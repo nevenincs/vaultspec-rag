@@ -13,6 +13,7 @@ modified: '2026-09-07'
 body_schema: 'body-v2'
 body_hash: 'sha256:d00dbd190dfc00d7f0cf6eb2ccdcb0f15f43ec22da017b9c6c9354eb25592837'
 ---
+
 # `explicit-reindex-authority` adr: `Require explicit authority for full-corpus indexing` | (**status:** `accepted`)
 
 ## Problem Statement

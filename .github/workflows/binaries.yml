@@ -75,6 +75,7 @@ jobs:
   # an awk pass over a file in this repository - it needs no capability the
   # build runners do not already have.
   derive-selectors:
+    timeout-minutes: 15
     name: Derive the selectors this matrix requires
     runs-on: [self-hosted, Linux, X64, build]
     outputs:
@@ -113,6 +114,7 @@ jobs:
   # standard; nevenincs/ci-fleet is private, and same-owner reusable calls are
   # permitted by its Actions access level.
   preflight:
+    timeout-minutes: 15
     name: Preflight runners
     needs: derive-selectors
     runs-on: [self-hosted, Linux, X64]
@@ -274,7 +276,7 @@ jobs:
           # `macbook-neo-linux-arm-rag`.
           #
           # KNOWN TO FAIL AS WRITTEN, and stated here rather than discovered:
-          # that runner is itself a colima container whose `/home/runner` is a
+          # that runner is itself a colima container whose runner home is a
           # named volume, so the container this leg declares mounts a path that
           # does not exist in the VM and the job dies in `Initialize containers`
           # before any step runs. The fix is to bind-mount the runner's home
@@ -349,14 +351,22 @@ jobs:
       - name: Install Python
         run: uv python install 3.13
 
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+
+      # The recipe, not a second copy of its body. `just release-binaries`
+      # already ran exactly this command under exactly this bare `--no-project`
+      # interpreter so a maintainer reproducing a release build runs what CI
+      # runs; this file was the reason that property was worth having, and the
+      # one place that did not use it.
       - name: Build binaries
         shell: bash
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
           TARGET: ${{ matrix.target }}
-        run: |
-          uv run --no-project --python 3.13 -- \
-            python -m tools.binaries.build_pyapp --tag "${TAG}" --target "${TARGET}" --outdir dist-bin
+        run: just release-binaries "${TAG}" "${TARGET}" dist-bin
 
       - name: Upload binaries
         uses: actions/upload-artifact@v7
@@ -383,6 +393,7 @@ jobs:
         run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
 
   release:
+    timeout-minutes: 30
     name: Attach to release
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
@@ -494,24 +505,22 @@ jobs:
       # vaultspec-core-v0.1.60 published a manifest with empty hashes out of
       # a green run - this repository adopts the fix rather than repeating it. The generator raises on a missing digest, refuses a
       # backward bump, and omits an unbuilt platform instead of inventing one.
-      - name: Generate release channel pointers
+      # Generate AND validate, in one call, because they are one act: a
+      # pointer that is generated but not validated is an uninstallable
+      # release nobody has looked at. These were two steps here, so the first
+      # could run without the second. `just release-channels` runs both, and
+      # is what a maintainer reproducing a release runs too.
+      #
+      # Between generating the pointers and committing them is the only point
+      # where a bad pointer can still be STOPPED rather than reported after it
+      # has shipped. vaultspec-core published a manifest with the right
+      # version, the right URLs and empty hashes out of a run that was green
+      # end to end; this repository had no equivalent check.
+      - name: Generate and validate the release channel pointers
         shell: bash
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          uv run --no-project --python 3.13 --             python -m tools.packaging.generate               --tag "${TAG}"               --checksums dist-bin/SHA256SUMS               --root channels
-
-      # Between generating the pointers and committing them, which is the
-      # only point where a bad pointer can still be STOPPED rather than
-      # reported after it has shipped. vaultspec-core published a manifest
-      # with the right version, the right URLs and empty hashes out of a run
-      # that was green end to end; this repository had no equivalent check.
-      - name: Refuse an uninstallable channel pointer
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root channels
+        run: just release-channels "${TAG}" channels dist-bin/SHA256SUMS
 
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
@@ -581,6 +590,7 @@ jobs:
   # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
+    timeout-minutes: 30
     name: Verify the release carries artifacts
     needs: release
     if: ${{ always() }}

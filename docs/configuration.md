@@ -122,6 +122,15 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 
 The stored vectors belong to the model that produced them. After changing any model here, reindex. If the dense width disagrees with the dense model, the store rejects the first upsert rather than writing silently.
 
+The default sparse model is gated and non-commercial. The
+[installation guide](installation.md#the-model-cache-and-its-first-download) owns the
+access, licensing, error-recovery, and dense-only policy. This page records the knobs:
+authenticate downloads with `HF_TOKEN` or `hf auth login`, or set
+`VAULTSPEC_RAG_SPARSE_ENABLED=0` consistently in the service environment and reindex.
+Disabling sparse does not disable the dense encoder or reranker, so the service still
+requires `[gpu]` and a supported accelerator. The installation guide also describes
+the current all-model prefetch and readiness caveat for this toggle.
+
 | Variable                            | Type    | Default                     | Controls                                       | CLI flag |
 | ----------------------------------- | ------- | --------------------------- | ---------------------------------------------- | -------- |
 | `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B` | Dense embedding model id                       | -        |
@@ -177,7 +186,7 @@ These bound the segment and queue geometry of one index run, its memory use, and
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB)                             | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_ALLOCATOR_FRACTION`     | float   | `0.8`                 | Fraction of CUDA memory the index allocator may reserve                                                | -        |
 | `VAULTSPEC_RAG_GPU_ADMISSION_FLOOR_MIB`           | integer | `0` (auto-derive)     | Free device memory required before this process loads model stacks (MiB)                               | -        |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service; `managed-service` or `embedded-local`                 | -        |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE`             | string  | `managed-service`     | Index resource profile advertised to the service; `managed-service` or `embedded-local`                | -        |
 
 #### How the CUDA ceiling and admission floor derive
 
@@ -266,14 +275,15 @@ These keys exist in the configuration loader and read no environment variable of
 
 vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables on this page. The Hub client honours most of them itself; the Controls column notes where vaultspec-rag reads or defaults one itself.
 
-| Variable                         | Type    | Controls                                                                                          |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                               |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
-| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                            |
+| Variable                         | Type    | Controls                                                                                                                                     |
+| -------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HF_TOKEN`                       | string  | Hugging Face access token; overrides a token saved by `hf auth login` and must belong to an account that accepted any gated model conditions |
+| `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface`                                            |
+| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                                                                          |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                                                                       |
+| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                                                                |
+| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                                                                    |
+| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                                                                       |
 
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 

@@ -72,10 +72,22 @@ jobs:
       # still resolves inside one.
       - uses: ./.github/actions/contain-writes
 
-      - name: Lint GitHub Actions workflows
-        run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
-          ./actionlint
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Initialize the worktree
+        run: just init
+      # actionlint AND the CI/justfile contract, both through the recipe. This
+      # step used to pipe an unpinned install script from raw.githubusercontent
+      # into bash and run whatever came back - the gate over every workflow in
+      # this repository was itself the least verified thing in it.
+      - name: Workflow lint and CI contract (just check-workflow)
+        run: just check-workflow
 
   pr-gate:
     name: PR Gate (ruff, ty, tests)
@@ -113,30 +125,32 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       # Each gate carries `if: '!cancelled()'` so one failure does not hide
       # the others: a contributor should get every finding from one run
       # rather than discovering them one push at a time.
       - name: Ruff
         if: '!cancelled()'
-        run: just lint python
+        run: just check-python
 
       - name: Ty
         if: '!cancelled()'
-        run: just lint type
+        run: just check-type
 
       - name: Tests
         if: '!cancelled()'
-        run: just test python
+        run: just test-python
 
   pr-gate-windows-provisioning:
     name: PR Gate (Windows provisioning)
@@ -170,18 +184,20 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Provisioning proofs
-        run: just test provisioning
+        run: just test-provisioning
 
   lint-and-type:
     name: Lint, Type, Config, Link, and Markdown Checks
@@ -210,7 +226,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
@@ -224,11 +240,13 @@ jobs:
         with:
           tool: taplo-cli
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       # This runner is long-lived and mutable, so its interpreter can move
       # between jobs with no workflow change - an OS upgrade once took the
@@ -258,36 +276,36 @@ jobs:
       # complexity step never executed. One red gate hid another.
       - name: Ruff
         if: '!cancelled()'
-        run: just lint python
+        run: just check-python
 
       - name: Ty
         if: '!cancelled()'
-        run: just lint type
+        run: just check-type
 
       - name: Taplo
         if: '!cancelled()'
-        run: just lint toml
+        run: just check-toml
 
       - name: Lychee
         if: '!cancelled()'
-        run: just lint links
+        run: just check-links
 
       - name: Markdown
         if: '!cancelled()'
-        run: just lint markdown
+        run: just check-markdown
 
       - name: Docs version guard
         if: '!cancelled()'
-        run: just lint docs-version
+        run: just check-docs-version
 
       # ADVISORY (continue-on-error) — see the block above the ratchet gates
       # below. Previously absent from CI entirely: the recipe existed and ran
-      # only from `just lint all` on a workstation. Red today on seven test
+      # only from `just check-all` on a workstation. Red today on seven test
       # modules that import the package absolutely.
       - name: Absolute imports (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just lint absolute-imports
+        run: just check-absolute-imports
 
       # Gating: fails CI if tracked source cites a development record (plan/Step
       # coordinate, dated vault stem) in a comment or docstring, or hardcodes a
@@ -295,7 +313,7 @@ jobs:
       # paths are reported as smells but do not fail.
       - name: Citations
         if: '!cancelled()'
-        run: just lint citations
+        run: just check-citations
 
       # ─────────────────────────────────────────────────────────────────────
       # ADVISORY RATCHETS — these RUN and REPORT on every PR, and none of them
@@ -307,7 +325,7 @@ jobs:
       # block unrelated work on debt its author did not create.
       #
       # They still run on every PR, and a regression shows as a step warning
-      # on the run. `just lint <target>` reproduces any of them locally
+      # on the run. `just check-<dimension>` reproduces any of them locally
       # and DOES exit non-zero — the local recipe is the strict one.
       #
       # Promote a step out of this block by deleting its `continue-on-error`
@@ -319,7 +337,7 @@ jobs:
       - name: Complexity (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just lint complexity
+        run: just check-complexity
 
       # ruff's nesting-depth rule is preview-only, so it runs scoped here
       # rather than from the main ruff config, where global preview mode
@@ -327,7 +345,7 @@ jobs:
       - name: Nesting depth (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just lint nesting
+        run: just check-nesting
 
       # Module length (pylint C0302) and the class-shape limits ruff has no
       # rule for. This replaced a bespoke script whose CI step claimed to be
@@ -335,13 +353,13 @@ jobs:
       - name: Module and class size (advisory)
         if: '!cancelled()'
         continue-on-error: true
-        run: just lint size
+        run: just check-size
 
       # Gating: basedpyright strict reached zero on 2026-06-10, so this now
       # fails CI on any new strict-type error.
       - name: Strict types
         if: '!cancelled()'
-        run: just lint type-strict
+        run: just check-type-strict
 
   tests:
     name: Tests (py${{ matrix.python-version }})
@@ -381,15 +399,17 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       # Guards the env pin above: if UV_PYTHON stopped taking effect, the leg
       # would test the floor twice and still report green.
@@ -404,7 +424,62 @@ jobs:
           "
 
       - name: Run tests
-        run: just test python
+        run: just test-python
+
+  # THE WINDOWS RECIPE GATE. Blocking, and deliberately narrow.
+  #
+  # The unit tiers below are advisory for a reason that is argued and true.
+  # This job is not one of them: it asserts the property the justfile CLAIMS
+  # rather than the state of the test suite - that `just` recipes execute on
+  # Windows at all. That claim was untested here. The two jobs that ran `just`
+  # on a Windows runner both hand-rolled their own pwsh download of a
+  # different `just` version, and the tier they served was advisory, so a
+  # recipe that failed to parse under `cmd.exe` would have been reported and
+  # ignored.
+  #
+  # It stays cheap on purpose: initialize the worktree, prove the stamp says
+  # so, and run one real gate. A recipe that cannot get through those is
+  # broken for every Windows contributor, not failing a triage backlog.
+  windows-recipe-gate:
+    name: Windows recipe gate
+    timeout-minutes: 30
+    concurrency:
+      group: ci-windows-recipe-gate-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: [self-hosted, Windows, X64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - uses: ./.github/actions/contain-writes
+
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Initialize the worktree
+        run: just init
+
+      # `init` is idempotent and stamped: the second call must be a sub-second
+      # no-op, and `init-check` must agree the worktree is initialized. On
+      # Windows that is a real assertion rather than a formality - the stamp
+      # hashes paths, and a path comparison is where a Windows no-op most
+      # often stops being one.
+      - name: Initialization is idempotent
+        run: just init
+
+      - name: The worktree reports itself initialized
+        run: just init-check
+
+      - name: A real gate runs through the recipe
+        run: just check-python
 
   # WINDOWS AND macOS UNIT TIERS.
   #
@@ -453,32 +528,23 @@ jobs:
       - uses: ./.github/actions/contain-writes
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
       # Same pinned, checksum-verified download the GPU job uses: this
       # runner's service account has no bash on PATH, so the marketplace
       # action's shell is unavailable.
-      - name: Install just
-        shell: pwsh
-        run: |
-          $ver = "1.57.0"
-          $sha = "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09"
-          $zip = "$env:RUNNER_TEMP\just-$ver.zip"
-          $dest = "$env:RUNNER_TEMP\just-$ver"
-          $url = "https://github.com/casey/just/releases/download/$ver/just-$ver-x86_64-pc-windows-msvc.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne $sha) { throw "just checksum mismatch: got $actual" }
-          Expand-Archive -Path $zip -DestinationPath $dest -Force
-          Add-Content -Path $env:GITHUB_PATH -Value $dest
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Run tests
-        run: just test python
+        run: just test-python
 
   tests-macos:
     name: Tests (macOS units advisory, MPS required)
@@ -530,19 +596,21 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Run tests
         continue-on-error: true
-        run: just test python
+        run: just test-python
 
       # The guard below reads the machine's model cache with the Hub switched
       # off, deliberately, so that a missing snapshot fails as a runner problem
@@ -582,7 +650,7 @@ jobs:
       - name: Run MPS acceptance guard
         env:
           PYTORCH_ENABLE_MPS_FALLBACK: "0"
-        run: just test mps
+        run: just test-mps
 
   gpu-tests:
     name: GPU Tests
@@ -662,29 +730,20 @@ jobs:
       - uses: ./.github/actions/contain-writes
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
       # Install `just` without the bash-based marketplace action: this runner's
       # service account has no `bash` on PATH, so a pinned, SHA256-verified
       # download driven by PowerShell is the portable path.
-      - name: Install just
-        shell: pwsh
-        run: |
-          $ver = "1.57.0"
-          $sha = "4c7391d17cb1d17b758b52004ee6411372b8a13ff37c3c9b9031625cb6026e09"
-          $zip = "$env:RUNNER_TEMP\just-$ver.zip"
-          $dest = "$env:RUNNER_TEMP\just-$ver"
-          $url = "https://github.com/casey/just/releases/download/$ver/just-$ver-x86_64-pc-windows-msvc.zip"
-          Invoke-WebRequest -Uri $url -OutFile $zip
-          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne $sha) { throw "just checksum mismatch: got $actual" }
-          Expand-Archive -Path $zip -DestinationPath $dest -Force
-          Add-Content -Path $env:GITHUB_PATH -Value $dest
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install
@@ -751,7 +810,7 @@ jobs:
       - name: Run GPU test tier through guarded coordinator
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: just test gpu
+        run: just test-gpu
 
       # Always: a tier that failed mid-borrow still leaves a daemon holding the
       # card, and the next run's capture would then contend with a service this
@@ -786,15 +845,17 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Verify vault structure and links
         run: uv run vaultspec-core vault check all
@@ -824,21 +885,23 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Python dependency vulnerability audit
-        run: just audit deps
+        run: just audit-deps
 
   # Advisory only — this job reports and can never fail the run. It is the CI
-  # face of `just audit`: dead code, undeclared (transitively-resolved)
+  # face of `just audit-all`: dead code, undeclared (transitively-resolved)
   # imports, and the security scan. Each yields a lead to confirm rather than a
   # verdict, so none of them belongs in a blocking gate.
   #
@@ -869,27 +932,29 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
-      - name: Install dependencies
-        run: just deps sync
+      - name: Initialize the worktree
+        run: just init
 
       - name: Dead code (vulture)
         if: '!cancelled()'
         continue-on-error: true
-        run: just audit dead-code
+        run: just audit-dead-code
 
       - name: Undeclared dependencies (deptry)
         if: '!cancelled()'
         continue-on-error: true
-        run: just audit dependencies
+        run: just audit-dependencies
 
       - name: Security (bandit)
         if: '!cancelled()'
         continue-on-error: true
-        run: just audit security
+        run: just audit-security

@@ -58,6 +58,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.binaries.torch_channel import pip_extra_args
+from tools.binaries.windows_icon import stamp_icon
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -69,6 +70,9 @@ PROJECT_NAME = "vaultspec-rag"
 
 # Embedded CPython series. Must satisfy the package's requires-python.
 PYTHON_VERSION = "3.13"
+
+# Governed multi-frame application icon for every Windows release executable.
+APPLICATION_ICON = Path(__file__).with_name("assets") / "vaultspec.ico"
 
 
 @dataclass(frozen=True)
@@ -383,7 +387,9 @@ def main() -> int:
             raw = build_one(binary, version, target, workdir)
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
-            if not target.endswith("windows-msvc"):
+            if target.endswith("windows-msvc"):
+                stamp_icon(asset, APPLICATION_ICON)
+            else:
                 asset.chmod(0o755)
             # Refuse the artifact HERE, before it is renamed into place and
             # long before anything uploads it. A floor violation found after

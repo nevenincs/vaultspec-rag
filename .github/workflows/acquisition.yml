@@ -114,7 +114,7 @@ jobs:
     #
     # THE aarch64 LEGS ARE KNOWN TO FAIL AS WRITTEN. They are container jobs
     # on `macbook-neo-linux-arm-rag`, which is itself a colima container
-    # whose `/home/runner` is a named volume, so a sibling job container
+    # whose runner home is a named volume, so a sibling job container
     # mounts a path that does not exist in the VM and the job dies in
     # `Initialize containers` before any step runs. The fix is to bind-mount
     # the runner's home from the identical path in the VM, which needs the

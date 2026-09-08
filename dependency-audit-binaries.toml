@@ -1,0 +1,19 @@
+# Binaries this repository ships that no package lockfile pins.
+#
+# `dev/audit/dependency_audit.py` reads every committed lockfile, but a binary
+# built from a pinned upstream tool has no lockfile entry -- so it is declared
+# here instead and audited against OSV exactly like a locked dependency. An
+# entry missing any field aborts the audit rather than being skipped.
+#
+#   ecosystem  the OSV ecosystem the upstream project publishes advisories in
+#   name       its name in that ecosystem
+#   version    the exact version this repository pins
+
+# The release binaries (`vaultspec-rag`, `vaultspec-search-mcp`) are PyApp
+# bootstrappers: a Rust binary compiled from the pinned crate below, which
+# then carries the wheel. Keep in step with PYAPP_VERSION in
+# tools/binaries/build_pyapp.py.
+[[binary]]
+ecosystem = "crates.io"
+name = "pyapp"
+version = "0.29.0"
