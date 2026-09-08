@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:8f7c1c6a5663d11fede5def65bd4d59f29c7d527c8b76331c4ed8b3cbb60b028'
+body_hash: 'sha256:3b41e740485ad05a3ce706c07386bc94507dcbab20dde5e32361d2dbd5104ac4'
 ---
 
 # `incremental-publication-cost` plan
@@ -46,7 +46,7 @@ Provide source-neutral immutable values for proof identity, path outcomes, aggre
 
 Give the run ledger normalized manifest rows, exact retained-point relations, aggregates, revisions, and idempotent prepare, apply, and commit operations without copying a parent manifest.
 
-- [ ] `W01.P02.S03` - Extend ledger value and schema contracts for proof revisions, rows, aggregates, receipts, and provenance; `src/vaultspec_rag/indexer/_run_ledger_models.py`.
+- [x] `W01.P02.S03` - Extend ledger value and schema contracts for proof revisions, rows, aggregates, receipts, and provenance; `src/vaultspec_rag/indexer/_run_ledger_models.py`.
 - [ ] `W01.P02.S04` - Create and migrate proof tables and replace eager parent-manifest copying with ancestry references; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
 - [ ] `W01.P02.S05` - Implement transactional proof reads, exact path updates, aggregate updates, receipt transitions, and ancestry validation; `src/vaultspec_rag/indexer/_run_ledger_publication.py`.
 - [ ] `W01.P02.S06` - Preserve retained-point evidence and deterministic mutation identities across receipt replay; `src/vaultspec_rag/indexer/_run_ledger_commits.py`.

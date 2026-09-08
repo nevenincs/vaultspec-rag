@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -14,6 +15,13 @@ from typing import TYPE_CHECKING, Final, TypedDict
 
 from ._content_policy import ContentKind
 from ._file_state import validate_rel_path
+from ._publication_proof import (
+    PathDelta,
+    ProofAggregate,
+    ProofIdentity,
+    ProofProvenance,
+    ProofReceiptState,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -22,9 +30,18 @@ __all__ = [
     "INDEX_RUN_LEDGER_FILENAME",
     "LEDGER_BUSY_TIMEOUT_SECONDS",
     "LEDGER_CONTENTION_ATTEMPTS",
+    "PUBLICATION_PROOF_SCHEMA",
     "CommitUnit",
     "CommitUnitKind",
     "FinalizationPhase",
+    "PublicationEvidenceRow",
+    "PublicationPointRow",
+    "PublicationProof",
+    "PublicationProofRow",
+    "PublicationReceipt",
+    "PublicationReceiptDeltaRow",
+    "PublicationReceiptPointRow",
+    "PublicationReceiptRow",
     "RunGeneration",
     "RunLedgerCompatibilityError",
     "RunLedgerConcurrencyError",
@@ -318,6 +335,100 @@ class GenerationRow(TypedDict):
     consecutive_failures: int
 
 
+class PublicationProofRow(TypedDict):
+    """Flattened durable header for one current publication proof."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    generation_id: str
+    storage_schema: int
+    payload_schema: int
+    embedding_schema_identity: str
+    chunking_schema_identity: str
+    membership_identity: str
+    content_identity: str
+    policy_identity: str
+    revision: int
+    indexed_identities: int
+    retained_points: int
+    provenance: str
+    committed_at: float
+    verified_at: float | None
+
+
+class PublicationEvidenceRow(TypedDict):
+    """One normalized path evidence row in the current proof."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    rel_path: str
+    content_identity: str
+    evidence_generation_id: str
+
+
+class PublicationPointRow(TypedDict):
+    """One retained point identity belonging to normalized path evidence."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    rel_path: str
+    point_ordinal: int
+    point_id: str
+
+
+class PublicationReceiptRow(TypedDict):
+    """Durable state-machine header for one publication attempt."""
+
+    receipt_id: str
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    generation_id: str
+    storage_schema: int
+    payload_schema: int
+    embedding_schema_identity: str
+    chunking_schema_identity: str
+    membership_identity: str
+    content_identity: str
+    policy_identity: str
+    parent_revision: int
+    target_revision: int
+    state: str
+    prepared_at: float
+    applied_at: float | None
+    confirmed_at: float | None
+    committed_at: float | None
+
+
+class PublicationReceiptDeltaRow(TypedDict):
+    """Deterministically ordered path transition retained for receipt replay."""
+
+    receipt_id: str
+    delta_ordinal: int
+    outcome: str
+    rel_path: str
+    target_rel_path: str | None
+    old_content_identity: str | None
+    new_content_identity: str | None
+
+
+class PublicationReceiptPointRow(TypedDict):
+    """Exact old or new retained point membership for one receipt delta."""
+
+    receipt_id: str
+    delta_ordinal: int
+    evidence_side: str
+    point_ordinal: int
+    point_id: str
+
+
 SCHEMA_VERSION: Final = 6
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
@@ -369,6 +480,17 @@ REQUIRED_SCHEMA: Final = {
             "evidence_generation_id",
         }
     ),
+}
+
+# Proof tables are migrated before this contract is merged into REQUIRED_SCHEMA.
+# Keeping it separate lets a legacy ledger open far enough to run that migration.
+PUBLICATION_PROOF_SCHEMA: Final = {
+    "publication_proofs": frozenset(PublicationProofRow.__annotations__),
+    "publication_evidence": frozenset(PublicationEvidenceRow.__annotations__),
+    "publication_points": frozenset(PublicationPointRow.__annotations__),
+    "publication_receipts": frozenset(PublicationReceiptRow.__annotations__),
+    "publication_receipt_deltas": frozenset(PublicationReceiptDeltaRow.__annotations__),
+    "publication_receipt_points": frozenset(PublicationReceiptPointRow.__annotations__),
 }
 
 
@@ -647,6 +769,132 @@ class RunGeneration:
     def complete(self) -> bool:
         """Return whether the generation is immutably successful."""
         return self.terminal_state is RunTerminalState.SUCCEEDED
+
+
+def _require_timestamp(value: float, *, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError(f"{name} must be a timestamp")
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a finite non-negative timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationProof:
+    """Committed ledger projection of one exact publication proof revision."""
+
+    revision: int
+    identity: ProofIdentity
+    aggregate: ProofAggregate
+    provenance: ProofProvenance
+    committed_at: float
+    verified_at: float | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("revision must be an integer")
+        if self.revision < 0:
+            raise ValueError("revision must be non-negative")
+        if not isinstance(self.identity, ProofIdentity):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("identity must be a ProofIdentity")
+        if not isinstance(self.aggregate, ProofAggregate):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("aggregate must be a ProofAggregate")
+        if not isinstance(self.provenance, ProofProvenance):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("provenance must be a ProofProvenance")
+        _require_timestamp(self.committed_at, name="committed_at")
+        if self.verified_at is not None:
+            _require_timestamp(self.verified_at, name="verified_at")
+            if self.verified_at > self.committed_at:
+                raise ValueError("verified_at must not follow committed_at")
+        if self.provenance is ProofProvenance.VERIFIED:
+            if self.verified_at is None:
+                raise ValueError("verified proof requires verified_at")
+        elif self.verified_at is not None:
+            raise ValueError("delta-derived proof must not carry verified_at")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationReceipt:
+    """Durable replay contract spanning external storage and proof commit."""
+
+    receipt_id: str
+    identity: ProofIdentity
+    parent_revision: int
+    target_revision: int
+    state: ProofReceiptState
+    deltas: tuple[PathDelta, ...]
+    prepared_at: float
+    applied_at: float | None = None
+    confirmed_at: float | None = None
+    committed_at: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt_id, str) or not self.receipt_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise ValueError("receipt_id must be non-empty")
+        if not isinstance(self.identity, ProofIdentity):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("identity must be a ProofIdentity")
+        for name in ("parent_revision", "target_revision"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.target_revision != self.parent_revision + 1:
+            raise ValueError("target_revision must immediately follow parent_revision")
+        if not isinstance(self.state, ProofReceiptState):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("state must be a ProofReceiptState")
+        if not isinstance(self.deltas, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("deltas must be a tuple")
+        _validate_receipt_deltas(self.deltas, parent_revision=self.parent_revision)
+        self._validate_timestamps()
+
+    def _validate_timestamps(self) -> None:
+        _require_timestamp(self.prepared_at, name="prepared_at")
+        timestamps = (self.applied_at, self.confirmed_at, self.committed_at)
+        required = {
+            ProofReceiptState.PREPARED: 0,
+            ProofReceiptState.APPLIED: 1,
+            ProofReceiptState.CONFIRMED: 2,
+            ProofReceiptState.COMMITTED: 3,
+        }[self.state]
+        if any(value is None for value in timestamps[:required]) or any(
+            value is not None for value in timestamps[required:]
+        ):
+            raise ValueError("receipt timestamps must match its state")
+        present = (
+            self.prepared_at,
+            *(value for value in timestamps if value is not None),
+        )
+        for name, value in zip(
+            ("prepared_at", "applied_at", "confirmed_at", "committed_at"),
+            present,
+            strict=False,
+        ):
+            _require_timestamp(value, name=name)
+        if present != tuple(sorted(present)):
+            raise ValueError("receipt timestamps must be monotonic")
+
+
+def _validate_receipt_deltas(
+    deltas: tuple[PathDelta, ...], *, parent_revision: int
+) -> None:
+    if any(not isinstance(delta, PathDelta) for delta in deltas):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError("deltas must contain only PathDelta values")
+    if any(delta.expected_parent_revision != parent_revision for delta in deltas):
+        raise ValueError("every delta must name the receipt parent revision")
+    ordering = tuple(
+        (delta.rel_path, delta.target_rel_path or "", delta.outcome.value)
+        for delta in deltas
+    )
+    if ordering != tuple(sorted(ordering)):
+        raise ValueError("deltas must use canonical path ordering")
+    reserved_paths: set[str] = set()
+    for delta in deltas:
+        paths = (delta.rel_path,) + (
+            (delta.target_rel_path,) if delta.target_rel_path is not None else ()
+        )
+        if any(path in reserved_paths for path in paths):
+            raise ValueError("a receipt must not affect one path more than once")
+        reserved_paths.update(paths)
 
 
 def _is_digest(value: object) -> bool:
