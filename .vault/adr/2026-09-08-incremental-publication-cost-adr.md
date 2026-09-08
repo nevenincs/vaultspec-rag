@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:931f841978f5b70c98d93843f141f34227db9bc678652ee638fcd981c1840135'
+body_hash: 'sha256:7641e756df0c2c3524df50b67433d761823bd219890d66ddb5788d50e4270f56'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -37,6 +37,10 @@ and `2026-09-08-incremental-publication-cost-reference`.
   revision fence that fails closed while mutation intent is open.
 - The accepted explicit-reindex and pointer-last generation boundaries remain stable.
 - Code, document, and vault share proof invariants but retain distinct source semantics.
+- Old persisted formats are not proof or rebuild inputs. A rebuild reads current source and
+  writes fresh target storage; it never decodes, migrates, seeds, or translates old evidence.
+- A reader-first hard cutover may make an old index unavailable until rebuild; that typed,
+  explicit failure is preferable to a fallback or second authority.
 - Deterministic operation counts are the primary proportionality gate; time budgets support
   rather than replace them.
 
@@ -54,6 +58,11 @@ copies or rewrites corpus-wide state for each small delta.
 **Maintain a normalized ledger-backed proof and publish storage-confirmed deltas through
 prepare, apply, and commit receipts.** Chosen. It gives every source one exact proof model,
 bounds normal work by changed scope, and makes cross-store interruption recoverable.
+
+**Stage compatibility readers, dual-write sidecars, or seed proof from old evidence.**
+Rejected. Each option preserves two interpretations of completeness, obscures which store
+is authoritative during transition, and lets an old persisted format influence current
+proof. The cutover instead fails old indexes closed until an explicitly authorized rebuild.
 
 **Treat every publication as an authoritative backend scan.** Rejected for normal work and
 retained as the exceptional verification path.
@@ -74,9 +83,18 @@ retained as the exceptional verification path.
 - Add, modify, delete, rename, empty, ignored, rejected, and no-op use one delta algebra.
   Modify requires changed evidence, rename is atomic remove-plus-add, and no-op changes no
   storage, proof rows, aggregate, or revision.
-- An active generation reads its committed parent projection plus sparse local overrides
-  and deletion tombstones. Proof commit folds changed heads and aggregates atomically;
-  historical generations remain provenance, not the normal lookup structure.
+- An active generation reads the canonical committed proof projection plus sparse run-local
+  overrides and deletion tombstones. Run-local file states are operational checkpoint
+  outcomes, never a second manifest authority. Proof commit folds changed heads and
+  aggregates atomically; historical generation file states are not a lookup structure.
+- Effective path and candidate membership reads are bounded and receipt-bound. They validate
+  the active generation, exact proof identity, parent revision, reservation sequence, and
+  direct proof parent and return state plus retained membership from one ledger snapshot.
+  Destructive callers never compose that authority from separate reads.
+- A local override and tombstone for one path cannot coexist. A local outcome shadows the
+  committed head, a confirmed deletion tombstone hides it, and an untouched path reads the
+  canonical head. Missing, malformed, or mismatched proof is refusal, never an empty set that
+  authorizes deletion.
 - Proof never leads storage. Reserve a parent-to-target revision before the first mutation;
   prepare each bounded mutation unit before its store call, confirm it after acknowledgement,
   seal complete path outcomes before destructive reconciliation, and commit only when every
@@ -90,20 +108,33 @@ retained as the exceptional verification path.
 - Replacement proof commits before the served pointer moves; failure leaves the previous
   generation served.
 - Backend mismatch, missing ancestry, incompatible policy or schema, corrupt receipts,
-  inexact legacy evidence, and unexplained drift cannot manufacture proof.
-- Only persisted explicit rebuild, migration, or audit authority may perform full identity
-  and payload verification. Recovery may finish or roll back recorded units but does not
-  silently acquire full-scan authority.
+  pre-proof persisted state, and unexplained drift cannot manufacture proof.
+- Only persisted explicit rebuild or audit authority may perform full identity and payload
+  work. Audit verification checks an existing canonical proof and never seeds or repairs a
+  missing one. Recovery may finish or roll back recorded units but does not silently acquire
+  full-scan authority.
 - Cheap serve-time integrity may compare an O(1) backend count with the proof aggregate and
   must check pending receipts. Equal-cardinality substitution remains unverifiable until an
   authorized exact verification.
 - Existing explicit-reindex authority, non-destructive publication, generation accounting,
   and source isolation decisions remain stable; this record refines rather than supersedes
   them.
-- Legacy consumers migrate to the canonical proof reader. Publication never dual-writes an
-  independently authoritative full manifest.
-- Compatibility readers cut over atomically before producers stop legacy sidecar writes.
-- Open receipts and referenced evidence owners are retained; committed history is bounded.
+- Canonical proof is the only publication reader and writer authority after cutover.
+  There is no runtime mode selector, fallback reader, sidecar translation, dual write,
+  compatibility alias, deprecated re-export, or migration or seeding path.
+- Reader cutover is direct and precedes producer cutover. Missing or old-format proof fails
+  with a typed rebuild-required result until an explicitly authorized rebuild writes a fresh
+  current-format proof. Once all consumers are direct, producers switch and obsolete
+  sidecar code is deleted rather than retained dormant.
+- Reader-first and producer-second are implementation order inside one unreleased change.
+  No build is released or deployed between them; the release boundary includes every source
+  producer, every consumer, and deletion of sidecar and compatibility code.
+- Ledger initialization creates the schema only for an empty database or opens the exact
+  current schema. Any nonempty older or differently shaped ledger is left untouched and
+  fails with a typed rebuild-required result.
+- Current proof generations, referenced evidence owners, and open-receipt generations are
+  retained. Eligible closed receipt history is bounded before generation deletion; file-state
+  ancestry is not a retention reason.
   Cleanup removes proof state before its collection, while archive and restore carry a
   consistent proof export.
 - Code, document, and vault use one source-neutral publication coordinator with
@@ -124,9 +155,16 @@ classification and payload rules.
 
 For each affected identity, validate the authoritative old head and derive aggregate changes
 by subtracting old point membership and adding new point membership. During an active run,
-sparse overrides and tombstones shadow the committed parent. Commit changed current heads,
-aggregates, revision, and provenance in one ledger transaction; never copy a complete parent
-manifest or retain recursive ancestry on the normal read path.
+sparse run-local overrides and tombstones shadow canonical committed proof. Commit changed
+current heads, aggregates, revision, and provenance in one ledger transaction; never copy a
+complete parent manifest, consult ancestor `file_states`, or retain recursive ancestry on
+the normal read path.
+
+Create the new ledger schema only for an empty database and require its exact version and
+shape thereafter. Do not alter old ledgers in place, decode old signature shapes, read old
+sidecars, or expose compatibility statuses and aliases. An old or incomplete format yields
+the same typed rebuild-required boundary used for missing proof, and the rebuild constructs
+new evidence from current source plus fresh target acknowledgements under explicit authority.
 
 Before external mutation, durably reserve the parent and target revisions. Streaming writers
 prepare each deterministic mutation unit with its path, content, and point identities before
@@ -147,13 +185,17 @@ within a bounded policy or returns typed transient or unverifiable state on chan
 accepts mixed proof and storage generations.
 
 Keep authoritative verification as a separate operation and cost class. It scans backend
-point identities and source payloads, reconstructs normalized evidence, and detects missing,
-extra, foreign, incompatible, or partial state. Only successful authorized verification may
-establish ancestry where none exists.
+point identities and source payloads, compares them with canonical evidence, and detects
+missing, extra, foreign, incompatible, or partial state. Verification never establishes
+ancestry where none exists; only successful explicitly authorized rebuild publication
+creates a fresh proof.
 
-Move proof consumers before removing legacy publication writes, including breadth, integrity,
-donor selection, generation and storage surveys, reclamation, archive, restore, and cleanup.
-Route reconciliation and stat evidence use changed-key operations during scoped work; their
+Make rebuild admission operational, then move proof consumers directly before removing old
+publication writes, including breadth, integrity, donor selection, generation and storage
+surveys, reclamation, archive, restore, and cleanup. Consumers never fall back when proof is
+absent. After all readers are canonical, switch code, document, and vault producers and
+delete their old sidecar implementation and exports in the same source cutover. Route
+reconciliation and stat evidence use changed-key operations during scoped work; their
 full-corpus forms remain explicit-authority operations.
 
 Report changed identities, proof rows, and backend point operations plus data-apply,
@@ -182,8 +224,10 @@ pointer-last publication, while source adapters retain code, document, and vault
   serializes a complete metadata map.
 - Completeness gains explicit provenance distinguishing verified and delta-derived proofs.
 - Receipts and normalized proof state increase ledger schema and recovery complexity.
-- The ledger becomes the sole authoritative proof store; full sidecars and readers migrate
-  or are removed.
+- The ledger becomes the sole authoritative proof store; full sidecar readers, writers,
+  models, and exports are removed.
+- Existing old-format indexes require an explicit rebuild and are never upgraded or seeded
+  from their ledgers or sidecars.
 - Cheap publication does not claim to detect arbitrary same-cardinality out-of-band backend
   substitution; exceptional verification remains necessary.
 - Full verification stays expensive and operator-authorized, with separately visible cost.

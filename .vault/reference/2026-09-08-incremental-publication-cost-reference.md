@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:3565c4d5c90d1566efd149ce2564e416d36a1d302b569860013494e71e841c18'
+body_hash: 'sha256:4ecb994ed361bf60dc6f1b024b4ad5d3f88062c66807aae0af44ce2a6ce89ae4'
 related:
   - "[[2026-09-07-explicit-reindex-authority-adr]]"
   - "[[2026-07-25-non-destructive-index-publication-adr]]"
@@ -72,7 +72,30 @@ runtime-only change. Child reads and mutations assume physical ownership of a co
 `src/vaultspec_rag/indexer/_run_ledger_commits.py:519`. Finalization and compaction make
 the same assumption at `src/vaultspec_rag/indexer/_run_ledger_finalization.py:88` and
 `src/vaultspec_rag/indexer/_run_ledger_finalization.py:260`. Sparse inheritance therefore
-requires deletion tombstones and ancestry-aware reads before the copy can be removed.
+requires deletion tombstones and bounded effective reads before the copy can be removed.
+Those reads must take their committed base from `publication_evidence`, not recursively
+from ancestor `file_states`: otherwise the operational checkpoint manifest becomes a
+second proof authority and normal lookup cost grows with generation depth. The
+generation-local rows and tombstones can remain durable in-flight outcomes only, with
+retained membership owned by the canonical proof or the current run's confirmed units.
+The destructive route cleanup currently reads candidate states and retained ids separately
+at `src/vaultspec_rag/indexer/_route_migration.py:585` and
+`src/vaultspec_rag/indexer/_route_migration.py:586`. The replacement must return both from
+one transaction after validating the active receipt, compatibility key, proof revision,
+reservation sequence, and direct proof parent; two public reads that each open a connection
+do not provide that boundary.
+
+The proof schema presently installs through an additive same-version path. `RunLedger`
+accepts version 6 at `src/vaultspec_rag/indexer/_run_ledger_runtime.py:401`, creates the
+new tables on every accepted open at
+`src/vaultspec_rag/indexer/_run_ledger_runtime.py:481`, and leaves the version at 6 through
+`src/vaultspec_rag/indexer/_run_ledger_models.py:474`. It also decodes a missing backend
+identity as `legacy:unknown` at
+`src/vaultspec_rag/indexer/_run_ledger_runtime.py:1080`; the corresponding dataclass
+default is at `src/vaultspec_rag/indexer/_run_ledger_models.py:782`. Current-format-only
+opening must distinguish an empty database from a nonempty old schema before creation,
+reject the latter with a typed rebuild-required result, and require the current signature
+shape without a fallback value.
 
 The backend transaction gap also reaches readers. Commit units are recorded after storage
 at `src/vaultspec_rag/indexer/_run_ledger_commits.py:115`; streaming code discovers exact
@@ -88,8 +111,11 @@ code materializes all retained identities at
 `src/vaultspec_rag/indexer/_consumer_pipeline.py:270`; and route reconciliation scrolls
 same-kind and cross-kind collections at
 `src/vaultspec_rag/indexer/_route_migration.py:615`. Generation protection still reads
-sidecars at `src/vaultspec_rag/generation_survey.py:105`, so proof readers must cut over
-before producers stop writing those sidecars.
+sidecars at `src/vaultspec_rag/generation_survey.py:105`. This makes reader-first the only
+safe sequential cutover: consumers can fail closed on absent canonical proof until an
+explicit rebuild, whereas producer-first would leave sidecar readers observing stale
+evidence. There is no need for a runtime selector or translation path; after every reader
+is direct, the three source producers can switch and their sidecar code can be deleted.
 
 Vault does not currently share the code/document generation lifecycle: its entry point at
 `src/vaultspec_rag/indexer/_vault_indexer.py:79` has no run-ledger checkpoint owner, and
