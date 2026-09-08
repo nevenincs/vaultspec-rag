@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:d9eeb4c2a6b83532ef666a5cf0cf0db5d4af1a77787130e082c87db66ab16f35'
+body_hash: 'sha256:cc0200150bf9636d711661b885aec561ad1fc9d10369871bd7d2b9e1e7fd29e3'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -87,7 +87,7 @@ Prove bounded liveness, fairness, restart safety, pressure behavior, and surface
 Exercise real watcher events, restarts, sustained churn, multiple roots, service pressure, and adapter parity.
 
 - [x] `W03.P06.S16` - Cover create, modify, delete, rename, active-job, cooldown, cancellation, failure, and restart convergence; `src/vaultspec_rag/tests/integration`.
-- [ ] `W03.P06.S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
+- [x] `W03.P06.S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`.
 - [ ] `W03.P06.S18` - Assert service, HTTP, CLI, and MCP controller telemetry conformance; `src/vaultspec_rag/tests/integration/test_service_state.py`.
 
 ### Phase `W03.P07` - guards and documentation

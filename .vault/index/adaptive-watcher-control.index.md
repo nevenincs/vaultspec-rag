@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:ea25a18dc70338e9f017e453156a4a62ef11c262317956a014af07d894883f7c'
+body_hash: 'sha256:dfbc6df3570a93f719d4a160a79cd69978318821f86212e035d41d3aed49f234'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -24,6 +24,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W02-P05-S14]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P05-S15]]'
   - '[[2026-09-08-adaptive-watcher-control-W03-P06-S16]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-S17]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -63,6 +64,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W02-P05-S14` - Project identical controller facts through watcher and job HTTP routes
 - `2026-09-08-adaptive-watcher-control-W02-P05-S15` - Adapt controller state and stable reasons through CLI and MCP clients
 - `2026-09-08-adaptive-watcher-control-W03-P06-S16` - Cover create, modify, delete, rename, active-job, cooldown, cancellation, failure, and restart convergence
+- `2026-09-08-adaptive-watcher-control-W03-P06-S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load
 
 ### plan
 
