@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:c16d0d818f3e292aff5e9f2c95fef393d62c068674d896bd02fbf7ac3a1dcfa8'
+body_hash: 'sha256:954681a9664416ea922937819bb840c198488f9c99a19130fa3c60bc27ae37a7'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -16,6 +16,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P02-S06]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P03-S07]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P03-S08]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P03-S09]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -47,6 +48,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W01-P02-S06` - Add virtual-clock and generated-sequence proofs for transitions, deadlines, scope safety, and restart
 - `2026-09-08-adaptive-watcher-control-W02-P03-S07` - Implement earliest-deadline admission with rotating root and source ties
 - `2026-09-08-adaptive-watcher-control-W02-P03-S08` - Own controller registration, deadline scheduling, wakeups, and bounded reevaluation in the service
+- `2026-09-08-adaptive-watcher-control-W02-P03-S09` - Expose immutable job, search, GPU, storage, limiter, and quiesce measurement snapshots to admission
 
 ### plan
 
