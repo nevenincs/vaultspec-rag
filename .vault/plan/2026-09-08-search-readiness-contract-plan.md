@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:975e049a30db9c0c5f7a1be0bf7b4931d553d2df3bcfc4d11d782ac48ff13b80'
+body_hash: 'sha256:9d36b6005fa2c1652dee509b615ae605aed339ac254109e6775ae6a85d8165b3'
 ---
 
 <!-- RETIRED: P14 -->
@@ -104,7 +104,7 @@ Measure every existing admission and capacity boundary under its actual canonica
 - [x] `W02.P07.S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope; `src/vaultspec_rag/search/_searcher.py`.
 - [x] `W02.P07.S31` - Map storage duration and refusal to storage-owned outcomes without guessing index state; `src/vaultspec_rag/server/_routes_search.py`.
 - [x] `W02.P07.S32` - Prove queued visibility deadlines bounded history completion and cancellation cleanup; `src/vaultspec_rag/tests/test_search_activity.py`.
-- [ ] `W02.P07.S33` - Prove every named wait cause remains distinct under contention; `src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
+- [x] `W02.P07.S33` - Prove every named wait cause remains distinct under contention; `src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
 - [ ] `W02.P07.S34` - Mutation-prove the no-new-GPU-serialization concurrency guard; `src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
 
 ## Wave `W03` - client CLI and MCP conformance

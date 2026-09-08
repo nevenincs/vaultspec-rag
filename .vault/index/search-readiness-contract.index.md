@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:13ba4ad2c04de313c2d58874096549f7a43febdf53ec74fba83fb00cfbfc9c29'
+body_hash: 'sha256:1abc9cfc23ebe69cf050bc03a39e91083a2e48c2880f226f0d17840318b15525'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -46,6 +46,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P07-S30]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S31]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S32]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P07-S33]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -102,6 +103,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P07-S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope
 - `2026-09-08-search-readiness-contract-W02-P07-S31` - Map storage duration and refusal to storage-owned outcomes without guessing index state
 - `2026-09-08-search-readiness-contract-W02-P07-S32` - Prove queued visibility deadlines bounded history completion and cancellation cleanup
+- `2026-09-08-search-readiness-contract-W02-P07-S33` - Prove every named wait cause remains distinct under contention
 
 ### plan
 

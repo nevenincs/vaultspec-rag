@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+import math
+import threading
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -501,6 +503,148 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
     # and a substring match would pass on whichever branch happened to fire.
     assert empty["reason"] == "no_match_path_filter"
     assert "src/vaultspec_rag/indexr/**" in str(empty["message"])
+
+
+def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
+    """Each bounded producer retains the cause it owns.
+
+    Mutation evidence: rewriting route-attached ``search_admission`` to
+    ``index_transition`` failed the exact ordered cause assertion below
+    (exit 1); restoration passed (exit 0).
+    """
+    from .._search_state import (
+        AbsenceAuthority,
+        SearchAvailability,
+        SearchFreshness,
+        SearchSourceFact,
+        SearchWaitCause,
+        WaitObservation,
+        search_readiness_block,
+    )
+    from ..server._routes_search import _attach_route_waits
+
+    def observed(cause: SearchWaitCause, waited: float) -> WaitObservation:
+        return WaitObservation(
+            cause=cause,
+            waited_seconds=waited,
+            configured_bound_seconds=1.0,
+            remaining_bound_seconds=1.0 - waited,
+        )
+
+    fact = SearchSourceFact(
+        source="code",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.UPDATING,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        waits=(
+            observed(SearchWaitCause.INDEX_TRANSITION, 0.1),
+            observed(SearchWaitCause.CONTROLLER_DEFERRAL, 0.2),
+            observed(SearchWaitCause.OTHER_SERVICE_CAPACITY, 0.3),
+        ),
+        reason_code="index_updating",
+        retryable=True,
+    )
+    readiness: dict[str, object] = search_readiness_block((fact,))
+    response: dict[str, object] = {"readiness": readiness}
+    _attach_route_waits(
+        response,
+        (observed(SearchWaitCause.SEARCH_ADMISSION, 0.4),),
+    )
+
+    source = cast("list[dict[str, object]]", readiness["sources"])[0]
+    waits = cast("list[dict[str, object]]", source["waits"])
+    assert [wait["cause"] for wait in waits] == [
+        "index_transition",
+        "controller_deferral",
+        "other_service_capacity",
+        "search_admission",
+    ]
+
+
+def test_unbounded_service_waits_remain_distinct_named_timing_scalars() -> None:
+    """Unbounded elapsed measurements are not fabricated observations.
+
+    Mutation evidence: collapsing timing keys onto ``queue_wait_seconds`` in
+    the route extractor failed the exact key-set assertion (exit 1);
+    restoration passed (exit 0).
+    """
+    from ..search._searcher import GPU_COMPUTE_WAIT_SECONDS
+    from ..server._routes_search import _activity_timings
+
+    result: dict[str, object] = {
+        "timing": {
+            "search_limiter_wait_seconds": 0.11,
+            "compute_ticket_wait_seconds": 0.12,
+            GPU_COMPUTE_WAIT_SECONDS: 0.13,
+            "project_lease_seconds": 0.14,
+            "storage_backend_seconds": 0.15,
+            "phases": {"qdrant_seconds": 0.15},
+        }
+    }
+
+    timings = _activity_timings(result, 0.9)
+
+    assert set(timings) == {
+        "server_total_seconds",
+        "search_limiter_wait_seconds",
+        "compute_ticket_wait_seconds",
+        "gpu_compute_wait_seconds",
+        "project_lease_seconds",
+        "storage_backend_seconds",
+        "qdrant_seconds",
+    }
+    assert timings["search_limiter_wait_seconds"] == 0.11
+    assert timings["compute_ticket_wait_seconds"] == 0.12
+    assert timings["gpu_compute_wait_seconds"] == 0.13
+    assert timings["project_lease_seconds"] == 0.14
+    assert timings["storage_backend_seconds"] == 0.15
+
+
+def test_gpu_lock_contention_records_only_the_gpu_compute_cause() -> None:
+    """The real lock seam records GPU ownership without needing GPU hardware.
+
+    Mutation evidence: removing the canonical GPU timing write from
+    ``_gpu_section`` failed the exact key-presence lookup with ``KeyError``
+    (exit 1); restoration passed (exit 0).
+    """
+    from ..search._searcher import GPU_COMPUTE_WAIT_SECONDS, VaultSearcher
+
+    class AttemptObservedLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.attempted = threading.Event()
+
+        def acquire(self) -> bool:
+            self.attempted.set()
+            return self._lock.acquire()
+
+        def release(self) -> None:
+            self._lock.release()
+
+    lock = AttemptObservedLock()
+    lock.acquire()
+    lock.attempted.clear()
+    searcher = object.__new__(VaultSearcher)
+    searcher._gpu_lock = cast("Any", lock)
+    timings: dict[str, float] = {}
+    entered = threading.Event()
+
+    def contend() -> None:
+        with searcher._gpu_section(timings):
+            entered.set()
+
+    thread = threading.Thread(target=contend, daemon=True)
+    thread.start()
+    assert lock.attempted.wait(timeout=1.0), "contender never attempted GPU lock"
+    assert not entered.is_set()
+    lock.release()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert math.isfinite(timings[GPU_COMPUTE_WAIT_SECONDS])
+    assert timings[GPU_COMPUTE_WAIT_SECONDS] >= 0.0
+    assert "project_lease_seconds" not in timings
+    assert "storage_backend_seconds" not in timings
 
 
 def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
