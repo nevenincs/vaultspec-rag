@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:8ea892b324c46eef852ef0d6b5d705bb16ddc5a00f469bf086d932dc920a1de1'
+body_hash: 'sha256:b9f1cb256bd4bc37b7a5a84a097bf3de44ae95baa53e5c310e50a7c76a1e8e8e'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -48,6 +48,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P07-S32]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S33]]'
   - '[[2026-09-08-search-readiness-contract-W02-P07-S34]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P07-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -106,6 +107,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P07-S32` - Prove queued visibility deadlines bounded history completion and cancellation cleanup
 - `2026-09-08-search-readiness-contract-W02-P07-S33` - Prove every named wait cause remains distinct under contention
 - `2026-09-08-search-readiness-contract-W02-P07-S34` - Mutation-prove the no-new-GPU-serialization concurrency guard
+- `2026-09-08-search-readiness-contract-W02-P07-summary` - `search-readiness-contract` `W02.P07` summary
 
 ### plan
 
