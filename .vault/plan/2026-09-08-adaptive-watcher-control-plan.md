@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:2189f940c30e01f334edd08ec212c26135a14d38b75740e0929635f0d78b8a94'
+body_hash: 'sha256:f9ccdd985507d615913f459a814e93e893e182d04fe9bdefc472681072be84c9'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -94,7 +94,7 @@ Exercise real watcher events, restarts, sustained churn, multiple roots, service
 
 Mutation-prove architectural invariants and document policy defaults, bounds, refusal, and operator interpretation.
 
-- [ ] `W03.P07.S19` - Add mutation-proved guards for trailing flush, freshness, refusal, exact recovery, fair rotation, and adapter ownership; `src/vaultspec_rag/tests/test_adr_regression.py`.
+- [x] `W03.P07.S19` - Add mutation-proved guards for trailing flush, freshness, refusal, exact recovery, fair rotation, and adapter ownership; `src/vaultspec_rag/tests/test_adr_regression.py`.
 - [ ] `W03.P07.S20` - Document adaptive policy defaults, validation, telemetry, and rebuild-required remediation; `docs`.
 
 ## Parallelization
