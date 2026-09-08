@@ -6,8 +6,9 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, Final, Never
 
+from .. import store_schema
 from .._source_types import PublicSourceType
 from ._file_state import validate_rel_path
 from ._publication_proof import (
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
 
 
 _OPEN_RECEIPT_SQL = "state IN ('reserved', 'sealed', 'rolling_back')"
+_CLOSED_PUBLICATION_RECEIPT_HISTORY_LIMIT: Final = FETCH_BATCH
 
 
 def _stable_parameters(key: ProofCompatibilityKey) -> tuple[object, ...]:
@@ -62,6 +64,28 @@ def _stable_parameters(key: ProofCompatibilityKey) -> tuple[object, ...]:
         key.root_identity,
         key.backend_identity,
         key.collection_identity,
+    )
+
+
+def _compatibility_for_generation(
+    generation: RunGeneration,
+) -> ProofCompatibilityKey:
+    signature = generation.signature
+    return ProofCompatibilityKey(
+        source_type=PublicSourceType(signature.source_type.value),
+        root_identity=signature.root_identity,
+        backend_identity=signature.backend_identity,
+        collection_identity=signature.collection_identity,
+        storage_schema=store_schema.STORAGE_SCHEMA_VERSION,
+        payload_schema=signature.payload_schema,
+        embedding_schema_identity=(
+            f"{signature.model_identity}:{signature.dense_dimensions}:"
+            f"{signature.embedding_schema}"
+        ),
+        chunking_schema_identity=signature.preprocessing_identity,
+        membership_identity=signature.membership_epoch,
+        content_identity=signature.content_epoch,
+        policy_identity=signature.policy_fingerprint,
     )
 
 
@@ -529,6 +553,157 @@ class RunLedgerPublicationMethods:
         with ledger_connection(self.path) as connection:
             row = _require_proof_row(connection, key)
         return _proof_from_row(row)
+
+    def assert_generation_proof_committed(
+        self,
+        connection: sqlite3.Connection,
+        generation_id: str,
+    ) -> None:
+        """Refuse a caller-owned finalization snapshot without current proof."""
+        generation = self._generation_from_row(
+            self._require_mutable_generation(connection, generation_id)
+        )
+        signature = generation.signature
+        stable = (
+            signature.source_type.value,
+            signature.root_identity,
+            signature.backend_identity,
+            signature.collection_identity,
+        )
+        proof_row: sqlite3.Row | None = fetch_one(
+            connection,
+            """
+            SELECT * FROM publication_proofs
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+            """,
+            stable,
+        )
+        if proof_row is None:
+            raise RunLedgerStateError(
+                "publication proof must commit before generation finalization"
+            )
+        proof = _proof_from_row(proof_row)
+        if proof.compatibility_key != _compatibility_for_generation(generation):
+            raise RunLedgerStateError(
+                "publication proof is incompatible with generation finalization"
+            )
+        if proof.generation_id != generation.generation_id:
+            raise RunLedgerStateError(
+                "publication proof must commit before generation finalization"
+            )
+        open_receipt: sqlite3.Row | None = fetch_one(
+            connection,
+            f"""
+            SELECT receipt_id FROM publication_receipts
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+              AND {_OPEN_RECEIPT_SQL}
+            LIMIT 1
+            """,
+            stable,
+        )
+        if open_receipt is not None:
+            raise RunLedgerStateError(
+                "publication proof must close its receipt before generation "
+                "finalization"
+            )
+        latest_receipt: sqlite3.Row | None = fetch_one(
+            connection,
+            """
+            SELECT * FROM publication_receipts
+            WHERE generation_id = ?
+            ORDER BY reservation_sequence DESC, receipt_id DESC
+            LIMIT 1
+            """,
+            (generation.generation_id,),
+        )
+        if latest_receipt is None:
+            if proof.provenance is not ProofProvenance.VERIFIED:
+                raise RunLedgerStateError(
+                    "delta-derived publication proof requires its committed receipt"
+                )
+            return
+        try:
+            receipt_state = ProofReceiptState(column_text(latest_receipt, "state"))
+            receipt_key = _compatibility_from_row(latest_receipt)
+        except (KeyError, TypeError, ValueError) as exc:
+            _receipt_corrupt("stored publication receipt header is malformed", exc)
+        if (
+            receipt_state is not ProofReceiptState.COMMITTED
+            or receipt_key != proof.compatibility_key
+            or column_int(latest_receipt, "target_revision") != proof.revision
+            or column_int(latest_receipt, "reservation_sequence")
+            != proof.reservation_sequence
+            or proof.provenance is not ProofProvenance.DELTA_DERIVED
+        ):
+            raise RunLedgerStateError(
+                "publication receipt must commit the current proof before generation "
+                "finalization"
+            )
+
+    @staticmethod
+    def _prune_closed_publication_receipts(
+        connection: sqlite3.Connection,
+        *,
+        source_type: str,
+        collection_identity: str,
+    ) -> None:
+        """Bound unexposed closed history before generation reclamation."""
+        connection.execute(
+            """
+            WITH ranked_history AS (
+                SELECT receipt.receipt_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY
+                               receipt.source_type,
+                               receipt.root_identity,
+                               receipt.backend_identity,
+                               receipt.collection_identity
+                           ORDER BY receipt.reservation_sequence DESC,
+                                    receipt.receipt_id DESC
+                       ) AS history_rank
+                FROM publication_receipts AS receipt
+                WHERE receipt.source_type = ?
+                  AND receipt.collection_identity = ?
+                  AND receipt.state IN (?, ?)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM publication_proofs AS proof
+                      WHERE proof.source_type = receipt.source_type
+                        AND proof.root_identity = receipt.root_identity
+                        AND proof.backend_identity = receipt.backend_identity
+                        AND proof.collection_identity = receipt.collection_identity
+                        AND proof.storage_schema = receipt.storage_schema
+                        AND proof.payload_schema = receipt.payload_schema
+                        AND proof.embedding_schema_identity =
+                            receipt.embedding_schema_identity
+                        AND proof.chunking_schema_identity =
+                            receipt.chunking_schema_identity
+                        AND proof.membership_identity = receipt.membership_identity
+                        AND proof.content_identity = receipt.content_identity
+                        AND proof.policy_identity = receipt.policy_identity
+                        AND proof.generation_id = receipt.generation_id
+                        AND proof.revision = receipt.target_revision
+                        AND proof.reservation_sequence =
+                            receipt.reservation_sequence
+                        AND proof.provenance = ?
+                  )
+            )
+            DELETE FROM publication_receipts
+            WHERE receipt_id IN (
+                SELECT receipt_id FROM ranked_history
+                WHERE history_rank > ?
+            )
+            """,
+            (
+                source_type,
+                collection_identity,
+                ProofReceiptState.COMMITTED.value,
+                ProofReceiptState.ROLLED_BACK.value,
+                ProofProvenance.DELTA_DERIVED.value,
+                _CLOSED_PUBLICATION_RECEIPT_HISTORY_LIMIT,
+            ),
+        )
 
     def _require_effective_read_authority(
         self,

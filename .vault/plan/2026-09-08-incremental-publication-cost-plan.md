@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:e80f9ecd90343bdc253b207fd7682e7248e7160326c66c4634d1df9e80812701'
+body_hash: 'sha256:f703fb8f98894e88ff2ba4dce6bf02ef16bb3f8ca54d631a7f79a0bb9f0c1d33'
 ---
 
 <!-- RETIRED: S13, S14, S15, S18, S19, S23, S24 -->
@@ -66,7 +66,7 @@ Give the run ledger exact current-format proof rows, receipts, receipt-bound act
 
 Make proof finalization and compaction preserve every current proof, retained-evidence owner, and open receipt while bounding eligible closed history.
 
-- [ ] `W01.P03.S10` - Enforce proof-before-generation finalization, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction; `src/vaultspec_rag/indexer/_run_ledger_finalization.py, src/vaultspec_rag/indexer/_run_ledger_publication.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
+- [x] `W01.P03.S10` - Provide a strict proof-before-generation finalization gate, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction; `src/vaultspec_rag/indexer/_run_ledger_finalization.py, src/vaultspec_rag/indexer/_run_ledger_publication.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
 
 ## Wave `W03` - authorize rebuild and cut over canonical proof readers
 
@@ -112,7 +112,7 @@ Replace shared checkpoint, routing, and stat-evidence publication only after eve
 
 - [ ] `W02.P12.S56` - Split affected-path route reconciliation from explicitly authorized full collection sweeps; `src/vaultspec_rag/indexer/_route_migration.py, src/vaultspec_rag/tests/integration/test_content_route_migration.py`.
 - [ ] `W02.P12.S57` - Replace scoped full stat-evidence persistence with normalized changed-key updates; `src/vaultspec_rag/indexer/_stat_gate.py, src/vaultspec_rag/tests/test_stat_gate.py`.
-- [ ] `W02.P12.S09` - Implement source-neutral receipt-backed proof finalization and recovery primitives for the atomic source cutovers without sidecar access or a compatibility branch; `src/vaultspec_rag/indexer/_checkpoint_common.py, src/vaultspec_rag/indexer/_run_checkpoint.py, src/vaultspec_rag/indexer/_document_checkpoint.py`.
+- [ ] `W02.P12.S09` - Implement source-neutral receipt-backed proof finalization and recovery primitives and atomically activate the strict proof-before-generation gate with canonical checkpoint producer cutover, without sidecar access or a compatibility branch; `src/vaultspec_rag/indexer/_checkpoint_common.py, src/vaultspec_rag/indexer/_run_checkpoint.py, src/vaultspec_rag/indexer/_document_checkpoint.py, src/vaultspec_rag/indexer/_run_ledger_finalization.py`.
 - [ ] `W02.P12.S11` - Prove shared transition ownership, parent mismatch refusal, and generation publication ordering; `src/vaultspec_rag/tests/test_checkpoint_common.py`.
 - [ ] `W02.P12.S12` - Prove restart convergence for reserved receipts, partial mutation-unit states, sealed receipts, ingest-barrier ambiguity, immutable replay, authorized rollback, proof commit, and generation lag; `src/vaultspec_rag/tests/test_run_checkpoint.py`.
 

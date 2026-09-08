@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:f811cf5b82f98b6d50e8fb5c716833fdba9c84a15286f1ce3f3c18e57b376867'
+body_hash: 'sha256:6f8095e66cb199aa4cae51f90d5369ca657d08186307e315ce7114cf698c1336'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S54]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S68]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S70]]'
+  - '[[2026-09-08-incremental-publication-cost-W01-P03-S10]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -50,6 +51,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P02-S54` - Implement receipt-bound single-snapshot canonical-proof reads with sparse run-local overrides, deletion tombstones, bounded path and candidate inputs, and exact retained-point ownership without generation ancestry or a second authority
 - `2026-09-08-incremental-publication-cost-W01-P02-S68` - Hard-bump and gate the publication ledger format, create only an empty current schema, reject old or pre-proof databases without mutation, and remove legacy proof statuses
 - `2026-09-08-incremental-publication-cost-W01-P02-S70` - Require backend identity in run signatures and checkpoint requests, delete legacy defaults and decoder fallbacks, and update every constructor
+- `2026-09-08-incremental-publication-cost-W01-P03-S10` - Provide a strict proof-before-generation finalization gate, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction
 
 ### plan
 

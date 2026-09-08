@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from .. import store_schema
 from .._index_breadth import GENERATION_ID_KEY
 from .._source_types import PublicSourceType
 from ..indexer._code_meta import (
@@ -154,7 +155,7 @@ def _proof_key_for_signature(signature: RunSignature) -> ProofCompatibilityKey:
         root_identity=signature.root_identity,
         backend_identity=signature.backend_identity,
         collection_identity=signature.collection_identity,
-        storage_schema=1,
+        storage_schema=store_schema.STORAGE_SCHEMA_VERSION,
         payload_schema=signature.payload_schema,
         embedding_schema_identity=(
             f"{signature.model_identity}:{signature.dense_dimensions}:"
@@ -280,6 +281,20 @@ def _seed_publication_proof(
         connection.close()
 
 
+def _assert_generation_proof_gate(
+    ledger: RunLedger,
+    generation_id: str,
+) -> None:
+    """Invoke the strict gate inside one caller-owned ledger snapshot."""
+    with sqlite3.connect(ledger.path) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("BEGIN")
+        ledger.assert_generation_proof_committed(
+            connection,
+            generation_id,
+        )
+
+
 def _seal_publication_receipt(
     ledger: RunLedger,
     receipt: PublicationReceipt,
@@ -299,10 +314,19 @@ def _insert_reserved_receipt(
     receipt_id: str,
     reservation_sequence: int,
     generation_id: str,
-    projection: tuple[str, int] = ("collection-v1", 1),
+    projection: tuple[str | ProofCompatibilityKey, int] = ("collection-v1", 1),
 ) -> None:
-    key = _proof_compatibility()
-    collection_identity, target_revision = projection
+    projection_identity, target_revision = projection
+    key = (
+        projection_identity
+        if isinstance(projection_identity, ProofCompatibilityKey)
+        else _proof_compatibility()
+    )
+    collection_identity = (
+        key.collection_identity
+        if isinstance(projection_identity, ProofCompatibilityKey)
+        else projection_identity
+    )
     connection.execute(
         """
         INSERT INTO publication_receipts (
@@ -1658,6 +1682,324 @@ def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
     finally:
         connection.close()
     assert ledger.commit_publication_receipt(receipt.receipt_id) == committed
+
+
+def test_generation_finalization_waits_for_the_current_proof_commit(
+    tmp_path: Path,
+) -> None:
+    """Mutation: bypassing the proof fence advances an uncertified generation."""
+    old = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a",),
+    )
+    ledger, key, parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (old,),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    new = replace(old, content_identity=_digest("a-v2"))
+    delta = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=old.rel_path,
+        old=old,
+        new=new,
+    )
+    mutation = CommitUnit(
+        rel_path=new.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=new.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=new.point_ids,
+    )
+    _seal_publication_receipt(
+        ledger,
+        receipt,
+        mutation=mutation,
+        delta=delta,
+    )
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    with pytest.raises(RunLedgerStateError, match=r"proof.*before generation"):
+        _assert_generation_proof_gate(ledger, successor_id)
+    assert ledger.generation(successor_id).finalization_phase is (
+        FinalizationPhase.STALE_RECONCILED
+    )
+    assert ledger.publication_proof(key).generation_id == parent_id
+    assert ledger.active_publication_receipt(key) is not None
+
+    committed = ledger.commit_publication_receipt(receipt.receipt_id)
+    assert committed.generation_id == successor_id
+    assert ledger.active_publication_receipt(key) is None
+    _assert_generation_proof_gate(ledger, successor_id)
+
+
+def test_generation_finalization_refuses_a_missing_proof(tmp_path: Path) -> None:
+    """Mutation: treating absent canonical proof as a no-op makes this red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.advance_finalization(
+        generation.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+
+    with pytest.raises(RunLedgerStateError, match="proof must commit"):
+        _assert_generation_proof_gate(ledger, generation.generation_id)
+    assert ledger.generation(generation.generation_id).finalization_phase is (
+        FinalizationPhase.STALE_RECONCILED
+    )
+
+
+def test_generation_finalization_refuses_a_parent_owned_proof_without_a_receipt(
+    tmp_path: Path,
+) -> None:
+    """Mutation: accepting parent proof as a silent no-op makes this guard red."""
+    ledger, _key, _parent_id, successor_id = _seeded_publication_lineage(tmp_path, ())
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    with pytest.raises(RunLedgerStateError, match="proof must commit"):
+        _assert_generation_proof_gate(ledger, successor_id)
+
+
+def test_generation_finalization_refuses_proof_pair_incompatible_with_generation(
+    tmp_path: Path,
+) -> None:
+    """Mutation: trusting proof/receipt agreement alone makes this guard red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.advance_finalization(
+        generation.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    key = replace(
+        _proof_key_for_signature(generation.signature),
+        policy_identity="policy-other",
+    )
+    _seed_publication_proof(
+        ledger,
+        generation_id=generation.generation_id,
+        key=key,
+        evidence=(),
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute(
+            """
+            UPDATE publication_proofs
+            SET provenance = 'delta_derived', verified_at = NULL
+            WHERE generation_id = ?
+            """,
+            (generation.generation_id,),
+        )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="incompatible-generation",
+            reservation_sequence=5,
+            generation_id=generation.generation_id,
+            projection=(key, 1),
+        )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET parent_revision = 2, target_revision = 3,
+                state = 'committed', sealed_at = 2.0, committed_at = 3.0
+            WHERE receipt_id = 'incompatible-generation'
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(RunLedgerStateError, match="incompatible with generation"):
+        _assert_generation_proof_gate(ledger, generation.generation_id)
+
+
+def test_generation_finalization_refuses_an_open_receipt_even_if_proof_points_at_it(
+    tmp_path: Path,
+) -> None:
+    """Mutation: ignoring open receipt ownership makes this guard red."""
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(tmp_path, ())
+    ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute(
+            """
+            UPDATE publication_proofs SET generation_id = ?
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+            """,
+            (
+                successor_id,
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+            ),
+        )
+        connection.commit()
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    with pytest.raises(RunLedgerStateError, match="close its receipt"):
+        _assert_generation_proof_gate(ledger, successor_id)
+
+
+def test_generation_finalization_refuses_a_noncommitted_latest_receipt(
+    tmp_path: Path,
+) -> None:
+    """Mutation: accepting rolled-back history as proof closure makes this red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.advance_finalization(
+        generation.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    key = _proof_key_for_signature(generation.signature)
+    _seed_publication_proof(
+        ledger,
+        generation_id=generation.generation_id,
+        key=key,
+        evidence=(),
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="rolled-back-latest",
+            reservation_sequence=6,
+            generation_id=generation.generation_id,
+            projection=(key, 1),
+        )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = 'rolled_back', rollback_started_at = 2.0,
+                rolled_back_at = 3.0
+            WHERE receipt_id = 'rolled-back-latest'
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(RunLedgerStateError, match="receipt must commit"):
+        _assert_generation_proof_gate(ledger, generation.generation_id)
+
+
+def test_generation_finalization_requires_receipt_for_delta_derived_proof(
+    tmp_path: Path,
+) -> None:
+    """Mutation: accepting receiptless delta provenance makes this guard red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.advance_finalization(
+        generation.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    _seed_publication_proof(
+        ledger,
+        generation_id=generation.generation_id,
+        key=_proof_key_for_signature(generation.signature),
+        evidence=(),
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute(
+            """
+            UPDATE publication_proofs
+            SET provenance = 'delta_derived', verified_at = NULL
+            WHERE generation_id = ?
+            """,
+            (generation.generation_id,),
+        )
+        connection.commit()
+
+    with pytest.raises(RunLedgerStateError, match="requires its committed receipt"):
+        _assert_generation_proof_gate(ledger, generation.generation_id)
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("state", "compatibility", "revision", "sequence", "provenance"),
+)
+def test_generation_finalization_refuses_mismatched_committed_receipt(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    """Mutation: removing any receipt/proof equality guard makes a case red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    ledger.advance_finalization(
+        generation.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    key = _proof_key_for_signature(generation.signature)
+    _seed_publication_proof(
+        ledger,
+        generation_id=generation.generation_id,
+        key=key,
+        evidence=(),
+    )
+    receipt_key = (
+        replace(key, root_identity=f"{key.root_identity}-other")
+        if mismatch == "compatibility"
+        else key
+    )
+    target_revision = 4 if mismatch == "revision" else 3
+    reservation_sequence = 6 if mismatch == "sequence" else 5
+    with sqlite3.connect(ledger.path) as connection:
+        if mismatch != "provenance":
+            connection.execute(
+                """
+                UPDATE publication_proofs
+                SET provenance = 'delta_derived', verified_at = NULL
+                WHERE generation_id = ?
+                """,
+                (generation.generation_id,),
+            )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id=f"mismatch-{mismatch}",
+            reservation_sequence=reservation_sequence,
+            generation_id=generation.generation_id,
+            projection=(receipt_key, 1),
+        )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET parent_revision = ?, target_revision = ?
+            WHERE receipt_id = ?
+            """,
+            (
+                target_revision - 1,
+                target_revision,
+                f"mismatch-{mismatch}",
+            ),
+        )
+        if mismatch == "state":
+            connection.execute(
+                """
+                UPDATE publication_receipts
+                SET state = 'rolled_back', rollback_started_at = 2.0,
+                    rolled_back_at = 3.0
+                WHERE receipt_id = ?
+                """,
+                (f"mismatch-{mismatch}",),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE publication_receipts
+                SET state = 'committed', sealed_at = 2.0, committed_at = 3.0
+                WHERE receipt_id = ?
+                """,
+                (f"mismatch-{mismatch}",),
+            )
+        connection.commit()
+
+    with pytest.raises(RunLedgerStateError, match="receipt must commit"):
+        _assert_generation_proof_gate(ledger, generation.generation_id)
 
 
 def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(
@@ -3678,6 +4020,240 @@ def test_compact_tolerates_an_updated_at_tie_with_another_publication(
     assert ledger.generation(newest.generation_id).finalization_phase is (
         FinalizationPhase.COMPACTED
     )
+
+
+def test_compaction_preserves_every_canonical_publication_owner(
+    tmp_path: Path,
+) -> None:
+    """Mutation: omitting any proof owner makes compaction delete or fail."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    base = replace(_signature(tmp_path), collection_identity="collection-v1")
+    generations = tuple(
+        ledger.start_generation(replace(base, content_epoch=f"epoch-{ordinal}"))
+        for ordinal in range(5)
+    )
+    proof_owner, evidence_owner, open_owner, obsolete, keep = generations
+    key = _proof_key_for_signature(keep.signature)
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    _seed_publication_proof(
+        ledger,
+        generation_id=keep.generation_id,
+        key=key,
+        evidence=(),
+    )
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.METADATA_PUBLISHED,
+    )
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    )
+    ledger.finish_generation(keep.generation_id, RunTerminalState.SUCCEEDED)
+
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            UPDATE publication_proofs
+            SET generation_id = ?, indexed_identities = 1
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+            """,
+            (
+                proof_owner.generation_id,
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO publication_evidence (
+                source_type, root_identity, backend_identity,
+                collection_identity, rel_path, content_identity,
+                evidence_generation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                "src/retained.py",
+                _digest("retained"),
+                evidence_owner.generation_id,
+            ),
+        )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="open-owner",
+            reservation_sequence=6,
+            generation_id=open_owner.generation_id,
+            projection=(key, 1),
+        )
+        connection.commit()
+
+    assert ledger.compact(keep.generation_id) == 1
+    for retained in (proof_owner, evidence_owner, open_owner, keep):
+        assert ledger.generation(retained.generation_id).generation_id == (
+            retained.generation_id
+        )
+    with pytest.raises(KeyError):
+        ledger.generation(obsolete.generation_id)
+    with sqlite3.connect(ledger.path) as connection:
+        assert connection.execute(
+            "SELECT state FROM publication_receipts WHERE receipt_id = 'open-owner'"
+        ).fetchone() == (ProofReceiptState.RESERVED.value,)
+
+
+def test_compaction_bounds_closed_receipts_per_projection_without_pruning_open(
+    tmp_path: Path,
+) -> None:
+    """Mutation: skipping, reversing, or widening pruning makes this guard red."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = replace(
+        _signature(tmp_path),
+        collection_identity="collection-v1",
+        content_epoch="current",
+    )
+    obsolete = ledger.start_generation(replace(signature, content_epoch="obsolete"))
+    keep = ledger.start_generation(signature)
+    key = _proof_key_for_signature(signature)
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.STALE_RECONCILED,
+    )
+    _seed_publication_proof(
+        ledger,
+        generation_id=keep.generation_id,
+        key=key,
+        evidence=(),
+    )
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.METADATA_PUBLISHED,
+    )
+    ledger.advance_finalization(
+        keep.generation_id,
+        FinalizationPhase.GENERATION_PUBLISHED,
+    )
+    ledger.finish_generation(keep.generation_id, RunTerminalState.SUCCEEDED)
+
+    history_limit = FETCH_BATCH
+    history_size = history_limit + 3
+    projection_keys = (
+        _proof_compatibility(),
+        replace(_proof_compatibility(), backend_identity="backend-v2"),
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        for projection_index, projection_key in enumerate(projection_keys):
+            for sequence in range(1, history_size + 1):
+                receipt_id = f"history-{projection_index}-{sequence}"
+                _insert_reserved_receipt(
+                    connection,
+                    receipt_id=receipt_id,
+                    reservation_sequence=sequence,
+                    generation_id=(
+                        obsolete.generation_id if sequence == 1 else keep.generation_id
+                    ),
+                    projection=(projection_key, 1),
+                )
+                if sequence % 2 == 0:
+                    connection.execute(
+                        """
+                        INSERT INTO publication_receipt_deltas (
+                            receipt_id, delta_ordinal, outcome, rel_path,
+                            target_rel_path, old_content_identity,
+                            new_content_identity
+                        ) VALUES (?, 0, 'add', ?, NULL, NULL, ?)
+                        """,
+                        (
+                            receipt_id,
+                            f"src/{receipt_id}.py",
+                            _digest(receipt_id),
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE publication_receipts
+                        SET state = 'committed', sealed_at = 2.0,
+                            committed_at = 3.0
+                        WHERE receipt_id = ?
+                        """,
+                        (receipt_id,),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE publication_receipts
+                        SET state = 'rolled_back', rollback_started_at = 2.0,
+                            rolled_back_at = 3.0
+                        WHERE receipt_id = ?
+                        """,
+                        (receipt_id,),
+                    )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="still-open",
+            reservation_sequence=history_size + 1,
+            generation_id=keep.generation_id,
+            projection=(projection_keys[0], 1),
+        )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="still-sealed",
+            reservation_sequence=history_size + 1,
+            generation_id=keep.generation_id,
+            projection=(projection_keys[1], 1),
+        )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = 'sealed', sealed_at = 2.0
+            WHERE receipt_id = 'still-sealed'
+            """
+        )
+        connection.commit()
+
+    assert ledger.compact(keep.generation_id) == 1
+    assert ledger.compact(keep.generation_id) == 0
+    with pytest.raises(KeyError):
+        ledger.generation(obsolete.generation_id)
+    with sqlite3.connect(ledger.path) as connection:
+        for projection_key in projection_keys:
+            rows = connection.execute(
+                """
+                SELECT reservation_sequence FROM publication_receipts
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ? AND collection_identity = ?
+                  AND state IN ('committed', 'rolled_back')
+                ORDER BY reservation_sequence
+                """,
+                (
+                    projection_key.source_type.value,
+                    projection_key.root_identity,
+                    projection_key.backend_identity,
+                    projection_key.collection_identity,
+                ),
+            ).fetchall()
+            assert tuple(int(row[0]) for row in rows) == tuple(
+                range(history_size - history_limit + 1, history_size + 1)
+            )
+        assert {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT state FROM publication_receipts
+                WHERE receipt_id IN ('still-open', 'still-sealed')
+                """
+            )
+        } == {ProofReceiptState.RESERVED.value, ProofReceiptState.SEALED.value}
 
 
 # --- Concurrency -----------------------------------------------------------
