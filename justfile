@@ -439,6 +439,6 @@ release-channels tag root checksums='dist-bin/SHA256SUMS':
 # ===========================================================================
 
 # Run the full local gate: static analysis, dependency audit, vault, tests.
-[group('meta')]
+[group('check')]
 ci:
     {{dev}} ci all
