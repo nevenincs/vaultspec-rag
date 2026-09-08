@@ -46,6 +46,7 @@ __all__ = [
     "IndexOptions",
     "VaultSearchRequest",
     "clean",
+    "controller_snapshot_envelope",
     "get_readiness",
     "get_related",
     "get_service_state",
@@ -1135,6 +1136,95 @@ class _WatcherState(TypedDict):
     cooldown_s: float
     watching: list[str]
     running: bool
+    controllers: list[dict[str, object]]
+    controllers_truncated: bool
+
+
+def controller_snapshot_envelope(
+    snapshot: object,
+    *,
+    observed_at: float | None = None,
+) -> dict[str, object]:
+    """Return the canonical bounded projection of one watcher controller."""
+    from .watcher_controller import ControllerSnapshot
+
+    if not isinstance(snapshot, ControllerSnapshot):
+        raise TypeError("snapshot must be a ControllerSnapshot")
+    now = time.time() if observed_at is None else observed_at
+    observations = snapshot.scope.pending + snapshot.scope.captured
+    first_observed = min(
+        (item.first_observed_at for item in observations), default=None
+    )
+    latest_observed = max(
+        (item.latest_observed_at for item in observations), default=None
+    )
+    measurement = snapshot.measurement
+    measurement_fields = {
+        "generation": None if measurement is None else measurement.generation,
+        "observed_at": None if measurement is None else measurement.observed_at,
+        "job_backlog": None if measurement is None else measurement.job_backlog,
+        "index_in_flight": (
+            None if measurement is None else measurement.index_in_flight
+        ),
+        "index_waiters": None if measurement is None else measurement.index_waiters,
+        "search_in_flight": (
+            None if measurement is None else measurement.search_in_flight
+        ),
+        "search_latency_seconds": (
+            None if measurement is None else measurement.search_latency_seconds
+        ),
+        "gpu_pressure": None if measurement is None else measurement.gpu_pressure,
+        "storage_available": (
+            None if measurement is None else measurement.storage_available
+        ),
+        "service_quiesced": (
+            None if measurement is None else measurement.service_quiesced
+        ),
+    }
+    unavailable = sorted(
+        key
+        for key, value in measurement_fields.items()
+        if key not in {"generation", "observed_at"} and value is None
+    )
+    transition = snapshot.last_transition
+    remediation = snapshot.remediation
+    if snapshot.state.value == "refused" and not remediation:
+        remediation = "Inspect the refusal reason and request an explicit rebuild."
+    return {
+        "root": snapshot.canonical_root,
+        "source": snapshot.source.value,
+        "state": snapshot.state.value,
+        "reason": snapshot.reason.value,
+        "pending_count": len(snapshot.scope.pending),
+        "oldest_age_seconds": (
+            None if first_observed is None else max(0.0, now - first_observed)
+        ),
+        "first_observed_at": first_observed,
+        "latest_observed_at": latest_observed,
+        "captured_generation": snapshot.scope.captured_generation,
+        "captured_count": len(snapshot.scope.captured),
+        "next_decision_at": snapshot.next_decision_at,
+        "freshness_deadline": snapshot.freshness_deadline,
+        "measurement": measurement_fields,
+        "measurement_unavailable": unavailable,
+        "backpressure": [reason.value for reason in snapshot.backpressure],
+        "last_transition": (
+            None
+            if transition is None
+            else {
+                "source_state": transition.source_state.value,
+                "destination_state": transition.destination_state.value,
+                "reason": transition.reason.value,
+                "wall_time": transition.wall_time,
+                "deadline": transition.deadline,
+                "measurement_generation": transition.measurement_generation,
+            }
+        ),
+        "job_id": snapshot.job_id,
+        "retry_at": snapshot.retry_at,
+        "circuit_state": snapshot.circuit_state.value,
+        "remediation": remediation,
+    }
 
 
 def get_service_state(
@@ -1207,7 +1297,16 @@ def get_service_state(
         "cooldown_s": float(cfg.watch_cooldown_s),
         "watching": watching,
         "running": str(root) in watching,
+        "controllers": [],
+        "controllers_truncated": False,
     }
+    from .server._watcher import _controller_snapshots
+
+    controller_snapshots, controllers_truncated = _controller_snapshots()
+    watcher_data["controllers"] = [
+        controller_snapshot_envelope(item) for item in controller_snapshots
+    ]
+    watcher_data["controllers_truncated"] = controllers_truncated
 
     from . import store_schema
     from .qdrant_runtime._supervise import runtime_state
