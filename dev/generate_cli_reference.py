@@ -115,9 +115,8 @@ def render() -> str:
         "",
         "::::{container} vs-cli-reference",
         "",
-        "Generated from the live command surface. Run "
-        "`python -m dev.generate_cli_reference` after changing a command, "
-        "argument, option, default, or help string.",
+        "Generated from the live command surface. Each entry lists the command's "
+        "arguments, options, types, defaults, and help text.",
         "",
         "## Global options",
         "",
