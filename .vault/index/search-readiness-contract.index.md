@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:97a1f219e77d1db9f6c162745f9f84cbe4ab498c467fa9a27ab05c6b0822b351'
+body_hash: 'sha256:72eb719bfb51ab871891c71d8c5f60ff62c6a90ac2ac2fc29c06d8b66593f7ca'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -27,6 +27,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P04-S14]]'
   - '[[2026-09-08-search-readiness-contract-W02-P04-S15]]'
   - '[[2026-09-08-search-readiness-contract-W02-P04-S16]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P04-S17]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -64,6 +65,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P04-S14` - Add immediate-default and bounded request policy capture stable source targets enforce maximum wait and preserve cancellation
 - `2026-09-08-search-readiness-contract-W02-P04-S15` - Add the bounded freshness-wait maximum to canonical configuration and settings projection
 - `2026-09-08-search-readiness-contract-W02-P04-S16` - Prove policy defaults validation stable targets typed timeout and disconnect behavior
+- `2026-09-08-search-readiness-contract-W02-P04-S17` - Prove freshness-wait configuration defaults overrides and upper-bound validation
 
 ### plan
 
