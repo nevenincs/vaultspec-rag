@@ -416,7 +416,13 @@ class TestMcpFastPath:
 
         import typer
 
-        from .._source_types import PublicSourceType
+        from .._search_state import (
+            AbsenceAuthority,
+            SearchAvailability,
+            SearchFreshness,
+            SearchSourceFact,
+        )
+        from .._source_types import IndexSource, PublicSourceType
         from ..cli._search import _InProcessRenderRequest, _render_in_process_results
         from ..search._outcomes import (
             COMBINED_SEARCH_FAILED,
@@ -425,15 +431,35 @@ class TestMcpFastPath:
             SearchDomainOutcome,
         )
 
+        def unavailable_fact(source: IndexSource) -> SearchSourceFact:
+            return SearchSourceFact(
+                source=source,
+                availability=SearchAvailability.UNAVAILABLE,
+                freshness=SearchFreshness.UNVERIFIABLE,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                reason_code="index_unavailable",
+                retryable=True,
+                remediation="vaultspec-rag server status --verbose",
+            )
+
         outcome = CombinedSearchOutcome(
             SearchDomainOutcome.failure(
-                PublicSourceType.VAULT, "index_unavailable", "vault index missing"
+                PublicSourceType.VAULT,
+                "index_unavailable",
+                "vault index missing",
+                source_fact=unavailable_fact("vault"),
             ),
             SearchDomainOutcome.failure(
-                PublicSourceType.CODE, "index_unavailable", "code index missing"
+                PublicSourceType.CODE,
+                "index_unavailable",
+                "code index missing",
+                source_fact=unavailable_fact("code"),
             ),
             SearchDomainOutcome.failure(
-                PublicSourceType.DOCUMENT, "index_unavailable", "document index missing"
+                PublicSourceType.DOCUMENT,
+                "index_unavailable",
+                "document index missing",
+                source_fact=unavailable_fact("document"),
             ),
             top_k=5,
         )
