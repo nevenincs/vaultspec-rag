@@ -80,6 +80,7 @@ class CanonicalSearchEvidence:
     target_matches: bool | None = None
     integrity_verified: bool | None = None
     capacity_refused: bool = False
+    rebuild_required: bool = False
 
     def __post_init__(self) -> None:
         GenerationEvidence(
@@ -98,6 +99,12 @@ class CanonicalSearchEvidence:
                 raise ValueError(f"{field} must be a boolean or None")
         if not isinstance(self.capacity_refused, bool):
             raise ValueError("capacity_refused must be a boolean")
+        if not isinstance(self.rebuild_required, bool):
+            raise ValueError("rebuild_required must be a boolean")
+        if self.capacity_refused and self.rebuild_required:
+            raise ValueError(
+                "capacity_refused and rebuild_required are mutually exclusive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,11 +295,15 @@ def _project_source_fact(
     current = _target_is_current(canonical)
     if canonical.capacity_refused:
         availability = SearchAvailability.CAPACITY_LIMITED
+    elif canonical.rebuild_required:
+        availability = SearchAvailability.UNAVAILABLE
     elif served_collection:
         availability = SearchAvailability.USABLE
     else:
         availability = SearchAvailability.UNAVAILABLE
-    if matches:
+    if canonical.rebuild_required:
+        freshness = SearchFreshness.REBUILD_REQUIRED
+    elif matches:
         freshness = SearchFreshness.UPDATING
     elif current:
         freshness = SearchFreshness.CURRENT
@@ -319,6 +330,8 @@ def _project_source_fact(
         reason_code=(
             "capacity_limited"
             if canonical.capacity_refused
+            else "rebuild_required"
+            if canonical.rebuild_required
             else "index_unavailable"
             if canonical.collection_present is False
             else "index_updating"

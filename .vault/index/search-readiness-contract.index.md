@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:e4f72ac6bd88c03b665f1e3b5bfef6a0a341514c389fb6060195f3a164da741d'
+body_hash: 'sha256:05f7065434ac119a6355d51fa7a6425a7566ec0410150a738e30638afebbca9f'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -14,6 +14,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-summary]]'
   - '[[2026-09-08-search-readiness-contract-W01-P02-S04]]'
   - '[[2026-09-08-search-readiness-contract-W01-P02-S05]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P02-S06]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -38,6 +39,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P01-summary` - `search-readiness-contract` `W01.P01` summary
 - `2026-09-08-search-readiness-contract-W01-P02-S04` - Replace the empty-only classifier with per-source projection from canonical job generation controller integrity and collection evidence
 - `2026-09-08-search-readiness-contract-W01-P02-S05` - Project generation summary requested and effective mode controller resilience and revision evidence without a second authority
+- `2026-09-08-search-readiness-contract-W01-P02-S06` - Add explicit rebuild-required evidence and cover current updating unavailable unverifiable rebuild capacity authority and bounded scenarios
 
 ### plan
 
