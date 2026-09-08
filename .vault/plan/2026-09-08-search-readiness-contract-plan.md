@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:679913df5b1a761de2d8e0a3ce3179cc809ff4537f33cc81ffaf70f2640439e6'
+body_hash: 'sha256:b4fa558925edfbfc2fb898e88e457c2ce61144f1fa782f73cc487e6288751dd0'
 ---
 
 <!-- RETIRED: P14 -->
@@ -38,7 +38,7 @@ Deliver the immutable vocabulary, source classification, aggregation, and public
 
 Define and validate the immutable source and aggregate contract.
 
-- [ ] `W01.P01.S01` - Define typed availability freshness authority wait policy generation evidence source fact and aggregate serialization; `src/vaultspec_rag/_search_state.py`.
+- [x] `W01.P01.S01` - Define typed availability freshness authority wait policy generation evidence source fact and aggregate serialization; `src/vaultspec_rag/_search_state.py`.
 - [ ] `W01.P01.S02` - Prove model validation rejects contradictions malformed identities negative timing and unbounded evidence; `src/vaultspec_rag/tests/test_search_availability.py`.
 - [ ] `W01.P01.S03` - Mutation-prove the model validation bound and authority contradiction guards; `src/vaultspec_rag/tests/test_search_availability.py`.
 
