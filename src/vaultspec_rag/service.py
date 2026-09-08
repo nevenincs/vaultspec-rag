@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import asyncio
@@ -23,8 +23,10 @@ if TYPE_CHECKING:
 
     from sentence_transformers import CrossEncoder
 
+    from ._source_types import IndexSource
     from .embeddings import EmbeddingModel
     from .job_manager.manager import JobManager
+    from .job_models import JobSource
     from .server._search_readiness import (
         ReadinessRevisionRegistry,
         ReadinessRevisionSnapshot,
@@ -211,8 +213,9 @@ class ServiceRegistry(
         return readiness
 
     @staticmethod
-    def _publish_code_readiness(
+    def _publish_readiness(
         readiness: ReadinessRevisionRegistry,
+        source: JobSource,
         root: Path,
         generation: str,
     ) -> ReadinessRevisionSnapshot | None:
@@ -220,7 +223,11 @@ class ServiceRegistry(
         from .server._search_readiness import ReadinessRegistryClosedError
 
         try:
-            return readiness.publish_next(root, "code", generation=generation)
+            return readiness.publish_next(
+                root,
+                cast("IndexSource", source.value),
+                generation=generation,
+            )
         except ReadinessRegistryClosedError:
             return None
 
@@ -1034,6 +1041,7 @@ class ServiceRegistry(
         """Build the model-dependent components for one already-admitted slot."""
         from .config._settings import get_config
         from .indexer import CodebaseIndexer, DocumentIndexer, VaultIndexer
+        from .job_models import JobSource
         from .search import VaultSearcher
 
         self._load_model(model_name)
@@ -1042,8 +1050,13 @@ class ServiceRegistry(
         reranker = self._get_reranker() if cfg.reranker_enabled else None
         with self._lock:
             readiness = self._readiness_registry
-        publish_readiness = (
-            partial(self._publish_code_readiness, readiness)
+        publish_code_readiness = (
+            partial(self._publish_readiness, readiness, JobSource.CODE)
+            if readiness is not None
+            else None
+        )
+        publish_document_readiness = (
+            partial(self._publish_readiness, readiness, JobSource.DOCUMENT)
             if readiness is not None
             else None
         )
@@ -1067,7 +1080,7 @@ class ServiceRegistry(
             slot.store,
             options=CodebaseIndexer.Options(
                 gpu_lock=self._gpu_lock,
-                publish_readiness=publish_readiness,
+                publish_readiness=publish_code_readiness,
             ),
         )
         document_indexer = DocumentIndexer(
@@ -1075,6 +1088,7 @@ class ServiceRegistry(
             model,
             slot.store,
             gpu_lock=self._gpu_lock,
+            publish_readiness=publish_document_readiness,
         )
         return ProjectComputeRuntime(
             model=model,

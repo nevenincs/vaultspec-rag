@@ -52,7 +52,7 @@ from ._streaming_types import DocumentSliceRequest, DocumentSliceStreamRequest
 from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from .._store_models import DocumentChunk
     from ..embeddings import EmbeddingModel
@@ -287,6 +287,7 @@ class _DocumentIndexerOptions(TypedDict, total=False):
     gpu_lock: threading.Lock | None
     extra_excludes: list[str] | None
     content_policy: RootContentPolicy | None
+    publish_readiness: Callable[[pathlib.Path, str], object] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +295,7 @@ class _DocumentIndexerConfig:
     gpu_lock: threading.Lock | None = None
     extra_excludes: list[str] | None = None
     content_policy: RootContentPolicy | None = None
+    publish_readiness: Callable[[pathlib.Path, str], object] | None = None
 
 
 class DocumentIndexer:
@@ -315,6 +317,7 @@ class DocumentIndexer:
         self._content_policy = config.content_policy or RootContentPolicy(
             SourceProfileVersion.CONVENTIONAL_V1
         )
+        self._publish_readiness = config.publish_readiness
         self._writer_lock = threading.RLock()
         from .._store_writes import workspace_volume_path
 
@@ -853,13 +856,19 @@ class DocumentIndexer:
                 ContentKind.DOCUMENT,
             )
             checkpoint.publish_metadata(self._meta_path)
-            checkpoint.publish_generation()
+            self._publish_generation(checkpoint)
             reporter.advance(1)
         finally:
             reporter.phase_end()
         return self._finish_result(
             _DocumentResultDetails(started, 0, 0, 0, 0, 0, []),
         )
+
+    def _publish_generation(self, checkpoint: DocumentRunCheckpoint) -> None:
+        """Publish durable generation state, then notify the service authority."""
+        published = checkpoint.publish_generation()
+        if self._publish_readiness is not None:
+            self._publish_readiness(self.root_dir, published.generation_id)
 
     def _finish_result(
         self,
@@ -1216,7 +1225,7 @@ class DocumentIndexer:
                     ContentKind.DOCUMENT,
                 )
                 checkpoint.publish_metadata(self._meta_path)
-                checkpoint.publish_generation()
+                self._publish_generation(checkpoint)
         return self._finish_result(
             _DocumentResultDetails(
                 started,
@@ -1408,7 +1417,7 @@ class DocumentIndexer:
                     ContentKind.DOCUMENT,
                 )
                 checkpoint.publish_metadata(self._meta_path)
-                checkpoint.publish_generation()
+                self._publish_generation(checkpoint)
             return self._finish_result(
                 _DocumentResultDetails(
                     started,
