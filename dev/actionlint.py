@@ -113,7 +113,7 @@ def _cache_root() -> Path:
 
 def _download(url: str, into: Path) -> None:
     """Fetch `url` to `into`, failing loudly rather than partially."""
-    with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310
+    with urllib.request.urlopen(url, timeout=120) as response:
         into.write_bytes(response.read())
 
 
@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     # missing external linter, so leaving them implicit means the gate checks
     # a different set of things on every machine and nobody can tell which.
     command = [str(binary), "-no-color", "-shellcheck=", "-pyflakes=", *args]
-    return subprocess.call(command)  # noqa: S603
+    return subprocess.call(command)
 
 
 if __name__ == "__main__":
