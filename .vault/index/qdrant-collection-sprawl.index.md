@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:dfa2dd269ff1a992e27a2a67b1b39a5ccbbb18e2636f6292fc5b64cea7760e7d'
+body_hash: 'sha256:2b0a30e7ca2214aa5b473653a8577d2db172de80ae78cc68215387515236e8b1'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -16,6 +16,15 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S06]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S07]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S08]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S09]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S10]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S11]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S12]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S13]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S14]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S15]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S16]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S17]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
@@ -41,6 +50,15 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 - `2026-09-08-qdrant-collection-sprawl-P01-S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures
 - `2026-09-08-qdrant-collection-sprawl-P01-S07` - Add a guard test proving a snapshot read timeout marks that namespace failed and the cycle continues to the next candidate
 - `2026-09-08-qdrant-collection-sprawl-P01-S08` - Add a guard test proving a re-count read timeout defers the namespace rather than aborting the cycle
+- `2026-09-08-qdrant-collection-sprawl-P02-S09` - Add the ephemeral-orphan grace window as a configuration default alongside the existing autoprune knobs
+- `2026-09-08-qdrant-collection-sprawl-P02-S10` - Add the ephemeral-orphan window field to the reclaim policy with its documented default
+- `2026-09-08-qdrant-collection-sprawl-P02-S11` - Select the ephemeral window in the orphan decision when the namespace root was temp-rooted, keeping point count as the tier selector
+- `2026-09-08-qdrant-collection-sprawl-P02-S12` - Thread the configured ephemeral window into the policy the maintenance tick constructs
+- `2026-09-08-qdrant-collection-sprawl-P02-S13` - Add a test proving an orphaned temp-rooted point-bearing namespace draws the ephemeral window, not the data window
+- `2026-09-08-qdrant-collection-sprawl-P02-S14` - Add a test proving an orphaned non-temp point-bearing namespace still draws the full data window
+- `2026-09-08-qdrant-collection-sprawl-P02-S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate
+- `2026-09-08-qdrant-collection-sprawl-P02-S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count
+- `2026-09-08-qdrant-collection-sprawl-P02-S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path
 
 ### plan
 

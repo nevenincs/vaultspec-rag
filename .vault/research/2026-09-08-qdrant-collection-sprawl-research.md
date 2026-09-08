@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:a5bcb848d42fac1f56b8874e43417b8539f4c55348ee095f417830215745ccd9'
+body_hash: 'sha256:eee804b892752efe8543a31073e057ce1e46b8e9ecaaaaeb2134ea61ca458a65'
 related:
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
   - "[[2026-07-14-storage-namespace-hygiene-adr]]"
@@ -216,7 +216,6 @@ nothing yet, so the re-count would not catch it either.
 The accepted parent contract already requires that any gate failing skips the prefix
 and reports why, so every one of these is an unimplemented clause of a shipped
 decision rather than a new capability.
-
 
 ### The archive cap bounds retention, not drain rate - and it is about to turn over
 
