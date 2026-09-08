@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:a01d3da90139869873c7604b550ce54d934bc02e199fec8015926038184804eb'
+body_hash: 'sha256:90d660d89cdbe5915a02d04dd282a67bcf20cc4e577a67f52b27276a7f1998bb'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -19,6 +19,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W02-P03-S09]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S10]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S11]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P04-S12]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -53,6 +54,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W02-P03-S09` - Expose immutable job, search, GPU, storage, limiter, and quiesce measurement snapshots to admission
 - `2026-09-08-adaptive-watcher-control-W02-P04-S10` - Replace fixed-timing slot reconciliation with durable controller collection and decisions
 - `2026-09-08-adaptive-watcher-control-W02-P04-S11` - Bind controller generations to canonical watcher job creation, coalescing, and settlement
+- `2026-09-08-adaptive-watcher-control-W02-P04-S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission
 
 ### plan
 
