@@ -788,6 +788,87 @@ def _seeded_publication_lineage(
     return ledger, key, parent.generation_id, successor.generation_id
 
 
+def test_generation_start_leaves_canonical_publication_projection_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Mutation: any canonical-table DML during generation start makes this red."""
+    evidence = (
+        ProofEvidence(
+            rel_path="src/a.py",
+            content_identity=_digest("a-v1"),
+            point_ids=("point-a-0", "point-a-1"),
+        ),
+        ProofEvidence(
+            rel_path="src/b.py",
+            content_identity=_digest("b-v1"),
+            point_ids=("point-b-0",),
+        ),
+    )
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    parent = ledger.start_generation(signature)
+    _publish_and_compact(ledger, parent.generation_id)
+    _seed_publication_proof(
+        ledger,
+        generation_id=parent.generation_id,
+        key=_proof_key_for_signature(signature),
+        evidence=evidence,
+    )
+
+    def canonical_projection() -> tuple[tuple[object, ...], ...]:
+        with sqlite3.connect(ledger.path) as connection:
+            return tuple(
+                tuple(row)
+                for table in (
+                    "publication_proofs",
+                    "publication_evidence",
+                    "publication_points",
+                )
+                for row in connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid')
+            )
+
+    before = canonical_projection()
+    canonical_tables = (
+        "publication_proofs",
+        "publication_evidence",
+        "publication_points",
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        for table in canonical_tables:
+            for operation in ("INSERT", "UPDATE", "DELETE"):
+                trigger = f"reject_start_{operation.lower()}_{table}"
+                connection.execute(
+                    f"""
+                    CREATE TRIGGER "{trigger}"
+                    BEFORE {operation} ON "{table}"
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'canonical publication write during generation start'
+                        );
+                    END
+                    """
+                )
+        connection.commit()
+
+    try:
+        successor = ledger.start_generation(signature)
+    except sqlite3.IntegrityError as exc:  # pragma: no cover - mutation guard
+        pytest.fail(f"generation start wrote canonical publication state: {exc}")
+    finally:
+        with sqlite3.connect(ledger.path) as connection:
+            for table in canonical_tables:
+                for operation in ("INSERT", "UPDATE", "DELETE"):
+                    connection.execute(
+                        f'DROP TRIGGER "reject_start_{operation.lower()}_{table}"'
+                    )
+            connection.commit()
+
+    assert successor.parent_generation_id == parent.generation_id
+    assert successor.generation_id != parent.generation_id
+    assert canonical_projection() == before
+
+
 def test_publication_reads_are_bounded_and_distinguish_incompatible_proof(
     tmp_path: Path,
 ) -> None:
@@ -1577,6 +1658,181 @@ def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
     finally:
         connection.close()
     assert ledger.commit_publication_receipt(receipt.receipt_id) == committed
+
+
+def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(
+    tmp_path: Path,
+) -> None:
+    """Mutation: committing evidence before the receipt transition makes this red."""
+    old = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a-old",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (old,),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    new = ProofEvidence(
+        rel_path=old.rel_path,
+        content_identity=_digest("a-v2"),
+        point_ids=old.point_ids,
+    )
+    delta = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=old.rel_path,
+        old=old,
+        new=new,
+    )
+    mutation = CommitUnit(
+        rel_path=new.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=new.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=new.point_ids,
+    )
+    _seal_publication_receipt(
+        ledger,
+        receipt,
+        mutation=mutation,
+        delta=delta,
+    )
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    def durable_projection() -> tuple[tuple[object, ...], ...]:
+        with sqlite3.connect(ledger.path) as connection:
+            return tuple(
+                tuple(row)
+                for table in (
+                    "publication_proofs",
+                    "publication_evidence",
+                    "publication_points",
+                    "publication_receipts",
+                )
+                for row in connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid')
+            )
+
+    before = durable_projection()
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_receipt_commit
+            BEFORE UPDATE OF state ON publication_receipts
+            WHEN NEW.state = 'committed'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected late receipt commit failure');
+            END
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected late"):
+        ledger.commit_publication_receipt(receipt.receipt_id)
+
+    assert durable_projection() == before
+    active = ledger.active_publication_receipt(key)
+    assert active is not None
+    assert active.state is ProofReceiptState.SEALED
+    assert ledger.publication_evidence_for_paths(key, (old.rel_path,)) == {
+        old.rel_path: old
+    }
+
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("DROP TRIGGER reject_receipt_commit")
+        connection.commit()
+    committed = ledger.commit_publication_receipt(receipt.receipt_id)
+    assert committed.revision == receipt.target_revision
+    assert ledger.publication_evidence_for_paths(key, (new.rel_path,)) == {
+        new.rel_path: new
+    }
+
+
+def test_changed_parent_revision_refuses_proof_commit_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """Mutation: skipping the commit-time parent revision check makes this red."""
+    old = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a-old",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (old,),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    new = ProofEvidence(
+        rel_path=old.rel_path,
+        content_identity=_digest("a-v2"),
+        point_ids=old.point_ids,
+    )
+    delta = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=old.rel_path,
+        old=old,
+        new=new,
+    )
+    mutation = CommitUnit(
+        rel_path=new.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=new.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=new.point_ids,
+    )
+    _seal_publication_receipt(
+        ledger,
+        receipt,
+        mutation=mutation,
+        delta=delta,
+    )
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("UPDATE publication_proofs SET revision = revision + 1")
+        connection.commit()
+
+    def durable_projection() -> tuple[tuple[object, ...], ...]:
+        with sqlite3.connect(ledger.path) as connection:
+            return tuple(
+                tuple(row)
+                for table in (
+                    "publication_proofs",
+                    "publication_evidence",
+                    "publication_points",
+                    "publication_receipts",
+                )
+                for row in connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid')
+            )
+
+    before = durable_projection()
+    with pytest.raises(
+        ProofParentMismatchError,
+        match="publication proof no longer matches the receipt parent",
+    ):
+        ledger.commit_publication_receipt(receipt.receipt_id)
+
+    assert durable_projection() == before
+    with sqlite3.connect(ledger.path) as connection:
+        state = connection.execute(
+            "SELECT state FROM publication_receipts WHERE receipt_id = ?",
+            (receipt.receipt_id,),
+        ).fetchone()
+    assert state == (ProofReceiptState.SEALED.value,)
+    assert ledger.publication_evidence_for_paths(key, (old.rel_path,)) == {
+        old.rel_path: old
+    }
 
 
 def test_receipt_seal_refuses_stale_parent_or_old_evidence_atomically(
