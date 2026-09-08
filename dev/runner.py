@@ -43,11 +43,6 @@ TOOL_MISSING = _TOOL_MISSING
 #: environment call ``uv`` directly and deliberately omit it.
 NO_SYNC = ("--no-sync",)
 
-#: complexipy and several other tools emit status glyphs; Windows consoles
-#: default to a codepage that cannot encode them, which aborts the run before
-#: any finding is reported.
-UTF8 = {"PYTHONIOENCODING": "utf-8"}
-
 
 @dataclass(frozen=True)
 class Cmd:
