@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:f1a80d8fe76559796bf9c558e8a4ba6e125d8808e2aa2f960acf4adb519efbb7'
+body_hash: 'sha256:a5bcb848d42fac1f56b8874e43417b8539f4c55348ee095f417830215745ccd9'
 related:
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
   - "[[2026-07-14-storage-namespace-hygiene-adr]]"
@@ -173,23 +173,50 @@ evidence the policy ignores. This is the one clear defect in the reclamation pol
 
 ### A transport timeout unwinds the whole maintenance cycle
 
+### A transport timeout unwinds the whole maintenance cycle
+
 The 2026-09-07 15:57 tick died with `error_kind=timeout` and reclaimed nothing. The
 cause is an exception clause, not a budget. `archive_prefix` snapshots each collection
-via `client.create_snapshot(..., wait=True)`
-(`src/vaultspec_rag/storage_reclamation.py:425`), and the qdrant client raises
-`httpx.ReadTimeout` on a slow snapshot. The guard wrapping the archive call catches
-only `(OSError, RuntimeError)` (`src/vaultspec_rag/storage_reclamation.py:696`).
-`httpx.ReadTimeout` inherits `TimeoutException` to `TransportError` to `RequestError`
-to `HTTPError` to `Exception` and is a subclass of neither, verified directly against
-the installed client, so it walks past the handler and unwinds the entire cycle rather
-than marking one namespace failed.
+via `client.create_snapshot(..., wait=True)`, and the guards on that path catch only
+`(OSError, RuntimeError)`.
 
-The same hole exists on two safety-relevant paths: `_prefix_points`
-(`src/vaultspec_rag/storage_reclamation.py:120`) and `_active_index_prefixes`
-(`:149`). A read timeout on the pre-drop re-count aborts the cycle instead of
-deferring that namespace. The accepted parent contract already requires that any gate
-failing skips the prefix and reports why, so this is an unimplemented clause of a
-shipped decision rather than a new capability.
+The escaping type is the client's own wrapper, not the underlying `httpx` error.
+Probed directly against the installed client on all three real call paths -
+`get_collections`, `count` and `create_snapshot`, each against a socket that accepts
+and never answers - every one raises
+`qdrant_client.http.exceptions.ResponseHandlingException` carrying a
+`ReadTimeout('timed out')`. Raw `httpx.ReadTimeout` never escapes, because the
+client wraps every exception out of its send call and this project sets no
+`prefer_grpc`, so REST is the only path. The wrapper is a plain `Exception` and a
+subclass of neither builtin, so the effect is the same - it walks past the handler and
+unwinds the entire cycle rather than marking one namespace failed. Catching the `httpx`
+type directly would additionally import an undeclared transitive dependency into
+production source.
+
+The hole is not confined to the archive call. It repeats on the pre-drop re-count and
+the active-job probe, and - beyond the three sites first identified - at survey time in
+`src/vaultspec_rag/storage_survey_ops.py:302`, where a timeout unwinds the survey before
+any per-namespace gate is reached. That last site also records an uncountable
+collection as **zero points** rather than as unverifiable, which mis-tiers a
+data-bearing namespace as empty and so routes it to the tier that drops without
+archiving. The pre-drop re-count closes that as a loss path - a re-count disagreeing
+with the survey defers with `points_appeared_since_survey` - so the observable effect
+is churn rather than destruction, but the survey is stating a number it does not have.
+The collection enumeration inside the re-count
+(`src/vaultspec_rag/storage_reclamation.py:115`) is likewise unguarded, so a timeout on
+the listing half still escapes.
+
+The active-job probe carries a different asymmetry. It returns the empty set when the
+job registry cannot be read, and the empty set is the answer that *authorises*
+destruction - it means no namespace is busy. The neighbouring re-count refuses on
+principle to let an unverifiable read become a number; this one lets an unverifiable
+read become a verified negative. A namespace with a queued or paused index job writes
+nothing yet, so the re-count would not catch it either.
+
+The accepted parent contract already requires that any gate failing skips the prefix
+and reports why, so every one of these is an unimplemented clause of a shipped
+decision rather than a new capability.
+
 
 ### The archive cap bounds retention, not drain rate - and it is about to turn over
 

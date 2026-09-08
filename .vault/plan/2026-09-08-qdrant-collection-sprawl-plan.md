@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:74a7af261d31c72974f1d5b39ba087af100760618c35e6794853a930c6939beb'
+body_hash: 'sha256:172399df2710a89ec2afef2d88fe28d831ae4dea0852bc469de69d578caa4a95'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -54,11 +54,17 @@ Delivers the two prerequisites without which no retention change executes: a rea
 - [x] `P01.S01` - Make the qdrant readiness wait treat observable recovery progress as liveness, keeping the existing fixed budget as a hard ceiling; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
 - [x] `P01.S02` - Add a guard test proving a child still recovering collections survives past the old fixed budget; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
 - [x] `P01.S03` - Add a guard test proving a wedged child making no progress is still stopped at the hard ceiling; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
-- [ ] `P01.S04` - Widen the archive-call guard to catch the qdrant client transport failures so a snapshot timeout marks one namespace failed; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P01.S05` - Widen the pre-drop re-count guard to catch the qdrant client transport failures so a timeout defers that namespace; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P01.S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures; `src/vaultspec_rag/storage_reclamation.py`.
-- [ ] `P01.S07` - Add a guard test proving a snapshot read timeout marks that namespace failed and the cycle continues to the next candidate; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
-- [ ] `P01.S08` - Add a guard test proving a re-count read timeout defers the namespace rather than aborting the cycle; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [x] `P01.S04` - Widen the archive-call guard to catch the qdrant client transport failures so a snapshot timeout marks one namespace failed; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P01.S05` - Widen the pre-drop re-count guard to catch the qdrant client transport failures so a timeout defers that namespace; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P01.S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures; `src/vaultspec_rag/storage_reclamation.py`.
+- [x] `P01.S07` - Add a guard test proving a snapshot read timeout marks that namespace failed and the cycle continues to the next candidate; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [x] `P01.S08` - Add a guard test proving a re-count read timeout defers the namespace rather than aborting the cycle; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [ ] `P01.S27` - Widen the survey-time point-count guard so a transport timeout leaves that collection uncounted rather than unwinding the survey and the cycle with it; `src/vaultspec_rag/storage_survey_ops.py`.
+- [ ] `P01.S28` - Carry an uncountable collection through the survey as unverifiable rather than as zero points, so a failed count cannot mis-tier a data-bearing namespace as empty; `src/vaultspec_rag/storage_survey_ops.py`.
+- [ ] `P01.S29` - Guard the collection enumeration in the pre-drop re-count so a transport timeout yields an unverifiable count instead of escaping; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P01.S30` - Return an unverifiable result from the active-index-job probe so a registry read failure defers the namespace instead of reporting no job busy; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P01.S31` - Add a guard test proving a survey-time transport timeout leaves the maintenance cycle running and the namespace unreclaimed; `src/vaultspec_rag/tests/test_storage_survey.py`.
+- [ ] `P01.S32` - Add a guard test proving an unverifiable active-job probe defers the namespace rather than authorising the drop; `src/vaultspec_rag/tests/test_storage_safety.py`.
 
 ### Phase `P02` - discriminate retention by namespace class
 
