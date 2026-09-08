@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
 from .._source_types import INDEX_SOURCES, IndexSource
 
@@ -235,25 +235,35 @@ class ReadinessRevisionRegistry:
             self._require_live_locked()
             return self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
 
-    def publish(
+    def publish_next(
         self,
         root: str | Path,
         source: IndexSource,
         *,
-        revision: int,
         generation: str | None = None,
     ) -> ReadinessRevisionSnapshot:
-        """Record canonical publication evidence and wake interested observers."""
+        """Allocate and publish the next monotonic revision for one source."""
         _identity(generation, field="generation")
-        _revision(revision, field="revision")
-        if revision is None:
-            raise ValueError("revision must be a non-negative integer")
-        return self._update(
-            ReadinessSourceKey.from_root(root, source),
-            kind="publication",
-            generation=generation,
-            revision=revision,
-        )
+        key = ReadinessSourceKey.from_root(root, source)
+        with self._lock:
+            loop = self._require_live_locked()
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            revision = (
+                max(
+                    current.publication_revision or 0,
+                    current.controller_revision or 0,
+                )
+                + 1
+            )
+            updated = replace(
+                current,
+                published_generation=generation,
+                publication_revision=revision,
+            )
+            self._snapshots[key] = updated
+            futures = self._observer_futures_locked(key)
+        self._wake_observers(loop, futures)
+        return updated
 
     def notify_controller(
         self,
@@ -268,12 +278,36 @@ class ReadinessRevisionRegistry:
         _revision(revision, field="revision")
         if revision is None:
             raise ValueError("revision must be a non-negative integer")
-        return self._update(
-            ReadinessSourceKey.from_root(root, source),
-            kind="controller",
-            generation=generation,
-            revision=revision,
-        )
+        key = ReadinessSourceKey.from_root(root, source)
+        with self._lock:
+            loop = self._require_live_locked()
+            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
+            previous_revision = current.controller_revision
+            if previous_revision is not None and revision < previous_revision:
+                raise ValueError("controller_revision must not regress")
+            if (
+                previous_revision == revision
+                and generation is not None
+                and current.desired_generation is not None
+                and generation != current.desired_generation
+            ):
+                raise ValueError(
+                    "desired_generation must agree at the same controller_revision"
+                )
+            desired_generation = (
+                current.desired_generation
+                if previous_revision == revision and generation is None
+                else generation
+            )
+            updated = replace(
+                current,
+                desired_generation=desired_generation,
+                controller_revision=revision,
+            )
+            self._snapshots[key] = updated
+            futures = self._observer_futures_locked(key)
+        self._wake_observers(loop, futures)
+        return updated
 
     async def published_at_least(
         self,
@@ -325,66 +359,22 @@ class ReadinessRevisionRegistry:
                 with self._lock:
                     self._observers.pop(observer_id, None)
 
-    def _update(
-        self,
-        key: ReadinessSourceKey,
-        *,
-        kind: Literal["publication", "controller"],
-        generation: str | None,
-        revision: int,
-    ) -> ReadinessRevisionSnapshot:
-        with self._lock:
-            loop = self._require_live_locked()
-            current = self._snapshots.get(key, ReadinessRevisionSnapshot(key=key))
-            revision_field = (
-                "publication_revision"
-                if kind == "publication"
-                else "controller_revision"
-            )
-            previous_revision = getattr(current, revision_field)
-            if previous_revision is not None and revision < previous_revision:
-                raise ValueError(f"{revision_field} must not regress")
-            generation_field = (
-                "published_generation"
-                if kind == "publication"
-                else "desired_generation"
-            )
-            previous_generation = getattr(current, generation_field)
-            if (
-                previous_revision == revision
-                and generation is not None
-                and previous_generation is not None
-                and generation != previous_generation
-            ):
-                raise ValueError(
-                    f"{generation_field} must agree at the same {revision_field}"
-                )
-            next_generation = (
-                previous_generation
-                if previous_revision == revision and generation is None
-                else generation
-            )
-            if kind == "publication":
-                updated = replace(
-                    current,
-                    published_generation=next_generation,
-                    publication_revision=revision,
-                )
-            else:
-                updated = replace(
-                    current,
-                    desired_generation=next_generation,
-                    controller_revision=revision,
-                )
-            self._snapshots[key] = updated
-            futures = tuple(
-                observer.future
-                for observer in self._observers.values()
-                if key in observer.keys
-            )
+    def _observer_futures_locked(
+        self, key: ReadinessSourceKey
+    ) -> tuple[asyncio.Future[None], ...]:
+        return tuple(
+            observer.future
+            for observer in self._observers.values()
+            if key in observer.keys
+        )
+
+    @staticmethod
+    def _wake_observers(
+        loop: asyncio.AbstractEventLoop,
+        futures: tuple[asyncio.Future[None], ...],
+    ) -> None:
         for future in futures:
             _schedule_on_owner(loop, _resolve_future, future)
-        return updated
 
     def _require_live_locked(self) -> asyncio.AbstractEventLoop:
         if self._closed:

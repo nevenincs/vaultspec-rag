@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:143419ed801fa9c245e23e323881756c7e9ad0bdbcae918742f5f2352d0db61b'
+body_hash: 'sha256:915c2b29e68b1b433ee7e4ce7c624b2da8b0c0a5e83c7cfa3c35192b920daf5e'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -18,6 +18,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P02-S07]]'
   - '[[2026-09-08-search-readiness-contract-W01-P02-summary]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S08]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P03-S09]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -46,6 +47,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P02-S07` - Mutation-prove exact source and root matching plus bounded evidence
 - `2026-09-08-search-readiness-contract-W01-P02-summary` - `search-readiness-contract` `W01.P02` summary
 - `2026-09-08-search-readiness-contract-W01-P03-S08` - Implement a service-owned readiness revision registry and cancellable monotonic publication waiter
+- `2026-09-08-search-readiness-contract-W01-P03-S09` - Own the readiness registry lifecycle and inject one registry-allocated revision emission after canonical code publication succeeds
 
 ### plan
 

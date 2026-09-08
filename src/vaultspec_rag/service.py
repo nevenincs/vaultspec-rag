@@ -13,9 +13,11 @@ import contextlib
 import logging
 import threading
 import time
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable, Generator
     from pathlib import Path
 
@@ -23,6 +25,10 @@ if TYPE_CHECKING:
 
     from .embeddings import EmbeddingModel
     from .job_manager.manager import JobManager
+    from .server._search_readiness import (
+        ReadinessRevisionRegistry,
+        ReadinessRevisionSnapshot,
+    )
     from .store_runtime import VaultStore
 
 from ._service_borrower import BorrowerLeaseMixin
@@ -121,6 +127,7 @@ class ServiceRegistry(
         # coordinator.  Keeping the manager here makes every lifecycle owner
         # consult the controller that actually owns its admission epoch.
         self._job_manager: JobManager | None = None
+        self._readiness_registry: ReadinessRevisionRegistry | None = None
         # This condition owns only the right to perform a registry-level
         # resource transition.  It is never held while the owner drains jobs,
         # waits for tickets, or takes GPU/registry locks.
@@ -182,6 +189,40 @@ class ServiceRegistry(
             self._shutting_down = False
             self._shutdown_complete = False
             return True
+
+    def start_readiness(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Create and bind readiness state to this service generation's loop."""
+        from .server._search_readiness import ReadinessRevisionRegistry
+
+        with self._lock:
+            if self._readiness_registry is not None:
+                raise RuntimeError("readiness registry is already started")
+            readiness = ReadinessRevisionRegistry()
+            readiness.start(loop)
+            self._readiness_registry = readiness
+
+    @property
+    def readiness_registry(self) -> ReadinessRevisionRegistry:
+        """Return the running service generation's readiness authority."""
+        with self._lock:
+            readiness = self._readiness_registry
+        if readiness is None:
+            raise RuntimeError("readiness registry is not started")
+        return readiness
+
+    @staticmethod
+    def _publish_code_readiness(
+        readiness: ReadinessRevisionRegistry,
+        root: Path,
+        generation: str,
+    ) -> ReadinessRevisionSnapshot | None:
+        """Publish one code generation when a service lifetime owns readiness."""
+        from .server._search_readiness import ReadinessRegistryClosedError
+
+        try:
+            return readiness.publish_next(root, "code", generation=generation)
+        except ReadinessRegistryClosedError:
+            return None
 
     def load_model(self, model_name: str | None = None) -> None:
         """Eagerly load GPU models into ``_model``.
@@ -999,6 +1040,13 @@ class ServiceRegistry(
         model = self.model
         cfg = get_config()
         reranker = self._get_reranker() if cfg.reranker_enabled else None
+        with self._lock:
+            readiness = self._readiness_registry
+        publish_readiness = (
+            partial(self._publish_code_readiness, readiness)
+            if readiness is not None
+            else None
+        )
         searcher = VaultSearcher(
             root,
             model,
@@ -1017,7 +1065,10 @@ class ServiceRegistry(
             root,
             model,
             slot.store,
-            options=CodebaseIndexer.Options(gpu_lock=self._gpu_lock),
+            options=CodebaseIndexer.Options(
+                gpu_lock=self._gpu_lock,
+                publish_readiness=publish_readiness,
+            ),
         )
         document_indexer = DocumentIndexer(
             root,
@@ -1094,9 +1145,14 @@ class ServiceRegistry(
         with self._lock:
             self._shutting_down = True
             self._shutdown_complete = False
+            readiness = self._readiness_registry
+            self._readiness_registry = None
             # Wake same-root admission joiners so they observe shutdown rather
             # than waiting for a constructor that is about to be drained.
             self._project_admission_condition.notify_all()
+
+        if readiness is not None:
+            readiness.close()
 
         # Bounded drain: 5.0 seconds is intentionally hardcoded.
         deadline = time.monotonic() + 5.0
