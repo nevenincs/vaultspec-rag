@@ -572,7 +572,6 @@ TEST = Verb(
                 _pytest(
                     "tools",
                     "-q",
-                    "--tb=short",
                     "-n",
                     "auto",
                     "--dist",
@@ -586,7 +585,7 @@ TEST = Verb(
         Target(
             "fast",
             "Run the unit tier only, stopping at the first failure.",
-            (_pytest("-x", "-q", "--tb=short", "-m", "unit"),),
+            (_pytest("-x", "-q", "-m", "unit"),),
         ),
         Target(
             "gpu",
@@ -601,12 +600,11 @@ TEST = Verb(
             (
                 _pytest(
                     "-q",
-                    "--tb=short",
                     "-m",
                     "(integration or quality or robustness or cuda) "
                     "and not performance and not subprocess_gpu",
                 ),
-                _pytest("-q", "--tb=short", "-m", "subprocess_gpu"),
+                _pytest("-q", "-m", "subprocess_gpu"),
             ),
             lane=True,
             gate=CUDA_GATE,
@@ -617,7 +615,7 @@ TEST = Verb(
             # A separate quiet-machine-ONLY lane: its wall-clock assertions ARE
             # the system under test, so a loaded machine fails them for reasons
             # unrelated to a regression. Never a correctness gate.
-            (_pytest("-q", "--tb=short", "-m", "performance"),),
+            (_pytest("-q", "-m", "performance"),),
             lane=True,
             gate=PERF_GATE,
         ),
@@ -630,7 +628,6 @@ TEST = Verb(
                         "pytest",
                         f"{PACKAGE}/tests/integration/test_mps_backend.py",
                         "-q",
-                        "--tb=short",
                         "-m",
                         "mps",
                     ).argv,
@@ -657,7 +654,6 @@ TEST = Verb(
                         )
                     ),
                     "-q",
-                    "--tb=short",
                 ),
             ),
         ),
