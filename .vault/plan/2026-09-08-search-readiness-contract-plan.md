@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:123debeeb0cd0b81acd2e7b1d8bbecd3afcefa4ce264175f0cfd0f20f2afaee4'
+body_hash: 'sha256:2d2f6c89f8be9b3e6f9302a2512c6e7bbf6e9cb969479d6ab770a5523959896a'
 ---
 
 <!-- RETIRED: P14 -->
@@ -145,7 +145,7 @@ Build on W03 to deliver reusable conformance coverage, real boundary tests, expl
 
 Drive identical readiness scenarios through HTTP CLI MCP and combined search.
 
-- [ ] `W04.P11.S46` - Define reusable current updating unavailable unverifiable rebuild timeout capacity backend empty and mixed scenarios; `src/vaultspec_rag/tests/_search_readiness_scenarios.py`.
+- [x] `W04.P11.S46` - Define reusable current updating unavailable unverifiable rebuild timeout capacity backend empty and mixed scenarios; `src/vaultspec_rag/tests/_search_readiness_scenarios.py`.
 - [ ] `W04.P11.S47` - Apply the readiness scenario matrix to real HTTP responses and headers; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`.
 - [ ] `W04.P11.S48` - Apply the readiness scenario matrix to CLI JSON and human rendering; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`.
 - [ ] `W04.P11.S49` - Apply the readiness scenario matrix to official-client MCP structured responses; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`.
