@@ -38,6 +38,7 @@ from ..server._search_readiness import (
     ReadinessRevisionRegistry,
     ReadinessSourceKey,
 )
+from ..service import ServiceRegistry
 from ..service_quiesce import ServiceQuiesceController
 from ..store_runtime import VaultStore
 
@@ -267,6 +268,8 @@ async def test_publication_committed_at_deadline_wins_over_timeout(
 
 
 async def test_task_cancellation_promptly_unregisters_observer(tmp_path: Path) -> None:
+    # Removing the shared finally-pop (also used by timeout) leaves observer 0
+    # behind and makes the final empty-registry assertion fail.
     scheduler = VirtualReadinessDeadlineScheduler()
     registry = _registry(scheduler)
     waiting = asyncio.create_task(
@@ -368,17 +371,18 @@ async def test_revision_is_monotonic_and_equal_revision_checks_generation(
 async def test_terminal_job_transition_cannot_satisfy_publication(
     tmp_path: Path,
 ) -> None:
+    # Allowing terminal callbacks and routing the service callback through
+    # publish_next makes the exact unsatisfied-publication assertion fail.
     scheduler = VirtualReadinessDeadlineScheduler()
     registry = _registry(scheduler)
-    target = _target(tmp_path, "code", 1, "terminal-job-generation")
+    target = _target(tmp_path, "code", 1)
     manager = JobManager(
         quiesce_controller=ServiceQuiesceController(),
         max_nonterminal=1,
         state_path=tmp_path / "jobs.json",
-        on_controller_target=lambda snapshot: registry.notify_controller(
-            snapshot.spec.project_root or tmp_path,
-            "code",
-            generation="terminal-job-generation",
+        on_controller_target=lambda snapshot: ServiceRegistry._notify_controller_target(
+            registry,
+            snapshot,
         ),
     )
     created = manager.create(
