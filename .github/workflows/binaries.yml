@@ -75,6 +75,7 @@ jobs:
   # an awk pass over a file in this repository - it needs no capability the
   # build runners do not already have.
   derive-selectors:
+    timeout-minutes: 15
     name: Derive the selectors this matrix requires
     runs-on: [self-hosted, Linux, X64, build]
     outputs:
@@ -113,6 +114,7 @@ jobs:
   # standard; nevenincs/ci-fleet is private, and same-owner reusable calls are
   # permitted by its Actions access level.
   preflight:
+    timeout-minutes: 15
     name: Preflight runners
     needs: derive-selectors
     runs-on: [self-hosted, Linux, X64]
@@ -383,6 +385,7 @@ jobs:
         run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
 
   release:
+    timeout-minutes: 30
     name: Attach to release
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
@@ -581,6 +584,7 @@ jobs:
   # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
+    timeout-minutes: 30
     name: Verify the release carries artifacts
     needs: release
     if: ${{ always() }}
