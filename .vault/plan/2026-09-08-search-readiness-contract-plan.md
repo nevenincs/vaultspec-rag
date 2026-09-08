@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:c0746ce7ab3fe516262d144deb4c2bcbf43825065d9b603348880e256a89bab9'
+body_hash: 'sha256:61d67cbeab48878ba2a27f10da63c733c27cce177d2ed98e0d77ea7f6df73a96'
 ---
 
 <!-- RETIRED: P14 -->
@@ -134,7 +134,7 @@ Preserve canonical structured success and recoverable failure content through ev
 - [x] `W03.P10.S41` - Extend MCP input and result models with policy and canonical readiness content; `src/vaultspec_rag/mcp/_tools.py`.
 - [x] `W03.P10.S42` - Replace opaque RuntimeError reduction with structured error content and actionable text; `src/vaultspec_rag/mcp/_tools.py`.
 - [x] `W03.P10.S43` - Prove every MCP search tool preserves structured success and failure through the official client; `src/vaultspec_rag/mcp/_tools.py, src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py, and src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`.
-- [ ] `W03.P10.S44` - Prove MCP schemas expose bounded policy consistently for every search source; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
+- [x] `W03.P10.S44` - Prove MCP schemas expose bounded policy consistently for every search source; `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`.
 - [ ] `W03.P10.S45` - Mutation-prove the MCP structured-failure preservation guard; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`.
 
 ## Wave `W04` - end-to-end proof and performance protection
