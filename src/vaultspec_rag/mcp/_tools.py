@@ -20,12 +20,19 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Self, cast
 
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .._source_types import SourceTypeParseError, parse_source_type
+from .._search_state import (
+    AbsenceAuthority,
+    FreshnessWaitPolicy,
+    SearchAvailability,
+    SearchFreshness,
+    SearchWaitCause,
+)
+from .._source_types import IndexSource, SourceTypeParseError, parse_source_type
 from ..serviceclient._search_transport import document_search_filters, try_http_search
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -40,6 +47,70 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+class SearchGenerationEvidence(BaseModel):
+    """Canonical publication identities reported for one source."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    served_generation: str | None = None
+    observed_generation: str | None = None
+    desired_generation: str | None = None
+    served_revision: int | None = Field(default=None, ge=0)
+    observed_revision: int | None = Field(default=None, ge=0)
+    desired_revision: int | None = Field(default=None, ge=0)
+
+
+class SearchWaitContent(BaseModel):
+    """One service-owned bounded wait observation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cause: SearchWaitCause
+    waited_seconds: float = Field(ge=0)
+    configured_bound_seconds: float = Field(ge=0)
+    remaining_bound_seconds: float = Field(ge=0)
+
+
+class SearchSourceReadiness(BaseModel):
+    """Canonical readiness fact for one requested concrete source."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: IndexSource
+    availability: SearchAvailability
+    freshness: SearchFreshness
+    absence_authority: AbsenceAuthority
+    generation: SearchGenerationEvidence
+    wait_policy: FreshnessWaitPolicy
+    waits: list[SearchWaitContent]
+    evidence: list[str]
+    reason_code: str | None = None
+    retryable: bool
+    remediation: str | None = None
+
+
+class SearchReadinessSummary(BaseModel):
+    """Canonical aggregate derived from the requested source facts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    availability: SearchAvailability
+    freshness: SearchFreshness
+    absence_authority: AbsenceAuthority
+    source_count: int = Field(gt=0)
+    usable_source_count: int = Field(ge=0)
+    degraded_sources: list[IndexSource]
+
+
+class SearchReadinessContent(BaseModel):
+    """Per-source readiness facts and their lossless aggregate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sources: list[SearchSourceReadiness]
+    aggregate: SearchReadinessSummary
+
+
 class SearchResults(BaseModel):
     """Structured envelope returned by the search tools (MCP ``outputSchema``).
 
@@ -51,8 +122,35 @@ class SearchResults(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    results: list[dict[str, object]] = []
+    ok: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    results: list[dict[str, object]] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     summary: str | None = None
+    error: str | None = None
+    message: str | None = None
+    retryable: bool | None = None
+    request_id: str | None = None
+    remediation: str | list[str] | None = None
+    readiness: SearchReadinessContent
+
+    @model_validator(mode="after")
+    def _validate_envelope_variant(self) -> Self:
+        supplied = self.model_fields_set
+        if self.ok is not False:
+            if "results" not in supplied or self.results is None:
+                raise ValueError("a successful search envelope requires results")
+            return self
+        if "results" in supplied:
+            raise ValueError("a failed search envelope must not contain results")
+        for field in ("error", "message", "retryable", "request_id", "remediation"):
+            if field not in supplied or getattr(self, field) is None:
+                raise ValueError(f"a failed search envelope requires {field}")
+        return self
+
+
+FreshnessWaitSeconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 _SERVICE_DOWN_MESSAGE = (
@@ -265,6 +363,8 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
     intent: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search the documentation vault for relevant ADRs, plans, and research.
@@ -292,6 +392,8 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
             intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))
@@ -315,6 +417,8 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
     include_domains: list[str] | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search the source codebase for relevant functions, classes, or logic.
@@ -352,6 +456,8 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
             prefer=prefer,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
         )
     )
     return SearchResults.model_validate(_search_envelope_or_raise(result))
@@ -365,6 +471,8 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search independently indexed extracted-document content."""
@@ -377,6 +485,8 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
             top_k,
             port,
             _resolve_project_root(project_root),
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
             document_filters=document_search_filters(
                 source_path=source_path,
                 extractor_id=extractor_id,
@@ -413,6 +523,8 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search vault, code, and document domains with partial outcomes intact."""
@@ -430,6 +542,8 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             top_k,
             port,
             _resolve_project_root(project_root),
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
             language=language,
             path=path,
             node_type=node_type,
