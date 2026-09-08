@@ -71,6 +71,7 @@ if TYPE_CHECKING:
         _last_flush_monotonic: float
         _lifecycle_state: JobLifecycleState
         _lock: threading.RLock
+        _on_controller_target: Callable[[JobSnapshot], object] | None
         _max_idempotency: int
         _max_nonterminal: int
         _max_terminal_history: int

@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Never, cast
 if TYPE_CHECKING:
     import asyncio
     import os
+    from collections.abc import Callable
 
     from .. import job_persistence as _job_persistence
+    from ..job_models import JobSnapshot
     from ..service_quiesce import ServiceQuiesceController
     from .state import AttemptExit, JobLifecycleState
 
@@ -52,6 +54,7 @@ class JobManager(
             str | os.PathLike[str] | ConfiguredStatePath | None
         ) = CONFIGURED_STATE_PATH,
         quiesce_controller: ServiceQuiesceController,
+        on_controller_target: Callable[[JobSnapshot], object] | None = None,
     ) -> None:
         resolved_max = (
             get_config().job_max_nonterminal
@@ -74,6 +77,7 @@ class JobManager(
                 Path(resolved_path) if resolved_path is not None else None
             )
         self._quiesce_controller = quiesce_controller
+        self._on_controller_target = on_controller_target
         self._lock = threading.RLock()
         # Serializes every state-file write. Synchronous transition persists
         # write while holding both locks; deferred progress flushes serialize
@@ -111,6 +115,17 @@ class JobManager(
         self._accepting_dispatch = True
         self._lifecycle_state: JobLifecycleState = "new"
         self._startup_restore_incomplete = False
+
+    def bind_controller_target(
+        self, callback: Callable[[JobSnapshot], object] | None
+    ) -> None:
+        """Bind controller notifications to the current service generation."""
+        with self._lock:
+            if self._lifecycle_state not in {"new", "stopped"}:
+                raise RuntimeError(
+                    "controller target callback can only bind between service lives"
+                )
+            self._on_controller_target = callback
 
     def prepare_startup(self) -> bool:
         """Open dispatch for one service life and report whether restore is needed.

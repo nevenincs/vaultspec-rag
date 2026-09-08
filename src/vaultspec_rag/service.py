@@ -14,19 +14,19 @@ import logging
 import threading
 import time
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Callable, Generator
-    from pathlib import Path
 
     from sentence_transformers import CrossEncoder
 
     from ._source_types import IndexSource
     from .embeddings import EmbeddingModel
     from .job_manager.manager import JobManager
-    from .job_models import JobSource
+    from .job_models import JobSnapshot, JobSource
     from .server._search_readiness import (
         ReadinessRevisionRegistry,
         ReadinessRevisionSnapshot,
@@ -129,6 +129,7 @@ class ServiceRegistry(
         # coordinator.  Keeping the manager here makes every lifecycle owner
         # consult the controller that actually owns its admission epoch.
         self._job_manager: JobManager | None = None
+        self._job_manager_readiness_registry: ReadinessRevisionRegistry | None = None
         self._readiness_registry: ReadinessRevisionRegistry | None = None
         # This condition owns only the right to perform a registry-level
         # resource transition.  It is never held while the owner drains jobs,
@@ -226,6 +227,31 @@ class ServiceRegistry(
             return readiness.publish_next(
                 root,
                 cast("IndexSource", source.value),
+                generation=generation,
+            )
+        except ReadinessRegistryClosedError:
+            return None
+
+    @staticmethod
+    def _notify_controller_target(
+        readiness: ReadinessRevisionRegistry,
+        snapshot: JobSnapshot,
+    ) -> ReadinessRevisionSnapshot | None:
+        """Project one persisted corpus target into its exact service generation."""
+        from .server._search_readiness import ReadinessRegistryClosedError
+
+        root = snapshot.spec.project_root
+        if root is None or not snapshot.spec.source.is_corpus:
+            return None
+        generation = (
+            snapshot.resilience.generation_id
+            if snapshot.resilience is not None
+            else None
+        )
+        try:
+            return readiness.notify_controller(
+                Path(root),
+                cast("IndexSource", snapshot.spec.source.value),
                 generation=generation,
             )
         except ReadinessRegistryClosedError:
@@ -953,9 +979,22 @@ class ServiceRegistry(
 
         with self._lock:
             manager = self._job_manager
+            readiness = self._readiness_registry
+            controller_target = (
+                partial(self._notify_controller_target, readiness)
+                if readiness is not None
+                else None
+            )
             if manager is None:
-                manager = JobManager(quiesce_controller=self._quiesce_controller)
+                manager = JobManager(
+                    quiesce_controller=self._quiesce_controller,
+                    on_controller_target=controller_target,
+                )
                 self._job_manager = manager
+                self._job_manager_readiness_registry = readiness
+            elif readiness is not self._job_manager_readiness_registry:
+                manager.bind_controller_target(controller_target)
+                self._job_manager_readiness_registry = readiness
             return manager
 
     def discard_job_manager(self) -> None:
@@ -967,6 +1006,7 @@ class ServiceRegistry(
         """
         with self._lock:
             self._job_manager = None
+            self._job_manager_readiness_registry = None
 
     def _create_slot(self, root: Path) -> ProjectSlot:
         """Build one storage-only project slot for *root*.
