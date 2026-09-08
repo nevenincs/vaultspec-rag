@@ -303,6 +303,16 @@ fix target='all':
 # shipped a CI step labelled "report-only" that gated, and a complexity gate
 # that never ran because an earlier step aborted the job.
 #
+# ADVISORY IS NOT `; exit 0`. Each advisory dimension runs through
+# `tools/advisory.py`, which maps the scanner's own findings-exit-code onto
+# success and PROPAGATES every other status. Appending `; exit 0` to the
+# scanner instead - which is what these targets used to do - also swallowed a
+# bad config, an unparsable file, and a scanner that is not installed at all,
+# so a dimension that had stopped running was indistinguishable from a clean
+# one. `deps` runs through `tools/dependency_audit.py`, which derives its
+# verdict from uv's summary AND its exit code so a preview tool that reports
+# advisories while exiting 0 cannot un-gate the supply chain.
+#
 # Promote a dimension into `lint` once its finding count reaches zero and
 # the gate can hold that line.
 #
@@ -313,40 +323,50 @@ fix target='all':
 # Audit project dependencies and code quality.
 audit target='all':
   switch ("{{target}}") { \
-    "deps" { uv audit --locked --preview-features audit ; break } \
-    "security" { {{uvr}} bandit -c pyproject.toml -r src/vaultspec_rag -x "src/vaultspec_rag/tests" -q ; exit 0 } \
-    "dead-code" { {{uvr}} vulture ; exit 0 } \
-    "dependencies" { {{uvr}} deptry src/vaultspec_rag ; exit 0 } \
+    "deps" { {{uvr}} python tools/dependency_audit.py ; break } \
+    "security" { {{uvr}} python tools/advisory.py --finding-exit 1 -- bandit -c pyproject.toml -r src/vaultspec_rag -x "src/vaultspec_rag/tests" -q ; break } \
+    "dead-code" { {{uvr}} python tools/advisory.py --finding-exit 3 -- vulture ; break } \
+    "dependencies" { {{uvr}} python tools/advisory.py --finding-exit 1 -- deptry src/vaultspec_rag ; break } \
     "duplication" { \
       if (Get-Command npx -ErrorAction SilentlyContinue) { \
-        npx --yes jscpd@4 src/vaultspec_rag --min-lines 20 --min-tokens 70 --reporters console \
+        {{uvr}} python tools/advisory.py --finding-exit 1 -- npx --yes jscpd@4 src/vaultspec_rag --min-lines 20 --min-tokens 70 --reporters console \
       } else { \
         Write-Host "npx not found - skipping duplication scan" -ForegroundColor Yellow \
       } \
-      exit 0 \
+      break \
     } \
     "complexity" { \
       $env:PYTHONIOENCODING = "utf-8" ; \
-      {{uvr}} complexipy src/vaultspec_rag/tests --failed ; \
+      {{uvr}} python tools/advisory.py --finding-exit 1 -- complexipy src/vaultspec_rag/tests --failed ; \
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } ; \
       Push-Location src ; \
-      {{uvr}} xenon vaultspec_rag --max-absolute C --max-modules C --max-average A ; \
+      {{uvr}} python ../tools/advisory.py --finding-exit 1 -- xenon vaultspec_rag --max-absolute C --max-modules C --max-average A ; \
+      $xenon = $LASTEXITCODE ; \
       Pop-Location ; \
-      exit 0 \
+      if ($xenon -ne 0) { exit $xenon } ; \
+      break \
     } \
     "all" { \
+      $failed = 0 ; \
       Write-Host "=== dependency advisories ===" -ForegroundColor Cyan ; \
       just audit deps ; \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
       Write-Host "=== security ===" -ForegroundColor Cyan ; \
       just audit security ; \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
       Write-Host "=== dead code ===" -ForegroundColor Cyan ; \
       just audit dead-code ; \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
       Write-Host "=== undeclared dependencies ===" -ForegroundColor Cyan ; \
       just audit dependencies ; \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
       Write-Host "=== duplication ===" -ForegroundColor Cyan ; \
       just audit duplication ; \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
       Write-Host "=== test-tree cognitive complexity ===" -ForegroundColor Cyan ; \
       just audit complexity ; \
-      exit 0 \
+      if ($LASTEXITCODE -ne 0) { $failed = $LASTEXITCODE } ; \
+      exit $failed \
     } \
     default { \
       Write-Host "unknown audit target: {{target}}" -ForegroundColor Red ; \
