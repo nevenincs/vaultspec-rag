@@ -330,6 +330,11 @@ def test_official_client_preserves_canonical_search_envelope(
             )
         )
 
+    # Mutation proof (exact case ``failure-search_vault-vault``): temporarily
+    # restoring the legacy recoverable-failure RuntimeError reducer made this
+    # exact assertion fail with ``is_error=True`` and ``structured_content=None``
+    # (RED exit 1); in the same uninterrupted sequence, immediately removing the
+    # reducer restored the identical case to a structured result (GREEN exit 0).
     assert response.is_error is False
     structured = cast("dict[str, object]", response.structured_content)
     readiness = cast("dict[str, object]", structured["readiness"])
