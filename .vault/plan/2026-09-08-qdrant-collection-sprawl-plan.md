@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:eb265ee31ba7aef5ee1c3417614fa5d7a6b0b725da5dbd2445884c0edb0c8573'
+body_hash: 'sha256:74a7af261d31c72974f1d5b39ba087af100760618c35e6794853a930c6939beb'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -51,9 +51,9 @@ our own tests seeding namespaces into the operator's real backend.
 
 Delivers the two prerequisites without which no retention change executes: a readiness budget that tolerates a live, progressing qdrant child, and failure isolation so one slow snapshot defers a single namespace instead of unwinding the whole cycle.
 
-- [ ] `P01.S01` - Make the qdrant readiness wait treat observable recovery progress as liveness, keeping the existing fixed budget as a hard ceiling; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
-- [ ] `P01.S02` - Add a guard test proving a child still recovering collections survives past the old fixed budget; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
-- [ ] `P01.S03` - Add a guard test proving a wedged child making no progress is still stopped at the hard ceiling; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
+- [x] `P01.S01` - Make the qdrant readiness wait treat observable recovery progress as liveness, keeping the existing fixed budget as a hard ceiling; `src/vaultspec_rag/qdrant_runtime/_supervise.py`.
+- [x] `P01.S02` - Add a guard test proving a child still recovering collections survives past the old fixed budget; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
+- [x] `P01.S03` - Add a guard test proving a wedged child making no progress is still stopped at the hard ceiling; `src/vaultspec_rag/tests/test_qdrant_supervise.py`.
 - [ ] `P01.S04` - Widen the archive-call guard to catch the qdrant client transport failures so a snapshot timeout marks one namespace failed; `src/vaultspec_rag/storage_reclamation.py`.
 - [ ] `P01.S05` - Widen the pre-drop re-count guard to catch the qdrant client transport failures so a timeout defers that namespace; `src/vaultspec_rag/storage_reclamation.py`.
 - [ ] `P01.S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures; `src/vaultspec_rag/storage_reclamation.py`.
