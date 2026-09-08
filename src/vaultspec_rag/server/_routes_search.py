@@ -19,7 +19,11 @@ from math import ceil, isfinite
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
-from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.http.exceptions import (
+    ApiException,
+    ResponseHandlingException,
+    UnexpectedResponse,
+)
 from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
@@ -301,6 +305,76 @@ def _attach_route_waits(
             source = domain.get("readiness")
             if isinstance(source, dict):
                 attach(source)
+
+
+def _backend_unavailable_result(
+    request: SearchRequest, port: int | None
+) -> dict[str, object]:
+    """Render a proven backend refusal without inferring index state."""
+    sources: tuple[IndexSource, ...] = (
+        cast("tuple[IndexSource, ...]", tuple(INDEX_SOURCES))
+        if request.search_type is PublicSourceType.COMBINED
+        else (request.search_type.value,)
+    )
+    remediation = server_status_command(port, verbose=True)
+    facts = tuple(
+        SearchSourceFact(
+            source=source,
+            availability=SearchAvailability.UNAVAILABLE,
+            freshness=SearchFreshness.UNVERIFIABLE,
+            absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+            reason_code="backend_unavailable",
+            retryable=True,
+            remediation=remediation,
+        )
+        for source in sources
+    )
+    return {
+        "ok": False,
+        "error": "backend_unavailable",
+        "message": "The search storage backend is temporarily unavailable.",
+        "request_id": request.request_id,
+        "retryable": True,
+        "readiness": search_readiness_block(facts),
+        "remediation": remediation,
+    }
+
+
+def _complete_backend_unavailable(
+    request: SearchRequest,
+    port: int | None,
+    exc: BaseException,
+    *,
+    total_seconds: float,
+    activity_waits: tuple[WaitObservation, ...],
+) -> SearchRouteResult:
+    """Finish one proven storage refusal as a stable route outcome."""
+    result = _backend_unavailable_result(request, port)
+    _attach_route_waits(result, activity_waits)
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    log_event(
+        logger,
+        "service.search",
+        "unavailable",
+        fields={
+            "status_code": 503,
+            "error": "backend_unavailable",
+            "request_id": request.request_id,
+            "source": request.search_type.value,
+            "search_type": request.search_type.value,
+            "root": request.root,
+            "results": 0,
+            "exception_type": type(exc).__name__,
+            "total_seconds": f"{total_seconds:.3f}",
+        },
+    )
+    return SearchRouteResult(
+        result=result,
+        status_code=503,
+        total_seconds=total_seconds,
+        availability_cause="storage_backend",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1521,6 +1595,11 @@ async def _execute_search_route(
                     0.0,
                     time.perf_counter() - started_at - float(compute_wait),
                 )
+            storage_seconds = timing.get("qdrant_seconds")
+            if isinstance(storage_seconds, (int, float)) and not isinstance(
+                storage_seconds, bool
+            ):
+                timing["storage_backend_seconds"] = float(storage_seconds)
         return result
 
     try:
@@ -1560,6 +1639,15 @@ async def _execute_search_route(
             status_code=503,
             total_seconds=total_seconds,
             availability_cause=None,
+        )
+    except (ApiException, ResponseHandlingException) as exc:
+        total_seconds = time.perf_counter() - started
+        return _complete_backend_unavailable(
+            search_request,
+            port,
+            exc,
+            total_seconds=total_seconds,
+            activity_waits=activity_waits,
         )
     total_seconds = time.perf_counter() - started
     limiter_wait = worker_started[0] - limiter_submitted if worker_started else 0.0
