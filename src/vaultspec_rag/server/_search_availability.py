@@ -12,6 +12,14 @@ from typing import TYPE_CHECKING, Literal, cast
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from .._operator_commands import server_jobs_command
+from .._search_state import (
+    MAX_SEARCH_EVIDENCE_ITEMS,
+    AbsenceAuthority,
+    GenerationEvidence,
+    SearchAvailability,
+    SearchFreshness,
+    SearchSourceFact,
+)
 
 if TYPE_CHECKING:
     from .._source_types import IndexSource
@@ -21,6 +29,7 @@ if TYPE_CHECKING:
     from ..job_models import JobMode
 
 __all__ = [
+    "CanonicalSearchEvidence",
     "SearchResponseClassification",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
@@ -31,7 +40,6 @@ __all__ = [
 _CANONICAL_NONTERMINAL_STATES = frozenset(
     {"queued", "running", "pausing", "paused", "cancelling"}
 )
-_MAX_EXPOSED_JOBS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +65,39 @@ class SearchResponseClassification:
     matching_jobs_truncated: bool
     rebuilding: bool
     availability_cause: Literal["matching_index_job", "collection_missing"] | None
+    source_fact: SearchSourceFact
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalSearchEvidence:
+    """Explicit collection and publication evidence available at classification."""
+
+    served_generation: str | None = None
+    desired_generation: str | None = None
+    publication_revision: int | None = None
+    desired_revision: int | None = None
+    collection_present: bool | None = None
+    target_matches: bool | None = None
+    integrity_verified: bool | None = None
+    capacity_refused: bool = False
+
+    def __post_init__(self) -> None:
+        GenerationEvidence(
+            served_generation=self.served_generation,
+            desired_generation=self.desired_generation,
+            served_revision=self.publication_revision,
+            desired_revision=self.desired_revision,
+        )
+        for field in (
+            "collection_present",
+            "target_matches",
+            "integrity_verified",
+        ):
+            value = getattr(self, field)
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(f"{field} must be a boolean or None")
+        if not isinstance(self.capacity_refused, bool):
+            raise ValueError("capacity_refused must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +120,7 @@ class SearchAvailabilityContext:
     request_id: str
     index_state: Mapping[str, object]
     port: int | None
+    canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +249,88 @@ def _combined_matches(
     return _deduplicated_matches(ordered_matches)
 
 
+def _target_is_current(evidence: CanonicalSearchEvidence) -> bool:
+    """Return whether explicit publication evidence satisfies a verified target."""
+    generation_targeted = evidence.desired_generation is not None
+    revision_targeted = evidence.desired_revision is not None
+    if not generation_targeted and not revision_targeted:
+        return False
+    generation_current = (
+        not generation_targeted
+        or evidence.served_generation == evidence.desired_generation
+    )
+    revision_current = not revision_targeted or (
+        evidence.publication_revision is not None
+        and evidence.publication_revision >= evidence.desired_revision
+    )
+    return (
+        evidence.collection_present is True
+        and evidence.target_matches is True
+        and evidence.integrity_verified is True
+        and generation_current
+        and revision_current
+    )
+
+
+def _project_source_fact(
+    context: SearchAvailabilityContext,
+    matches: Sequence[_MatchingJob],
+) -> SearchSourceFact:
+    """Project explicit canonical evidence without treating terminality as publish."""
+    canonical = context.canonical_evidence
+    has_published_generation = (
+        canonical.served_generation is not None
+        or canonical.publication_revision is not None
+    )
+    served_collection = (
+        canonical.collection_present is True and has_published_generation
+    )
+    current = _target_is_current(canonical)
+    if canonical.capacity_refused:
+        availability = SearchAvailability.CAPACITY_LIMITED
+    elif served_collection:
+        availability = SearchAvailability.USABLE
+    else:
+        availability = SearchAvailability.UNAVAILABLE
+    if matches:
+        freshness = SearchFreshness.UPDATING
+    elif current:
+        freshness = SearchFreshness.CURRENT
+    else:
+        freshness = SearchFreshness.UNVERIFIABLE
+    authority = (
+        AbsenceAuthority.AUTHORITATIVE
+        if availability is SearchAvailability.USABLE
+        and freshness is SearchFreshness.CURRENT
+        else AbsenceAuthority.NON_AUTHORITATIVE
+    )
+    return SearchSourceFact(
+        source=context.source,
+        availability=availability,
+        freshness=freshness,
+        absence_authority=authority,
+        generation=GenerationEvidence(
+            served_generation=canonical.served_generation,
+            desired_generation=canonical.desired_generation,
+            served_revision=canonical.publication_revision,
+            desired_revision=canonical.desired_revision,
+        ),
+        evidence=tuple(match.id for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]),
+        reason_code=(
+            "capacity_limited"
+            if canonical.capacity_refused
+            else "index_unavailable"
+            if canonical.collection_present is False
+            else "index_updating"
+            if matches
+            else "index_unverifiable"
+            if not current
+            else None
+        ),
+        retryable=canonical.capacity_refused or bool(matches),
+    )
+
+
 def _build_index_unavailable_response(
     context: SearchAvailabilityContext,
     *,
@@ -280,9 +404,17 @@ def classify_qdrant_collection_disappearance(
     """Convert a matching collection-disappearance race, or decline it."""
     if not _is_qdrant_collection_disappearance(exc):
         return None
+    disappearance_context = replace(
+        context,
+        canonical_evidence=replace(
+            context.canonical_evidence,
+            collection_present=False,
+            integrity_verified=False,
+        ),
+    )
     classification = classify_search_response(
         {"results": []},
-        context,
+        disappearance_context,
     )
     if classification.status_code != 503:
         return None
@@ -305,9 +437,12 @@ def classify_search_response(
         if normalized_root is not None
         else []
     )
-    matching_jobs = tuple(match.to_reference() for match in matches[:_MAX_EXPOSED_JOBS])
-    matching_jobs_truncated = len(matches) > _MAX_EXPOSED_JOBS
+    matching_jobs = tuple(
+        match.to_reference() for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]
+    )
+    matching_jobs_truncated = len(matches) > MAX_SEARCH_EVIDENCE_ITEMS
     rebuilding = any(match.mode == "rebuild" for match in matches)
+    source_fact = _project_source_fact(context, matches)
 
     results = result.get("results")
     if isinstance(results, list) and not results and matches:
@@ -324,6 +459,7 @@ def classify_search_response(
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
             availability_cause="matching_index_job",
+            source_fact=source_fact,
         )
     return SearchResponseClassification(
         response=result,
@@ -332,4 +468,5 @@ def classify_search_response(
         matching_jobs_truncated=matching_jobs_truncated,
         rebuilding=rebuilding,
         availability_cause=None,
+        source_fact=source_fact,
     )
