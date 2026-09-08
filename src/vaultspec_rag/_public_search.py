@@ -10,10 +10,16 @@ from ._source_types import PublicSourceType
 from .registry import get_registry
 from .search import validate_search_filters
 from .search._outcomes import CombinedSearchOutcome, SearchDomainOutcome
+from .server._search_availability import (
+    CanonicalSearchEvidence,
+    SearchAvailabilityContext,
+    classify_search_response,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from ._search_state import SearchSourceFact
     from .search import DocumentSearchResult
     from .search._outcomes import AnySearchResult
     from .service import ServiceRegistry
@@ -150,16 +156,84 @@ def search_documents_timed(
 
 def _search_domain(
     source: PublicSourceType,
+    source_fact: SearchSourceFact,
     operation: Callable[[], Sequence[AnySearchResult]],
 ) -> SearchDomainOutcome:
     try:
-        return SearchDomainOutcome.success(source, list(operation()))
+        return SearchDomainOutcome.success(
+            source, list(operation()), source_fact=source_fact
+        )
     except Exception as exc:
         return SearchDomainOutcome.failure(
             source,
             type(exc).__name__,
             str(exc) or type(exc).__name__,
+            source_fact=source_fact,
         )
+
+
+def _combined_source_fact(
+    root: pathlib.Path,
+    source: PublicSourceType,
+    registry: ServiceRegistry,
+    *,
+    collection_present: bool | None,
+    job_snapshot: list[dict[str, object]],
+) -> SearchSourceFact:
+    """Project one domain through the canonical availability authority."""
+    from .server._search_readiness import ReadinessRegistryClosedError
+
+    if source is PublicSourceType.COMBINED:
+        raise ValueError("combined readiness requires one concrete source")
+    concrete_source = source.value
+
+    try:
+        readiness = registry.readiness_registry
+    except RuntimeError as exc:
+        if str(exc) != "readiness registry is not started":
+            raise
+        snapshot = None
+    else:
+        try:
+            snapshot = readiness.snapshot(root, concrete_source)
+        except ReadinessRegistryClosedError:
+            snapshot = None
+    evidence = CanonicalSearchEvidence(
+        served_generation=(
+            snapshot.published_generation if snapshot is not None else None
+        ),
+        desired_generation=(
+            snapshot.desired_generation if snapshot is not None else None
+        ),
+        publication_revision=(
+            snapshot.publication_revision if snapshot is not None else None
+        ),
+        desired_revision=(
+            snapshot.controller_revision if snapshot is not None else None
+        ),
+        collection_present=collection_present,
+    )
+    classification = classify_search_response(
+        {},
+        SearchAvailabilityContext(
+            before_snapshot=job_snapshot,
+            after_snapshot=job_snapshot,
+            requested_root=root,
+            source=concrete_source,
+            request_id="combined-search",
+            index_state={
+                "source": concrete_source,
+                "indexed_count": 1 if collection_present is True else 0,
+                "indexed_target_root": None,
+                "requested_target_root": str(root),
+                "target_matches": False,
+                "status": "available" if collection_present is True else "unverifiable",
+            },
+            port=None,
+            canonical_evidence=evidence,
+        ),
+    )
+    return classification.source_fact
 
 
 def _count_combined_domains(
@@ -168,6 +242,7 @@ def _count_combined_domains(
 ) -> tuple[
     dict[PublicSourceType, int],
     dict[PublicSourceType, SearchDomainOutcome],
+    dict[PublicSourceType, SearchSourceFact],
     dict[str, float],
 ]:
     """Count each domain independently and retain model-free failures."""
@@ -178,30 +253,53 @@ def _count_combined_domains(
     }
     counts: dict[PublicSourceType, int] = {}
     failures: dict[PublicSourceType, SearchDomainOutcome] = {}
+    facts: dict[PublicSourceType, SearchSourceFact] = {}
     timings: dict[str, float] = {}
+    from .server._routes import canonical_job_snapshot
+
+    jobs = canonical_job_snapshot()
     for source, operation in operations.items():
         try:
             count = operation()
         except Exception as exc:
+            source_fact = _combined_source_fact(
+                root,
+                source,
+                registry,
+                collection_present=None,
+                job_snapshot=jobs,
+            )
+            facts[source] = source_fact
             failures[source] = SearchDomainOutcome.failure(
                 source,
                 type(exc).__name__,
                 str(exc) or type(exc).__name__,
+                source_fact=source_fact,
             )
         else:
             counts[source] = count
+            facts[source] = _combined_source_fact(
+                root,
+                source,
+                registry,
+                collection_present=True,
+                job_snapshot=jobs,
+            )
             timings[f"{source.value}_indexed_count"] = float(count)
-    return counts, failures, timings
+    return counts, failures, facts, timings
 
 
 def _empty_or_failed_combined_outcome(
     failures: dict[PublicSourceType, SearchDomainOutcome],
+    facts: dict[PublicSourceType, SearchSourceFact],
     top_k: int,
 ) -> CombinedSearchOutcome:
     """Build the no-positive-count outcome without erasing count failures."""
 
     def outcome(source: PublicSourceType) -> SearchDomainOutcome:
-        return failures.get(source) or SearchDomainOutcome.success(source, [])
+        return failures.get(source) or SearchDomainOutcome.success(
+            source, [], source_fact=facts[source]
+        )
 
     return CombinedSearchOutcome(
         outcome(PublicSourceType.VAULT),
@@ -215,6 +313,7 @@ def _indexed_domain_outcome(
     source: PublicSourceType,
     counts: dict[PublicSourceType, int],
     failures: dict[PublicSourceType, SearchDomainOutcome],
+    facts: dict[PublicSourceType, SearchSourceFact],
     operation: Callable[[], Sequence[AnySearchResult]],
 ) -> SearchDomainOutcome:
     """Search one counted domain or return its preserved count outcome."""
@@ -222,8 +321,8 @@ def _indexed_domain_outcome(
     if failure is not None:
         return failure
     if counts.get(source, 0) == 0:
-        return SearchDomainOutcome.success(source, [])
-    return _search_domain(source, operation)
+        return SearchDomainOutcome.success(source, [], source_fact=facts[source])
+    return _search_domain(source, facts[source], operation)
 
 
 def search_combined(
@@ -269,9 +368,16 @@ def search_combined_timed(
     )
     root = pathlib.Path(request.root_dir).resolve()
     active_registry = registry if registry is not None else get_registry()
-    counts, count_failures, timings = _count_combined_domains(root, active_registry)
+    counts, count_failures, source_facts, timings = _count_combined_domains(
+        root, active_registry
+    )
     if not any(counts.values()):
-        return _empty_or_failed_combined_outcome(count_failures, request.top_k), timings
+        return (
+            _empty_or_failed_combined_outcome(
+                count_failures, source_facts, request.top_k
+            ),
+            timings,
+        )
 
     vault: SearchDomainOutcome | None = None
     code: SearchDomainOutcome | None = None
@@ -281,6 +387,7 @@ def search_combined_timed(
             PublicSourceType.VAULT,
             counts,
             count_failures,
+            source_facts,
             lambda: lease.searcher.search_vault(
                 request.query,
                 top_k=request.top_k,
@@ -295,6 +402,7 @@ def search_combined_timed(
             PublicSourceType.CODE,
             counts,
             count_failures,
+            source_facts,
             lambda: lease.searcher.search_codebase(
                 request.query,
                 top_k=request.top_k,
@@ -316,6 +424,7 @@ def search_combined_timed(
             PublicSourceType.DOCUMENT,
             counts,
             count_failures,
+            source_facts,
             lambda: lease.searcher.search_document(
                 request.query,
                 top_k=request.top_k,

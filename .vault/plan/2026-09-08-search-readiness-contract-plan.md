@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:21a6162a2919c5bb5573296e0c5d2bea6304da1140e8b9a3b7a9a276b2a8baf0'
+body_hash: 'sha256:4626c5e7c7649f563a966b942158819869963961d4fc2c960dff6c6b8173cc2e'
 ---
 
 <!-- RETIRED: P14 -->
@@ -90,7 +90,7 @@ Map canonical source facts into truthful result status header and retry behavior
 Aggregate per-source facts without erasing useful results degradation or authority gaps.
 
 - [x] `W02.P06.S23` - Extend domain outcomes with immutable source readiness and derive a lossless combined aggregate; `src/vaultspec_rag/search/_outcomes.py`.
-- [ ] `W02.P06.S24` - Classify every requested source and retain constituent failures beside useful combined results; `src/vaultspec_rag/_public_search.py`.
+- [x] `W02.P06.S24` - Classify every requested source and retain constituent failures beside useful combined results; `src/vaultspec_rag/_public_search.py`.
 - [ ] `W02.P06.S25` - Carry per-domain facts through route dispatch and require all-source authority for empty aggregate; `src/vaultspec_rag/server/_routes_search.py`.
 - [ ] `W02.P06.S26` - Prove partial degraded failed authoritative-empty non-authoritative-empty and omitted-domain combined outcomes; `src/vaultspec_rag/tests/test_search_outcomes.py`.
 - [ ] `W02.P06.S27` - Prove combined HTTP no longer bypasses classification or hides constituent failure; `src/vaultspec_rag/tests/test_http_search_errors.py`.
