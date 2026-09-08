@@ -33,7 +33,7 @@ from ...indexer._run_ledger_models import (
 from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
-from ...watcher_intake import _record_watcher_changes
+from ...watcher_intake import _classify_watcher_changes
 from ...watcher_retry import WatcherRetryPolicy, WatcherSource
 from ...watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
@@ -154,7 +154,7 @@ def _assert_deletion_routes_to_the_code_slot(root: Path, deleted: Path) -> None:
     try:
         vault, code, document = _slots(root, registry)
 
-        observed = _record_watcher_changes(
+        batch = _classify_watcher_changes(
             [(Change.deleted, str(deleted))],
             routing=WatcherChangeRouting(
                 root_dir=root,
@@ -166,8 +166,10 @@ def _assert_deletion_routes_to_the_code_slot(root: Path, deleted: Path) -> None:
             ),
         )
 
-        assert observed == (False, True, False)
-        assert code.dirty_paths() == frozenset({deleted})
+        assert [(change.source, change.path) for change in batch.changes] == [
+            (WatcherSource.CODE, deleted)
+        ]
+        assert code.dirty_paths() == frozenset()
         assert document.dirty_paths() == frozenset()
     finally:
         registry.close_all()
@@ -207,7 +209,7 @@ def test_policy_control_event_schedules_code_and_document_independently(
     try:
         vault, code, document = _slots(tmp_path, registry)
 
-        observed = _record_watcher_changes(
+        batch = _classify_watcher_changes(
             [(Change.modified, str(control))],
             routing=WatcherChangeRouting(
                 root_dir=tmp_path,
@@ -219,9 +221,12 @@ def test_policy_control_event_schedules_code_and_document_independently(
             ),
         )
 
-        assert observed == (False, True, True)
-        assert code.dirty_paths() == frozenset({control})
-        assert document.dirty_paths() == frozenset({control})
+        assert [(change.source, change.path) for change in batch.changes] == [
+            (WatcherSource.CODE, control),
+            (WatcherSource.DOCUMENT, control),
+        ]
+        assert code.dirty_paths() == frozenset()
+        assert document.dirty_paths() == frozenset()
         assert code.retry_policy.state.source is WatcherSource.CODE
         assert document.retry_policy.state.source is WatcherSource.DOCUMENT
     finally:
