@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from vaultspec_rag.watcher_controller import (
-    ControllerEventKind,
     ControllerLimits,
     ControllerMeasurement,
     ControllerReason,
@@ -96,9 +95,7 @@ def _observation(path: str = "src/example.py") -> ScopeObservation:
         source=WatcherSource.CODE,
         first_observed_at=10.0,
         latest_observed_at=12.0,
-        event_kinds=frozenset(
-            {ControllerEventKind.ADDED, ControllerEventKind.MODIFIED}
-        ),
+        event_kinds=frozenset({WatcherPathEvent.ADDED, WatcherPathEvent.MODIFIED}),
         generation=3,
     )
 
@@ -178,8 +175,8 @@ def test_scope_retains_exact_source_qualified_event_evidence() -> None:
     assert scope.pending == (observation,)
     assert observation.source is WatcherSource.CODE
     assert observation.event_kinds == {
-        ControllerEventKind.ADDED,
-        ControllerEventKind.MODIFIED,
+        WatcherPathEvent.ADDED,
+        WatcherPathEvent.MODIFIED,
     }
     field_name = "generation"
     with pytest.raises(FrozenInstanceError):
@@ -403,9 +400,15 @@ def test_fair_selection_admission_start_and_successful_convergence() -> None:
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
     controller.evaluate(_measurement(clock))
 
-    assert controller.select().reason is ControllerReason.FAIR_TURN_SELECTED
+    assert (
+        controller.advance(ControllerReason.FAIR_TURN_SELECTED).reason
+        is ControllerReason.FAIR_TURN_SELECTED
+    )
     assert controller.admit("job-1").state is ControllerState.ADMITTED
-    assert controller.start().state is ControllerState.RUNNING
+    assert (
+        controller.advance(ControllerReason.JOB_STARTED).state
+        is ControllerState.RUNNING
+    )
     completed = controller.complete(
         ControllerScope(generation=3),
         run_duration=10.0,
@@ -423,7 +426,7 @@ def test_success_with_later_work_cools_and_freshness_caps_delay() -> None:
     controller.observe(scope)
     controller.evaluate(_measurement(clock))
     controller.admit("job-1")
-    controller.start()
+    controller.advance(ControllerReason.JOB_STARTED)
 
     cooling = controller.complete(scope, run_duration=500.0, publication_duration=1.0)
     assert cooling.state is ControllerState.COOLING_DOWN
@@ -444,7 +447,7 @@ def test_release_restores_exact_scope(superseded: bool) -> None:
     controller.observe(scope)
     controller.evaluate(_measurement(clock))
     controller.admit("job-1")
-    controller.start()
+    controller.advance(ControllerReason.JOB_STARTED)
 
     released = controller.release(scope, superseded=superseded)
 
@@ -521,7 +524,7 @@ def test_every_eligible_controller_can_claim_selection_independently() -> None:
             source=source,
             first_observed_at=10.0,
             latest_observed_at=10.0,
-            event_kinds=frozenset({ControllerEventKind.MODIFIED}),
+            event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
             generation=1,
         )
         controller = WatcherController(
@@ -541,7 +544,10 @@ def test_every_eligible_controller_can_claim_selection_independently() -> None:
         controller.evaluate(_measurement(clock))
         controllers.append(controller)
 
-    selected = [controller.select() for controller in controllers]
+    selected = [
+        controller.advance(ControllerReason.FAIR_TURN_SELECTED)
+        for controller in controllers
+    ]
 
     assert [item.source for item in selected] == list(WatcherSource)
     assert all(item.reason is ControllerReason.FAIR_TURN_SELECTED for item in selected)

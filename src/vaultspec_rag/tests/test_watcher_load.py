@@ -10,7 +10,6 @@ import pytest
 
 from ..server._watcher import _WatcherScheduler
 from ..watcher_controller import (
-    ControllerEventKind,
     ControllerLimits,
     ControllerMeasurement,
     ControllerReason,
@@ -20,7 +19,7 @@ from ..watcher_controller import (
     ScopeObservation,
     WatcherController,
 )
-from ..watcher_retry import WatcherSource
+from ..watcher_retry import WatcherPathEvent, WatcherSource
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,7 +73,7 @@ def _scope(
                 source=source,
                 first_observed_at=first,
                 latest_observed_at=latest,
-                event_kinds=frozenset({ControllerEventKind.MODIFIED}),
+                event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
                 generation=generation,
             ),
         ),
@@ -102,7 +101,7 @@ def _admit(
     admitted: list[tuple[str, WatcherSource]],
     selection: AdmissionSelection,
 ) -> None:
-    controller.select()
+    controller.advance(ControllerReason.FAIR_TURN_SELECTED)
     controller.admit(f"load-{len(admitted)}")
     admitted.append((selection.canonical_root, selection.source))
 

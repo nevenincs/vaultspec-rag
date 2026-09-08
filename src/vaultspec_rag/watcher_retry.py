@@ -52,6 +52,7 @@ __all__ = [
     "WatcherRetryUnavailableError",
     "WatcherScopeRefusal",
     "WatcherSource",
+    "is_valid_watcher_relative_path",
 ]
 
 _SCHEMA_VERSION: Final = 3
@@ -108,6 +109,18 @@ class WatcherPathEvent(StrEnum):
     ADDED = "added"
     MODIFIED = "modified"
     DELETED = "deleted"
+
+
+def is_valid_watcher_relative_path(value: str) -> bool:
+    """Return whether a path is canonical, non-empty, and root-relative."""
+    path = PurePosixPath(value)
+    return bool(
+        value
+        and not path.is_absolute()
+        and not path.parts[0].endswith(":")
+        and "\\" not in value
+        and all(part not in ("", ".", "..") for part in path.parts)
+    )
 
 
 class WatcherScopeRefusal(StrEnum):
@@ -1504,14 +1517,14 @@ def _read_state(
     scope_refusal = (
         WatcherScopeRefusal.FULL_REINDEX_REQUIRED
         if legacy and convergence_pending
-        else _optional_scope_refusal(raw.get("scope_refusal"))
+        else _optional_enum(raw.get("scope_refusal"), WatcherScopeRefusal)
     )
     state = WatcherRetryState(
         schema_version=_SCHEMA_VERSION,
         canonical_root=_required_text(raw, "canonical_root"),
         source=WatcherSource(_required_text(raw, "source")),
         consecutive_failures=_nonnegative_int(raw, "consecutive_failures"),
-        last_error_kind=_optional_error_kind(raw.get("last_error_kind")),
+        last_error_kind=_optional_enum(raw.get("last_error_kind"), JobErrorKind),
         last_error_detail=_optional_text(raw.get("last_error_detail")),
         last_failure_at=_optional_timestamp(raw.get("last_failure_at")),
         last_durable_progress_at=_optional_timestamp(
@@ -1678,24 +1691,12 @@ def _path_observations(
     return tuple(observations)
 
 
-def _optional_scope_refusal(value: object) -> WatcherScopeRefusal | None:
-    text = _optional_text(value)
-    return WatcherScopeRefusal(text) if text is not None else None
-
-
 def _validate_path_observation(
     observation: WatcherPathObservation,
     *,
     source: WatcherSource,
 ) -> None:
-    path = PurePosixPath(observation.relative_path)
-    if (
-        not observation.relative_path
-        or path.is_absolute()
-        or path.parts[0].endswith(":")
-        or "\\" in observation.relative_path
-        or any(part in {"", ".", ".."} for part in path.parts)
-    ):
+    if not is_valid_watcher_relative_path(observation.relative_path):
         raise ValueError("scope_state_invalid: watcher path must be root-relative")
     if observation.source is not source:
         raise ValueError(
@@ -1782,9 +1783,9 @@ def _optional_text(value: object) -> str | None:
     )
 
 
-def _optional_error_kind(value: object) -> JobErrorKind | None:
+def _optional_enum[T: StrEnum](value: object, enum_type: type[T]) -> T | None:
     text = _optional_text(value)
-    return JobErrorKind(text) if text is not None else None
+    return enum_type(text) if text is not None else None
 
 
 def _nonnegative_int(raw: dict[str, object], key: str) -> int:

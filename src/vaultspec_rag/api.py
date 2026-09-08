@@ -1144,13 +1144,34 @@ def controller_snapshot_envelope(
     snapshot: object,
     *,
     observed_at: float | None = None,
+    monotonic_at: float | None = None,
 ) -> dict[str, object]:
     """Return the canonical bounded projection of one watcher controller."""
     from .watcher_controller import ControllerSnapshot
 
     if not isinstance(snapshot, ControllerSnapshot):
         raise TypeError("snapshot must be a ControllerSnapshot")
-    now = time.time() if observed_at is None else observed_at
+    reference_process = (
+        snapshot.observed_at if snapshot.monotonic_at is None else snapshot.monotonic_at
+    )
+    if observed_at is None and monotonic_at is None:
+        wall_now = snapshot.observed_at
+        process_now = reference_process
+    elif observed_at is not None and monotonic_at is None:
+        wall_now = observed_at
+        process_now = reference_process + (observed_at - snapshot.observed_at)
+    elif observed_at is None:
+        assert monotonic_at is not None
+        process_now = monotonic_at
+        wall_now = snapshot.observed_at + (monotonic_at - reference_process)
+    else:
+        wall_now = observed_at
+        assert monotonic_at is not None
+        process_now = monotonic_at
+
+    def wall_timestamp(value: float | None) -> float | None:
+        return None if value is None else wall_now + (value - process_now)
+
     observations = snapshot.scope.pending + snapshot.scope.captured
     first_observed = min(
         (item.first_observed_at for item in observations), default=None
@@ -1161,7 +1182,9 @@ def controller_snapshot_envelope(
     measurement = snapshot.measurement
     measurement_fields = {
         "generation": None if measurement is None else measurement.generation,
-        "observed_at": None if measurement is None else measurement.observed_at,
+        "observed_at": (
+            None if measurement is None else wall_timestamp(measurement.observed_at)
+        ),
         "job_backlog": None if measurement is None else measurement.job_backlog,
         "index_in_flight": (
             None if measurement is None else measurement.index_in_flight
@@ -1197,14 +1220,14 @@ def controller_snapshot_envelope(
         "reason": snapshot.reason.value,
         "pending_count": len(snapshot.scope.pending),
         "oldest_age_seconds": (
-            None if first_observed is None else max(0.0, now - first_observed)
+            None if first_observed is None else max(0.0, process_now - first_observed)
         ),
-        "first_observed_at": first_observed,
-        "latest_observed_at": latest_observed,
+        "first_observed_at": wall_timestamp(first_observed),
+        "latest_observed_at": wall_timestamp(latest_observed),
         "captured_generation": snapshot.scope.captured_generation,
         "captured_count": len(snapshot.scope.captured),
-        "next_decision_at": snapshot.next_decision_at,
-        "freshness_deadline": snapshot.freshness_deadline,
+        "next_decision_at": wall_timestamp(snapshot.next_decision_at),
+        "freshness_deadline": wall_timestamp(snapshot.freshness_deadline),
         "measurement": measurement_fields,
         "measurement_unavailable": unavailable,
         "backpressure": [reason.value for reason in snapshot.backpressure],
@@ -1216,12 +1239,12 @@ def controller_snapshot_envelope(
                 "destination_state": transition.destination_state.value,
                 "reason": transition.reason.value,
                 "wall_time": transition.wall_time,
-                "deadline": transition.deadline,
+                "deadline": wall_timestamp(transition.deadline),
                 "measurement_generation": transition.measurement_generation,
             }
         ),
         "job_id": snapshot.job_id,
-        "retry_at": snapshot.retry_at,
+        "retry_at": wall_timestamp(snapshot.retry_at),
         "circuit_state": snapshot.circuit_state.value,
         "remediation": remediation,
     }

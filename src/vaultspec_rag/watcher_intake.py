@@ -10,9 +10,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import (
     Change,
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
@@ -28,7 +30,6 @@ from .logging_config import log_event
 from .registry import get_registry
 from .watcher_controller import (
     ControllerLimits,
-    ControllerMeasurement,
     ControllerReason,
     ControllerSnapshot,
     ControllerState,
@@ -205,6 +206,7 @@ def _new_controller(retry_policy: WatcherRetryPolicy) -> WatcherController:
             reason=ControllerReason.CONVERGED,
             scope=scope,
             observed_at=wall_now,
+            monotonic_at=monotonic_now,
         ),
         monotonic=time.monotonic,
         wall_clock=time.time,
@@ -224,22 +226,38 @@ def _new_controller(retry_policy: WatcherRetryPolicy) -> WatcherController:
 
 def _register_controller_binding(binding: _ControllerBinding) -> None:
     from .server._watcher import _register_watcher_controller
+    from .server._watcher_measurements import capture_watcher_measurement
 
-    def reevaluate() -> None:
+    measurement_generation = 0
+
+    async def reevaluate() -> None:
+        nonlocal measurement_generation
         state = binding.retry_policy.state
+        measurement_generation += 1
+        observed_at = time.monotonic()
+        measurement = await _run_in_thread(
+            partial(
+                capture_watcher_measurement,
+                binding.slot.registry,
+                key=(str(binding.slot.root), state.source),
+                retry_state=state,
+                generation=measurement_generation,
+                observed_at=observed_at,
+            )
+        )
         retry_at = (
-            time.monotonic() + max(0.0, state.next_retry_at - time.time())
+            observed_at + max(0.0, state.next_retry_at - time.time())
             if state.next_retry_at
             else None
         )
         binding.controller.evaluate(
-            ControllerMeasurement(generation=0, observed_at=time.monotonic()),
+            measurement.controller,
             retry_at=retry_at,
             circuit_state=state.circuit_state,
         )
 
     async def admit(_selection: object) -> None:
-        binding.controller.select()
+        binding.controller.advance(ControllerReason.FAIR_TURN_SELECTED)
         await submit_watcher_job(
             binding.slot,
             controller=binding.controller,
