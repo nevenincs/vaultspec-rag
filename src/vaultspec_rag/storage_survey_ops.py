@@ -292,6 +292,8 @@ def gather_survey(
     Returns:
         Classified namespace records, actionable states first.
     """
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
     on_progress("Listing collections...")
     names = [c.name for c in client.get_collections().collections]
     counts: dict[str, int] = {}
@@ -299,7 +301,13 @@ def gather_survey(
         on_progress(f"Counting points ({position}/{len(names)} collections)")
         try:
             counts[name] = int(client.count(collection_name=name).count)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ResponseHandlingException):
+            # A slow server is one of the ways a collection cannot be
+            # counted, and the client does not signal it with a builtin: it
+            # wraps the underlying read timeout in a plain ``Exception``.
+            # Naming only the builtins here let one slow collection walk past
+            # this handler and unwind the survey - and with it the whole
+            # maintenance cycle - before any per-namespace gate was reached.
             counts[name] = 0
     on_progress(f"Measuring on-disk footprints for {len(names)} collections...")
     footprints = collection_footprints(names, storage_dir)
