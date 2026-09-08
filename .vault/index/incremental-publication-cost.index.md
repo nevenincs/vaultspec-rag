@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:0647c1980bf24455031ebd93480a393f6b57d4154c468b3479d9daa71db75241'
+body_hash: 'sha256:fdd75ebd27a4b8422a6ea046aed309b00b38510facec6e278993d29d5fcbb83d'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -14,6 +14,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S03]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S04]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S05]]'
+  - '[[2026-09-08-incremental-publication-cost-W01-P02-S54]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -38,6 +39,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P02-S03` - Extend ledger value and schema contracts for proof revisions, rows, aggregates, receipts, and provenance
 - `2026-09-08-incremental-publication-cost-W01-P02-S04` - Create and migrate normalized proof, receipt, mutation-unit, and tombstone tables with post-migration schema verification
 - `2026-09-08-incremental-publication-cost-W01-P02-S05` - Implement bounded proof reads, compare-and-swap revision commits, active-receipt lookup, read tokens, and canonical RunLedger composition
+- `2026-09-08-incremental-publication-cost-W01-P02-S54` - Implement receipt-bound single-snapshot canonical-proof reads with sparse run-local overrides, deletion tombstones, bounded path and candidate inputs, and exact retained-point ownership without generation ancestry or a second authority
 
 ### plan
 
