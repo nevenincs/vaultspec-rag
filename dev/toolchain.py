@@ -242,7 +242,7 @@ DEPS = Verb(
 
 #: The dimensions ``lint all`` chains, in order. Stated once, as data, so a
 #: target cannot exist without being part of the aggregate that claims to run
-#: everything - which is exactly what a hand-repeated chain of `just lint X`
+#: everything - which is exactly what a hand-repeated chain of `just check-<dimension>`
 #: calls could not guarantee.
 LINT_ALL = (
     "python",
