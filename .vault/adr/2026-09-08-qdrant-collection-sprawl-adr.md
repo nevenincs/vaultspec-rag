@@ -5,14 +5,16 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:c8b7cb97273d2807d599d0463883097cf7967e7298e7f35a2a8a34aa36ee8361'
+body_hash: 'sha256:4bd70f17f05879362a61ccd13ba94c833f393ff24ad530dd522ee29e4c168046'
 related:
   - "[[2026-09-08-qdrant-collection-sprawl-research]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
   - "[[2026-07-14-storage-namespace-hygiene-adr]]"
 ---
 
-# `qdrant-collection-sprawl` adr: `retention discrimination for the ephemeral namespace class, and the prerequisites that let it execute` | (**status:** `proposed`)
+# `qdrant-collection-sprawl` adr: `retention discrimination for the ephemeral namespace class, and the prerequisites that let it execute` | (**status:** `accepted`)
+
+## Problem Statement
 
 ## Problem Statement
 
@@ -26,13 +28,15 @@ sandboxes now enters the shared backend, each a full repository index, and each 
 held for seven days because the only retention input is whether a namespace holds
 points.
 
-A decision is needed now for a reason the first pass at this record missed. The
-research's readiness finding shows the daemon can fail to start at this collection
-count, and the maintenance cycle has exactly one caller inside that daemon - so the
-population is not merely expensive, it is capable of disabling the only mechanism that
-reduces it. Two further defects, an exception clause that lets one slow snapshot
-unwind a whole cycle and an archive that turns over wholesale under a drain, mean that
-changing a retention window on its own would not drain the backlog. This record
+A decision is needed now because the situation is no longer merely expensive. The
+research's readiness finding records the store failing to come up at this collection
+count and staying down, and the maintenance cycle has exactly one caller inside the
+daemon that needs it. The population that causes the start to fail is therefore the
+population only the reaper can reduce, and that loop is open at the time of writing
+rather than closed - the reaper has not run since the store went down. Two further
+defects, an exception clause that lets one slow snapshot unwind a whole cycle and an
+archive that turns over wholesale under a drain, mean that changing a retention window
+on its own would not drain the backlog even once the store is serving. This record
 decides the retention change and the conditions under which it can actually run.
 
 ## Considerations
@@ -86,10 +90,14 @@ decides the retention change and the conditions under which it can actually run.
   the primary: it trades one arbitrary constant for another and silently re-breaks at
   a higher collection count, which is precisely how the present value stopped being
   adequate. Acceptable only as a stopgap inside O4's ceiling.
-- **O6 - raise the archive cap for the drain (chosen, prerequisite).** Gives the
-  archive enough headroom that a drain does not evict the evidence it is writing.
-  Costs disk; the alternative is an archive that satisfies the letter of
-  archive-before-destroy while retaining roughly one cycle of it.
+- **O6 - raise the archive cap for the drain (chosen, prerequisite).** Takes
+  `storage_autoprune_archive_max_gb` from 20.0 to 64.0, roughly the 2.5x the research
+  derives as cover for a full ephemeral drain plus the non-temp orphans behind it, so
+  the archive does not evict the evidence it is writing. The cost is real and awkward:
+  it adds up to 44GB of disk on the host whose defining complaint is that this
+  subsystem is already its largest resource consumer. The alternative is an archive
+  that satisfies the letter of archive-before-destroy while retaining roughly one
+  cycle of it.
 - **O7 - rate-limit the ephemeral drain so archive turnover stays bounded.** Rejected
   in favour of O6: it protects the archive by prolonging exactly the resource pressure
   this record exists to relieve, and the per-cycle cap already bounds burst size.
@@ -138,6 +146,8 @@ decides the retention change and the conditions under which it can actually run.
 
 ## Implementation
 
+## Implementation
+
 The work is ordered by dependency, because the retention change is inert until the
 cycle can both start and survive.
 
@@ -146,7 +156,10 @@ wall time against a fixed budget and stops a child that exceeds it regardless of
 whether that child is still recovering collections. It will instead treat observable
 recovery progress as liveness, resetting its patience while progress continues and
 falling back to a hard ceiling so a wedged child is still caught. The existing fixed
-budget becomes that ceiling rather than the primary test.
+budget becomes that ceiling rather than the primary test. The ceiling is sized against
+the slowest observed contended start rather than the fastest cold one, because the
+research could not establish what drives the start-time variance and the cold-cache
+explanation is contradicted by its own data.
 
 Second, the cycle's failure isolation is brought up to what the parent contract already
 specifies. The guards around the archive call, the pre-drop re-count, and the
@@ -157,18 +170,18 @@ is remediation of an unimplemented clause, not a new capability.
 
 Third, retention gains its third input. The orphan decision reads point count to pick
 between an empty and a data window; it will additionally read ephemerality, already
-available on the survey record, and select a new `storage_autoprune_grace_hours_ephemeral`
-window when the root was temporary. The default is 24 hours, matching the empty-orphan
-window: the evidence for an orphaned temp-rooted namespace is strictly stronger than
-for the live temp-rooted case the existing 72-hour idle tier already destroys on, and a
-full day still absorbs a transient mount or share failure. Point count continues to
-select the tier *within* that choice, so an ephemeral point-bearing namespace still
-archives before it drops; only the waiting period changes. The live idle tier is
-untouched, leaving the two ephemeral paths symmetric.
+available on the survey record, and select a new
+`storage_autoprune_grace_hours_ephemeral` window when the root was temporary, defaulting
+to 24 hours. Point count continues to select the tier *within* that choice, so an
+ephemeral point-bearing namespace still archives before it drops; only the waiting
+period changes. The live idle tier is untouched, leaving the two ephemeral paths
+symmetric.
 
-Fourth, the archive gains headroom sized to the drain so the reclamation does not evict
-its own evidence, and the operator-facing surface states plainly that in-place restore
-is unavailable on Windows and names the portable path.
+Fourth, `storage_autoprune_archive_max_gb` rises from 20.0 to 64.0 - roughly the 2.5x
+the research derives as the cover for a full ephemeral drain plus the non-temp orphans
+that follow it - so the reclamation does not evict the evidence it is writing. The
+operator-facing archive surface additionally states that in-place restore is
+unavailable on Windows and names the portable path.
 
 Fifth, collection count and ephemeral backlog become reported quantities on the status
 surface, so the growth this record is correcting is visible next time without a manual
@@ -178,6 +191,8 @@ Finally, the stale generation-suffix residue is disposed of through the existing
 unreferenced-generation reclamation and the grace ledger is pruned of entries naming
 collections that no longer exist, and the tests that reach the shared backend are
 isolated to a temp storage directory so they stop seeding that residue.
+
+## Rationale
 
 ## Rationale
 
@@ -191,26 +206,46 @@ and which has not changed.
 
 That leaves discriminating by class, and the evidence for the ephemeral class is
 unusually strong: the root was created under the OS temp directory and is now provably
-absent. The existing policy already trusts the weaker half of that pair - temp-rootedness
-alone, with the directory still present - to authorise destruction after 72 hours.
-Refusing to trust the stronger pair for seven days is an inversion, and correcting it
-makes the two ephemeral paths consistent rather than introducing a new licence to
-delete. Setting the window at 24 hours rather than something shorter keeps a full day
-of tolerance for the transient-absence cases the parent contract was built around.
+absent. The existing policy already trusts the weaker half of that pair -
+temp-rootedness alone, with the directory still present - to authorise destruction
+after 72 hours. Refusing to trust the stronger pair for seven days is an inversion, and
+correcting it makes the two ephemeral paths consistent rather than introducing a new
+licence to delete.
+
+The window length is settled by effect size, not by symmetry. Symmetry alone would
+argue for 72 hours, matching the live idle tier; the research's projection shows that
+leaves roughly 114 collections against today's 138, a reduction too small to justify
+the change. 48 hours reaches roughly 96. Only 24 hours, at roughly 79, materially
+alters the situation, and it is chosen for that reason. It is not chosen because a day
+absorbs a transient mount or share failure: that case never arises here, because an
+absent root on an unreachable anchor classifies `unverifiable` rather than `orphaned`
+and so never reaches this decision at all, and every measured temp root is anchored on
+the system drive.
+
+One consequence of the short window is accepted deliberately. At 168 hours the
+distinction between elapsed time and continuous observation is immaterial; at 24 hours,
+against an hourly cycle and a daemon that demonstrably spends real time down, a window
+can be satisfied on relatively few confirming observations - and the namespaces
+destroyed hold full repository indexes. The grace stamp persisting across restarts is
+what makes this sound rather than reckless, since downtime can only ever extend the
+elapsed window and never shorten it, but the reduced observation density is a real
+change in the evidentiary basis and is owned here rather than left implicit.
 
 The prerequisites are included because O1 alone would have changed nothing observable.
-A retention window cannot drain a backlog if the daemon that evaluates it does not
-start, and cannot survive a cycle that unwinds on the first slow snapshot. Both were
-found only on re-examination, and both are failures against contracts already accepted
-rather than new ground.
+A retention window cannot drain a backlog if the daemon that evaluates it cannot start,
+and cannot survive a cycle that unwinds on the first slow snapshot. Both were found
+only on re-examination, and both are failures against contracts already accepted rather
+than new ground.
 
 The two rejections that matter most share a principle. O3 and O8 are the two ways to
 make the backlog drain faster by giving up a safety property - one abandons
 recoverability, the other lets a population statistic authorise a drop. Throughput here
 is bought with headroom, isolation, and reporting, never by lowering the bar for
-destruction. O10 is deferred for the same reason in weaker form: it is defensible, but
-it converts an enumerated safety gate into a throughput control, and that deserves its
-own record rather than riding along inside this one.
+destruction. O10 is deferred on plainer grounds: at 16 reclaims per cycle and 24 cycles
+a day, existing capacity exceeds both the arrival rate and the one-time backlog by more
+than an order of magnitude, so it would buy nothing the current cap does not already
+deliver - and deferring it is what lets this record's claim to reverse no gate stand
+unqualified.
 
 ## Consequences
 
@@ -224,7 +259,9 @@ framing is that this record buys headroom rather than solving collection sprawl.
 The first cycle after landing is a burst, not a trickle: the whole ephemeral backlog
 becomes eligible at once and drains at the per-cycle cap over several cycles. That is
 intended, and the archive headroom exists to keep it from destroying its own evidence
-while it happens.
+while it happens. That headroom is bought with disk on a host already under storage
+pressure, and it is a transitional cost: once the backlog clears, steady-state archive
+turnover falls back to the arrival rate and the raised cap is mostly unused headroom.
 
 A real risk is accepted knowingly. Any namespace whose legitimate root lives under the
 OS temp directory now gets a materially shorter window. Every gate still applies and

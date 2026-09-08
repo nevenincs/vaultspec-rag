@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:29da2a8798e725a6a0de96227083f5b2217a4a4938fce8527c500bcf482fe913'
+body_hash: 'sha256:f1a80d8fe76559796bf9c558e8a4ba6e125d8808e2aa2f960acf4adb519efbb7'
 related:
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
   - "[[2026-07-14-storage-namespace-hygiene-adr]]"
@@ -53,32 +53,55 @@ behaviour and is not restated here.
 
 ### A healthy start costs about two minutes; the observed failure is the daemon not starting at all
 
+### A healthy start costs about two minutes; the observed failure is the store not coming up at all
+
 Qdrant recovers every collection eagerly and sequentially at boot, with no lazy or
 on-demand loading - a long-standing upstream limitation rather than a regression
-(qdrant issues 2358, 3935, 7190). The cost is modest: segmenting the rotated logs by
-start banner, three separate successful starts each recovered all **139 collections in
-1.8 to 2.2 minutes**, roughly 0.9s per collection, before listening.
+(qdrant issues 2358, 3935, 7190). The cost of a *successful* start is modest:
+segmenting the rotated logs by start banner, three separate starts each recovered all
+139 collections in 1.8 to 2.2 minutes, roughly 0.9s per collection, and reached the
+listening marker.
 
 The damaging behaviour is a different one. `qdrant_ready_timeout_seconds` is a fixed
 300s (`src/vaultspec_rag/config/_settings.py:300`, consumed at
-`src/vaultspec_rag/qdrant_runtime/_supervise.py:246`). When the page cache is cold,
-recovery exceeds that budget, and the supervisor stops a child that is visibly still
-progressing and raises. Five such truncated starts are on record, all cut off at
-4.8-5.0 minutes: spans of 24, 59, and 90 collections loaded in one log, 58 and 109 in
-another. The supervisor's own comment acknowledges the hazard - that quarantining a
-still-alive child at the deadline would kill a healthily-loading one - and stops it
-regardless.
+`src/vaultspec_rag/qdrant_runtime/_supervise.py:246`). When recovery exceeds that
+budget, the supervisor stops a child that is visibly still progressing and raises
+(`src/vaultspec_rag/qdrant_runtime/_supervise.py:684`). Its own comment acknowledges
+the hazard - that quarantining a still-alive child at the deadline would kill a
+healthily-loading one - and stops it regardless.
 
-The sequence is self-resolving but expensive. Each attempt warms more of the page
-cache, so successive attempts reach further (24, then 59, then 90) until one completes
-and the service comes up; the service was confirmed running afterwards. The cost is
-not a permanent deadlock but a burst of consecutive five-minute outages after a cold
-start, and the number of attempts required grows with collection count.
+Five truncated starts are on record. Their *logged* spans and their process lifetimes
+are different quantities and should not be conflated: `Recovered collection` lines
+appear only on completion, so a start stalled inside one slow collection writes nothing
+for the remainder of its life. Three attempts logged 24, 59, and 90 collections before
+being cut; two in an earlier rotation logged 58 and 109. Only the 109-collection
+attempt shows a log span at the full 5.0 minutes.
 
-This is a prerequisite finding rather than a consequence. `run_maintenance_cycle` has
-exactly one caller, `src/vaultspec_rag/server/_lifecycle.py:713`, so the reaper only
-runs inside a started daemon. Any retention change is inert for as long as the daemon
-is failing to start, which makes the readiness budget a gate on every other fix here.
+**The store is down at the time of writing and the loop is open.** No attempt in the
+current rotation completed: the sequence ended at 90 of 138 and stopped. The supervisor
+raises after a failed attempt rather than retrying, the daemon then treats server-mode
+startup as fatal and force-exits, and a successor daemon came up 19 seconds later
+without a backend - completing startup in 76 seconds precisely because it loaded no
+collections. Verified directly: no qdrant process exists, nothing listens on the
+configured port, `/readyz` is unreachable, and `qdrant.log` has not been written since
+the last kill. A daemon reporting `running` and GPU embedding models loading are
+separate subsystems and are not evidence the store came up.
+
+This is the central prerequisite finding. `run_maintenance_cycle` has exactly one
+caller, `src/vaultspec_rag/server/_lifecycle.py:713`, and needs a client against the
+managed server, so **the reaper has been unable to run since the store went down**. The
+population that causes the start to fail is the population only the reaper can reduce.
+Any retention change is inert until this is fixed, which is why it sequences first.
+
+Why a start takes 1.8 minutes on one attempt and exceeds 5.0 on the next, at a constant
+collection count, is **not established**. Cold page cache is the intuitive explanation
+and it is contradicted by the data: in one rotation, two complete 139-collection loads
+at 2.1 and 2.2 minutes immediately precede the *worst* attempt of the five, which
+managed 58. The cache was at its warmest exactly where performance was worst. Plausible
+alternatives not investigated include contention with the concurrent indexing that runs
+throughout the same logs, and memory pressure against the resident set. This matters
+for sizing: a budget must be sized against whatever the contended case is, not against
+a cold-cache story the evidence does not support.
 
 ### The recursive generation suffix is already fixed; the observed names are residue
 
@@ -170,6 +193,8 @@ shipped decision rather than a new capability.
 
 ### The archive cap bounds retention, not drain rate - and it is about to turn over
 
+### The archive cap bounds retention, not drain rate - and it is about to turn over
+
 The archive holds 44 entries totalling 21,122,717,394 bytes, **98.36%** of its
 `storage_autoprune_archive_max_gb = 20.0` cap (`src/vaultspec_rag/config/_settings.py:97`).
 It is tempting to read this as a brake on reclamation; it is not. `archive_prefix`
@@ -182,10 +207,12 @@ cap governs how long evidence survives.
 That distinction matters because of what a retention fix triggers. Every temp-rooted
 orphan stamp is already 8 to 160 hours old, so shortening their window makes all 40
 eligible on the first cycle. Their footprint is 49,701,190,154 bytes (46.3 GiB) across
-40 namespaces, about 1.16 GiB each; 16 per cycle is roughly 18.5 GiB against a 21.47 GB
-cap that is already 98% full. **One or two cycles turn the entire archive over**, so
-the nominal 30-day retention collapses to roughly one cycle for the duration of the
-drain.
+40 namespaces, about 1.16 GiB each - an on-disk footprint used here as a proxy for
+snapshot size, which is an estimate, though the conclusion tolerates a wide margin. One
+cycle of 16 therefore writes on the order of 18.5 GiB against a 20 GiB cap that is
+already 98% full. **One or two cycles turn the entire archive over**, so the nominal
+30-day retention collapses to roughly one cycle for the duration of the drain. Covering
+the full drain without eviction would need a cap around 2.5 times the present one.
 
 ### The archive is not restorable on the affected platform
 
@@ -224,31 +251,41 @@ ADR.
 
 ### Option space, and what was not investigated
 
+### Option space, and what was not investigated
+
 Two findings are prerequisites and should be sequenced first: a readiness budget that
 tolerates a live, progressing child, and the exception clause that lets one slow
-snapshot abort a cycle. Neither is a retention question, and retention changes are
-inert until both hold.
+snapshot abort a cycle. Neither is a retention question, and retention changes cannot
+execute at all while the store is down.
 
 On retention itself, the evidence favours discriminating by namespace class over
 building new reaping machinery, since the reaper works and the windows are the
-mismatch. The open axes are: carrying `is_temp_rooted` into the orphan decision so
-ephemerality survives teardown, and at what window; a count-based backstop, and
-whether it may modulate throughput without becoming an authorisation; whether the
-archive cap should be raised to cover the drain, given that it will otherwise turn over
-wholesale; and stopping production at the source, which is only partly available since
-the dominant producer is a foreign harness. Our own `vaultspec-livetest-*` residue is
-in scope and indicates tests reaching the operator's real backend.
+mismatch. The window length is the substantive open question, and it is settled by
+effect size rather than by principle: against the fixed 27 non-temp-orphan and 34 live
+collections, a 72-hour ephemeral window leaves roughly 114 collections, 48 hours
+roughly 96, and 24 hours roughly 79. Only the shortest materially changes the
+situation, which the ADR must weigh against the fact that this would be the first
+data-tier destruction running on a window short enough for daemon downtime to thin the
+number of confirming observations behind it.
+
+The other open axes are: a count-based backstop, and whether it may modulate throughput
+without becoming an authorisation; whether the archive cap should be raised to cover
+the drain, given that it will otherwise turn over wholesale; and stopping production at
+the source, which is only partly available since the dominant producer is a foreign
+harness. Our own `vaultspec-livetest-*` residue is in scope and indicates tests
+reaching the operator's real backend.
 
 The qdrant-side shape change - payload partitioning instead of collection-per-repo -
 is the upstream-recommended fix and would remove the class outright, but it is a
 storage-schema migration far larger than this defect and is named here only so the ADR
 can size it against the alternatives.
 
-Not investigated: whether qdrant's per-structure memory tiers would materially reduce
-RSS at this collection count; whether reducing `default_segment_number` below 2 is safe
-for our query shapes; the RSS attribution across collections, taken from the audit
-rather than re-measured; and why the `cadrumo` harness indexes a fresh full repository
-roughly nine times a day.
+Not investigated: what drives the 1.8-to-over-5.0-minute start variance at constant
+collection count, which the cold-cache hypothesis fails to explain; whether qdrant's
+per-structure memory tiers would materially reduce RSS at this collection count;
+whether reducing `default_segment_number` below 2 is safe for our query shapes; the RSS
+attribution across collections, taken from the audit rather than re-measured; and why
+the `cadrumo` harness indexes a fresh full repository roughly nine times a day.
 
 ## Sources
 
