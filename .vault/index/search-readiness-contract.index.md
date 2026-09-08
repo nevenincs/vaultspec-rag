@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:ae66f489705b7f9d03590ce0f190c9dbccc8bf6d9c741af6935f6509cf796c6b'
+body_hash: 'sha256:41af7a3a98a1322c49486656f1aaf00034b478d5da32c0e800f551d3998bbe1b'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -54,6 +54,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P08-summary]]'
   - '[[2026-09-08-search-readiness-contract-W03-P09-S37]]'
   - '[[2026-09-08-search-readiness-contract-W03-P09-S38]]'
+  - '[[2026-09-08-search-readiness-contract-W03-P09-S39]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -118,6 +119,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P08-summary` - `search-readiness-contract` `W03.P08` summary
 - `2026-09-08-search-readiness-contract-W03-P09-S37` - Expose freshness policy and bounded duration on search commands with immediate defaults
 - `2026-09-08-search-readiness-contract-W03-P09-S38` - Preserve canonical JSON and render concise human readiness wait identifiers code and remediation
+- `2026-09-08-search-readiness-contract-W03-P09-S39` - Prove JSON parity policy validation updating success typed failure wait cause and identifier bounds
 
 ### plan
 
