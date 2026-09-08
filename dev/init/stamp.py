@@ -145,9 +145,7 @@ def missing_artifacts(repo_root: Path, phase: Phase) -> list[str]:
     Returns:
         The relative paths that are missing, in declaration order.
     """
-    return [
-        relative for relative in phase.artifacts if not (repo_root / relative).exists()
-    ]
+    return [path for path in phase.artifacts if not (repo_root / path).exists()]
 
 
 def read(repo_root: Path) -> dict[str, str]:
@@ -242,12 +240,7 @@ def staleness(repo_root: Path, phases: Iterable[Phase]) -> list[tuple[str, str]]
         if missing:
             reasons.append((phase.name, f"missing: {', '.join(missing)}"))
         elif recorded.get(phase.name) != phase_digest(repo_root, phase):
-            reasons.append(
-                (
-                    phase.name,
-                    "no stamp"
-                    if phase.name not in recorded
-                    else "inputs changed since the last run",
-                )
-            )
+            unstamped = phase.name not in recorded
+            why = "no stamp" if unstamped else "inputs changed since the last run"
+            reasons.append((phase.name, why))
     return reasons

@@ -21,7 +21,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -92,7 +92,7 @@ def _version_of(requirement: Requirement) -> str | None:
     declared = list(requirement.version_argv or (requirement.command, "--version"))
     argv = [resolved, *declared[1:]]
     try:
-        completed = subprocess.run(  # noqa: S603 - argv is declared data, never shell
+        completed = subprocess.run(
             argv,
             capture_output=True,
             text=True,
@@ -120,6 +120,19 @@ def _tuple(version: str) -> tuple[int, ...]:
     return tuple(parts + [0] * (3 - len(parts)))
 
 
+def _absent(requirement: Requirement) -> str:
+    """Return the message for a tool that is not on ``PATH``.
+
+    Args:
+        requirement: The tool that is missing.
+
+    Returns:
+        The one line a person needs: what it was for, and where to get it.
+    """
+    where = f"Install it from {requirement.install_url}"
+    return f"{requirement.command} is not on PATH. {requirement.purpose} {where}"
+
+
 def check(requirement: Requirement) -> Finding:
     """Probe one requirement.
 
@@ -134,10 +147,7 @@ def check(requirement: Requirement) -> Finding:
             command=requirement.command,
             ok=False,
             found=None,
-            message=(
-                f"{requirement.command} is not on PATH. "
-                f"{requirement.purpose} Install it from {requirement.install_url}"
-            ),
+            message=_absent(requirement),
             advisory=requirement.advisory,
         )
     found = _version_of(requirement)

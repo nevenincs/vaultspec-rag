@@ -78,12 +78,12 @@ TOOLS = Phase(
         Step(
             name="framework-install",
             argv=("uv", "run", "--no-sync", "vaultspec-core", "install", "--force"),
-            summary="Rebuild the gitignored .vaultspec install manifest from tracked config.",
+            summary="Rebuild the gitignored install manifest from tracked config.",
         ),
         Step(
             name="hook-runner",
             argv=(PY, "-m", "dev.init.hooks", ".pre-commit-config.yaml"),
-            summary="Install the committed hooks, or report that no runner is declared.",
+            summary="Install the committed hooks, or report that none can be.",
             advisory=True,
         ),
     ),

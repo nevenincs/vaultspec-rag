@@ -53,7 +53,7 @@ def ensure(venv: Path) -> int:
         return 0
     argv = ["uv", "venv", str(venv)]
     print(f"$ {' '.join(argv)}", flush=True)
-    return subprocess.run(argv, check=False).returncode  # noqa: S603
+    return subprocess.run(argv, check=False).returncode
 
 
 def main(argv: list[str] | None = None) -> int:

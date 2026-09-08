@@ -174,7 +174,7 @@ def run(step: Step, *, cwd: Path, echo: bool = True) -> tuple[StepResult, int]:
         )
     argv = [executable, *step.argv[1:]]
     try:
-        completed = subprocess.run(  # noqa: S603 - argv is declared data, never shell
+        completed = subprocess.run(
             argv,
             cwd=cwd,
             capture_output=True,
