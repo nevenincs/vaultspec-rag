@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:cdac21958a34b2a919a69b7a4f840f2d4187b4c0adc71b34fbd132cd8472e901'
+body_hash: 'sha256:dbb7aab54ecc6e1db70a3e9df35b60c4b166615a6c9bc65eb1e9e658341ddcc3'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -47,7 +47,7 @@ Define deterministic controller states, decisions, deadlines, measurements, and 
 Persist bounded canonical paths and controller fencing so restart recovery is deterministic and fail-closed.
 
 - [x] `W01.P02.S04` - Extend watcher durable state with versioned path observations, bounds, and refusal validation; `src/vaultspec_rag/watcher_retry.py`.
-- [ ] `W01.P02.S05` - Make event merge, admission fencing, settlement, and cancellation handoff atomic; `src/vaultspec_rag/watcher_durability.py`.
+- [x] `W01.P02.S05` - Make event merge, admission fencing, settlement, and cancellation handoff atomic; `src/vaultspec_rag/watcher_durability.py`.
 - [ ] `W01.P02.S06` - Add virtual-clock and generated-sequence proofs for transitions, deadlines, scope safety, and restart; `src/vaultspec_rag/tests/test_watcher_controller.py`.
 
 ## Wave `W02` - service admission and projections
