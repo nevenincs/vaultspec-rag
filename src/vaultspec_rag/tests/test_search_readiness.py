@@ -360,12 +360,18 @@ async def test_revision_is_monotonic_and_equal_revision_checks_generation(
     conflict = await registry.published_at_least(
         (_target(tmp_path, "code", 3, "not-second"),), timeout_seconds=0
     )
-    older = await registry.published_at_least(
+    older_conflict = await registry.published_at_least(
+        (_target(tmp_path, "code", 2, "not-second"),), timeout_seconds=0
+    )
+    matching = registry.publish_next(tmp_path, "code", generation="not-second")
+    older_matching = await registry.published_at_least(
         (_target(tmp_path, "code", 2, "not-second"),), timeout_seconds=0
     )
 
     assert not conflict
-    assert older
+    assert not older_conflict
+    assert matching.publication_revision == 4
+    assert older_matching
 
 
 async def test_terminal_job_transition_cannot_satisfy_publication(
