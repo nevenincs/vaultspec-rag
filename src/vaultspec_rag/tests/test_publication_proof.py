@@ -6,12 +6,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._source_types import PublicSourceType
 from ..indexer._publication_proof import (
     AggregateDelta,
     PathDelta,
     PathOutcome,
     ProofAggregate,
+    ProofCompatibilityKey,
     ProofEvidence,
+    ProofIncompatibleError,
+    ProofReadConflictError,
+    ProofReadToken,
 )
 
 if TYPE_CHECKING:
@@ -25,6 +30,22 @@ def _evidence(path: str, *point_ids: str, content: str = "content-v1") -> ProofE
         rel_path=path,
         content_identity=content,
         point_ids=tuple(point_ids),
+    )
+
+
+def _compatibility(*, policy: str = "policy-v1") -> ProofCompatibilityKey:
+    return ProofCompatibilityKey(
+        source_type=PublicSourceType.CODE,
+        root_identity="root-v1",
+        backend_identity="backend-v1",
+        collection_identity="collection-v1",
+        storage_schema=1,
+        payload_schema=2,
+        embedding_schema_identity="embedding-v1",
+        chunking_schema_identity="chunking-v1",
+        membership_identity="membership-v1",
+        content_identity="content-v1",
+        policy_identity=policy,
     )
 
 
@@ -168,6 +189,111 @@ def test_path_outcome_applies_exact_aggregate_delta(
 
     assert delta.aggregate_delta == expected_delta
     assert parent.apply(delta) == expected_aggregate
+
+
+def test_modify_requires_changed_evidence_and_noop_requires_exact_evidence() -> None:
+    """Mutation proving this can fail: allow equal MODIFY or absent NOOP evidence."""
+    evidence = _evidence("src/item.py", "point:0")
+
+    with pytest.raises(ValueError, match="invalid modify"):
+        PathDelta(
+            outcome=PathOutcome.MODIFY,
+            expected_parent_revision=4,
+            rel_path=evidence.rel_path,
+            old=evidence,
+            new=evidence,
+        )
+    with pytest.raises(ValueError, match="invalid noop"):
+        PathDelta(
+            outcome=PathOutcome.NOOP,
+            expected_parent_revision=4,
+            rel_path=evidence.rel_path,
+        )
+    for changed in (
+        _evidence("src/item.py", "point:0", content="content-v2"),
+        _evidence("src/item.py", "point:1"),
+    ):
+        with pytest.raises(ValueError, match="invalid noop"):
+            PathDelta(
+                outcome=PathOutcome.NOOP,
+                expected_parent_revision=4,
+                rel_path=evidence.rel_path,
+                old=evidence,
+                new=changed,
+            )
+
+    exact_noop = PathDelta(
+        outcome=PathOutcome.NOOP,
+        expected_parent_revision=4,
+        rel_path=evidence.rel_path,
+        old=evidence,
+        new=evidence,
+    )
+    assert exact_noop.aggregate_delta == AggregateDelta()
+    assert not exact_noop.changes_proof
+
+    changed = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=4,
+        rel_path=evidence.rel_path,
+        old=evidence,
+        new=_evidence("src/item.py", "point:1"),
+    )
+    assert changed.changes_proof
+
+
+def test_read_token_fences_open_or_changed_receipt_snapshots() -> None:
+    """Mutation proving this can fail: omit the receipt flag or reservation sequence."""
+    key = _compatibility()
+    token = ProofReadToken.from_snapshot(
+        compatibility_key=key,
+        revision=7,
+        reservation_sequence=11,
+        has_open_receipt=False,
+    )
+
+    token.validate(
+        compatibility_key=key,
+        revision=7,
+        reservation_sequence=11,
+        has_open_receipt=False,
+    )
+    with pytest.raises(ProofReadConflictError):
+        token.validate(
+            compatibility_key=key,
+            revision=8,
+            reservation_sequence=11,
+            has_open_receipt=False,
+        )
+    with pytest.raises(ProofReadConflictError):
+        token.validate(
+            compatibility_key=key,
+            revision=7,
+            reservation_sequence=12,
+            has_open_receipt=False,
+        )
+    with pytest.raises(ProofReadConflictError):
+        token.validate(
+            compatibility_key=key,
+            revision=7,
+            reservation_sequence=11,
+            has_open_receipt=True,
+        )
+
+    with pytest.raises(ProofReadConflictError, match="open receipt"):
+        ProofReadToken.from_snapshot(
+            compatibility_key=key,
+            revision=7,
+            reservation_sequence=11,
+            has_open_receipt=True,
+        )
+    with pytest.raises(ProofIncompatibleError):
+        token.validate(
+            compatibility_key=_compatibility(policy="policy-v2"),
+            revision=7,
+            reservation_sequence=11,
+            has_open_receipt=False,
+        )
 
 
 @pytest.mark.parametrize(

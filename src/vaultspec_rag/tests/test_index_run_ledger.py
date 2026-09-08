@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._index_breadth import GENERATION_ID_KEY
+from .._source_types import PublicSourceType
 from ..indexer._code_meta import (
     CONTENT_EPOCH_KEY,
     MEMBERSHIP_EPOCH_KEY,
@@ -20,14 +21,28 @@ from ..indexer._code_meta import (
 )
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
+from ..indexer._publication_proof import (
+    PathDelta,
+    PathOutcome,
+    ProofAggregate,
+    ProofCompatibilityKey,
+    ProofEvidence,
+    ProofMutationState,
+    ProofProvenance,
+    ProofReceiptState,
+)
 from ..indexer._run_ledger_commits import retained_point_ids_sql
 from ..indexer._run_ledger_models import (
     FETCH_BATCH,
     INDEX_RUN_LEDGER_FILENAME,
+    PUBLICATION_PROOF_SCHEMA,
     RESUMABLE_STATES,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    PublicationMutationUnit,
+    PublicationProof,
+    PublicationReceipt,
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
@@ -90,6 +105,325 @@ def _unit(
         is_file_end=ordinal == count - 1,
         point_ids=(f"{path}:{ordinal}:0", f"{path}:{ordinal}:1"),
     )
+
+
+def _proof_compatibility() -> ProofCompatibilityKey:
+    return ProofCompatibilityKey(
+        source_type=PublicSourceType.CODE,
+        root_identity="root-v1",
+        backend_identity="backend-v1",
+        collection_identity="collection-v1",
+        storage_schema=1,
+        payload_schema=2,
+        embedding_schema_identity="embedding-v1",
+        chunking_schema_identity="chunking-v1",
+        membership_identity="membership-v1",
+        content_identity="content-v1",
+        policy_identity="policy-v1",
+    )
+
+
+def test_publication_generation_is_provenance_not_compatibility() -> None:
+    key = _proof_compatibility()
+    first = PublicationProof(
+        revision=3,
+        reservation_sequence=7,
+        compatibility_key=key,
+        generation_id="generation-a",
+        aggregate=ProofAggregate(indexed_identities=1, retained_points=2),
+        provenance=ProofProvenance.DELTA_DERIVED,
+        committed_at=2.0,
+    )
+    second = replace(first, generation_id="generation-b", committed_at=3.0)
+
+    assert first.compatibility_key == second.compatibility_key
+    assert first.generation_id != second.generation_id
+    assert not hasattr(key, "generation_id")
+
+
+def test_streaming_mutations_advance_independently_before_receipt_sealing() -> None:
+    prepared = PublicationMutationUnit(
+        ordinal=0,
+        unit=_unit("src/item.py", 0, 1),
+        state=ProofMutationState.PREPARED,
+        prepared_at=1.0,
+    )
+    applied = replace(
+        prepared,
+        state=ProofMutationState.APPLIED,
+        applied_at=2.0,
+    )
+    confirmed = replace(
+        applied,
+        state=ProofMutationState.CONFIRMED,
+        confirmed_at=3.0,
+    )
+
+    assert prepared.identity == applied.identity == confirmed.identity
+    with pytest.raises(ValueError, match="timestamps must match"):
+        replace(prepared, state=ProofMutationState.CONFIRMED, confirmed_at=3.0)
+    with pytest.raises(ValueError, match="monotonic"):
+        replace(applied, applied_at=0.5)
+
+
+def test_receipt_reserves_streaming_work_then_seals_complete_deltas() -> None:
+    """Mutation proving this can fail: omit sealed coverage or close at seal."""
+    prepared = PublicationMutationUnit(
+        ordinal=0,
+        unit=_unit("src/item.py", 0, 1),
+        state=ProofMutationState.PREPARED,
+        prepared_at=2.0,
+    )
+    reserved = PublicationReceipt(
+        receipt_id="receipt-v1",
+        reservation_sequence=8,
+        compatibility_key=_proof_compatibility(),
+        generation_id="generation-v2",
+        parent_revision=3,
+        target_revision=4,
+        state=ProofReceiptState.RESERVED,
+        reserved_at=1.0,
+    )
+
+    assert reserved.mutations == ()
+    assert reserved.deltas == ()
+    assert reserved.is_open
+    with_prepared = replace(reserved, mutations=(prepared,))
+
+    assert prepared.unit.source_digest is not None
+    evidence = ProofEvidence(
+        rel_path="src/item.py",
+        content_identity=prepared.unit.source_digest,
+        point_ids=prepared.unit.point_ids,
+    )
+    delta = PathDelta(
+        outcome=PathOutcome.ADD,
+        expected_parent_revision=3,
+        rel_path=evidence.rel_path,
+        new=evidence,
+    )
+    with pytest.raises(ValueError, match="exactly cover"):
+        replace(
+            reserved,
+            state=ProofReceiptState.SEALED,
+            deltas=(delta,),
+            sealed_at=4.0,
+        )
+
+    sealed_prepared = replace(prepared, sealed_ordinal=0)
+    sealed = replace(
+        with_prepared,
+        state=ProofReceiptState.SEALED,
+        mutations=(sealed_prepared,),
+        deltas=(delta,),
+        sealed_at=4.0,
+    )
+
+    assert sealed.is_open
+    wrong_content = replace(
+        sealed_prepared,
+        unit=replace(sealed_prepared.unit, source_digest=_digest("other-content")),
+    )
+    with pytest.raises(ValueError, match="content must match"):
+        replace(sealed, mutations=(wrong_content,))
+    wrong_points = replace(
+        sealed_prepared,
+        unit=replace(
+            sealed_prepared.unit,
+            point_ids=sealed_prepared.unit.point_ids[:1],
+        ),
+    )
+    with pytest.raises(ValueError, match="exact proof point"):
+        replace(sealed, mutations=(wrong_points,))
+    with pytest.raises(ValueError, match="every mutation"):
+        replace(sealed, state=ProofReceiptState.COMMITTED, committed_at=5.0)
+
+    confirmed = replace(
+        sealed_prepared,
+        state=ProofMutationState.CONFIRMED,
+        applied_at=2.5,
+        confirmed_at=3.0,
+    )
+    late_confirmation = replace(confirmed, applied_at=4.5, confirmed_at=6.0)
+    with pytest.raises(ValueError, match="follow receipt closure"):
+        replace(
+            sealed,
+            state=ProofReceiptState.COMMITTED,
+            mutations=(late_confirmation,),
+            committed_at=5.0,
+        )
+    committed = replace(
+        sealed,
+        state=ProofReceiptState.COMMITTED,
+        mutations=(confirmed,),
+        committed_at=5.0,
+    )
+    noop_evidence = ProofEvidence(
+        rel_path="src/noop.py",
+        content_identity="content-v1",
+        point_ids=("point-v1",),
+    )
+    noop = PathDelta(
+        outcome=PathOutcome.NOOP,
+        expected_parent_revision=3,
+        rel_path=noop_evidence.rel_path,
+        old=noop_evidence,
+        new=noop_evidence,
+    )
+    with pytest.raises(ValueError, match="no-op receipt"):
+        replace(
+            reserved,
+            state=ProofReceiptState.COMMITTED,
+            deltas=(noop,),
+            sealed_at=4.0,
+            committed_at=5.0,
+        )
+    rolled_back = replace(
+        with_prepared,
+        state=ProofReceiptState.ROLLED_BACK,
+        rolled_back_at=4.0,
+    )
+
+    assert not committed.is_open
+    assert not rolled_back.is_open
+
+
+def test_receipt_rejects_ambiguous_point_ownership_across_paths() -> None:
+    """Mutation proving this can fail: omit receipt-wide point ownership checks."""
+    shared_a = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("content-a"),
+        point_ids=("shared-point",),
+    )
+    shared_b = ProofEvidence(
+        rel_path="src/b.py",
+        content_identity=_digest("content-b"),
+        point_ids=("shared-point",),
+    )
+
+    def unit(kind: CommitUnitKind, evidence: ProofEvidence) -> CommitUnit:
+        return CommitUnit(
+            rel_path=evidence.rel_path,
+            kind=kind,
+            source_digest=(
+                evidence.content_identity if kind is CommitUnitKind.UPSERT else None
+            ),
+            segment_ordinal=0,
+            is_file_end=True,
+            point_ids=evidence.point_ids,
+        )
+
+    def seal(
+        deltas: tuple[PathDelta, ...], units: tuple[CommitUnit, ...]
+    ) -> PublicationReceipt:
+        prepared = tuple(
+            PublicationMutationUnit(
+                ordinal=ordinal,
+                unit=value,
+                state=ProofMutationState.PREPARED,
+                prepared_at=1.5,
+            )
+            for ordinal, value in enumerate(units)
+        )
+        sealed_order = {
+            mutation.identity: ordinal
+            for ordinal, mutation in enumerate(
+                sorted(prepared, key=lambda mutation: mutation.identity)
+            )
+        }
+        mutations = tuple(
+            replace(
+                mutation,
+                sealed_ordinal=sealed_order[mutation.identity],
+            )
+            for mutation in prepared
+        )
+        return PublicationReceipt(
+            receipt_id="receipt-overlap",
+            reservation_sequence=9,
+            compatibility_key=_proof_compatibility(),
+            generation_id="generation-v2",
+            parent_revision=3,
+            target_revision=4,
+            state=ProofReceiptState.SEALED,
+            reserved_at=1.0,
+            mutations=mutations,
+            deltas=deltas,
+            sealed_at=2.0,
+        )
+
+    add_a = PathDelta(
+        outcome=PathOutcome.ADD,
+        expected_parent_revision=3,
+        rel_path=shared_a.rel_path,
+        new=shared_a,
+    )
+    add_b = PathDelta(
+        outcome=PathOutcome.ADD,
+        expected_parent_revision=3,
+        rel_path=shared_b.rel_path,
+        new=shared_b,
+    )
+    delete_a = PathDelta(
+        outcome=PathOutcome.DELETE,
+        expected_parent_revision=3,
+        rel_path=shared_a.rel_path,
+        old=shared_a,
+    )
+    delete_b = PathDelta(
+        outcome=PathOutcome.DELETE,
+        expected_parent_revision=3,
+        rel_path=shared_b.rel_path,
+        old=shared_b,
+    )
+    with pytest.raises(ValueError, match="multiple proof paths"):
+        seal(
+            (add_a, add_b),
+            (
+                unit(CommitUnitKind.UPSERT, shared_a),
+                unit(CommitUnitKind.UPSERT, shared_b),
+            ),
+        )
+    with pytest.raises(ValueError, match="multiple proof paths"):
+        seal(
+            (delete_a, delete_b),
+            (
+                unit(CommitUnitKind.DELETE_PATH, shared_a),
+                unit(CommitUnitKind.DELETE_PATH, shared_b),
+            ),
+        )
+    with pytest.raises(ValueError, match="transfer point identity"):
+        seal(
+            (delete_a, add_b),
+            (
+                unit(CommitUnitKind.DELETE_PATH, shared_a),
+                unit(CommitUnitKind.UPSERT, shared_b),
+            ),
+        )
+
+
+def test_publication_schema_separates_receipts_from_streaming_mutations() -> None:
+    """Mutation proving this can fail: remove either normalized mutation table."""
+    assert {
+        "publication_mutation_units",
+        "publication_mutation_points",
+    } <= PUBLICATION_PROOF_SCHEMA.keys()
+    assert {
+        "reservation_sequence",
+        "reserved_at",
+        "sealed_at",
+        "committed_at",
+        "rolled_back_at",
+    } <= PUBLICATION_PROOF_SCHEMA["publication_receipts"]
+    assert {
+        "prepared_at",
+        "applied_at",
+        "confirmed_at",
+        "sealed_ordinal",
+        "state",
+    } <= (PUBLICATION_PROOF_SCHEMA["publication_mutation_units"])
+    assert "reservation_sequence" in PUBLICATION_PROOF_SCHEMA["publication_proofs"]
+    assert "prepared_at" not in PUBLICATION_PROOF_SCHEMA["publication_receipts"]
 
 
 def test_backend_identity_is_part_of_manifest_compatibility(tmp_path: Path) -> None:

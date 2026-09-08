@@ -13,14 +13,17 @@ __all__ = [
     "PathDelta",
     "PathOutcome",
     "ProofAggregate",
+    "ProofCompatibilityKey",
     "ProofEvidence",
-    "ProofIdentity",
     "ProofIncompatibleError",
     "ProofMismatchError",
     "ProofMissingError",
+    "ProofMutationState",
     "ProofOldEvidenceMismatchError",
     "ProofParentMismatchError",
     "ProofProvenance",
+    "ProofReadConflictError",
+    "ProofReadToken",
     "ProofRebuildRequiredError",
     "ProofReceiptState",
     "ProofUnverifiableError",
@@ -52,12 +55,25 @@ class PathOutcome(StrEnum):
 
 
 class ProofReceiptState(StrEnum):
-    """Durable progress across the storage and proof transaction boundary."""
+    """Lifecycle of one reserved parent-to-target proof transition."""
+
+    RESERVED = "reserved"
+    SEALED = "sealed"
+    COMMITTED = "committed"
+    ROLLED_BACK = "rolled_back"
+
+    @property
+    def is_open(self) -> bool:
+        """Return whether this receipt prevents the current proof being read."""
+        return self in {ProofReceiptState.RESERVED, ProofReceiptState.SEALED}
+
+
+class ProofMutationState(StrEnum):
+    """Durable progress of one bounded external-storage mutation."""
 
     PREPARED = "prepared"
     APPLIED = "applied"
     CONFIRMED = "confirmed"
-    COMMITTED = "committed"
 
 
 class ProofProvenance(StrEnum):
@@ -139,15 +155,18 @@ class ProofRebuildRequiredError(ProofUnverifiableError):
         super().__init__(message, reason=reason)
 
 
+class ProofReadConflictError(RuntimeError):
+    """A live read could not retain one receipt-free proof snapshot."""
+
+
 @dataclass(frozen=True, slots=True)
-class ProofIdentity:
-    """Compatibility and storage identity of one source generation proof."""
+class ProofCompatibilityKey:
+    """Stable conditions under which publication proof ancestry is reusable."""
 
     source_type: PublicSourceType
     root_identity: str
     backend_identity: str
     collection_identity: str
-    generation_id: str
     storage_schema: int
     payload_schema: int
     embedding_schema_identity: str
@@ -165,7 +184,6 @@ class ProofIdentity:
             "root_identity",
             "backend_identity",
             "collection_identity",
-            "generation_id",
             "embedding_schema_identity",
             "chunking_schema_identity",
             "membership_identity",
@@ -177,6 +195,65 @@ class ProofIdentity:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ProofReadToken:
+    """Receipt-free proof snapshot used to fence one backend read."""
+
+    compatibility_key: ProofCompatibilityKey
+    revision: int
+    reservation_sequence: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("compatibility_key must be a ProofCompatibilityKey")
+        _require_revision(self.revision, name="revision")
+        _require_revision(self.reservation_sequence, name="reservation_sequence")
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        *,
+        compatibility_key: ProofCompatibilityKey,
+        revision: int,
+        reservation_sequence: int,
+        has_open_receipt: bool,
+    ) -> ProofReadToken:
+        """Capture one atomically read ledger snapshot when no receipt is open."""
+        if not isinstance(has_open_receipt, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("has_open_receipt must be a bool")
+        if has_open_receipt:
+            raise ProofReadConflictError("an open receipt prevents proof certification")
+        return cls(
+            compatibility_key=compatibility_key,
+            revision=revision,
+            reservation_sequence=reservation_sequence,
+        )
+
+    def validate(
+        self,
+        *,
+        compatibility_key: ProofCompatibilityKey,
+        revision: int,
+        reservation_sequence: int,
+        has_open_receipt: bool,
+    ) -> None:
+        """Validate against one atomic ledger snapshot after the backend read."""
+        if not isinstance(has_open_receipt, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("has_open_receipt must be a bool")
+        _require_revision(revision, name="revision")
+        _require_revision(reservation_sequence, name="reservation_sequence")
+        if compatibility_key != self.compatibility_key:
+            raise ProofIncompatibleError(
+                "proof compatibility changed during the backend read"
+            )
+        if (
+            has_open_receipt
+            or revision != self.revision
+            or reservation_sequence != self.reservation_sequence
+        ):
+            raise ProofReadConflictError("proof state changed during the backend read")
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,13 +325,15 @@ class PathDelta:
             raise ValueError("target_rel_path is valid only for rename")
         valid_shapes = {
             PathOutcome.ADD: self.old is None and self.new is not None,
-            PathOutcome.MODIFY: self.old is not None and self.new is not None,
+            PathOutcome.MODIFY: (
+                self.old is not None and self.new is not None and self.old != self.new
+            ),
             PathOutcome.DELETE: self.old is not None and self.new is None,
             PathOutcome.RENAME: self.old is not None and self.new is not None,
             PathOutcome.EMPTY: self.new is None,
             PathOutcome.IGNORED: self.new is None,
             PathOutcome.REJECTED: self.new is None,
-            PathOutcome.NOOP: self.old == self.new,
+            PathOutcome.NOOP: self.old is not None and self.old == self.new,
         }
         if not valid_shapes[self.outcome]:
             raise ValueError(f"invalid {self.outcome.value} old-to-new evidence")
@@ -279,6 +358,11 @@ class PathDelta:
             indexed_identities=new_identities - old_identities,
             retained_points=new_points - old_points,
         )
+
+    @property
+    def changes_proof(self) -> bool:
+        """Return whether this transition changes normalized proof evidence."""
+        return self.old != self.new
 
 
 @dataclass(frozen=True, slots=True)
