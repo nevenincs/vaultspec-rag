@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:0afda6202f3d65827681f98146beb5bade18f78ae2be362d7436bf56c6efacaa'
+body_hash: 'sha256:143419ed801fa9c245e23e323881756c7e9ad0bdbcae918742f5f2352d0db61b'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -17,6 +17,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P02-S06]]'
   - '[[2026-09-08-search-readiness-contract-W01-P02-S07]]'
   - '[[2026-09-08-search-readiness-contract-W01-P02-summary]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P03-S08]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -44,6 +45,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P02-S06` - Add explicit rebuild-required evidence and cover current updating unavailable unverifiable rebuild capacity authority and bounded scenarios
 - `2026-09-08-search-readiness-contract-W01-P02-S07` - Mutation-prove exact source and root matching plus bounded evidence
 - `2026-09-08-search-readiness-contract-W01-P02-summary` - `search-readiness-contract` `W01.P02` summary
+- `2026-09-08-search-readiness-contract-W01-P03-S08` - Implement a service-owned readiness revision registry and cancellable monotonic publication waiter
 
 ### plan
 
