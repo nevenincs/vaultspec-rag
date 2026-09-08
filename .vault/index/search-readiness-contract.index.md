@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:b2c7ffcc68d8141d4d62b3dad010d1a8903803c035adac7a33a5f6f015983457'
+body_hash: 'sha256:72bf35807ab808f38a9b1de99172a4fdc1cd180be6b0dc02b3f4975871e66286'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -30,6 +30,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P04-S17]]'
   - '[[2026-09-08-search-readiness-contract-W02-P04-summary]]'
   - '[[2026-09-08-search-readiness-contract-W02-P05-S18]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P05-S19]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -70,6 +71,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P04-S17` - Prove freshness-wait configuration defaults overrides and upper-bound validation
 - `2026-09-08-search-readiness-contract-W02-P04-summary` - `search-readiness-contract` `W02.P04` summary
 - `2026-09-08-search-readiness-contract-W02-P05-S18` - Attach per-source facts and aggregate to success and require authoritative absence for empty success
+- `2026-09-08-search-readiness-contract-W02-P05-S19` - Map typed failure status and emit Retry-After only from a canonical future deadline
 
 ### plan
 
