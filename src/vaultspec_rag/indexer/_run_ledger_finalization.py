@@ -42,6 +42,14 @@ class RunLedgerFinalizationMethods:
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
+        @staticmethod
+        def _prune_closed_publication_receipts(
+            connection: sqlite3.Connection,
+            *,
+            source_type: str,
+            collection_identity: str,
+        ) -> None: ...
+
     def advance_finalization(
         self,
         generation_id: str,
@@ -360,6 +368,11 @@ class RunLedgerFinalizationMethods:
                 raise RunLedgerStateError(
                     "only the newest published generation compacts its collection"
                 )
+            self._prune_closed_publication_receipts(
+                connection,
+                source_type=keep["source_type"],
+                collection_identity=keep["collection_identity"],
+            )
             result = connection.execute(
                 """
                 DELETE FROM generations
@@ -367,6 +380,15 @@ class RunLedgerFinalizationMethods:
                   AND source_type = ?
                   AND collection_identity = ?
                   AND terminal_state IN (?, ?)
+                  AND generation_id NOT IN (
+                      SELECT generation_id FROM publication_proofs
+                  )
+                  AND generation_id NOT IN (
+                      SELECT evidence_generation_id FROM publication_evidence
+                  )
+                  AND generation_id NOT IN (
+                      SELECT generation_id FROM publication_receipts
+                  )
                   AND generation_id NOT IN (
                       SELECT states.evidence_generation_id
                       FROM file_states AS states
