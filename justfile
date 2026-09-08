@@ -407,6 +407,16 @@ build-all:
 docs-readme-assets out_dir='assets':
     uv run --no-sync python scripts/render_readme_assets.py {{out_dir}}
 
+# Regenerate the CLI reference from the live command surface.
+[group('docs')]
+docs-cli:
+    uv run --no-sync python -m dev.generate_cli_reference
+
+# Check that the generated CLI reference is current.
+[group('check')]
+check-docs-cli:
+    uv run --no-sync python -m dev.generate_cli_reference --check
+
 # ===========================================================================
 #  release
 #

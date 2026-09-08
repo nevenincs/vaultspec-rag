@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from typer._click.core import Command
 
 from ..cli._app import app
+from dev.generate_cli_reference import OUTPUT, render
 
 pytestmark = [pytest.mark.unit]
 
@@ -68,6 +69,11 @@ pytestmark.append(
         reason="docs are not shipped in the installed package",
     )
 )
+
+
+def test_cli_reference_is_generated_from_live_surface() -> None:
+    """The committed standalone reference matches the live command tree."""
+    assert OUTPUT.read_text(encoding="utf-8") == render()
 
 
 def _command_tree() -> Command:
