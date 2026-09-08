@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sqlite3
 import threading
@@ -37,7 +38,10 @@ from ..indexer._publication_proof import (
     ProofReadConflictError,
     ProofReceiptState,
 )
-from ..indexer._run_ledger_commits import retained_point_ids_sql
+from ..indexer._run_ledger_commits import (
+    RunLedgerCommitMethods,
+    retained_point_ids_sql,
+)
 from ..indexer._run_ledger_models import (
     FETCH_BATCH,
     INDEX_RUN_LEDGER_FILENAME,
@@ -282,88 +286,10 @@ def _seal_publication_receipt(
     mutation: CommitUnit,
     delta: PathDelta,
 ) -> None:
-    connection = sqlite3.connect(ledger.path)
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        timestamp = receipt.reserved_at
-        connection.execute(
-            """
-            INSERT INTO publication_mutation_units (
-                receipt_id, mutation_ordinal, sealed_ordinal, unit_id,
-                rel_path, unit_kind, source_digest, segment_ordinal,
-                is_file_end, state, prepared_at, applied_at, confirmed_at
-            ) VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                receipt.receipt_id,
-                mutation.identity,
-                mutation.rel_path,
-                mutation.kind.value,
-                mutation.source_digest,
-                mutation.segment_ordinal,
-                int(mutation.is_file_end),
-                ProofMutationState.CONFIRMED.value,
-                timestamp,
-                timestamp,
-                timestamp,
-            ),
-        )
-        connection.executemany(
-            """
-            INSERT INTO publication_mutation_points (
-                receipt_id, mutation_ordinal, point_ordinal, point_id
-            ) VALUES (?, 0, ?, ?)
-            """,
-            (
-                (receipt.receipt_id, ordinal, point_id)
-                for ordinal, point_id in enumerate(mutation.point_ids)
-            ),
-        )
-        connection.execute(
-            """
-            INSERT INTO publication_receipt_deltas (
-                receipt_id, delta_ordinal, outcome, rel_path,
-                target_rel_path, old_content_identity, new_content_identity
-            ) VALUES (?, 0, ?, ?, ?, ?, ?)
-            """,
-            (
-                receipt.receipt_id,
-                delta.outcome.value,
-                delta.rel_path,
-                delta.target_rel_path,
-                delta.old.content_identity if delta.old is not None else None,
-                delta.new.content_identity if delta.new is not None else None,
-            ),
-        )
-        for side, item in (("old", delta.old), ("new", delta.new)):
-            if item is None:
-                continue
-            connection.executemany(
-                """
-                INSERT INTO publication_receipt_points (
-                    receipt_id, delta_ordinal, evidence_side,
-                    point_ordinal, point_id
-                ) VALUES (?, 0, ?, ?, ?)
-                """,
-                (
-                    (receipt.receipt_id, side, ordinal, point_id)
-                    for ordinal, point_id in enumerate(item.point_ids)
-                ),
-            )
-        connection.execute(
-            """
-            UPDATE publication_receipts
-            SET state = ?, sealed_at = ? WHERE receipt_id = ?
-            """,
-            (
-                ProofReceiptState.SEALED.value,
-                timestamp,
-                receipt.receipt_id,
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    ledger.prepare_publication_mutation(receipt.receipt_id, mutation)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, mutation)
+    ledger.confirm_publication_mutation(receipt.receipt_id, mutation)
+    ledger.seal_publication_receipt(receipt.receipt_id, (delta,))
 
 
 def _insert_reserved_receipt(
@@ -384,10 +310,11 @@ def _insert_reserved_receipt(
             payload_schema, embedding_schema_identity,
             chunking_schema_identity, membership_identity, content_identity,
             policy_identity, generation_id, parent_revision, target_revision,
-            state, reserved_at, sealed_at, committed_at, rolled_back_at
+            next_mutation_ordinal, state, reserved_at, sealed_at,
+            rollback_started_at, committed_at, rolled_back_at
         ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?,
-            'reserved', 1.0, NULL, NULL, NULL
+            0, 'reserved', 1.0, NULL, NULL, NULL, NULL
         )
         """,
         (
@@ -565,14 +492,41 @@ def test_receipt_reserves_streaming_work_then_seals_complete_deltas() -> None:
             sealed_at=4.0,
             committed_at=5.0,
         )
+    confirmed_unsealed = replace(confirmed, sealed_ordinal=None)
+    with_confirmed = replace(with_prepared, mutations=(confirmed_unsealed,))
+    with pytest.raises(ValueError, match="confirmed mutations"):
+        replace(
+            with_prepared,
+            state=ProofReceiptState.ROLLING_BACK,
+            rollback_started_at=4.0,
+        )
+    rolling_back = replace(
+        with_confirmed,
+        state=ProofReceiptState.ROLLING_BACK,
+        rollback_started_at=4.0,
+    )
+    with pytest.raises(ValueError, match="follow receipt closure"):
+        replace(
+            with_confirmed,
+            state=ProofReceiptState.ROLLING_BACK,
+            rollback_started_at=2.75,
+        )
     rolled_back = replace(
-        with_prepared,
+        rolling_back,
         state=ProofReceiptState.ROLLED_BACK,
-        rolled_back_at=4.0,
+        rolled_back_at=5.0,
     )
 
     assert not committed.is_open
+    assert rolling_back.is_open
     assert not rolled_back.is_open
+    assert set(ProofReceiptState) == {
+        ProofReceiptState.RESERVED,
+        ProofReceiptState.SEALED,
+        ProofReceiptState.ROLLING_BACK,
+        ProofReceiptState.COMMITTED,
+        ProofReceiptState.ROLLED_BACK,
+    }
 
 
 def test_receipt_rejects_ambiguous_point_ownership_across_paths() -> None:
@@ -697,8 +651,10 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
     } <= PUBLICATION_PROOF_SCHEMA.keys()
     assert {
         "reservation_sequence",
+        "next_mutation_ordinal",
         "reserved_at",
         "sealed_at",
+        "rollback_started_at",
         "committed_at",
         "rolled_back_at",
     } <= PUBLICATION_PROOF_SCHEMA["publication_receipts"]
@@ -714,8 +670,8 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
 
 
 def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
-    """Mutation: restoring version 6 would admit the pre-proof ledger format."""
-    assert SCHEMA_VERSION == 7
+    """Mutation: restoring the prior version would admit the old receipt format."""
+    assert SCHEMA_VERSION == 8
 
 
 def test_run_ledger_installs_and_verifies_normalized_publication_schema(
@@ -905,22 +861,13 @@ def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
     with pytest.raises(ProofReadConflictError):
         ledger.validate_publication_read_token(token)
 
-    connection = sqlite3.connect(ledger.path)
-    try:
-        connection.execute(
-            """
-            UPDATE publication_receipts
-            SET state = ?, rolled_back_at = ? WHERE receipt_id = ?
-            """,
-            (
-                ProofReceiptState.ROLLED_BACK.value,
-                receipt.reserved_at,
-                receipt.receipt_id,
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    rolling_back = ledger.begin_publication_rollback(receipt.receipt_id)
+    assert rolling_back.state is ProofReceiptState.ROLLING_BACK
+    rolled_back = ledger.roll_back_publication_receipt(
+        receipt.receipt_id,
+        compensated_units=(),
+    )
+    assert rolled_back.state is ProofReceiptState.ROLLED_BACK
 
     assert ledger.active_publication_receipt(key) is None
     with pytest.raises(ProofReadConflictError):
@@ -933,6 +880,303 @@ def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
         expected_parent_revision=current.revision,
     )
     assert next_receipt.reservation_sequence == receipt.reservation_sequence + 1
+
+
+def test_publication_mutation_journal_is_monotonic_exact_and_replayable(
+    tmp_path: Path,
+) -> None:
+    """Mutation: allowing CONFIRMED directly from PREPARED makes this guard red."""
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(tmp_path, ())
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    unit = _unit("src/a.py", 0, 1)
+
+    preparation_source = inspect.getsource(
+        RunLedgerCommitMethods.prepare_publication_mutation
+    ).lower()
+    assert "count(*)" not in preparation_source
+    assert "max(mutation_ordinal)" not in preparation_source
+
+    prepared = ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    assert prepared.state is ProofMutationState.PREPARED
+    reopened = RunLedger(ledger.path)
+    assert reopened.prepare_publication_mutation(receipt.receipt_id, unit) == prepared
+    second = _unit("src/second.py", 0, 1)
+    second_prepared = reopened.prepare_publication_mutation(
+        receipt.receipt_id,
+        second,
+    )
+    assert (prepared.ordinal, second_prepared.ordinal) == (0, 1)
+    with sqlite3.connect(ledger.path) as connection:
+        cursor = connection.execute(
+            """
+            SELECT next_mutation_ordinal FROM publication_receipts
+            WHERE receipt_id = ?
+            """,
+            (receipt.receipt_id,),
+        ).fetchone()
+    assert cursor is not None and int(cursor[0]) == 2
+    assert ledger.prepare_publication_mutation(receipt.receipt_id, unit) == prepared
+    with sqlite3.connect(ledger.path) as connection:
+        replay_cursor = connection.execute(
+            """
+            SELECT next_mutation_ordinal FROM publication_receipts
+            WHERE receipt_id = ?
+            """,
+            (receipt.receipt_id,),
+        ).fetchone()
+    assert replay_cursor is not None and int(replay_cursor[0]) == 2
+    with pytest.raises(RunLedgerStateError, match="applied"):
+        ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+
+    applied = ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    assert applied.state is ProofMutationState.APPLIED
+    assert applied.applied_at is not None
+    assert ledger.mark_publication_mutation_applied(receipt.receipt_id, unit) == applied
+
+    confirmed = ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    assert confirmed.state is ProofMutationState.CONFIRMED
+    assert confirmed.confirmed_at is not None
+    assert ledger.confirm_publication_mutation(receipt.receipt_id, unit) == confirmed
+    assert ledger.prepare_publication_mutation(receipt.receipt_id, unit) == confirmed
+
+    collision = replace(unit, point_ids=("different-point",))
+    with pytest.raises(RunLedgerStateError, match="slot"):
+        ledger.prepare_publication_mutation(receipt.receipt_id, collision)
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+    with pytest.raises(RunLedgerStateError, match="after finalization begins"):
+        ledger.prepare_publication_mutation(
+            receipt.receipt_id,
+            _unit("src/b.py", 0, 1),
+        )
+
+
+def test_publication_receipt_seal_is_exact_atomic_and_identity_ordered(
+    tmp_path: Path,
+) -> None:
+    """Mutation: sealing partial point coverage makes this guard red."""
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(tmp_path, ())
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    digest = _digest("a-v1")
+    first = _unit("src/a.py", 0, 2, digest=digest)
+    second = _unit("src/a.py", 1, 2, digest=digest)
+    for unit in (second, first):
+        ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+        ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+        ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    evidence = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=digest,
+        point_ids=tuple(sorted((*first.point_ids, *second.point_ids))),
+    )
+    partial = replace(evidence, point_ids=tuple(sorted(first.point_ids)))
+    invalid_delta = PathDelta(
+        outcome=PathOutcome.ADD,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=evidence.rel_path,
+        new=partial,
+    )
+    with pytest.raises(ValueError, match="exact proof point membership"):
+        ledger.seal_publication_receipt(receipt.receipt_id, (invalid_delta,))
+    still_reserved = ledger.active_publication_receipt(key)
+    assert still_reserved is not None
+    assert still_reserved.state is ProofReceiptState.RESERVED
+    assert still_reserved.deltas == ()
+    assert all(unit.sealed_ordinal is None for unit in still_reserved.mutations)
+
+    delta = replace(invalid_delta, new=evidence)
+    sealed = ledger.seal_publication_receipt(receipt.receipt_id, (delta,))
+    assert sealed.state is ProofReceiptState.SEALED
+    assert sealed.deltas == (delta,)
+    assert {
+        mutation.identity: mutation.sealed_ordinal for mutation in sealed.mutations
+    } == {
+        identity: ordinal
+        for ordinal, identity in enumerate(sorted((first.identity, second.identity)))
+    }
+    assert ledger.seal_publication_receipt(receipt.receipt_id, (delta,)) == sealed
+    with pytest.raises(RunLedgerStateError, match="sealed"):
+        ledger.prepare_publication_mutation(
+            receipt.receipt_id,
+            _unit("src/b.py", 0, 1),
+        )
+
+
+def test_publication_mutation_prepare_refuses_foreign_point_ownership(
+    tmp_path: Path,
+) -> None:
+    """Mutation: deferring point-owner validation until seal makes this red."""
+    owner = ProofEvidence(
+        rel_path="src/owner.py",
+        content_identity=_digest("owner"),
+        point_ids=("owned-point",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (owner,),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    evidence = ProofEvidence(
+        rel_path="src/new.py",
+        content_identity=_digest("new"),
+        point_ids=("owned-point",),
+    )
+    unit = CommitUnit(
+        rel_path=evidence.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=evidence.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=evidence.point_ids,
+    )
+    with pytest.raises(RunLedgerStateError, match="another canonical path"):
+        ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    active = ledger.active_publication_receipt(key)
+    assert active is not None
+    assert active.state is ProofReceiptState.RESERVED
+    assert active.mutations == ()
+    assert active.deltas == ()
+
+
+def test_publication_receipt_seal_rechecks_late_point_ownership(
+    tmp_path: Path,
+) -> None:
+    """Mutation: removing seal's defense-in-depth owner check makes this red."""
+    owner = ProofEvidence(
+        rel_path="src/owner.py",
+        content_identity=_digest("owner"),
+        point_ids=("owner-original",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (owner,),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    evidence = ProofEvidence(
+        rel_path="src/new.py",
+        content_identity=_digest("new"),
+        point_ids=("late-collision",),
+    )
+    unit = CommitUnit(
+        rel_path=evidence.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=evidence.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=evidence.point_ids,
+    )
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute(
+            """
+            UPDATE publication_points SET point_id = ?
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+              AND rel_path = ?
+            """,
+            (
+                evidence.point_ids[0],
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                owner.rel_path,
+            ),
+        )
+        connection.commit()
+    delta = PathDelta(
+        outcome=PathOutcome.ADD,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=evidence.rel_path,
+        new=evidence,
+    )
+
+    with pytest.raises(ProofOldEvidenceMismatchError, match="untouched path"):
+        ledger.seal_publication_receipt(receipt.receipt_id, (delta,))
+    active = ledger.active_publication_receipt(key)
+    assert active is not None
+    assert active.state is ProofReceiptState.RESERVED
+    assert active.deltas == ()
+
+
+def test_publication_receipt_rollback_requires_exact_confirmed_compensation(
+    tmp_path: Path,
+) -> None:
+    """Mutation: accepting an uncertain PREPARED rollback makes this guard red."""
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(tmp_path, ())
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    unit = _unit("src/a.py", 0, 1)
+    ledger.prepare_publication_mutation(receipt.receipt_id, unit)
+
+    with pytest.raises(RunLedgerStateError, match="confirmed"):
+        ledger.begin_publication_rollback(receipt.receipt_id)
+    ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
+    with pytest.raises(RunLedgerStateError, match="confirmed"):
+        ledger.begin_publication_rollback(receipt.receipt_id)
+    ledger.confirm_publication_mutation(receipt.receipt_id, unit)
+    with pytest.raises(RunLedgerStateError, match="must begin"):
+        ledger.roll_back_publication_receipt(
+            receipt.receipt_id,
+            compensated_units=(unit,),
+        )
+    rolling_back = ledger.begin_publication_rollback(receipt.receipt_id)
+    assert rolling_back.state is ProofReceiptState.ROLLING_BACK
+    reopened = RunLedger(ledger.path)
+    assert reopened.active_publication_receipt(key) == rolling_back
+    for transition in (
+        reopened.prepare_publication_mutation,
+        reopened.mark_publication_mutation_applied,
+        reopened.confirm_publication_mutation,
+    ):
+        with pytest.raises(RunLedgerStateError, match="rolling_back"):
+            transition(receipt.receipt_id, unit)
+    with pytest.raises(RunLedgerStateError, match="exactly"):
+        reopened.roll_back_publication_receipt(
+            receipt.receipt_id,
+            compensated_units=(),
+        )
+
+    rolled_back = reopened.roll_back_publication_receipt(
+        receipt.receipt_id,
+        compensated_units=(unit,),
+    )
+    assert rolled_back.state is ProofReceiptState.ROLLED_BACK
+    assert ledger.active_publication_receipt(key) is None
+    for transition in (
+        ledger.prepare_publication_mutation,
+        ledger.mark_publication_mutation_applied,
+        ledger.confirm_publication_mutation,
+    ):
+        with pytest.raises(RunLedgerStateError, match="rolled_back"):
+            transition(receipt.receipt_id, unit)
+    assert (
+        ledger.roll_back_publication_receipt(
+            receipt.receipt_id,
+            compensated_units=(unit,),
+        )
+        == rolled_back
+    )
 
 
 def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
@@ -1017,7 +1261,7 @@ def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
     assert ledger.commit_publication_receipt(receipt.receipt_id) == committed
 
 
-def test_receipt_commit_refuses_stale_parent_or_old_evidence_atomically(
+def test_receipt_seal_refuses_stale_parent_or_old_evidence_atomically(
     tmp_path: Path,
 ) -> None:
     actual = ProofEvidence(
@@ -1060,16 +1304,13 @@ def test_receipt_commit_refuses_stale_parent_or_old_evidence_atomically(
         is_file_end=True,
         point_ids=new.point_ids,
     )
-    _seal_publication_receipt(
-        ledger,
-        receipt,
-        mutation=mutation,
-        delta=delta,
-    )
-    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
-
     with pytest.raises(ProofOldEvidenceMismatchError):
-        ledger.commit_publication_receipt(receipt.receipt_id)
+        _seal_publication_receipt(
+            ledger,
+            receipt,
+            mutation=mutation,
+            delta=delta,
+        )
     after = ledger.publication_proof(key)
     assert after.revision == before.revision
     assert after.reservation_sequence == receipt.reservation_sequence
@@ -1078,7 +1319,9 @@ def test_receipt_commit_refuses_stale_parent_or_old_evidence_atomically(
     }
     active = ledger.active_publication_receipt(key)
     assert active is not None
-    assert active.state is ProofReceiptState.SEALED
+    assert active.state is ProofReceiptState.RESERVED
+    assert active.deltas == ()
+    assert active.mutations[0].sealed_ordinal is None
 
 
 def test_publication_schema_enforces_open_receipt_and_state_constraints(
@@ -1109,7 +1352,21 @@ def test_publication_schema_enforces_open_receipt_and_state_constraints(
         connection.execute(
             """
             UPDATE publication_receipts
-            SET state = 'rolled_back', rolled_back_at = 2.0
+            SET state = 'rolling_back', rollback_started_at = 2.0
+            WHERE receipt_id = 'receipt-one'
+            """
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_reserved_receipt(
+                connection,
+                receipt_id="receipt-two",
+                reservation_sequence=2,
+                generation_id=generation.generation_id,
+            )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = 'rolled_back', rolled_back_at = 3.0
             WHERE receipt_id = 'receipt-one'
             """
         )
@@ -1176,13 +1433,17 @@ def test_publication_schema_enforces_open_receipt_and_state_constraints(
             )
 
 
-def test_old_ledger_format_requires_rebuild_without_mutation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("schema_version", [6, 7])
+def test_old_ledger_format_requires_rebuild_without_mutation(
+    tmp_path: Path,
+    schema_version: int,
+) -> None:
     """Mutation: requesting WAL before the version gate mutates this database."""
     path = tmp_path / "runs.sqlite3"
     with sqlite3.connect(path) as connection:
         connection.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
         connection.execute("INSERT INTO old_runs VALUES ('preserve-me')")
-        connection.execute("PRAGMA user_version = 6")
+        connection.execute(f"PRAGMA user_version = {schema_version}")
         connection.commit()
 
     _assert_rebuild_required_without_mutation(path, match="not supported")

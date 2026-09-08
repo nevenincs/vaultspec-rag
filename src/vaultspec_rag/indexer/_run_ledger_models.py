@@ -451,9 +451,11 @@ class PublicationReceiptRow(TypedDict):
     generation_id: str
     parent_revision: int
     target_revision: int
+    next_mutation_ordinal: int
     state: str
     reserved_at: float
     sealed_at: float | None
+    rollback_started_at: float | None
     committed_at: float | None
     rolled_back_at: float | None
 
@@ -514,7 +516,7 @@ class FileStateTombstoneRow(TypedDict):
     rel_path: str
 
 
-SCHEMA_VERSION: Final = 7
+SCHEMA_VERSION: Final = 8
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
@@ -685,7 +687,9 @@ REQUIRED_INDEXES: Final[dict[str, tuple[str, tuple[str, ...], bool, bool]]] = {
 }
 
 REQUIRED_INDEX_PREDICATES: Final = {
-    "publication_receipts_open": "where state in ('reserved', 'sealed')",
+    "publication_receipts_open": (
+        "where state in ('reserved', 'sealed', 'rolling_back')"
+    ),
     "publication_mutation_units_sealed": "where sealed_ordinal is not null",
 }
 
@@ -1096,6 +1100,7 @@ class PublicationReceipt:
     mutations: tuple[PublicationMutationUnit, ...] = ()
     deltas: tuple[PathDelta, ...] = ()
     sealed_at: float | None = None
+    rollback_started_at: float | None = None
     committed_at: float | None = None
     rolled_back_at: float | None = None
 
@@ -1125,6 +1130,9 @@ class PublicationReceipt:
         self._validate_timestamps()
         self._validate_mutation_timestamps()
         self._validate_sealed_mutations()
+        self._validate_terminal_mutations()
+
+    def _validate_terminal_mutations(self) -> None:
         if self.state is ProofReceiptState.COMMITTED:
             if not any(delta.changes_proof for delta in self.deltas):
                 raise ValueError("a no-op receipt must not commit a proof revision")
@@ -1135,6 +1143,14 @@ class PublicationReceipt:
                 raise ValueError(
                     "committed receipt requires every mutation to be confirmed"
                 )
+        if self.state in {
+            ProofReceiptState.ROLLING_BACK,
+            ProofReceiptState.ROLLED_BACK,
+        } and any(
+            mutation.state is not ProofMutationState.CONFIRMED
+            for mutation in self.mutations
+        ):
+            raise ValueError("rolling-back receipt requires confirmed mutations")
 
     @property
     def is_open(self) -> bool:
@@ -1145,6 +1161,7 @@ class PublicationReceipt:
         _require_timestamp(self.reserved_at, name="reserved_at")
         optional_timestamps = {
             "sealed_at": self.sealed_at,
+            "rollback_started_at": self.rollback_started_at,
             "committed_at": self.committed_at,
             "rolled_back_at": self.rolled_back_at,
         }
@@ -1154,21 +1171,31 @@ class PublicationReceipt:
         valid_shape = {
             ProofReceiptState.RESERVED: (
                 self.sealed_at is None
+                and self.rollback_started_at is None
                 and self.committed_at is None
                 and self.rolled_back_at is None
             ),
             ProofReceiptState.SEALED: (
                 self.sealed_at is not None
+                and self.rollback_started_at is None
+                and self.committed_at is None
+                and self.rolled_back_at is None
+            ),
+            ProofReceiptState.ROLLING_BACK: (
+                self.rollback_started_at is not None
                 and self.committed_at is None
                 and self.rolled_back_at is None
             ),
             ProofReceiptState.COMMITTED: (
                 self.sealed_at is not None
+                and self.rollback_started_at is None
                 and self.committed_at is not None
                 and self.rolled_back_at is None
             ),
             ProofReceiptState.ROLLED_BACK: (
-                self.committed_at is None and self.rolled_back_at is not None
+                self.rollback_started_at is not None
+                and self.committed_at is None
+                and self.rolled_back_at is not None
             ),
         }[self.state]
         if not valid_shape:
@@ -1179,14 +1206,21 @@ class PublicationReceipt:
         present = (
             self.reserved_at,
             *((self.sealed_at,) if self.sealed_at is not None else ()),
+            *(
+                (self.rollback_started_at,)
+                if self.rollback_started_at is not None
+                else ()
+            ),
             *((terminal_at,) if terminal_at is not None else ()),
         )
         if present != tuple(sorted(present)):
             raise ValueError("receipt timestamps must be monotonic")
 
     def _validate_mutation_timestamps(self) -> None:
-        terminal_at = (
-            self.committed_at if self.committed_at is not None else self.rolled_back_at
+        closure_bound = (
+            self.committed_at
+            if self.committed_at is not None
+            else self.rollback_started_at
         )
         for mutation in self.mutations:
             if mutation.prepared_at < self.reserved_at:
@@ -1198,7 +1232,7 @@ class PublicationReceipt:
                 if mutation.applied_at is not None
                 else mutation.prepared_at
             )
-            if terminal_at is not None and mutation_at > terminal_at:
+            if closure_bound is not None and mutation_at > closure_bound:
                 raise ValueError("mutation cannot follow receipt closure")
 
     def _validate_sealed_mutations(self) -> None:
