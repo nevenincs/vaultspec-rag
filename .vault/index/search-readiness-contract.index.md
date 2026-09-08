@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:c8c6057f44adbc164ab3491dca1f1e3dfed4fbb069564926e026095c71a04324'
+body_hash: 'sha256:93509d8c33a7aeaca81ef9161ce410e448866e7a29d0bace3cdc7d5af8d46100'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -68,6 +68,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W04-P11-S48]]'
   - '[[2026-09-08-search-readiness-contract-W04-P11-S49]]'
   - '[[2026-09-08-search-readiness-contract-W04-P11-S50]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P11-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -146,6 +147,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W04-P11-S48` - Apply the readiness scenario matrix to CLI JSON and human rendering
 - `2026-09-08-search-readiness-contract-W04-P11-S49` - Apply the readiness scenario matrix to official-client MCP structured responses
 - `2026-09-08-search-readiness-contract-W04-P11-S50` - Prove rebuild-required behavior and remediation across service and adapters
+- `2026-09-08-search-readiness-contract-W04-P11-summary` - `search-readiness-contract` `W04.P11` summary
 
 ### plan
 
