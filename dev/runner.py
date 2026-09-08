@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dev import ci_formats
 from dev.exit_codes import TOOL_MISSING as _TOOL_MISSING
 
 if TYPE_CHECKING:
@@ -156,6 +157,9 @@ def run(
         executable does not exist.
     """
     merged = {**os.environ, **(env or {})}
+    # What a tool PRINTS is decided in one place, from the environment; unset,
+    # this returns the command untouched. It never changes the exit status.
+    argv = ci_formats.augment(argv, merged)
     location = f" (in {cwd})" if cwd else ""
     print(f"$ {' '.join(argv)}{location}", flush=True)
 
