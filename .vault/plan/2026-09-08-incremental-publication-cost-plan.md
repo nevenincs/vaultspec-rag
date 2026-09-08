@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:5c7945aa093b89196d42842a81a37446d5368514befc08a3fad79ba0d6cc9e7f'
+body_hash: 'sha256:8f7c1c6a5663d11fede5def65bd4d59f29c7d527c8b76331c4ed8b3cbb60b028'
 ---
 
 # `incremental-publication-cost` plan
@@ -40,7 +40,7 @@ Deliver the normalized proof contract and durable receipt state machine required
 Provide source-neutral immutable values for proof identity, path outcomes, aggregates, receipt states, provenance, and typed unverifiable outcomes.
 
 - [x] `W01.P01.S01` - Define publication proof identities, path deltas, aggregate arithmetic, receipt states, provenance, and typed failures; `src/vaultspec_rag/indexer/_publication_proof.py`.
-- [ ] `W01.P01.S02` - Prove add, modify, delete, rename, empty, ignored, rejected, and no-op delta behavior; `src/vaultspec_rag/tests/test_publication_proof.py`.
+- [x] `W01.P01.S02` - Prove add, modify, delete, rename, empty, ignored, rejected, and no-op delta behavior; `src/vaultspec_rag/tests/test_publication_proof.py`.
 
 ### Phase `W01.P02` - persist normalized proofs and receipts
 
