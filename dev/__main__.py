@@ -8,8 +8,12 @@ Usage::
 
 Exit codes are the point of this module: a gating target propagates the exit
 code of whichever step failed, so ``just`` and CI both see the real result. An
-advisory target reports its findings and exits 0 regardless, because a scan
-that yields leads rather than verdicts must not gate a build. The shell form
+advisory target suppresses its FINDINGS - and only its findings - because a
+scan that yields leads rather than verdicts must not gate a build. A tool that
+failed to RUN is a different event and propagates as ADVISORY_BROKEN: the
+`; exit 0` this replaced mapped every status onto success, so a scanner that
+crashed or was never installed reported exactly like a clean run.
+``dev/EXIT-CODES.md`` states the contract in full. The shell form
 this replaced restated that decision in every case body, which is how a step
 labelled report-only came to gate and a complexity gate came to never run.
 """
@@ -20,7 +24,12 @@ import sys
 import textwrap
 from typing import assert_never
 
-from dev.gates import ALL_SKIPPED_EXIT, NO_TESTS_COLLECTED, SKIPPED
+from dev.exit_codes import (
+    NOTHING_SELECTED,
+    PYTEST_NO_TESTS_COLLECTED,
+    advisory_result,
+)
+from dev.gates import SKIPPED
 from dev.runner import (
     Cmd,
     Echo,
@@ -96,7 +105,7 @@ def _summarise(verb: Verb, target: Target, outcomes: list[tuple[str, int]]) -> i
 
     Returns:
         0 when at least one lane ran and none failed, the first failing lane's
-        exit code when one failed, and :data:`~dev.gates.ALL_SKIPPED_EXIT` when
+        exit code when one failed, and :data:`~dev.exit_codes.NOTHING_SELECTED` when
         every lane was skipped.
     """
     ran = [name for name, code in outcomes if code == 0]
@@ -129,7 +138,7 @@ def _summarise(verb: Verb, target: Target, outcomes: list[tuple[str, int]]) -> i
             file=sys.stderr,
             flush=True,
         )
-        return ALL_SKIPPED_EXIT
+        return NOTHING_SELECTED
     if skipped:
         print(
             f"{verb.name} {target.name}: passed {len(ran)} lane(s); "
@@ -213,7 +222,7 @@ def _execute(verb: Verb, target: Target) -> int:
         # A lane that collected nothing did not pass - it selected an empty
         # set, which is what a stale marker expression or a collection guard
         # bailing out both look like. Report it as the skip it is.
-        if code == NO_TESTS_COLLECTED and target.lane:
+        if code == PYTEST_NO_TESTS_COLLECTED and target.lane:
             print(
                 f"\nSKIPPED  {verb.name} {target.name} - pytest collected no "
                 "tests for this lane's selection",
@@ -222,13 +231,16 @@ def _execute(verb: Verb, target: Target) -> int:
             return SKIPPED
 
         if code != 0:
-            worst = code
+            # FIRST non-zero wins. An aggregate that keeps going reports the
+            # status of the earliest thing that broke, because that is the one
+            # whose failure may explain the rest.
+            worst = worst or code
             if not target.keep_going:
                 break
 
     if target.aggregate:
         return _summarise(verb, target, outcomes)
-    return 0 if target.advisory else worst
+    return advisory_result(worst) if target.advisory else worst
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -275,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
             "was proved.",
             file=sys.stderr,
         )
-        return ALL_SKIPPED_EXIT
+        return NOTHING_SELECTED
     return code
 
 
