@@ -32,6 +32,11 @@ from ...serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
 )
 from .._http_stubs import QuietHandler
+from .._search_readiness_scenarios import (
+    SEARCH_READINESS_SCENARIOS,
+    SearchReadinessScenario,
+    canonical_service_envelope,
+)
 from ._service_search_diagnostics_support import bounded_failure_evidence
 
 if TYPE_CHECKING:
@@ -156,48 +161,11 @@ def assert_mcp_unavailable_response(
     assert structured is None or "results" not in structured, evidence
 
 
-def _readiness(source: str, *, available: bool) -> dict[str, object]:
-    sources = ("vault", "code", "document") if source == "combined" else (source,)
-    facts: list[dict[str, object]] = [
-        {
-            "source": item,
-            "availability": "usable" if available else "unavailable",
-            "freshness": "current" if available else "unverifiable",
-            "absence_authority": (
-                "authoritative" if available else "non_authoritative"
-            ),
-            "generation": {},
-            "wait_policy": "immediate",
-            "waits": [],
-            "evidence": [],
-            "reason_code": (
-                "published_generation_current" if available else "index_unavailable"
-            ),
-            "retryable": not available,
-            "remediation": None if available else "vaultspec-rag server status",
-        }
-        for item in sources
-    ]
-    return {
-        "sources": facts,
-        "aggregate": {
-            "availability": "usable" if available else "unavailable",
-            "freshness": "current" if available else "unverifiable",
-            "absence_authority": (
-                "authoritative" if available else "non_authoritative"
-            ),
-            "source_count": len(sources),
-            "usable_source_count": len(sources) if available else 0,
-            "degraded_sources": [] if available else list(sources),
-        },
-    }
-
-
 @contextmanager
 def _canonical_search_service(
     tmp_path: Path,
     *,
-    available: bool,
+    scenario: SearchReadinessScenario,
 ) -> Generator[tuple[int, Path, list[dict[str, object]]]]:
     requests: list[dict[str, object]] = []
 
@@ -209,27 +177,9 @@ def _canonical_search_service(
                 json.loads(self.rfile.read(length).decode("utf-8")),
             )
             requests.append(body)
-            source = str(body["type"])
-            if available:
-                payload: dict[str, object] = {
-                    "results": [],
-                    "request_id": "mcp-success",
-                    "readiness": _readiness(source, available=True),
-                }
-                if source == "combined":
-                    payload["ok"] = True
-            else:
-                payload = {
-                    "ok": False,
-                    "error": "index_unavailable",
-                    "message": "The requested index is unavailable.",
-                    "retryable": True,
-                    "request_id": "mcp-failure",
-                    "remediation": "vaultspec-rag server status",
-                    "readiness": _readiness(source, available=False),
-                }
+            payload = canonical_service_envelope(scenario)
             encoded = json.dumps(payload).encode("utf-8")
-            self.send_response(200 if available else 503)
+            self.send_response(scenario.status_code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
@@ -298,25 +248,26 @@ async def _official_search_call(
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "source"),
-    [
-        ("search_vault", "vault"),
-        ("search_codebase", "code"),
-        ("search_documents", "document"),
-        ("search_combined", "combined"),
-    ],
+    "scenario", SEARCH_READINESS_SCENARIOS.values(), ids=lambda item: item.name
 )
-@pytest.mark.parametrize("available", [True, False], ids=["success", "failure"])
 def test_official_client_preserves_canonical_search_envelope(
     tmp_path: Path,
-    tool_name: str,
-    source: str,
-    *,
-    available: bool,
+    scenario: SearchReadinessScenario,
 ) -> None:
-    root = tmp_path / f"{source}-{available}"
+    source = (
+        "combined"
+        if len(scenario.source_facts) > 1
+        else next(iter(scenario.source_facts)).source
+    )
+    tool_name = {
+        "vault": "search_vault",
+        "code": "search_codebase",
+        "document": "search_documents",
+        "combined": "search_combined",
+    }[source]
+    root = tmp_path / scenario.name
     (root / ".vaultspec").mkdir(parents=True)
-    with _canonical_search_service(tmp_path, available=available) as (
+    with _canonical_search_service(tmp_path, scenario=scenario) as (
         port,
         status_dir,
         requests,
@@ -330,79 +281,50 @@ def test_official_client_preserves_canonical_search_envelope(
             )
         )
 
-    # Mutation proof (exact case ``failure-search_vault-vault``): temporarily
+    # Mutation proof (exact matrix case ``unavailable``): temporarily
     # restoring the legacy recoverable-failure RuntimeError reducer made this
     # exact assertion fail with ``is_error=True`` and ``structured_content=None``
     # (RED exit 1); in the same uninterrupted sequence, immediately removing the
     # reducer restored the identical case to a structured result (GREEN exit 0).
     assert response.is_error is False
     structured = cast("dict[str, object]", response.structured_content)
+    expected = canonical_service_envelope(scenario)
+    assert structured == expected
     readiness = cast("dict[str, object]", structured["readiness"])
-    expected_sources = (
-        ["vault", "code", "document"] if source == "combined" else [source]
-    )
+    expected_sources = [fact.source for fact in scenario.source_facts]
     source_facts = cast("list[dict[str, object]]", readiness["sources"])
     assert [fact["source"] for fact in source_facts] == expected_sources
-    expected_availability = "usable" if available else "unavailable"
-    expected_freshness = "current" if available else "unverifiable"
-    expected_authority = "authoritative" if available else "non_authoritative"
-    for fact, expected_source in zip(source_facts, expected_sources, strict=True):
-        expected_fact: dict[str, object] = {
-            "source": expected_source,
-            "availability": expected_availability,
-            "freshness": expected_freshness,
-            "absence_authority": expected_authority,
-            "generation": {},
-            "wait_policy": "immediate",
-            "waits": [],
-            "evidence": [],
-            "reason_code": (
-                "published_generation_current" if available else "index_unavailable"
-            ),
-            "retryable": not available,
-        }
-        if not available:
-            expected_fact["remediation"] = "vaultspec-rag server status"
-        assert fact == expected_fact
-    aggregate = cast("dict[str, object]", readiness["aggregate"])
-    assert aggregate == {
-        "availability": expected_availability,
-        "freshness": expected_freshness,
-        "absence_authority": expected_authority,
-        "source_count": len(expected_sources),
-        "usable_source_count": len(expected_sources) if available else 0,
-        "degraded_sources": [] if available else expected_sources,
-    }
+    assert source_facts == [fact.as_dict() for fact in scenario.source_facts]
+    assert readiness["aggregate"] == scenario.aggregate.as_dict()
     text = " ".join(
         block.text for block in response.content if isinstance(block, TextContent)
     )
-    if available:
-        expected_keys = {"results", "request_id", "readiness"}
-        if source == "combined":
-            expected_keys.add("ok")
-        assert set(structured) == expected_keys
-        assert structured["results"] == []
-        assert structured["request_id"] == "mcp-success"
+    if scenario.failure is None:
+        assert structured["results"] == scenario.result_payloads()
+        assert structured["request_id"] == scenario.request_id
         assert ("ok" in structured) is (source == "combined")
+        # FastMCP's text companion must remain useful without requiring callers to
+        # decode the already-exact structured payload asserted above.
+        assert "readiness" in text
+        for expected_source in expected_sources:
+            assert expected_source in text
+        if scenario.results:
+            for result in scenario.results:
+                assert result.text in text
+        else:
+            assert "results" in text
+            assert "[]" in text
+            assert "authoritative" in text
     else:
-        assert set(structured) == {
-            "ok",
-            "error",
-            "message",
-            "retryable",
-            "request_id",
-            "remediation",
-            "readiness",
-        }
         assert structured["ok"] is False
-        assert structured["error"] == "index_unavailable"
-        assert structured["message"] == "The requested index is unavailable."
-        assert structured["retryable"] is True
-        assert structured["request_id"] == "mcp-failure"
-        assert structured["remediation"] == "vaultspec-rag server status"
+        assert structured["error"] == scenario.failure.code
+        assert structured["message"] == scenario.failure.message
+        assert structured["retryable"] is scenario.failure.retryable
+        assert structured["request_id"] == scenario.request_id
+        assert structured["remediation"] == scenario.failure.remediation
         assert "results" not in structured
-        assert "index_unavailable" in text
-        assert "The requested index is unavailable." in text
-        assert "vaultspec-rag server status" in text
+        assert scenario.failure.code in text
+        assert scenario.failure.message in text
+        assert scenario.failure.remediation in text
     assert len(requests) == 1
     assert requests[0]["type"] == source
