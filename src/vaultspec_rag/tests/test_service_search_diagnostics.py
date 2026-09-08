@@ -453,6 +453,12 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
         SearchAvailabilityRequestFacts,
         _classify_search_result,
     )
+    from ..server._search_readiness import (
+        ReadinessRevisionSnapshot,
+        ReadinessSourceKey,
+    )
+
+    readiness_key = ReadinessSourceKey.from_root(tmp_path, "code")
 
     searched: dict[str, object] = {
         "results": [],
@@ -463,6 +469,7 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
             "requested_target_root": str(tmp_path),
             "target_matches": True,
             "status": "available",
+            "index_integrity": {"verdict": "consistent"},
         },
         "path_filter": {
             "patterns": ["src/vaultspec_rag/indexr/**"],
@@ -478,6 +485,13 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
             source="code",
             request_id="0" * 32,
             port=8766,
+            readiness_snapshot=ReadinessRevisionSnapshot(
+                key=readiness_key,
+                published_generation="current",
+                publication_revision=1,
+                desired_generation="current",
+                controller_revision=1,
+            ),
         ),
     )
 

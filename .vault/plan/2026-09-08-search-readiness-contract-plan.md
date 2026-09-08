@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:add3b64327d67338164e8be3e9475ddf9845ff584f1ee5f62698d8b7a9dd6459'
+body_hash: 'sha256:71a9556ddaec0bed33e2950dc75474e153a651a81a4c5bb445e326f62f66b561'
 ---
 
 <!-- RETIRED: P14 -->
@@ -82,7 +82,7 @@ Map canonical source facts into truthful result status header and retry behavior
 - [x] `W02.P05.S18` - Attach per-source facts and aggregate to success and require authoritative absence for empty success; `src/vaultspec_rag/server/_routes_search.py`.
 - [x] `W02.P05.S19` - Map typed failure status and emit Retry-After only from a canonical future deadline; `src/vaultspec_rag/server/_routes_search.py`.
 - [x] `W02.P05.S20` - Replace legacy availability envelopes with canonical code retry wait evidence and remediation; `src/vaultspec_rag/server/_search_availability.py`.
-- [ ] `W02.P05.S21` - Cover stable failures updating success empty authority result suppression status and header truthfulness; `src/vaultspec_rag/tests/test_http_search_errors.py`.
+- [x] `W02.P05.S21` - Cover stable failures updating success empty authority result suppression status and header truthfulness; `src/vaultspec_rag/tests/test_http_search_errors.py`.
 - [ ] `W02.P05.S22` - Mutation-prove empty authority and Retry-After guards; `src/vaultspec_rag/tests/test_http_search_errors.py`.
 
 ### Phase `W02.P06` - preserve every combined constituent

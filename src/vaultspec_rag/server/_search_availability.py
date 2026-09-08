@@ -359,9 +359,12 @@ def _project_source_fact(
         evidence=tuple(match.id for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]),
         reason_code=reason_code,
         retryable=(
-            canonical.capacity_refused
-            or canonical.collection_present is False
-            or bool(matches)
+            not canonical.rebuild_required
+            and (
+                canonical.capacity_refused
+                or canonical.collection_present is False
+                or bool(matches)
+            )
         ),
         remediation=remediation,
     )

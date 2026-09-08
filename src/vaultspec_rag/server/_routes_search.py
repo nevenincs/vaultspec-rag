@@ -33,7 +33,12 @@ from .._operator_commands import (
 from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
+    GenerationEvidence,
+    SearchAvailability,
+    SearchFreshness,
     SearchSourceFact,
+    SearchWaitCause,
+    WaitObservation,
     search_readiness_block,
 )
 from .._source_types import (
@@ -267,6 +272,9 @@ class FreshnessAdmission:
     readiness: ReadinessRevisionRegistry | None = None
     target: PublicationTarget | None = None
     snapshot: ReadinessRevisionSnapshot | None = None
+    targets: tuple[PublicationTarget, ...] = ()
+    snapshots: tuple[ReadinessRevisionSnapshot, ...] = ()
+    waited_seconds: float = 0.0
 
 
 @dataclass(slots=True)
@@ -542,6 +550,7 @@ def _non_authoritative_empty_result(
         "retryable": source_fact.retryable,
         "request_id": request_id,
         "readiness": _readiness_block(source_fact),
+        "remediation": source_fact.remediation,
     }
 
 
@@ -1210,12 +1219,24 @@ async def _admit_requested_freshness(
         targets = _capture_publication_targets(search_request, readiness)
         if targets is None:
             return FreshnessAdmission("unverifiable", readiness=readiness)
+        wait_started = time.perf_counter()
         satisfied = await readiness.published_at_least(
             targets,
             timeout_seconds=search_request.freshness_wait_seconds,
         )
+        waited_seconds = time.perf_counter() - wait_started
         if not satisfied:
-            return FreshnessAdmission("timeout", readiness=readiness)
+            snapshots = tuple(
+                readiness.snapshot(target.key.canonical_root, target.key.source)
+                for target in targets
+            )
+            return FreshnessAdmission(
+                "timeout",
+                readiness=readiness,
+                targets=targets,
+                snapshots=snapshots,
+                waited_seconds=waited_seconds,
+            )
         target = targets[0] if len(targets) == 1 else None
         snapshot = (
             readiness.snapshot(search_request.root, target.key.source)
@@ -1241,16 +1262,17 @@ async def _wait_for_requested_freshness(
 
 
 def _freshness_wait_failure(
-    outcome: Literal["timeout", "unverifiable", "unavailable"],
+    admission: FreshnessAdmission,
     search_request: SearchRequest,
     *,
+    port: int | None,
     total_seconds: float,
 ) -> SearchRouteResult:
     """Return a stable typed pre-retrieval freshness failure."""
-    if outcome == "timeout":
+    if admission.outcome == "timeout":
         error = "freshness_wait_timeout"
         message = "The index did not reach the requested publication before the bound."
-    elif outcome == "unavailable":
+    elif admission.outcome == "unavailable":
         error = "index_unavailable"
         message = "The admitted readiness lifetime closed before search could run."
     else:
@@ -1260,14 +1282,67 @@ def _freshness_wait_failure(
         )
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
+    result: dict[str, object] = {
+        "ok": False,
+        "error": error,
+        "message": message,
+        "retryable": True,
+        "request_id": search_request.request_id,
+    }
+    if admission.outcome == "timeout":
+        bound = search_request.freshness_wait_seconds
+        waited = min(admission.waited_seconds, bound)
+        facts = tuple(
+            SearchSourceFact(
+                source=target.key.source,
+                availability=(
+                    SearchAvailability.USABLE
+                    if snapshot.publication_revision is not None
+                    else SearchAvailability.UNAVAILABLE
+                ),
+                freshness=(
+                    SearchFreshness.UPDATING
+                    if snapshot.publication_revision is not None
+                    else SearchFreshness.UNVERIFIABLE
+                ),
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                generation=GenerationEvidence(
+                    served_generation=snapshot.published_generation,
+                    desired_generation=target.generation,
+                    served_revision=snapshot.publication_revision,
+                    desired_revision=target.revision,
+                ),
+                wait_policy=FreshnessWaitPolicy.BOUNDED,
+                waits=(
+                    WaitObservation(
+                        cause=(
+                            SearchWaitCause.CONTROLLER_DEFERRAL
+                            if snapshot.controller_revision is not None
+                            and (
+                                snapshot.publication_revision is None
+                                or snapshot.controller_revision
+                                > snapshot.publication_revision
+                            )
+                            else SearchWaitCause.INDEX_TRANSITION
+                        ),
+                        waited_seconds=waited,
+                        configured_bound_seconds=bound,
+                        remaining_bound_seconds=max(0.0, bound - waited),
+                    ),
+                ),
+                evidence=(f"target_revision:{target.revision}",),
+                reason_code=error,
+                retryable=True,
+                remediation=server_status_command(port, verbose=True),
+            )
+            for target, snapshot in zip(
+                admission.targets, admission.snapshots, strict=True
+            )
+        )
+        result["readiness"] = search_readiness_block(facts)
+        result["remediation"] = server_status_command(port, verbose=True)
     return SearchRouteResult(
-        result={
-            "ok": False,
-            "error": error,
-            "message": message,
-            "retryable": True,
-            "request_id": search_request.request_id,
-        },
+        result=result,
         status_code=503,
         total_seconds=total_seconds,
         availability_cause=None,
@@ -1286,8 +1361,9 @@ async def _execute_search_route(
     admission = await _admit_requested_freshness(search_request, registry)
     if admission.outcome in ("timeout", "unverifiable", "unavailable"):
         return _freshness_wait_failure(
-            admission.outcome,
+            admission,
             search_request,
+            port=port,
             total_seconds=time.perf_counter() - started,
         )
 

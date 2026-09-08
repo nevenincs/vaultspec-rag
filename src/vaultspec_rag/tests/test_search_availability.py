@@ -599,7 +599,7 @@ def test_projection_keeps_a_prior_complete_generation_usable_while_updating(
     assert classification.status_code == 200
 
 
-def test_projection_marks_updating_unavailable_without_a_served_generation(
+def test_projection_marks_observed_collection_usable_without_a_served_generation(
     tmp_path: Path,
 ) -> None:
     snapshot = _canonical_snapshot(tmp_path, job_id="first-publication")
@@ -609,7 +609,7 @@ def test_projection_marks_updating_unavailable_without_a_served_generation(
         snapshots=(snapshot.to_dict(),),
     )
 
-    assert classification.source_fact.availability is SearchAvailability.UNAVAILABLE
+    assert classification.source_fact.availability is SearchAvailability.USABLE
     assert classification.source_fact.freshness is SearchFreshness.UPDATING
     assert classification.source_fact.reason_code == "index_updating"
     assert classification.status_code == 503
@@ -1150,4 +1150,8 @@ def test_qdrant_collection_disappearance_declines_unrelated_failures(
     )
 
     assert wrong_status is None
-    assert no_matching_job is None
+    assert no_matching_job is not None
+    assert no_matching_job.status_code == 503
+    assert no_matching_job.availability_cause == "collection_missing"
+    assert no_matching_job.response["error"] == "index_unavailable"
+    assert "results" not in no_matching_job.response

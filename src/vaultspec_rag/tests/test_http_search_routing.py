@@ -281,7 +281,72 @@ async def test_bounded_request_returns_typed_timeout_before_retrieval(
     assert result.status_code == 503
     assert result.result["ok"] is False
     assert result.result["error"] == "freshness_wait_timeout"
+    assert result.result["retryable"] is True
+    assert result.result["request_id"] == request.request_id
+    assert result.result["remediation"] == "vaultspec-rag server status --verbose"
     assert "results" not in result.result
+    readiness_block = cast("dict[str, object]", result.result["readiness"])
+    sources = cast("list[dict[str, object]]", readiness_block["sources"])
+    assert len(sources) == 1
+    source = sources[0]
+    assert source["source"] == "code"
+    assert source["availability"] == "usable"
+    assert source["freshness"] == "updating"
+    assert source["absence_authority"] == "non_authoritative"
+    assert source["reason_code"] == "freshness_wait_timeout"
+    assert source["generation"] == {
+        "served_generation": "served",
+        "desired_generation": "desired",
+        "served_revision": 1,
+        "desired_revision": 2,
+    }
+    assert source["waits"] == [
+        {
+            "cause": "controller_deferral",
+            "waited_seconds": 0.0,
+            "configured_bound_seconds": 0.0,
+            "remaining_bound_seconds": 0.0,
+        }
+    ]
+    assert source["evidence"] == ["target_revision:2"]
+    assert readiness_block["aggregate"] == {
+        "availability": "usable",
+        "freshness": "updating",
+        "absence_authority": "non_authoritative",
+        "source_count": 1,
+        "usable_source_count": 1,
+        "degraded_sources": ["code"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_timeout_without_prior_publication_is_unavailable_and_unverifiable(
+    tmp_path: Path,
+) -> None:
+    registry = ServiceRegistry()
+    registry.start_readiness(asyncio.get_running_loop())
+    registry.readiness_registry.notify_controller(
+        tmp_path, "code", generation="desired"
+    )
+    request = _normalised(
+        tmp_path,
+        freshness_policy="bounded",
+        freshness_wait_seconds=0,
+    )
+
+    result = await _execute_search_route(request, None, registry)
+
+    readiness = cast("dict[str, object]", result.result["readiness"])
+    source = cast("list[dict[str, object]]", readiness["sources"])[0]
+    assert result.status_code == 503
+    assert result.result["error"] == "freshness_wait_timeout"
+    assert source["availability"] == "unavailable"
+    assert source["freshness"] == "unverifiable"
+    assert source["absence_authority"] == "non_authoritative"
+    assert source["generation"] == {
+        "desired_generation": "desired",
+        "desired_revision": 1,
+    }
 
 
 @pytest.mark.asyncio
