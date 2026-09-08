@@ -50,6 +50,7 @@ __all__ = [
     "PublicationReceiptDeltaRow",
     "PublicationReceiptPointRow",
     "PublicationReceiptRow",
+    "RunAuthority",
     "RunGeneration",
     "RunLedgerCompatibilityError",
     "RunLedgerConcurrencyError",
@@ -779,6 +780,20 @@ class RunLedgerIndexedPathCollisionError(RunLedgerStateError):
         return (
             self.indexed_digest is not None and self.indexed_digest != self.unit_digest
         )
+
+
+class RunAuthority(StrEnum):
+    """Persisted permission class for indexing work and proof verification.
+
+    Authority is intentionally separate from :class:`RunOperation`: an operation
+    describes the shape of generation work, while this value records which work a
+    caller was explicitly allowed to perform.  The closed vocabulary contains no
+    migration or recovery authority; neither can be inferred after restart.
+    """
+
+    PUBLICATION = "publication"
+    REBUILD = "rebuild"
+    AUDIT_VERIFICATION = "audit_verification"
 
 
 class RunOperation(StrEnum):

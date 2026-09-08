@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:6f8095e66cb199aa4cae51f90d5369ca657d08186307e315ce7114cf698c1336'
+body_hash: 'sha256:733ef9024a229f3dca168bd6c6cf1d111bf6f2d040f2af7cbec9106b76abd7d1'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -21,10 +21,12 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S68]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S70]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P03-S10]]'
+  - '[[2026-09-08-incremental-publication-cost-W03-P08-S37]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
   - '[[2026-09-08-incremental-publication-cost-research]]'
+  - '[[2026-09-08-incremental-publication-cost-s37-authority-audit]]'
 ---
 
 # `incremental-publication-cost` feature index
@@ -36,6 +38,10 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 ### adr
 
 - `2026-09-08-incremental-publication-cost-adr` - `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-08-incremental-publication-cost-s37-authority-audit` - `incremental-publication-cost` audit: `S37 authority contract review`
 
 ### exec
 
@@ -52,6 +58,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P02-S68` - Hard-bump and gate the publication ledger format, create only an empty current schema, reject old or pre-proof databases without mutation, and remove legacy proof statuses
 - `2026-09-08-incremental-publication-cost-W01-P02-S70` - Require backend identity in run signatures and checkpoint requests, delete legacy defaults and decoder fallbacks, and update every constructor
 - `2026-09-08-incremental-publication-cost-W01-P03-S10` - Provide a strict proof-before-generation finalization gate, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction
+- `2026-09-08-incremental-publication-cost-W03-P08-S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority
 
 ### plan
 

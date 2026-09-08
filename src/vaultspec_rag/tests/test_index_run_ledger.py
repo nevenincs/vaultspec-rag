@@ -59,6 +59,7 @@ from ..indexer._run_ledger_models import (
     PublicationPointCandidate,
     PublicationProof,
     PublicationReceipt,
+    RunAuthority,
     RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
@@ -103,6 +104,28 @@ def _signature(
         policy_fingerprint="policy-v1",
         backend_identity=backend_identity,
     )
+
+
+def test_run_authority_has_exact_persisted_vocabulary() -> None:
+    """Guard: authority cannot be inferred from run mode or widened for migration."""
+    assert [
+        (name, member.value) for name, member in RunAuthority.__members__.items()
+    ] == [
+        ("PUBLICATION", "publication"),
+        ("REBUILD", "rebuild"),
+        ("AUDIT_VERIFICATION", "audit_verification"),
+    ]
+    assert {authority.value for authority in RunAuthority}.isdisjoint(
+        operation.value for operation in RunOperation
+    )
+
+    for authority in RunAuthority:
+        encoded = json.dumps({"authority": authority}, sort_keys=True)
+        assert json.loads(encoded) == {"authority": authority.value}
+
+    for forbidden in ("migration", "recovery", "full", "exact_verification"):
+        with pytest.raises(ValueError):
+            RunAuthority(forbidden)
 
 
 def test_run_signature_and_decoder_require_backend_identity() -> None:
