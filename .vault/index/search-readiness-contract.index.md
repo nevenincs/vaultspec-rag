@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:4c413adff0de2fb8281fda904aad69b1bfa777f4c49b88661bdb3e46739838d3'
+body_hash: 'sha256:1b8bba7db1b62f8ea72458917578c5e4e011c742cb3d8a37b5c6440652719887'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -51,6 +51,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P07-summary]]'
   - '[[2026-09-08-search-readiness-contract-W03-P08-S35]]'
   - '[[2026-09-08-search-readiness-contract-W03-P08-S36]]'
+  - '[[2026-09-08-search-readiness-contract-W03-P08-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -112,6 +113,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P07-summary` - `search-readiness-contract` `W02.P07` summary
 - `2026-09-08-search-readiness-contract-W03-P08-S35` - Send caller policy and bound preserve canonical bodies and remove synthesized freshness diagnosis
 - `2026-09-08-search-readiness-contract-W03-P08-S36` - Prove payload propagation envelope passthrough transport-only failures and absence of client-derived readiness
+- `2026-09-08-search-readiness-contract-W03-P08-summary` - `search-readiness-contract` `W03.P08` summary
 
 ### plan
 
