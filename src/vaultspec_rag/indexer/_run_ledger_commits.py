@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from ._file_state import FileStateKind, validate_rel_path
 from ._publication_proof import (
     PathDelta,
+    ProofCompatibilityKey,
     ProofMutationState,
     ProofReceiptState,
 )
@@ -19,6 +20,7 @@ from ._run_ledger_models import (
     CommitUnitKind,
     FinalizationPhase,
     PublicationMutationUnit,
+    PublicationPointCandidate,
     PublicationReceipt,
     RunLedgerCorruptionError,
     RunLedgerIndexedPathCollisionError,
@@ -43,7 +45,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from ._publication_proof import ProofCompatibilityKey
     from ._run_ledger_models import GenerationRow, PublicationProof, RunGeneration
 
 
@@ -115,6 +116,117 @@ class _UnitCountRow(TypedDict):
     """A bare ``COUNT(*)`` projection over ``commit_units``."""
 
     unit_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectiveCandidateQuery:
+    """Receipt-bound inputs for one bounded retained-candidate query."""
+
+    receipt_id: str
+    generation_id: str
+    compatibility_key: ProofCompatibilityKey
+    candidates: tuple[PublicationPointCandidate, ...]
+    local_paths: frozenset[str]
+    tombstoned_paths: frozenset[str]
+
+
+def effective_retained_candidates(
+    connection: sqlite3.Connection,
+    query: _EffectiveCandidateQuery,
+) -> frozenset[PublicationPointCandidate]:
+    """Resolve path-qualified candidates from canonical or confirmed local owners."""
+    if not query.candidates:
+        return frozenset()
+    canonical = tuple(
+        candidate
+        for candidate in query.candidates
+        if candidate.rel_path not in query.local_paths
+        and candidate.rel_path not in query.tombstoned_paths
+    )
+    local = tuple(
+        candidate
+        for candidate in query.candidates
+        if candidate.rel_path in query.local_paths
+    )
+    retained: set[PublicationPointCandidate] = set()
+    stable = (
+        query.compatibility_key.source_type.value,
+        query.compatibility_key.root_identity,
+        query.compatibility_key.backend_identity,
+        query.compatibility_key.collection_identity,
+    )
+    if canonical:
+        values = ", ".join("(?, ?)" for _candidate in canonical)
+        rows: list[sqlite3.Row] = fetch_all(
+            connection,
+            f"""
+            WITH candidates(rel_path, point_id) AS (VALUES {values})
+            SELECT candidates.rel_path, candidates.point_id
+            FROM candidates
+            JOIN publication_points AS points
+              ON points.rel_path = candidates.rel_path
+             AND points.point_id = candidates.point_id
+            WHERE points.source_type = ? AND points.root_identity = ?
+              AND points.backend_identity = ?
+              AND points.collection_identity = ?
+            """,
+            (
+                *(
+                    value
+                    for item in canonical
+                    for value in (item.rel_path, item.point_id)
+                ),
+                *stable,
+            ),
+        )
+        retained.update(
+            PublicationPointCandidate(
+                column_text(row, "rel_path"),
+                column_text(row, "point_id"),
+            )
+            for row in rows
+        )
+    if local:
+        values = ", ".join("(?, ?)" for _candidate in local)
+        rows = fetch_all(
+            connection,
+            f"""
+            WITH candidates(rel_path, point_id) AS (VALUES {values})
+            SELECT candidates.rel_path, candidates.point_id
+            FROM candidates
+            JOIN publication_mutation_points AS points
+              ON points.receipt_id = ?
+             AND points.point_id = candidates.point_id
+            JOIN publication_mutation_units AS units
+              ON units.receipt_id = points.receipt_id
+             AND units.mutation_ordinal = points.mutation_ordinal
+             AND units.rel_path = candidates.rel_path
+            JOIN file_states AS states
+              ON states.generation_id = ?
+             AND states.evidence_generation_id = ?
+             AND states.rel_path = units.rel_path
+             AND states.state = ?
+             AND states.content_hash = units.source_digest
+            WHERE units.unit_kind = ? AND units.state = ?
+            """,
+            (
+                *(value for item in local for value in (item.rel_path, item.point_id)),
+                query.receipt_id,
+                query.generation_id,
+                query.generation_id,
+                FileStateKind.INDEXED.value,
+                CommitUnitKind.UPSERT.value,
+                ProofMutationState.CONFIRMED.value,
+            ),
+        )
+        retained.update(
+            PublicationPointCandidate(
+                column_text(row, "rel_path"),
+                column_text(row, "point_id"),
+            )
+            for row in rows
+        )
+    return frozenset(retained)
 
 
 def _validate_receipt_id(receipt_id: str) -> None:

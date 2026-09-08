@@ -530,6 +530,62 @@ class RunLedgerPublicationMethods:
             row = _require_proof_row(connection, key)
         return _proof_from_row(row)
 
+    def _require_effective_read_authority(
+        self,
+        connection: sqlite3.Connection,
+        receipt_id: str,
+        generation_id: str,
+    ) -> tuple[ProofCompatibilityKey, int, int]:
+        """Validate the sealed forward receipt that authorizes one local read."""
+        if not isinstance(receipt_id, str) or not receipt_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise ValueError("receipt_id must be non-empty")
+        if not isinstance(generation_id, str) or not generation_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise ValueError("generation_id must be non-empty")
+        row = _receipt_row_by_id(connection, receipt_id)
+        if row is None:
+            raise KeyError(receipt_id)
+        if column_text(row, "generation_id") != generation_id:
+            raise RunLedgerStateError(
+                "publication receipt belongs to a different generation"
+            )
+        try:
+            state = ProofReceiptState(column_text(row, "state"))
+            key = _compatibility_from_row(row)
+        except (KeyError, TypeError, ValueError) as exc:
+            _receipt_corrupt("stored publication receipt header is malformed", exc)
+        if state is not ProofReceiptState.SEALED:
+            raise RunLedgerStateError(
+                "effective publication reads require a sealed forward receipt"
+            )
+        proof_row = _require_proof_row(connection, key)
+        proof = _proof_from_row(proof_row)
+        parent_revision = column_int(row, "parent_revision")
+        reservation_sequence = column_int(row, "reservation_sequence")
+        if proof.revision != parent_revision:
+            raise ProofParentMismatchError(
+                "publication proof no longer matches the receipt parent"
+            )
+        if proof.reservation_sequence != reservation_sequence:
+            raise ProofReadConflictError(
+                "publication reservation sequence no longer matches the receipt"
+            )
+        self._require_compatible_receipt_generation(
+            connection,
+            generation_id,
+            key,
+            proof,
+        )
+        return key, parent_revision, reservation_sequence
+
+    @staticmethod
+    def _publication_evidence_in_snapshot(
+        connection: sqlite3.Connection,
+        key: ProofCompatibilityKey,
+        rel_paths: tuple[str, ...],
+    ) -> dict[str, ProofEvidence]:
+        """Read canonical heads without opening a second ledger snapshot."""
+        return _evidence_rows_for_paths(connection, key, rel_paths)
+
     def publication_evidence_for_paths(
         self,
         key: ProofCompatibilityKey,

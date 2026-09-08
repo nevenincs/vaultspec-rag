@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypedDict
 
 from ._content_policy import ContentKind
-from ._file_state import validate_rel_path
+from ._file_state import FileState, validate_rel_path
 from ._publication_proof import (
     PathDelta,
     PathOutcome,
@@ -35,12 +35,14 @@ __all__ = [
     "PUBLICATION_PROOF_SCHEMA",
     "CommitUnit",
     "CommitUnitKind",
+    "EffectivePublicationRead",
     "FileStateTombstoneRow",
     "FinalizationPhase",
     "PublicationEvidenceRow",
     "PublicationMutationPointRow",
     "PublicationMutationUnit",
     "PublicationMutationUnitRow",
+    "PublicationPointCandidate",
     "PublicationPointRow",
     "PublicationProof",
     "PublicationProofRow",
@@ -516,7 +518,7 @@ class FileStateTombstoneRow(TypedDict):
     rel_path: str
 
 
-SCHEMA_VERSION: Final = 8
+SCHEMA_VERSION: Final = 9
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
@@ -670,6 +672,12 @@ REQUIRED_INDEXES: Final[dict[str, tuple[str, tuple[str, ...], bool, bool]]] = {
         "publication_receipt_deltas",
         ("receipt_id", "rel_path"),
         True,
+        False,
+    ),
+    "publication_receipt_deltas_target": (
+        "publication_receipt_deltas",
+        ("receipt_id", "target_rel_path"),
+        False,
         False,
     ),
     "publication_receipt_points_point": (
@@ -1250,6 +1258,59 @@ class PublicationReceipt:
                 "sealed receipt must freeze every mutation in identity order"
             )
         _validate_mutation_coverage(self.deltas, self.mutations)
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationPointCandidate:
+    """One path-qualified backend identity offered to an effective read."""
+
+    rel_path: str
+    point_id: str
+
+    def __post_init__(self) -> None:
+        validate_rel_path(self.rel_path)
+        _require_non_empty_text(self.point_id, name="point_id")
+
+
+@dataclass(frozen=True, slots=True)
+class EffectivePublicationRead:
+    """One receipt-bound snapshot of path state and retained candidates."""
+
+    receipt_id: str
+    generation_id: str
+    parent_revision: int
+    reservation_sequence: int
+    file_states: tuple[FileState, ...]
+    retained_candidates: frozenset[PublicationPointCandidate]
+
+    def __post_init__(self) -> None:
+        _require_non_empty_text(self.receipt_id, name="receipt_id")
+        _require_non_empty_text(self.generation_id, name="generation_id")
+        for name in ("parent_revision", "reservation_sequence"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.file_states, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("file_states must be a tuple")
+        if any(not isinstance(state, FileState) for state in self.file_states):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("file_states must contain only FileState values")
+        paths = tuple(state.rel_path for state in self.file_states)
+        if paths != tuple(sorted(paths)) or len(paths) != len(frozenset(paths)):
+            raise ValueError("file_states must use unique lexical path ordering")
+        if not isinstance(self.retained_candidates, frozenset):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("retained_candidates must be a frozenset")
+        if any(
+            not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+                candidate,
+                PublicationPointCandidate,
+            )
+            for candidate in self.retained_candidates
+        ):
+            raise TypeError(
+                "retained_candidates must contain PublicationPointCandidate values"
+            )
 
 
 def _validate_receipt_mutations(

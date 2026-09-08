@@ -996,6 +996,8 @@ class RunLedger(
                 ON publication_mutation_points(point_id);
             CREATE UNIQUE INDEX IF NOT EXISTS publication_receipt_deltas_path
                 ON publication_receipt_deltas(receipt_id, rel_path);
+            CREATE INDEX IF NOT EXISTS publication_receipt_deltas_target
+                ON publication_receipt_deltas(receipt_id, target_rel_path);
             CREATE INDEX IF NOT EXISTS publication_receipt_points_point
                 ON publication_receipt_points(point_id);
             CREATE INDEX IF NOT EXISTS file_state_tombstones_path
