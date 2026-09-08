@@ -15,7 +15,7 @@ four citations survived it.
 
 from __future__ import annotations
 
-from pathlib import Path  # noqa: TC003  (a runtime value, not only an annotation)
+from pathlib import Path
 
 import pytest
 
