@@ -11,6 +11,7 @@ superseded_by: '2026-09-07-explicit-reindex-authority-adr'
 modified: '2026-09-07'
 body_hash: 'sha256:af811b92e3309a114ddb59b5e5b7343801c1ee08febe4f21199ef2cdbb1eeae8'
 ---
+
 # `index-completeness-guard` adr: `reconcile published evidence against stored breadth and refuse silent partial answers` | (**status:** `superseded`)
 
 ## Problem Statement

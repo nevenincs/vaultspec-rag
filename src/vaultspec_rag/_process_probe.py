@@ -680,6 +680,54 @@ def _rendered_cmdline(value: object) -> str | None:
     return None
 
 
+def _scan_environment_holders(
+    resolved: Path,
+    named: Path,
+    excluded: frozenset[int],
+) -> tuple[tuple[EnvironmentHolder, ...], int] | None:
+    found: list[EnvironmentHolder] = []
+    blind = 0
+    resolved_paths: dict[str, Path | None] = {}
+    try:
+        for info in iter_process_info(["pid", "exe", "cwd", "cmdline"]):
+            pid = info["pid"]
+            if not isinstance(pid, int) or pid in excluded:
+                continue
+            image = info["exe"]
+            working_directory: object = None
+            if _resolves_under(image, resolved, resolved_paths):
+                relation = HolderRelation.IMAGE
+            elif _names_under(_launch_path(info["cmdline"]), resolved, named):
+                relation = HolderRelation.LAUNCH_PATH
+            else:
+                working_directory = info["cwd"]
+                if _resolves_under(working_directory, resolved, resolved_paths):
+                    relation = HolderRelation.WORKING_DIRECTORY
+                else:
+                    if image is None and working_directory is None:
+                        blind += 1
+                    continue
+            if working_directory is None:
+                working_directory = info["cwd"]
+            found.append(
+                EnvironmentHolder(
+                    pid=pid,
+                    relation=relation,
+                    image=image if isinstance(image, str) else None,
+                    working_directory=(
+                        working_directory
+                        if isinstance(working_directory, str)
+                        else None
+                    ),
+                    cmdline=_rendered_cmdline(info["cmdline"]),
+                )
+            )
+    except OSError as exc:
+        logger.warning("could not scan for holders of %s: %s", resolved, exc)
+        return None
+    return tuple(found), blind
+
+
 def environment_holders(
     root: str | Path,
     *,
@@ -716,55 +764,11 @@ def environment_holders(
         named = resolved
     excluded = frozenset(exclude_pids)
 
-    def scan() -> tuple[tuple[EnvironmentHolder, ...], int] | None:
-        found: list[EnvironmentHolder] = []
-        blind = 0
-        resolved_paths: dict[str, Path | None] = {}
-        try:
-            for info in iter_process_info(["pid", "exe", "cwd", "cmdline"]):
-                pid = info["pid"]
-                if not isinstance(pid, int) or pid in excluded:
-                    continue
-                image = info["exe"]
-                # Read in branch order rather than up front: each attribute is
-                # fetched on access, and on Windows psutil retries a process it
-                # cannot open with a backoff sleep, so reading an attribute for
-                # every process on the machine costs seconds of pure waiting.
-                working_directory: object = None
-                if _resolves_under(image, resolved, resolved_paths):
-                    relation = HolderRelation.IMAGE
-                elif _names_under(_launch_path(info["cmdline"]), resolved, named):
-                    relation = HolderRelation.LAUNCH_PATH
-                else:
-                    working_directory = info["cwd"]
-                    if _resolves_under(working_directory, resolved, resolved_paths):
-                        relation = HolderRelation.WORKING_DIRECTORY
-                    else:
-                        if image is None and working_directory is None:
-                            blind += 1
-                        continue
-                if working_directory is None:
-                    working_directory = info["cwd"]
-                found.append(
-                    EnvironmentHolder(
-                        pid=pid,
-                        relation=relation,
-                        image=image if isinstance(image, str) else None,
-                        working_directory=(
-                            working_directory
-                            if isinstance(working_directory, str)
-                            else None
-                        ),
-                        cmdline=_rendered_cmdline(info["cmdline"]),
-                    )
-                )
-        except OSError as exc:
-            logger.warning("could not scan for holders of %s: %s", resolved, exc)
-            return None
-        return tuple(found), blind
-
     outcome = bounded_call(
-        scan, timeout=timeout, fallback=None, label="environment-holders"
+        lambda: _scan_environment_holders(resolved, named, excluded),
+        timeout=timeout,
+        fallback=None,
+        label="environment-holders",
     )
     if outcome is None:
         return EnvironmentHolders(

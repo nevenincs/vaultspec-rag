@@ -1,0 +1,82 @@
+# Steps `dev/ci_contract.py` permits to name a tool, and the reason each does.
+#
+# An entry is `workflow.yml:Step name`, or a bare `workflow.yml` for a lane
+# whose conversion has not started. Every line is a debt with an owner, not a
+# dispensation: the file exists so the unconverted surface is a number someone
+# can burn down instead of a silence.
+
+# --- runner-plane -----------------------------------------------------------
+# Acts on the MACHINE, not the product, so there is no local recipe it could
+# be hiding. These belong in ci-fleet, which already owns the job hooks, the
+# preflight and the fleet-health check.
+binaries.yml:Read the self-hosted selectors out of the matrix
+binaries.yml:Every required selector has an online runner
+binaries.yml:Return the workspace to the runner's user
+acquisition.yml:Return the workspace to the runner's user
+acquisition.yml:Install what acquisition itself needs
+ci.yml:Put Homebrew and user binaries on PATH
+bootstrap-branch.yml:Bootstrap local worktree
+
+# ci-fleet ships this check as its own workflow. This is a second, independent
+# implementation of it in a consumer repo; the entry stays until the copy is
+# deleted in favour of the fleet's.
+fleet-health.yml
+
+# --- pending ----------------------------------------------------------------
+# Asserts the venv interpreter is the one `.python-version` pins, and that the
+# matrix leg runs the Python it claims. Three copies of one Python heredoc.
+# Recipe needed: `check-interpreter`. `just init` hashes `.python-version`
+# into its stamp but does not assert the running interpreter against it.
+ci.yml:Verify the venv interpreter matches the pin
+ci.yml:Verify the interpreter under test
+publish.yml:Verify the interpreter under test
+
+# `uv run vaultspec-core vault check all`, called raw. Every other repo in the
+# fleet reaches the vault through a recipe; this one has `fix-vault` and no
+# read-only counterpart. Recipe needed: `check-vault`.
+ci.yml:Verify vault structure and links
+
+# The GPU tier's environment: warm the model cache (one 15-line Python
+# heredoc, twice), provision the pinned Qdrant binary, start and stop the
+# resident service behind a 25-line pwsh poll loop. Recipes needed:
+# `rag-warmup`, `rag-service-start`, `rag-service-stop` - which vaultspec-a2a
+# already has by those exact names, over the same service.
+ci.yml:Warm the model cache the MPS guard reads
+ci.yml:Warm the model cache the resident service loads
+ci.yml:Provision the pinned Qdrant binary the GPU tier requires
+ci.yml:Start the resident service the GPU tier borrows from
+ci.yml:Stop the resident service
+
+# The distribution smoke check, run by path against a built wheel and sdist.
+# Recipe needed: `test-smoke` - vaultspec-core and cadrumo have the same two
+# steps, against the same kind of artifact, with three different spellings.
+publish.yml:Smoke test (wheel)
+publish.yml:Smoke test (sdist)
+
+# Release-plane bookkeeping that is genuinely CI-only (`gh` calls, a checksum
+# aggregation over downloaded artifacts, a push to the channel root) mixed
+# with work that should be a recipe. Recipes needed:
+# `release-checksums` (the inherited-SHA merge, duplicated in vaultspec-core),
+# `release-publish` (the tap commit and its push-retry loop).
+binaries.yml:Aggregate checksums
+binaries.yml:Commit the Scoop manifest and Homebrew formula
+binaries.yml:Require artifacts on the published release
+binaries.yml:Ask the acquisition check to try this release
+binaries.yml:Promote a repaired release back to latest
+publish.yml:Generate checksums
+publish.yml:Publish to PyPI
+release-please.yml:Regenerate and push uv.lock
+release-please.yml:Trigger Binaries workflow
+
+# Downloads the published binary onto a machine with no checkout and asks
+# whether the dynamic loader accepts it. Recipe needed: `test-acquisition`,
+# shared in shape with vaultspec-core's three-OS version of the same lane.
+acquisition.yml:Acquire the published binaries
+acquisition.yml:The loader must accept them
+
+# Provisions the interpreter for a job that never enters the project
+# environment: the binaries build runs under a bare `--no-project` python by
+# design, and the smoke test installs the matrix interpreter to run an
+# isolated wheel. `just init` would build a project venv neither one uses.
+binaries.yml:Install Python
+publish.yml:Install Python

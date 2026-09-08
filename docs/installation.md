@@ -2,8 +2,13 @@
 
 ## What you need before you start
 
-For local inference, use an NVIDIA GPU with CUDA on Linux or Windows, or Apple
-silicon with MPS on macOS. CPU inference and AMD GPUs are unsupported.
+The accelerator requirements on this page apply to an environment that runs the
+resident inference service. A command-line client or MCP adapter can be installed
+without model packages or CUDA when a compatible vaultspec-rag HTTP service is already
+running on the same machine.
+
+For inference, use an NVIDIA GPU with CUDA on Linux or Windows, or Apple silicon with
+MPS on macOS. CPU inference and AMD GPUs are unsupported.
 
 Choose a service resource profile:
 
@@ -41,6 +46,37 @@ macOS supplies the driver; no CUDA installation is needed. PyTorch must report M
 vaultspec-rag refuses to start when neither CUDA nor MPS is available, and it refuses MPS when `PYTORCH_ENABLE_MPS_FALLBACK` enables processor execution. Neither platform falls back.
 
 ## Choose an install route
+
+### Choose what this environment runs
+
+The package has two independent extras. `gpu` installs the model stack used by the
+resident inference service. `mcp` installs the model-free MCP stdio adapter, which
+forwards tool calls to that service over loopback HTTP. There is no `rag` extra.
+
+| Environment role                         | Requirement              | What it can run                                                                     |
+| ---------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| Command-line client and service controls | `vaultspec-rag`          | Client commands against an already-running compatible HTTP service; no local models |
+| MCP client adapter                       | `vaultspec-rag[mcp]`     | MCP stdio transport plus the base client; no local models                           |
+| Inference-service host                   | `vaultspec-rag[gpu]`     | Resident HTTP inference service, indexing, and search                               |
+| Combined host                            | `vaultspec-rag[gpu,mcp]` | Inference service and an MCP adapter in the same environment                        |
+
+The service is loopback-only. These client lanes separate Python dependencies and GPU
+ownership between processes on one host; they are not a documented network deployment
+across machines. `VAULTSPEC_RAG_QDRANT_URL` may point at remote vector storage, but
+Qdrant does not run the dense encoder, sparse encoder, or reranker. The process hosting
+vaultspec-rag inference still needs `[gpu]` and a supported accelerator.
+
+The `vaultspec-rag install` command has a broader default than the base package: it
+enrolls MCP, downloads all three models, prepares PyTorch, and provisions managed
+Qdrant. That default creates the normal combined local topology. To enroll a deliberately
+lightweight client workspace, install the base or `[mcp]` package and run:
+
+```bash
+vaultspec-rag install --no-provision --no-torch-config
+```
+
+Add `--no-mcp` for a command-line-only workspace. An inference host must be prepared
+with the `[gpu]` extra and the normal provisioning flow before `server start`.
 
 <p id="trying-it-without-commitment"></p>
 
@@ -88,8 +124,9 @@ Follow [Install without Python](#install-without-python).
 
 <p id="which-sections-you-still-need"></p>
 
-For diagnostic and service-control commands without local inference, Python
-routes can omit `gpu` from the extras. This omits PyTorch and model dependencies.
+For client and service-control commands without inference in that environment, Python
+routes omit `gpu`. Use the base package for the CLI, or `[mcp]` when that environment
+also runs the MCP stdio adapter.
 
 ## Install without Python
 
@@ -133,6 +170,11 @@ use the [uvx invocation](#run-without-installing-a-tool).
 By default, installation sets up coding-agent integration, including Model Context
 Protocol (MCP), downloads model files into the cache, and provisions a
 checksum-verified Qdrant binary.
+
+This is provisioning for an inference host, regardless of which extras are already in
+the current environment. A base or `[mcp]` install stays lightweight only when setup is
+also run with `--no-provision`; package extras and installer provisioning are separate
+choices.
 
 For CLI-only use, add `--no-mcp`. To use an embedded store, add `--local-only`;
 see [storage backends](backends.md) for its requirements.
@@ -315,6 +357,41 @@ For anything not covered here, the [issue tracker](https://github.com/nevenincs/
 Model files use the [Hugging Face cache](configuration.md#hugging-face-cache).
 Set `HF_HOME` to a persistent location before setup if you need to choose where
 downloads are stored.
+
+The default sparse model, [`naver/splade-v3`](https://huggingface.co/naver/splade-v3),
+is gated. Before the default provisioning flow, sign in to Hugging Face, open the model
+page, and accept its access conditions. Then authenticate the account that runs the
+service with either `HF_TOKEN` or a persisted login:
+
+```bash
+hf auth login
+```
+
+`HF_TOKEN` takes precedence over the token stored by the login command. A token alone
+is not sufficient until its account has accepted the model conditions. Without both
+access approval and authentication, model download or `server start` may report a
+`401`, `403`, `GatedRepoError`, or “repository not found”; for a gated public model,
+those messages can mean missing authorization rather than a nonexistent repository.
+
+The model is licensed under CC-BY-NC-SA-4.0, which restricts commercial use and adds
+attribution and share-alike obligations. Confirm that the license fits your use before
+enabling the default sparse lane.
+
+If that license or gate is unsuitable, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the
+inference service environment. This disables SPLADE and produces dense-only indexes and
+searches; lexical/sparse matching and hybrid fusion are absent. Apply the setting
+consistently to every service process and rebuild existing indexes so stored vector
+schemas match. Dense embedding and reranking still run locally, so disabling sparse
+does not remove the `[gpu]` or accelerator requirement.
+
+The current `install` model-prefetch step and `server doctor` cache check still inspect
+all three configured model repositories, including SPLADE when sparse is disabled. To
+avoid requesting the gated model, run setup with `--skip-models`, then start the service
+with sparse disabled; startup downloads the enabled dense and reranker models. Until
+the cache check follows the toggle, `server doctor` can report the intentionally absent
+sparse repository as missing. See
+[model selection and toggles](configuration.md#model-selection) for the canonical
+settings reference.
 
 If a run exhausts GPU memory, that's a runtime concern rather than an install one: see [tuning for memory and speed](configuration.md#tuning-for-memory-and-speed). On MPS, memory is unified with the rest of the system rather than dedicated.
 

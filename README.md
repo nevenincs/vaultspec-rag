@@ -23,17 +23,34 @@ independently in another repository. To index PDFs and other formats,
 
 For the Python installation below, use Python 3.13 or 3.14 and
 [uv](https://docs.astral.sh/uv/getting-started/installation/).
-Local indexing and search require NVIDIA CUDA on Linux or Windows, or Apple silicon
-on macOS. CPU inference and AMD GPUs are unsupported.
+Only the process that hosts the inference service needs model packages and an
+accelerator. It requires NVIDIA CUDA on Linux or Windows, or Apple silicon on macOS;
+CPU inference and AMD GPUs are unsupported. A command-line or MCP client that connects
+to an already-running service on the same machine does not need CUDA.
 
 Check the [memory and disk requirements](docs/installation.md#what-you-need-before-you-start)
 before installing. That section also covers the smaller resource profile.
 
 ## Install
 
+Choose extras for the role this environment performs. There is no `rag` extra.
+
+| Role                                     | Package                  | Loads models here? | Needs an accelerator? |
+| ---------------------------------------- | ------------------------ | ------------------ | --------------------- |
+| Command-line client and service controls | `vaultspec-rag`          | No                 | No                    |
+| MCP stdio adapter to an existing service | `vaultspec-rag[mcp]`     | No                 | No                    |
+| Inference-service host                   | `vaultspec-rag[gpu]`     | Yes                | Yes                   |
+| Inference host with local MCP adapter    | `vaultspec-rag[gpu,mcp]` | Yes                | Yes                   |
+
+The client and MCP adapter use the compatible vaultspec-rag HTTP service listening on
+the configured loopback port. A remote Qdrant URL moves vector storage only; it is not
+a remote inference service and does not remove the host's `gpu` requirement. See the
+[installation lanes](docs/installation.md#choose-what-this-environment-runs) for setup
+commands and the limits of each role.
+
 Install a standalone tool for use across repositories. Choose the command for your
-platform. These CUDA commands use Python 3.13 and pin the GPU wheel so later tool
-upgrades retain it.
+platform. The commands below install the combined inference-host and MCP lane. These
+CUDA commands use Python 3.13 and pin the GPU wheel so later tool upgrades retain it.
 
 Windows x64:
 
@@ -61,6 +78,14 @@ replacing its environment.
 
 Once installation succeeds, open the repository you want to search and run:
 
+The default setup downloads
+[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a gated sparse model.
+Before running it, accept the model's access conditions and authenticate the service
+account with `HF_TOKEN` or `hf auth login`; a token alone is insufficient until its
+account has accepted the conditions. The model's CC-BY-NC-SA-4.0 license restricts
+commercial use. If the gate or license is unsuitable, follow the
+[dense-only setup](docs/installation.md#the-model-cache-and-its-first-download) instead.
+
 ```bash
 vaultspec-rag install --no-torch-config
 ```
@@ -69,6 +94,10 @@ This installs the repository's agent integration, downloads the three search mod
 and provisions Qdrant, the index server. The GPU packages are already installed, so
 `--no-torch-config` leaves the project's PyTorch configuration alone. The first setup
 downloads several gigabytes; subsequent projects share the models and server binary.
+
+The default installer intentionally prepares this full local topology even though a
+base or `[mcp]` package installation is lightweight. Use `install --no-provision` when
+enrolling a client-only workspace against an already-running service.
 
 Check the installation:
 

@@ -50,12 +50,7 @@ def _digest(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()
 
 
-def _signature(
-    root: Path,
-    *,
-    content_epoch: str = "content-v1",
-    backend_identity: str = "qdrant-server:http://127.0.0.1:6333",
-) -> RunSignature:
+def _signature(root: Path, *, content_epoch: str = "content-v1") -> RunSignature:
     return RunSignature(
         root_identity=str(root.resolve()),
         collection_identity="source-v1",
@@ -71,7 +66,6 @@ def _signature(
         preprocessing_identity="preprocessing-v1",
         configuration_fingerprint="configuration-v1",
         policy_fingerprint="policy-v1",
-        backend_identity=backend_identity,
     )
 
 
@@ -89,18 +83,6 @@ def _unit(
         segment_ordinal=ordinal,
         is_file_end=ordinal == count - 1,
         point_ids=(f"{path}:{ordinal}:0", f"{path}:{ordinal}:1"),
-    )
-
-
-def test_backend_identity_is_part_of_manifest_compatibility(tmp_path: Path) -> None:
-    server = _signature(tmp_path)
-    local = _signature(
-        tmp_path,
-        backend_identity=f"qdrant-local:{tmp_path.resolve()}",
-    )
-
-    assert server.content_compatibility_fingerprint != (
-        local.content_compatibility_fingerprint
     )
 
 
