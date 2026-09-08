@@ -907,13 +907,17 @@ def _collection_of(prefix: str) -> str:
     return prefix + VAULT_COLLECTION
 
 
-def _orphaned_namespace(tmp_path: Path, *, now: datetime) -> str:
+def _orphaned_namespace(
+    tmp_path: Path, *, now: datetime, name: str = "vanished-root"
+) -> str:
     """Record a root, remove it, and age its orphan clock past both windows.
 
     Uses the orphan tier rather than the ephemeral one so the pre-drop gates
-    can be exercised without also depending on temp-rootedness.
+    can be exercised without also depending on temp-rootedness. ``name``
+    distinguishes roots so one test can stand up several namespaces, which is
+    what a per-namespace failure has to be observed against.
     """
-    root = tmp_path / "vanished-root"
+    root = tmp_path / name
     root.mkdir()
     entry = record_root(root, backend="server")
     root.rmdir()
