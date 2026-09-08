@@ -105,8 +105,6 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
     status_code=400,
 )
 
-MAX_FRESHNESS_WAIT_SECONDS = 30.0
-
 
 @dataclass(frozen=True, slots=True)
 class SearchIndexStateInput:
@@ -918,6 +916,9 @@ def _freshness_wait_policy(
     payload: dict[str, object],
 ) -> tuple[FreshnessWaitPolicy, float] | SearchRouteError:
     """Validate the opt-in publication wait without changing immediate defaults."""
+    from ..config._settings import get_config
+
+    configured_maximum = float(get_config().search_freshness_wait_max_seconds)
     raw_policy = payload.get("freshness_policy", FreshnessWaitPolicy.IMMEDIATE.value)
     if not isinstance(raw_policy, str):
         return _bad_search_field(
@@ -944,12 +945,12 @@ def _freshness_wait_policy(
         or not isinstance(raw_seconds, (int, float))
         or not isfinite(raw_seconds)
         or raw_seconds < 0
-        or raw_seconds > MAX_FRESHNESS_WAIT_SECONDS
+        or raw_seconds > configured_maximum
     ):
         return _bad_search_field(
             "invalid_freshness_wait_seconds",
             "freshness_wait_seconds must be a finite number between 0 and "
-            f"{MAX_FRESHNESS_WAIT_SECONDS:g}",
+            f"{configured_maximum:g}",
         )
     return policy, float(raw_seconds)
 

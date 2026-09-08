@@ -80,6 +80,9 @@ class EnvVar(StrEnum):
     # authoritative list of settings; the thin client parses them leniently
     # and falls back to the shipped default rather than raising.
     SERVICE_SEARCH_TIMEOUT = "VAULTSPEC_RAG_SEARCH_TIMEOUT"
+    SEARCH_FRESHNESS_WAIT_MAX_SECONDS = (
+        "VAULTSPEC_RAG_SEARCH_FRESHNESS_WAIT_MAX_SECONDS"
+    )
     SERVICE_ADMIN_TIMEOUT = "VAULTSPEC_RAG_ADMIN_TIMEOUT"
     SERVICE_REINDEX_TIMEOUT = "VAULTSPEC_RAG_REINDEX_TIMEOUT"
     # Managed qdrant readiness bound, operator-tunable for very large stores.
