@@ -1116,9 +1116,10 @@ def _logs_route_path(args: dict[str, object]) -> str:
 # GET admin tools that accept only an optional ``?project_root=`` query.
 _GET_ROOT_ROUTES: dict[str, str] = {
     "list_projects": "/projects",
-    "get_watcher_state": "/watcher",
     "get_service_state": "/service-state",
 }
+
+_WATCHER_PARAMS = {"project_root", "root", "source", "state", "limit"}
 
 # POST admin tools whose full ``args`` dict is the JSON body.
 _POST_BODY_ROUTES: dict[str, str] = {
@@ -1177,6 +1178,9 @@ def _resolve_admin_call(
 ) -> tuple[str, dict[str, object] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
     filtered_routes = {
+        "get_watcher_state": lambda args: _bounded_route_path(
+            "/watcher", args, _WATCHER_PARAMS
+        ),
         "get_logs": _logs_route_path,
         "get_jobs": _jobs_route_path,
         "get_search_activity": _search_activity_route_path,

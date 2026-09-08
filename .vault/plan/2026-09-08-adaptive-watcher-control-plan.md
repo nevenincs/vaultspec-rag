@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:3dccbf5f23a792edac1d8ed0dc7535eb4d58599642d330bae809d5113e38ae3c'
+body_hash: 'sha256:ab09e8d045a2e96a97bb11a65d578671aa577965dc44ceaae96e37d5e5374a73'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -76,7 +76,7 @@ Publish controller truth once in the service domain and adapt it without schedul
 
 - [x] `W02.P05.S13` - Add canonical controller snapshots and structured transition evidence to service state, jobs, and logs; `src/vaultspec_rag/api.py`.
 - [x] `W02.P05.S14` - Project identical controller facts through watcher and job HTTP routes; `src/vaultspec_rag/server`.
-- [ ] `W02.P05.S15` - Adapt controller state and stable reasons through CLI and MCP clients; `src/vaultspec_rag/cli`.
+- [x] `W02.P05.S15` - Adapt controller state and stable reasons through CLI and MCP clients; `src/vaultspec_rag/cli`.
 
 ## Wave `W03` - convergence proof and operator policy
 
