@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:dfbc6df3570a93f719d4a160a79cd69978318821f86212e035d41d3aed49f234'
+body_hash: 'sha256:c5abc4c831cba074036752285048c88058f5dd34bb5ea6cde55061058000f778'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -25,6 +25,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W02-P05-S15]]'
   - '[[2026-09-08-adaptive-watcher-control-W03-P06-S16]]'
   - '[[2026-09-08-adaptive-watcher-control-W03-P06-S17]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-S18]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -65,6 +66,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W02-P05-S15` - Adapt controller state and stable reasons through CLI and MCP clients
 - `2026-09-08-adaptive-watcher-control-W03-P06-S16` - Cover create, modify, delete, rename, active-job, cooldown, cancellation, failure, and restart convergence
 - `2026-09-08-adaptive-watcher-control-W03-P06-S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load
+- `2026-09-08-adaptive-watcher-control-W03-P06-S18` - Assert service, HTTP, CLI, and MCP controller telemetry conformance
 
 ### plan
 
