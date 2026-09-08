@@ -124,17 +124,23 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     in ``ResponseHandlingException``, a plain ``Exception``, so a guard naming
     only the builtin types let a timeout past this function and unwound the
     whole cycle instead of leaving one namespace unverifiable.
+
+    Listing the collections is the other half of counting them, and it reaches
+    the same server over the same transport. Guarding only the per-collection
+    count left the enumeration able to fail out of a function whose whole
+    contract is that it never raises - a namespace cannot be counted when the
+    set of collections to count could not be read either.
     """
     from qdrant_client.http.exceptions import ResponseHandlingException
 
     total = 0
-    for collection in client.get_collections().collections:
-        if not collection.name.startswith(prefix):
-            continue
-        try:
+    try:
+        for collection in client.get_collections().collections:
+            if not collection.name.startswith(prefix):
+                continue
             total += int(client.count(collection_name=collection.name).count)
-        except (OSError, RuntimeError, ResponseHandlingException):
-            return None
+    except (OSError, RuntimeError, ResponseHandlingException):
+        return None
     return total
 
 
