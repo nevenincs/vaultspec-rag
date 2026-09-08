@@ -82,7 +82,7 @@ class DocumentRunOpenRequest:
     model_identity: str
     dense_dimensions: int
     configuration: DocumentRunConfiguration
-    backend_identity: str = "legacy:unknown"
+    backend_identity: str
 
 
 @dataclass(slots=True)

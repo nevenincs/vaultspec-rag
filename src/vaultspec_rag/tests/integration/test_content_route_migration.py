@@ -122,6 +122,7 @@ def _document_checkpoint(
             operation=RunOperation.FULL,
             clean=False,
             model_identity="route-migration-test",
+            backend_identity="test-backend:content-route-migration",
             dense_dimensions=4,
             configuration=DocumentRunConfiguration(
                 slice_max_chunks=1,
@@ -475,6 +476,7 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
             operation=RunOperation.FULL,
             clean=False,
             model_identity="route-migration-page-test",
+            backend_identity="test-backend:content-route-migration",
             dense_dimensions=4,
             configuration=DocumentRunConfiguration(
                 slice_max_chunks=1,

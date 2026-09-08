@@ -406,6 +406,7 @@ def test_checkpoint_signature_drift_invalidates_before_reuse(
         operation=RunOperation.FULL,
         clean=False,
         model_identity="model-v1",
+        backend_identity="test-backend:config-epoch",
         dense_dimensions=8,
         embedding_schema=2,
         payload_schema=3,

@@ -128,6 +128,7 @@ def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> Run
             operation=RunOperation.FULL,
             clean=False,
             model_identity="retired-model",
+            backend_identity="test-backend:document-escalation",
             dense_dimensions=8,
             embedding_schema=DOCUMENT_EMBED_SCHEMA,
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,

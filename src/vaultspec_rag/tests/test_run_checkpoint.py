@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import MISSING, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -54,6 +54,12 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_code_run_open_request_requires_backend_identity() -> None:
+    """Mutation: a request default permits backend-ambiguous generations."""
+    field = CodeRunOpenRequest.__dataclass_fields__["backend_identity"]
+    assert field.default is MISSING
 
 
 def _digest(value: str) -> str:
@@ -120,6 +126,7 @@ def _open(
             operation=operation,
             clean=clean,
             model_identity="model-v1",
+            backend_identity="test-backend:code-checkpoint",
             dense_dimensions=8,
             configuration=configuration or _configuration(),
         )

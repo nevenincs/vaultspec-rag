@@ -517,6 +517,7 @@ def _open_clean_code_generation(
             operation=RunOperation.FULL,
             clean=True,
             model_identity="model-v1",
+            backend_identity="test-backend:index-rebuild-survivability",
             dense_dimensions=_embedding_dimension(),
             configuration=configuration,
         )

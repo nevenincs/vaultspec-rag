@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
-from dataclasses import replace
+from dataclasses import MISSING, replace
 from pathlib import Path
 
 import pytest
@@ -63,7 +64,7 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_publication import RunLedgerPublicationMethods
-from ..indexer._run_ledger_runtime import RunLedger
+from ..indexer._run_ledger_runtime import RunLedger, _signature_from_payload
 from ._production_service import PROCESS_TIMEOUT_SECONDS
 
 pytestmark = [pytest.mark.unit]
@@ -96,6 +97,17 @@ def _signature(
         policy_fingerprint="policy-v1",
         backend_identity=backend_identity,
     )
+
+
+def test_run_signature_and_decoder_require_backend_identity() -> None:
+    """Mutation: a default or missing-field fallback reopens old signatures."""
+    backend_field = RunSignature.__dataclass_fields__["backend_identity"]
+    assert backend_field.default is MISSING
+
+    payload = json.loads(_signature(Path(".")).canonical_json)
+    del payload["backend_identity"]
+    with pytest.raises(TypeError, match="backend_identity"):
+        _signature_from_payload(payload)
 
 
 def _unit(
