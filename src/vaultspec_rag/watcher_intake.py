@@ -7,7 +7,6 @@ re-indexing when changes are detected.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TC003
 import logging
 import time
 from dataclasses import dataclass
@@ -19,7 +18,6 @@ from watchfiles import (
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
 )
 
-from . import jobs as _jobs
 from .indexer._content_policy import ContentKind
 from .indexer._route_migration import prior_stored_owners
 from .job_models import (
@@ -27,26 +25,20 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .registry import get_registry
-from .service_quiesce import QuiesceState
 from .watcher_controller import (
-    ControllerEventKind,
     ControllerLimits,
     ControllerMeasurement,
     ControllerReason,
-    ControllerScope,
     ControllerSnapshot,
     ControllerState,
-    ScopeObservation,
     WatcherController,
 )
 from .watcher_durability import (
-    admit_watcher_attempt,
     initialize_retry_policies,
     persist_watcher_observations,
     raise_if_cancellation_requested,
-    run_durable_retry_transaction,
 )
-from .watcher_execution import submit_watcher_job
+from .watcher_execution import controller_scope_from_retry_state, submit_watcher_job
 from .watcher_policy import (
     CONFIG_FILENAMES,
     is_code_change,
@@ -58,16 +50,12 @@ from .watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
     WatcherRetryPolicy,
-    WatcherRetryStateError,
     WatcherSource,
 )
 from .watcher_runtime import (
     WatcherChangeRouting,
     WatcherConfiguration,
     WatcherConvergenceSlot,
-    observe_managed_job,
-    release_missing_job,
-    sync_legacy_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -198,44 +186,11 @@ def _controller_limits() -> ControllerLimits:
     )
 
 
-def _controller_scope(
-    retry_policy: WatcherRetryPolicy,
-    *,
-    monotonic_now: float,
-    wall_now: float,
-) -> ControllerScope:
-    """Translate durable wall-clock observations onto this process clock."""
-    state = retry_policy.state
-
-    def translate(item: WatcherPathObservation) -> ScopeObservation:
-        first_age = max(0.0, wall_now - item.first_observed_at)
-        latest_age = max(0.0, wall_now - item.latest_observed_at)
-        return ScopeObservation(
-            relative_path=item.relative_path,
-            source=item.source,
-            first_observed_at=max(0.0, monotonic_now - first_age),
-            latest_observed_at=max(0.0, monotonic_now - latest_age),
-            event_kinds=frozenset(
-                ControllerEventKind(event) for event in item.event_kinds
-            ),
-            generation=item.generation,
-        )
-
-    return ControllerScope(
-        generation=state.convergence_generation,
-        pending=tuple(translate(item) for item in state.pending_paths),
-        captured_generation=(
-            state.attempt_generation if state.captured_paths else None
-        ),
-        captured=tuple(translate(item) for item in state.captured_paths),
-    )
-
-
 def _new_controller(retry_policy: WatcherRetryPolicy) -> WatcherController:
     monotonic_now = time.monotonic()
     wall_now = time.time()
-    scope = _controller_scope(
-        retry_policy,
+    scope = controller_scope_from_retry_state(
+        retry_policy.state,
         monotonic_now=monotonic_now,
         wall_now=wall_now,
     )
@@ -283,9 +238,9 @@ def _register_controller_binding(binding: _ControllerBinding) -> None:
 
     async def admit(_selection: object) -> None:
         binding.controller.select()
-        await _reconcile_watcher_slot(
+        await submit_watcher_job(
             binding.slot,
-            cooldown=0.0,
+            controller=binding.controller,
             now=time.monotonic(),
             secondary_graph_cache=binding.secondary_graph_cache,
         )
@@ -359,8 +314,8 @@ async def _persist_and_observe_batch(
             )
         else:
             binding.controller.observe(
-                _controller_scope(
-                    binding.retry_policy,
+                controller_scope_from_retry_state(
+                    binding.retry_policy.state,
                     monotonic_now=time.monotonic(),
                     wall_now=time.time(),
                 )
@@ -571,141 +526,3 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         # shutdown must not publish a false cancellation while a worker can
         # still mutate storage; the service lifecycle joins that owner.
         log_event(logger, "service.watcher", "stopped", root=root_dir)
-
-
-async def _await_slot_settlement(
-    slot: WatcherConvergenceSlot,
-    settlement: asyncio.Task[None] | None,
-) -> bool:
-    """Wait out a pending settlement, reporting whether to continue.
-
-    A manager terminal transition is not yet a watcher convergence
-    outcome: the durable retry authority must settle the exact policy
-    generation before the slot may clear its path set or admit a
-    replacement. Returns ``False`` while a settlement is still running.
-    """
-    if settlement is None:
-        return True
-    if not settlement.done():
-        return False
-    await settlement
-    with slot.lock:
-        if slot.settlement_task is settlement:
-            slot.settlement_task = None
-    return True
-
-
-def _observe_slot_owner(
-    slot: WatcherConvergenceSlot,
-    manager: _jobs.JobManager,
-    job_id: str,
-    *,
-    now: float,
-) -> None:
-    """Fold the canonical job's current state back into the slot."""
-    snapshot = manager.get(job_id)
-    if snapshot is None:
-        release_missing_job(slot, job_id, now=now)
-        return
-    with slot.lock:
-        watcher_owned = slot.watcher_owned
-    if observe_managed_job(slot, snapshot, now=now) and watcher_owned:
-        sync_legacy_snapshot(snapshot, result=None, error=None)
-
-
-async def _reconcile_watcher_slot(
-    slot: WatcherConvergenceSlot,
-    *,
-    cooldown: float,
-    now: float,
-    secondary_graph_cache: GraphCache | None = None,
-) -> None:
-    """Observe the canonical owner, then admit one eligible convergence job."""
-    quiesce_snapshot = slot.registry.quiesce_snapshot()
-    if quiesce_snapshot.state is not QuiesceState.RUNNING:
-        # A closed controller owns the pause boundary.  Do not touch durable
-        # retry state here: its current generation and the slot's dirty paths
-        # are the deferred work that the normal idle tick reconciles after
-        # warming opens the next admission epoch.
-        log_event(
-            logger,
-            "service.watcher",
-            "quiesce_admission_closed",
-            severity=logging.DEBUG,
-            source=slot.source.value,
-            state=quiesce_snapshot.state.value,
-            pending_paths=slot.pending_count(),
-        )
-        return
-
-    manager = _jobs.get_job_manager()
-    with slot.lock:
-        job_id = slot.job_id
-        settlement = slot.settlement_task
-
-    if not await _await_slot_settlement(slot, settlement):
-        return
-    if job_id is not None:
-        _observe_slot_owner(slot, manager, job_id, now=now)
-
-    retry_source = WatcherSource(slot.source.value)
-    retry_state, refresh_cancelled = await run_durable_retry_transaction(
-        slot.retry_policy.refresh,
-        source=retry_source,
-        root_dir=slot.root,
-        action="refresh",
-    )
-    raise_if_cancellation_requested(refresh_cancelled)
-
-    with slot.lock:
-        if slot.job_id is not None or not (
-            slot.held_paths or slot.pending_paths or retry_state.convergence_pending
-        ):
-            return
-        eligible_at = max(
-            slot.last_success + cooldown,
-            slot.replacement_not_before,
-        )
-        pending_count = len(slot.held_paths | slot.pending_paths)
-
-    if now < eligible_at:
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_suppressed",
-            severity=logging.DEBUG,
-            source=slot.source.value,
-            cooldown_remaining_seconds=f"{eligible_at - now:.0f}",
-            pending_paths=pending_count,
-        )
-        return
-
-    decision = await admit_watcher_attempt(
-        slot.retry_policy,
-        source=retry_source,
-        root_dir=slot.root,
-    )
-    if not decision.admitted:
-        if decision.reason != "retry delay active":
-            log_event(
-                logger,
-                "service.watcher",
-                "reindex_suppressed",
-                severity=logging.DEBUG,
-                source=slot.source.value,
-                reason=decision.reason,
-                circuit_state=decision.circuit_state,
-                retry_at=f"{decision.retry_at:.3f}",
-                retry_in_seconds=f"{decision.retry_in_seconds:.3f}",
-                consecutive_failures=slot.retry_policy.state.consecutive_failures,
-                pending_paths=pending_count,
-            )
-        return
-    if decision.attempt_generation is None:
-        raise WatcherRetryStateError("admitted watcher attempt has no generation")
-    await submit_watcher_job(
-        slot,
-        now=now,
-        retry_decision=decision,
-        secondary_graph_cache=secondary_graph_cache,
-    )
