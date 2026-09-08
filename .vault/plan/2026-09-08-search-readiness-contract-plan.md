@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:88da25e1e68d9c5d0e0fbca5bcbfd4cdb00ecbffc81bc7195dad9674bf491185'
+body_hash: 'sha256:6fcb0fef78288c712402f459a5bc3874cc4c38172b3615f39c9169033cbb97c7'
 ---
 
 <!-- RETIRED: P14 -->
@@ -116,7 +116,7 @@ Build on W02 to preserve one service envelope and render it across the client, C
 Carry policy and canonical success or failure payloads without inferred readiness.
 
 - [x] `W03.P08.S35` - Send caller policy and bound preserve canonical bodies and remove synthesized freshness diagnosis; `src/vaultspec_rag/serviceclient/_search_transport.py`.
-- [ ] `W03.P08.S36` - Prove payload propagation envelope passthrough transport-only failures and absence of client-derived readiness; `src/vaultspec_rag/tests/test_cli_search.py`.
+- [x] `W03.P08.S36` - Prove payload propagation envelope passthrough transport-only failures and absence of client-derived readiness; `src/vaultspec_rag/tests/test_cli_search.py`.
 
 ### Phase `W03.P09` - render CLI readiness
 
