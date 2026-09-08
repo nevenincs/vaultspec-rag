@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:2cca429ca8d67058e1e3109e82ad27ceab8f55f07371e36e189a522d5b894730'
+body_hash: 'sha256:c53a6ca3c58a60ded74ef5c71653afa2b988a0b4a9f4964880167151e1d2b59e'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -38,6 +38,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P06-S23]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S24]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S25]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P07-S28]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -86,6 +87,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P06-S23` - Extend domain outcomes with immutable source readiness and derive a lossless combined aggregate
 - `2026-09-08-search-readiness-contract-W02-P06-S24` - Classify every requested source and retain constituent failures beside useful combined results
 - `2026-09-08-search-readiness-contract-W02-P06-S25` - Carry per-domain facts through route dispatch and require all-source authority for empty aggregate
+- `2026-09-08-search-readiness-contract-W02-P07-S28` - Record admission before blocking and expose bounded queued-request wait observations
 
 ### plan
 
