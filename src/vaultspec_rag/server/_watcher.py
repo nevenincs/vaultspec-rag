@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "WatcherStartOutcome",
+    "_controller_snapshot_by_job_id",
+    "_controller_snapshots",
     "_ensure_watcher",
     "_ensure_watcher_soon",
     "_register_watcher_controller",
@@ -43,9 +45,11 @@ if TYPE_CHECKING:
     from ..job_models import JobSnapshot
     from ..service import ProjectSlot, ServiceRegistry
     from ..watcher_admission import AdmissionSelection, ControllerKey
-    from ..watcher_controller import WatcherController
+    from ..watcher_controller import ControllerSnapshot, WatcherController
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+_MAX_CONTROLLER_SNAPSHOTS = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +177,18 @@ class _WatcherScheduler:
     def empty(self) -> bool:
         return not self._registrations
 
+    def snapshots(self) -> tuple[ControllerSnapshot, ...]:
+        """Return current immutable facts in stable authority order."""
+        return tuple(
+            sorted(
+                (
+                    registration.controller.snapshot
+                    for registration in self._registrations.values()
+                ),
+                key=lambda item: (item.canonical_root, item.source.value),
+            )
+        )
+
     def register(
         self,
         controller: WatcherController,
@@ -276,6 +292,8 @@ class _WatcherScheduler:
     async def _invoke(
         self, key: ControllerKey, callback: Callable[..., Any], *args: object
     ) -> None:
+        registration = self._registrations.get(key)
+        before = registration.controller.snapshot if registration is not None else None
         self._active.add(key)
         self._released.clear()
         try:
@@ -283,6 +301,19 @@ class _WatcherScheduler:
             if inspect.isawaitable(result):
                 await result
         finally:
+            current = self._registrations.get(key)
+            after = current.controller.snapshot if current is not None else None
+            if after is not None and after.last_transition != (
+                None if before is None else before.last_transition
+            ):
+                from ..api import controller_snapshot_envelope
+
+                log_event(
+                    logger,
+                    "service.watcher.controller",
+                    "transition",
+                    fields=controller_snapshot_envelope(after),
+                )
             self._active.discard(key)
             self._publish_released()
 
@@ -344,6 +375,25 @@ async def _wait_for_scheduler_wakeup(event: asyncio.Event, timeout: float) -> bo
 
 _watcher_scheduler: _WatcherScheduler | None = None
 _watcher_scheduler_task: asyncio.Task[None] | None = None
+
+
+def _controller_snapshots(
+    *, limit: int = _MAX_CONTROLLER_SNAPSHOTS
+) -> tuple[tuple[ControllerSnapshot, ...], bool]:
+    """Return a deterministic bounded view of registered controller truth."""
+    if limit < 1:
+        raise ValueError("controller snapshot limit must be positive")
+    scheduler = _watcher_scheduler
+    if scheduler is None:
+        return (), False
+    snapshots = scheduler.snapshots()
+    return tuple(snapshots[:limit]), len(snapshots) > limit
+
+
+def _controller_snapshot_by_job_id(job_id: str) -> ControllerSnapshot | None:
+    """Return the same immutable controller fact used by service state."""
+    snapshots, _ = _controller_snapshots()
+    return next((item for item in snapshots if item.job_id == job_id), None)
 
 
 def _register_watcher_controller(

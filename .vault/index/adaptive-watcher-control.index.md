@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:90d660d89cdbe5915a02d04dd282a67bcf20cc4e577a67f52b27276a7f1998bb'
+body_hash: 'sha256:3c16415c22769a917bbf6a842ff4ea62566f48e20f8350624058ae2a471de590'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S10]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S11]]'
   - '[[2026-09-08-adaptive-watcher-control-W02-P04-S12]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-S13]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -55,6 +56,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 - `2026-09-08-adaptive-watcher-control-W02-P04-S10` - Replace fixed-timing slot reconciliation with durable controller collection and decisions
 - `2026-09-08-adaptive-watcher-control-W02-P04-S11` - Bind controller generations to canonical watcher job creation, coalescing, and settlement
 - `2026-09-08-adaptive-watcher-control-W02-P04-S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission
+- `2026-09-08-adaptive-watcher-control-W02-P05-S13` - Add canonical controller snapshots and structured transition evidence to service state, jobs, and logs
 
 ### plan
 
