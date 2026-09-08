@@ -144,8 +144,8 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     return total
 
 
-def _active_index_prefixes() -> frozenset[str]:
-    """Return the collection prefixes an active index job is writing to.
+def _active_index_prefixes() -> frozenset[str] | None:
+    """Return the prefixes an active index job is writing to, or ``None``.
 
     The liveness signal automated destruction consults. Read-only: it reads
     the job registry's nonterminal set and maps each job's project root
@@ -159,12 +159,18 @@ def _active_index_prefixes() -> frozenset[str]:
     be attributed to a root is skipped - it cannot be matched to a prefix, and
     an unattributable job is not evidence about any particular namespace.
 
-    A registry that cannot be read yields the empty set rather than raising:
-    this runs inside a background cycle, and the pre-drop re-count and the
-    persisted grace windows both remain in force behind it. That promise holds
-    for whatever the read raises, so the guard names the client's transport
-    failure alongside the builtins - it is a plain ``Exception`` and would
-    otherwise unwind the cycle this probe is only consulted from.
+    ``None`` means the registry could not be read, and is never a set: the
+    empty set is a positive finding - nothing is busy - and it is the finding
+    that authorises destruction. Returning it for a read that failed turned an
+    absence of evidence into a verified negative, which is the inversion the
+    re-count beside this one refuses to make with a point total. Nor does a
+    later gate catch it: a queued or paused run has written nothing yet, so
+    the re-count agrees with the survey and the drop proceeds.
+
+    It still never raises. This runs inside a background cycle, and the answer
+    a caller cannot get is a deferral rather than an unwound cycle - which is
+    why the guard names the client's transport failure alongside the builtins,
+    that being a plain ``Exception`` the builtins do not cover.
     """
     from qdrant_client.http.exceptions import ResponseHandlingException
 
@@ -175,8 +181,8 @@ def _active_index_prefixes() -> frozenset[str]:
     try:
         active = jobs.get_job_manager().active()
     except (OSError, RuntimeError, ResponseHandlingException):
-        logger.exception("active-job probe failed; treating no namespace as busy")
-        return frozenset()
+        logger.exception("active-job probe failed; deferring every namespace")
+        return None
     prefixes: set[str] = set()
     for snapshot in active:
         if snapshot.spec.operation is not JobOperation.INDEX:
@@ -752,7 +758,7 @@ def _apply_reclaim(
     *,
     snapshots_dir: Path,
     archive_dir: Path,
-    active_prefixes: Callable[[], frozenset[str]],
+    active_prefixes: Callable[[], frozenset[str] | None],
 ) -> tuple[ReclaimDecision, list[Path]]:
     """Destroy one eligible namespace, or defer it, under the pre-drop gates.
 
@@ -770,7 +776,8 @@ def _apply_reclaim(
         archive_dir: The bounded archive destination.
         active_prefixes: Liveness probe, called here rather than once per
             cycle so a run that started during an earlier namespace's archive
-            is still seen.
+            is still seen. ``None`` from it is not an empty set: it means the
+            probe could not answer, and the namespace defers.
 
     Returns:
         The outcome decision and the archive paths written.
@@ -824,12 +831,19 @@ def _pre_drop_reclaim_gate(
     client: QdrantClient,
     decision: ReclaimDecision,
     *,
-    active_prefixes: Callable[[], frozenset[str]],
+    active_prefixes: Callable[[], frozenset[str] | None],
 ) -> int | ReclaimDecision:
     """Return the stable point count, or one precise pre-drop deferral."""
     # Liveness first. An archive taken across a live writer is torn, so this
     # gate has to precede the archive, not just the drop.
-    if decision.prefix in active_prefixes():
+    active = active_prefixes()
+    if active is None:
+        # Its own reason, never the busy one. "A job is running on this
+        # namespace" and "we cannot tell whether one is" are different facts
+        # with different remedies, and an operator reading a deferral has to
+        # be able to tell which of the two held the namespace back.
+        return _redecide(decision, "deferred", "liveness_unverifiable")
+    if decision.prefix in active:
         return _redecide(decision, "deferred", "active_index_job")
     # Re-count immediately before acting, in BOTH tiers. The survey reading
     # can be many minutes stale by the time this prefix's turn arrives, and
@@ -916,7 +930,7 @@ class MaintenanceCycleRequest:
     snapshots_dir: Path
     archive_dir: Path
     dry_run: bool = False
-    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes
+    active_prefixes: Callable[[], frozenset[str] | None] = _active_index_prefixes
 
 
 def run_maintenance_cycle(
@@ -936,8 +950,9 @@ def run_maintenance_cycle(
 
     Two gates stand between a decision and the drop, both re-evaluated per
     namespace immediately before acting on it rather than once per cycle:
-    a liveness check (no active index job may own the prefix) and a re-count
-    against the surveyed point total (any movement defers). The data tier
+    a liveness check (no active index job may own the prefix, and the probe
+    must have been able to say so) and a re-count against the surveyed point
+    total (any movement defers). The data tier
     re-counts a second time across its archive, because a write landing
     during the snapshot tears it and the delete would then destroy the delta
     the copy missed. Deferral is always the safe answer: the namespace is
@@ -954,8 +969,9 @@ def run_maintenance_cycle(
             (grace stamps are still advanced - observation is not
             destruction).
         active_prefixes: Liveness probe returning the collection prefixes an
-            active index job is writing to. Defaults to the job registry;
-            injectable so the gate is testable without a live daemon.
+            active index job is writing to, or ``None`` when it could not
+            establish them. Defaults to the job registry; injectable so the
+            gate is testable without a live daemon.
 
     Returns:
         A :class:`MaintenanceResult` for the jobs registry and rollup.
