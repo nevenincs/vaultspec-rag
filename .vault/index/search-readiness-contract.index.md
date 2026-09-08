@@ -6,9 +6,10 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:1bdd19b36b93d1c594a228bd3178469e6508e69839efe38534d3ca166751c84b'
+body_hash: 'sha256:b588a3470c215889a382cab3cb72df55300590e005223e9eb3f9b12ae78ab269'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
+  - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -28,6 +29,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 ### exec
 
 - `2026-09-08-search-readiness-contract-W01-P01-S01` - Define typed availability freshness authority wait policy generation evidence source fact and aggregate serialization
+- `2026-09-08-search-readiness-contract-W01-P01-S02` - Prove model validation rejects contradictions malformed identities negative timing and unbounded evidence
 
 ### plan
 

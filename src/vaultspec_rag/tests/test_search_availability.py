@@ -10,6 +10,18 @@ import pytest
 from httpx import Headers
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._search_state import (
+    MAX_SEARCH_EVIDENCE_ITEMS,
+    AbsenceAuthority,
+    FreshnessWaitPolicy,
+    GenerationEvidence,
+    SearchAvailability,
+    SearchFreshness,
+    SearchReadinessAggregate,
+    SearchSourceFact,
+    SearchWaitCause,
+    WaitObservation,
+)
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -28,12 +40,346 @@ from ..server._search_availability import (
 from ..service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
 type SearchSource = Literal["vault", "code"]
+
+
+def _current_source_fact() -> SearchSourceFact:
+    return SearchSourceFact(
+        source="vault",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.CURRENT,
+        absence_authority=AbsenceAuthority.AUTHORITATIVE,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda fact: replace(
+                fact,
+                availability=cast("SearchAvailability", "unknown"),
+            ),
+            "availability must be a SearchAvailability",
+        ),
+        (
+            lambda fact: replace(
+                fact,
+                freshness=cast("SearchFreshness", "unknown"),
+            ),
+            "freshness must be a SearchFreshness",
+        ),
+        (
+            lambda fact: replace(
+                fact,
+                absence_authority=cast("AbsenceAuthority", "unknown"),
+            ),
+            "absence_authority must be a AbsenceAuthority",
+        ),
+        (
+            lambda fact: replace(
+                fact,
+                wait_policy=cast("FreshnessWaitPolicy", "unknown"),
+            ),
+            "wait_policy must be a FreshnessWaitPolicy",
+        ),
+    ],
+)
+def test_source_fact_rejects_unknown_closed_vocabulary(
+    mutation: Callable[[SearchSourceFact], SearchSourceFact],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        mutation(_current_source_fact())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda fact: replace(
+            fact,
+            availability=SearchAvailability.UNAVAILABLE,
+        ),
+        lambda fact: replace(
+            fact,
+            freshness=SearchFreshness.UPDATING,
+        ),
+    ],
+)
+def test_source_fact_rejects_authoritative_contradictions(
+    mutation: Callable[[SearchSourceFact], SearchSourceFact],
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="authoritative absence requires a usable, current source",
+    ):
+        mutation(_current_source_fact())
+
+
+def test_wait_observation_rejects_unknown_cause() -> None:
+    with pytest.raises(ValueError, match="cause must be a SearchWaitCause"):
+        WaitObservation(
+            cause=cast("SearchWaitCause", "unknown"),
+            waited_seconds=0,
+            configured_bound_seconds=1,
+            remaining_bound_seconds=1,
+        )
+
+
+def _wait_with_invalid_duration(field: str, value: object) -> WaitObservation:
+    if field == "waited_seconds":
+        return WaitObservation(
+            cause=SearchWaitCause.INDEX_TRANSITION,
+            waited_seconds=cast("float", value),
+            configured_bound_seconds=1,
+            remaining_bound_seconds=0,
+        )
+    if field == "configured_bound_seconds":
+        return WaitObservation(
+            cause=SearchWaitCause.INDEX_TRANSITION,
+            waited_seconds=0,
+            configured_bound_seconds=cast("float", value),
+            remaining_bound_seconds=0,
+        )
+    return WaitObservation(
+        cause=SearchWaitCause.INDEX_TRANSITION,
+        waited_seconds=0,
+        configured_bound_seconds=1,
+        remaining_bound_seconds=cast("float", value),
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "duration"),
+    [
+        (field, duration)
+        for field in (
+            "waited_seconds",
+            "configured_bound_seconds",
+            "remaining_bound_seconds",
+        )
+        for duration in (-1, float("inf"), float("nan"), True, "1")
+    ],
+)
+def test_wait_observation_rejects_invalid_durations(
+    field: str,
+    duration: object,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=f"{field} must be a finite non-negative number",
+    ):
+        _wait_with_invalid_duration(field, duration)
+
+
+def test_wait_observation_rejects_remaining_above_bound() -> None:
+    with pytest.raises(
+        ValueError,
+        match="remaining_bound_seconds cannot exceed the configured bound",
+    ):
+        WaitObservation(
+            cause=SearchWaitCause.INDEX_TRANSITION,
+            waited_seconds=0,
+            configured_bound_seconds=1,
+            remaining_bound_seconds=2,
+        )
+
+
+def test_wait_observation_rejects_total_above_bound() -> None:
+    with pytest.raises(
+        ValueError,
+        match="waited and remaining time cannot exceed the configured bound",
+    ):
+        WaitObservation(
+            cause=SearchWaitCause.INDEX_TRANSITION,
+            waited_seconds=0.6,
+            configured_bound_seconds=1,
+            remaining_bound_seconds=0.5,
+        )
+
+
+def test_source_fact_rejects_unbounded_evidence() -> None:
+    observation = WaitObservation(
+        cause=SearchWaitCause.SEARCH_ADMISSION,
+        waited_seconds=0,
+        configured_bound_seconds=1,
+        remaining_bound_seconds=1,
+    )
+    with pytest.raises(ValueError, match="wait observations exceed"):
+        replace(
+            _current_source_fact(),
+            absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+            waits=(observation,) * (MAX_SEARCH_EVIDENCE_ITEMS + 1),
+        )
+    with pytest.raises(ValueError, match="source evidence exceeds"):
+        replace(
+            _current_source_fact(),
+            evidence=("job",) * (MAX_SEARCH_EVIDENCE_ITEMS + 1),
+        )
+
+
+def test_source_fact_rejects_malformed_generation_evidence() -> None:
+    with pytest.raises(ValueError, match="generation must be GenerationEvidence"):
+        replace(
+            _current_source_fact(),
+            generation=cast("GenerationEvidence", object()),
+        )
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (
+            lambda: GenerationEvidence(served_generation=""),
+            "served_generation must contain 1 to 256 characters",
+        ),
+        (
+            lambda: GenerationEvidence(observed_generation="x" * 257),
+            "observed_generation must contain 1 to 256 characters",
+        ),
+        (
+            lambda: GenerationEvidence(desired_generation=cast("str", 7)),
+            "desired_generation must contain 1 to 256 characters",
+        ),
+        (
+            lambda: GenerationEvidence(served_revision=-1),
+            "served_revision must be a non-negative integer",
+        ),
+        (
+            lambda: GenerationEvidence(observed_revision=cast("int", True)),
+            "observed_revision must be a non-negative integer",
+        ),
+        (
+            lambda: GenerationEvidence(desired_revision=cast("int", 1.5)),
+            "desired_revision must be a non-negative integer",
+        ),
+    ],
+)
+def test_generation_evidence_rejects_malformed_identity(
+    build: Callable[[], GenerationEvidence],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+def test_source_fact_rejects_non_boolean_retryability() -> None:
+    with pytest.raises(ValueError, match="retryable must be a boolean"):
+        replace(_current_source_fact(), retryable=cast("bool", 1))
+
+
+@pytest.mark.parametrize(
+    "aggregate",
+    [
+        SearchReadinessAggregate(
+            availability=SearchAvailability.USABLE,
+            freshness=SearchFreshness.CURRENT,
+            absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+            source_count=2,
+            usable_source_count=1,
+            degraded_sources=("code",),
+        ),
+    ],
+)
+def test_valid_non_authoritative_aggregate_is_accepted(
+    aggregate: SearchReadinessAggregate,
+) -> None:
+    assert aggregate.usable_source_count == 1
+
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.UNAVAILABLE,
+                freshness=SearchFreshness.CURRENT,
+                absence_authority=AbsenceAuthority.AUTHORITATIVE,
+                source_count=1,
+                usable_source_count=0,
+                degraded_sources=("vault",),
+            ),
+            "authoritative aggregate requires every source to be usable and current",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.USABLE,
+                freshness=SearchFreshness.UPDATING,
+                absence_authority=AbsenceAuthority.AUTHORITATIVE,
+                source_count=1,
+                usable_source_count=1,
+                degraded_sources=("vault",),
+            ),
+            "authoritative aggregate requires every source to be usable and current",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.USABLE,
+                freshness=SearchFreshness.CURRENT,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                source_count=2,
+                usable_source_count=1,
+                degraded_sources=(),
+            ),
+            "degraded_sources contradict the aggregate source counts",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.USABLE,
+                freshness=SearchFreshness.CURRENT,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                source_count=1,
+                usable_source_count=0,
+                degraded_sources=("vault",),
+            ),
+            "usable aggregate requires at least one usable source",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.UNAVAILABLE,
+                freshness=SearchFreshness.CURRENT,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                source_count=2,
+                usable_source_count=1,
+                degraded_sources=("vault",),
+            ),
+            "non-usable aggregate cannot report usable sources",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.USABLE,
+                freshness=SearchFreshness.CURRENT,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                source_count=2,
+                usable_source_count=2,
+                degraded_sources=("vault",),
+            ),
+            "current aggregate cannot contain freshness degradation",
+        ),
+        (
+            lambda: SearchReadinessAggregate(
+                availability=SearchAvailability.USABLE,
+                freshness=SearchFreshness.UPDATING,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                source_count=1,
+                usable_source_count=1,
+                degraded_sources=(),
+            ),
+            "non-current aggregate requires a degraded source",
+        ),
+    ],
+)
+def test_aggregate_rejects_contradictory_authority_freshness_and_counts(
+    build: Callable[[], SearchReadinessAggregate],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
 
 
 def _canonical_snapshot(
