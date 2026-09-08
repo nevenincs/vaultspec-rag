@@ -43,6 +43,7 @@ from .._win32 import (
     create_kill_on_close_job,
 )
 from ..config._settings import managed_status_dir, rag_default
+from ..config._types import EnvVar
 from ..logging_config import QDRANT_LOG_NAME
 from ._constants import (
     QDRANT_SERVER_VERSION,
@@ -229,13 +230,39 @@ def _quarantine_collection(storage_dir: Path, name: str) -> Path:
     return dest
 
 
-def _ready_timeout_seconds() -> float:
-    """Resolve the qdrant readiness timeout from the settings object.
+# How far past the no-progress patience window a *still-progressing* child may
+# run before the wait gives up anyway. The readiness wait's primary test is
+# whether the child is doing observable work, not how long it has been at it,
+# so this multiple exists only to keep a child that chatters without ever
+# serving from holding daemon startup open indefinitely.
+#
+# Sized against the slowest observed start rather than the fastest. A healthy
+# full recovery of 139 collections measures 1.8-2.2 minutes, about 0.9s per
+# collection, but the slowest observed attempt managed 58 collections in five
+# minutes - roughly 5s each, six times the healthy rate - and what drives that
+# variance is not established, so the ceiling assumes a legitimate start can
+# take several times the fast path. At the shipped patience window this yields
+# twenty minutes, comfortably above the twelve a full recovery at the slowest
+# observed rate would need, and still a bound.
+#
+# Derived from the caller's patience window rather than fixed in absolute
+# seconds so every caller stays bounded in proportion to what it asked for: a
+# caller that asks for a short wait can never be held for a long one.
+_READY_CEILING_MULTIPLE = 4.0
 
-    A large managed store cold-loads every collection before answering
-    ``/readyz``; a multi-hundred-GB store with ~170 collections was
-    measured at ~131s, well over the original fixed 60s, so the default is
-    generous and operators with even larger stores can raise it via
+
+def _ready_ceiling_seconds(patience: float) -> float:
+    """Total-wait bound for a readiness *patience* window, in seconds."""
+    return patience * _READY_CEILING_MULTIPLE
+
+
+def _ready_timeout_seconds() -> float:
+    """Resolve the qdrant readiness patience window from the settings object.
+
+    A large managed store loads every collection before answering ``/readyz``;
+    a multi-hundred-GB store with ~170 collections was measured at ~131s, well
+    over the original fixed 60s, so the default is generous and operators with
+    even larger stores can raise it via
     ``VAULTSPEC_RAG_QDRANT_READY_TIMEOUT`` (seconds). A malformed value
     makes the settings lookup raise; catching that here, along with a
     non-positive value, falls back to the default rather than failing
@@ -356,6 +383,13 @@ class QdrantSupervisor:
         # Most-recent child output lines, filled by the drain thread, so a
         # non-ready exit reports its cause instead of an opaque timeout.
         self._recent_output: deque[str] = deque(maxlen=_RECENT_OUTPUT_LINES)
+        # Monotonic count of complete output lines the drain has seen. The ring
+        # above saturates at its bound and so cannot witness progress; this
+        # counter can, and the readiness wait reads an increase as proof the
+        # child is still working. Written only by the single drain thread and
+        # read without a lock: a stale read costs one more poll cycle, never a
+        # wrong verdict, because the count only ever rises.
+        self._output_lines = 0
         self._drain_thread: threading.Thread | None = None
         # Attached mode: this supervisor points at an already-running managed
         # Qdrant it did NOT spawn, so it must never terminate it on stop().
@@ -433,6 +467,7 @@ class QdrantSupervisor:
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._recent_output.clear()
+        self._output_lines = 0
 
         # Capture the child's combined stdout/stderr through a pipe drained by a
         # thread, rather than redirecting straight to a file: an abnormal exit
@@ -501,6 +536,7 @@ class QdrantSupervisor:
         incomplete = parts.pop()
         for line in parts:
             self._recent_output.append(f"{line[-_RECENT_OUTPUT_LINE_CHARS:]}\n")
+        self._output_lines += len(parts)
         return incomplete[-_RECENT_OUTPUT_LINE_CHARS:]
 
     def _drain_output(self, stream: BinaryIO) -> None:
@@ -547,6 +583,7 @@ class QdrantSupervisor:
             pending = self._append_recent_text(decoder.decode(b"", final=True), pending)
             if pending:
                 self._recent_output.append(pending)
+                self._output_lines += 1
         except (OSError, ValueError) as exc:
             logger.debug("qdrant output drain ended: %s", exc)
         finally:
@@ -595,29 +632,104 @@ class QdrantSupervisor:
             return False
 
     def wait_ready(self, timeout: float | None = None) -> bool:
-        """Poll ``/readyz`` with backoff until ready or *timeout*.
+        """Poll ``/readyz`` until ready, until the child goes quiet, or the ceiling.
+
+        *timeout* is the no-progress patience window, not a total budget. The
+        server loads every collection eagerly and sequentially before it
+        listens, and how long that takes varies by several times across
+        otherwise identical starts, so elapsed wall time says nothing about
+        whether a start is healthy. Every new line of child output restarts the
+        window, which makes a store that is still loading indefinitely patient
+        and leaves a store that has stopped doing anything caught as promptly
+        as before. Stopping a still-loading child throws away every collection
+        it had recovered and forces the next attempt to start over, so tolerance
+        here is cheaper than a truncated start.
+
+        The total wait is bounded by :func:`_ready_ceiling_seconds` so a child
+        that chatters without ever serving cannot hold daemon startup open
+        indefinitely.
+
+        *timeout* carries the patience window rather than the ceiling because
+        every caller passes a value meaning "how long a slow store may take to
+        open", which is what the patience window governs; and because deriving
+        the ceiling from that same value keeps a caller that asks for a short
+        wait bounded by a short wait, which a separate absolute ceiling would
+        not.
+
+        Progress is counted as drained output lines rather than parsed out of
+        the child's log text. The count is already produced by the output
+        drain, only ever rises, and ties readiness to nothing more than the
+        child still writing - where matching load messages would tie it to a
+        log format that changes between server versions and would silently
+        stop resetting the window when it did.
 
         Args:
-            timeout: Seconds to wait; ``None`` resolves the env-overridable
-                default via :func:`_ready_timeout_seconds`.
+            timeout: Seconds of no observable progress to tolerate; ``None``
+                resolves the env-overridable default via
+                :func:`_ready_timeout_seconds`.
 
         Returns:
-            True once the server answers ready; False on timeout or
-            child death (both logged).
+            True once the server answers ready; False on child death, on the
+            patience window expiring with no new output, or on the ceiling.
+            All three are logged, and distinguishably.
         """
         if timeout is None:
             timeout = _ready_timeout_seconds()
-        deadline = time.monotonic() + timeout
+        ceiling = _ready_ceiling_seconds(timeout)
+        started = time.monotonic()
+        ceiling_deadline = started + ceiling
+        progress_deadline = started + timeout
+        witnessed_lines = self._output_lines
         delay = 0.1
-        while time.monotonic() < deadline:
+        while True:
             if not self.is_alive():
                 logger.error("qdrant child died during startup; see %s", self.log_path)
                 return False
+            # Probed before either deadline is judged, so a store that finished
+            # loading, went quiet, and bound its port between two polls is never
+            # condemned for the silence its own success produced.
             if self._ready_probe():
                 return True
+            drained = self._output_lines
+            if drained != witnessed_lines:
+                witnessed_lines = drained
+                progress_deadline = time.monotonic() + timeout
+            now = time.monotonic()
+            if now >= ceiling_deadline:
+                return self._report_ceiling_reached(ceiling)
+            if now >= progress_deadline:
+                return self._report_no_progress(timeout, now - started)
             time.sleep(delay)
             delay = min(delay * 2, 2.0)
-        logger.error("qdrant child pid=%s not ready after %.0fs", self.pid, timeout)
+
+    def _report_ceiling_reached(self, ceiling: float) -> bool:
+        """Log the still-writing-but-never-ready outcome; always False."""
+        logger.error(
+            "qdrant child pid=%s is still writing output but has not become "
+            "ready within the %.0fs hard ceiling; giving up. The store is "
+            "unavailable until a start succeeds. Raise %s (seconds) if this "
+            "store legitimately needs longer, and see %s for what the child "
+            "was doing.",
+            self.pid,
+            ceiling,
+            EnvVar.QDRANT_READY_TIMEOUT.value,
+            self.log_path,
+        )
+        return False
+
+    def _report_no_progress(self, patience: float, elapsed: float) -> bool:
+        """Log the child-went-quiet outcome; always False."""
+        logger.error(
+            "qdrant child pid=%s produced no output for %.0fs after %.0fs and "
+            "is not ready; giving up. The store is unavailable until a start "
+            "succeeds. A child this quiet is wedged rather than slow, so raising "
+            "%s is unlikely to help; see %s.",
+            self.pid,
+            patience,
+            elapsed,
+            EnvVar.QDRANT_READY_TIMEOUT.value,
+            self.log_path,
+        )
         return False
 
     def start(
@@ -634,8 +746,11 @@ class QdrantSupervisor:
         captured panic rather than guessing.
 
         Args:
-            timeout: Seconds to wait for readiness; ``None`` resolves the
-                env-overridable default via :func:`_ready_timeout_seconds`.
+            timeout: Seconds of no observable progress to tolerate while
+                waiting for readiness, under the ceiling
+                :func:`_ready_ceiling_seconds` derives from it; ``None``
+                resolves the env-overridable default via
+                :func:`_ready_timeout_seconds`.
             auto_quarantine: When ``True`` (default), quarantine an identified
                 corrupt collection and retry; when ``False``, fail on the first
                 non-ready exit without touching the store.
@@ -683,7 +798,10 @@ class QdrantSupervisor:
                 )
                 raise RuntimeError(
                     f"qdrant server on port {self.http_port} failed to become "
-                    f"ready within {timeout:.0f}s; see {self.log_path}.{cause}"
+                    f"ready; it was allowed {timeout:.0f}s without observable "
+                    f"progress under a {_ready_ceiling_seconds(timeout):.0f}s "
+                    f"hard ceiling. The store stays unavailable until a start "
+                    f"succeeds. See {self.log_path}.{cause}"
                 )
             try:
                 dest = _quarantine_collection(self.storage_dir, culprit)
@@ -707,8 +825,9 @@ class QdrantSupervisor:
         """One supervised restart attempt; increments the counter.
 
         Args:
-            timeout: Seconds to wait for readiness; ``None`` resolves the
-                env-overridable default via :func:`_ready_timeout_seconds`.
+            timeout: Seconds of no observable progress to tolerate while
+                waiting for readiness; ``None`` resolves the env-overridable
+                default via :func:`_ready_timeout_seconds`.
 
         Returns:
             True when the restarted child reports ready.
