@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from .watcher_retry import WatcherCircuitState, WatcherSource
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 __all__ = [
     "ControllerEventKind",
+    "ControllerLimits",
     "ControllerMeasurement",
     "ControllerReason",
     "ControllerScope",
@@ -18,6 +22,7 @@ __all__ = [
     "ControllerState",
     "ControllerTransition",
     "ScopeObservation",
+    "WatcherController",
 ]
 
 
@@ -72,6 +77,42 @@ class ControllerEventKind(StrEnum):
     ADDED = "added"
     MODIFIED = "modified"
     DELETED = "deleted"
+
+
+@dataclass(frozen=True, slots=True)
+class ControllerLimits:
+    """Validated runtime limits consumed by the pure controller."""
+
+    coalesce_min_seconds: float = 2.0
+    coalesce_max_seconds: float = 30.0
+    cooling_max_seconds: float = 120.0
+    maximum_freshness_seconds: float = 300.0
+    measurement_reevaluation_seconds: float = 5.0
+    batch_path_limit: int = 10_000
+
+    def __post_init__(self) -> None:
+        values = (
+            self.coalesce_min_seconds,
+            self.coalesce_max_seconds,
+            self.cooling_max_seconds,
+            self.maximum_freshness_seconds,
+            self.measurement_reevaluation_seconds,
+        )
+        if any(value < 0 for value in values):
+            msg = "controller limits must be non-negative"
+            raise ValueError(msg)
+        if self.coalesce_min_seconds > self.coalesce_max_seconds:
+            msg = "minimum coalescing cannot exceed maximum coalescing"
+            raise ValueError(msg)
+        if self.maximum_freshness_seconds < self.coalesce_max_seconds:
+            msg = "maximum freshness cannot be shorter than coalescing"
+            raise ValueError(msg)
+        if self.measurement_reevaluation_seconds <= 0:
+            msg = "measurement reevaluation must be positive"
+            raise ValueError(msg)
+        if self.batch_path_limit < 1:
+            msg = "batch path limit must be positive"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,3 +288,421 @@ _BACKPRESSURE_REASONS: Final = frozenset(
         ControllerReason.SERVICE_QUIESCED,
     }
 )
+
+_REFUSAL_REASONS: Final = frozenset(
+    {
+        ControllerReason.FULL_REINDEX_REQUIRED,
+        ControllerReason.SCOPE_STATE_INVALID,
+        ControllerReason.SCOPE_CAPACITY_EXCEEDED,
+        ControllerReason.CONTROLLER_SCHEMA_UNSUPPORTED,
+    }
+)
+
+
+class WatcherController:
+    """Deterministic state machine for one canonical root/source."""
+
+    __slots__ = (
+        "_limits",
+        "_monotonic",
+        "_prior_success_duration",
+        "_snapshot",
+        "_wall_clock",
+    )
+
+    def __init__(
+        self,
+        snapshot: ControllerSnapshot,
+        *,
+        monotonic: Callable[[], float],
+        wall_clock: Callable[[], float],
+        limits: ControllerLimits | None = None,
+    ) -> None:
+        self._snapshot = snapshot
+        self._monotonic = monotonic
+        self._wall_clock = wall_clock
+        self._limits = limits or ControllerLimits()
+        self._prior_success_duration = 0.0
+
+    @property
+    def snapshot(self) -> ControllerSnapshot:
+        """Return the current immutable controller truth."""
+        return self._snapshot
+
+    def observe(self, scope: ControllerScope) -> ControllerSnapshot:
+        """Accept already-merged exact scope and begin adaptive collection."""
+        now = self._monotonic()
+        freshness = self._freshness_deadline(scope)
+        coalesce = min(now + self._coalesce_delay(scope), freshness)
+        return self._transition(
+            ControllerState.COLLECTING,
+            ControllerReason.CHANGE_OBSERVED,
+            scope=scope,
+            next_decision_at=coalesce,
+            freshness_deadline=freshness,
+            job_id=None,
+            remediation=None,
+        )
+
+    def evaluate(
+        self,
+        measurement: ControllerMeasurement,
+        *,
+        retry_at: float | None = None,
+        circuit_state: WatcherCircuitState = WatcherCircuitState.CLOSED,
+    ) -> ControllerSnapshot:
+        """Evaluate collection, cooling, retry, and service-pressure evidence."""
+        now = self._monotonic()
+        snapshot = self._snapshot
+        if snapshot.state is ControllerState.REFUSED:
+            return self._transition(
+                ControllerState.REFUSED,
+                snapshot.reason,
+                measurement=measurement,
+                next_decision_at=None,
+            )
+        if not snapshot.scope.pending and not snapshot.scope.captured:
+            return self._transition(
+                ControllerState.CONVERGED,
+                ControllerReason.CONVERGED,
+                measurement=measurement,
+                next_decision_at=None,
+                freshness_deadline=None,
+            )
+        retry_decision = self._evaluate_retry(
+            measurement,
+            now=now,
+            retry_at=retry_at,
+            circuit_state=circuit_state,
+        )
+        if retry_decision is not None:
+            return retry_decision
+        return self._evaluate_pending(measurement, now=now, retry_at=retry_at)
+
+    def _evaluate_retry(
+        self,
+        measurement: ControllerMeasurement,
+        *,
+        now: float,
+        retry_at: float | None,
+        circuit_state: WatcherCircuitState,
+    ) -> ControllerSnapshot | None:
+        if circuit_state is WatcherCircuitState.OPEN:
+            return self._transition(
+                ControllerState.RETRYING,
+                ControllerReason.CIRCUIT_OPEN,
+                measurement=measurement,
+                circuit_state=circuit_state,
+                retry_at=retry_at,
+                next_decision_at=retry_at,
+            )
+        if retry_at is not None and retry_at > now:
+            return self._transition(
+                ControllerState.RETRYING,
+                ControllerReason.RETRY_DELAY_ACTIVE,
+                measurement=measurement,
+                circuit_state=circuit_state,
+                retry_at=retry_at,
+                next_decision_at=retry_at,
+            )
+        return None
+
+    def _evaluate_pending(
+        self,
+        measurement: ControllerMeasurement,
+        *,
+        now: float,
+        retry_at: float | None,
+    ) -> ControllerSnapshot:
+        snapshot = self._snapshot
+        safety_reason = self._safety_pressure(measurement)
+        if safety_reason is not None:
+            return self._backpressure(safety_reason, measurement, cap_freshness=False)
+        freshness = snapshot.freshness_deadline
+        if freshness is not None and now >= freshness:
+            return self._transition(
+                ControllerState.READY,
+                ControllerReason.MAXIMUM_FRESHNESS_DUE,
+                measurement=measurement,
+                next_decision_at=now,
+                circuit_state=WatcherCircuitState.CLOSED,
+                retry_at=retry_at,
+            )
+        deadline = snapshot.next_decision_at
+        if (
+            snapshot.state is ControllerState.COOLING_DOWN
+            and deadline is not None
+            and now < deadline
+        ):
+            return self._transition(
+                snapshot.state,
+                ControllerReason.POST_SUCCESS_COST_DELAY,
+                measurement=measurement,
+                next_decision_at=deadline,
+            )
+        capacity_decision = self._evaluate_capacity_pressure(measurement, now=now)
+        if capacity_decision is not None:
+            return capacity_decision
+        if deadline is not None and now < deadline:
+            return self._transition(
+                snapshot.state,
+                ControllerReason.COALESCE_WINDOW_ACTIVE,
+                measurement=measurement,
+                next_decision_at=deadline,
+            )
+        reason = (
+            ControllerReason.RETRY_ADMITTED
+            if retry_at is not None
+            else ControllerReason.QUIET_TREE_DEADLINE
+        )
+        return self._transition(
+            ControllerState.READY,
+            reason,
+            measurement=measurement,
+            next_decision_at=now,
+            retry_at=retry_at,
+        )
+
+    def _evaluate_capacity_pressure(
+        self,
+        measurement: ControllerMeasurement,
+        *,
+        now: float,
+    ) -> ControllerSnapshot | None:
+        snapshot = self._snapshot
+        if len(snapshot.scope.pending) >= self._limits.batch_path_limit:
+            return self._transition(
+                ControllerState.READY,
+                ControllerReason.BATCH_LIMIT_REACHED,
+                measurement=measurement,
+                next_decision_at=now,
+            )
+        pressure = self._ordinary_pressure(measurement)
+        if pressure is not None:
+            return self._backpressure(pressure, measurement, cap_freshness=True)
+        return None
+
+    def select(self) -> ControllerSnapshot:
+        """Record that the fair arbiter selected this ready controller."""
+        if self._snapshot.state is not ControllerState.READY:
+            msg = "only a ready controller may be selected"
+            raise ValueError(msg)
+        return self._transition(
+            ControllerState.READY,
+            ControllerReason.FAIR_TURN_SELECTED,
+        )
+
+    def admit(self, job_id: str) -> ControllerSnapshot:
+        """Bind the canonical incremental job admitted for this controller."""
+        if self._snapshot.state is not ControllerState.READY or not job_id:
+            msg = "admission requires a ready controller and job identity"
+            raise ValueError(msg)
+        return self._transition(
+            ControllerState.ADMITTED,
+            ControllerReason.JOB_ADMITTED,
+            job_id=job_id,
+            next_decision_at=None,
+        )
+
+    def start(self) -> ControllerSnapshot:
+        """Record canonical job execution start."""
+        if self._snapshot.state is not ControllerState.ADMITTED:
+            msg = "only an admitted controller may start"
+            raise ValueError(msg)
+        return self._transition(ControllerState.RUNNING, ControllerReason.JOB_STARTED)
+
+    def complete(
+        self,
+        scope: ControllerScope,
+        *,
+        run_duration: float,
+        publication_duration: float,
+    ) -> ControllerSnapshot:
+        """Settle a successful attempt and cool remaining exact work."""
+        if self._snapshot.state is not ControllerState.RUNNING:
+            msg = "only a running controller may complete"
+            raise ValueError(msg)
+        if run_duration < 0 or publication_duration < 0:
+            msg = "successful durations must be non-negative"
+            raise ValueError(msg)
+        self._prior_success_duration = run_duration + publication_duration
+        if not scope.pending and not scope.captured:
+            return self._transition(
+                ControllerState.CONVERGED,
+                ControllerReason.CONVERGED,
+                scope=scope,
+                job_id=None,
+                next_decision_at=None,
+                freshness_deadline=None,
+            )
+        now = self._monotonic()
+        freshness = self._freshness_deadline(scope)
+        cooling = min(
+            now
+            + min(
+                run_duration + publication_duration, self._limits.cooling_max_seconds
+            ),
+            freshness,
+        )
+        return self._transition(
+            ControllerState.COOLING_DOWN,
+            ControllerReason.JOB_COMPLETED,
+            scope=scope,
+            job_id=None,
+            next_decision_at=cooling,
+            freshness_deadline=freshness,
+        )
+
+    def release(
+        self,
+        scope: ControllerScope,
+        *,
+        superseded: bool = False,
+    ) -> ControllerSnapshot:
+        """Restore exact captured work after cancellation or supersession."""
+        if self._snapshot.state not in {
+            ControllerState.ADMITTED,
+            ControllerState.RUNNING,
+        }:
+            msg = "only admitted or running work may be released"
+            raise ValueError(msg)
+        reason = (
+            ControllerReason.JOB_SUPERSEDED
+            if superseded
+            else ControllerReason.JOB_CANCELLED
+        )
+        now = self._monotonic()
+        freshness = self._freshness_deadline(scope)
+        return self._transition(
+            ControllerState.COLLECTING,
+            reason,
+            scope=scope,
+            job_id=None,
+            next_decision_at=min(now + self._coalesce_delay(scope), freshness),
+            freshness_deadline=freshness,
+        )
+
+    def refuse(
+        self,
+        reason: ControllerReason,
+        *,
+        remediation: str,
+    ) -> ControllerSnapshot:
+        """Stop unsafe automatic admission with a typed actionable reason."""
+        if reason not in _REFUSAL_REASONS or not remediation:
+            msg = "refusal requires a refusal reason and remediation"
+            raise ValueError(msg)
+        return self._transition(
+            ControllerState.REFUSED,
+            reason,
+            next_decision_at=None,
+            remediation=remediation,
+            job_id=None,
+        )
+
+    def _coalesce_delay(self, scope: ControllerScope) -> float:
+        observations = scope.pending
+        if not observations:
+            return self._limits.coalesce_min_seconds
+        oldest = min(item.first_observed_at for item in observations)
+        latest = max(item.latest_observed_at for item in observations)
+        span = max(latest - oldest, 1.0)
+        event_count = sum(len(item.event_kinds) for item in observations)
+        arrival_rate = event_count / span
+        repeated_ratio = max(0.0, 1.0 - len(observations) / event_count)
+        cardinality_factor = min(len(observations) / 1000.0, 1.0)
+        pressure = min(arrival_rate / 10.0, 1.0)
+        duration_factor = min(
+            self._prior_success_duration / max(self._limits.cooling_max_seconds, 1.0),
+            1.0,
+        )
+        weight = min(
+            1.0,
+            pressure * 0.4
+            + repeated_ratio * 0.2
+            + cardinality_factor * 0.2
+            + duration_factor * 0.2,
+        )
+        width = self._limits.coalesce_max_seconds - self._limits.coalesce_min_seconds
+        return self._limits.coalesce_min_seconds + width * weight
+
+    def _freshness_deadline(self, scope: ControllerScope) -> float:
+        observations = scope.pending + scope.captured
+        if not observations:
+            return self._monotonic()
+        oldest = min(item.first_observed_at for item in observations)
+        return oldest + self._limits.maximum_freshness_seconds
+
+    @staticmethod
+    def _safety_pressure(
+        measurement: ControllerMeasurement,
+    ) -> ControllerReason | None:
+        if measurement.service_quiesced is True:
+            return ControllerReason.SERVICE_QUIESCED
+        if measurement.storage_available is False:
+            return ControllerReason.STORAGE_PRESSURE
+        return None
+
+    @staticmethod
+    def _ordinary_pressure(
+        measurement: ControllerMeasurement,
+    ) -> ControllerReason | None:
+        if measurement.job_backlog:
+            return ControllerReason.JOB_BACKLOG
+        if measurement.search_in_flight:
+            return ControllerReason.SEARCH_PRESSURE
+        if measurement.gpu_pressure is True:
+            return ControllerReason.GPU_PRESSURE
+        return None
+
+    def _backpressure(
+        self,
+        reason: ControllerReason,
+        measurement: ControllerMeasurement,
+        *,
+        cap_freshness: bool,
+    ) -> ControllerSnapshot:
+        deadline = self._monotonic() + self._limits.measurement_reevaluation_seconds
+        freshness = self._snapshot.freshness_deadline
+        if cap_freshness and freshness is not None:
+            deadline = min(deadline, freshness)
+        return self._transition(
+            ControllerState.BACKPRESSURED,
+            reason,
+            measurement=measurement,
+            next_decision_at=deadline,
+            backpressure=(reason,),
+        )
+
+    def _transition(
+        self,
+        state: ControllerState,
+        reason: ControllerReason,
+        **changes: object,
+    ) -> ControllerSnapshot:
+        if state is not ControllerState.BACKPRESSURED:
+            changes.setdefault("backpressure", ())
+        deadline = changes.get("next_decision_at", self._snapshot.next_decision_at)
+        measurement = changes.get("measurement", self._snapshot.measurement)
+        generation = (
+            measurement.generation
+            if isinstance(measurement, ControllerMeasurement)
+            else None
+        )
+        transition = ControllerTransition(
+            source_state=self._snapshot.state,
+            destination_state=state,
+            reason=reason,
+            wall_time=self._wall_clock(),
+            deadline=deadline if isinstance(deadline, float) else None,
+            measurement_generation=generation,
+        )
+        self._snapshot = replace(
+            self._snapshot,
+            state=state,
+            reason=reason,
+            observed_at=self._wall_clock(),
+            last_transition=transition,
+            **changes,
+        )
+        return self._snapshot
