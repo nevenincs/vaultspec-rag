@@ -575,6 +575,7 @@ class WatcherRetryPolicy:
         attempt_token: str | None,
         *,
         now: float | None = None,
+        job_id: str | None = None,
     ) -> WatcherRetryDecision:
         """Commit a token published before asynchronous worker admission."""
         timestamp = _wall_time(now)
@@ -638,7 +639,16 @@ class WatcherRetryPolicy:
                     replace(
                         state,
                         circuit_state=circuit_state,
+                        pending_paths=(
+                            () if job_id is not None else state.pending_paths
+                        ),
+                        captured_paths=(
+                            state.pending_paths
+                            if job_id is not None
+                            else state.captured_paths
+                        ),
                         attempt_generation=attempt_generation,
+                        attempt_job_id=job_id,
                         attempt_token=attempt_token,
                         attempt_started_at=timestamp,
                         attempt_owner_pid=owner_pid,
@@ -726,6 +736,8 @@ class WatcherRetryPolicy:
                     unscoped_required=(
                         newer_generation_pending and state.unscoped_required
                     ),
+                    captured_paths=(),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -773,6 +785,9 @@ class WatcherRetryPolicy:
                     # pending bit and scope refresh both escalate for any
                     # instance that cannot scope the pending generation.
                     unscoped_required=state.unscoped_required,
+                    pending_paths=_restore_captured_paths(state),
+                    captured_paths=(),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -828,6 +843,18 @@ class WatcherRetryPolicy:
                     ),
                     convergence_pending=not requires_explicit_rebuild,
                     unscoped_required=False,
+                    pending_paths=(
+                        ()
+                        if requires_explicit_rebuild
+                        else _restore_captured_paths(state)
+                    ),
+                    captured_paths=(),
+                    scope_refusal=(
+                        WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+                        if requires_explicit_rebuild
+                        else state.scope_refusal
+                    ),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -1561,8 +1588,6 @@ def _validate_loaded_scope(
         raise ValueError("scope_capacity_exceeded: watcher path count exceeds bound")
     if file_size > scope_max_bytes:
         raise ValueError("scope_capacity_exceeded: watcher state exceeds byte bound")
-    if state.scope_refusal is not None and not state.convergence_pending:
-        raise ValueError("watcher scope refusal requires pending convergence")
     if state.captured_paths and (
         state.attempt_generation is None or state.attempt_job_id is None
     ):
@@ -1691,6 +1716,16 @@ def _merge_observations(
             generation=generation,
         )
     return tuple(sorted(merged.values(), key=lambda item: item.relative_path))
+
+
+def _restore_captured_paths(
+    state: WatcherRetryState,
+) -> tuple[WatcherPathObservation, ...]:
+    restored = {
+        (item.source, item.relative_path): item
+        for item in state.captured_paths + state.pending_paths
+    }
+    return tuple(sorted(restored.values(), key=lambda item: item.relative_path))
 
 
 def _refuse_scope_capacity(
