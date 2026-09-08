@@ -36,6 +36,8 @@ from ..indexer._run_ledger_models import (
     FETCH_BATCH,
     INDEX_RUN_LEDGER_FILENAME,
     PUBLICATION_PROOF_SCHEMA,
+    REQUIRED_INDEX_PREDICATES,
+    REQUIRED_INDEXES,
     RESUMABLE_STATES,
     CommitUnit,
     CommitUnitKind,
@@ -120,6 +122,50 @@ def _proof_compatibility() -> ProofCompatibilityKey:
         membership_identity="membership-v1",
         content_identity="content-v1",
         policy_identity="policy-v1",
+    )
+
+
+def _insert_reserved_receipt(
+    connection: sqlite3.Connection,
+    *,
+    receipt_id: str,
+    reservation_sequence: int,
+    generation_id: str,
+    projection: tuple[str, int] = ("collection-v1", 1),
+) -> None:
+    key = _proof_compatibility()
+    collection_identity, target_revision = projection
+    connection.execute(
+        """
+        INSERT INTO publication_receipts (
+            receipt_id, reservation_sequence, source_type, root_identity,
+            backend_identity, collection_identity, storage_schema,
+            payload_schema, embedding_schema_identity,
+            chunking_schema_identity, membership_identity, content_identity,
+            policy_identity, generation_id, parent_revision, target_revision,
+            state, reserved_at, sealed_at, committed_at, rolled_back_at
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?,
+            'reserved', 1.0, NULL, NULL, NULL
+        )
+        """,
+        (
+            receipt_id,
+            reservation_sequence,
+            key.source_type.value,
+            key.root_identity,
+            key.backend_identity,
+            collection_identity,
+            key.storage_schema,
+            key.payload_schema,
+            key.embedding_schema_identity,
+            key.chunking_schema_identity,
+            key.membership_identity,
+            key.content_identity,
+            key.policy_identity,
+            generation_id,
+            target_revision,
+        ),
     )
 
 
@@ -424,6 +470,260 @@ def test_publication_schema_separates_receipts_from_streaming_mutations() -> Non
     } <= (PUBLICATION_PROOF_SCHEMA["publication_mutation_units"])
     assert "reservation_sequence" in PUBLICATION_PROOF_SCHEMA["publication_proofs"]
     assert "prepared_at" not in PUBLICATION_PROOF_SCHEMA["publication_receipts"]
+
+
+def test_run_ledger_installs_and_verifies_normalized_publication_schema(
+    tmp_path: Path,
+) -> None:
+    """Mutation proving this can fail: omit a table or weaken an index."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    expected_tables = {
+        "publication_proofs",
+        "publication_evidence",
+        "publication_points",
+        "publication_receipts",
+        "publication_mutation_units",
+        "publication_mutation_points",
+        "publication_receipt_deltas",
+        "publication_receipt_points",
+        "file_state_tombstones",
+    }
+
+    with sqlite3.connect(ledger.path) as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert expected_tables <= tables
+        assert expected_tables == set(PUBLICATION_PROOF_SCHEMA)
+        for table, expected_columns in PUBLICATION_PROOF_SCHEMA.items():
+            actual_columns = {
+                str(row[1])
+                for row in connection.execute(f'PRAGMA table_info("{table}")')
+            }
+            assert expected_columns <= actual_columns
+        receipt_columns = {
+            str(row[1]): row
+            for row in connection.execute('PRAGMA table_info("publication_receipts")')
+        }
+        assert bool(receipt_columns["receipt_id"][3])
+        assert int(receipt_columns["receipt_id"][5]) == 1
+
+        for name, (table, columns, unique, partial) in REQUIRED_INDEXES.items():
+            index_row = next(
+                row
+                for row in connection.execute(f'PRAGMA index_list("{table}")')
+                if str(row[1]) == name
+            )
+            actual_columns = tuple(
+                str(row[2])
+                for row in sorted(
+                    connection.execute(f'PRAGMA index_info("{name}")'),
+                    key=lambda row: int(row[0]),
+                )
+            )
+            assert actual_columns == columns
+            assert bool(index_row[2]) is unique
+            assert bool(index_row[4]) is partial
+            expected_predicate = REQUIRED_INDEX_PREDICATES.get(name)
+            if expected_predicate is not None:
+                definition = " ".join(
+                    str(
+                        connection.execute(
+                            "SELECT sql FROM sqlite_master WHERE name = ?", (name,)
+                        ).fetchone()[0]
+                    )
+                    .lower()
+                    .split()
+                )
+                _prefix, separator, predicate = definition.partition(" where ")
+                actual_predicate = f"where {predicate}" if separator else ""
+                assert actual_predicate == expected_predicate
+
+        assert {
+            str(row[2])
+            for row in connection.execute(
+                'PRAGMA foreign_key_list("publication_evidence")'
+            )
+        } == {"generations", "publication_proofs"}
+        assert {
+            str(row[2])
+            for row in connection.execute(
+                'PRAGMA foreign_key_list("file_state_tombstones")'
+            )
+        } == {"generations"}
+
+
+def test_publication_schema_enforces_open_receipt_and_state_constraints(
+    tmp_path: Path,
+) -> None:
+    """The durable schema rejects ambiguous or malformed receipt state."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="receipt-one",
+            reservation_sequence=1,
+            generation_id=generation.generation_id,
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_reserved_receipt(
+                connection,
+                receipt_id="receipt-two",
+                reservation_sequence=2,
+                generation_id=generation.generation_id,
+            )
+
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = 'rolled_back', rolled_back_at = 2.0
+            WHERE receipt_id = 'receipt-one'
+            """
+        )
+        _insert_reserved_receipt(
+            connection,
+            receipt_id="receipt-two",
+            reservation_sequence=2,
+            generation_id=generation.generation_id,
+        )
+        connection.commit()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            _insert_reserved_receipt(
+                connection,
+                receipt_id="wrong-revision",
+                reservation_sequence=1,
+                generation_id=generation.generation_id,
+                projection=("other-collection", 2),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO publication_mutation_units (
+                    receipt_id, mutation_ordinal, sealed_ordinal, unit_id,
+                    rel_path, unit_kind, source_digest, segment_ordinal,
+                    is_file_end, state, prepared_at, applied_at, confirmed_at
+                ) VALUES (
+                    'receipt-two', 0, NULL, 'unit-one', 'src/item.py',
+                    'upsert', ?, 0, 1, 'confirmed', 2.0, NULL, 3.0
+                )
+                """,
+                (_digest("item"),),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO file_state_tombstones (generation_id, rel_path)
+                VALUES ('missing-generation', 'src/deleted.py')
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO publication_receipt_deltas (
+                    receipt_id, delta_ordinal, outcome, rel_path,
+                    target_rel_path, old_content_identity, new_content_identity
+                ) VALUES (
+                    'receipt-two', 0, 'modify', 'src/item.py',
+                    NULL, 'same-content', 'same-content'
+                )
+                """
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                """
+                INSERT INTO publication_receipt_deltas (
+                    receipt_id, delta_ordinal, outcome, rel_path,
+                    target_rel_path, old_content_identity, new_content_identity
+                ) VALUES (
+                    'receipt-two', 1, 'noop', 'src/item.py',
+                    NULL, 'old-content', 'new-content'
+                )
+                """
+            )
+
+
+def test_v6_migration_preserves_legacy_rows_without_manufacturing_proof(
+    tmp_path: Path,
+) -> None:
+    digest = _digest("legacy")
+    ledger, generation_id = _indexed_path_ledger(tmp_path, digest)
+    before = list(ledger.iter_file_states(generation_id))
+    retained = _unit("src/drift.py", 0, 1, digest=digest).point_ids
+
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        for table in PUBLICATION_PROOF_SCHEMA:
+            connection.execute(f'DROP TABLE "{table}"')
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 6
+        connection.commit()
+
+    migrated = RunLedger(ledger.path)
+    assert migrated.generation(generation_id).generation_id == generation_id
+    assert list(migrated.iter_file_states(generation_id)) == before
+    assert migrated.retained_point_ids_for_candidates(
+        generation_id, retained
+    ) == frozenset(retained)
+    with sqlite3.connect(migrated.path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 6
+        assert {
+            table: int(
+                connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            )
+            for table in PUBLICATION_PROOF_SCHEMA
+        } == dict.fromkeys(PUBLICATION_PROOF_SCHEMA, 0)
+
+
+def test_open_refuses_a_preexisting_incompatible_publication_index(
+    tmp_path: Path,
+) -> None:
+    """Mutation proving this can fail: skip post-migration index verification."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("DROP INDEX publication_receipts_open")
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX publication_receipts_open
+            ON publication_receipts(
+                source_type, root_identity, backend_identity,
+                collection_identity
+            ) WHERE state = 'committed'
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(RunLedgerCompatibilityError, match="does not match"):
+        RunLedger(ledger.path)
+
+
+def test_open_refuses_a_preexisting_publication_table_without_constraints(
+    tmp_path: Path,
+) -> None:
+    """Mutation proving this can fail: skip exact table-definition verification."""
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("DROP TABLE file_state_tombstones")
+        connection.execute(
+            """
+            CREATE TABLE file_state_tombstones (
+                generation_id TEXT,
+                rel_path TEXT
+            )
+            """
+        )
+        connection.commit()
+
+    with pytest.raises(RunLedgerCompatibilityError, match="does not match"):
+        RunLedger(ledger.path)
 
 
 def test_backend_identity_is_part_of_manifest_compatibility(tmp_path: Path) -> None:

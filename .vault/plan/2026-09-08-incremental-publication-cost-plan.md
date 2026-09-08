@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:b3ae9f10934114da0de1ad64241b0a3da07d0560eae67ba0858b805e059aa653'
+body_hash: 'sha256:69052e9cf2a5ad3553e9968aef222e2cc19f7540298ece731552eb89a4d552d3'
 ---
 
 # `incremental-publication-cost` plan
@@ -50,7 +50,7 @@ Provide source-neutral immutable values for proof identity, path outcomes, aggre
 Give the run ledger normalized manifest rows, exact retained-point relations, aggregates, revisions, and idempotent prepare, apply, and commit operations without copying a parent manifest.
 
 - [x] `W01.P02.S03` - Extend ledger value and schema contracts for proof revisions, rows, aggregates, receipts, and provenance; `src/vaultspec_rag/indexer/_run_ledger_models.py`.
-- [ ] `W01.P02.S04` - Create and migrate normalized proof, receipt, mutation-unit, and tombstone tables with post-migration schema verification; `src/vaultspec_rag/indexer/_run_ledger_runtime.py, src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
+- [x] `W01.P02.S04` - Create and migrate normalized proof, receipt, mutation-unit, and tombstone tables with post-migration schema verification; `src/vaultspec_rag/indexer/_run_ledger_runtime.py, src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
 - [ ] `W01.P02.S05` - Implement bounded proof reads, compare-and-swap revision commits, active-receipt lookup, read tokens, and canonical RunLedger composition; `src/vaultspec_rag/indexer/_run_ledger_publication.py, src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
 - [ ] `W01.P02.S54` - Implement sparse active-manifest overrides, deletion tombstones, bounded effective reads, and retained-evidence ownership; `src/vaultspec_rag/indexer/_run_ledger_files.py, src/vaultspec_rag/indexer/_run_ledger_commits.py, src/vaultspec_rag/indexer/_run_ledger_finalization.py, src/vaultspec_rag/indexer/_run_checkpoint.py, src/vaultspec_rag/indexer/_document_checkpoint.py, src/vaultspec_rag/indexer/_route_migration.py`.
 - [ ] `W01.P02.S55` - Remove eager parent-manifest copying and preserve live proof and receipt owners through compaction; `src/vaultspec_rag/indexer/_run_ledger_runtime.py, src/vaultspec_rag/indexer/_run_ledger_finalization.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
