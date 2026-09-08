@@ -33,7 +33,7 @@ from ._http_stubs import QuietHandler
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 pytestmark = [pytest.mark.unit]
 
@@ -81,7 +81,7 @@ def _supervised_child(
     tmp_path: Path,
     source: str,
     http_port: int,
-) -> Iterator[QdrantSupervisor]:
+) -> Generator[QdrantSupervisor]:
     """Attach a real child process and its output drain to a supervisor.
 
     The child is spawned here rather than through ``spawn()`` because the
@@ -112,7 +112,7 @@ def _supervised_child(
 
 
 @contextlib.contextmanager
-def _readyz_from(port: int, *, after: float) -> Iterator[None]:
+def _readyz_from(port: int, *, after: float) -> Generator[None]:
     """Serve a ready endpoint on *port*, but only once *after* has elapsed.
 
     Nothing is bound before then, so the supervisor's probes are refused - the
