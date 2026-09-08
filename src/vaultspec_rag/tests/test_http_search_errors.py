@@ -193,6 +193,9 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         assert payload["error"] == "index_unverifiable"
         assert payload["retryable"] is False
         assert "results" not in payload
+        # Adding an unconditional Retry-After at the JSONResponse seam made
+        # this exact absence assertion fail with `'1' is None` (exit 1);
+        # restoring the header-free response passed (exit 0).
         assert response.headers.get("retry-after") is None
     finally:
         runtime_registry.close_all()
@@ -553,6 +556,9 @@ def test_authoritative_empty_success_carries_current_readiness(tmp_path: Path) -
 def test_non_authoritative_empty_is_typed_failure_without_results(
     tmp_path: Path,
 ) -> None:
+    # Disabling the non-authoritative-empty rewrite made the exact status
+    # assertion fail with `assert 200 == 503` (exit 1); restoring it passed
+    # (exit 0) and keeps the empty results suppressed.
     classification = _classify_search_result(
         _canonical_searched([]),
         _canonical_classification_facts(tmp_path, current=False),
