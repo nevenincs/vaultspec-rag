@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:b18099a267d7424f449887dd38606c4b297844be5608194902627f78a879a3f3'
+body_hash: 'sha256:6edceea600a9e9b220a8c29a52a7b13a9d433ef76268b1a93d38180746cc9a7c'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -34,6 +34,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P05-S20]]'
   - '[[2026-09-08-search-readiness-contract-W02-P05-S21]]'
   - '[[2026-09-08-search-readiness-contract-W02-P05-S22]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P05-summary]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -78,6 +79,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P05-S20` - Replace legacy availability envelopes with canonical code retry wait evidence and remediation
 - `2026-09-08-search-readiness-contract-W02-P05-S21` - Cover stable failures updating success empty authority result suppression status and header truthfulness
 - `2026-09-08-search-readiness-contract-W02-P05-S22` - Mutation-prove empty authority and Retry-After guards
+- `2026-09-08-search-readiness-contract-W02-P05-summary` - `search-readiness-contract` `W02.P05` summary
 
 ### plan
 
