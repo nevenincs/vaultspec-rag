@@ -4,16 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final
 
-from .watcher_retry import WatcherCircuitState, WatcherSource
+from .watcher_retry import (
+    WatcherCircuitState,
+    WatcherPathEvent,
+    WatcherSource,
+    is_valid_watcher_relative_path,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
-    "ControllerEventKind",
     "ControllerLimits",
     "ControllerMeasurement",
     "ControllerReason",
@@ -71,14 +74,6 @@ class ControllerReason(StrEnum):
     CONVERGED = "converged"
 
 
-class ControllerEventKind(StrEnum):
-    """Filesystem facts retained for each changed path."""
-
-    ADDED = "added"
-    MODIFIED = "modified"
-    DELETED = "deleted"
-
-
 @dataclass(frozen=True, slots=True)
 class ControllerLimits:
     """Validated runtime limits consumed by the pure controller."""
@@ -123,21 +118,12 @@ class ScopeObservation:
     source: WatcherSource
     first_observed_at: float
     latest_observed_at: float
-    event_kinds: frozenset[ControllerEventKind]
+    event_kinds: frozenset[WatcherPathEvent]
     generation: int
 
     def __post_init__(self) -> None:
-        path = PurePosixPath(self.relative_path)
-        if (
-            not self.relative_path
-            or path.is_absolute()
-            or path.parts[0].endswith(":")
-            or any(part in {"", ".", ".."} for part in path.parts)
-        ):
+        if not is_valid_watcher_relative_path(self.relative_path):
             msg = "relative_path must be a non-empty relative path"
-            raise ValueError(msg)
-        if "\\" in self.relative_path:
-            msg = "relative_path must use canonical forward slashes"
             raise ValueError(msg)
         if self.generation < 1:
             msg = "generation must be positive"
@@ -247,6 +233,7 @@ class ControllerSnapshot:
     reason: ControllerReason
     scope: ControllerScope
     observed_at: float
+    monotonic_at: float | None = None
     next_decision_at: float | None = None
     freshness_deadline: float | None = None
     measurement: ControllerMeasurement | None = None
@@ -263,6 +250,9 @@ class ControllerSnapshot:
             raise ValueError(msg)
         if self.observed_at < 0:
             msg = "observed_at must be non-negative"
+            raise ValueError(msg)
+        if self.monotonic_at is not None and self.monotonic_at < 0:
+            msg = "monotonic_at must be non-negative"
             raise ValueError(msg)
         for name in ("next_decision_at", "freshness_deadline", "retry_at"):
             value = getattr(self, name)
@@ -482,16 +472,6 @@ class WatcherController:
             return self._backpressure(pressure, measurement, cap_freshness=True)
         return None
 
-    def select(self) -> ControllerSnapshot:
-        """Record that the fair arbiter selected this ready controller."""
-        if self._snapshot.state is not ControllerState.READY:
-            msg = "only a ready controller may be selected"
-            raise ValueError(msg)
-        return self._transition(
-            ControllerState.READY,
-            ControllerReason.FAIR_TURN_SELECTED,
-        )
-
     def admit(self, job_id: str) -> ControllerSnapshot:
         """Bind the canonical incremental job admitted for this controller."""
         if self._snapshot.state is not ControllerState.READY or not job_id:
@@ -504,12 +484,27 @@ class WatcherController:
             next_decision_at=None,
         )
 
-    def start(self) -> ControllerSnapshot:
-        """Record canonical job execution start."""
-        if self._snapshot.state is not ControllerState.ADMITTED:
-            msg = "only an admitted controller may start"
-            raise ValueError(msg)
-        return self._transition(ControllerState.RUNNING, ControllerReason.JOB_STARTED)
+    def advance(self, reason: ControllerReason) -> ControllerSnapshot:
+        """Apply one non-admission execution transition."""
+        transitions = {
+            ControllerReason.FAIR_TURN_SELECTED: (
+                ControllerState.READY,
+                ControllerState.READY,
+                "only a ready controller may be selected",
+            ),
+            ControllerReason.JOB_STARTED: (
+                ControllerState.ADMITTED,
+                ControllerState.RUNNING,
+                "only an admitted controller may start",
+            ),
+        }
+        try:
+            required, destination, error = transitions[reason]
+        except KeyError as exc:
+            raise ValueError("reason is not an execution transition") from exc
+        if self._snapshot.state is not required:
+            raise ValueError(error)
+        return self._transition(destination, reason)
 
     def complete(
         self,
@@ -689,11 +684,13 @@ class WatcherController:
             if isinstance(measurement, ControllerMeasurement)
             else None
         )
+        process_now = self._monotonic()
+        wall_now = self._wall_clock()
         transition = ControllerTransition(
             source_state=self._snapshot.state,
             destination_state=state,
             reason=reason,
-            wall_time=self._wall_clock(),
+            wall_time=wall_now,
             deadline=deadline if isinstance(deadline, float) else None,
             measurement_generation=generation,
         )
@@ -701,7 +698,8 @@ class WatcherController:
             self._snapshot,
             state=state,
             reason=reason,
-            observed_at=self._wall_clock(),
+            observed_at=wall_now,
+            monotonic_at=process_now,
             last_transition=transition,
             **changes,
         )

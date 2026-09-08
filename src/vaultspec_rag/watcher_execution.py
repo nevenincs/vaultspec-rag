@@ -36,7 +36,6 @@ from .job_models import (
 from .logging_config import log_event
 from .service_quiesce import QuiesceAdmissionClosedError
 from .watcher_controller import (
-    ControllerEventKind,
     ControllerReason,
     ControllerScope,
     ControllerState,
@@ -52,6 +51,7 @@ from .watcher_durability import (
     settle_watcher_attempt,
 )
 from .watcher_retry import (
+    WatcherPathEvent,
     WatcherPathObservation,
     WatcherRetryState,
     WatcherRetryStateError,
@@ -98,7 +98,7 @@ def controller_scope_from_retry_state(
             first_observed_at=max(0.0, process_now - first_age),
             latest_observed_at=max(0.0, process_now - latest_age),
             event_kinds=frozenset(
-                ControllerEventKind(event) for event in item.event_kinds
+                WatcherPathEvent(event) for event in item.event_kinds
             ),
             generation=item.generation,
         )
@@ -200,6 +200,25 @@ async def _preflight_scoped_paths(
     return code_preflight, document_preflight
 
 
+async def _restore_uncreated_admission(
+    slot: WatcherConvergenceSlot,
+    controller: WatcherController,
+    admission: _ScopedAdmission,
+) -> None:
+    """Restore an exact fence when orchestration failed before job creation."""
+    retry_state = await settle_watcher_attempt(
+        slot.retry_policy,
+        admission.generation,
+        WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED),
+        source=WatcherSource(slot.source.value),
+        root_dir=slot.root,
+    )
+    controller.observe(controller_scope_from_retry_state(retry_state))
+    from .server._watcher import _wake_watcher_scheduler
+
+    _wake_watcher_scheduler()
+
+
 async def submit_watcher_job(
     slot: WatcherConvergenceSlot,
     *,
@@ -230,28 +249,33 @@ async def submit_watcher_job(
     admission = await _capture_scoped_admission(slot, controller, proposed_job_id)
     if admission is None:
         return
-    code_preflight, document_preflight = await _preflight_scoped_paths(
-        slot, admission.candidate_paths
-    )
     with slot.lock:
         slot.retry_attempt_generations[1] = admission.generation
-    outcome = await _run_in_thread(
-        partial(
-            manager.create,
-            JobSpec(
-                operation=JobOperation.INDEX,
-                source=slot.source,
-                project_root=str(slot.root),
-                mode=JobMode.INCREMENTAL,
-            ),
-            JobInitiator(
-                kind="watcher",
-                command=slot.command,
-                project_root=str(slot.root),
-            ),
-            job_id=proposed_job_id,
+    try:
+        code_preflight, document_preflight = await _preflight_scoped_paths(
+            slot, admission.candidate_paths
         )
-    )
+        outcome = await _run_in_thread(
+            partial(
+                manager.create,
+                JobSpec(
+                    operation=JobOperation.INDEX,
+                    source=slot.source,
+                    project_root=str(slot.root),
+                    mode=JobMode.INCREMENTAL,
+                ),
+                JobInitiator(
+                    kind="watcher",
+                    command=slot.command,
+                    project_root=str(slot.root),
+                ),
+                job_id=proposed_job_id,
+            )
+        )
+    except BaseException:
+        if manager.get(proposed_job_id) is None:
+            await _restore_uncreated_admission(slot, controller, admission)
+        raise
     if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
         await _settle_retry_failure(
             slot,
@@ -369,7 +393,7 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
 
     def _on_started(started: JobSnapshot) -> None:
         if request.controller.snapshot.state is ControllerState.ADMITTED:
-            request.controller.start()
+            request.controller.advance(ControllerReason.JOB_STARTED)
         _job_progress.record_progress(started.id, "queued")
 
     def _on_finished(

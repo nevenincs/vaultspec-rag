@@ -13,13 +13,15 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from ..job_models import JobSnapshot
+    from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
-    from ..watcher_retry import WatcherRetryState
+    from ..watcher_retry import WatcherRetryState, WatcherSource
 
 __all__ = [
     "ActiveIndexGeneration",
     "WatcherMeasurementFacts",
     "WatcherServiceMeasurement",
+    "capture_watcher_measurement",
     "compose_watcher_measurement",
 ]
 
@@ -72,6 +74,52 @@ class WatcherMeasurementFacts:
     retry_state: WatcherRetryState | None
     requested_cost: JobMode | None = JobMode.INCREMENTAL
     effective_cost: JobMode | None = None
+
+
+def capture_watcher_measurement(
+    registry: ServiceRegistry,
+    *,
+    key: tuple[str, WatcherSource],
+    retry_state: WatcherRetryState,
+    generation: int,
+    observed_at: float,
+) -> WatcherServiceMeasurement:
+    """Capture the service-owned facts used by production admission."""
+    import time
+
+    from .. import _job_evidence
+    from ..concurrency import limiter_stats
+    from ._state import search_activity_ledger
+
+    root, source = key
+    jobs = tuple(registry.create_job_manager().list_jobs())
+    pressure = _job_evidence.machine_pressure(
+        now=time.time(),
+        forwards=[],
+        project_root=root,
+        source=source.value,
+    )
+    evidence = pressure.get("evidence")
+    backend = evidence.get("backend") if isinstance(evidence, dict) else None
+    storage_available = backend.get("alive") if isinstance(backend, dict) else None
+    if not isinstance(storage_available, bool):
+        storage_available = None
+    tier = pressure.get("tier")
+    return compose_watcher_measurement(
+        WatcherMeasurementFacts(
+            generation=generation,
+            observed_at=observed_at,
+            jobs=jobs,
+            limiter_snapshot=limiter_stats(),
+            search_snapshot=search_activity_ledger().snapshot(include_query=False),
+            pressure_tier=tier if isinstance(tier, str) else None,
+            storage_available=storage_available,
+            quiesce=registry.quiesce_snapshot(),
+            retry_state=retry_state,
+            requested_cost=JobMode.INCREMENTAL,
+            effective_cost=JobMode.INCREMENTAL,
+        )
+    )
 
 
 def compose_watcher_measurement(
