@@ -59,6 +59,7 @@ from dev.init.contract import (
     SKIPPED,
     STALE,
     Emitter,
+    Outcome,
     Phase,
     PhaseResult,
     StepResult,
@@ -69,9 +70,13 @@ from dev.init.process import run as run_step
 from dev.init.stamp import (
     is_current,
     phase_digest,
-    read as read_stamp,
     report_path,
     staleness,
+)
+from dev.init.stamp import (
+    read as read_stamp,
+)
+from dev.init.stamp import (
     write as write_stamp,
 )
 
@@ -107,7 +112,8 @@ def _truthy(name: str) -> bool:
 
 
 def _preflight(
-    repo_root: Path, emitter: Emitter
+    repo_root: Path,
+    emitter: Emitter,
 ) -> tuple[list[StepResult], int, list[str]]:
     """Run the steps that must happen before any phase, and probe the host.
 
@@ -134,7 +140,7 @@ def _preflight(
     results: list[StepResult] = []
 
     findings = check_all(plan.REQUIREMENTS)
-    blocking = [finding for finding in findings if not finding.ok and not finding.advisory]
+    blocking = [item for item in findings if not item.ok and not item.advisory]
     for finding in findings:
         emitter.say(f"  host: {finding.message}")
         emitter.event(
@@ -155,13 +161,19 @@ def _preflight(
         results.append(result)
         emitter.event("step", phase="preflight", **result.as_dict())
         if code != OK:
-            remediation.append(f"preflight step '{step.name}' failed: {' '.join(step.argv)}")
+            remediation.append(
+                f"preflight step '{step.name}' failed: {' '.join(step.argv)}",
+            )
             return results, code, remediation
     return results, OK, remediation
 
 
 def _run_phase(
-    repo_root: Path, phase: Phase, emitter: Emitter, *, force: bool
+    repo_root: Path,
+    phase: Phase,
+    emitter: Emitter,
+    *,
+    force: bool,
 ) -> PhaseResult:
     """Run one phase, or establish that it does not need running.
 
@@ -197,16 +209,25 @@ def _run_phase(
         if code != OK:
             result.status = FAILED
             result.exit_code = code
-            result.reason = f"step '{step.name}' failed with exit {step_result.exit_code}"
+            result.reason = f"step '{step.name}' failed: exit {step_result.exit_code}"
             emitter.say(f"init-{phase.name}: FAILED - {result.reason}")
-            emitter.event("phase", name=phase.name, status=FAILED, reason=result.reason, exit_code=code)
+            emitter.event(
+                "phase",
+                name=phase.name,
+                status=FAILED,
+                reason=result.reason,
+                exit_code=code,
+            )
             return result
 
     emitter.event("phase", name=phase.name, status="ok", reason="")
     return result
 
 
-def _check(repo_root: Path, emitter: Emitter) -> tuple[list[PhaseResult], int, list[str]]:
+def _check(
+    repo_root: Path,
+    emitter: Emitter,
+) -> tuple[list[PhaseResult], int, list[str]]:
     """Report whether the worktree is initialized, changing nothing.
 
     Args:
@@ -230,7 +251,11 @@ def _check(repo_root: Path, emitter: Emitter) -> tuple[list[PhaseResult], int, l
         emitter.event("phase", name=name, status=status, reason=reason)
         results.append(PhaseResult(name=name, status=status, reason=reason))
     if stale:
-        return results, INIT_STALE, [f"run `just init` ({name}: {why})" for name, why in stale.items()]
+        return (
+            results,
+            INIT_STALE,
+            [f"run `just init` ({name}: {why})" for name, why in stale.items()],
+        )
     return results, OK, []
 
 
@@ -248,9 +273,22 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m dev.init",
         description="Initialize this worktree so it is usable.",
     )
-    parser.add_argument("selection", choices=[*SELECTIONS, "check"], nargs="?", default="all")
-    parser.add_argument("--json", action="store_true", help="emit NDJSON events on stdout")
-    parser.add_argument("--force", action="store_true", help="ignore the idempotence stamp")
+    parser.add_argument(
+        "selection",
+        choices=[*SELECTIONS, "check"],
+        nargs="?",
+        default="all",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit NDJSON events on stdout",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="ignore the idempotence stamp",
+    )
     args = parser.parse_args(argv)
 
     repo_root = _repo_root()
@@ -265,8 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=repo_root,
             selection=["check"],
             phases=checked,
-            status=FRESH if code == OK else STALE,
-            exit_code=code,
+            outcome=Outcome(FRESH if code == OK else STALE, code),
             remediation=remediation,
         )
         _finish(repo_root, report, emitter, write_file=False)
@@ -312,8 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         selection=list(selection),
         phases=phases,
-        status=status,
-        exit_code=code,
+        outcome=Outcome(status, code),
         remediation=remediation,
     )
     _finish(repo_root, report, emitter, write_file=True)
@@ -322,7 +358,13 @@ def main(argv: list[str] | None = None) -> int:
     return code
 
 
-def _finish(repo_root: Path, report: dict, emitter: Emitter, *, write_file: bool) -> None:
+def _finish(
+    repo_root: Path,
+    report: dict,
+    emitter: Emitter,
+    *,
+    write_file: bool,
+) -> None:
     """Write the report and announce where it went.
 
     Args:
@@ -336,14 +378,14 @@ def _finish(repo_root: Path, report: dict, emitter: Emitter, *, write_file: bool
     path = report_path(repo_root)
     if write_file:
         try:
-            path.write_text(
-                json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+            path.write_text(payload, encoding="utf-8")
         except OSError as exc:  # pragma: no cover - unwritable filesystem
             emitter.say(f"init: could not write the report to {path}: {exc}")
         else:
             emitter.say(f"init: report written to {path}")
-    emitter.event("run-end", report=report, report_path=str(path) if write_file else None)
+    written = str(path) if write_file else None
+    emitter.event("run-end", report=report, report_path=written)
     for line in report["remediation"]:
         emitter.say(f"  -> {line}")
 

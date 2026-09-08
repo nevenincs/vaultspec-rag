@@ -41,7 +41,11 @@ def provision(example: Path, target: Path) -> int:
         print(f"{target.name} already exists - leaving it untouched.", flush=True)
         return 0
     if not example.is_file():
-        print(f"{example} not found - cannot provision {target}", file=sys.stderr, flush=True)
+        print(
+            f"{example} not found - cannot provision {target}",
+            file=sys.stderr,
+            flush=True,
+        )
         return 1
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(example, target)

@@ -102,7 +102,7 @@ def install(repo_root: Path, config: Path) -> int:
     runner, prefix = found
     argv = [*prefix, "install"]
     print(f"$ {' '.join(argv)}", flush=True)
-    completed = subprocess.run(argv, cwd=repo_root, check=False)  # noqa: S603
+    completed = subprocess.run(argv, cwd=repo_root, check=False)
     if completed.returncode == 0:
         print(f"Git hooks installed with {runner}.", flush=True)
     return completed.returncode
