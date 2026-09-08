@@ -25,13 +25,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dev.exit_codes import TOOL_MISSING as _TOOL_MISSING
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-#: Exit code for "the required tool is not installed and has no fallback".
-#: 127 is the conventional shell status for command-not-found, which keeps the
-#: meaning legible to CI logs and to anyone reading the exit code directly.
-TOOL_MISSING = 127
+#: Re-exported from :mod:`dev.exit_codes`, the fleet-wide statement of what
+#: every status means. Named here too because this module's callers already
+#: read it from here, and the contract must have exactly one source.
+TOOL_MISSING = _TOOL_MISSING
 
 #: ``--no-sync`` keeps ``uv run`` from re-resolving and rebuilding the project
 #: into ``.venv``. That rebuild fails on Windows whenever a resident process -
