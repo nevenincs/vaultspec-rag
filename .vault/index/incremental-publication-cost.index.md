@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:087943d9ae308126ec64f982719e4a4c0c62c1781d90210b6ba520bf35d0f606'
+body_hash: 'sha256:eb2dd5d0d5b01ccdaeaa75ea19ae0b1c5cd9a96374004744ebbf80264ddad425'
 related:
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -21,7 +21,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 
 ### adr
 
-- `2026-09-08-incremental-publication-cost-adr` - `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `proposed`)
+- `2026-09-08-incremental-publication-cost-adr` - `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `accepted`)
 
 ### reference
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:20948d940b361eeec5f26000af5effd8cdd5d6dbc4ac9ab565a2a028e0c36beb'
+body_hash: 'sha256:edef6b7519dd53872acfdab211702564615853c4af38fb40148c9899f8103216'
 related:
   - "[[2026-09-08-incremental-publication-cost-research]]"
   - "[[2026-09-08-incremental-publication-cost-reference]]"
@@ -15,7 +15,7 @@ related:
   - "[[2026-07-21-code-document-index-boundary-adr]]"
 ---
 
-# `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `proposed`)
+# `incremental-publication-cost` adr: `publish exact completeness proofs from committed deltas` | (**status:** `accepted`)
 
 ## Problem Statement
 
