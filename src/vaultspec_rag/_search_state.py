@@ -50,6 +50,7 @@ __all__ = [
     "WaitObservation",
     "result_collapse",
     "search_index_state",
+    "search_readiness_block",
 ]
 
 #: How many results a page must hold before resolving to one path is evidence
@@ -443,6 +444,17 @@ class SearchReadinessAggregate:
             "usable_source_count": self.usable_source_count,
             "degraded_sources": list(self.degraded_sources),
         }
+
+
+def search_readiness_block(
+    sources: tuple[SearchSourceFact, ...],
+) -> dict[str, object]:
+    """Serialize source facts beside their solely derived aggregate."""
+    aggregate = SearchReadinessAggregate.from_sources(sources)
+    return {
+        "sources": [source.as_dict() for source in sources],
+        "aggregate": aggregate.as_dict(),
+    }
 
 
 def result_collapse(paths: Sequence[str]) -> dict[str, object] | None:

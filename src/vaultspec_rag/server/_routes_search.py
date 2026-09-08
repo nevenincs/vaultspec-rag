@@ -33,8 +33,8 @@ from .._operator_commands import (
 from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
-    SearchReadinessAggregate,
     SearchSourceFact,
+    search_readiness_block,
 )
 from .._source_types import (
     INDEX_SOURCES,
@@ -510,11 +510,7 @@ def _readiness_snapshot(
 
 def _readiness_block(source_fact: SearchSourceFact) -> dict[str, object]:
     """Serialize one canonical source fact and its derived aggregate."""
-    aggregate = SearchReadinessAggregate.from_sources((source_fact,))
-    return {
-        "sources": [source_fact.as_dict()],
-        "aggregate": aggregate.as_dict(),
-    }
+    return search_readiness_block((source_fact,))
 
 
 def _non_authoritative_empty_result(
