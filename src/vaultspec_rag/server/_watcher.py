@@ -8,20 +8,25 @@ request or lifecycle owner's registry explicitly.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import zlib
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 __all__ = [
     "WatcherStartOutcome",
     "_ensure_watcher",
     "_ensure_watcher_soon",
+    "_register_watcher_controller",
     "_stop_all_watchers",
     "_stop_watcher",
+    "_unregister_watcher_controllers",
     "_wait_for_watcher_cleanup",
+    "_wake_watcher_scheduler",
 ]
 
 import vaultspec_rag.server as _m
@@ -32,9 +37,13 @@ from .._workspace_layout import (
 from ..logging_config import log_event
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from ..config._settings import VaultSpecConfigWrapper
     from ..job_models import JobSnapshot
     from ..service import ProjectSlot, ServiceRegistry
+    from ..watcher_admission import AdmissionSelection, ControllerKey
+    from ..watcher_controller import WatcherController
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -124,6 +133,287 @@ _watcher_starting_generations: dict[Path, int] = {}
 _watcher_starting_restarts: dict[Path, _WatcherRestartRequest] = {}
 
 
+@dataclass(frozen=True, slots=True)
+class _ControllerRegistration:
+    """One controller and the service callbacks used to advance it."""
+
+    controller: WatcherController
+    reevaluate: Callable[[], Awaitable[None] | None]
+    admit: Callable[[AdmissionSelection], Awaitable[None] | None]
+    recovery_not_before: float | None
+
+
+class _WatcherScheduler:
+    """Event-driven deadline scheduler for service-owned watcher controllers."""
+
+    def __init__(
+        self,
+        *,
+        reevaluation_seconds: float,
+        monotonic: Callable[[], float],
+        wait_for_wakeup: Callable[[asyncio.Event, float], Awaitable[bool]]
+        | None = None,
+    ) -> None:
+        if reevaluation_seconds <= 0:
+            raise ValueError("reevaluation_seconds must be positive")
+        from ..watcher_admission import WatcherAdmissionArbiter
+
+        self._reevaluation_seconds = reevaluation_seconds
+        self._monotonic = monotonic
+        self._wait_for_wakeup = wait_for_wakeup or _wait_for_scheduler_wakeup
+        self._arbiter = WatcherAdmissionArbiter()
+        self._registrations: dict[ControllerKey, _ControllerRegistration] = {}
+        self._active: set[ControllerKey] = set()
+        self._wakeup = asyncio.Event()
+        self._released = asyncio.Event()
+        self._released.set()
+        self._stopping = False
+
+    @property
+    def empty(self) -> bool:
+        return not self._registrations
+
+    def register(
+        self,
+        controller: WatcherController,
+        *,
+        reevaluate: Callable[[], Awaitable[None] | None],
+        admit: Callable[[AdmissionSelection], Awaitable[None] | None],
+    ) -> None:
+        """Register or atomically replace one canonical root/source owner."""
+        snapshot = controller.snapshot
+        key: ControllerKey = (snapshot.canonical_root, snapshot.source)
+        recovery_not_before = self._recovery_not_before(key, snapshot.next_decision_at)
+        self._stopping = False
+        self._registrations[key] = _ControllerRegistration(
+            controller=controller,
+            reevaluate=reevaluate,
+            admit=admit,
+            recovery_not_before=recovery_not_before,
+        )
+        self._released.clear()
+        self.wake()
+
+    def unregister_root(self, root: Path) -> None:
+        """Remove every source controller belonging to one canonical root."""
+        canonical_root = str(root.resolve())
+        self._registrations = {
+            key: registration
+            for key, registration in self._registrations.items()
+            if key[0] != canonical_root
+        }
+        if not self._registrations:
+            self._stopping = True
+        self.wake()
+        self._publish_released()
+
+    def wake(self) -> None:
+        """Wake the scheduler after an external fact changes."""
+        self._wakeup.set()
+
+    async def wait_root_released(self, root: Path, deadline: float) -> bool:
+        """Boundedly join callbacks that already claimed one root."""
+        canonical_root = str(root.resolve())
+        while any(key[0] == canonical_root for key in self._active):
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                return False
+            self._released.clear()
+            try:
+                await asyncio.wait_for(self._released.wait(), timeout=remaining)
+            except TimeoutError:
+                return False
+        return True
+
+    async def run(self) -> None:
+        """Reevaluate on events/deadlines and dispatch one fair claim per turn."""
+        try:
+            while not self._stopping:
+                timeout = self._next_timeout()
+                await self._wait_for_wakeup(self._wakeup, timeout)
+                self._wakeup.clear()
+                if not self._stopping:
+                    await self._run_cycle()
+        finally:
+            self._stopping = True
+            self._publish_released()
+
+    async def _run_cycle(self) -> None:
+        now = self._monotonic()
+        registrations = tuple(self._registrations.items())
+        for key, registration in registrations:
+            if self._registrations.get(key) is not registration:
+                continue
+            deadline = registration.controller.snapshot.next_decision_at
+            due = deadline is not None and deadline <= now
+            periodic = deadline is None or deadline > now
+            if (due or periodic) and not self._recovery_delayed(registration, now):
+                try:
+                    await self._invoke(key, registration.reevaluate)
+                except Exception:
+                    logger.exception(
+                        "Watcher controller reevaluation failed for %s/%s", *key
+                    )
+
+        current = tuple(
+            registration.controller.snapshot
+            for registration in self._registrations.values()
+            if not self._recovery_delayed(registration, self._monotonic())
+        )
+        selection = self._arbiter.select(current, now=self._monotonic())
+        if selection is None:
+            return
+        key = (selection.canonical_root, selection.source)
+        registration = self._registrations.get(key)
+        if registration is not None:
+            try:
+                await self._invoke(key, registration.admit, selection)
+            except Exception:
+                logger.exception(
+                    "Watcher controller admission callback failed for %s/%s", *key
+                )
+
+    async def _invoke(
+        self, key: ControllerKey, callback: Callable[..., Any], *args: object
+    ) -> None:
+        self._active.add(key)
+        self._released.clear()
+        try:
+            result = callback(*args)
+            if inspect.isawaitable(result):
+                await result
+        finally:
+            self._active.discard(key)
+            self._publish_released()
+
+    def _next_timeout(self) -> float:
+        from ..watcher_controller import ControllerState
+
+        now = self._monotonic()
+        deadlines: list[float] = []
+        timed_states = {
+            ControllerState.COLLECTING,
+            ControllerState.COOLING_DOWN,
+            ControllerState.BACKPRESSURED,
+            ControllerState.RETRYING,
+        }
+        for registration in self._registrations.values():
+            snapshot = registration.controller.snapshot
+            deadline = snapshot.next_decision_at
+            if deadline is None:
+                continue
+            effective = max(deadline, registration.recovery_not_before or deadline)
+            if effective > now:
+                deadlines.append(effective)
+            elif snapshot.state in timed_states:
+                deadlines.append(now)
+        if not deadlines:
+            return self._reevaluation_seconds
+        return min(self._reevaluation_seconds, max(0.0, min(deadlines) - now))
+
+    def _recovery_not_before(
+        self,
+        key: ControllerKey,
+        deadline: float | None,
+    ) -> float | None:
+        now = self._monotonic()
+        if deadline is None or deadline > now:
+            return None
+        window = min(1.0, self._reevaluation_seconds)
+        identity = f"{key[0]}\0{key[1].value}".encode()
+        fraction = zlib.crc32(identity) / 0xFFFFFFFF
+        return now + window * fraction
+
+    @staticmethod
+    def _recovery_delayed(registration: _ControllerRegistration, now: float) -> bool:
+        not_before = registration.recovery_not_before
+        return not_before is not None and now < not_before
+
+    def _publish_released(self) -> None:
+        if not self._active:
+            self._released.set()
+
+
+async def _wait_for_scheduler_wakeup(event: asyncio.Event, timeout: float) -> bool:
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except TimeoutError:
+        return False
+    return True
+
+
+_watcher_scheduler: _WatcherScheduler | None = None
+_watcher_scheduler_task: asyncio.Task[None] | None = None
+
+
+def _register_watcher_controller(
+    controller: WatcherController,
+    *,
+    reevaluate: Callable[[], Awaitable[None] | None],
+    admit: Callable[[AdmissionSelection], Awaitable[None] | None],
+) -> None:
+    """Register one controller with the scheduler owned by this service loop."""
+    from ..config._settings import get_config
+
+    global _watcher_scheduler, _watcher_scheduler_task
+    loop = asyncio.get_running_loop()
+    if _watcher_scheduler_task is None or _watcher_scheduler_task.done():
+        _watcher_scheduler = _WatcherScheduler(
+            reevaluation_seconds=float(
+                get_config().watch_measurement_reevaluation_seconds
+            ),
+            monotonic=loop.time,
+        )
+        _watcher_scheduler_task = loop.create_task(
+            _watcher_scheduler.run(),
+            name="vaultspec-watcher-scheduler",
+        )
+    assert _watcher_scheduler is not None
+    _watcher_scheduler.register(
+        controller,
+        reevaluate=reevaluate,
+        admit=admit,
+    )
+
+
+def _unregister_watcher_controllers(root: Path) -> None:
+    """Detach one root from scheduler ownership without blocking its caller."""
+    scheduler = _watcher_scheduler
+    task = _watcher_scheduler_task
+    if scheduler is None or task is None or task.done():
+        return
+    owner_loop = task.get_loop()
+
+    def _unregister() -> None:
+        scheduler.unregister_root(root)
+
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is owner_loop:
+        _unregister()
+    elif not owner_loop.is_closed():
+        owner_loop.call_soon_threadsafe(_unregister)
+
+
+def _wake_watcher_scheduler() -> None:
+    """Notify the scheduler that controller or service facts changed."""
+    scheduler = _watcher_scheduler
+    task = _watcher_scheduler_task
+    if scheduler is None or task is None or task.done():
+        return
+    owner_loop = task.get_loop()
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is owner_loop:
+        scheduler.wake()
+    elif not owner_loop.is_closed():
+        owner_loop.call_soon_threadsafe(scheduler.wake)
+
+
 def _forget_stop_generation_if_idle(root: Path) -> None:
     """Drop an epoch once no old or future watcher generation can observe it."""
     if (
@@ -196,6 +486,7 @@ def _watcher_task_done(
         root=root,
         error=error,
     )
+    _unregister_watcher_controllers(root)
     _schedule_watcher_drain(root, drain)
 
 
@@ -581,6 +872,7 @@ def _stop_watcher(root: Path) -> asyncio.Task[bool] | None:
     # to-thread warm may already be executing and cannot be stopped safely.
     if deferred is not None:
         log_event(logger, "service.watcher", "deferred_start_suppressed", root=root)
+    _unregister_watcher_controllers(root)
     if drain is None:
         return None
     return _schedule_watcher_drain(root, drain)
@@ -649,6 +941,8 @@ async def _watcher_release_error(
         return f"watcher intake did not stop within {timeout:g} seconds"
     if not await _wait_for_managed_watcher_attempts(root, deadline):
         return f"watcher-owned job resources did not release within {timeout:g} seconds"
+    if not await _wait_for_watcher_scheduler_release(root, deadline):
+        return f"watcher scheduler did not release within {timeout:g} seconds"
     from ..watcher_retry_settlement import wait_for_retry_settlements
 
     if not await wait_for_retry_settlements(root, deadline):
@@ -657,6 +951,31 @@ async def _watcher_release_error(
             f"{timeout:g} seconds"
         )
     return None
+
+
+async def _wait_for_watcher_scheduler_release(root: Path, deadline: float) -> bool:
+    """Join scheduler callbacks and its last-owner task under the drain bound."""
+    global _watcher_scheduler, _watcher_scheduler_task
+    scheduler = _watcher_scheduler
+    task = _watcher_scheduler_task
+    if scheduler is None or task is None:
+        return True
+    released = await scheduler.wait_root_released(root, deadline)
+    if released and scheduler.empty:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            released = False
+        else:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+            except TimeoutError:
+                released = False
+            else:
+                released = not task.cancelled() and task.exception() is None
+                if released and _watcher_scheduler_task is task:
+                    _watcher_scheduler_task = None
+                    _watcher_scheduler = None
+    return released
 
 
 async def _drain_watcher(root: Path, drain: _WatcherDrain) -> bool:
