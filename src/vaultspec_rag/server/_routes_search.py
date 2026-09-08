@@ -1307,7 +1307,8 @@ async def _search_route_response(request: Request) -> JSONResponse:
             _record_validation_rejection(finalization, search_request)
             return search_request.response
         _record_normalized_activity(activity_ticket, search_request)
-        completed = await _execute_search_route(
+        completed = await _execute_search_until_disconnect(
+            request,
             search_request,
             request.url.port,
             get_request_runtime(request).registry,
@@ -1327,3 +1328,41 @@ async def _search_route_response(request: Request) -> JSONResponse:
         raise
     finally:
         _finish_search_activity(activity_ticket, finalization)
+
+
+async def _execute_search_until_disconnect(
+    request: Request,
+    search_request: SearchRequest,
+    port: int | None,
+    registry: ServiceRegistry,
+) -> SearchRouteResult:
+    """Cancel route work when the already-read ASGI request disconnects."""
+    executing = asyncio.create_task(
+        _execute_search_route(search_request, port, registry)
+    )
+    disconnected = asyncio.create_task(_wait_for_http_disconnect(request))
+    try:
+        done, _ = await asyncio.wait(
+            (executing, disconnected),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if disconnected in done:
+            # A transport failure is not a client disconnect. Observe the listener
+            # first so its exception escapes unchanged; only its normal completion
+            # represents ``http.disconnect``.
+            await disconnected
+            raise asyncio.CancelledError
+        return await executing
+    finally:
+        for task in (executing, disconnected):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(executing, disconnected, return_exceptions=True)
+
+
+async def _wait_for_http_disconnect(request: Request) -> None:
+    """Wait for the transport's terminal message after request-body consumption."""
+    while True:
+        message = await request.receive()
+        if message["type"] == "http.disconnect":
+            return

@@ -387,8 +387,7 @@ class ReadinessRevisionRegistry:
             if snapshot.publication_revision < target.revision:
                 return False
             if (
-                snapshot.publication_revision == target.revision
-                and target.generation is not None
+                target.generation is not None
                 and snapshot.published_generation != target.generation
             ):
                 return False
