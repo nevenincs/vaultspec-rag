@@ -128,54 +128,33 @@ def _iter_result_rows(results: object) -> Iterator[object]:
 
 
 def _handle_service_results(
-    service_results: list[dict[str, object]] | dict[str, object] | None,
+    service_results: dict[str, object],
     request: _ServiceSearchRenderRequest,
 ) -> None:
-    if isinstance(service_results, dict):
-        if service_results.get("ok") is False:
-            _display_service_error(
-                service_results,
-                json_mode=request.json_mode,
-                command="search",
-            )
-            if not request.json_mode:
-                rendered_remediation = _render_readiness(service_results)
-                _render_string_remediation(service_results, rendered_remediation)
-            raise typer.Exit(code=1)
-        if "results" in service_results:
-            _handle_service_success(
-                service_results,
-                request,
-            )
-            return
+    if service_results.get("ok") is False:
         _display_service_error(
             service_results,
             json_mode=request.json_mode,
             command="search",
         )
+        if not request.json_mode:
+            rendered_remediation = _render_readiness(service_results)
+            _render_string_remediation(service_results, rendered_remediation)
         raise typer.Exit(code=1)
-    if request.json_mode:
-        _emit_json(
-            True,
-            "search",
-            data={
-                "query": request.query,
-                "search_type": request.search_type,
-                "via": "service",
-                "results": list(service_results or []),
-            },
+    if "results" in service_results:
+        _handle_service_success(
+            service_results,
+            request,
         )
         return
-    if not service_results:
-        _plain(f"No {request.search_type} results found for: {request.query}")
-        return
-    _display_search_results(
+    # The transport rejects non-dicts and empty/malformed dictionaries. Keep a
+    # final dictionary-shape defense for direct callers of this private seam.
+    _display_service_error(
         service_results,
-        request.search_type,
-        via="service",
-        show_scores=request.show_scores,
-        root=request.target,
+        json_mode=request.json_mode,
+        command="search",
     )
+    raise typer.Exit(code=1)
 
 
 def _handle_service_success(
@@ -257,13 +236,14 @@ def _render_readiness(payload: dict[str, object]) -> set[str]:
         if not isinstance(raw_source, dict):
             continue
         source = cast("dict[str, object]", raw_source)
-        if (remediation := _render_readiness_source(source)) is not None:
-            rendered_remediation.add(remediation)
+        _render_readiness_source(source, rendered_remediation)
         remaining_waits = _render_readiness_waits(source, remaining_waits)
     return rendered_remediation
 
 
-def _render_readiness_source(source: dict[str, object]) -> str | None:
+def _render_readiness_source(
+    source: dict[str, object], rendered_remediation: set[str]
+) -> None:
     """Render one supplied source state and its bounded generation identities."""
     identity = _bounded_readiness_identifier(source.get("source"))
     details = [
@@ -302,10 +282,9 @@ def _render_readiness_source(source: dict[str, object]) -> str | None:
         bounded = _bounded_readiness_identifier(
             remediation, limit=_READINESS_REMEDIATION_DISPLAY_LIMIT
         )
-        if bounded is not None:
+        if bounded is not None and remediation not in rendered_remediation:
             _plain(f"    Next action: {bounded}")
-            return remediation
-    return None
+            rendered_remediation.add(remediation)
 
 
 def _render_readiness_waits(source: dict[str, object], remaining: int) -> int:
@@ -313,6 +292,7 @@ def _render_readiness_waits(source: dict[str, object], remaining: int) -> int:
     raw_waits = source.get("waits")
     if not isinstance(raw_waits, list):
         return remaining
+    source_id = _bounded_readiness_identifier(source.get("source"))
     for raw_wait in cast("list[object]", raw_waits):
         if remaining == 0:
             break
@@ -325,7 +305,8 @@ def _render_readiness_waits(source: dict[str, object], remaining: int) -> int:
         waited = wait.get("waited_seconds")
         bound = wait.get("configured_bound_seconds")
         remainder = wait.get("remaining_bound_seconds")
-        _plain(f"  Wait {cause}: {waited}s / {bound}s ({remainder}s remaining)")
+        prefix = f"{source_id} " if source_id is not None else ""
+        _plain(f"  Wait {prefix}{cause}: {waited}s / {bound}s ({remainder}s remaining)")
         remaining -= 1
     return remaining
 
@@ -334,7 +315,11 @@ def _render_string_remediation(payload: dict[str, object], rendered: set[str]) -
     """Render the canonical scalar remediation form used by search failures."""
     remediation = payload.get("remediation")
     if isinstance(remediation, str) and remediation and remediation not in rendered:
-        _plain(f"Next action: {remediation}")
+        bounded = _bounded_readiness_identifier(
+            remediation, limit=_READINESS_REMEDIATION_DISPLAY_LIMIT
+        )
+        if bounded is not None:
+            _plain(f"Next action: {bounded}")
 
 
 def _render_shortfall_warnings(payload: dict[str, object]) -> None:
