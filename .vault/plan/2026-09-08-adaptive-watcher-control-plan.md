@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:94df27e864551ffc8f23efc4dee450d2769fd4fcf6be89f44ba95e0b6383b45e'
+body_hash: 'sha256:7889ee860ea04da7ae854c0c830ee85f1a998bdc1e1ef5f4288cab642191dfe1'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -59,7 +59,7 @@ Integrate durable controllers with fair service scheduling, canonical jobs and m
 Add earliest-deadline fair admission and event/deadline wakeups using canonical service-owned telemetry.
 
 - [x] `W02.P03.S07` - Implement earliest-deadline admission with rotating root and source ties; `src/vaultspec_rag/watcher_admission.py`.
-- [ ] `W02.P03.S08` - Own controller registration, deadline scheduling, wakeups, and bounded reevaluation in the service; `src/vaultspec_rag/server/_watcher.py`.
+- [x] `W02.P03.S08` - Own controller registration, deadline scheduling, wakeups, and bounded reevaluation in the service; `src/vaultspec_rag/server/_watcher.py`.
 - [ ] `W02.P03.S09` - Expose immutable job, search, GPU, storage, limiter, and quiesce measurement snapshots to admission; `src/vaultspec_rag/server`.
 
 ### Phase `W02.P04` - intake and job lifecycle
