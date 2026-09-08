@@ -647,6 +647,52 @@ def test_gpu_lock_contention_records_only_the_gpu_compute_cause() -> None:
     assert "storage_backend_seconds" not in timings
 
 
+def test_independent_searchers_do_not_gain_a_global_gpu_serial_boundary() -> None:
+    """Distinct runtime locks permit both search paths to enter concurrently.
+
+    Mutation evidence: after the first search had confirmed section ownership,
+    temporarily routing ``_gpu_section`` acquire/release through one
+    module-global lock kept the second contender outside and failed
+    ``second search was globally serialized`` (exit 1); restoration passed
+    (exit 0). No GPU hardware is touched.
+    """
+    from ..search._searcher import VaultSearcher
+
+    first = object.__new__(VaultSearcher)
+    second = object.__new__(VaultSearcher)
+    first._gpu_lock = threading.Lock()
+    second._gpu_lock = threading.Lock()
+    entered = (threading.Event(), threading.Event())
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def search(searcher: VaultSearcher, signal: threading.Event) -> None:
+        try:
+            with searcher._gpu_section({}):
+                signal.set()
+                assert release.wait(timeout=1.0)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = (
+        threading.Thread(target=search, args=(first, entered[0]), daemon=True),
+        threading.Thread(target=search, args=(second, entered[1]), daemon=True),
+    )
+    threads[0].start()
+    try:
+        assert entered[0].wait(timeout=1.0), "first search never entered its section"
+        threads[1].start()
+        assert entered[1].wait(timeout=1.0), "second search was globally serialized"
+    finally:
+        release.set()
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(timeout=1.0)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+
+
 def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
     """The MCP tools must hand the agent the same diagnostic the CLI renders.
 
