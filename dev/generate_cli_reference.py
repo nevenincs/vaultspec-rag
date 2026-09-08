@@ -53,6 +53,11 @@ def _default(param: Any) -> str:
     return _cell(value)
 
 
+def _type_name(param: Any) -> str:
+    value = getattr(getattr(param, "type", None), "name", None)
+    return _cell(value or "value")
+
+
 def _parameter_rows(command: Any, *, options: bool) -> list[str]:
     rows: list[str] = []
     for param in command.params:
@@ -62,7 +67,10 @@ def _parameter_rows(command: Any, *, options: bool) -> list[str]:
             continue
         name = ", ".join(f"`{opt}`" for opt in opts) if opts else f"`{param.name}`"
         help_text = _cell(getattr(param, "help", "") or "-")
-        rows.append(f"| {name} | {_default(param)} | {help_text} |")
+        required = "yes" if getattr(param, "required", False) else "no"
+        rows.append(
+            f"| {name} | {_type_name(param)} | {required} | {_default(param)} | {help_text} |"
+        )
     return rows
 
 
@@ -70,7 +78,33 @@ def _table(command: Any, *, options: bool) -> list[str]:
     rows = _parameter_rows(command, options=options)
     if not rows:
         return ["None.", ""]
-    return ["| Name | Default | Description |", "| --- | --- | --- |", *rows, ""]
+    return [
+        "| Name | Type | Required | Default | Description |",
+        "| --- | --- | --- | --- | --- |",
+        *rows,
+        "",
+    ]
+
+
+def _command_tree(commands: list[tuple[tuple[str, ...], Any]]) -> list[str]:
+    lines: list[str] = []
+    previous: tuple[str, ...] = ()
+    for path, _ in commands:
+        shared = 0
+        for left, right in zip(previous, path):
+            if left != right:
+                break
+            shared += 1
+        for depth in range(shared, len(path)):
+            partial = path[: depth + 1]
+            label = " ".join(partial)
+            indent = "  " * depth
+            if depth == len(path) - 1:
+                lines.append(f"{indent}- [{path[-1]}](#{label.replace(' ', '-').lower()})")
+            else:
+                lines.append(f"{indent}- **{path[-1]}**")
+        previous = path
+    return lines
 
 
 def render() -> str:
@@ -78,6 +112,8 @@ def render() -> str:
     commands = _paths(root)
     lines = [
         "# vaultspec-rag CLI reference",
+        "",
+        "::::{container} vs-cli-reference",
         "",
         "Generated from the live command surface. Run "
         "`python -m dev.generate_cli_reference` after changing a command, "
@@ -89,10 +125,7 @@ def render() -> str:
         "## Commands",
         "",
     ]
-    for path, _ in commands:
-        label = " ".join(path)
-        lines.append(f"- [{label}](#{label.replace(' ', '-').lower()})")
-    lines.append("")
+    lines.extend([*_command_tree(commands), ""])
     for path, command in commands:
         label = " ".join(path)
         usage = f"vaultspec-rag {label}"
@@ -102,7 +135,9 @@ def render() -> str:
                 "",
                 _summary(getattr(command, "help", "")),
                 "",
-                f"`{usage}`",
+                "```bash",
+                usage,
+                "```",
                 "",
                 "### Arguments",
                 "",
@@ -112,6 +147,7 @@ def render() -> str:
                 *_table(command, options=True),
             ]
         )
+    lines.extend(["::::", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
