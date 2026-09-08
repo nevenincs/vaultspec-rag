@@ -43,6 +43,7 @@ from ._run_ledger_models import (
     ledger_transaction,
     raise_if_lock_contention,
 )
+from ._run_ledger_publication import RunLedgerPublicationMethods
 
 __all__ = ["RunLedger"]
 
@@ -53,6 +54,7 @@ def _normalize_schema_definition(definition: str) -> str:
 
 
 class RunLedger(
+    RunLedgerPublicationMethods,
     RunLedgerCommitMethods,
     RunLedgerFileMethods,
     RunLedgerFinalizationMethods,

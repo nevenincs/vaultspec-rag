@@ -27,8 +27,13 @@ from ..indexer._publication_proof import (
     ProofAggregate,
     ProofCompatibilityKey,
     ProofEvidence,
+    ProofIncompatibleError,
+    ProofMissingError,
     ProofMutationState,
+    ProofOldEvidenceMismatchError,
+    ProofParentMismatchError,
     ProofProvenance,
+    ProofReadConflictError,
     ProofReceiptState,
 )
 from ..indexer._run_ledger_commits import retained_point_ids_sql
@@ -54,6 +59,7 @@ from ..indexer._run_ledger_models import (
     RunTerminalState,
     index_run_ledger_path,
 )
+from ..indexer._run_ledger_publication import RunLedgerPublicationMethods
 from ..indexer._run_ledger_runtime import RunLedger
 from ._production_service import PROCESS_TIMEOUT_SECONDS
 
@@ -123,6 +129,204 @@ def _proof_compatibility() -> ProofCompatibilityKey:
         content_identity="content-v1",
         policy_identity="policy-v1",
     )
+
+
+def _proof_key_for_signature(signature: RunSignature) -> ProofCompatibilityKey:
+    return ProofCompatibilityKey(
+        source_type=PublicSourceType(signature.source_type.value),
+        root_identity=signature.root_identity,
+        backend_identity=signature.backend_identity,
+        collection_identity=signature.collection_identity,
+        storage_schema=1,
+        payload_schema=signature.payload_schema,
+        embedding_schema_identity=(
+            f"{signature.model_identity}:{signature.dense_dimensions}:"
+            f"{signature.embedding_schema}"
+        ),
+        chunking_schema_identity=signature.preprocessing_identity,
+        membership_identity=signature.membership_epoch,
+        content_identity=signature.content_epoch,
+        policy_identity=signature.policy_fingerprint,
+    )
+
+
+def _seed_publication_proof(
+    ledger: RunLedger,
+    *,
+    generation_id: str,
+    key: ProofCompatibilityKey,
+    evidence: tuple[ProofEvidence, ...],
+) -> None:
+    connection = sqlite3.connect(ledger.path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_proofs (
+                source_type, root_identity, backend_identity,
+                collection_identity, storage_schema, payload_schema,
+                embedding_schema_identity, chunking_schema_identity,
+                membership_identity, content_identity, policy_identity,
+                generation_id, revision, reservation_sequence,
+                indexed_identities, retained_points, provenance,
+                committed_at, verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation_id,
+                3,
+                5,
+                len(evidence),
+                sum(len(item.point_ids) for item in evidence),
+                ProofProvenance.VERIFIED.value,
+                1.0,
+                1.0,
+            ),
+        )
+        for item in evidence:
+            connection.execute(
+                """
+                INSERT INTO publication_evidence (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, content_identity,
+                    evidence_generation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key.source_type.value,
+                    key.root_identity,
+                    key.backend_identity,
+                    key.collection_identity,
+                    item.rel_path,
+                    item.content_identity,
+                    generation_id,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO publication_points (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, point_ordinal, point_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        key.source_type.value,
+                        key.root_identity,
+                        key.backend_identity,
+                        key.collection_identity,
+                        item.rel_path,
+                        ordinal,
+                        point_id,
+                    )
+                    for ordinal, point_id in enumerate(item.point_ids)
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _seal_publication_receipt(
+    ledger: RunLedger,
+    receipt: PublicationReceipt,
+    *,
+    mutation: CommitUnit,
+    delta: PathDelta,
+) -> None:
+    connection = sqlite3.connect(ledger.path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        timestamp = receipt.reserved_at
+        connection.execute(
+            """
+            INSERT INTO publication_mutation_units (
+                receipt_id, mutation_ordinal, sealed_ordinal, unit_id,
+                rel_path, unit_kind, source_digest, segment_ordinal,
+                is_file_end, state, prepared_at, applied_at, confirmed_at
+            ) VALUES (?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.receipt_id,
+                mutation.identity,
+                mutation.rel_path,
+                mutation.kind.value,
+                mutation.source_digest,
+                mutation.segment_ordinal,
+                int(mutation.is_file_end),
+                ProofMutationState.CONFIRMED.value,
+                timestamp,
+                timestamp,
+                timestamp,
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO publication_mutation_points (
+                receipt_id, mutation_ordinal, point_ordinal, point_id
+            ) VALUES (?, 0, ?, ?)
+            """,
+            (
+                (receipt.receipt_id, ordinal, point_id)
+                for ordinal, point_id in enumerate(mutation.point_ids)
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO publication_receipt_deltas (
+                receipt_id, delta_ordinal, outcome, rel_path,
+                target_rel_path, old_content_identity, new_content_identity
+            ) VALUES (?, 0, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.receipt_id,
+                delta.outcome.value,
+                delta.rel_path,
+                delta.target_rel_path,
+                delta.old.content_identity if delta.old is not None else None,
+                delta.new.content_identity if delta.new is not None else None,
+            ),
+        )
+        for side, item in (("old", delta.old), ("new", delta.new)):
+            if item is None:
+                continue
+            connection.executemany(
+                """
+                INSERT INTO publication_receipt_points (
+                    receipt_id, delta_ordinal, evidence_side,
+                    point_ordinal, point_id
+                ) VALUES (?, 0, ?, ?, ?)
+                """,
+                (
+                    (receipt.receipt_id, side, ordinal, point_id)
+                    for ordinal, point_id in enumerate(item.point_ids)
+                ),
+            )
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = ?, sealed_at = ? WHERE receipt_id = ?
+            """,
+            (
+                ProofReceiptState.SEALED.value,
+                timestamp,
+                receipt.receipt_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def _insert_reserved_receipt(
@@ -554,6 +758,282 @@ def test_run_ledger_installs_and_verifies_normalized_publication_schema(
                 'PRAGMA foreign_key_list("file_state_tombstones")'
             )
         } == {"generations"}
+
+
+def _seeded_publication_lineage(
+    tmp_path: Path,
+    evidence: tuple[ProofEvidence, ...],
+) -> tuple[RunLedger, ProofCompatibilityKey, str, str]:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    signature = _signature(tmp_path)
+    parent = ledger.start_generation(signature)
+    _publish_and_compact(ledger, parent.generation_id)
+    key = _proof_key_for_signature(signature)
+    _seed_publication_proof(
+        ledger,
+        generation_id=parent.generation_id,
+        key=key,
+        evidence=evidence,
+    )
+    successor = ledger.start_generation(signature)
+    assert successor.parent_generation_id == parent.generation_id
+    return ledger, key, parent.generation_id, successor.generation_id
+
+
+def test_publication_reads_are_bounded_and_distinguish_incompatible_proof(
+    tmp_path: Path,
+) -> None:
+    first = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a-0", "point-a-1"),
+    )
+    second = ProofEvidence(
+        rel_path="src/b.py",
+        content_identity=_digest("b-v1"),
+        point_ids=("point-b-0",),
+    )
+    ledger, key, parent_id, _successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (first, second),
+    )
+
+    assert RunLedgerPublicationMethods in RunLedger.__mro__
+    proof = ledger.publication_proof(key)
+    assert proof.generation_id == parent_id
+    assert proof.aggregate == ProofAggregate(
+        indexed_identities=2,
+        retained_points=3,
+    )
+    assert ledger.publication_evidence_for_paths(
+        key,
+        (second.rel_path, first.rel_path, first.rel_path),
+    ) == {first.rel_path: first, second.rel_path: second}
+    assert ledger.publication_point_ids_for_candidates(
+        key,
+        ("absent", "point-a-1", "point-b-0"),
+    ) == frozenset({"point-a-1", "point-b-0"})
+
+    incompatible = replace(key, payload_schema=key.payload_schema + 1)
+    with pytest.raises(ProofIncompatibleError):
+        ledger.publication_proof(incompatible)
+    with pytest.raises(ProofIncompatibleError):
+        ledger.publication_evidence_for_paths(incompatible, (first.rel_path,))
+    with pytest.raises(ProofMissingError):
+        ledger.publication_proof(replace(key, root_identity="other-root"))
+    with pytest.raises(ValueError, match="at most"):
+        ledger.publication_evidence_for_paths(
+            key,
+            tuple(f"src/{ordinal}.py" for ordinal in range(FETCH_BATCH + 1)),
+        )
+    with pytest.raises(ValueError, match="at most"):
+        ledger.publication_point_ids_for_candidates(
+            key,
+            tuple(f"point-{ordinal}" for ordinal in range(FETCH_BATCH + 1)),
+        )
+
+
+def test_publication_reservation_sequence_fences_open_and_rolled_back_receipts(
+    tmp_path: Path,
+) -> None:
+    """Mutation proving this can fail: ignore the stored sequence at validation."""
+    evidence = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (evidence,),
+    )
+    token = ledger.acquire_publication_read_token(key)
+
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=token.revision,
+    )
+    assert receipt.reservation_sequence == token.reservation_sequence + 1
+    assert ledger.active_publication_receipt(key) == receipt
+    with pytest.raises(ProofReadConflictError):
+        ledger.acquire_publication_read_token(key)
+    with pytest.raises(ProofReadConflictError):
+        ledger.validate_publication_read_token(token)
+
+    connection = sqlite3.connect(ledger.path)
+    try:
+        connection.execute(
+            """
+            UPDATE publication_receipts
+            SET state = ?, rolled_back_at = ? WHERE receipt_id = ?
+            """,
+            (
+                ProofReceiptState.ROLLED_BACK.value,
+                receipt.reserved_at,
+                receipt.receipt_id,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert ledger.active_publication_receipt(key) is None
+    with pytest.raises(ProofReadConflictError):
+        ledger.validate_publication_read_token(token)
+    current = ledger.acquire_publication_read_token(key)
+    ledger.validate_publication_read_token(current)
+    next_receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=current.revision,
+    )
+    assert next_receipt.reservation_sequence == receipt.reservation_sequence + 1
+
+
+def test_sealed_receipt_commit_is_exact_atomic_and_replayable(
+    tmp_path: Path,
+) -> None:
+    """Mutation proving this can fail: allow proof commit while still ingesting."""
+    old = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a-0", "point-a-1"),
+    )
+    untouched = ProofEvidence(
+        rel_path="src/b.py",
+        content_identity=_digest("b-v1"),
+        point_ids=("point-b-0",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (old, untouched),
+    )
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=3,
+    )
+    new = replace(old, content_identity=_digest("a-v2"))
+    delta = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=old.rel_path,
+        old=old,
+        new=new,
+    )
+    mutation = CommitUnit(
+        rel_path=new.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=new.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=new.point_ids,
+    )
+    _seal_publication_receipt(
+        ledger,
+        receipt,
+        mutation=mutation,
+        delta=delta,
+    )
+    with pytest.raises(RunLedgerStateError, match="only after stale reconciliation"):
+        ledger.commit_publication_receipt(receipt.receipt_id)
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    active = ledger.active_publication_receipt(key)
+    assert active is not None
+    assert active.state is ProofReceiptState.SEALED
+    assert active.deltas == (delta,)
+    assert active.mutations[0].unit == mutation
+    committed = ledger.commit_publication_receipt(receipt.receipt_id)
+
+    assert committed.revision == receipt.target_revision
+    assert committed.reservation_sequence == receipt.reservation_sequence
+    assert committed.generation_id == successor_id
+    assert committed.provenance is ProofProvenance.DELTA_DERIVED
+    assert committed.aggregate == ProofAggregate(
+        indexed_identities=2,
+        retained_points=3,
+    )
+    assert ledger.publication_evidence_for_paths(
+        key,
+        (old.rel_path, untouched.rel_path),
+    ) == {new.rel_path: new, untouched.rel_path: untouched}
+    assert ledger.active_publication_receipt(key) is None
+
+    connection = sqlite3.connect(ledger.path)
+    try:
+        connection.execute(
+            "UPDATE generations SET terminal_state = ? WHERE generation_id = ?",
+            (RunTerminalState.SUCCEEDED.value, successor_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    assert ledger.commit_publication_receipt(receipt.receipt_id) == committed
+
+
+def test_receipt_commit_refuses_stale_parent_or_old_evidence_atomically(
+    tmp_path: Path,
+) -> None:
+    actual = ProofEvidence(
+        rel_path="src/a.py",
+        content_identity=_digest("a-v1"),
+        point_ids=("point-a",),
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (actual,),
+    )
+    before = ledger.publication_proof(key)
+    with pytest.raises(ProofParentMismatchError):
+        ledger.reserve_publication_receipt(
+            key,
+            successor_id,
+            expected_parent_revision=before.revision + 1,
+        )
+    assert ledger.publication_proof(key) == before
+
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=before.revision,
+    )
+    wrong_old = replace(actual, content_identity=_digest("not-authoritative"))
+    new = replace(actual, content_identity=_digest("a-v2"))
+    delta = PathDelta(
+        outcome=PathOutcome.MODIFY,
+        expected_parent_revision=receipt.parent_revision,
+        rel_path=actual.rel_path,
+        old=wrong_old,
+        new=new,
+    )
+    mutation = CommitUnit(
+        rel_path=new.rel_path,
+        kind=CommitUnitKind.UPSERT,
+        source_digest=new.content_identity,
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=new.point_ids,
+    )
+    _seal_publication_receipt(
+        ledger,
+        receipt,
+        mutation=mutation,
+        delta=delta,
+    )
+    ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+
+    with pytest.raises(ProofOldEvidenceMismatchError):
+        ledger.commit_publication_receipt(receipt.receipt_id)
+    after = ledger.publication_proof(key)
+    assert after.revision == before.revision
+    assert after.reservation_sequence == receipt.reservation_sequence
+    assert ledger.publication_evidence_for_paths(key, (actual.rel_path,)) == {
+        actual.rel_path: actual
+    }
+    active = ledger.active_publication_receipt(key)
+    assert active is not None
+    assert active.state is ProofReceiptState.SEALED
 
 
 def test_publication_schema_enforces_open_receipt_and_state_constraints(

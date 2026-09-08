@@ -6,13 +6,14 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:a23d7624022176592d9b7887aa2f55a7610e708de82ea8ca9cd6c804c4ce671a'
+body_hash: 'sha256:0647c1980bf24455031ebd93480a393f6b57d4154c468b3479d9daa71db75241'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S53]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S03]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S04]]'
+  - '[[2026-09-08-incremental-publication-cost-W01-P02-S05]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -36,6 +37,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P01-S53` - Correct proof compatibility, streaming mutation, and reader-transition contracts
 - `2026-09-08-incremental-publication-cost-W01-P02-S03` - Extend ledger value and schema contracts for proof revisions, rows, aggregates, receipts, and provenance
 - `2026-09-08-incremental-publication-cost-W01-P02-S04` - Create and migrate normalized proof, receipt, mutation-unit, and tombstone tables with post-migration schema verification
+- `2026-09-08-incremental-publication-cost-W01-P02-S05` - Implement bounded proof reads, compare-and-swap revision commits, active-receipt lookup, read tokens, and canonical RunLedger composition
 
 ### plan
 
