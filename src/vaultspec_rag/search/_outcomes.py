@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .._search_state import SearchReadinessAggregate, SearchSourceFact
 from .._source_types import PublicSourceType
 from ._models import DocumentSearchResult, SearchResult
 from ._result_shaping import select_combined_results
@@ -52,13 +53,20 @@ class SearchDomainOutcome:
     """Success or failure for one independently queried search domain."""
 
     source: PublicSourceType
+    source_fact: SearchSourceFact
     results: tuple[AnySearchResult, ...] = ()
     error_kind: str | None = None
     detail: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source, PublicSourceType):
+            raise ValueError("a domain outcome source must be a PublicSourceType")
         if self.source is PublicSourceType.COMBINED:
             raise ValueError("a domain outcome cannot use the combined source")
+        if not isinstance(self.source_fact, SearchSourceFact):
+            raise ValueError("a domain outcome requires a SearchSourceFact")
+        if self.source_fact.source != self.source.value:
+            raise ValueError("a domain outcome source fact carries the wrong source")
         if (self.error_kind is None) != (self.detail is None):
             raise ValueError("error kind and detail must be present together")
         if self.error_kind is not None and self.results:
@@ -74,9 +82,11 @@ class SearchDomainOutcome:
         cls,
         source: PublicSourceType,
         results: list[AnySearchResult],
+        *,
+        source_fact: SearchSourceFact,
     ) -> SearchDomainOutcome:
         """Build a completed domain outcome."""
-        return cls(source=source, results=tuple(results))
+        return cls(source=source, source_fact=source_fact, results=tuple(results))
 
     @classmethod
     def failure(
@@ -84,11 +94,18 @@ class SearchDomainOutcome:
         source: PublicSourceType,
         error_kind: str,
         detail: str,
+        *,
+        source_fact: SearchSourceFact,
     ) -> SearchDomainOutcome:
         """Build a visible domain failure."""
         if not error_kind.strip() or not detail.strip():
             raise ValueError("search failure fields must not be empty")
-        return cls(source=source, error_kind=error_kind, detail=detail)
+        return cls(
+            source=source,
+            source_fact=source_fact,
+            error_kind=error_kind,
+            detail=detail,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +148,20 @@ class CombinedSearchOutcome:
         ]
         return select_combined_results(candidates, self.top_k)
 
+    @property
+    def source_facts(self) -> tuple[SearchSourceFact, ...]:
+        """Return every constituent fact in the stable domain order."""
+        return (
+            self.vault.source_fact,
+            self.code.source_fact,
+            self.document.source_fact,
+        )
+
+    @property
+    def readiness(self) -> SearchReadinessAggregate:
+        """Derive the combined state without erasing degraded constituents."""
+        return SearchReadinessAggregate.from_sources(self.source_facts)
+
     def domain_status_payload(self) -> dict[str, dict[str, object]]:
         """Return the canonical wire status for each closed domain."""
         return {
@@ -139,6 +170,7 @@ class CombinedSearchOutcome:
                 "results_count": len(outcome.results),
                 "error_kind": outcome.error_kind,
                 "detail": outcome.detail,
+                "readiness": outcome.source_fact.as_dict(),
             }
             for outcome in (self.vault, self.code, self.document)
         }
