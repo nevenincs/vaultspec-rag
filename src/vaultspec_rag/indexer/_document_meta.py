@@ -41,6 +41,7 @@ class _DocumentMetaPublishOptions(TypedDict, total=False):
     membership_fingerprint: str
     content_fingerprint: str
     policy_snapshot: str
+    backend_identity: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class _DocumentMetaPublishRequest:
     membership_fingerprint: str
     content_fingerprint: str
     policy_snapshot: str
+    backend_identity: str = "legacy:unknown"
 
 
 class DocumentMetadataError(ValueError):
@@ -90,6 +92,7 @@ class DocumentIndexMetadata:
     meta_schema_version: int = DOCUMENT_META_SCHEMA_VERSION
     storage_schema_version: int = store_schema.STORAGE_SCHEMA_VERSION
     complete: bool = True
+    backend_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.meta_schema_version not in (1, DOCUMENT_META_SCHEMA_VERSION):
@@ -135,6 +138,7 @@ class DocumentIndexMetadata:
             "policy_snapshot": self.policy_snapshot,
             "generation_id": self.generation_id,
             "complete": self.complete,
+            "backend_identity": self.backend_identity,
             "files": [
                 {
                     "source_path": file.source_path,
@@ -209,6 +213,7 @@ def _from_payload(value: object) -> DocumentIndexMetadata:
             payload, "meta_schema_version", _typed_fields.required_int
         )
         raw_generation_id = payload.get("generation_id")
+        raw_backend_identity = payload.get("backend_identity")
         generation_id = (
             _required(payload, "generation_id", _typed_fields.required_str)
             if raw_generation_id is not None
@@ -225,6 +230,11 @@ def _from_payload(value: object) -> DocumentIndexMetadata:
                 payload, "storage_schema_version", _typed_fields.required_int
             ),
             complete=complete,
+            backend_identity=(
+                raw_backend_identity
+                if isinstance(raw_backend_identity, str) and raw_backend_identity
+                else None
+            ),
         )
     except (TypeError, ValueError) as exc:
         if isinstance(exc, DocumentMetadataError):
@@ -276,6 +286,7 @@ def _publish_document_meta_from_file_states(
         membership_fingerprint,
         content_fingerprint,
         policy_snapshot,
+        backend_identity,
     ) = (
         request.meta_path,
         request.states,
@@ -284,6 +295,7 @@ def _publish_document_meta_from_file_states(
         request.membership_fingerprint,
         request.content_fingerprint,
         request.policy_snapshot,
+        request.backend_identity,
     )
 
     files: list[DocumentFileMetadata] = []
@@ -302,6 +314,7 @@ def _publish_document_meta_from_file_states(
             policy_snapshot,
             tuple(files),
             generation_id=generation_id,
+            backend_identity=backend_identity,
         ),
     )
     return len(files)

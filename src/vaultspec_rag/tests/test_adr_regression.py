@@ -804,14 +804,14 @@ class TestDeviceTierIsolation:
 
     def _gpu_recipe_selections(self) -> list[str]:
         """Return the marker expressions the GPU recipe runs, in order."""
-        import re
-        from pathlib import Path
+        from dev.runner import Cmd
+        from dev.toolchain import VERBS
 
-        justfile = Path(__file__).resolve().parents[3] / "justfile"
-        recipe = justfile.read_text(encoding="utf-8")
-        block = re.search(r'"gpu"\s*\{(.*?)\n\s*\}', recipe, re.DOTALL)
-        assert block is not None, "the runner has no gpu recipe"
-        return re.findall(r'pytest [^\n]*?-m "([^"]+)"', block.group(1))
+        test_verb = next(verb for verb in VERBS if verb.name == "test")
+        target = test_verb.find("gpu")
+        assert target is not None, "the runner has no gpu recipe"
+        commands = [step for step in target.steps if isinstance(step, Cmd)]
+        return [command.argv[command.argv.index("-m") + 1] for command in commands]
 
     def test_the_gpu_recipe_runs_the_two_tiers_as_separate_selections(self) -> None:
         """Mutation it catches: merging the two selections back into one.

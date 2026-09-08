@@ -72,6 +72,7 @@ def _publish_code_claim(
         content_epoch="content-epoch",
         published_points_count=points,
         published_files_count=covered_files,
+        backend_identity="backend:test",
     )
 
 
@@ -80,6 +81,7 @@ def _publish_document_claim(
     *,
     point_ids: tuple[tuple[str, tuple[str, ...]], ...],
     complete: bool = True,
+    backend_identity: str = "backend:test",
 ) -> None:
     """Publish a real document manifest through the production writer."""
     files = tuple(
@@ -95,11 +97,32 @@ def _publish_document_claim(
             files=files,
             generation_id="generation-doc",
             complete=complete,
+            backend_identity=backend_identity,
         ),
     )
 
 
 class TestCodeClassification:
+    def test_foreign_backend_claim_is_unverifiable(self, tmp_path: Path) -> None:
+        publish_meta_from_file_states(
+            index_meta_path(tmp_path, PublicSourceType.CODE),
+            _indexed_states(1),
+            generation_id="generation-test",
+            membership_epoch="membership-epoch",
+            content_epoch="content-epoch",
+            published_points_count=5,
+            backend_identity="backend:writer",
+        )
+        verdict = evaluate_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            2,
+            claim_ttl_seconds=0.0,
+            backend_identity="backend:reader",
+        )
+        assert verdict.verdict == VERDICT_UNVERIFIABLE
+        assert verdict.reason == "backend_unverified"
+
     def test_exact_match_is_consistent(self, tmp_path: Path) -> None:
         _publish_code_claim(tmp_path, points=5)
         verdict = evaluate_index_integrity(

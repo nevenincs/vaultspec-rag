@@ -185,6 +185,7 @@ class CodeGenerationLifecycle:
                     model_identity=model_identity,
                     dense_dimensions=spec.dense_dimensions,
                     configuration=spec.configuration,
+                    backend_identity=self._store.backend_identity,
                 )
             )
 

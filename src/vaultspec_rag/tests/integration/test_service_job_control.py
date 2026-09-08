@@ -449,6 +449,8 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
             "source": "vault",
             "project_root": str(project_root),
             "mode": "incremental",
+            "requested_mode": "incremental",
+            "effective_mode": "incremental",
         }
         assert initiator["kind"] == "mcp"
         assert job["id"] == response["job_id"]

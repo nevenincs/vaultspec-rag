@@ -86,6 +86,7 @@ class CodeRunOpenRequest:
     model_identity: str
     dense_dimensions: int
     configuration: CodeRunConfiguration
+    backend_identity: str = "legacy:unknown"
 
 
 @dataclass(slots=True)
@@ -114,6 +115,7 @@ class CodeRunCheckpoint(RunCheckpointBase):
             preprocessing_identity=request.policy.fingerprints.execution,
             configuration_fingerprint=configuration_fingerprint(request.configuration),
             policy_fingerprint=request.policy.fingerprints.snapshot,
+            backend_identity=request.backend_identity,
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = cls.start_compatible_generation(ledger, signature)
@@ -336,5 +338,6 @@ class CodeRunCheckpoint(RunCheckpointBase):
                 content_epoch=fingerprints.content,
                 published_points_count=published_points,
                 published_files_count=published_files,
+                backend_identity=self.generation.signature.backend_identity,
             )
         )

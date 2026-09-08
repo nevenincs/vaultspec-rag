@@ -119,7 +119,7 @@ def test_newer_convergence_generation_survives_older_success(tmp_path: Path) -> 
     next_attempt = second.admit(now=3.0)
     assert next_attempt.admitted
     assert next_attempt.attempt_generation == 2
-    assert next_attempt.requires_unscoped
+    assert not next_attempt.requires_unscoped
     settled = second.record_success(2, now=4.0)
     assert not settled.convergence_pending
     assert settled.circuit_state is WatcherCircuitState.CLOSED
@@ -185,6 +185,30 @@ def test_third_failure_opens_the_circuit(tmp_path: Path) -> None:
     assert state.next_retry_at == 60.0
     assert state.circuit_state is WatcherCircuitState.OPEN
     assert not policy.admit(now=59.9).admitted
+
+
+def test_full_reindex_required_is_terminal_and_clears_pending_intent(
+    tmp_path: Path,
+) -> None:
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    policy.mark_convergence_pending(now=0.0)
+
+    state = _fail_once(
+        policy,
+        JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "explicit consent required"),
+        now=1.0,
+        random_unit=0.5,
+    )
+
+    assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert state.circuit_state is WatcherCircuitState.OPEN
+    assert not state.convergence_pending
+    assert not policy.admit(now=1000.0).admitted
+
+    renewed = policy.mark_convergence_pending(now=1001.0)
+    assert renewed.last_error_kind is None
+    assert renewed.circuit_state is WatcherCircuitState.CLOSED
+    assert policy.admit(now=1001.0).admitted
 
 
 def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:
@@ -295,13 +319,15 @@ def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
     restarted = _policy(state_path, tmp_path, now=40.0, jitter_fraction=0.0)
     state = restarted.state
     assert state.consecutive_failures == 3
-    assert state.last_error_kind is JobErrorKind.UNAVAILABLE
+    assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert state.circuit_state is WatcherCircuitState.OPEN
     assert state.next_retry_at == 65.0
     assert state.attempt_generation is None
-    assert state.unscoped_required
+    assert not state.unscoped_required
     assert not restarted.admit(now=64.9).admitted
-    assert restarted.admit(now=65.0).circuit_state is WatcherCircuitState.HALF_OPEN
+    refused = restarted.admit(now=65.0)
+    assert not refused.admitted
+    assert refused.circuit_state is WatcherCircuitState.OPEN
 
 
 def test_live_attempt_owner_is_not_reclaimed(tmp_path: Path) -> None:
@@ -504,12 +530,11 @@ async def test_detached_admission_consumes_its_fenced_handoff(
 
         assert replacement.state.attempt_generation is None
         assert replacement.state.convergence_pending
-        assert replacement.state.unscoped_required
+        assert not replacement.state.unscoped_required
+        assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
         next_attempt = replacement.admit()
-        assert next_attempt.admitted
-        assert next_attempt.attempt_generation is not None
-        replacement.record_interrupted(next_attempt.attempt_generation)
+        assert not next_attempt.admitted
     finally:
         if holder.poll() is None:
             holder.terminate()
@@ -531,11 +556,10 @@ def test_prestart_handoff_cancels_reserved_admission(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert replacement.state.unscoped_required
+    assert not replacement.state.unscoped_required
+    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     next_attempt = replacement.admit(now=2.0)
-    assert next_attempt.admitted
-    assert next_attempt.attempt_generation is not None
-    replacement.record_interrupted(next_attempt.attempt_generation, now=3.0)
+    assert not next_attempt.admitted
 
 
 def test_handoff_without_reservation_closes_admission_authority(
@@ -584,7 +608,8 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 
     replacement = _policy(tmp_path / "code.json", tmp_path)
     assert replacement.state.convergence_pending
-    assert replacement.state.unscoped_required
+    assert not replacement.state.unscoped_required
+    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> None:
@@ -603,8 +628,8 @@ def test_restored_unknown_scope_is_not_narrowed_by_new_event(tmp_path: Path) -> 
     restarted = _policy(state_path, tmp_path, now=2.0)
     restarted.mark_convergence_pending(now=3.0)
     decision = restarted.admit(now=11.0)
-    assert decision.admitted
-    assert decision.requires_unscoped
+    assert not decision.admitted
+    assert restarted.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 def test_interruption_retains_scoped_intent_for_the_marking_instance(
@@ -635,8 +660,9 @@ def test_interruption_retains_scoped_intent_for_the_marking_instance(
     # durable pending bit promotes the intent to unscoped.
     replacement = _policy(state_path, tmp_path, now=3.0)
     assert replacement.state.convergence_pending
-    assert replacement.state.unscoped_required
-    assert replacement.admit(now=3.0).requires_unscoped
+    assert not replacement.state.unscoped_required
+    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert not replacement.admit(now=3.0).admitted
 
 
 def test_success_with_mid_attempt_event_stays_scoped(tmp_path: Path) -> None:
@@ -730,7 +756,7 @@ async def test_permanent_lock_file_error_fails_without_retrying(
     assert asyncio.get_running_loop().time() - started < 1.0
 
 
-def test_recovery_marker_clears_claim_and_forces_unscoped(
+def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "code.json"
@@ -746,13 +772,11 @@ def test_recovery_marker_clears_claim_and_forces_unscoped(
 
     assert recovered.state.attempt_generation is None
     assert recovered.state.convergence_pending
-    assert recovered.state.unscoped_required
+    assert not recovered.state.unscoped_required
+    assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert not marker.exists()
     next_attempt = recovered.admit(now=1.0)
-    assert next_attempt.admitted
-    assert next_attempt.requires_unscoped
-    assert next_attempt.attempt_generation is not None
-    recovered.record_interrupted(next_attempt.attempt_generation, now=2.0)
+    assert not next_attempt.admitted
 
 
 def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None:
@@ -765,19 +789,18 @@ def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None
 
     replacement = _policy(state_path, tmp_path, now=2.0)
     replacement_attempt = replacement.admit(now=2.0)
-    assert replacement_attempt.attempt_generation is not None
+    assert not replacement_attempt.admitted
+    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     marker = retiring.write_recovery_marker()
 
-    settled = replacement.record_success(
-        replacement_attempt.attempt_generation,
-        now=3.0,
-    )
+    settled = _policy(state_path, tmp_path, now=3.0).state
 
     assert not marker.exists()
     assert settled.attempt_generation is None
     assert settled.convergence_pending
-    assert settled.unscoped_required
-    assert settled.convergence_generation > replacement_attempt.attempt_generation
+    assert not settled.unscoped_required
+    assert settled.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert settled.convergence_generation > retiring_attempt.attempt_generation
 
 
 def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
@@ -797,7 +820,8 @@ def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert replacement.state.unscoped_required
+    assert not replacement.state.unscoped_required
+    assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 def test_invalid_recovery_marker_fails_closed(tmp_path: Path) -> None:
@@ -887,9 +911,11 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
     recovered_vault = _policy(vault_path, tmp_path, source=WatcherSource.VAULT)
     recovered_code = _policy(code_path, tmp_path)
     assert recovered_vault.state.convergence_pending
-    assert recovered_vault.state.unscoped_required
+    assert not recovered_vault.state.unscoped_required
+    assert recovered_vault.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert recovered_code.state.convergence_pending
-    assert recovered_code.state.unscoped_required
+    assert not recovered_code.state.unscoped_required
+    assert recovered_code.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 @pytest.mark.asyncio
@@ -938,4 +964,5 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
 
     recovered = _policy(state_path, tmp_path)
     assert recovered.state.convergence_pending
-    assert recovered.state.unscoped_required
+    assert not recovered.state.unscoped_required
+    assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED

@@ -375,6 +375,7 @@ class CodeBreadthClaim(NamedTuple):
     generation_id: str | None
     named_files: int = 0
     published_files: int | None = None
+    backend_identity: str | None = None
 
 
 def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
@@ -388,6 +389,7 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
     if raw is None:
         return None
     generation = raw.get(GENERATION_ID_KEY)
+    backend_identity = raw.get("__storage_backend_identity__")
     return CodeBreadthClaim(
         published_points=parse_reserved_count(raw, PUBLISHED_POINTS_KEY),
         generation_id=(
@@ -395,6 +397,11 @@ def read_code_breadth_claim(root: pathlib.Path) -> CodeBreadthClaim | None:
         ),
         named_files=sum(1 for key in raw if not key.startswith("__")),
         published_files=parse_reserved_count(raw, PUBLISHED_FILES_KEY),
+        backend_identity=(
+            backend_identity
+            if isinstance(backend_identity, str) and backend_identity
+            else None
+        ),
     )
 
 

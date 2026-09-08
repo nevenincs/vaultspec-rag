@@ -109,7 +109,7 @@ class VaultSpecConfigWrapper:
         # through the ordinary job machinery. Disabling leaves detection
         # and reporting intact - the status surface then says so honestly
         # rather than pretending the shrink is being handled.
-        "integrity_auto_repair": True,
+        "integrity_auto_repair": False,
         # Geometry reconcile. Collections created before per-collection
         # preallocation was bounded keep their original segment target
         # forever, because collection creation is the only place the bound

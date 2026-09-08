@@ -1,4 +1,4 @@
-"""A document ledger that cannot parent an incremental escalates, not fails.
+"""A document ledger that cannot parent an incremental fails closed.
 
 The document sidecar and the run ledger are two independent durable records,
 and only one of them has to be lost for the pair to disagree. A sidecar that
@@ -9,24 +9,9 @@ there is no compatible parent. Every incremental then fails - the store is
 intact, so the breadth check that would otherwise rebuild sees nothing wrong,
 and nothing else ever repairs it.
 
-The escalation under test converges that refusal on the same full
-failure-safe reconciliation the indexer already runs for a manifest it cannot
-trust. Non-destructive, so a spurious one costs a rebuild rather than data.
-
-MUTATION PROOF, run in one uninterrupted sequence: removing the
-``except RunLedgerCompatibilityError`` arm from
-``DocumentIndexer.incremental_index`` - so the open is unconditional again,
-exactly the pre-fix code - fails both parametrisations of
-``test_an_unparentable_ledger_escalates_to_a_full_reconciliation``. The
-failure is ``RunLedgerCompatibilityError: incremental document indexing
-requires a compatible published manifest`` raised out of the
-``incremental_index`` call the test drives, which is the regression itself
-and not a setup or collection error. Restoring the arm returns both to green.
-Re-run that mutation before loosening any assertion below.
-
-The run is model-free by construction: nothing on disk is a document, so the
-escalated reconciliation has only a deletion to reconcile and never reaches
-the encoder.
+The refusal must preserve the existing collection and manifest. The mutation
+guard replaces ``full_index`` with a function that fails the test, proving the
+incremental path cannot silently authorize corpus-wide work.
 """
 
 from __future__ import annotations
@@ -37,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from .. import store_schema
+from .._job_errors import JobError, JobErrorKind
 from .._store_models import DocumentChunk, DocumentPayload
 from ..config._types import EnvVar
 from ..indexer._content_policy import ContentKind
@@ -161,21 +147,12 @@ def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> Run
 
 
 @pytest.mark.parametrize("scoped", [False, True])
-def test_an_unparentable_ledger_escalates_to_a_full_reconciliation(
+def test_an_unparentable_ledger_requires_an_explicit_full_reconciliation(
     tmp_path: Path,
     scoped: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An incremental with no compatible parent rebuilds instead of raising.
-
-    Both entry shapes are driven because the refusal is raised for the scoped
-    and unscoped operations alike; an escalation that covered only one would
-    leave the other failing forever.
-
-    The assertions name the branch rather than a log line: the run must have
-    reconciled the deleted source away (``removed``), the store must agree,
-    and the manifest the run republished must be owned by a generation the
-    ledger records as a FULL run - which no incremental path can produce.
-    """
+    """No compatible parent may broaden either incremental entry shape."""
     with managed_env(**{EnvVar.SPARSE_ENABLED.value: "false"}):
         store = VaultStore(tmp_path)
         try:
@@ -187,25 +164,21 @@ def test_an_unparentable_ledger_escalates_to_a_full_reconciliation(
             _publish_manifest(meta_path, policy, point_ids)
             # The sidecar sits in the data root, which is also where the run
             # ledger the indexer opens lives.
-            ledger = _retire_the_only_document_generation(tmp_path, meta_path.parent)
+            _retire_the_only_document_generation(tmp_path, meta_path.parent)
 
-            result = indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths=(tmp_path / _DELETED_SOURCE,) if scoped else None,
-            )
+            def _forbidden_full(*_args: object, **_kwargs: object) -> None:
+                pytest.fail("incremental indexing invoked full_index")
 
-            assert result.removed == len(point_ids), (
-                "the escalated reconciliation must retire the deleted source's "
-                "points instead of the run failing"
-            )
-            assert store.count_document() == 0
-            republished = read_document_meta(meta_path)
-            assert republished is not None
-            assert republished.files == ()
-            assert republished.generation_id is not None
-            assert (
-                ledger.generation(republished.generation_id).signature.operation
-                is RunOperation.FULL
-            ), "the republished manifest must be owned by a full reconciliation"
+            monkeypatch.setattr(DocumentIndexer, "full_index", _forbidden_full)
+
+            with pytest.raises(JobError) as raised:
+                indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=(tmp_path / _DELETED_SOURCE,) if scoped else None,
+                )
+
+            assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert store.count_document() == len(point_ids)
+            assert read_document_meta(meta_path) is not None
         finally:
             store.close()

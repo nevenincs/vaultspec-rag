@@ -522,6 +522,7 @@ class RunSignature:
     preprocessing_identity: str
     configuration_fingerprint: str
     policy_fingerprint: str
+    backend_identity: str = "legacy:unknown"
 
     def __post_init__(self) -> None:
         for name in (
@@ -533,6 +534,7 @@ class RunSignature:
             "preprocessing_identity",
             "configuration_fingerprint",
             "policy_fingerprint",
+            "backend_identity",
         ):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():

@@ -311,6 +311,9 @@ def _search_integrity(
     """
     from .._index_integrity import evaluate_index_integrity
     from .._integrity_remediation import note_integrity_verdict
+    from ..store_runtime import configured_backend_identity
+
+    backend_identity = configured_backend_identity(request.root)
 
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
@@ -319,6 +322,7 @@ def _search_integrity(
             request.root,
             source,
             None if code_count is None else int(code_count),
+            backend_identity=backend_identity,
         )
     else:
         source = request.search_type
@@ -326,6 +330,7 @@ def _search_integrity(
             request.root,
             source,
             int(phase_timing["indexed_count"]),
+            backend_identity=backend_identity,
         )
     repair_job_id = note_integrity_verdict(request.root, source, integrity.verdict)
     return integrity, repair_job_id
@@ -414,6 +419,7 @@ def _classify_collection_disappearance(
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
     from .._index_integrity import evaluate_index_integrity
+    from ..store_runtime import configured_backend_identity
     from ._routes import canonical_job_snapshot
 
     return classify_qdrant_collection_disappearance(
@@ -433,6 +439,7 @@ def _classify_collection_disappearance(
                         facts.root,
                         PublicSourceType(facts.source),
                         None,
+                        backend_identity=configured_backend_identity(facts.root),
                     ),
                     search_type=facts.source,
                 )
