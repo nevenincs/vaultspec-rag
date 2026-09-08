@@ -841,6 +841,39 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
+def _dominant_combined_failure(
+    source_facts: tuple[SearchSourceFact, ...],
+) -> tuple[str, bool, str | None]:
+    """Select the strongest carried failure without erasing its retry policy."""
+    priority = (
+        "rebuild_required",
+        "rebuild_refused",
+        "capacity_limited",
+        "backend_unavailable",
+        "freshness_wait_timeout",
+        "index_unavailable",
+        "index_updating",
+        "index_unverifiable",
+    )
+    by_reason = {
+        fact.reason_code: fact for fact in source_facts if fact.reason_code is not None
+    }
+    selected_reason = next(
+        (reason for reason in priority if reason in by_reason),
+        "index_unverifiable",
+    )
+    selected = by_reason.get(selected_reason)
+    if selected is None:
+        selected = next(
+            (fact for fact in source_facts if fact.remediation is not None),
+            source_facts[0],
+        )
+    stable_error = (
+        "index_unavailable" if selected_reason == "index_updating" else selected_reason
+    )
+    return stable_error, selected.retryable, selected.remediation
+
+
 def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
@@ -917,15 +950,41 @@ def _execute_search_request(
             "index_state": index_state,
         }
         if combined is not None:
+            dominant_error, dominant_retryable, dominant_remediation = (
+                _dominant_combined_failure(combined.source_facts)
+            )
             response["ok"] = combined.ok
             response["partial"] = combined.partial
             response["domains"] = combined.domain_status_payload()
+            response["readiness"] = search_readiness_block(combined.source_facts)
             if not combined.ok:
+                response.pop("results", None)
                 response.update(
                     {
                         "error": COMBINED_SEARCH_FAILED,
                         "message": COMBINED_SEARCH_FAILED_MESSAGE,
                         "summary": "Combined search failed in every domain.",
+                        "retryable": dominant_retryable,
+                        "remediation": dominant_remediation,
+                    }
+                )
+            elif not items and (
+                combined.partial
+                or combined.readiness.absence_authority
+                is not AbsenceAuthority.AUTHORITATIVE
+            ):
+                response.pop("results", None)
+                response.pop("summary", None)
+                response.update(
+                    {
+                        "ok": False,
+                        "error": dominant_error,
+                        "message": (
+                            "The empty combined search is not authoritative for "
+                            "every requested source."
+                        ),
+                        "retryable": dominant_retryable,
+                        "remediation": dominant_remediation,
                     }
                 )
         return response
