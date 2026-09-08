@@ -18,6 +18,7 @@ file to green. Re-run that mutation before loosening any assertion below.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 import pytest
@@ -54,6 +55,12 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+def test_document_run_open_request_requires_backend_identity() -> None:
+    """Mutation: a request default permits backend-ambiguous generations."""
+    field = DocumentRunOpenRequest.__dataclass_fields__["backend_identity"]
+    assert field.default is MISSING
+
+
 def _digest(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()
 
@@ -79,6 +86,7 @@ def _open(
             operation=operation,
             clean=False,
             model_identity="model-v1",
+            backend_identity="test-backend:document-checkpoint",
             dense_dimensions=8,
             configuration=configuration or _configuration(),
         )

@@ -51,6 +51,7 @@ def _signature(root: Path, *, clean: bool) -> RunSignature:
         operation=RunOperation.FULL,
         clean=clean,
         model_identity="model-v1",
+        backend_identity="test-backend:checkpoint-common",
         dense_dimensions=8,
         embedding_schema=2,
         payload_schema=3,

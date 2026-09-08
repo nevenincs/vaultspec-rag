@@ -86,7 +86,7 @@ class CodeRunOpenRequest:
     model_identity: str
     dense_dimensions: int
     configuration: CodeRunConfiguration
-    backend_identity: str = "legacy:unknown"
+    backend_identity: str
 
 
 @dataclass(slots=True)

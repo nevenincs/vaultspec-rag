@@ -844,7 +844,7 @@ class RunSignature:
     preprocessing_identity: str
     configuration_fingerprint: str
     policy_fingerprint: str
-    backend_identity: str = "legacy:unknown"
+    backend_identity: str
 
     def __post_init__(self) -> None:
         for name in (

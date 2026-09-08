@@ -317,6 +317,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
                 operation=RunOperation.FULL,
                 clean=False,
                 model_identity="restart-model-v1",
+                backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
                 configuration=code_configuration,
             )
@@ -332,6 +333,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
                 operation=RunOperation.FULL,
                 clean=False,
                 model_identity="restart-model-v1",
+                backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
                 configuration=document_configuration,
             )
