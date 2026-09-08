@@ -51,6 +51,7 @@ from pathlib import Path
 from dev.exit_codes import INIT_HOST_TOOL_MISSING, INIT_STALE, OK
 from dev.init import plan
 from dev.init.contract import (
+    DONE,
     FAILED,
     FORCE_ENV,
     FRESH,
@@ -200,7 +201,7 @@ def _run_phase(
 
     emitter.say(f"init-{phase.name}: {phase.summary}")
     emitter.event("phase-start", name=phase.name)
-    result = PhaseResult(name=phase.name, status="ok")
+    result = PhaseResult(name=phase.name, status=DONE)
     for step in phase.steps:
         emitter.say(f"  $ {' '.join(step.argv)}")
         step_result, code = run_step(step, cwd=repo_root)
@@ -220,7 +221,7 @@ def _run_phase(
             )
             return result
 
-    emitter.event("phase", name=phase.name, status="ok", reason="")
+    emitter.event("phase", name=phase.name, status=DONE, reason="")
     return result
 
 
@@ -316,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         phases.append(
             PhaseResult(
                 name="preflight",
-                status=FAILED if code != OK else "ok",
+                status=FAILED if code != OK else DONE,
                 reason="" if code == OK else "a preflight step failed",
                 steps=preflight,
                 exit_code=code,
@@ -344,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
                 digests[name] = phase_digest(repo_root, phase)
         write_stamp(repo_root, digests)
 
-    status = "ok" if code == OK else FAILED
+    status = DONE if code == OK else FAILED
     report = build_report(
         repo_root=repo_root,
         selection=list(selection),
