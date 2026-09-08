@@ -285,13 +285,10 @@ def _project_source_fact(
 ) -> SearchSourceFact:
     """Project explicit canonical evidence without treating terminality as publish."""
     canonical = context.canonical_evidence
-    has_published_generation = (
-        canonical.served_generation is not None
-        or canonical.publication_revision is not None
-    )
-    served_collection = (
-        canonical.collection_present is True and has_published_generation
-    )
+    # A successful retrieval is direct evidence that this collection can serve,
+    # even when an older daemon/index path supplied no publication identity.
+    # Identity remains mandatory for CURRENT and authoritative absence below.
+    served_collection = canonical.collection_present is True
     current = _target_is_current(canonical)
     if canonical.capacity_refused:
         availability = SearchAvailability.CAPACITY_LIMITED
