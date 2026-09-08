@@ -296,7 +296,7 @@ def gather_survey(
 
     on_progress("Listing collections...")
     names = [c.name for c in client.get_collections().collections]
-    counts: dict[str, int] = {}
+    counts: dict[str, int | None] = {}
     for position, name in enumerate(names, start=1):
         on_progress(f"Counting points ({position}/{len(names)} collections)")
         try:
@@ -308,7 +308,12 @@ def gather_survey(
             # Naming only the builtins here let one slow collection walk past
             # this handler and unwind the survey - and with it the whole
             # maintenance cycle - before any per-namespace gate was reached.
-            counts[name] = 0
+            #
+            # ``None``, never zero. Zero is a claim about the collection, and
+            # a data-bearing namespace claimed empty is routed to the tier
+            # that drops it without an archive. What we have here is the
+            # absence of a reading, and it is carried as one.
+            counts[name] = None
     on_progress(f"Measuring on-disk footprints for {len(names)} collections...")
     footprints = collection_footprints(names, storage_dir)
     surveys = classify_namespaces(

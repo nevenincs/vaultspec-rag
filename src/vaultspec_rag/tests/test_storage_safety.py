@@ -215,10 +215,14 @@ class TestEphemeralWindowKeepsEveryDestructionGate:
         compares.
         """
         unverifiable_prefix = _ephemeral_orphan(tmp_path, name="sandbox-uncountable")
+        # Surveyed empty, so the archive gate is not in the way and this gate
+        # is the only thing between the namespace and the drop. A namespace
+        # the survey itself could not count never gets this far - it is held
+        # at evaluation - so the re-count is what has to fail here.
         unverifiable = _CycleClient(
-            {_collection_of(unverifiable_prefix): 10},
+            {_collection_of(unverifiable_prefix): 0},
             snapshots_dir=tmp_path / "snapshots",
-            uncountable=True,
+            uncountable_after_survey=True,
         )
 
         unverifiable_result = _run_cycle(unverifiable, tmp_path, policy=_EPHEMERAL_ONLY)
