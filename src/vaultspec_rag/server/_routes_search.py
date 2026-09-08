@@ -13,7 +13,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from math import isfinite
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -30,7 +30,12 @@ from .._operator_commands import (
     server_jobs_command,
     server_status_command,
 )
-from .._search_state import FreshnessWaitPolicy
+from .._search_state import (
+    AbsenceAuthority,
+    FreshnessWaitPolicy,
+    SearchReadinessAggregate,
+    SearchSourceFact,
+)
 from .._source_types import (
     INDEX_SOURCES,
     IndexSource,
@@ -64,6 +69,7 @@ from ._search_activity import (
     SearchActivityTicket,
 )
 from ._search_availability import (
+    CanonicalSearchEvidence,
     SearchAvailabilityContext,
     SearchResponseClassification,
     classify_qdrant_collection_disappearance,
@@ -87,7 +93,11 @@ if TYPE_CHECKING:
     from .._index_integrity import IndexIntegrity
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
-    from ._search_readiness import PublicationTarget, ReadinessRevisionRegistry
+    from ._search_readiness import (
+        PublicationTarget,
+        ReadinessRevisionRegistry,
+        ReadinessRevisionSnapshot,
+    )
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -145,6 +155,9 @@ class SearchAvailabilityRequestFacts:
     source: IndexSource
     request_id: str
     port: int | None
+    readiness_snapshot: ReadinessRevisionSnapshot | None = None
+    readiness_target: PublicationTarget | None = None
+    wait_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
 
     def __post_init__(self) -> None:
         """Refuse a source no index job can ever be recorded against.
@@ -171,6 +184,12 @@ class SearchAvailabilityRequestFacts:
         index_state: dict[str, object],
     ) -> SearchAvailabilityContext:
         """Complete these facts with the evidence retrieval has since produced."""
+        integrity = index_state.get("index_integrity")
+        integrity_verified = (
+            isinstance(integrity, dict) and integrity.get("verdict") == "consistent"
+        )
+        snapshot = self.readiness_snapshot
+        target = self.readiness_target
         return SearchAvailabilityContext(
             before_snapshot=self.job_snapshot_before,
             after_snapshot=after_snapshot,
@@ -179,6 +198,31 @@ class SearchAvailabilityRequestFacts:
             request_id=self.request_id,
             index_state=index_state,
             port=self.port,
+            canonical_evidence=CanonicalSearchEvidence(
+                served_generation=(
+                    snapshot.published_generation if snapshot is not None else None
+                ),
+                desired_generation=(
+                    target.generation
+                    if target is not None
+                    else snapshot.desired_generation
+                    if snapshot is not None
+                    else None
+                ),
+                publication_revision=(
+                    snapshot.publication_revision if snapshot is not None else None
+                ),
+                desired_revision=(
+                    target.revision
+                    if target is not None
+                    else snapshot.controller_revision
+                    if snapshot is not None
+                    else None
+                ),
+                collection_present=True,
+                target_matches=index_state.get("target_matches") is True,
+                integrity_verified=integrity_verified,
+            ),
         )
 
 
@@ -213,6 +257,16 @@ class SearchRouteResult:
     status_code: int
     total_seconds: float
     availability_cause: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FreshnessAdmission:
+    """One request's result from one exact readiness-registry lifetime."""
+
+    outcome: Literal["immediate", "satisfied", "timeout", "unverifiable", "unavailable"]
+    readiness: ReadinessRevisionRegistry | None = None
+    target: PublicationTarget | None = None
+    snapshot: ReadinessRevisionSnapshot | None = None
 
 
 @dataclass(slots=True)
@@ -407,7 +461,20 @@ def _classify_search_result(
             index_state=index_state,
         ),
     )
-    if classification.status_code == 200 and not classification.response["results"]:
+    source_fact = replace(
+        classification.source_fact,
+        wait_policy=facts.wait_policy,
+    )
+    classification = replace(classification, source_fact=source_fact)
+    results = classification.response.get("results")
+    if classification.status_code == 200 and isinstance(results, list) and not results:
+        if source_fact.absence_authority is not AbsenceAuthority.AUTHORITATIVE:
+            failure = _non_authoritative_empty_result(
+                classification.response,
+                source_fact=source_fact,
+                request_id=facts.request_id,
+            )
+            return replace(classification, response=failure, status_code=503)
         raw_path_filter = classification.response.get("path_filter")
         classification.response["empty"] = _empty_search_diagnostics(
             index_state,
@@ -416,7 +483,70 @@ def _classify_search_result(
             if isinstance(raw_path_filter, dict)
             else None,
         )
+    if classification.status_code == 200:
+        classification.response["readiness"] = _readiness_block(source_fact)
     return classification
+
+
+def _readiness_snapshot(
+    registry: ServiceRegistry,
+    root: Path,
+    source: IndexSource,
+) -> ReadinessRevisionSnapshot | None:
+    """Read canonical evidence when this runtime owns a readiness lifetime."""
+    from ._search_readiness import ReadinessRegistryClosedError
+
+    try:
+        readiness = registry.readiness_registry
+    except RuntimeError as exc:
+        if str(exc) != "readiness registry is not started":
+            raise
+        return None
+    try:
+        return readiness.snapshot(root, source)
+    except ReadinessRegistryClosedError:
+        return None
+
+
+def _readiness_block(source_fact: SearchSourceFact) -> dict[str, object]:
+    """Serialize one canonical source fact and its derived aggregate."""
+    aggregate = SearchReadinessAggregate.from_sources((source_fact,))
+    return {
+        "sources": [source_fact.as_dict()],
+        "aggregate": aggregate.as_dict(),
+    }
+
+
+def _non_authoritative_empty_result(
+    result: dict[str, object],
+    *,
+    source_fact: SearchSourceFact,
+    request_id: str,
+) -> dict[str, object]:
+    """Suppress an empty result list that cannot prove absence."""
+    stable_error = (
+        source_fact.reason_code
+        if source_fact.reason_code
+        in {
+            "index_unavailable",
+            "index_unverifiable",
+            "rebuild_required",
+            "capacity_limited",
+        }
+        else "index_unverifiable"
+    )
+    return {
+        key: value
+        for key, value in result.items()
+        if key not in {"results", "summary", "empty"}
+    } | {
+        "ok": False,
+        "error": stable_error,
+        "message": "The empty search result is not authoritative for this source.",
+        "retryable": source_fact.retryable,
+        "request_id": request_id,
+        "readiness": _readiness_block(source_fact),
+    }
 
 
 def _classify_collection_disappearance(
@@ -1061,26 +1191,57 @@ def _capture_publication_targets(
     return tuple(targets)
 
 
+async def _admit_requested_freshness(
+    search_request: SearchRequest,
+    registry: ServiceRegistry,
+) -> FreshnessAdmission:
+    """Apply the caller policy while preserving native task cancellation."""
+    if search_request.freshness_policy is FreshnessWaitPolicy.IMMEDIATE:
+        return FreshnessAdmission("immediate")
+    from ._search_readiness import ReadinessRegistryClosedError
+
+    try:
+        readiness = registry.readiness_registry
+    except RuntimeError as exc:
+        if str(exc) != "readiness registry is not started":
+            raise
+        return FreshnessAdmission("unavailable")
+    try:
+        targets = _capture_publication_targets(search_request, readiness)
+        if targets is None:
+            return FreshnessAdmission("unverifiable", readiness=readiness)
+        satisfied = await readiness.published_at_least(
+            targets,
+            timeout_seconds=search_request.freshness_wait_seconds,
+        )
+        if not satisfied:
+            return FreshnessAdmission("timeout", readiness=readiness)
+        target = targets[0] if len(targets) == 1 else None
+        snapshot = (
+            readiness.snapshot(search_request.root, target.key.source)
+            if target is not None
+            else None
+        )
+    except ReadinessRegistryClosedError:
+        return FreshnessAdmission("unavailable", readiness=readiness)
+    return FreshnessAdmission(
+        "satisfied",
+        readiness=readiness,
+        target=target,
+        snapshot=snapshot,
+    )
+
+
 async def _wait_for_requested_freshness(
     search_request: SearchRequest,
     registry: ServiceRegistry,
-) -> Literal["immediate", "satisfied", "timeout", "unverifiable"]:
-    """Apply the caller policy while preserving native task cancellation."""
-    if search_request.freshness_policy is FreshnessWaitPolicy.IMMEDIATE:
-        return "immediate"
-    readiness = registry.readiness_registry
-    targets = _capture_publication_targets(search_request, readiness)
-    if targets is None:
-        return "unverifiable"
-    satisfied = await readiness.published_at_least(
-        targets,
-        timeout_seconds=search_request.freshness_wait_seconds,
-    )
-    return "satisfied" if satisfied else "timeout"
+) -> Literal["immediate", "satisfied", "timeout", "unverifiable", "unavailable"]:
+    """Return the public policy outcome while the route retains full admission facts."""
+    return (await _admit_requested_freshness(search_request, registry)).outcome
 
 
 def _freshness_wait_failure(
-    outcome: Literal["timeout", "unverifiable"],
+    outcome: Literal["timeout", "unverifiable", "unavailable"],
     search_request: SearchRequest,
     *,
     total_seconds: float,
@@ -1089,6 +1250,9 @@ def _freshness_wait_failure(
     if outcome == "timeout":
         error = "freshness_wait_timeout"
         message = "The index did not reach the requested publication before the bound."
+    elif outcome == "unavailable":
+        error = "index_unavailable"
+        message = "The admitted readiness lifetime closed before search could run."
     else:
         error = "index_unverifiable"
         message = (
@@ -1119,10 +1283,10 @@ async def _execute_search_route(
     from ._routes import canonical_job_snapshot
 
     started = time.perf_counter()
-    freshness_outcome = await _wait_for_requested_freshness(search_request, registry)
-    if freshness_outcome in ("timeout", "unverifiable"):
+    admission = await _admit_requested_freshness(search_request, registry)
+    if admission.outcome in ("timeout", "unverifiable", "unavailable"):
         return _freshness_wait_failure(
-            freshness_outcome,
+            admission.outcome,
             search_request,
             total_seconds=time.perf_counter() - started,
         )
@@ -1141,6 +1305,17 @@ async def _execute_search_route(
             source=search_request.search_type.value,
             request_id=search_request.request_id,
             port=port,
+            readiness_snapshot=(
+                admission.snapshot
+                if admission.readiness is not None
+                else _readiness_snapshot(
+                    registry,
+                    search_request.root,
+                    search_request.search_type.value,
+                )
+            ),
+            readiness_target=admission.target,
+            wait_policy=search_request.freshness_policy,
         )
     )
     run = partial(_execute_search_request, search_request, registry)
