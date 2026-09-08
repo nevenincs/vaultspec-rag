@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:9fbb1b5ec7e280d89ac3565d31f71961c6fa28d53265bf3c287e567686308e56'
+body_hash: 'sha256:5d1d34a5c520d135b796d728c57865960fed90208cf5331bc9a93f0e72b80c08'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -68,7 +68,7 @@ Route watcher events and canonical job transitions through the new controller wi
 
 - [x] `W02.P04.S10` - Replace fixed-timing slot reconciliation with durable controller collection and decisions; `src/vaultspec_rag/watcher_intake.py`.
 - [x] `W02.P04.S11` - Bind controller generations to canonical watcher job creation, coalescing, and settlement; `src/vaultspec_rag/watcher_execution.py`.
-- [ ] `W02.P04.S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission; `src/vaultspec_rag/watcher_runtime.py`.
+- [x] `W02.P04.S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission; `src/vaultspec_rag/watcher_runtime.py`.
 
 ### Phase `W02.P05` - canonical observability
 

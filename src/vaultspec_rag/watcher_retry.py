@@ -326,12 +326,23 @@ class WatcherRetryPolicy:
             if loaded.attempt_generation is not None and not _attempt_owner_is_live(
                 loaded
             ):
-                # An admitted attempt with no recorded outcome means its process
-                # vanished. Treat recovery as the next unavailable failure so a
-                # restart cannot collapse an established exponential delay.
-                failures = loaded.consecutive_failures + 1
-                loaded = replace(
-                    loaded,
+                loaded, recovered_changed = self._recover_abandoned_attempt(
+                    loaded, timestamp
+                )
+                state_changed |= recovered_changed
+            if state_changed:
+                _write_state(self._path, loaded)
+            self._state = loaded
+
+    def _recover_abandoned_attempt(
+        self, state: WatcherRetryState, timestamp: float
+    ) -> tuple[WatcherRetryState, bool]:
+        """Retain scoped fences for job reconciliation; refuse legacy scope loss."""
+        if state.attempt_job_id is None:
+            failures = state.consecutive_failures + 1
+            return (
+                replace(
+                    state,
                     consecutive_failures=failures,
                     last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
                     last_error_detail=(
@@ -341,10 +352,7 @@ class WatcherRetryPolicy:
                     ),
                     last_failure_at=timestamp,
                     next_retry_at=timestamp
-                    + self._retry_delay(
-                        failures,
-                        random_unit=random.random(),
-                    ),
+                    + self._retry_delay(failures, random_unit=random.random()),
                     circuit_state=WatcherCircuitState.OPEN,
                     convergence_pending=True,
                     unscoped_required=False,
@@ -354,11 +362,24 @@ class WatcherRetryPolicy:
                     attempt_owner_pid=None,
                     attempt_owner_create_time=None,
                     updated_at=timestamp,
+                ),
+                True,
+            )
+        # The adopted token blocks admission and lets ordinary settlement consume
+        # or restore the exact generation after canonical job history is checked.
+        token = state.attempt_token
+        if token is None:  # validated state makes this defensive only
+            raise WatcherRetryStateError(
+                "watcher recovery attempt has no admission token"
+            )
+        with _ACTIVE_ADMISSION_GUARD:
+            if token in _ADMISSION_RESERVATIONS:
+                raise WatcherRetryStateError(
+                    "watcher recovery admission token is already owned"
                 )
-                state_changed = True
-            if state_changed:
-                _write_state(self._path, loaded)
-            self._state = loaded
+            self._owned_attempt_token = token
+            _ADMISSION_RESERVATIONS[token] = True
+        return state, False
 
     @classmethod
     def for_root(

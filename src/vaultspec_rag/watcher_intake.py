@@ -18,6 +18,7 @@ from watchfiles import (
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
 )
 
+from . import jobs as _jobs
 from .indexer._content_policy import ContentKind
 from .indexer._route_migration import prior_stored_owners
 from .job_models import (
@@ -56,6 +57,7 @@ from .watcher_runtime import (
     WatcherChangeRouting,
     WatcherConfiguration,
     WatcherConvergenceSlot,
+    reconcile_restarted_slot,
 )
 
 if TYPE_CHECKING:
@@ -435,6 +437,10 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         if document_retry is not None
         else None
     )
+    manager = _jobs.get_job_manager()
+    for slot in (vault_slot, code_slot, document_slot):
+        if slot is not None:
+            await reconcile_restarted_slot(slot, manager)
     bindings = (
         _ControllerBinding(
             _new_controller(vault_retry),
