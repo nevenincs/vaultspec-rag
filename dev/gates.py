@@ -35,23 +35,9 @@ from dataclasses import dataclass
 
 #: Internal marker returned in place of an exit code when a lane did not run
 #: because its gate was closed. Negative so it can never collide with a real
-#: process exit status, and never returned from ``main``.
+#: process exit status, and never returned from ``main``: the entry point maps
+#: it onto :data:`~dev.exit_codes.NOTHING_SELECTED` before exiting.
 SKIPPED = -1
-
-#: Pytest's own exit status for "no tests were collected". A lane that selects
-#: nothing exits 5, and 5 is not a pass: it means the marker expression matched
-#: an empty set, which is what a typo, a renamed marker, or a collection guard
-#: bailing out all look like. The aggregate treats it as a visible skip.
-NO_TESTS_COLLECTED = 5
-
-#: The exit status of an aggregate in which EVERY lane was skipped and none
-#: actually ran. Distinct from 0 on purpose - "nothing was proved" must never
-#: be reported as "everything passed".
-#:
-#: This is the single place the value is written down. Lane L9 owns the
-#: fleet-wide exit-code contract for this condition; when that constant lands,
-#: change this assignment to import it and nothing else in the harness moves.
-ALL_SKIPPED_EXIT = 1
 
 _PROBE_SOURCE = textwrap.dedent(
     """

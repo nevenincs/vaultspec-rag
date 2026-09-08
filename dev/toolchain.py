@@ -459,10 +459,18 @@ AUDIT = Verb(
         "line."
     ),
     targets=(
+        # The gate resolves every pinned coordinate itself - out of uv.lock
+        # and dependency-audit-binaries.toml, which declares the PyApp
+        # bootstrapper the release binaries are built from - and queries OSV
+        # for all of them, so the verdict is a property of the finding set
+        # rather than of `uv audit`, a preview tool that exits 0 even when it
+        # prints advisories. Accepted advisories live in
+        # dependency-audit-allowlist.toml with a reason and an expiry each; an
+        # expired acceptance fails the gate rather than lapsing quietly.
         Target(
             "deps",
             "Gate on published advisories against the locked versions.",
-            (uv_run("python", "tools/dependency_audit.py"),),
+            (uv_run("python", "-m", "dev.audit.dependency_audit"),),
         ),
         Target(
             "security",
