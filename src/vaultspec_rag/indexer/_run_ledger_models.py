@@ -55,6 +55,7 @@ __all__ = [
     "RunLedgerCorruptionError",
     "RunLedgerError",
     "RunLedgerIndexedPathCollisionError",
+    "RunLedgerRebuildRequiredError",
     "RunLedgerStateError",
     "RunOperation",
     "RunSignature",
@@ -113,7 +114,12 @@ def fetch_all[T](
 LEDGER_BUSY_TIMEOUT_SECONDS: Final = 10.0
 
 
-def open_ledger_connection(path: Path) -> sqlite3.Connection:
+def open_ledger_connection(
+    path: Path,
+    *,
+    read_only_preflight: Callable[[sqlite3.Connection], None] | None = None,
+    before_journal_mode: Callable[[sqlite3.Connection], None] | None = None,
+) -> sqlite3.Connection:
     """Open one ledger connection under the durable-state concurrency contract.
 
     Write-ahead logging is the load-bearing part. Under a rollback journal a
@@ -125,22 +131,50 @@ def open_ledger_connection(path: Path) -> sqlite3.Connection:
     fail a code run's commit. Write-ahead logging admits many readers alongside
     one writer and removes the escalation entirely.
 
-    The journal mode is a property of the database file, not of the connection,
-    so the first open converts the file and every later open reads the mode
-    back. A file that will not hold the conversion cannot honour the contract -
-    a network filesystem is the usual reason - and this raises rather than
+    A caller that gates durable format supplies ``read_only_preflight``. Existing
+    files are then inspected through a side-effect-free read-only connection
+    before a writable handle can create or alter journal sidecars. Immutable mode
+    protects WAL shared memory; an active rollback journal instead needs SQLite's
+    locked read-only snapshot. ``before_journal_mode`` may atomically initialize a
+    preflight-approved empty file before the normal WAL conversion. The returned
+    connection always uses WAL for durable files.
+
+    The journal mode is a property of the database file, not of the connection.
+    A file that will not hold the conversion cannot honour the contract - a
+    network filesystem is the usual reason - and this raises rather than
     returning a connection that would quietly reintroduce the starvation.
     """
+    if read_only_preflight is not None and path != Path(":memory:") and path.exists():
+        # Immutable mode cannot update WAL shared memory. With a live rollback
+        # journal, however, it could observe the writer's uncommitted in-place
+        # pages, so a normal read-only connection must honor the journal locks.
+        query = "mode=ro"
+        if not Path(f"{path}-journal").exists():
+            query += "&immutable=1"
+        preflight_connection = sqlite3.connect(
+            f"{path.resolve().as_uri()}?{query}",
+            uri=True,
+            timeout=LEDGER_BUSY_TIMEOUT_SECONDS,
+        )
+        try:
+            preflight_connection.row_factory = sqlite3.Row
+            read_only_preflight(preflight_connection)
+        finally:
+            preflight_connection.close()
+
     connection = sqlite3.connect(path, timeout=LEDGER_BUSY_TIMEOUT_SECONDS)
     try:
         connection.row_factory = sqlite3.Row
-        mode = _request_write_ahead_logging(connection)
-        if mode != "wal":
-            raise RunLedgerConcurrencyError(
-                f"run ledger {path} reports journal mode {mode!r} after requesting "
-                "write-ahead logging; this filesystem cannot support concurrent "
-                "indexing safely - a network-mounted data root is the usual cause"
-            )
+        if before_journal_mode is not None:
+            before_journal_mode(connection)
+        if path != Path(":memory:"):
+            mode = _request_write_ahead_logging(connection)
+            if mode != "wal":
+                raise RunLedgerConcurrencyError(
+                    f"run ledger {path} reports journal mode {mode!r} after requesting "
+                    "write-ahead logging; this filesystem cannot support concurrent "
+                    "indexing safely - a network-mounted data root is the usual cause"
+                )
         connection.execute("PRAGMA foreign_keys = ON")
     except BaseException:
         connection.close()
@@ -173,7 +207,12 @@ def _request_write_ahead_logging(connection: sqlite3.Connection) -> str:
 
 
 @contextmanager
-def ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
+def ledger_connection(
+    path: Path,
+    *,
+    read_only_preflight: Callable[[sqlite3.Connection], None] | None = None,
+    before_journal_mode: Callable[[sqlite3.Connection], None] | None = None,
+) -> Generator[sqlite3.Connection]:
     """Yield a ledger connection and close it when the block ends.
 
     ``sqlite3.Connection`` is itself a context manager, but that manager scopes
@@ -182,7 +221,11 @@ def ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
     until the collector happens to reclaim it. This scopes the handle, which is
     what the call sites mean.
     """
-    connection = open_ledger_connection(path)
+    connection = open_ledger_connection(
+        path,
+        read_only_preflight=read_only_preflight,
+        before_journal_mode=before_journal_mode,
+    )
     try:
         yield connection
     finally:
@@ -471,7 +514,7 @@ class FileStateTombstoneRow(TypedDict):
     rel_path: str
 
 
-SCHEMA_VERSION: Final = 6
+SCHEMA_VERSION: Final = 7
 FETCH_BATCH: Final = 256
 _DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
@@ -542,7 +585,7 @@ REQUIRED_SCHEMA: Final = {**_BASE_LEDGER_SCHEMA, **PUBLICATION_PROOF_SCHEMA}
 
 # Named indexes are part of the durable schema contract, not optional tuning.
 # Each tuple is ``(table, ordered columns, unique, partial)`` and is verified on
-# every open after additive migration has had a chance to install it.
+# every open of the exact current format.
 REQUIRED_INDEXES: Final[dict[str, tuple[str, tuple[str, ...], bool, bool]]] = {
     "generations_active": (
         "generations",
@@ -658,6 +701,10 @@ class RunLedgerError(RuntimeError):
 
 class RunLedgerCompatibilityError(RunLedgerError):
     """The ledger schema or requested generation is incompatible."""
+
+
+class RunLedgerRebuildRequiredError(RunLedgerCompatibilityError):
+    """The persisted ledger format must be replaced by an explicit rebuild."""
 
 
 class RunLedgerCorruptionError(RunLedgerError):

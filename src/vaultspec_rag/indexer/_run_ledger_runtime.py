@@ -20,7 +20,6 @@ from ._run_ledger_files import (
 from ._run_ledger_finalization import RunLedgerFinalizationMethods
 from ._run_ledger_models import (
     MAX_RESUME_FAILURES,
-    PUBLICATION_PROOF_SCHEMA,
     REQUIRED_INDEX_PREDICATES,
     REQUIRED_INDEXES,
     REQUIRED_SCHEMA,
@@ -29,8 +28,8 @@ from ._run_ledger_models import (
     FinalizationPhase,
     GenerationRow,
     RunGeneration,
-    RunLedgerCompatibilityError,
     RunLedgerCorruptionError,
+    RunLedgerRebuildRequiredError,
     RunLedgerStateError,
     RunOperation,
     RunSignature,
@@ -41,6 +40,7 @@ from ._run_ledger_models import (
     fetch_one,
     ledger_connection,
     ledger_transaction,
+    open_ledger_connection,
     raise_if_lock_contention,
 )
 from ._run_ledger_publication import RunLedgerPublicationMethods
@@ -51,6 +51,21 @@ __all__ = ["RunLedger"]
 def _normalize_schema_definition(definition: str) -> str:
     """Collapse non-semantic whitespace in one SQLite schema definition."""
     return " ".join(definition.split()).removesuffix(";")
+
+
+def _execute_schema_statements(
+    connection: sqlite3.Connection,
+    script: str,
+) -> None:
+    """Execute a trusted DDL script without escaping its caller's transaction."""
+    statement = ""
+    for line in script.splitlines():
+        statement += f"{line}\n"
+        if sqlite3.complete_statement(statement):
+            connection.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise AssertionError("schema DDL contains an incomplete statement")
 
 
 class RunLedger(
@@ -65,12 +80,15 @@ class RunLedger(
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with ledger_connection(self.path) as connection:
-                self._initialize(connection)
+            with ledger_connection(
+                self.path,
+                read_only_preflight=self._require_current_or_empty_schema,
+                before_journal_mode=self._initialize,
+            ) as connection:
                 self._verify_schema(connection)
         except sqlite3.OperationalError as exc:
             # A held lock is not damage. It reaches here because opening
-            # converts the journal mode and schema-migrates, both of which a
+            # converts the journal mode and creates a fresh schema, both of which a
             # peer's transaction can block. Reporting that as corrupt durable
             # state would be a lie the caller cannot recover from, where the
             # truth is a condition that clears on its own.
@@ -398,119 +416,153 @@ class RunLedger(
             )
         return file_state_from_row(row) if row is not None else None
 
+    def _require_current_or_empty_schema(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Refuse non-current durable state before journal-mode mutation."""
+        version_row: sqlite3.Row | None = fetch_one(connection, "PRAGMA user_version")
+        assert version_row is not None
+        version = column_int(version_row, 0)
+        if version == 0:
+            object_row: sqlite3.Row | None = fetch_one(
+                connection,
+                "SELECT 1 FROM sqlite_master LIMIT 1",
+            )
+            if object_row is None:
+                active_wal = any(
+                    Path(f"{self.path}{suffix}").exists() for suffix in ("-wal", "-shm")
+                )
+                if active_wal:
+                    raise RunLedgerRebuildRequiredError(
+                        "run ledger has active journal state but no current base "
+                        "schema; an explicit rebuild is required"
+                    )
+                return
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema 0 belongs to a nonempty pre-proof database; "
+                "an explicit rebuild is required"
+            )
+        if version != SCHEMA_VERSION:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema "
+                f"{version} is not supported; expected {SCHEMA_VERSION}; "
+                "an explicit rebuild is required"
+            )
+        self._verify_schema(connection)
+
     def _initialize(self, connection: sqlite3.Connection) -> None:
         version_row: sqlite3.Row | None = fetch_one(connection, "PRAGMA user_version")
         assert version_row is not None
         version = column_int(version_row, 0)
-        if version not in (0, SCHEMA_VERSION):
-            raise RunLedgerCompatibilityError(
-                "run ledger schema "
-                f"{version} is not supported; expected {SCHEMA_VERSION}"
-            )
-        if version == 0:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS generations (
-                    generation_id TEXT PRIMARY KEY,
-                    source_type TEXT NOT NULL,
-                    collection_identity TEXT NOT NULL,
-                    signature_fingerprint TEXT NOT NULL,
-                    signature_json TEXT NOT NULL,
-                    finalization_phase TEXT NOT NULL,
-                    terminal_state TEXT NOT NULL,
-                    destructive_intent INTEGER NOT NULL
-                        CHECK(destructive_intent IN (0, 1)),
-                    created_at REAL NOT NULL,
-                    updated_at REAL NOT NULL,
-                    terminal_detail TEXT,
-                    parent_generation_id TEXT,
-                    consecutive_failures INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE INDEX IF NOT EXISTS generations_active
-                    ON generations(source_type, terminal_state, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS commit_units (
-                    generation_id TEXT NOT NULL REFERENCES generations(generation_id)
-                        ON DELETE CASCADE,
-                    unit_id TEXT NOT NULL,
-                    rel_path TEXT NOT NULL,
-                    unit_kind TEXT NOT NULL,
-                    source_digest TEXT,
-                    segment_ordinal INTEGER NOT NULL,
-                    is_file_end INTEGER NOT NULL CHECK(is_file_end IN (0, 1)),
-                    point_ids_json TEXT NOT NULL,
-                    committed_at REAL NOT NULL,
-                    PRIMARY KEY(generation_id, unit_id),
-                    UNIQUE(generation_id, rel_path, unit_kind, segment_ordinal)
-                );
-                CREATE INDEX IF NOT EXISTS commit_units_path
-                    ON commit_units(generation_id, rel_path, segment_ordinal);
-
-                CREATE TABLE IF NOT EXISTS commit_point_ids (
-                    generation_id TEXT NOT NULL,
-                    unit_id TEXT NOT NULL,
-                    point_ordinal INTEGER NOT NULL,
-                    point_id TEXT NOT NULL,
-                    PRIMARY KEY(generation_id, unit_id, point_ordinal),
-                    UNIQUE(generation_id, point_id),
-                    FOREIGN KEY(generation_id, unit_id)
-                        REFERENCES commit_units(generation_id, unit_id)
-                        ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS commit_point_ids_point
-                    ON commit_point_ids(point_id);
-
-                CREATE TABLE IF NOT EXISTS file_states (
-                    generation_id TEXT NOT NULL REFERENCES generations(generation_id)
-                        ON DELETE CASCADE,
-                    rel_path TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    content_kind TEXT,
-                    content_hash TEXT,
-                    admission_reason TEXT,
-                    error_kind TEXT,
-                    detail TEXT,
-                    evidence_generation_id TEXT NOT NULL,
-                    PRIMARY KEY(generation_id, rel_path)
-                );
-                CREATE INDEX IF NOT EXISTS file_states_state
-                    ON file_states(generation_id, state, rel_path);
-                """
-            )
-
-        # Additive migrations must reach every existing v6 ledger without
-        # translating legacy rows into proof. A version bump would reject those
-        # files before they could acquire the new empty normalized projection.
-        connection.execute(
-            """
-            CREATE INDEX IF NOT EXISTS commit_point_ids_point
-                ON commit_point_ids(point_id)
-            """
+        if version == SCHEMA_VERSION:
+            self._verify_schema(connection)
+            return
+        object_row: sqlite3.Row | None = fetch_one(
+            connection,
+            "SELECT 1 FROM sqlite_master LIMIT 1",
         )
-        info_rows: list[sqlite3.Row] = fetch_all(
-            connection, "PRAGMA table_info(generations)"
-        )
-        columns = {column_text(row, "name") for row in info_rows}
-        if "consecutive_failures" not in columns:
-            connection.execute(
-                """
-                ALTER TABLE generations
-                ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0
-                """
+        if version != 0 or object_row is not None:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger changed before current-schema creation; "
+                "an explicit rebuild is required"
             )
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            version_row = fetch_one(connection, "PRAGMA user_version")
+            assert version_row is not None
+            version = column_int(version_row, 0)
+            object_row = fetch_one(
+                connection,
+                "SELECT 1 FROM sqlite_master LIMIT 1",
+            )
+            if version == SCHEMA_VERSION:
+                self._verify_schema(connection)
+            elif version == 0 and object_row is None:
+                self._create_base_tables(connection)
+                self._create_publication_tables(connection)
+                self._create_required_indexes(connection)
+                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                self._verify_schema(connection)
+            else:
+                raise RunLedgerRebuildRequiredError(
+                    "run ledger changed before current-schema creation; "
+                    "an explicit rebuild is required"
+                )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
 
-        self._create_publication_tables(connection)
-        # A table left behind by a partial or foreign migration must be
-        # rejected before index creation attempts to use columns it may lack.
-        self._verify_schema_tables(connection)
-        self._create_required_indexes(connection)
-        if version == 0:
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        connection.commit()
+    @staticmethod
+    def _create_base_tables(connection: sqlite3.Connection) -> None:
+        _execute_schema_statements(
+            connection,
+            """
+            CREATE TABLE IF NOT EXISTS generations (
+                generation_id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                collection_identity TEXT NOT NULL,
+                signature_fingerprint TEXT NOT NULL,
+                signature_json TEXT NOT NULL,
+                finalization_phase TEXT NOT NULL,
+                terminal_state TEXT NOT NULL,
+                destructive_intent INTEGER NOT NULL
+                    CHECK(destructive_intent IN (0, 1)),
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                terminal_detail TEXT,
+                parent_generation_id TEXT,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS commit_units (
+                generation_id TEXT NOT NULL REFERENCES generations(generation_id)
+                    ON DELETE CASCADE,
+                unit_id TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                unit_kind TEXT NOT NULL,
+                source_digest TEXT,
+                segment_ordinal INTEGER NOT NULL,
+                is_file_end INTEGER NOT NULL CHECK(is_file_end IN (0, 1)),
+                point_ids_json TEXT NOT NULL,
+                committed_at REAL NOT NULL,
+                PRIMARY KEY(generation_id, unit_id),
+                UNIQUE(generation_id, rel_path, unit_kind, segment_ordinal)
+            );
+
+            CREATE TABLE IF NOT EXISTS commit_point_ids (
+                generation_id TEXT NOT NULL,
+                unit_id TEXT NOT NULL,
+                point_ordinal INTEGER NOT NULL,
+                point_id TEXT NOT NULL,
+                PRIMARY KEY(generation_id, unit_id, point_ordinal),
+                UNIQUE(generation_id, point_id),
+                FOREIGN KEY(generation_id, unit_id)
+                    REFERENCES commit_units(generation_id, unit_id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS file_states (
+                generation_id TEXT NOT NULL REFERENCES generations(generation_id)
+                    ON DELETE CASCADE,
+                rel_path TEXT NOT NULL,
+                state TEXT NOT NULL,
+                content_kind TEXT,
+                content_hash TEXT,
+                admission_reason TEXT,
+                error_kind TEXT,
+                detail TEXT,
+                evidence_generation_id TEXT NOT NULL,
+                PRIMARY KEY(generation_id, rel_path)
+            );
+            """,
+        )
 
     @staticmethod
     def _create_publication_tables(connection: sqlite3.Connection) -> None:
-        connection.executescript(
+        _execute_schema_statements(
+            connection,
             """
             CREATE TABLE IF NOT EXISTS publication_proofs (
                 source_type TEXT NOT NULL
@@ -831,26 +883,27 @@ class RunLedger(
                 PRIMARY KEY(generation_id, rel_path)
             );
 
-            """
+            """,
         )
 
     @staticmethod
     @cache
-    def _expected_publication_table_definitions() -> tuple[tuple[str, str], ...]:
-        """Build the exact normalized-table contract from its DDL authority.
+    def _expected_table_definitions() -> tuple[tuple[str, str], ...]:
+        """Build the exact table contract from the current DDL authority.
 
         SQLite retains each table's complete definition in ``sqlite_master``.
         That definition includes nullability, primary and unique keys, CHECK
         expressions, foreign keys, and their actions. Building it once in an
-        isolated in-memory database makes real ledgers fail closed on a partial
-        or foreign migration while keeping the definition single-sourced.
+        isolated in-memory database makes differently shaped ledgers fail closed
+        while keeping the definition single-sourced.
         """
-        connection = sqlite3.connect(":memory:")
+        connection = open_ledger_connection(Path(":memory:"))
         try:
             connection.row_factory = sqlite3.Row
+            RunLedger._create_base_tables(connection)
             RunLedger._create_publication_tables(connection)
             definitions: list[tuple[str, str]] = []
-            for table in PUBLICATION_PROOF_SCHEMA:
+            for table in REQUIRED_SCHEMA:
                 row: sqlite3.Row | None = fetch_one(
                     connection,
                     "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -865,8 +918,34 @@ class RunLedger(
             connection.close()
 
     @staticmethod
+    @cache
+    def _expected_index_definitions() -> tuple[tuple[str, str], ...]:
+        """Build the exact named-index contract from the current DDL authority."""
+        connection = open_ledger_connection(Path(":memory:"))
+        try:
+            connection.row_factory = sqlite3.Row
+            RunLedger._create_base_tables(connection)
+            RunLedger._create_publication_tables(connection)
+            RunLedger._create_required_indexes(connection)
+            definitions: list[tuple[str, str]] = []
+            for index_name in REQUIRED_INDEXES:
+                row: sqlite3.Row | None = fetch_one(
+                    connection,
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                    (index_name,),
+                )
+                assert row is not None
+                definitions.append(
+                    (index_name, _normalize_schema_definition(column_text(row, "sql")))
+                )
+            return tuple(definitions)
+        finally:
+            connection.close()
+
+    @staticmethod
     def _create_required_indexes(connection: sqlite3.Connection) -> None:
-        connection.executescript(
+        _execute_schema_statements(
+            connection,
             """
             CREATE INDEX IF NOT EXISTS generations_active
                 ON generations(source_type, terminal_state, created_at DESC);
@@ -905,10 +984,11 @@ class RunLedger(
                 ON publication_receipt_points(point_id);
             CREATE INDEX IF NOT EXISTS file_state_tombstones_path
                 ON file_state_tombstones(rel_path, generation_id);
-            """
+            """,
         )
 
     def _verify_schema(self, connection: sqlite3.Connection) -> None:
+        self._verify_schema_objects(connection)
         self._verify_schema_tables(connection)
         for index_name, (
             table,
@@ -924,8 +1004,9 @@ class RunLedger(
                 None,
             )
             if index_row is None:
-                raise RunLedgerCompatibilityError(
-                    f"run ledger schema is incomplete; missing index: {index_name}"
+                raise RunLedgerRebuildRequiredError(
+                    "run ledger schema is incomplete; missing index: "
+                    f"{index_name}; an explicit rebuild is required"
                 )
             info_rows: list[sqlite3.Row] = fetch_all(
                 connection, f'PRAGMA index_info("{index_name}")'
@@ -941,12 +1022,13 @@ class RunLedger(
                 or unique is not expected_unique
                 or partial is not expected_partial
             ):
-                raise RunLedgerCompatibilityError(
-                    f"run ledger index {index_name!r} does not match its contract"
+                raise RunLedgerRebuildRequiredError(
+                    f"run ledger index {index_name!r} does not match its contract; "
+                    "an explicit rebuild is required"
                 )
             expected_predicate = REQUIRED_INDEX_PREDICATES.get(index_name)
             if expected_predicate is not None:
-                definition_row: sqlite3.Row | None = fetch_one(
+                predicate_definition_row: sqlite3.Row | None = fetch_one(
                     connection,
                     """
                     SELECT sql FROM sqlite_master
@@ -954,62 +1036,127 @@ class RunLedger(
                     """,
                     (index_name,),
                 )
-                if definition_row is None:
-                    raise RunLedgerCompatibilityError(
-                        f"run ledger schema is incomplete; missing index: {index_name}"
+                if predicate_definition_row is None:
+                    raise RunLedgerRebuildRequiredError(
+                        "run ledger schema is incomplete; missing index: "
+                        f"{index_name}; an explicit rebuild is required"
                     )
                 definition = " ".join(
-                    column_text(definition_row, "sql").lower().split()
+                    column_text(predicate_definition_row, "sql").lower().split()
                 )
                 _prefix, separator, predicate = definition.partition(" where ")
                 actual_predicate = f"where {predicate}" if separator else ""
                 if actual_predicate != expected_predicate:
-                    raise RunLedgerCompatibilityError(
-                        f"run ledger index {index_name!r} does not match its contract"
+                    raise RunLedgerRebuildRequiredError(
+                        f"run ledger index {index_name!r} does not match its contract; "
+                        "an explicit rebuild is required"
                     )
+        index_rows = fetch_all(
+            connection,
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
+            """,
+        )
+        indexes = {column_text(row, "name") for row in index_rows}
+        unexpected_indexes = indexes - set(REQUIRED_INDEXES)
+        if unexpected_indexes:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema contains unexpected indexes: "
+                + ", ".join(sorted(unexpected_indexes))
+                + "; an explicit rebuild is required"
+            )
+        for index_name, expected_definition in self._expected_index_definitions():
+            definition_row: sqlite3.Row | None = fetch_one(
+                connection,
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (index_name,),
+            )
+            assert definition_row is not None
+            actual_definition = _normalize_schema_definition(
+                column_text(definition_row, "sql")
+            )
+            if actual_definition != expected_definition:
+                raise RunLedgerRebuildRequiredError(
+                    f"run ledger index {index_name!r} does not match its contract; "
+                    "an explicit rebuild is required"
+                )
+
+    @staticmethod
+    def _verify_schema_objects(connection: sqlite3.Connection) -> None:
+        object_rows: list[sqlite3.Row] = fetch_all(
+            connection,
+            """
+            SELECT type, name FROM sqlite_master
+            WHERE type NOT IN ('table', 'index') AND name NOT LIKE 'sqlite_%'
+            """,
+        )
+        unexpected_objects = sorted(
+            f"{column_text(row, 'type')} {column_text(row, 'name')!r}"
+            for row in object_rows
+        )
+        if unexpected_objects:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema contains unexpected objects: "
+                + ", ".join(unexpected_objects)
+                + "; an explicit rebuild is required"
+            )
 
     @staticmethod
     def _verify_schema_tables(connection: sqlite3.Connection) -> None:
         table_rows: list[sqlite3.Row] = fetch_all(
-            connection, "SELECT name FROM sqlite_master WHERE type = 'table'"
+            connection,
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            """,
         )
         tables = {column_text(row, "name") for row in table_rows}
         missing_tables = set(REQUIRED_SCHEMA) - tables
         if missing_tables:
-            raise RunLedgerCompatibilityError(
+            raise RunLedgerRebuildRequiredError(
                 "run ledger schema is incomplete; missing tables: "
                 + ", ".join(sorted(missing_tables))
+                + "; an explicit rebuild is required"
+            )
+        unexpected_tables = tables - set(REQUIRED_SCHEMA)
+        if unexpected_tables:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema contains unexpected tables: "
+                + ", ".join(sorted(unexpected_tables))
+                + "; an explicit rebuild is required"
             )
         for table, required_columns in REQUIRED_SCHEMA.items():
             info_rows: list[sqlite3.Row] = fetch_all(
                 connection, f"PRAGMA table_info({table})"
             )
             columns = {column_text(row, "name") for row in info_rows}
-            missing_columns = required_columns - columns
-            if missing_columns:
-                raise RunLedgerCompatibilityError(
-                    f"run ledger table {table!r} is missing columns: "
-                    + ", ".join(sorted(missing_columns))
+            if frozenset(columns) != required_columns:
+                raise RunLedgerRebuildRequiredError(
+                    f"run ledger table {table!r} does not match its column contract; "
+                    "an explicit rebuild is required"
                 )
         for (
             table,
             expected_definition,
-        ) in RunLedger._expected_publication_table_definitions():
+        ) in RunLedger._expected_table_definitions():
             definition_row: sqlite3.Row | None = fetch_one(
                 connection,
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
                 (table,),
             )
             if definition_row is None:
-                raise RunLedgerCompatibilityError(
-                    f"run ledger schema is incomplete; missing table: {table}"
+                raise RunLedgerRebuildRequiredError(
+                    f"run ledger schema is incomplete; missing table: {table}; "
+                    "an explicit rebuild is required"
                 )
             actual_definition = _normalize_schema_definition(
                 column_text(definition_row, "sql")
             )
             if actual_definition != expected_definition:
-                raise RunLedgerCompatibilityError(
-                    f"run ledger table {table!r} does not match its contract"
+                raise RunLedgerRebuildRequiredError(
+                    f"run ledger table {table!r} does not match its contract; "
+                    "an explicit rebuild is required"
                 )
 
     @staticmethod
