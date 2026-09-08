@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:33e4148a64428267029558e09d8c51333cfc75ccfa21fbfa1920cb0095739975'
+body_hash: 'sha256:9e3b720dded272830a15ea2b11af1125850e7596597963f5b7eea5a0f882cbee'
 ---
 
 <!-- RETIRED: P14 -->
@@ -123,7 +123,7 @@ Carry policy and canonical success or failure payloads without inferred readines
 Expose caller policy and render canonical JSON and concise human diagnostics.
 
 - [x] `W03.P09.S37` - Expose freshness policy and bounded duration on search commands with immediate defaults; `src/vaultspec_rag/cli/_search.py`.
-- [ ] `W03.P09.S38` - Preserve canonical JSON and render concise human readiness wait identifiers code and remediation; `src/vaultspec_rag/cli/_search.py`.
+- [x] `W03.P09.S38` - Preserve canonical JSON and render concise human readiness wait identifiers code and remediation; `src/vaultspec_rag/cli/_search.py`.
 - [ ] `W03.P09.S39` - Prove JSON parity policy validation updating success typed failure wait cause and identifier bounds; `src/vaultspec_rag/tests/test_cli_search.py`.
 - [ ] `W03.P09.S40` - Prove fallback and timeout safety never recreate adapter readiness diagnosis; `src/vaultspec_rag/tests/test_cli_search_safety.py`.
 
