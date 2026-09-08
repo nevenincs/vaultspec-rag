@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:fa5c6a318435821243a3b8b292d041b808ac6baae18b35520fe944bbedea437b'
+body_hash: 'sha256:b698724c47e87a1c6fb8d6a9faa49e07bc5a57def9a4662b7717ea5858d44d58'
 ---
 
 <!-- RETIRED: P14 -->
@@ -48,7 +48,7 @@ Project existing job generation controller integrity and collection facts throug
 
 - [x] `W01.P02.S04` - Replace the empty-only classifier with per-source projection from canonical job generation controller integrity and collection evidence; `src/vaultspec_rag/server/_search_availability.py`.
 - [x] `W01.P02.S05` - Project generation summary requested and effective mode controller resilience and revision evidence without a second authority; `src/vaultspec_rag/jobs.py`.
-- [ ] `W01.P02.S06` - Cover current updating unavailable unverifiable rebuild capacity and empty-authority classifications; `src/vaultspec_rag/tests/test_search_availability.py`.
+- [ ] `W01.P02.S06` - Add explicit rebuild-required evidence and cover current updating unavailable unverifiable rebuild capacity authority and bounded scenarios; `src/vaultspec_rag/server/_search_availability.py and src/vaultspec_rag/tests/test_search_availability.py`.
 - [ ] `W01.P02.S07` - Mutation-prove exact source and root matching plus bounded evidence; `src/vaultspec_rag/tests/test_search_availability.py`.
 
 ### Phase `W01.P03` - add revision-based convergence
