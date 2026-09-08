@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:ce97755162cd910750fd4a6914b9b1131000ba07ca7c385bd89e86354e0193b4'
+body_hash: 'sha256:d1e9df61e4bb74b277e5e83b517952d1cf7b85809fb35a3f97537cd87654bc22'
 ---
 
 <!-- RETIRED: S21, S22 -->
@@ -40,7 +40,7 @@ Define deterministic controller states, decisions, deadlines, measurements, and 
 
 - [x] `W01.P01.S01` - Define controller state, reason, transition, measurement, scope, and snapshot models; `src/vaultspec_rag/watcher_controller.py`.
 - [x] `W01.P01.S02` - Implement virtual-clock adaptive coalescing, cooling, pressure, refusal, and convergence decisions; `src/vaultspec_rag/watcher_controller.py`.
-- [ ] `W01.P01.S03` - Replace free watcher timing settings with validated policy bounds and compatibility mapping; `src/vaultspec_rag/config`.
+- [x] `W01.P01.S03` - Replace free watcher timing settings with validated policy bounds and compatibility mapping; `src/vaultspec_rag/config`.
 
 ### Phase `W01.P02` - exact-scope durability
 

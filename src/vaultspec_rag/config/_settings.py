@@ -392,11 +392,21 @@ class VaultSpecConfigWrapper:
         # Filesystem-watcher / auto-reindex knobs (#143/#144). The
         # resident service auto-reindexes on file change; ``watch_enabled``
         # is the sole opt-out (``False`` => pull-only service). The
-        # ``debounce_ms`` and ``cooldown_s`` knobs tune responsiveness;
-        # ``0`` means "no delay", not "disabled".
+        # Adaptive policy owns timing as related lower/upper bounds. The two
+        # older fixed-delay settings remain readable and, when explicitly
+        # supplied without their adaptive counterpart, map debounce to both
+        # coalescing bounds and cooldown to the cooling ceiling.
         "watch_enabled": True,
         "watch_debounce_ms": 2000,
         "watch_cooldown_s": 30.0,
+        "watch_coalesce_min_seconds": 2.0,
+        "watch_coalesce_max_seconds": 30.0,
+        "watch_cooling_max_seconds": 120.0,
+        "watch_maximum_freshness_seconds": 300.0,
+        "watch_measurement_reevaluation_seconds": 5.0,
+        "watch_batch_path_limit": 10_000,
+        "watch_scope_max_paths": 100_000,
+        "watch_scope_max_bytes": 8 * 1024 * 1024,
         # Document-preprocessing two-state.
         # ``default`` runs a root's ``.vaultragpreprocess.toml`` rules directly
         # for any root: a root's preprocess config is repo-authored code and
@@ -723,6 +733,96 @@ class VaultSpecConfigWrapper:
         """Return the maximum watcher retry delay, never below the base."""
         return self._watch_retry_bounds()[1]
 
+    def _explicit_rag_setting(self, name: str) -> bool:
+        """Return whether an override source explicitly supplies *name*."""
+        if name in self._rag_overrides:
+            return True
+        try:
+            getattr(self._base, name)
+        except AttributeError:
+            pass
+        else:
+            return True
+        env_key = ENV_OVERRIDE_MAP.get(name)
+        return env_key is not None and os.environ.get(env_key.value) is not None
+
+    def _legacy_watcher_value(
+        self,
+        name: str,
+        legacy_name: str,
+        *,
+        scale: float = 1.0,
+    ) -> float:
+        """Resolve an adaptive value, honoring an explicit legacy input."""
+        if not self._explicit_rag_setting(name) and self._explicit_rag_setting(
+            legacy_name
+        ):
+            return float(self._resolve_rag_default(legacy_name)) * scale
+        return float(self._resolve_rag_default(name))
+
+    def _watch_coalesce_bounds(self) -> tuple[float, float]:
+        legacy_scale = 0.001
+        lower = self._legacy_watcher_value(
+            "watch_coalesce_min_seconds", "watch_debounce_ms", scale=legacy_scale
+        )
+        upper = self._legacy_watcher_value(
+            "watch_coalesce_max_seconds", "watch_debounce_ms", scale=legacy_scale
+        )
+        if upper < lower:
+            msg = (
+                "watch_coalesce_max_seconds must be greater than or equal to "
+                "watch_coalesce_min_seconds, "
+                f"got maximum={upper}, minimum={lower}"
+            )
+            raise ValueError(msg)
+        return lower, upper
+
+    @property
+    def watch_coalesce_min_seconds(self) -> float:
+        """Return the adaptive coalescing floor or mapped legacy debounce."""
+        return self._watch_coalesce_bounds()[0]
+
+    @property
+    def watch_coalesce_max_seconds(self) -> float:
+        """Return the adaptive coalescing ceiling or mapped legacy debounce."""
+        return self._watch_coalesce_bounds()[1]
+
+    @property
+    def watch_cooling_max_seconds(self) -> float:
+        """Return the cooling ceiling or an explicitly supplied old cooldown."""
+        return self._legacy_watcher_value(
+            "watch_cooling_max_seconds", "watch_cooldown_s"
+        )
+
+    def _watch_policy_relations(self) -> None:
+        coalesce_max = self.watch_coalesce_max_seconds
+        cooling_max = self.watch_cooling_max_seconds
+        freshness = float(self._resolve_rag_default("watch_maximum_freshness_seconds"))
+        reevaluation = float(
+            self._resolve_rag_default("watch_measurement_reevaluation_seconds")
+        )
+        scope_paths = int(self._resolve_rag_default("watch_scope_max_paths"))
+        batch_paths = int(self._resolve_rag_default("watch_batch_path_limit"))
+        delays = {
+            "watch_coalesce_max_seconds": coalesce_max,
+            "watch_cooling_max_seconds": cooling_max,
+            "watch_measurement_reevaluation_seconds": reevaluation,
+        }
+        too_long = [name for name, value in delays.items() if value > freshness]
+        if too_long:
+            msg = (
+                "watch_maximum_freshness_seconds must be greater than or equal to "
+                f"{', '.join(too_long)}, got freshness={freshness}"
+            )
+            raise ValueError(msg)
+        if batch_paths > scope_paths:
+            msg = (
+                "watch_batch_path_limit must be less than or equal to "
+                "watch_scope_max_paths, "
+                f"got batch={batch_paths}, scope={scope_paths}"
+            )
+            raise ValueError(msg)
+
     def _coerce_env(self, name: str, raw: str, source: EnvVar) -> object:
         """Parse an environment string into the settings key's declared type.
 
@@ -866,6 +966,7 @@ class VaultSpecConfigWrapper:
             self._index_chunk_bounds,
             self._index_byte_bounds,
             self._watch_retry_bounds,
+            self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
         )
         for relation in relations:
@@ -1035,6 +1136,11 @@ class VaultSpecConfigWrapper:
     watch_enabled: bool
     watch_debounce_ms: int
     watch_cooldown_s: float
+    watch_maximum_freshness_seconds: float
+    watch_measurement_reevaluation_seconds: float
+    watch_batch_path_limit: int
+    watch_scope_max_paths: int
+    watch_scope_max_bytes: int
     preprocess_max_emitted_bytes: int
     document_chunk_chars_per_token: int
     html_strip: bool
