@@ -19,7 +19,9 @@ def _commands(command: Any) -> dict[str, Any]:
     return cast("dict[str, Any]", getattr(command, "commands", None) or {})
 
 
-def _paths(command: Any, prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
+def _paths(
+    command: Any, prefix: tuple[str, ...] = ()
+) -> list[tuple[tuple[str, ...], Any]]:
     found: list[tuple[tuple[str, ...], Any]] = []
     for name, child in _commands(command).items():
         path = (*prefix, name)
@@ -77,7 +79,9 @@ def render() -> str:
     lines = [
         "# vaultspec-rag CLI reference",
         "",
-        "Generated from the live command surface. Run `python -m dev.generate_cli_reference` after changing a command, argument, option, default, or help string.",
+        "Generated from the live command surface. Run "
+        "`python -m dev.generate_cli_reference` after changing a command, "
+        "argument, option, default, or help string.",
         "",
         "## Global options",
         "",

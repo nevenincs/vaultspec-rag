@@ -37,8 +37,9 @@ if TYPE_CHECKING:
     # ``typer.main.get_command`` actually returns.
     from typer._click.core import Command
 
-from ..cli._app import app
 from dev.generate_cli_reference import OUTPUT, render
+
+from ..cli._app import app
 
 pytestmark = [pytest.mark.unit]
 

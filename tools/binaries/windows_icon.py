@@ -11,7 +11,7 @@ import os
 import struct
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -130,7 +130,11 @@ def _kernel32() -> Any:
     return kernel32
 
 
-def _raise_win32(action: str, path: Path) -> None:
+def _raise_win32(action: str, path: Path) -> NoReturn:
+    # Annotated NoReturn rather than None because every caller relies on it:
+    # each one is a bare guard that falls through to code using the value it
+    # just rejected, and only this annotation tells a type checker the
+    # fall-through is unreachable.
     code = ctypes.get_last_error()
     detail = ctypes.FormatError(code).strip()
     raise IconResourceError(f"{action} {path} failed: [{code}] {detail}")
