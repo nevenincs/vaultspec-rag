@@ -855,23 +855,30 @@ def _dominant_combined_failure(
         "index_updating",
         "index_unverifiable",
     )
-    by_reason = {
-        fact.reason_code: fact for fact in source_facts if fact.reason_code is not None
-    }
     selected_reason = next(
-        (reason for reason in priority if reason in by_reason),
+        (
+            reason
+            for reason in priority
+            if any(fact.reason_code == reason for fact in source_facts)
+        ),
         "index_unverifiable",
     )
-    selected = by_reason.get(selected_reason)
-    if selected is None:
-        selected = next(
-            (fact for fact in source_facts if fact.remediation is not None),
-            source_facts[0],
-        )
+    selected = next(
+        (fact for fact in source_facts if fact.reason_code == selected_reason),
+        source_facts[0],
+    )
+    remediation = next(
+        (
+            fact.remediation
+            for fact in source_facts
+            if fact.reason_code == selected_reason and fact.remediation is not None
+        ),
+        selected.remediation,
+    )
     stable_error = (
         "index_unavailable" if selected_reason == "index_updating" else selected_reason
     )
-    return stable_error, selected.retryable, selected.remediation
+    return stable_error, selected.retryable, remediation
 
 
 def _execute_search_request(
