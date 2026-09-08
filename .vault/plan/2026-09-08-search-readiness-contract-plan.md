@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:cc13d1487a6ba85d0187e6d1f2953f66247b7cefc9050f315dc7cb84bde5209f'
+body_hash: 'sha256:7c036810ab6529efdd57685f2a40956ff871ce4e7a6ea0d5168ad015229de078'
 ---
 
 <!-- RETIRED: P14 -->
@@ -149,7 +149,7 @@ Drive identical readiness scenarios through HTTP CLI MCP and combined search.
 - [x] `W04.P11.S47` - Apply the readiness scenario matrix to real HTTP responses and headers; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`.
 - [x] `W04.P11.S48` - Apply the readiness scenario matrix to CLI JSON and human rendering; `src/vaultspec_rag/tests/_search_readiness_scenarios.py, src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py, and src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`.
 - [x] `W04.P11.S49` - Apply the readiness scenario matrix to official-client MCP structured responses; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`.
-- [ ] `W04.P11.S50` - Prove rebuild-required behavior and remediation across service and adapters; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`.
+- [x] `W04.P11.S50` - Prove rebuild-required behavior and remediation across service and adapters; `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`.
 
 ### Phase `W04.P12` - enforce compatibility and load budgets
 

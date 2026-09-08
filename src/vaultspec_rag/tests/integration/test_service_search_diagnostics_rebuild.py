@@ -14,6 +14,7 @@ from real content and leaves the paused job untouched.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
@@ -23,12 +24,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from mcp.types import TextContent
 
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._search_transport import try_http_search
+from .._search_readiness_scenarios import (
+    SEARCH_READINESS_SCENARIOS,
+    canonical_service_envelope,
+)
 from ..corpus import build_synthetic_vault
+from ..test_cli_search import _invoke_readiness_search, _search_envelope_service
 from ._service_search_diagnostics_support import (
     RawSearchPayloads,
     RawSearchResponse,
@@ -44,8 +51,11 @@ from ._service_search_diagnostics_support import (
     wait_for_succeeded_job,
 )
 from .conftest import _live_service_context
+from .test_service_search_diagnostics_http import _production_route_response
 from .test_service_search_diagnostics_mcp import (
     McpConcurrentRequest,
+    _canonical_search_service,
+    _official_search_call,
     assert_mcp_unavailable_response,
     mcp_search_after_concurrent_admission,
     wait_for_mcp_initialization,
@@ -64,6 +74,76 @@ type ConcurrentProbeResponses = tuple[
     CallToolResult,
 ]
 type RebuildProbeRun = tuple[str, dict[str, object], ConcurrentProbeResponses]
+
+
+@pytest.mark.unit
+def test_rebuild_required_is_identical_across_public_surfaces(
+    tmp_path: Path,
+) -> None:
+    scenario = SEARCH_READINESS_SCENARIOS["rebuild_required"]
+    expected = canonical_service_envelope(scenario)
+    failure = scenario.failure
+    assert failure is not None
+
+    http_status, http_body, http_headers = _production_route_response(
+        tmp_path, scenario
+    )
+    # The route's 409 guard is mutation-proved at its shared matrix assertion in
+    # test_service_search_diagnostics_http; this cross-surface test reuses it.
+    assert http_status == 409
+    assert "retry-after" not in http_headers
+    assert http_body["error"] == failure.code
+    assert http_body["retryable"] is False
+    assert http_body["request_id"] == scenario.request_id
+    assert http_body["remediation"] == failure.remediation
+    assert "results" not in http_body
+    http_readiness = cast("dict[str, object]", http_body["readiness"])
+    assert http_readiness["aggregate"] == scenario.aggregate.as_dict()
+    http_sources = cast("list[dict[str, object]]", http_readiness["sources"])
+    assert len(http_sources) == 1
+    assert {key: value for key, value in http_sources[0].items() if key != "waits"} == {
+        key: value
+        for key, value in scenario.source_facts[0].as_dict().items()
+        if key != "waits"
+    }
+
+    with _search_envelope_service(expected, status=409) as (port, _requests):
+        cli_json = _invoke_readiness_search(tmp_path, port, "--json")
+    emitted = json.loads(cli_json.output)
+    assert cli_json.exit_code == 1
+    assert emitted == {**expected, "command": "search"}
+    assert "results" not in emitted
+
+    with _search_envelope_service(expected, status=409) as (port, _requests):
+        cli_human = _invoke_readiness_search(tmp_path, port)
+    assert cli_human.exit_code == 1
+    assert f"Code: {failure.code}" in cli_human.output
+    assert cli_human.output.count(failure.remediation) == 1
+    assert "document: unavailable, rebuild_required" in cli_human.output
+
+    root = tmp_path / "mcp-rebuild"
+    (root / ".vaultspec").mkdir(parents=True)
+    with _canonical_search_service(tmp_path, scenario=scenario) as (
+        port,
+        status_dir,
+        _requests,
+    ):
+        mcp_response = asyncio.run(
+            _official_search_call(
+                port=port,
+                status_dir=status_dir,
+                root=root,
+                tool_name="search_documents",
+            )
+        )
+    assert mcp_response.is_error is False
+    assert mcp_response.structured_content == expected
+    assert "results" not in cast("dict[str, object]", mcp_response.structured_content)
+    mcp_text = " ".join(
+        block.text for block in mcp_response.content if isinstance(block, TextContent)
+    )
+    assert failure.code in mcp_text
+    assert failure.remediation in mcp_text
 
 
 @dataclass(frozen=True, slots=True)
