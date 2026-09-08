@@ -684,9 +684,7 @@ class WatcherRetryPolicy:
             self._require_active_attempt(state, attempt_generation)
             failures = state.consecutive_failures + 1
             error_kind, retryable = _classify_failure(error)
-            requires_explicit_rebuild = (
-                error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-            )
+            requires_explicit_rebuild = error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
             delay = self._retry_delay(failures, random_unit=unit)
             was_half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
             open_circuit = (

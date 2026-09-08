@@ -1224,9 +1224,7 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     if summary["stalled"]:
         degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
     if summary["degraded"]:
-        degraded_reasons.append(
-            f"{summary['degraded']} indexing job(s) are degraded"
-        )
+        degraded_reasons.append(f"{summary['degraded']} indexing job(s) are degraded")
     if (
         last_failed is not None
         and _failure_belongs_to_this_generation(last_failed)

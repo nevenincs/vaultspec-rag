@@ -35,6 +35,7 @@ from ._codebase_preprocess import CodebasePreprocessMixin
 from ._consumer_pipeline import (
     CodeConsumerPipeline,
     CodePipelineBindings,
+    CodePipelineLimits,
     CodePipelineRun,
 )
 from ._content_discovery import (
@@ -970,40 +971,25 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         current_hashes.update(
             self._preserved_disabled_metadata(policy, previous_metadata)
         )
-        previous_files = set(previous_metadata)
-        current_names = set(current_hashes)
-        new_files = current_names - previous_files
-        deleted_files = previous_files - current_names
-        modified_files = {
-            rel
-            for rel in current_names & previous_files
-            if current_hashes[rel] != previous_metadata.get(rel)
-        }
-        to_index = new_files | modified_files
-        paths_to_index = [current_files[rel] for rel in sorted(to_index)]
-        attempted_paths = to_index | deleted_files
+        deleted_files = set(previous_metadata) - set(current_hashes)
+        new_files, modified_files, to_index, paths_to_index, attempted_paths = (
+            self._incremental_change_sets(
+                current_hashes,
+                previous_metadata,
+                current_files,
+                deleted_files,
+            )
+        )
         if not attempted_paths:
             return self._unchanged_incremental_result(started_at=start)
         limits = self._consumer_pipeline.resolve_limits()
-        try:
-            checkpoint = self._lifecycle.open_checkpoint(
-                CodeGenerationOpenRequest(
-                    policy=policy,
-                    operation=RunOperation.INCREMENTAL,
-                    clean=False,
-                    configuration=limits.run_configuration,
-                    dense_dimensions=limits.dense_dimension,
-                    sparse_enabled=limits.sparse_enabled,
-                    run_control=run_control,
-                )
-            )
-        except RunLedgerCompatibilityError as exc:
-            logger.warning("code incremental ledger is incompatible: %s", exc)
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                f"no compatible published code manifest ({exc}); request an "
-                "explicit full code reindex",
-            ) from exc
+        checkpoint = self._open_incremental_checkpoint(
+            policy=policy,
+            operation=RunOperation.INCREMENTAL,
+            limits=limits,
+            run_control=run_control,
+            scope="code incremental",
+        )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
@@ -1058,6 +1044,58 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 drift=self._lifecycle.drift_snapshot(),
             )
         return result
+
+    @staticmethod
+    def _incremental_change_sets(
+        current_hashes: dict[str, str],
+        previous_metadata: dict[str, str],
+        current_files: dict[str, pathlib.Path],
+        deleted_files: set[str],
+    ) -> tuple[set[str], set[str], set[str], list[pathlib.Path], set[str]]:
+        new_files = set(current_hashes) - set(previous_metadata)
+        modified_files = {
+            rel
+            for rel in set(current_hashes).intersection(previous_metadata)
+            if current_hashes[rel] != previous_metadata.get(rel)
+        }
+        to_index = new_files | modified_files
+        paths_to_index = [current_files[rel] for rel in sorted(to_index)]
+        return (
+            new_files,
+            modified_files,
+            to_index,
+            paths_to_index,
+            to_index | deleted_files,
+        )
+
+    def _open_incremental_checkpoint(
+        self,
+        *,
+        policy: ResolvedIndexPolicy,
+        operation: RunOperation,
+        limits: CodePipelineLimits,
+        run_control: RunControl,
+        scope: str,
+    ) -> CodeRunCheckpoint:
+        try:
+            return self._lifecycle.open_checkpoint(
+                CodeGenerationOpenRequest(
+                    policy=policy,
+                    operation=operation,
+                    clean=False,
+                    configuration=limits.run_configuration,
+                    dense_dimensions=limits.dense_dimension,
+                    sparse_enabled=limits.sparse_enabled,
+                    run_control=run_control,
+                )
+            )
+        except RunLedgerCompatibilityError as exc:
+            logger.warning("%s ledger is incompatible: %s", scope, exc)
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                f"no compatible published code manifest ({exc}); request an "
+                "explicit full code reindex",
+            ) from exc
 
     def _scan_changed_paths(
         self,
@@ -1192,40 +1230,24 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         changed_hashes = self._hash_changed_paths(
             to_hash, reporter, run_control=run_control
         )
-        new_files = {rel for rel in changed_hashes if rel not in previous_metadata}
-        modified_files = {
-            rel
-            for rel in changed_hashes
-            if (
-                rel in previous_metadata
-                and changed_hashes[rel] != previous_metadata.get(rel)
+        new_files, modified_files, to_index, paths_to_index, attempted_paths = (
+            self._incremental_change_sets(
+                changed_hashes,
+                previous_metadata,
+                to_hash,
+                delete_files,
             )
-        }
-        to_index = new_files | modified_files
-        paths_to_index = [to_hash[rel] for rel in sorted(to_index)]
-        attempted_paths = to_index | delete_files
+        )
         if not attempted_paths:
             return self._unchanged_incremental_result(started_at=start)
         limits = self._consumer_pipeline.resolve_limits()
-        try:
-            checkpoint = self._lifecycle.open_checkpoint(
-                CodeGenerationOpenRequest(
-                    policy=policy,
-                    operation=RunOperation.SCOPED_INCREMENTAL,
-                    clean=False,
-                    configuration=limits.run_configuration,
-                    dense_dimensions=limits.dense_dimension,
-                    sparse_enabled=limits.sparse_enabled,
-                    run_control=run_control,
-                )
-            )
-        except RunLedgerCompatibilityError as exc:
-            logger.warning("scoped code ledger is incompatible: %s", exc)
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                f"no compatible published code manifest ({exc}); request an "
-                "explicit full code reindex",
-            ) from exc
+        checkpoint = self._open_incremental_checkpoint(
+            policy=policy,
+            operation=RunOperation.SCOPED_INCREMENTAL,
+            limits=limits,
+            run_control=run_control,
+            scope="scoped code",
+        )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,
