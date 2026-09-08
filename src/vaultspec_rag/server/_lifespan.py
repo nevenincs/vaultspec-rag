@@ -420,6 +420,7 @@ async def _start_components(
     # only after its prior close_all() completed and proved that no model, slot,
     # or root lock remains.
     registry.prepare_startup()
+    registry.start_readiness(asyncio.get_running_loop())
 
     # Qdrant server mode is the default backend: spawn the supervised
     # child BEFORE model load so a missing/broken binary fails startup
@@ -1224,9 +1225,7 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
     if summary["stalled"]:
         degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
     if summary["degraded"]:
-        degraded_reasons.append(
-            f"{summary['degraded']} indexing job(s) are degraded"
-        )
+        degraded_reasons.append(f"{summary['degraded']} indexing job(s) are degraded")
     if (
         last_failed is not None
         and _failure_belongs_to_this_generation(last_failed)

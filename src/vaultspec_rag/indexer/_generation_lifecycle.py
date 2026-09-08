@@ -58,6 +58,7 @@ class CodeGenerationBindings:
     store: VaultStore
     load_meta: Callable[[], Mapping[str, str]]
     read_meta_raw: Callable[[], Mapping[str, str]]
+    publish_readiness: Callable[[pathlib.Path, str], object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,7 @@ class CodeGenerationLifecycle:
         "_last_checkpoint",
         "_load_meta",
         "_meta_path",
+        "_publish_readiness",
         "_read_meta_raw",
         "_root_dir",
         "_store",
@@ -113,6 +115,7 @@ class CodeGenerationLifecycle:
         self._store = bindings.store
         self._load_meta = bindings.load_meta
         self._read_meta_raw = bindings.read_meta_raw
+        self._publish_readiness = bindings.publish_readiness
         self._last_checkpoint: CodeRunCheckpoint | None = None
         self._active_build_target: str | None = None
         # Bound to the generation once a run opens its checkpoint, because
@@ -425,7 +428,9 @@ class CodeGenerationLifecycle:
                     ContentKind.CODE,
                     include_same_kind=False,
                 )
-            checkpoint.publish_generation()
+            published = checkpoint.publish_generation()
+            if self._publish_readiness is not None:
+                self._publish_readiness(self._root_dir, published.generation_id)
             reporter.advance(1)
         finally:
             reporter.phase_end()

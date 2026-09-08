@@ -75,7 +75,7 @@ from ._vault_prep import IndexResult
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from ..embeddings import EmbeddingModel
     from ..index_profiles import SupportMeasurement
@@ -124,6 +124,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         gpu_lock: threading.Lock | None = None
         extra_excludes: list[str] | None = None
         content_policy: RootContentPolicy | None = None
+        publish_readiness: Callable[[pathlib.Path, str], object] | None = None
 
     def __init__(
         self,
@@ -220,6 +221,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 store=self.store,
                 load_meta=self._load_meta,
                 read_meta_raw=self._read_meta_raw,
+                publish_readiness=options.publish_readiness,
             )
         )
         self._consumer_pipeline = CodeConsumerPipeline(
