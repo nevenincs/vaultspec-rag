@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:0671c6cbe7235258419d59e06d48a8ed7aad91ae6479ba15d5114e97fff208d3'
+body_hash: 'sha256:68587b476322eaa7b0bf30920ac8605919dfe4d61c689f56761450eb2757da48'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -36,6 +36,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W02-P05-S22]]'
   - '[[2026-09-08-search-readiness-contract-W02-P05-summary]]'
   - '[[2026-09-08-search-readiness-contract-W02-P06-S23]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P06-S24]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -82,6 +83,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W02-P05-S22` - Mutation-prove empty authority and Retry-After guards
 - `2026-09-08-search-readiness-contract-W02-P05-summary` - `search-readiness-contract` `W02.P05` summary
 - `2026-09-08-search-readiness-contract-W02-P06-S23` - Extend domain outcomes with immutable source readiness and derive a lossless combined aggregate
+- `2026-09-08-search-readiness-contract-W02-P06-S24` - Classify every requested source and retain constituent failures beside useful combined results
 
 ### plan
 
