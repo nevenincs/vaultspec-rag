@@ -152,6 +152,15 @@ class SearchResults(BaseModel):
 
 FreshnessWaitSeconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
+_CALLER_SEARCH_ERROR_CODES = frozenset(
+    {
+        "invalid_filter_for_search_type",
+        "invalid_prefer_value",
+        "unknown_source_type",
+        "unsupported_feedback_for_search_type",
+    }
+)
+
 
 _SERVICE_DOWN_MESSAGE = (
     "vaultspec-rag service is not running. Start it with `vaultspec-rag server start`."
@@ -232,10 +241,10 @@ def _canonical_tool_source(value: object) -> str:
         raise ValueError(f"{exc.error_kind}: {exc}") from None
 
 
-def _search_envelope_or_raise(
+def _validated_search_result(
     result: object,
-) -> dict[str, Any]:
-    """Return a successful search envelope or raise the daemon's failure."""
+) -> SearchResults:
+    """Validate one canonical search envelope without reducing its failure."""
     if not isinstance(result, dict):
         raise RuntimeError(
             "invalid_service_response: The search service returned an invalid "
@@ -244,32 +253,15 @@ def _search_envelope_or_raise(
     # isinstance narrows the key/value types no further than dict[Unknown,
     # Unknown]; the JSON object this daemon returns is always str-keyed.
     envelope = cast("dict[str, Any]", result)
-    if envelope.get("ok") is not False:
-        if not isinstance(envelope.get("results"), list):
+    error = envelope.get("error")
+    if envelope.get("ok") is False and error in _CALLER_SEARCH_ERROR_CODES:
+        message = envelope.get("message")
+        if not isinstance(message, str) or not message:
             raise RuntimeError(
-                "invalid_service_response: The search service returned an invalid "
-                "response; expected a success envelope containing a results list."
+                "invalid_service_response: A caller search refusal omitted its message."
             )
-        return envelope
-
-    error_code = str(envelope.get("error") or "search_failed")
-    message = str(envelope.get("message") or "The search request failed.")
-    raw_remediation = envelope.get("remediation")
-    if isinstance(raw_remediation, list):
-        remediation = [
-            step.strip()
-            for step in cast("list[object]", raw_remediation)
-            if isinstance(step, str) and step.strip()
-        ]
-    elif isinstance(raw_remediation, str) and raw_remediation.strip():
-        remediation = [raw_remediation.strip()]
-    else:
-        remediation = []
-
-    detail = f"{error_code}: {message}"
-    if remediation:
-        detail = f"{detail} Remediation: {' | '.join(remediation)}"
-    raise RuntimeError(detail)
+        raise ValueError(f"{error}: {message}")
+    return SearchResults.model_validate(envelope)
 
 
 def _with_domain_tokens(
@@ -396,7 +388,7 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
             freshness_wait_seconds=freshness_wait_seconds,
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search codebase", annotations=_READ_ONLY)
@@ -460,7 +452,7 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
             freshness_wait_seconds=freshness_wait_seconds,
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search documents", annotations=_READ_ONLY)
@@ -495,7 +487,7 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
             ),
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search all index domains", annotations=_READ_ONLY)
@@ -566,7 +558,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             ),
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Get code file", annotations=_READ_ONLY)

@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:ac055b74775a07612986f8357c434e9fe5682436337733309adeaea64fa45a89'
+body_hash: 'sha256:591026d367aa35d8e37747003a983511f7bd886dfb24f1a5829edb20066783a7'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -58,6 +58,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W03-P09-S40]]'
   - '[[2026-09-08-search-readiness-contract-W03-P09-summary]]'
   - '[[2026-09-08-search-readiness-contract-W03-P10-S41]]'
+  - '[[2026-09-08-search-readiness-contract-W03-P10-S42]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -126,6 +127,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W03-P09-S40` - Prove fallback and timeout safety never recreate adapter readiness diagnosis
 - `2026-09-08-search-readiness-contract-W03-P09-summary` - `search-readiness-contract` `W03.P09` summary
 - `2026-09-08-search-readiness-contract-W03-P10-S41` - Extend MCP input and result models with policy and canonical readiness content
+- `2026-09-08-search-readiness-contract-W03-P10-S42` - Replace opaque RuntimeError reduction with structured error content and actionable text
 
 ### plan
 
