@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:3dec6407d1ef32ae05ee2b30c129b69f7ed68f2f131e4c25ae97441ed6f93292'
+body_hash: 'sha256:3abd65b1cd04e68f926a070226ceb92fbd4a3acf982cb351dd72d1645101cd7f'
 ---
 
 <!-- RETIRED: P14 -->
@@ -101,7 +101,7 @@ Measure every existing admission and capacity boundary under its actual canonica
 
 - [x] `W02.P07.S28` - Record admission before blocking and expose bounded queued-request wait observations; `src/vaultspec_rag/server/_search_activity.py`.
 - [ ] `W02.P07.S29` - Measure search-limiter and compute-ticket waits separately from service duration; `src/vaultspec_rag/server/_routes_search.py`.
-- [ ] `W02.P07.S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `W02.P07.S30` - Preserve GPU-compute and project-lease measurements as distinct named causes without widening lock scope; `src/vaultspec_rag/search/_searcher.py`.
 - [ ] `W02.P07.S31` - Map storage duration and refusal to storage-owned outcomes without guessing index state; `src/vaultspec_rag/server/_routes_search.py`.
 - [ ] `W02.P07.S32` - Prove queued visibility deadlines bounded history completion and cancellation cleanup; `src/vaultspec_rag/tests/test_search_activity.py`.
 - [ ] `W02.P07.S33` - Prove every named wait cause remains distinct under contention; `src/vaultspec_rag/tests/test_service_search_diagnostics.py`.
