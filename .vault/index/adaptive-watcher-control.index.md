@@ -6,9 +6,10 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:e5555f5f9b097312d8408e1c06d6a81147c5fc08192750eaed9e8df9345e2037'
+body_hash: 'sha256:cf3ccb3617a835f152f23b25588abbac5dbb8f9c63c0db54c0400dd3a62ec73d'
 related:
   - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
   - '[[2026-09-08-adaptive-watcher-control-adr]]'
   - '[[2026-09-08-adaptive-watcher-control-plan]]'
   - '[[2026-09-08-adaptive-watcher-control-reference]]'
@@ -28,6 +29,7 @@ Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
 ### exec
 
 - `2026-09-08-adaptive-watcher-control-W01-P01-S01` - Define controller state, reason, transition, measurement, scope, and snapshot models
+- `2026-09-08-adaptive-watcher-control-W01-P01-S02` - Implement virtual-clock adaptive coalescing, cooling, pressure, refusal, and convergence decisions
 
 ### plan
 
