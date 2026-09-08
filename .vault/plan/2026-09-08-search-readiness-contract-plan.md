@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-08'
 body_schema: body-v2
-body_hash: 'sha256:b359108ed1d8d2df719659588a4d21b7255e1975d5504058714fbf47af3d349f'
+body_hash: 'sha256:772484ecfaa45b301087e30bb2198e7c135ed404c689016ef2af678c658619fa'
 ---
 
 <!-- RETIRED: P14 -->
@@ -70,7 +70,7 @@ Build on W01 to deliver caller policy, bounded waiting, HTTP envelopes, combined
 
 Validate immediate and bounded policies capture stable targets and preserve cancellation.
 
-- [ ] `W02.P04.S14` - Add immediate-default and bounded request policy capture stable source targets enforce maximum wait and preserve cancellation; `src/vaultspec_rag/server/_routes_search.py`.
+- [x] `W02.P04.S14` - Add immediate-default and bounded request policy capture stable source targets enforce maximum wait and preserve cancellation; `src/vaultspec_rag/server/_routes_search.py`.
 - [ ] `W02.P04.S15` - Add the bounded freshness-wait maximum to canonical configuration and settings projection; `src/vaultspec_rag/config`.
 - [ ] `W02.P04.S16` - Prove policy defaults validation stable targets typed timeout and disconnect behavior; `src/vaultspec_rag/tests/test_http_search_routing.py`.
 - [ ] `W02.P04.S17` - Prove freshness-wait configuration defaults overrides and upper-bound validation; `src/vaultspec_rag/tests/test_config.py`.

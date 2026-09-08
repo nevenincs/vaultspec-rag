@@ -15,6 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import partial
+from math import isfinite
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
@@ -29,6 +30,7 @@ from .._operator_commands import (
     server_jobs_command,
     server_status_command,
 )
+from .._search_state import FreshnessWaitPolicy
 from .._source_types import (
     INDEX_SOURCES,
     IndexSource,
@@ -85,6 +87,8 @@ if TYPE_CHECKING:
     from .._index_integrity import IndexIntegrity
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
+    from ._search_readiness import PublicationTarget, ReadinessRevisionRegistry
+
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -100,6 +104,8 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
     },
     status_code=400,
 )
+
+MAX_FRESHNESS_WAIT_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +194,8 @@ class SearchRequest:
     payload: dict[str, Any]
     search_type: PublicSourceType
     request_id: str
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
+    freshness_wait_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -864,8 +872,17 @@ def _normalise_search_request(
     if isinstance(search_type, JSONResponse):
         return SearchRouteError(search_type, error_code="bad_request")
     unsupported_feedback = _unsupported_search_feedback(search_type, payload)
-    if unsupported_feedback is not None:
-        return SearchRouteError(unsupported_feedback, error_code="unsupported_feedback")
+    wait_policy = _freshness_wait_policy(payload)
+    policy_error = (
+        SearchRouteError(unsupported_feedback, error_code="unsupported_feedback")
+        if unsupported_feedback is not None
+        else wait_policy
+        if isinstance(wait_policy, SearchRouteError)
+        else None
+    )
+    if policy_error is not None:
+        return policy_error
+    assert not isinstance(wait_policy, SearchRouteError)
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
@@ -892,7 +909,49 @@ def _normalise_search_request(
         payload=payload,
         search_type=search_type,
         request_id=request_id,
+        freshness_policy=wait_policy[0],
+        freshness_wait_seconds=wait_policy[1],
     )
+
+
+def _freshness_wait_policy(
+    payload: dict[str, object],
+) -> tuple[FreshnessWaitPolicy, float] | SearchRouteError:
+    """Validate the opt-in publication wait without changing immediate defaults."""
+    raw_policy = payload.get("freshness_policy", FreshnessWaitPolicy.IMMEDIATE.value)
+    if not isinstance(raw_policy, str):
+        return _bad_search_field(
+            "invalid_freshness_policy",
+            "freshness_policy must be 'immediate' or 'bounded'",
+        )
+    try:
+        policy = FreshnessWaitPolicy(raw_policy)
+    except ValueError:
+        return _bad_search_field(
+            "invalid_freshness_policy",
+            "freshness_policy must be 'immediate' or 'bounded'",
+        )
+    raw_seconds = payload.get("freshness_wait_seconds")
+    if policy is FreshnessWaitPolicy.IMMEDIATE:
+        if raw_seconds is not None:
+            return _bad_search_field(
+                "invalid_freshness_wait_seconds",
+                "freshness_wait_seconds requires freshness_policy 'bounded'",
+            )
+        return policy, 0.0
+    if (
+        isinstance(raw_seconds, bool)
+        or not isinstance(raw_seconds, (int, float))
+        or not isfinite(raw_seconds)
+        or raw_seconds < 0
+        or raw_seconds > MAX_FRESHNESS_WAIT_SECONDS
+    ):
+        return _bad_search_field(
+            "invalid_freshness_wait_seconds",
+            "freshness_wait_seconds must be a finite number between 0 and "
+            f"{MAX_FRESHNESS_WAIT_SECONDS:g}",
+        )
+    return policy, float(raw_seconds)
 
 
 def _search_field_error(
@@ -968,6 +1027,88 @@ def _record_validation_rejection(
     finalization.error_message = error.error_message
 
 
+def _capture_publication_targets(
+    search_request: SearchRequest,
+    readiness: ReadinessRevisionRegistry,
+) -> tuple[PublicationTarget, ...] | None:
+    """Capture immutable per-source convergence targets at request admission."""
+    from ._search_readiness import PublicationTarget, ReadinessSourceKey
+
+    sources: tuple[IndexSource, ...] = (
+        cast("tuple[IndexSource, ...]", tuple(INDEX_SOURCES))
+        if search_request.search_type is PublicSourceType.COMBINED
+        else (search_request.search_type.value,)
+    )
+    targets: list[PublicationTarget] = []
+    for source in sources:
+        snapshot = readiness.snapshot(search_request.root, source)
+        if snapshot.controller_revision is not None:
+            revision = snapshot.controller_revision
+            generation = snapshot.desired_generation
+        elif snapshot.publication_revision is not None:
+            revision = snapshot.publication_revision
+            generation = snapshot.published_generation
+        else:
+            return None
+        targets.append(
+            PublicationTarget(
+                key=ReadinessSourceKey.from_root(search_request.root, source),
+                revision=revision,
+                generation=generation,
+            )
+        )
+    return tuple(targets)
+
+
+async def _wait_for_requested_freshness(
+    search_request: SearchRequest,
+    registry: ServiceRegistry,
+) -> Literal["immediate", "satisfied", "timeout", "unverifiable"]:
+    """Apply the caller policy while preserving native task cancellation."""
+    if search_request.freshness_policy is FreshnessWaitPolicy.IMMEDIATE:
+        return "immediate"
+    readiness = registry.readiness_registry
+    targets = _capture_publication_targets(search_request, readiness)
+    if targets is None:
+        return "unverifiable"
+    satisfied = await readiness.published_at_least(
+        targets,
+        timeout_seconds=search_request.freshness_wait_seconds,
+    )
+    return "satisfied" if satisfied else "timeout"
+
+
+def _freshness_wait_failure(
+    outcome: Literal["timeout", "unverifiable"],
+    search_request: SearchRequest,
+    *,
+    total_seconds: float,
+) -> SearchRouteResult:
+    """Return a stable typed pre-retrieval freshness failure."""
+    if outcome == "timeout":
+        error = "freshness_wait_timeout"
+        message = "The index did not reach the requested publication before the bound."
+    else:
+        error = "index_unverifiable"
+        message = (
+            "No canonical publication or controller target is available to wait for."
+        )
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    return SearchRouteResult(
+        result={
+            "ok": False,
+            "error": error,
+            "message": message,
+            "retryable": True,
+            "request_id": search_request.request_id,
+        },
+        status_code=503,
+        total_seconds=total_seconds,
+        availability_cause=None,
+    )
+
+
 async def _execute_search_route(
     search_request: SearchRequest,
     port: int | None,
@@ -975,6 +1116,15 @@ async def _execute_search_route(
 ) -> SearchRouteResult:
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
+
+    started = time.perf_counter()
+    freshness_outcome = await _wait_for_requested_freshness(search_request, registry)
+    if freshness_outcome in ("timeout", "unverifiable"):
+        return _freshness_wait_failure(
+            freshness_outcome,
+            search_request,
+            total_seconds=time.perf_counter() - started,
+        )
 
     # The fan-out has no single index to classify against, so it builds no
     # availability facts at all. Deriving ``source`` only on this branch is
@@ -993,7 +1143,6 @@ async def _execute_search_route(
         )
     )
     run = partial(_execute_search_request, search_request, registry)
-    started = time.perf_counter()
     try:
         if availability_facts is None:
             result = await _run_in_thread(run, limiter=get_search_limiter())

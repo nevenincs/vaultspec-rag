@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:2aff2cfd4936eabbe3b765dceb0ba5f9d534c2cad7fccce0914e1a40b9f8c589'
+body_hash: 'sha256:85b34efe793e69861b14aa45604729315125593696133d2fb48231ebefbfa2d1'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -24,6 +24,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W01-P03-S12]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-S13]]'
   - '[[2026-09-08-search-readiness-contract-W01-P03-summary]]'
+  - '[[2026-09-08-search-readiness-contract-W02-P04-S14]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -58,6 +59,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W01-P03-S12` - Prove immediate bypass notification wake monotonic timeout cancellation cleanup and multi-source convergence with a virtual clock
 - `2026-09-08-search-readiness-contract-W01-P03-S13` - Mutation-prove waiter cleanup and job-terminal-not-publication guards
 - `2026-09-08-search-readiness-contract-W01-P03-summary` - `search-readiness-contract` `W01.P03` summary
+- `2026-09-08-search-readiness-contract-W02-P04-S14` - Add immediate-default and bounded request policy capture stable source targets enforce maximum wait and preserve cancellation
 
 ### plan
 
