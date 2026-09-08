@@ -691,12 +691,19 @@ class RunLedger(
                 parent_revision INTEGER NOT NULL CHECK(parent_revision >= 0),
                 target_revision INTEGER NOT NULL
                     CHECK(target_revision = parent_revision + 1),
+                next_mutation_ordinal INTEGER NOT NULL
+                    CHECK(next_mutation_ordinal >= 0),
                 state TEXT NOT NULL
                     CHECK(state IN (
-                        'reserved', 'sealed', 'committed', 'rolled_back'
+                        'reserved', 'sealed', 'rolling_back',
+                        'committed', 'rolled_back'
                     )),
                 reserved_at REAL NOT NULL CHECK(reserved_at >= 0),
                 sealed_at REAL CHECK(sealed_at IS NULL OR sealed_at >= reserved_at),
+                rollback_started_at REAL CHECK(
+                    rollback_started_at IS NULL OR
+                    rollback_started_at >= COALESCE(sealed_at, reserved_at)
+                ),
                 committed_at REAL CHECK(
                     committed_at IS NULL OR (
                         sealed_at IS NOT NULL AND committed_at >= sealed_at
@@ -704,7 +711,7 @@ class RunLedger(
                 ),
                 rolled_back_at REAL CHECK(
                     rolled_back_at IS NULL OR
-                    rolled_back_at >= COALESCE(sealed_at, reserved_at)
+                    rolled_back_at >= rollback_started_at
                 ),
                 UNIQUE(
                     source_type, root_identity, backend_identity,
@@ -714,20 +721,29 @@ class RunLedger(
                     (
                         state = 'reserved'
                         AND sealed_at IS NULL
+                        AND rollback_started_at IS NULL
                         AND committed_at IS NULL
                         AND rolled_back_at IS NULL
                     ) OR (
                         state = 'sealed'
                         AND sealed_at IS NOT NULL
+                        AND rollback_started_at IS NULL
+                        AND committed_at IS NULL
+                        AND rolled_back_at IS NULL
+                    ) OR (
+                        state = 'rolling_back'
+                        AND rollback_started_at IS NOT NULL
                         AND committed_at IS NULL
                         AND rolled_back_at IS NULL
                     ) OR (
                         state = 'committed'
                         AND sealed_at IS NOT NULL
+                        AND rollback_started_at IS NULL
                         AND committed_at IS NOT NULL
                         AND rolled_back_at IS NULL
                     ) OR (
                         state = 'rolled_back'
+                        AND rollback_started_at IS NOT NULL
                         AND committed_at IS NULL
                         AND rolled_back_at IS NOT NULL
                     )
@@ -968,7 +984,7 @@ class RunLedger(
                 ON publication_receipts(
                     source_type, root_identity, backend_identity,
                     collection_identity
-                ) WHERE state IN ('reserved', 'sealed');
+                ) WHERE state IN ('reserved', 'sealed', 'rolling_back');
             CREATE INDEX IF NOT EXISTS publication_mutation_units_state
                 ON publication_mutation_units(
                     receipt_id, state, mutation_ordinal

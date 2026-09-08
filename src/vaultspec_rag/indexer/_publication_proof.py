@@ -59,13 +59,18 @@ class ProofReceiptState(StrEnum):
 
     RESERVED = "reserved"
     SEALED = "sealed"
+    ROLLING_BACK = "rolling_back"
     COMMITTED = "committed"
     ROLLED_BACK = "rolled_back"
 
     @property
     def is_open(self) -> bool:
         """Return whether this receipt prevents the current proof being read."""
-        return self in {ProofReceiptState.RESERVED, ProofReceiptState.SEALED}
+        return self in {
+            ProofReceiptState.RESERVED,
+            ProofReceiptState.SEALED,
+            ProofReceiptState.ROLLING_BACK,
+        }
 
 
 class ProofMutationState(StrEnum):

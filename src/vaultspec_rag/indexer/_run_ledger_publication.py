@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-_OPEN_RECEIPT_SQL = "state IN ('reserved', 'sealed')"
+_OPEN_RECEIPT_SQL = "state IN ('reserved', 'sealed', 'rolling_back')"
 
 
 def _stable_parameters(key: ProofCompatibilityKey) -> tuple[object, ...]:
@@ -434,6 +434,12 @@ def _hydrate_receipt(
     try:
         receipt_id = column_text(row, "receipt_id")
         parent_revision = column_int(row, "parent_revision")
+        next_mutation_ordinal = column_int(row, "next_mutation_ordinal")
+        mutations = _mutation_rows(connection, receipt_id)
+        if next_mutation_ordinal != len(mutations):
+            raise ValueError(
+                "receipt mutation cursor does not match persisted mutation units"
+            )
         receipt = PublicationReceipt(
             receipt_id=receipt_id,
             reservation_sequence=column_int(row, "reservation_sequence"),
@@ -443,13 +449,14 @@ def _hydrate_receipt(
             target_revision=column_int(row, "target_revision"),
             state=ProofReceiptState(column_text(row, "state")),
             reserved_at=_row_number(row, "reserved_at"),
-            mutations=_mutation_rows(connection, receipt_id),
+            mutations=mutations,
             deltas=_delta_rows(
                 connection,
                 receipt_id,
                 parent_revision=parent_revision,
             ),
             sealed_at=_row_optional_number(row, "sealed_at"),
+            rollback_started_at=_row_optional_number(row, "rollback_started_at"),
             committed_at=_row_optional_number(row, "committed_at"),
             rolled_back_at=_row_optional_number(row, "rolled_back_at"),
         )
@@ -704,11 +711,12 @@ class RunLedgerPublicationMethods:
                     storage_schema, payload_schema, embedding_schema_identity,
                     chunking_schema_identity, membership_identity,
                     content_identity, policy_identity, generation_id,
-                    parent_revision, target_revision, state, reserved_at,
-                    sealed_at, committed_at, rolled_back_at
+                    parent_revision, target_revision, next_mutation_ordinal,
+                    state, reserved_at, sealed_at, rollback_started_at,
+                    committed_at, rolled_back_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    NULL, NULL, NULL
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?,
+                    NULL, NULL, NULL, NULL
                 )
                 """,
                 (
@@ -816,16 +824,7 @@ class RunLedgerPublicationMethods:
                 raise RunLedgerStateError(
                     "publication receipt has unconfirmed mutation units"
                 )
-            proof_row = _require_proof_row(connection, receipt.compatibility_key)
-            proof = _proof_from_row(proof_row)
-            if proof.revision != receipt.parent_revision:
-                raise ProofParentMismatchError(
-                    "publication proof no longer matches the receipt parent"
-                )
-            if proof.reservation_sequence != receipt.reservation_sequence:
-                raise ProofReadConflictError(
-                    "publication reservation sequence no longer matches the receipt"
-                )
+            proof = self._validate_receipt_authority(connection, receipt)
             generation = self._require_compatible_receipt_generation(
                 connection,
                 receipt.generation_id,
@@ -836,21 +835,6 @@ class RunLedgerPublicationMethods:
                 raise RunLedgerStateError(
                     "publication proof commits only after stale reconciliation"
                 )
-            affected_paths = tuple(
-                path
-                for delta in receipt.deltas
-                for path in (
-                    delta.rel_path,
-                    *((delta.target_rel_path,) if delta.target_rel_path else ()),
-                )
-            )
-            current = _all_evidence_for_paths(
-                connection,
-                receipt.compatibility_key,
-                affected_paths,
-            )
-            self._validate_receipt_evidence(receipt, current)
-            self._validate_new_point_ownership(connection, receipt)
             aggregate = proof.aggregate
             for delta in receipt.deltas:
                 aggregate = aggregate.apply(delta)
@@ -914,6 +898,39 @@ class RunLedgerPublicationMethods:
             )
 
         return in_ledger_transaction(self.path, body)
+
+    def _validate_receipt_authority(
+        self,
+        connection: sqlite3.Connection,
+        receipt: PublicationReceipt,
+    ) -> PublicationProof:
+        """Validate a receipt against current proof before destructive work."""
+        proof_row = _require_proof_row(connection, receipt.compatibility_key)
+        proof = _proof_from_row(proof_row)
+        if proof.revision != receipt.parent_revision:
+            raise ProofParentMismatchError(
+                "publication proof no longer matches the receipt parent"
+            )
+        if proof.reservation_sequence != receipt.reservation_sequence:
+            raise ProofReadConflictError(
+                "publication reservation sequence no longer matches the receipt"
+            )
+        affected_paths = tuple(
+            path
+            for delta in receipt.deltas
+            for path in (
+                delta.rel_path,
+                *((delta.target_rel_path,) if delta.target_rel_path else ()),
+            )
+        )
+        current = _all_evidence_for_paths(
+            connection,
+            receipt.compatibility_key,
+            affected_paths,
+        )
+        self._validate_receipt_evidence(receipt, current)
+        self._validate_new_point_ownership(connection, receipt)
+        return proof
 
     @staticmethod
     def _committed_receipt_replay(

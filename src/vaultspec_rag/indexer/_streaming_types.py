@@ -60,6 +60,31 @@ class VaultStreamRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class StoreMutationLifecycle:
+    """Ordered durable callbacks for one bounded external-store mutation.
+
+    ``prepare`` must persist the deterministic unit before the store is
+    touched and returns whether the exact unit still requires application.
+    ``False`` means an already-confirmed replay and skips the complete store
+    path. ``mark_applied`` runs only after the store acknowledges the request.
+    Synchronous writes also run ``confirm`` immediately; asynchronous writes
+    leave that final transition to their owning ingest barrier.
+    """
+
+    prepare: Callable[[], bool]
+    mark_applied: Callable[[], None]
+    confirm: Callable[[], None]
+    confirm_after_acknowledgement: bool
+
+    def __post_init__(self) -> None:
+        for name in ("prepare", "mark_applied", "confirm"):
+            if not callable(getattr(self, name)):
+                raise TypeError(f"{name} must be callable")
+        if not isinstance(self.confirm_after_acknowledgement, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime request validation
+            raise TypeError("confirm_after_acknowledgement must be a bool")
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentSliceRequest:
     chunks: list[DocumentChunk]
     model: EmbeddingModel
@@ -74,6 +99,7 @@ class DocumentSliceRequest:
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
     writer: _SliceWriter | None = None
+    mutation_lifecycle: StoreMutationLifecycle | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +142,7 @@ class CodeSliceRequest:
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
     collection: str | None = None
+    mutation_lifecycle: StoreMutationLifecycle | None = None
 
 
 @dataclass(frozen=True, slots=True)
