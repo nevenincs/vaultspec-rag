@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-08'
 body_schema: 'body-v2'
-body_hash: 'sha256:2b0a30e7ca2214aa5b473653a8577d2db172de80ae78cc68215387515236e8b1'
+body_hash: 'sha256:320ba16209a2657cd84d9daf55b8abb919f5fea8d30a565716c4c3452fdce9f7'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -16,6 +16,12 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S06]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S07]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S08]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S27]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S28]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S29]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S30]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S31]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S32]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S09]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S10]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S11]]'
@@ -50,6 +56,12 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 - `2026-09-08-qdrant-collection-sprawl-P01-S06` - Widen the active-index-job probe guard to catch the qdrant client transport failures
 - `2026-09-08-qdrant-collection-sprawl-P01-S07` - Add a guard test proving a snapshot read timeout marks that namespace failed and the cycle continues to the next candidate
 - `2026-09-08-qdrant-collection-sprawl-P01-S08` - Add a guard test proving a re-count read timeout defers the namespace rather than aborting the cycle
+- `2026-09-08-qdrant-collection-sprawl-P01-S27` - Widen the survey-time point-count guard so a transport timeout leaves that collection uncounted rather than unwinding the survey and the cycle with it
+- `2026-09-08-qdrant-collection-sprawl-P01-S28` - Carry an uncountable collection through the survey as unverifiable rather than as zero points, so a failed count cannot mis-tier a data-bearing namespace as empty
+- `2026-09-08-qdrant-collection-sprawl-P01-S29` - Guard the collection enumeration in the pre-drop re-count so a transport timeout yields an unverifiable count instead of escaping
+- `2026-09-08-qdrant-collection-sprawl-P01-S30` - Return an unverifiable result from the active-index-job probe so a registry read failure defers the namespace instead of reporting no job busy
+- `2026-09-08-qdrant-collection-sprawl-P01-S31` - Add a guard test proving a survey-time transport timeout leaves the maintenance cycle running and the namespace unreclaimed
+- `2026-09-08-qdrant-collection-sprawl-P01-S32` - Add a guard test proving an unverifiable active-job probe defers the namespace rather than authorising the drop
 - `2026-09-08-qdrant-collection-sprawl-P02-S09` - Add the ephemeral-orphan grace window as a configuration default alongside the existing autoprune knobs
 - `2026-09-08-qdrant-collection-sprawl-P02-S10` - Add the ephemeral-orphan window field to the reclaim policy with its documented default
 - `2026-09-08-qdrant-collection-sprawl-P02-S11` - Select the ephemeral window in the orphan decision when the namespace root was temp-rooted, keeping point count as the tier selector
