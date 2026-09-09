@@ -616,11 +616,14 @@ def _code_breadth_timings(
     claimed, or that there is no claim to compare against. The two are
     deliberately indistinguishable to a consumer: neither is a shortfall, and a
     root written by a build that recorded no breadth must not be reported as
-    incomplete for want of evidence.
+    incomplete for want of evidence. ``None`` is the second of those: no proof
+    could be read, so this search has nothing to fall short of.
     """
     from ._index_breadth import CodeBreadthSnapshot
 
     carried: dict[str, float] = {}
+    if snapshot is None:
+        return carried
     if not isinstance(snapshot, CodeBreadthSnapshot):
         raise TypeError("snapshot must be a CodeBreadthSnapshot")
     shortfall = snapshot.finish(indexed_count)
@@ -656,9 +659,13 @@ def search_codebase_timed(
     )
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
-    from ._index_breadth import acquire_code_breadth_snapshot
+    from ._index_breadth import acquire_code_breadth_snapshot_if_proven
 
-    breadth_snapshot = acquire_code_breadth_snapshot(root)
+    # A read, so an unreadable proof is an absence rather than a refusal: a
+    # root nobody has indexed yet still has to answer a search, and answering
+    # it with a rebuild-required error would make the first search on every
+    # new project an error.
+    breadth_snapshot = acquire_code_breadth_snapshot_if_proven(root)
     # Empty/unbuilt code index: return an empty result without loading the model.
     indexed_count = active_registry.code_chunk_count(root)
     # The completeness fact is settled here, once, from the count this path
