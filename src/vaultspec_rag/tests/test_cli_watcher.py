@@ -217,7 +217,7 @@ def test_updates_status_forwards_controller_filters_and_renders_service_facts() 
 
 
 def test_updates_status_json_preserves_canonical_controller_envelope() -> None:
-    controller = {
+    controller: dict[str, object] = {
         "root": _TEST_PROJECT_ROOT,
         "source": "vault",
         "state": "refused",

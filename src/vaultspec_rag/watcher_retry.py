@@ -1659,13 +1659,14 @@ def _path_observations(
     if not isinstance(value, list):
         raise ValueError(f"watcher retry field {field_name!r} must be a list")
     observations: list[WatcherPathObservation] = []
-    for item in value:
+    for item in cast("list[object]", value):
         if not isinstance(item, dict):
             raise ValueError(f"watcher retry field {field_name!r} has a malformed path")
         raw = cast("dict[str, object]", item)
         event_values = raw.get("event_kinds")
         if not isinstance(event_values, list) or not event_values:
             raise ValueError("watcher path event_kinds must be a non-empty list")
+        event_kinds = cast("list[object]", event_values)
         observations.append(
             WatcherPathObservation(
                 relative_path=_required_text(raw, "relative_path"),
@@ -1675,13 +1676,13 @@ def _path_observations(
                 event_kinds=frozenset(
                     WatcherPathEvent(
                         _typed_fields.required_str(
-                            value,
+                            event_value,
                             on_invalid=lambda: ValueError(
                                 "watcher path event kind must be non-empty text"
                             ),
                         )
                     )
-                    for value in event_values
+                    for event_value in event_kinds
                 ),
                 generation=_required_positive(
                     raw, "generation", _optional_positive_int

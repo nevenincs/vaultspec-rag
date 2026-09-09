@@ -33,6 +33,12 @@ if TYPE_CHECKING:
     from .progress import ProgressReporter
     from .search import SearchResult
     from .service import ServiceRegistry
+    from .watcher_controller import (
+        ControllerMeasurement,
+        ControllerScope,
+        ControllerSnapshot,
+        ControllerTransition,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -1140,6 +1146,168 @@ class _WatcherState(TypedDict):
     controllers_truncated: bool
 
 
+#: The measurement's own clock fields. They describe the sample rather than the
+#: service, so their absence is not a missing reading and is never reported
+#: through ``measurement_unavailable``.
+_MEASUREMENT_CLOCK_FIELDS = frozenset({"generation", "observed_at"})
+
+#: The shape reported for a controller carrying no measurement at all.
+#: Projecting the same key set whether or not a sample exists means a reader
+#: never has to tell an unmeasured controller apart from one measured with
+#: nothing available. Copied on every use, never handed out directly.
+_ABSENT_MEASUREMENT: dict[str, object] = {
+    "generation": None,
+    "observed_at": None,
+    "job_backlog": None,
+    "index_in_flight": None,
+    "index_waiters": None,
+    "search_in_flight": None,
+    "search_latency_seconds": None,
+    "gpu_pressure": None,
+    "storage_available": None,
+    "service_quiesced": None,
+}
+
+#: What an operator can do about a controller that refused, when the controller
+#: itself recorded no more specific remedy.
+_REFUSED_REMEDIATION = "Inspect the refusal reason and request an explicit rebuild."
+
+
+@dataclass(frozen=True, slots=True)
+class _ClockFrame:
+    """The wall and process clock readings one projection is expressed in.
+
+    A controller schedules against a process clock that means nothing outside
+    the running service, so every time it records has to be carried onto the
+    wall clock before it leaves. Holding both readings together is what makes
+    that a single subtraction rather than a per-field conversion.
+    """
+
+    wall_now: float
+    process_now: float
+
+    def wall_timestamp(self, value: float | None) -> float | None:
+        """Carry one process-clock reading onto the wall clock."""
+        return None if value is None else self.wall_now + (value - self.process_now)
+
+
+def _projection_clock_frame(
+    snapshot: ControllerSnapshot,
+    observed_at: float | None,
+    monotonic_at: float | None,
+) -> _ClockFrame:
+    """Resolve the frame a snapshot projects into.
+
+    Each clock is anchored by the caller's own reading of it when there is one.
+    Failing that it is translated across from the other clock's drift since the
+    snapshot was taken, and failing both it stays as the snapshot recorded it.
+    A snapshot that recorded no process clock reads its wall time as one, which
+    makes the translation a no-op rather than a special case.
+    """
+    reference_process = (
+        snapshot.observed_at if snapshot.monotonic_at is None else snapshot.monotonic_at
+    )
+    if monotonic_at is not None:
+        process_now = monotonic_at
+    elif observed_at is not None:
+        process_now = reference_process + (observed_at - snapshot.observed_at)
+    else:
+        process_now = reference_process
+    if observed_at is not None:
+        wall_now = observed_at
+    elif monotonic_at is not None:
+        wall_now = snapshot.observed_at + (monotonic_at - reference_process)
+    else:
+        wall_now = snapshot.observed_at
+    return _ClockFrame(wall_now=wall_now, process_now=process_now)
+
+
+def _measurement_projection(
+    measurement: ControllerMeasurement | None, frame: _ClockFrame
+) -> dict[str, object]:
+    """Project one measurement sample, or the absent shape when there is none."""
+    if measurement is None:
+        return dict(_ABSENT_MEASUREMENT)
+    return {
+        "generation": measurement.generation,
+        "observed_at": frame.wall_timestamp(measurement.observed_at),
+        "job_backlog": measurement.job_backlog,
+        "index_in_flight": measurement.index_in_flight,
+        "index_waiters": measurement.index_waiters,
+        "search_in_flight": measurement.search_in_flight,
+        "search_latency_seconds": measurement.search_latency_seconds,
+        "gpu_pressure": measurement.gpu_pressure,
+        "storage_available": measurement.storage_available,
+        "service_quiesced": measurement.service_quiesced,
+    }
+
+
+def _unavailable_measurements(fields: dict[str, object]) -> list[str]:
+    """Name the service readings the projected measurement could not supply."""
+    return sorted(
+        name
+        for name, value in fields.items()
+        if value is None and name not in _MEASUREMENT_CLOCK_FIELDS
+    )
+
+
+def _scope_projection(scope: ControllerScope, frame: _ClockFrame) -> dict[str, object]:
+    """Project the observation window a controller has accumulated.
+
+    The age is reported against the process clock the observations were stamped
+    on, because subtracting two readings of the same clock is exact where
+    carrying both onto the wall clock first is not.
+    """
+    observations = scope.pending + scope.captured
+    first_observed = min(
+        (item.first_observed_at for item in observations), default=None
+    )
+    latest_observed = max(
+        (item.latest_observed_at for item in observations), default=None
+    )
+    return {
+        "pending_count": len(scope.pending),
+        "oldest_age_seconds": (
+            None
+            if first_observed is None
+            else max(0.0, frame.process_now - first_observed)
+        ),
+        "first_observed_at": frame.wall_timestamp(first_observed),
+        "latest_observed_at": frame.wall_timestamp(latest_observed),
+        "captured_generation": scope.captured_generation,
+        "captured_count": len(scope.captured),
+    }
+
+
+def _transition_projection(
+    transition: ControllerTransition | None, frame: _ClockFrame
+) -> dict[str, object] | None:
+    """Project the last recorded state change, if the controller has made one."""
+    if transition is None:
+        return None
+    return {
+        "source_state": transition.source_state.value,
+        "destination_state": transition.destination_state.value,
+        "reason": transition.reason.value,
+        "wall_time": transition.wall_time,
+        "deadline": frame.wall_timestamp(transition.deadline),
+        "measurement_generation": transition.measurement_generation,
+    }
+
+
+def _projected_remediation(snapshot: ControllerSnapshot) -> str | None:
+    """Return the remedy to report, defaulting a refusal to an actionable one.
+
+    A refusal an operator cannot act on reads as a dead end, so a controller
+    that refused without recording its own remedy is given the generic one.
+    """
+    if snapshot.remediation:
+        return snapshot.remediation
+    if snapshot.state.value == "refused":
+        return _REFUSED_REMEDIATION
+    return snapshot.remediation
+
+
 def controller_snapshot_envelope(
     snapshot: object,
     *,
@@ -1151,102 +1319,24 @@ def controller_snapshot_envelope(
 
     if not isinstance(snapshot, ControllerSnapshot):
         raise TypeError("snapshot must be a ControllerSnapshot")
-    reference_process = (
-        snapshot.observed_at if snapshot.monotonic_at is None else snapshot.monotonic_at
-    )
-    if observed_at is None and monotonic_at is None:
-        wall_now = snapshot.observed_at
-        process_now = reference_process
-    elif observed_at is not None and monotonic_at is None:
-        wall_now = observed_at
-        process_now = reference_process + (observed_at - snapshot.observed_at)
-    elif observed_at is None:
-        assert monotonic_at is not None
-        process_now = monotonic_at
-        wall_now = snapshot.observed_at + (monotonic_at - reference_process)
-    else:
-        wall_now = observed_at
-        assert monotonic_at is not None
-        process_now = monotonic_at
-
-    def wall_timestamp(value: float | None) -> float | None:
-        return None if value is None else wall_now + (value - process_now)
-
-    observations = snapshot.scope.pending + snapshot.scope.captured
-    first_observed = min(
-        (item.first_observed_at for item in observations), default=None
-    )
-    latest_observed = max(
-        (item.latest_observed_at for item in observations), default=None
-    )
-    measurement = snapshot.measurement
-    measurement_fields = {
-        "generation": None if measurement is None else measurement.generation,
-        "observed_at": (
-            None if measurement is None else wall_timestamp(measurement.observed_at)
-        ),
-        "job_backlog": None if measurement is None else measurement.job_backlog,
-        "index_in_flight": (
-            None if measurement is None else measurement.index_in_flight
-        ),
-        "index_waiters": None if measurement is None else measurement.index_waiters,
-        "search_in_flight": (
-            None if measurement is None else measurement.search_in_flight
-        ),
-        "search_latency_seconds": (
-            None if measurement is None else measurement.search_latency_seconds
-        ),
-        "gpu_pressure": None if measurement is None else measurement.gpu_pressure,
-        "storage_available": (
-            None if measurement is None else measurement.storage_available
-        ),
-        "service_quiesced": (
-            None if measurement is None else measurement.service_quiesced
-        ),
-    }
-    unavailable = sorted(
-        key
-        for key, value in measurement_fields.items()
-        if key not in {"generation", "observed_at"} and value is None
-    )
-    transition = snapshot.last_transition
-    remediation = snapshot.remediation
-    if snapshot.state.value == "refused" and not remediation:
-        remediation = "Inspect the refusal reason and request an explicit rebuild."
+    frame = _projection_clock_frame(snapshot, observed_at, monotonic_at)
+    measurement_fields = _measurement_projection(snapshot.measurement, frame)
     return {
         "root": snapshot.canonical_root,
         "source": snapshot.source.value,
         "state": snapshot.state.value,
         "reason": snapshot.reason.value,
-        "pending_count": len(snapshot.scope.pending),
-        "oldest_age_seconds": (
-            None if first_observed is None else max(0.0, process_now - first_observed)
-        ),
-        "first_observed_at": wall_timestamp(first_observed),
-        "latest_observed_at": wall_timestamp(latest_observed),
-        "captured_generation": snapshot.scope.captured_generation,
-        "captured_count": len(snapshot.scope.captured),
-        "next_decision_at": wall_timestamp(snapshot.next_decision_at),
-        "freshness_deadline": wall_timestamp(snapshot.freshness_deadline),
+        **_scope_projection(snapshot.scope, frame),
+        "next_decision_at": frame.wall_timestamp(snapshot.next_decision_at),
+        "freshness_deadline": frame.wall_timestamp(snapshot.freshness_deadline),
         "measurement": measurement_fields,
-        "measurement_unavailable": unavailable,
+        "measurement_unavailable": _unavailable_measurements(measurement_fields),
         "backpressure": [reason.value for reason in snapshot.backpressure],
-        "last_transition": (
-            None
-            if transition is None
-            else {
-                "source_state": transition.source_state.value,
-                "destination_state": transition.destination_state.value,
-                "reason": transition.reason.value,
-                "wall_time": transition.wall_time,
-                "deadline": wall_timestamp(transition.deadline),
-                "measurement_generation": transition.measurement_generation,
-            }
-        ),
+        "last_transition": _transition_projection(snapshot.last_transition, frame),
         "job_id": snapshot.job_id,
-        "retry_at": wall_timestamp(snapshot.retry_at),
+        "retry_at": frame.wall_timestamp(snapshot.retry_at),
         "circuit_state": snapshot.circuit_state.value,
-        "remediation": remediation,
+        "remediation": _projected_remediation(snapshot),
     }
 
 
