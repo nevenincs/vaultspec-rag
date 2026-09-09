@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#qdrant-collection-sprawl'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:4bd70f17f05879362a61ccd13ba94c833f393ff24ad530dd522ee29e4c168046'
+body_hash: 'sha256:77945ce7787b04d757599b5a21030463e43d159a287e5e35bfbf708a5b52d18f'
 related:
   - "[[2026-09-08-qdrant-collection-sprawl-research]]"
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
@@ -117,8 +117,9 @@ decides the retention change and the conditions under which it can actually run.
   disproportionate to the defect and would block the fix behind a large migration.
   Named so a future record can size it deliberately.
 - **O12 - producer-side teardown only.** Rejected as the primary fix: the dominant
-  producer is outside this codebase. Kept as a narrow secondary for our own tests,
-  which should not be registering namespaces in the operator's real backend at all.
+  producer is outside this codebase. Kept as a narrow secondary for this project's own
+  tests, whose isolation is worth tightening on its own merits rather than because any
+  particular residue was traced to them.
 
 ## Constraints
 
@@ -142,7 +143,9 @@ decides the retention change and the conditions under which it can actually run.
   after landing. The per-cycle cap, not the window, governs that burst.
 - Test isolation: any test exercising these paths must point the qdrant storage-dir
   environment variable at a temp path, or it writes into the operator's real managed
-  directory - the failure that produced our own residue.
+  directory. The temp-rooted residue on the audited host was NOT traced to this
+  project's tests and its origin is undetermined, so this constraint stands on the rule
+  rather than on that evidence.
 
 ## Implementation
 
