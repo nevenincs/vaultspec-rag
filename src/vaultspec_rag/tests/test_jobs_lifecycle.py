@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -196,6 +197,7 @@ class TestJobStallShaping:
                 JobSource.VAULT,
                 _TEST_PROJECT_ROOT,
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT),
             start_paused=True,
@@ -423,6 +425,7 @@ def test_index_job_status_reports_latest_generation_and_degradation(
                 source,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             initiator,
         )

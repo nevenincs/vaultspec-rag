@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import (
     DesiredJobState,
     JobInitiator,
@@ -134,6 +135,7 @@ def _seed_paused_job(project_root: Path, job_id: str) -> dict[str, object]:
             source=JobSource.VAULT,
             project_root=str(project_root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         JobInitiator(
             kind="cli",
@@ -163,6 +165,7 @@ def _create_paused_transport_job(port: int, project_root: Path) -> tuple[str, in
         JobSource.VAULT,
         str(project_root),
         port,
+        authority=RunAuthority.PUBLICATION,
         start_paused=True,
         idempotency_key="real-transport-lifecycle",
         timeout=5.0,
@@ -449,6 +452,7 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
             "source": "vault",
             "project_root": str(project_root),
             "mode": "incremental",
+            "authority": "publication",
             "requested_mode": "incremental",
             "effective_mode": "incremental",
         }

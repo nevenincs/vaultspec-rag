@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ... import jobs as _jobs
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import RunControlToken
 from ...job_manager._control import AttemptTerminal
 from ...job_manager.manager import JobManager
@@ -70,6 +71,7 @@ class TestJobResourceDeletion:
                 JobSource.CODE,
                 str(root),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator(
                 kind="cli",
@@ -307,6 +309,7 @@ class TestManagedJobPersistence:
             JobSource.VAULT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
 
@@ -355,12 +358,14 @@ class TestManagedJobPersistence:
             JobSource.CODE,
             str(project_root),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         alias_spec = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
             str(project_root / "uncreated" / ".."),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         canonical_initiator = JobInitiator(
             "watcher",
@@ -420,6 +425,7 @@ class TestManagedJobPersistence:
             JobSource.CODE,
             str(tmp_path),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         )
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
@@ -496,6 +502,7 @@ class TestManagedJobPersistence:
                 JobSource.VAULT,
                 str(completed_root),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("http", "POST /jobs", str(completed_root)),
         )
@@ -529,6 +536,7 @@ class TestManagedJobPersistence:
                     JobSource.CODE,
                     str(interrupted_root),
                     JobMode.REBUILD,
+                    RunAuthority.REBUILD,
                 ),
                 JobInitiator("watcher", "watcher_code_index", str(interrupted_root)),
             )
@@ -591,6 +599,7 @@ class TestManagedJobPersistence:
                 JobSource.VAULT,
                 str(root),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             )
             initiator = JobInitiator("http", "POST /jobs", str(root))
             key = f"request-{index}"
@@ -638,6 +647,7 @@ class TestManagedJobPersistence:
             JobSource.VAULT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("watcher", "watcher_vault_index", str(tmp_path))
         created = manager.create(spec, initiator)
@@ -701,14 +711,14 @@ class TestManagedJobPersistence:
         assert not reader.is_alive()
         assert failures == []
         assert observed_versions
-        assert set(observed_versions) == {1}
+        assert set(observed_versions) == {2}
         assert list(tmp_path.glob(".managed-jobs.json.*.tmp")) == []
         # Tolerating an open failure above would otherwise hide a replace that
         # destroyed the entry and never restored it: a reader spinning on a
         # permanently absent file records no observation at all. The published
         # generation has to be there, whole, once the writing has stopped.
         settled = json.loads(state_path.read_text(encoding="utf-8"))
-        assert settled["version"] == 1
+        assert settled["version"] == 2
         assert settled["jobs"][0]["id"] == created.job.id
 
     def test_failed_persistence_rolls_back_reversible_intent(
@@ -726,6 +736,7 @@ class TestManagedJobPersistence:
             JobSource.VAULT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
         created = manager.create(spec, initiator, idempotency_key="rollback-1")
@@ -767,6 +778,7 @@ class TestManagedJobPersistence:
             JobSource.CODE,
             str(tmp_path),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         )
         initiator = JobInitiator("cli", "server job create", str(tmp_path))
         created = manager.create(spec, initiator)
@@ -836,6 +848,7 @@ class TestManagedJobPersistence:
                 JobSource.VAULT,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("http", "POST /jobs", str(tmp_path)),
         )
@@ -879,7 +892,7 @@ class TestManagedJobPersistence:
         assert impossible_finish.restore_persisted().code == "job_state_quarantined"
         assert impossible_finish.list_jobs() == []
 
-    def test_legacy_v1_start_paused_round_trip_has_control_request_lineage(
+    def test_missing_control_request_lineage_is_quarantined_without_mutation(
         self,
         tmp_path: Path,
     ) -> None:
@@ -895,6 +908,7 @@ class TestManagedJobPersistence:
                 JobSource.CODE,
                 str(tmp_path),
                 JobMode.REBUILD,
+                RunAuthority.REBUILD,
             ),
             JobInitiator("cli", "server job create", str(tmp_path)),
             start_paused=True,
@@ -907,19 +921,18 @@ class TestManagedJobPersistence:
             created.job.timestamps.control_acknowledged_at
             == created.job.timestamps.control_requested_at
         )
-        legacy_v1 = json.loads(state_path.read_text(encoding="utf-8"))
-        legacy_v1["jobs"][0]["control_requested_at"] = None
-        state_path.write_text(json.dumps(legacy_v1), encoding="utf-8")
+        invalid_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        invalid_payload["jobs"][0]["control_requested_at"] = None
+        state_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
 
         restarted = JobManager(
             quiesce_controller=ServiceQuiesceController(),
             max_nonterminal=1,
             state_path=state_path,
         )
-        assert restarted.restore_persisted().code == "job_state_restored"
-        assert restarted.get(created.job.id) == created.job
-        migrated = json.loads(state_path.read_text(encoding="utf-8"))["jobs"][0]
-        assert migrated["control_requested_at"] == migrated["control_acknowledged_at"]
+        assert restarted.restore_persisted().code == "job_state_quarantined"
+        assert restarted.list_jobs() == []
+        assert not state_path.exists()
 
     @pytest.mark.asyncio
     async def test_lower_capacity_still_recovers_crashed_attempts(
@@ -942,6 +955,7 @@ class TestManagedJobPersistence:
                         JobSource.VAULT,
                         str(root),
                         JobMode.INCREMENTAL,
+                        RunAuthority.PUBLICATION,
                     ),
                     JobInitiator("watcher", "watcher_vault_index", str(root)),
                 )
@@ -988,6 +1002,7 @@ class TestManagedJobPersistence:
                 JobSource.VAULT,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
         )
@@ -1149,6 +1164,7 @@ class TestManagedJobPersistence:
                     JobSource.VAULT,
                     str(root),
                     JobMode.INCREMENTAL,
+                    RunAuthority.PUBLICATION,
                 ),
                 JobInitiator("watcher", "watcher_vault_index", str(root)),
             )
@@ -1177,6 +1193,7 @@ class TestManagedJobPersistence:
                 JobSource.VAULT,
                 str(tmp_path / "project-new"),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
         )
@@ -1215,6 +1232,7 @@ class TestManagedJobPersistence:
                     JobSource.CODE,
                     str(tmp_path / f"project-{index}"),
                     JobMode.REBUILD,
+                    RunAuthority.REBUILD,
                 ),
                 JobInitiator("test", "replay_binding", None),
                 idempotency_key=f"key-{index}",
@@ -1239,6 +1257,7 @@ class TestManagedJobPersistence:
                     JobSource.CODE,
                     str(tmp_path / f"project-{index}"),
                     JobMode.REBUILD,
+                    RunAuthority.REBUILD,
                 ),
                 JobInitiator("test", "replay_binding", None),
                 idempotency_key=f"key-{index}",
@@ -1299,6 +1318,7 @@ class TestManagedJobPersistence:
                     JobSource.CODE,
                     str(tmp_path / name),
                     JobMode.REBUILD,
+                    RunAuthority.REBUILD,
                 ),
                 JobInitiator("test", "transition_reload", None),
                 start_paused=start_paused,

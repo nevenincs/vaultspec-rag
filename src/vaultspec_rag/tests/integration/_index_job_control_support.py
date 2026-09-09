@@ -27,6 +27,7 @@ from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
+from ...indexer._run_ledger_models import RunAuthority
 from ...indexer._vault_prep import prepare_document
 from ...job_control import (
     CancelRequested,
@@ -481,7 +482,11 @@ async def request_cancel_at_the_write_gate(
     gpu_lock = registry.gpu_lock
     gpu_lock.acquire()
     try:
-        cancelled_id = jobs.start_reindex_codebase(root, clean=False)
+        cancelled_id = jobs.start_reindex_codebase(
+            root,
+            clean=False,
+            authority=RunAuthority.PUBLICATION,
+        )
         embedding = await _wait_for_managed_job(
             manager,
             cancelled_id,

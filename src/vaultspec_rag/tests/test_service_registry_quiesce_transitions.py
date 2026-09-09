@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -291,6 +292,7 @@ def test_resume_persistence_failure_stays_closed_until_real_repair(
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "registry-resume-persistence", _TEST_PROJECT_ROOT),
     )

@@ -23,6 +23,7 @@ from ... import jobs
 from ...concurrency import limiter_stats
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import (
     CancelRequested,
     ControlRequest,
@@ -307,7 +308,11 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     expected_ids = {document.id for document in documents}
     slot = managed_facade_registry.peek_project(root)
 
-    job_id = jobs.start_reindex_vault(root, clean=False)
+    job_id = jobs.start_reindex_vault(
+        root,
+        clean=False,
+        authority=RunAuthority.PUBLICATION,
+    )
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
@@ -349,7 +354,11 @@ async def test_managed_code_pause_releases_pipeline_and_resume_reconciles(
     paths = _write_code_files(root, 192, "initial")
     slot = managed_facade_registry.peek_project(root)
 
-    job_id = jobs.start_reindex_codebase(root, clean=True)
+    job_id = jobs.start_reindex_codebase(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
@@ -395,7 +404,11 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
     write_vault_documents(root, 128)
     slot = managed_facade_registry.peek_project(root)
 
-    job_id = jobs.start_reindex_vault(root, clean=False)
+    job_id = jobs.start_reindex_vault(
+        root,
+        clean=False,
+        authority=RunAuthority.PUBLICATION,
+    )
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
@@ -435,7 +448,11 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
     """
     root = tmp_path / "managed-code-cancel-gate"
     paths = _write_code_files(root, 4, "seed")
-    initial_id = jobs.start_reindex_codebase(root, clean=True)
+    initial_id = jobs.start_reindex_codebase(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
     initial_join = await managed_job_manager.wait_for_attempt(
         initial_id,
         timeout_seconds=_MANAGED_WAIT_SECONDS,

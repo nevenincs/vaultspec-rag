@@ -30,6 +30,7 @@ def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
 
 def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
     """Create one real large terminal record before the ASGI overlap probe."""
+    from ...indexer._run_ledger_models import RunAuthority
     from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 
     entry = manager.create(
@@ -38,6 +39,7 @@ def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
             source=JobSource.VAULT,
             project_root=str(root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         JobInitiator(
             kind="test",
@@ -102,6 +104,20 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             transport=transport,
             base_url="http://testserver",
         ) as client:
+            missing_authority = await client.post(
+                "/jobs",
+                headers=headers,
+                json={
+                    "operation": "index",
+                    "source": "vault",
+                    "project_root": str(target_root),
+                    "mode": "incremental",
+                    "start_paused": True,
+                },
+            )
+            assert missing_authority.status_code == 400
+            assert missing_authority.json()["code"] == "invalid_job_spec"
+
             created = await _assert_mutation_overlaps_auth_probe(
                 client,
                 client.post(
@@ -112,12 +128,15 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                         "source": "vault",
                         "project_root": str(target_root),
                         "mode": "incremental",
+                        "authority": "publication",
                         "start_paused": True,
                     },
                 ),
             )
             assert created.status_code == 202, created.text
             job = cast("dict[str, object]", created.json()["job"])
+            spec = cast("dict[str, object]", job["spec"])
+            assert spec["authority"] == "publication"
             job_id = str(job["id"])
 
             cancelled = await _assert_mutation_overlaps_auth_probe(

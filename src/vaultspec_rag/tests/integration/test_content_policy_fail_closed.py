@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import pytest
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 
 if TYPE_CHECKING:
@@ -331,7 +332,11 @@ def test_invalid_job_policy_does_not_admit_or_persist_a_job(tmp_path: Path) -> N
     before_durable_state = _json_state(status_root)
 
     with pytest.raises(PreprocessPolicyError, match="unknown"):
-        jobs.start_reindex_codebase(root, clean=True)
+        jobs.start_reindex_codebase(
+            root,
+            clean=True,
+            authority=RunAuthority.REBUILD,
+        )
 
     assert jobs.snapshot() == before_records
     assert _json_state(status_root) == before_durable_state

@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from ..indexer._run_ledger_models import RunAuthority
 from ._auth import require_token
 from ._runtime import get_request_runtime
 from ._utils import ProjectRootRequiredError, _resolve_root
@@ -160,6 +161,9 @@ async def _validate_reindex_domains(
             "operation": "index",
             "source": source.value,
             "mode": "rebuild" if clean else "incremental",
+            "authority": (
+                RunAuthority.REBUILD.value if clean else RunAuthority.PUBLICATION.value
+            ),
             "start_paused": False,
         }
         try:

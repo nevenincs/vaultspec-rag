@@ -90,6 +90,7 @@ def _create_route_job(
         "source": "vault",
         "project_root": str(project_root),
         "mode": "incremental",
+        "authority": "publication",
         "start_paused": True,
     }
     if include_initiator:

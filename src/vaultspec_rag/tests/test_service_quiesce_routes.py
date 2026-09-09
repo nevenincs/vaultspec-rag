@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import pytest
 from starlette.testclient import TestClient
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
 from ..job_models import (
@@ -102,6 +103,7 @@ def _attach_durable_quiesced_job(
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "resume-route-recovery", _TEST_PROJECT_ROOT),
     )

@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#incremental-publication-cost'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:733ef9024a229f3dca168bd6c6cf1d111bf6f2d040f2af7cbec9106b76abd7d1'
+body_hash: 'sha256:1128fdcad23813befe046df5c68cd304271410be218abbe8fd301fb311da3b75'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -22,6 +22,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S70]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P03-S10]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S37]]'
+  - '[[2026-09-08-incremental-publication-cost-W03-P08-S52]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -59,6 +60,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P02-S70` - Require backend identity in run signatures and checkpoint requests, delete legacy defaults and decoder fallbacks, and update every constructor
 - `2026-09-08-incremental-publication-cost-W01-P03-S10` - Provide a strict proof-before-generation finalization gate, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction
 - `2026-09-08-incremental-publication-cost-W03-P08-S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority
+- `2026-09-08-incremental-publication-cost-W03-P08-S52` - Carry required publication and verification authority through the exact job codec, every production constructor, immutable transition, and attempt context
 
 ### plan
 

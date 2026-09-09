@@ -1059,6 +1059,7 @@ class TestActiveIndexPrefixes:
         self, tmp_path: Path
     ) -> None:
         from .. import jobs
+        from ..indexer._run_ledger_models import RunAuthority
         from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
         from ..storage_reclamation import _active_index_prefixes
 
@@ -1073,6 +1074,7 @@ class TestActiveIndexPrefixes:
                     source=JobSource.DOCUMENT,
                     project_root=str(root),
                     mode=JobMode.INCREMENTAL,
+                    authority=RunAuthority.PUBLICATION,
                 ),
                 JobInitiator(
                     kind="cli",

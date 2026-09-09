@@ -18,6 +18,7 @@ import pytest
 from ... import _job_admission, jobs
 from ..._index_breadth import index_meta_path
 from ..._source_types import PublicSourceType
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_manager.manager import JobManager
 from ...job_models import (
     DesiredJobState,
@@ -70,6 +71,7 @@ def _vault_job_spec(root: Path) -> JobSpec:
         source=JobSource.VAULT,
         project_root=str(root.resolve()),
         mode=JobMode.INCREMENTAL,
+        authority=RunAuthority.PUBLICATION,
     )
 
 
@@ -134,7 +136,11 @@ async def _pause_and_resume_large_job(
     root: Path,
 ) -> None:
     """Pause and resume one publishing job through a released attempt."""
-    job_id = jobs.start_reindex_vault(root, clean=False)
+    job_id = jobs.start_reindex_vault(
+        root,
+        clean=False,
+        authority=RunAuthority.PUBLICATION,
+    )
     live = await _wait_for_job(
         manager,
         job_id,
@@ -200,7 +206,11 @@ async def _cancel_large_job(
         writer_lock = lease.runtime.vault_indexer._writer_lock
         writer_lock.acquire()
         try:
-            cancelled_id = jobs.start_reindex_vault(root, clean=False)
+            cancelled_id = jobs.start_reindex_vault(
+                root,
+                clean=False,
+                authority=RunAuthority.PUBLICATION,
+            )
             blocked = await _wait_for_job(
                 manager,
                 cancelled_id,
@@ -551,6 +561,7 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
             source=JobSource.CODE,
             project_root=str(root.resolve()),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         _integration_initiator(root, "paused code discovery refresh"),
         start_paused=True,
