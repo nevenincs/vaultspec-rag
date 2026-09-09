@@ -116,7 +116,7 @@ def search_index_state(
     :class:`BreadthFindings` for the presence discipline of each field.
     """
     requested_target = str(requested_root)
-    source = parse_source_type(search_type).value
+    source = parse_source_type(search_type, allow_aliases=True).value
     count = int(indexed_count)
     state: dict[str, object] = {
         "source": source,

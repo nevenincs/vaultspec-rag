@@ -421,7 +421,7 @@ def _validate_search_request(
     )
 
     try:
-        source = parse_source_type(request.search_type)
+        source = parse_source_type(request.search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
         return None, exc.as_error_envelope()
     refusal = unsupported_feedback_envelope(
