@@ -1,4 +1,4 @@
-"""A document ledger that cannot parent an incremental fails closed.
+"""Document publication evidence that cannot certify storage fails closed.
 
 The document sidecar and the run ledger are two independent durable records,
 and only one of them has to be lost for the pair to disagree. A sidecar that
@@ -12,18 +12,27 @@ and nothing else ever repairs it.
 The refusal must preserve the existing collection and manifest. The mutation
 guard replaces ``full_index`` with a function that fails the test, proving the
 incremental path cannot silently authorize corpus-wide work.
+
+The canonical audit boundary is stricter still: missing or non-current ledger
+state, incompatible proof ancestry, and corrupt receipts all refuse before a
+backend opens. Audit authority observes proof but never creates, repairs, or
+migrates it.
 """
 
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any, cast
+import sqlite3
+from typing import TYPE_CHECKING, Any, Never, cast
 
 import pytest
 
 from .. import store_schema
+from .._index_integrity import audit_index_sources
 from .._job_errors import JobError, JobErrorKind
+from .._source_types import PublicSourceType
 from .._store_models import DocumentChunk, DocumentPayload
+from .._store_writes import workspace_volume_path
 from ..config._types import EnvVar
 from ..indexer._content_policy import ContentKind
 from ..indexer._document_indexer import DocumentIndexer
@@ -36,6 +45,8 @@ from ..indexer._document_meta import (
     write_document_meta,
 )
 from ..indexer._run_ledger_models import (
+    SCHEMA_VERSION,
+    RunAuthority,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -43,13 +54,15 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ..progress import NullProgressReporter
-from ..store_runtime import VaultStore
+from ..store_runtime import VaultStore, configured_backend_identity
 from .conftest import managed_env
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..indexer._publication_proof import ProofCompatibilityKey
     from ..indexer._resolved_policy import ResolvedIndexPolicy
+    from ..indexer._run_ledger_models import RunGeneration
 
 pytestmark = [pytest.mark.unit]
 
@@ -60,6 +73,161 @@ _DELETED_SOURCE = "guide.md"
 #: An evidence generation the ledger does not hold. The sidecar cites it, and
 #: nothing resolves it - the dangling reference this escalation exists for.
 _DANGLING_GENERATION = "0" * 32
+
+
+def _audit_ledger_path(root_dir: Path) -> Path:
+    return index_run_ledger_path(workspace_volume_path(root_dir.resolve()))
+
+
+def _audit_without_storage(root_dir: Path) -> dict[str, object]:
+    def _forbidden_store() -> Never:
+        pytest.fail("rebuild-required audit opened storage")
+
+    return audit_index_sources(
+        root_dir,
+        PublicSourceType.DOCUMENT,
+        RunAuthority.AUDIT_VERIFICATION,
+        _forbidden_store,
+    )
+
+
+def _assert_document_rebuild_required(
+    result: dict[str, object],
+    *,
+    error_kind: str,
+) -> None:
+    assert result["ok"] is False
+    assert result["partial"] is False
+    assert result["status"] == "rebuild_required"
+    domains = cast("dict[str, dict[str, object]]", result["domains"])
+    document = domains[PublicSourceType.DOCUMENT.value]
+    assert document["ok"] is False
+    assert document["status"] == "rebuild_required"
+    assert document["error_kind"] == error_kind
+    remediation = cast("list[str]", document["remediation"])
+    assert len(remediation) == 1
+    assert "--rebuild" in remediation[0]
+
+
+def _seed_document_proof(
+    root_dir: Path,
+    *,
+    generation_collection: str = store_schema.DOCUMENT_COLLECTION,
+    proof_collection: str = store_schema.DOCUMENT_COLLECTION,
+    proof_storage_schema: int = store_schema.STORAGE_SCHEMA_VERSION,
+) -> tuple[RunLedger, ProofCompatibilityKey, RunGeneration]:
+    from ..indexer._publication_proof import ProofCompatibilityKey, ProofProvenance
+
+    backend_identity = configured_backend_identity(root_dir)
+    ledger = RunLedger(_audit_ledger_path(root_dir))
+    generation = ledger.start_generation(
+        RunSignature(
+            root_identity=str(root_dir.resolve()),
+            collection_identity=generation_collection,
+            source_type=ContentKind.DOCUMENT,
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="audit-model",
+            backend_identity=backend_identity,
+            dense_dimensions=8,
+            embedding_schema=DOCUMENT_EMBED_SCHEMA,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch=_fingerprint("audit-content"),
+            membership_epoch=_fingerprint("audit-membership"),
+            preprocessing_identity=_fingerprint("audit-preprocessing"),
+            configuration_fingerprint=_fingerprint("audit-configuration"),
+            policy_fingerprint=_fingerprint("audit-policy"),
+        )
+    )
+    key = ProofCompatibilityKey(
+        source_type=PublicSourceType.DOCUMENT,
+        root_identity=str(root_dir.resolve()),
+        backend_identity=backend_identity,
+        collection_identity=proof_collection,
+        storage_schema=proof_storage_schema,
+        payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+        embedding_schema_identity=(f"audit-model:8:{DOCUMENT_EMBED_SCHEMA}"),
+        chunking_schema_identity=_fingerprint("audit-preprocessing"),
+        membership_identity=_fingerprint("audit-membership"),
+        content_identity=_fingerprint("audit-content"),
+        policy_identity=_fingerprint("audit-policy"),
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_proofs (
+                source_type, root_identity, backend_identity,
+                collection_identity, storage_schema, payload_schema,
+                embedding_schema_identity, chunking_schema_identity,
+                membership_identity, content_identity, policy_identity,
+                generation_id, revision, reservation_sequence,
+                indexed_identities, retained_points, provenance,
+                committed_at, verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 5, 0, 0, ?, 1.0, 1.0)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation.generation_id,
+                ProofProvenance.VERIFIED.value,
+            ),
+        )
+    return ledger, key, generation
+
+
+def _insert_open_receipt(
+    ledger: RunLedger,
+    key: ProofCompatibilityKey,
+    generation: RunGeneration,
+    *,
+    receipt_id: str,
+    parent_revision: int,
+) -> None:
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_receipts (
+                receipt_id, reservation_sequence, source_type, root_identity,
+                backend_identity, collection_identity, storage_schema,
+                payload_schema, embedding_schema_identity,
+                chunking_schema_identity, membership_identity,
+                content_identity, policy_identity, generation_id,
+                parent_revision, target_revision, next_mutation_ordinal,
+                state, reserved_at, sealed_at, rollback_started_at,
+                committed_at, rolled_back_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+                      'reserved', 2.0, NULL, NULL, NULL, NULL)
+            """,
+            (
+                receipt_id,
+                5,
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation.generation_id,
+                parent_revision,
+                parent_revision + 1,
+            ),
+        )
 
 
 def _fingerprint(value: str) -> str:
@@ -145,6 +313,171 @@ def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> Run
         detail="attempt died before publication",
     )
     return ledger
+
+
+def test_audit_missing_ledger_requires_rebuild_without_creating_state(
+    tmp_path: Path,
+) -> None:
+    """Creating a ledger before refusing leaves observable forbidden state."""
+    before = set(tmp_path.rglob("*"))
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="missing")
+    assert set(tmp_path.rglob("*")) == before
+
+
+def test_audit_missing_proof_requires_rebuild_without_seeding(
+    tmp_path: Path,
+) -> None:
+    """A non-seeding audit leaves both the ledger bytes and proof count exact."""
+    ledger = RunLedger(_audit_ledger_path(tmp_path))
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="missing")
+    assert ledger.path.read_bytes() == before
+    with sqlite3.connect(ledger.path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM publication_proofs"
+        ).fetchone() == (0,)
+
+
+def test_audit_old_ledger_requires_rebuild_without_migration(
+    tmp_path: Path,
+) -> None:
+    """Reclassifying or opening an old schema breaks the typed refusal guard."""
+    path = _audit_ledger_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO old_runs VALUES ('preserve-me')")
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
+    before = path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(
+        result,
+        error_kind="RunLedgerRebuildRequiredError",
+    )
+    assert path.read_bytes() == before
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT value FROM old_runs").fetchone() == (
+            "preserve-me",
+        )
+
+
+def test_audit_receipt_schema_drift_requires_rebuild_without_repair(
+    tmp_path: Path,
+) -> None:
+    """A missing required receipt index is refused and never reinstalled."""
+    ledger = RunLedger(_audit_ledger_path(tmp_path))
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("DROP INDEX publication_receipts_open")
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(
+        result,
+        error_kind="RunLedgerRebuildRequiredError",
+    )
+    assert ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("proof_collection", "proof_storage_schema"),
+    [
+        ("foreign_document_collection", store_schema.STORAGE_SCHEMA_VERSION),
+        (
+            store_schema.DOCUMENT_COLLECTION,
+            store_schema.STORAGE_SCHEMA_VERSION + 1,
+        ),
+    ],
+    ids=["collection", "storage-schema"],
+)
+def test_audit_incompatible_proof_requires_rebuild_before_storage(
+    tmp_path: Path,
+    proof_collection: str,
+    proof_storage_schema: int,
+) -> None:
+    """Collection and storage-schema drift cannot reach a backend read."""
+    ledger, _key, _generation = _seed_document_proof(
+        tmp_path,
+        proof_collection=proof_collection,
+        proof_storage_schema=proof_storage_schema,
+    )
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="incompatible")
+    assert ledger.path.read_bytes() == before
+
+
+def test_audit_incompatible_proof_ancestry_requires_rebuild(
+    tmp_path: Path,
+) -> None:
+    """Skipping the proof-generation comparison opens storage and fails here."""
+    ledger, _key, _generation = _seed_document_proof(
+        tmp_path,
+        generation_collection="foreign_document_collection",
+    )
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="incompatible")
+    assert ledger.path.read_bytes() == before
+
+
+def test_audit_corrupt_open_receipt_requires_rebuild_instead_of_retry(
+    tmp_path: Path,
+) -> None:
+    """Treating a mismatched receipt as ordinary contention fails this guard."""
+    ledger, key, generation = _seed_document_proof(tmp_path)
+    _insert_open_receipt(
+        ledger,
+        key,
+        generation,
+        receipt_id="corrupt-audit-receipt",
+        parent_revision=4,
+    )
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="corrupt_receipt")
+    assert ledger.path.read_bytes() == before
+
+
+def test_audit_malformed_open_receipt_requires_typed_corrupt_refusal(
+    tmp_path: Path,
+) -> None:
+    """Leaking the ledger decoder's generic corruption kind fails this guard."""
+    ledger, key, generation = _seed_document_proof(tmp_path)
+    receipt_id = "malformed-audit-receipt"
+    _insert_open_receipt(
+        ledger,
+        key,
+        generation,
+        receipt_id=receipt_id,
+        parent_revision=3,
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            "UPDATE publication_receipts SET parent_revision = ? WHERE receipt_id = ?",
+            ("not-an-integer", receipt_id),
+        )
+    before = ledger.path.read_bytes()
+
+    result = _audit_without_storage(tmp_path)
+
+    _assert_document_rebuild_required(result, error_kind="corrupt_receipt")
+    assert ledger.path.read_bytes() == before
 
 
 @pytest.mark.parametrize("scoped", [False, True])
