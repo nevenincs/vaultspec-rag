@@ -1225,5 +1225,6 @@ def reclaim_superseded_generations(
         unreferenced=(name for name in unreferenced if name not in dropped),
         held=[*held, *dropped],
         now_iso=request.now.isoformat(),
+        live=live,
     )
     return results, advanced
