@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#qdrant-collection-sprawl'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:eee804b892752efe8543a31073e057ce1e46b8e9ecaaaaeb2134ea61ca458a65'
+body_hash: 'sha256:467423b8adb30e22742283f48393e71679e5a504a64783a1c7cf51b987092769'
 related:
   - "[[2026-07-14-storage-autoprune-safety-adr]]"
   - "[[2026-07-14-storage-namespace-hygiene-adr]]"
@@ -268,12 +268,34 @@ state near **79 collections** rather than the 34 live ones - a 43% reduction, no
 
 ### The confirming signal for a deferred affordance has arrived
 
+### The confirming signal for a deferred affordance has arrived
+
 The prior namespace-hygiene decision deliberately deferred an ephemeral-registration
 affordance - letting a harness declare a namespace throwaway at creation - until need
 was confirmed. 46 of 65 roots being harness sandboxes is that confirmation. Whether
 to revive registration, infer ephemerality from the root path as the reclaim path
 already does, or have harnesses tear their namespaces down at exit, is left to the
 ADR.
+
+One attribution made earlier in this investigation did not survive checking, and is
+corrected here rather than left standing. The eight `vaultspec-livetest-*` roots were
+taken to be residue from this project's own tests reaching the operator's real backend,
+on the strength of that name appearing in two test modules. It is not established. The
+recorded roots carry six-character random suffixes - the `mkdtemp` signature - while
+both test modules build fixed literals from a collection prefix and can produce no such
+name, and no code anywhere in this repository creates a temp directory under that
+prefix. Their origin is undetermined: another project on the same host, an older
+release, or a manual run are all consistent with the evidence. The name is suggestive
+and nothing more.
+
+Separately, and unlike the above, test isolation *was* found wanting on inspection -
+just not in the way the residue implied. The storage-ops module applied its
+status-directory isolation as a module-wide autouse fixture, so it covered tests that
+need it and tests that do not equally, and the survey module was already correctly and
+narrowly scoped. The root test configuration also redirects both directory knobs before
+collection, which is why the real manifest holds steady at 65 roots across full test
+runs. A residual gap remains in the reclaim test module, which builds orphaned
+namespaces through the shared helper without an isolation fixture of its own.
 
 ### Option space, and what was not investigated
 
