@@ -24,11 +24,13 @@ from ..watcher_retry import (
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherRetryState,
     WatcherRetryStateError,
     WatcherScopeRefusal,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import ObservedSource
@@ -446,9 +448,10 @@ def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
         (
             "import os, sys",
             "from pathlib import Path",
+            "from vaultspec_rag.watcher_retry import WatcherSource",
             (
-                "from vaultspec_rag.watcher_retry import "
-                "WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions"
+                "from vaultspec_rag.watcher_retry_policy import "
+                "WatcherRetryPolicy, _WatcherRetryOptions"
             ),
             "path, root = Path(sys.argv[1]), Path(sys.argv[2]).resolve()",
             (

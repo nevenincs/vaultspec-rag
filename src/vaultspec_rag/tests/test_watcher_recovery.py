@@ -26,14 +26,15 @@ from ..job_models import (
 )
 from ..service import ServiceRegistry
 from ..watcher_retry import (
-    _ADMISSION_RESERVATIONS,
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
-    WatcherRetryState,
     WatcherScopeRefusal,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    _ADMISSION_RESERVATIONS,
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
@@ -41,6 +42,8 @@ from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from ..watcher_retry import WatcherRetryState
 
 pytestmark = pytest.mark.unit
 
@@ -89,11 +92,19 @@ def _fenced_policy(
     )
     assert decision.admitted
     _ADMISSION_RESERVATIONS.clear()
-    monkeypatch.setattr("vaultspec_rag.watcher_retry._attempt_owner_is_live", _not_live)
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_retry_policy._attempt_owner_is_live", _owner_is_not_live
+    )
     return WatcherRetryPolicy(state_path, _options(tmp_path))
 
 
-def _not_live(_state: WatcherRetryState) -> bool:
+def _owner_is_not_live(_state: WatcherRetryState) -> bool:
+    """Report the recorded attempt owner as gone.
+
+    Restart reconciliation only engages for an attempt whose owner is provably
+    dead, and the honest way to establish that is to kill the process that
+    holds it - which here would be a real one this suite does not own.
+    """
     return False
 
 
@@ -143,23 +154,6 @@ def _snapshot(root: Path, state: JobState) -> JobSnapshot:
 def _slot(root: Path, policy: WatcherRetryPolicy) -> WatcherConvergenceSlot:
     return WatcherConvergenceSlot(
         JobSource.CODE, root.resolve(), ServiceRegistry(), policy
-    )
-
-
-def _missing_history(_root: Path) -> JobSnapshot | None:
-    return None
-
-
-def _rebuild_history(root: Path) -> JobSnapshot:
-    snapshot = _snapshot(root, JobState.SUCCEEDED)
-    return replace(snapshot, spec=replace(snapshot.spec, mode=JobMode.REBUILD))
-
-
-def _foreign_history(root: Path) -> JobSnapshot:
-    snapshot = _snapshot(root, JobState.SUCCEEDED)
-    return replace(
-        snapshot,
-        spec=replace(snapshot.spec, project_root=str(root / "foreign")),
     )
 
 
@@ -215,15 +209,33 @@ async def test_restart_reattaches_live_job_and_blocks_duplicate_admission(
     assert policy.reserve_admission() is None
 
 
+def _no_history(_root: Path) -> JobSnapshot | None:
+    """No recorded job at all for this root."""
+    return None
+
+
+def _rebuild_history(root: Path) -> JobSnapshot | None:
+    """A recorded job whose last run was a full rebuild, not an increment."""
+    succeeded = _snapshot(root, JobState.SUCCEEDED)
+    return replace(succeeded, spec=replace(succeeded.spec, mode=JobMode.REBUILD))
+
+
+def _foreign_root_history(root: Path) -> JobSnapshot | None:
+    """A recorded job belonging to a different project root."""
+    succeeded = _snapshot(root, JobState.SUCCEEDED)
+    return replace(
+        succeeded,
+        spec=replace(succeeded.spec, project_root=str(root / "foreign")),
+    )
+
+
+#: Job histories none of which establishes that this root's index is a safe
+#: base to continue from, which is what makes the recovery terminal.
+_UNSAFE_HISTORIES = (_no_history, _rebuild_history, _foreign_root_history)
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "history",
-    [
-        _missing_history,
-        _rebuild_history,
-        _foreign_history,
-    ],
-)
+@pytest.mark.parametrize("history", _UNSAFE_HISTORIES)
 async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

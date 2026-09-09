@@ -23,18 +23,11 @@ bootstrap-branch.yml:Bootstrap local worktree
 fleet-health.yml
 
 # --- pending ----------------------------------------------------------------
-# Asserts the venv interpreter is the one `.python-version` pins, and that the
-# matrix leg runs the Python it claims. Three copies of one Python heredoc.
-# Recipe needed: `check-interpreter`. `just init` hashes `.python-version`
-# into its stamp but does not assert the running interpreter against it.
-ci.yml:Verify the venv interpreter matches the pin
-ci.yml:Verify the interpreter under test
-publish.yml:Verify the interpreter under test
-
-# `uv run vaultspec-core vault check all`, called raw. Every other repo in the
-# fleet reaches the vault through a recipe; this one has `fix-vault` and no
-# read-only counterpart. Recipe needed: `check-vault`.
-ci.yml:Verify vault structure and links
+# The three interpreter heredocs and the raw vault check that stood here are
+# gone. The heredocs became `dev/guards/test_interpreter_pin.py`, which
+# asserts more than they did and holds on every platform and on a laptop; the
+# vault check became `just check-vault` and joined `check-all`, which is what
+# retired the job that existed only to run it.
 
 # The GPU tier's environment: warm the model cache (one 15-line Python
 # heredoc, twice), provision the pinned Qdrant binary, start and stop the

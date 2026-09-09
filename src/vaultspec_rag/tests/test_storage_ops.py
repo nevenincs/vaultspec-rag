@@ -20,6 +20,9 @@ import pytest
 
 from .._store_models import root_collection_prefix
 from ..job_models import JobOutcomeStatus
+from ..storage_archive import (
+    sweep_archive,
+)
 from ..storage_manifest import (
     load_manifest,
     record_root,
@@ -31,7 +34,6 @@ from ..storage_reclamation import (
     ReclaimPolicy,
     evaluate_reclaim,
     run_maintenance_cycle,
-    sweep_archive,
 )
 from ..storage_reconciliation import ReconcileResult, plan_reconcile
 from ..storage_survey import NamespaceSurvey, is_temp_rooted

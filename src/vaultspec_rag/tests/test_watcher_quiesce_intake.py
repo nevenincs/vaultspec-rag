@@ -25,7 +25,12 @@ from ..watcher_execution import (
     _dispatch_created_watcher_job,
 )
 from ..watcher_intake import _new_controller
-from ..watcher_retry import WatcherRetryPolicy, WatcherSource
+from ..watcher_retry import (
+    WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
+)
 from ..watcher_runtime import WatcherConvergenceSlot
 
 pytestmark = [pytest.mark.unit]

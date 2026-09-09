@@ -51,7 +51,6 @@ from .watcher_policy import (
 from .watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
 )
 from .watcher_runtime import (
@@ -66,6 +65,7 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer._resolved_policy import ResolvedIndexPolicy
+    from .watcher_retry_policy import WatcherRetryPolicy
 
 logger = logging.getLogger(__name__)
 # The native watcher uses this bound only to observe shutdown. Controller
@@ -88,6 +88,65 @@ class _WatcherEventBatch:
         return tuple(change for change in self.changes if change.source is source)
 
 
+#: The change kinds intake acts on. Everything else the platform reports is a
+#: notification about a path this watcher does not index.
+_ACCEPTED_CHANGES = frozenset({Change.added, Change.modified, Change.deleted})
+
+
+def _stored_owner_sources(
+    owners: frozenset[ContentKind],
+    routing: WatcherChangeRouting,
+) -> tuple[WatcherSource, ...]:
+    """Map recorded per-kind ownership onto the sources that must react.
+
+    Document ownership is dropped when this watcher runs no document slot: the
+    record says an index holds the path, but not one this watcher can drive.
+    """
+    sources: list[WatcherSource] = []
+    if ContentKind.CODE in owners:
+        sources.append(WatcherSource.CODE)
+    if routing.document_slot is not None and ContentKind.DOCUMENT in owners:
+        sources.append(WatcherSource.DOCUMENT)
+    return tuple(sources)
+
+
+def _present_path_sources(
+    path: Path,
+    routing: WatcherChangeRouting,
+) -> tuple[WatcherSource, ...]:
+    """Classify a path that is still on disk against the intake policy."""
+    sources: list[WatcherSource] = []
+    if is_code_change(path, routing.root_dir, routing.vault_dir, routing.policy):
+        sources.append(WatcherSource.CODE)
+    if routing.document_slot is not None and is_document_change(
+        path, routing.root_dir, routing.vault_dir, routing.policy
+    ):
+        sources.append(WatcherSource.DOCUMENT)
+    return tuple(sources)
+
+
+def _change_sources(
+    path: Path,
+    change_type: Change,
+    routing: WatcherChangeRouting,
+) -> tuple[WatcherSource, ...]:
+    """Name every source one changed path belongs to.
+
+    A deleted path cannot be classified by inspecting it, so its last recorded
+    ownership is the evidence of which index still holds it and takes
+    precedence. Only when nothing was ever stored does the path fall back to
+    the policy classification, which is what admits a file the watcher was
+    asked to index but never got to.
+    """
+    if is_vault_change(path, routing.vault_dir):
+        return (WatcherSource.VAULT,)
+    if change_type is Change.deleted:
+        prior_owners = _deleted_prior_owners(path, root_dir=routing.root_dir)
+        if prior_owners:
+            return _stored_owner_sources(prior_owners, routing)
+    return _present_path_sources(path, routing)
+
+
 def _classify_watcher_changes(
     changes: Iterable[tuple[Change, str]],
     *,
@@ -95,49 +154,16 @@ def _classify_watcher_changes(
 ) -> _WatcherEventBatch:
     """Classify one intake batch into immutable source-qualified facts."""
     classified: list[_ClassifiedWatcherChange] = []
-    accepted_changes = {Change.added, Change.modified, Change.deleted}
     for change_type, path_str in changes:
-        if change_type not in accepted_changes:
+        if change_type not in _ACCEPTED_CHANGES:
             continue
+        path = Path(path_str)
+        event = WatcherPathEvent(change_type.name)
         classified.extend(
-            _classify_watcher_change(
-                change_type,
-                Path(path_str),
-                routing=routing,
-            )
+            _ClassifiedWatcherChange(source, path, event)
+            for source in _change_sources(path, change_type, routing)
         )
     return _WatcherEventBatch(tuple(classified))
-
-
-def _classify_watcher_change(
-    change_type: Change,
-    path: Path,
-    *,
-    routing: WatcherChangeRouting,
-) -> tuple[_ClassifiedWatcherChange, ...]:
-    """Classify one accepted path without mutating controller state."""
-    event = WatcherPathEvent(change_type.name)
-    if is_vault_change(path, routing.vault_dir):
-        return (_ClassifiedWatcherChange(WatcherSource.VAULT, path, event),)
-    if change_type is Change.deleted:
-        prior_owners = _deleted_prior_owners(path, root_dir=routing.root_dir)
-        deleted: list[_ClassifiedWatcherChange] = []
-        if ContentKind.CODE in prior_owners:
-            deleted.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
-        if routing.document_slot is not None and ContentKind.DOCUMENT in prior_owners:
-            deleted.append(
-                _ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event)
-            )
-        if prior_owners:
-            return tuple(deleted)
-    classified: list[_ClassifiedWatcherChange] = []
-    if is_code_change(path, routing.root_dir, routing.vault_dir, routing.policy):
-        classified.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
-    if routing.document_slot is not None and is_document_change(
-        path, routing.root_dir, routing.vault_dir, routing.policy
-    ):
-        classified.append(_ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event))
-    return tuple(classified)
 
 
 def _deleted_prior_owners(

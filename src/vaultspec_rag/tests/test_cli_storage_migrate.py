@@ -36,16 +36,21 @@ pytestmark = [pytest.mark.unit]
 def run_migration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> Callable[..., Result]:
-    """Exercise argument parsing and outcome handling with scripted stores."""
+    """Exercise argument parsing and outcome handling with scripted stores.
+
+    The local store path is NOT scripted. It is a pure function of the root and
+    the configured data and qdrant directory names, and the command feeds it to
+    the containment check that refuses a path escaping the root. Substituting it
+    hands that check an answer it was written to compute, so the check passes on
+    a value production never derived. Deriving it for real costs nothing here:
+    no store is opened at it, because the client itself is scripted.
+    """
     monkeypatch.setattr("qdrant_client.QdrantClient", Mock())
     monkeypatch.setattr(
         storage_cli, "_resolve_server_url", Mock(return_value="http://unused.invalid")
     )
     monkeypatch.setattr(
         storage_cli, "_migrate_name_map", Mock(return_value={"source": "target"})
-    )
-    monkeypatch.setattr(
-        storage_cli, "_local_store_path", Mock(return_value=tmp_path / "qdrant")
     )
     monkeypatch.setattr(storage_cli, "_carry_identity_on_migrate", Mock())
     monkeypatch.setattr(storage_cli, "_rekey_manifest_on_migrate", Mock())

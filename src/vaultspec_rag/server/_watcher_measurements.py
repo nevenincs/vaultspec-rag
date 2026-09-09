@@ -99,17 +99,8 @@ def capture_watcher_measurement(
         project_root=root,
         source=source.value,
     )
-    evidence = pressure.get("evidence")
-    evidence_map = (
-        cast("dict[str, object]", evidence) if isinstance(evidence, dict) else None
-    )
-    backend = evidence_map.get("backend") if evidence_map is not None else None
-    backend_map = (
-        cast("dict[str, object]", backend) if isinstance(backend, dict) else None
-    )
-    storage_available = backend_map.get("alive") if backend_map is not None else None
-    if not isinstance(storage_available, bool):
-        storage_available = None
+    alive = _mapping_path(pressure, "evidence", "backend", "alive")
+    storage_available = alive if isinstance(alive, bool) else None
     tier = pressure.get("tier")
     return compose_watcher_measurement(
         WatcherMeasurementFacts(
@@ -128,22 +119,66 @@ def capture_watcher_measurement(
     )
 
 
-def compose_watcher_measurement(
-    facts: WatcherMeasurementFacts,
-) -> WatcherServiceMeasurement:
-    """Compose already-owned service facts without performing new probes."""
-    generation = facts.generation
-    observed_at = facts.observed_at
-    jobs = facts.jobs
-    limiter_snapshot = facts.limiter_snapshot
-    search_snapshot = facts.search_snapshot
-    pressure_tier = facts.pressure_tier
-    storage_available = facts.storage_available
-    quiesce = facts.quiesce
-    retry_state = facts.retry_state
-    requested_cost = facts.requested_cost
-    effective_cost = facts.effective_cost
-    active = tuple(
+@dataclass(frozen=True, slots=True)
+class _PoolReadings:
+    """The concurrency and search readings one measurement is derived from.
+
+    Every field is independently optional because each is read from a snapshot
+    the service may not have been able to take. They are held together because
+    both the controller projection and the unavailability report need the same
+    readings, and taking them twice could disagree.
+    """
+
+    index_in_flight: int | None
+    index_waiters: int | None
+    search_borrowed: int | None
+    search_in_flight: int | None
+    search_latency: float | None
+
+
+def _pool_readings(facts: WatcherMeasurementFacts) -> _PoolReadings:
+    """Read the limiter and search snapshots the facts arrived with."""
+    index_in_flight, index_waiters = _limiter_values(facts.limiter_snapshot, "index")
+    search_borrowed, _ = _limiter_values(facts.limiter_snapshot, "search")
+    search_in_flight, search_latency = _search_values(facts.search_snapshot)
+    return _PoolReadings(
+        index_in_flight=index_in_flight,
+        index_waiters=index_waiters,
+        search_borrowed=search_borrowed,
+        search_in_flight=search_in_flight,
+        search_latency=search_latency,
+    )
+
+
+def _unavailable_readings(
+    facts: WatcherMeasurementFacts, readings: _PoolReadings
+) -> frozenset[str]:
+    """Name every reading this measurement could not take.
+
+    A controller that could not tell an absent reading from a zero would admit
+    work against evidence it never had, so absence is reported as its own fact
+    rather than folded into the value.
+    """
+    absent = {
+        "index_limiter": readings.index_in_flight is None
+        or readings.index_waiters is None,
+        "search_limiter": readings.search_borrowed is None,
+        "search_activity": readings.search_in_flight is None,
+        "search_latency": readings.search_latency is None,
+        "machine_pressure": facts.pressure_tier is None,
+        "storage": facts.storage_available is None,
+        "quiesce": facts.quiesce is None,
+        "retry": facts.retry_state is None,
+        "effective_cost": facts.effective_cost is None,
+    }
+    return frozenset(name for name, missing in absent.items() if missing)
+
+
+def _active_index_generations(
+    jobs: Sequence[JobSnapshot],
+) -> tuple[ActiveIndexGeneration, ...]:
+    """Identify every index attempt still in flight when the facts were taken."""
+    return tuple(
         ActiveIndexGeneration(
             job_id=job.id,
             revision=job.revision,
@@ -154,83 +189,68 @@ def compose_watcher_measurement(
         for job in jobs
         if job.spec.operation is JobOperation.INDEX and not job.state.is_terminal
     )
-    index_borrowed, index_waiters = _limiter_values(limiter_snapshot, "index")
-    search_borrowed, _ = _limiter_values(limiter_snapshot, "search")
-    search_in_flight, search_latency = _search_values(search_snapshot)
-    unavailable = {
-        name
-        for name, missing in {
-            "index_limiter": index_borrowed is None or index_waiters is None,
-            "search_limiter": search_borrowed is None,
-            "search_activity": search_in_flight is None,
-            "search_latency": search_latency is None,
-            "machine_pressure": pressure_tier is None,
-            "storage": storage_available is None,
-            "quiesce": quiesce is None,
-            "retry": retry_state is None,
-            "effective_cost": effective_cost is None,
-        }.items()
-        if missing
-    }
-
-    controller = _compose_controller_measurement(
-        facts,
-        active_count=len(active),
-        index_values=(index_borrowed, index_waiters),
-        search_values=(search_borrowed, search_in_flight, search_latency),
-    )
-    return WatcherServiceMeasurement(
-        generation=generation,
-        observed_at=observed_at,
-        controller=controller,
-        active_index_generations=active,
-        machine_pressure_tier=pressure_tier,
-        requested_cost=requested_cost,
-        effective_cost=effective_cost,
-        failure_kind=(
-            None
-            if retry_state is None or retry_state.last_error_kind is None
-            else retry_state.last_error_kind.value
-        ),
-        circuit_state=(
-            None if retry_state is None else retry_state.circuit_state.value
-        ),
-        unavailable=frozenset(unavailable),
-    )
 
 
-def _compose_controller_measurement(
+def _controller_measurement(
     facts: WatcherMeasurementFacts,
-    *,
+    readings: _PoolReadings,
     active_count: int,
-    index_values: tuple[int | None, int | None],
-    search_values: tuple[int | None, int | None, float | None],
 ) -> ControllerMeasurement:
-    """Build the controller-facing projection from narrowed service facts."""
-    generation = facts.generation
-    observed_at = facts.observed_at
-    pressure_tier = facts.pressure_tier
-    storage_available = facts.storage_available
+    """Project the service readings onto the controller's measurement shape.
+
+    In-flight search falls back to the limiter's borrowed count when the
+    activity ledger could not answer, because the two count the same work and
+    the limiter is the reading that survives a ledger reset.
+    """
     quiesce = facts.quiesce
-    index_in_flight, index_waiters = index_values
-    search_borrowed, search_in_flight, search_latency_seconds = search_values
+    tier = facts.pressure_tier
     return ControllerMeasurement(
-        generation=generation,
-        observed_at=observed_at,
-        job_backlog=active_count + (index_waiters or 0),
-        index_in_flight=index_in_flight,
-        index_waiters=index_waiters,
+        generation=facts.generation,
+        observed_at=facts.observed_at,
+        job_backlog=active_count + (readings.index_waiters or 0),
+        index_in_flight=readings.index_in_flight,
+        index_waiters=readings.index_waiters,
         search_in_flight=(
-            search_in_flight if search_in_flight is not None else search_borrowed
+            readings.search_borrowed
+            if readings.search_in_flight is None
+            else readings.search_in_flight
         ),
-        search_latency_seconds=search_latency_seconds,
-        gpu_pressure=(
-            None if pressure_tier is None else pressure_tier in _PRESSURED_TIERS
-        ),
-        storage_available=storage_available,
+        search_latency_seconds=readings.search_latency,
+        gpu_pressure=None if tier is None else tier in _PRESSURED_TIERS,
+        storage_available=facts.storage_available,
         service_quiesced=(
             None if quiesce is None else quiesce.state is not QuiesceState.RUNNING
         ),
+    )
+
+
+def _failure_kind(retry_state: WatcherRetryState | None) -> str | None:
+    """Name the kind of the last recorded failure, if one was recorded."""
+    if retry_state is None or retry_state.last_error_kind is None:
+        return None
+    return retry_state.last_error_kind.value
+
+
+def compose_watcher_measurement(
+    facts: WatcherMeasurementFacts,
+) -> WatcherServiceMeasurement:
+    """Compose already-owned service facts without performing new probes."""
+    readings = _pool_readings(facts)
+    active = _active_index_generations(facts.jobs)
+    retry_state = facts.retry_state
+    return WatcherServiceMeasurement(
+        generation=facts.generation,
+        observed_at=facts.observed_at,
+        controller=_controller_measurement(facts, readings, len(active)),
+        active_index_generations=active,
+        machine_pressure_tier=facts.pressure_tier,
+        requested_cost=facts.requested_cost,
+        effective_cost=facts.effective_cost,
+        failure_kind=_failure_kind(retry_state),
+        circuit_state=(
+            None if retry_state is None else retry_state.circuit_state.value
+        ),
+        unavailable=_unavailable_readings(facts, readings),
     )
 
 
@@ -250,25 +270,42 @@ def _search_values(
 ) -> tuple[int | None, float | None]:
     if snapshot is None:
         return None, None
-    counts = snapshot.get("counts")
-    counts_map = cast("dict[str, object]", counts) if isinstance(counts, dict) else None
-    active = counts_map.get("active") if counts_map is not None else None
-    recent = snapshot.get("recent")
-    latencies: list[float] = []
-    if isinstance(recent, list):
-        recent_values = cast("list[object]", recent)
-        for raw_row in recent_values:
-            if not isinstance(raw_row, dict):
-                continue
-            row = cast("dict[str, object]", raw_row)
-            value = row.get("total_seconds")
-            if (
-                isinstance(value, int | float)
-                and not isinstance(value, bool)
-                and value >= 0
-            ):
-                latencies.append(float(value))
+    active = _mapping_path(snapshot.get("counts"), "active")
+    latencies = _recent_latencies(snapshot.get("recent"))
     return _non_negative_int(active), (max(latencies) if latencies else None)
+
+
+def _recent_latencies(recent: object) -> list[float]:
+    """Collect every well-formed duration from the recent-search window.
+
+    Rows are skipped rather than defaulted: a search whose duration was not
+    recorded is not a search that took no time, and averaging one in would
+    understate exactly the latency the controller backs off on.
+    """
+    if not isinstance(recent, list):
+        return []
+    latencies: list[float] = []
+    for row in cast("list[object]", recent):
+        value = _mapping_path(row, "total_seconds")
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            continue
+        if value >= 0:
+            latencies.append(float(value))
+    return latencies
+
+
+def _mapping_path(source: object, *keys: str) -> object:
+    """Read a nested key path from a value that may not be a mapping at all.
+
+    These snapshots cross a JSON-shaped boundary, so nothing about their
+    interior is guaranteed and every step has to re-establish that it is still
+    looking at a mapping before reading the next key.
+    """
+    for key in keys:
+        if not isinstance(source, dict):
+            return None
+        source = cast("dict[str, object]", source).get(key)
+    return source
 
 
 def _non_negative_int(value: object) -> int | None:

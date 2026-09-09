@@ -31,8 +31,10 @@ from ..watcher_intake import (
 from ..watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
@@ -40,6 +42,9 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from ..indexer._codebase_indexer import CodeExecutionPreflight
+    from ..indexer._document_indexer import DocumentExecutionPreflight
+    from ..job_models import JobSnapshot
     from ..watcher_admission import AdmissionSelection
 
 pytestmark = pytest.mark.unit
@@ -237,11 +242,14 @@ async def test_production_reevaluation_consumes_service_measurement(
 
     def capture(
         _registry: ServiceRegistry,
-        **kwargs: object,
+        *,
+        generation: int,
+        observed_at: float,
+        **_kwargs: object,
     ) -> WatcherServiceMeasurement:
         measurement = ControllerMeasurement(
-            generation=cast("int", kwargs["generation"]),
-            observed_at=cast("float", kwargs["observed_at"]),
+            generation=generation,
+            observed_at=observed_at,
             storage_available=False,
             service_quiesced=False,
         )
@@ -285,13 +293,15 @@ async def test_precreation_exception_restores_exact_durable_scope(
     binding = _ready_binding(tmp_path.resolve())
 
     class FailingManager:
-        def get(self, _job_id: str) -> None:
+        def get(self, _job_id: str) -> JobSnapshot | None:
             return None
 
-        def create(self, *_args: object, **_kwargs: object) -> None:
+        def create(self, *_args: object, **_kwargs: object) -> JobSnapshot:
             raise RuntimeError("create exploded")
 
-    async def preflight(*_args: object, **_kwargs: object) -> tuple[None, None]:
+    async def preflight(
+        *_args: object, **_kwargs: object
+    ) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
         if failure_site == "preflight":
             raise RuntimeError("preflight exploded")
         return None, None
