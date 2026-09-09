@@ -708,24 +708,6 @@ class _VaultCatalogMixin:
         """
         return self._count_collection(self._code_collection(collection))
 
-    def count_code_files(self, collection: str | None = None) -> int:
-        """Return how many distinct files the code collection holds points for.
-
-        Counted from the collection rather than read from the sidecar, so it
-        describes what is actually being served. A publication claiming more
-        files than this is claiming breadth the collection does not hold - the
-        shape a destroyed-and-partially-repopulated collection takes, where the
-        point count alone still looks self-consistent.
-
-        Scans the collection, so it belongs on a publication path and not on a
-        query path. Creates nothing, for the same reason :meth:`count_code`
-        does not.
-        """
-        _target = self._code_collection(collection)
-        if not self._collection_exists(_target):
-            return 0
-        return len(self._scroll_all_ids(_target, "path"))
-
     def count_document(self) -> int:
         """Return the point count in the document collection.
 

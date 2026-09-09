@@ -367,7 +367,10 @@ class TestSliceWriterContract:
         in place.
 
         Mutation: returning before the acknowledgement fails this on the
-        second assertion, and the fault-injection restart suites with it.
+        record assertion. This test is the only runnable coverage of that
+        branch - the whole unit lane stays green under the same mutation - so
+        loosening it removes the last thing watching the applied-but-
+        unconfirmed window.
         """
         events: list[str] = []
         lifecycle = StoreMutationLifecycle(
