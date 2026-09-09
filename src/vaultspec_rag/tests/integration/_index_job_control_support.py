@@ -43,7 +43,6 @@ from ...job_models import (
 )
 from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
-from ...store_runtime import VaultStore
 from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
@@ -54,6 +53,7 @@ if TYPE_CHECKING:
     from ..._store_models import VaultDocument
     from ...job_manager.manager import JobManager
     from ...service import ProjectSlot, ServiceRegistry
+    from ...store_runtime import VaultStore
 
 pytestmark = pytest.mark.integration
 
@@ -388,7 +388,10 @@ async def resume_managed_attempt(
     assert completed.code == "attempt_released"
     succeeded = manager.get(job_id)
     assert succeeded is not None
-    assert succeeded.state is JobState.SUCCEEDED
+    assert succeeded.state is JobState.SUCCEEDED, (
+        succeeded.error_kind,
+        succeeded.result,
+    )
     _assert_reconciliation_lineage(succeeded, job_id)
     return succeeded
 
@@ -457,16 +460,13 @@ def assert_cancelled_job_is_absorbing(manager: JobManager, job_id: str) -> None:
     assert rejected.code == "invalid_transition"
 
 
-def prepare_empty_code_collection(
+def prepare_code_collection_for_replacement(
     registry: ServiceRegistry,
     root: Path,
     *,
     file_count: int,
 ) -> ProjectSlot:
     registry.close_project(root)
-    with VaultStore(root, embedding_dim=registry.model.dimension) as empty_store:
-        empty_store.drop_code_table()
-        empty_store.ensure_code_table()
     _write_code_files(root, file_count, "empty-collection")
     return registry.peek_project(root)
 
@@ -539,8 +539,8 @@ async def assert_cancel_wins_at_the_write_gate(
     assert cancelled.timestamps.control_requested_at is not None
     assert cancelled.timestamps.control_acknowledged_at is not None
     # The pending write never executed: a cancel delivered at the pre-mutation
-    # write gate wins cleanly without recording a spurious failure. Nothing was
-    # persisted.
+    # write gate wins cleanly without recording a spurious failure. The stale
+    # points were removed, but none of the pending replacements were persisted.
     assert cancelled.error_kind is None
     assert cancelled.result is None
     slot = registry.peek_project(root)

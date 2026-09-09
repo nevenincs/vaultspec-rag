@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
+from ..._job_errors import JobError, JobErrorKind
 from ...progress import NullProgressReporter
 from .conftest import (
     SAMPLE_PYTHON_2,
@@ -361,10 +362,10 @@ class TestIncrementalPublicationRecovery:
 
 
 class TestCodeEmbedFormatRebuild:
-    """A pre-header store triggers a one-time clean rebuild."""
+    """A pre-header store requires explicit rebuild authority."""
 
     @pytest.mark.timeout(180)
-    def test_missing_embed_marker_triggers_rebuild(
+    def test_missing_embed_marker_requires_explicit_rebuild(
         self, code_project: _CodeProject
     ) -> None:
         import json
@@ -386,11 +387,21 @@ class TestCodeEmbedFormatRebuild:
         meta.pop("__code_embed_schema__")
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
-        result = indexer.incremental_index(
+        with pytest.raises(JobError) as raised:
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+
+        assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+        assert store.count_code() == chunk_total
+        unstamped = json.loads(meta_path.read_text(encoding="utf-8"))
+        assert "__code_embed_schema__" not in unstamped
+
+        result = indexer.full_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        # A rebuild re-embeds everything instead of a no-op pass.
         assert result.added == chunk_total
         stamped = json.loads(meta_path.read_text(encoding="utf-8"))
         assert stamped["__code_embed_schema__"] == "2"

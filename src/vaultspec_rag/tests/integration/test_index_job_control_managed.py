@@ -67,7 +67,7 @@ from ._index_job_control_support import (
     cancel_managed_attempt,
     code_pipeline_published,
     pause_managed_attempt,
-    prepare_empty_code_collection,
+    prepare_code_collection_for_replacement,
     request_after_first_code_upsert,
     request_cancel_at_the_write_gate,
     resume_managed_attempt,
@@ -307,7 +307,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     expected_ids = {document.id for document in documents}
     slot = managed_facade_registry.peek_project(root)
 
-    job_id = jobs.start_reindex_vault(root, clean=False)
+    job_id = jobs.start_reindex_vault(root, clean=True)
     live = await _wait_for_managed_job(
         managed_job_manager,
         job_id,
@@ -445,7 +445,7 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
     assert initial is not None
     assert initial.state is JobState.SUCCEEDED
 
-    slot = prepare_empty_code_collection(
+    slot = prepare_code_collection_for_replacement(
         managed_facade_registry,
         root,
         file_count=len(paths),

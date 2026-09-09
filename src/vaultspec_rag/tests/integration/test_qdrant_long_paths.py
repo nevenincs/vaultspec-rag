@@ -51,7 +51,9 @@ def test_collection_create_succeeds_on_a_long_storage_path(tmp_path: Path) -> No
     supervisor.spawn()
     try:
         assert supervisor.wait_ready(timeout=60.0), "qdrant did not become ready"
-        client = QdrantClient(url=f"http://127.0.0.1:{supervisor.http_port}")
+        client = QdrantClient(
+            url=f"http://127.0.0.1:{supervisor.http_port}", timeout=60
+        )
         try:
             client.create_collection(
                 collection_name="r0123456789ab_vault_docs",

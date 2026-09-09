@@ -374,6 +374,8 @@ def _assert_unavailable_response_envelope(
         "message",
         "request_id",
         "index_state",
+        "retryable",
+        "readiness",
         "remediation",
     }, evidence
     assert body["ok"] is False, evidence
@@ -473,10 +475,9 @@ def _assert_unavailable_search_response(
         evidence=evidence,
     )
     assert index_state["status"] == "rebuilding", evidence
-    assert body["remediation"] == [
-        f"vaultspec-rag server jobs --state active --index vault --port {port}",
-        "Retry the search after the matching index job reaches a terminal state.",
-    ], evidence
+    assert body["remediation"] == (
+        f"vaultspec-rag server jobs --state active --index vault --port {port}"
+    ), evidence
 
 
 def _assert_stable_missing_index_response(
@@ -487,10 +488,10 @@ def _assert_stable_missing_index_response(
     evidence: str,
 ) -> None:
     status, _headers, body = response
-    assert status == 200, evidence
-    assert body.get("ok") is not False, evidence
-    assert "error" not in body, evidence
-    assert body["results"] == [], evidence
+    assert status == 503, evidence
+    assert body["ok"] is False, evidence
+    assert body["error"] == "index_unverifiable", evidence
+    assert "results" not in body, evidence
 
     raw_index_state = body["index_state"]
     assert isinstance(raw_index_state, dict), evidence
@@ -516,11 +517,6 @@ def _assert_stable_missing_index_response(
     assert index_state["requested_target_root"] == str(root), evidence
     assert index_state["target_matches"] is True, evidence
     assert index_state["status"] == "missing", evidence
-
-    raw_empty = body["empty"]
-    assert isinstance(raw_empty, dict), evidence
-    empty = cast("dict[str, object]", raw_empty)
-    assert empty["reason"] == "index_missing", evidence
 
 
 def _assert_matching_nonempty_response(
@@ -705,12 +701,19 @@ def _run_clean_rebuild_availability_phase(
         last_job=terminal_job,
         last_response=post_response,
     )
-    assert post_status == 200, post_evidence
-    assert post_body["results"] == [], post_evidence
-    raw_post_empty = post_body["empty"]
-    assert isinstance(raw_post_empty, dict), post_evidence
-    post_empty = cast("dict[str, object]", raw_post_empty)
-    assert post_empty["reason"] == "no_match", post_evidence
+    assert post_status == 503, post_evidence
+    assert post_body["ok"] is False, post_evidence
+    assert post_body["error"] == "index_unverifiable", post_evidence
+    assert "results" not in post_body, post_evidence
+    raw_post_state = post_body["index_state"]
+    assert isinstance(raw_post_state, dict), post_evidence
+    post_state = cast("dict[str, object]", raw_post_state)
+    assert post_state["status"] == "available", post_evidence
+    assert post_state["target_matches"] is True, post_evidence
+    raw_post_integrity = post_state["index_integrity"]
+    assert isinstance(raw_post_integrity, dict), post_evidence
+    post_integrity = cast("dict[str, object]", raw_post_integrity)
+    assert post_integrity["verdict"] == "unverifiable", post_evidence
 
 
 def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
@@ -752,6 +755,8 @@ def _assert_paused_rebuild_snapshot(
         "source": "vault",
         "project_root": str(root),
         "mode": "rebuild",
+        "requested_mode": "rebuild",
+        "effective_mode": "rebuild",
     }, job
     runtime = cast("dict[str, object]", job["runtime"])
     assert runtime["task_active"] is False, job

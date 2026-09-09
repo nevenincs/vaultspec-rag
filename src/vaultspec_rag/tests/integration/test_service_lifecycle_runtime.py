@@ -350,7 +350,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             headers={"Authorization": f"Bearer {health['service_token']}"},
             json={
                 "type": "code",
-                "clean": False,
+                "clean": True,
                 "project_root": str(root),
             },
             timeout=30.0,
@@ -412,7 +412,10 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             },
             timeout=30.0,
         )
-        assert search.status_code == 200, search.text
+        assert search.status_code == 503, search.text
+        body = search.json()
+        assert body["error"] == "index_unverifiable"
+        assert "results" not in body
 
 
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:

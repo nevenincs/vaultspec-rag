@@ -23,6 +23,7 @@ from ...serviceclient._transport import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import TextIO
 
     from mcp.types import CallToolResult, Tool
 
@@ -99,7 +100,10 @@ async def _exercise_document_tools(
         env=env,
     )
     async with (
-        stdio_client(server) as (read_stream, write_stream),
+        stdio_client(server, errlog=cast("TextIO", sys.__stderr__)) as (
+            read_stream,
+            write_stream,
+        ),
         ClientSession(read_stream, write_stream) as session,
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)
@@ -272,7 +276,7 @@ def test_document_tools_through_real_mcp_session(
     source_path, phrase = _write_indexed_document_fixture(root)
     created = _try_http_reindex(
         "document",
-        False,
+        True,
         port,
         str(root),
         initiator_kind="mcp",

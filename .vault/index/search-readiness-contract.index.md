@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#search-readiness-contract'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:d8a906535b6c20f53a4314680014b90a44ac7de0c1c63108c5938048e007f641'
+body_hash: 'sha256:1de359a02ac878403b9c54fe5346ae7c06abe8fe4cf4a31de6d2e18fc2041147'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -74,6 +74,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
   - '[[2026-09-08-search-readiness-contract-research]]'
+  - '[[2026-09-09-search-readiness-contract-audit]]'
 ---
 
 # `search-readiness-contract` feature index
@@ -85,6 +86,10 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 ### adr
 
 - `2026-09-08-search-readiness-contract-adr` - `search-readiness-contract` adr: `canonical search readiness and bounded freshness waits` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-09-search-readiness-contract-audit` - `search-readiness-contract` audit: `post-merge integration alignment`
 
 ### exec
 

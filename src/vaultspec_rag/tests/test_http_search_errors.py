@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from httpx import Headers
+from pydantic import ValidationError
 from qdrant_client.http.exceptions import UnexpectedResponse
 from starlette.testclient import TestClient
 
@@ -17,7 +18,7 @@ from .._search_state import MAX_SEARCH_EVIDENCE_ITEMS
 from .._source_types import INDEX_SOURCES, PublicSourceType
 from .._store_locks import VaultStoreLockedError
 from ..config._settings import get_config, reset_config
-from ..mcp._tools import _search_envelope_or_raise
+from ..mcp._tools import _validated_search_result
 from ..registry import get_registry, reset_registry
 from ..search._models import SearchResult
 from ..server import (
@@ -46,6 +47,10 @@ from ..serviceclient._search_transport import (
     _search_response_envelope,
     try_http_search,
 )
+from ._search_readiness_scenarios import (
+    SEARCH_READINESS_SCENARIOS,
+    canonical_service_envelope,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -60,14 +65,11 @@ def _http_search(port: int) -> dict[str, object] | None:
 
 
 def test_valid_search_envelope_is_unchanged() -> None:
-    expected: dict[str, object] = {
-        "results": [{"id": "doc-1", "score": 0.75}],
-        "summary": "one result",
-    }
+    expected = canonical_service_envelope(SEARCH_READINESS_SCENARIOS["current"])
     result = _search_response_envelope(expected, 8766)
 
     assert result is expected
-    assert _search_envelope_or_raise(result) is result
+    assert _validated_search_result(result).model_dump(mode="json") == expected
 
 
 def test_structured_search_error_is_unchanged() -> None:
@@ -128,13 +130,18 @@ def test_refused_search_connection_remains_unreachable() -> None:
     assert result is None
 
 
-@pytest.mark.parametrize(
-    "result",
-    [[], {}, "legacy", None, {"summary": "missing"}, {"results": "legacy"}],
-)
-def test_mcp_rejects_malformed_search_envelopes(result: object) -> None:
+@pytest.mark.parametrize("result", [[], "legacy", None])
+def test_mcp_rejects_non_object_search_envelopes(result: object) -> None:
     with pytest.raises(RuntimeError, match=r"^invalid_service_response:"):
-        _search_envelope_or_raise(result)
+        _validated_search_result(result)
+
+
+@pytest.mark.parametrize("result", [{}, {"summary": "missing"}, {"results": "legacy"}])
+def test_mcp_rejects_malformed_object_search_envelopes(
+    result: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        _validated_search_result(result)
 
 
 def _status_contract_request(root: Path) -> SearchRequest:
@@ -607,20 +614,13 @@ class TestCompletedSearchClassificationSkip:
 
 
 def test_mcp_preserves_structured_error_remediation() -> None:
-    envelope: dict[str, object] = {
-        "ok": False,
-        "error": "index_unavailable",
-        "message": "The vault index is changing.",
-        "remediation": ["Inspect the matching job.", "Retry after convergence."],
-    }
+    envelope = canonical_service_envelope(SEARCH_READINESS_SCENARIOS["unavailable"])
 
-    with pytest.raises(RuntimeError) as raised:
-        _search_envelope_or_raise(envelope)
+    result = _validated_search_result(envelope)
 
-    assert str(raised.value) == (
-        "index_unavailable: The vault index is changing. Remediation: "
-        "Inspect the matching job. | Retry after convergence."
-    )
+    assert result.model_dump(mode="json") == envelope
+    assert result.error == "index_unavailable"
+    assert result.remediation == envelope["remediation"]
 
 
 class TestCombinedSearchBuildsNoAvailabilityFacts:

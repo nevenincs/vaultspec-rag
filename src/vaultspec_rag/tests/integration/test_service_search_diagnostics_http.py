@@ -32,7 +32,6 @@ from .._search_readiness_scenarios import (
     canonical_service_envelope,
 )
 from ._service_search_diagnostics_support import (
-    assert_empty_search_phase_timing,
     assert_request_id,
     raw_search,
     wait_for_search_log_line,
@@ -265,7 +264,7 @@ def test_direct_http_search_type_contract(
         },
         timeout=120,
     )
-    assert canonical_status == 200, canonical_body
+    assert canonical_status == 503, canonical_body
     index_state = cast("dict[str, object]", canonical_body["index_state"])
     assert index_state["source"] == "code", canonical_body
     request_id = assert_request_id(canonical_body)
@@ -283,9 +282,13 @@ def test_direct_http_code_search_reports_code_index_state(
     root = tmp_path / "empty-code-project"
     (root / ".vault").mkdir(parents=True)
 
-    result = _do_http_call(
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+    status, _headers, result = raw_search(
         port,
-        "/search",
+        token,
         {
             "query": "nothing should match this empty code workspace",
             "type": "code",
@@ -295,10 +298,12 @@ def test_direct_http_code_search_reports_code_index_state(
         timeout=120,
     )
 
+    assert status == 503, result
     assert isinstance(result, dict)
     assert_request_id(result)
-    assert result["results"] == []
-    assert_empty_search_phase_timing(result)
+    assert result["ok"] is False
+    assert result["error"] == "index_unverifiable"
+    assert "results" not in result
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "code"
@@ -312,12 +317,7 @@ def test_direct_http_code_search_reports_code_index_state(
         "status",
         "index_integrity",
     }
-    empty = cast("dict[str, object]", result["empty"])
-    assert isinstance(empty, dict)
-    assert empty["reason"] == "index_missing"
-    remediation = cast("list[object]", empty["remediation"])
-    assert isinstance(remediation, list)
-    assert any("index --type code" in str(item) for item in remediation)
+    assert "server status" in str(result["remediation"])
 
 
 @pytest.mark.subprocess_gpu

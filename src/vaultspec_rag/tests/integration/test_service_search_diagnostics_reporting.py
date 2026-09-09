@@ -24,8 +24,8 @@ from .._search_readiness_scenarios import (
 )
 from ..test_cli_search import _invoke_readiness_search, _search_envelope_service
 from ._service_search_diagnostics_support import (
-    assert_empty_search_phase_timing,
     assert_request_id,
+    raw_search,
     wait_for_search_log_line,
 )
 
@@ -119,19 +119,28 @@ def test_empty_service_search_reports_missing_index(
     root = tmp_path / "empty-project"
     (root / ".vault").mkdir(parents=True)
 
-    result = try_http_search(
-        "nothing should match this empty workspace",
-        "vault",
-        3,
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+    status, _headers, result = raw_search(
         port,
-        str(root),
+        token,
+        {
+            "query": "nothing should match this empty workspace",
+            "type": "vault",
+            "top_k": 3,
+            "project_root": str(root),
+        },
         timeout=120,
     )
 
+    assert status == 503, result
     assert isinstance(result, dict)
     assert_request_id(result)
-    assert result["results"] == []
-    assert_empty_search_phase_timing(result)
+    assert result["ok"] is False
+    assert result["error"] == "index_unverifiable"
+    assert "results" not in result
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
     assert index_state["source"] == "vault"
@@ -147,12 +156,7 @@ def test_empty_service_search_reports_missing_index(
     }
     assert index_state["requested_target_root"] == str(root)
     assert index_state["target_matches"] is True
-    empty = cast("dict[str, object]", result["empty"])
-    assert isinstance(empty, dict)
-    assert empty["reason"] == "index_missing"
-    remediation = cast("list[object]", empty["remediation"])
-    assert isinstance(remediation, list)
-    assert any("index --type vault" in str(item) for item in remediation)
+    assert "server status" in str(result["remediation"])
 
 
 @pytest.mark.subprocess_gpu
@@ -164,9 +168,13 @@ def test_search_request_id_is_log_correlatable(
     root = tmp_path / "request-id-project"
     (root / ".vault").mkdir(parents=True)
 
-    result = _do_http_call(
+    health = _do_http_call(port, "/health", None, timeout=5)
+    assert isinstance(health, dict), health
+    token = health.get("service_token")
+    assert isinstance(token, str) and token, health
+    status, _headers, result = raw_search(
         port,
-        "/search",
+        token,
         {
             "query": "correlate this search request",
             "type": "code",
@@ -176,10 +184,11 @@ def test_search_request_id_is_log_correlatable(
         timeout=120,
     )
 
+    assert status == 503, result
     assert isinstance(result, dict)
     request_id = assert_request_id(result)
     completed_log = wait_for_search_log_line(port, request_id)
-    assert "service.search event=completed status_code=200" in completed_log
+    assert "service.search event=completed status_code=503" in completed_log
     assert f"request_id={request_id}" in completed_log
     assert "source=code" in completed_log
     assert "search_type=code" in completed_log

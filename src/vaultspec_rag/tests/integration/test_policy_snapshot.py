@@ -51,7 +51,9 @@ class _SnapshotPaths(NamedTuple):
     proceed: Path
 
 
-def _write_snapshot_project(root: Path) -> _SnapshotPaths:
+def _write_snapshot_project(
+    root: Path, *, include_inputs: bool = True
+) -> _SnapshotPaths:
     paths = _SnapshotPaths(
         root / PREPROCESS_CONFIG_FILENAME,
         root / "replacement-policy.toml",
@@ -143,12 +145,13 @@ def _write_snapshot_project(root: Path) -> _SnapshotPaths:
         ),
         encoding="utf-8",
     )
-    paths.source.write_bytes(b"\x00\x01 snapshot-owned binary input")
-    paths.html.write_text(
-        "<html><body><section>worker shaping marker "
-        "<strong>preserved</strong></section></body></html>",
-        encoding="utf-8",
-    )
+    if include_inputs:
+        paths.source.write_bytes(b"\x00\x01 snapshot-owned binary input")
+        paths.html.write_text(
+            "<html><body><section>worker shaping marker "
+            "<strong>preserved</strong></section></body></html>",
+            encoding="utf-8",
+        )
     return paths
 
 
@@ -260,8 +263,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
     from ... import CodebaseIndexer
     from ...store_runtime import VaultStore
 
-    paths = _write_snapshot_project(tmp_path)
     with _snapshot_environment() as html_key:
+        paths = _write_snapshot_project(tmp_path, include_inputs=False)
         store = VaultStore(tmp_path)
         indexer = CodebaseIndexer(
             tmp_path,
@@ -274,6 +277,12 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
                 )
             ),
         )
+        indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
+        )
+        paths = _write_snapshot_project(tmp_path)
         changed_paths = [paths.source, paths.html]
         preflight = indexer.preflight_changed_paths(changed_paths)
         entry_policy = preflight.policy

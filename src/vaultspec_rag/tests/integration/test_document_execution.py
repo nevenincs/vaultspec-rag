@@ -576,7 +576,16 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
         assert metadata is None
         assert store.count_document() == 0
 
-        second = indexer.incremental_index(
+        with pytest.raises(JobError) as raised:
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+        assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+        assert attempts.read_text() == "1"
+        assert read_document_meta(document_metadata_path(tmp_path)) is None
+
+        second = indexer.full_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
