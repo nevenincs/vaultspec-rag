@@ -109,7 +109,7 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
     """An incremental run must not trust carried evidence for a destroyed collection.
 
     External storage destruction (the storage delete verb) drops the code
-    collection but leaves the per-root metadata sidecar and run ledger
+    collection but leaves the canonical per-root run ledger
     behind. An incremental diff against that carried metadata classifies
     every surviving file as unchanged, skips all encoding, and reports
     success over a collection whose points no longer exist anywhere. The
@@ -133,7 +133,7 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         assert published.added > 0
 
         # The storage-delete equivalent: the collection vanishes out-of-band
-        # while the metadata sidecar and per-root run ledger stay behind.
+        # while the canonical per-root run ledger stays behind.
         store.drop_code_table()
 
         indexer.incremental_index(
@@ -146,106 +146,6 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         # mutation-free success while the store holds zero points.
         assert_current_code_state(indexer, store, paths, "meta-stale")
         assert store.count_code() == published.added
-    _assert_code_resources_released()
-
-
-def test_an_unattended_gate_publishes_a_generation_without_emptying_the_served_one(
-    tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
-) -> None:
-    """A gate reached without an operator request must not destroy served data.
-
-    The embed-format and config-drift gates fire on a run the watcher asked
-    for, not one an operator asked for. Dropping the collection there empties
-    it for the whole repopulation, and an interruption in that window leaves a
-    fragment beneath a sidecar describing the whole corpus, which makes every
-    later run reconcile the entire tree. Reconciling instead keeps every
-    published point readable throughout.
-
-    The stale marker is written to the real sidecar, the same class of
-    out-of-band mutation as dropping the table above - real on-disk state, not
-    a substituted function.
-
-    Proven able to fail: restoring ``clean=True`` on the embed-format gate
-    empties the collection and fails the mid-run count assertion below.
-    """
-    import json as _json
-
-    from ..._index_breadth import index_meta_path
-    from ..._source_types import PublicSourceType
-    from ...indexer._code_meta import EMBED_SCHEMA_KEY
-
-    paths = _write_code_files(tmp_path, 24, "unattended-gate")
-
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
-        indexer = CodebaseIndexer(
-            tmp_path,
-            cpu_embedding_model,
-            store,
-            options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
-        )
-        published = indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert published.added > 0
-
-        # Age the embed-format marker so the unattended gate fires on the next
-        # incremental, exactly as it would after a format change shipped.
-        meta_path = index_meta_path(tmp_path, PublicSourceType.CODE)
-        raw = _json.loads(meta_path.read_text(encoding="utf-8"))
-        raw[EMBED_SCHEMA_KEY] = "superseded-regime"
-        meta_path.write_text(_json.dumps(raw), encoding="utf-8")
-
-        # Interrupt the gate's run through the real cooperative-cancel path a
-        # job uses. The end state alone cannot tell the two branches apart: a
-        # destructive rebuild drops and then repopulates, so once it finishes
-        # the count is back where it started. What separates them is the
-        # window, and the window is exactly what production observes.
-        with contextlib.suppress(CancelRequested):
-            indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-                run_control=CancelAfterCheckpoints(40),
-            )
-
-        # The point of the whole change: the gate published a new generation
-        # rather than dropping the served collection, so an interruption leaves
-        # the corpus readable instead of a fragment for the completeness
-        # predicate to chase.
-        assert store.count_code() >= published.added
-
-        # Give the next run real work, so it publishes rather than returning
-        # the unchanged-tree early result. An unchanged incremental never
-        # rewrites the sidecar, which is what made the first two placements of
-        # the assertion below vacuous.
-        paths = _write_code_files(tmp_path, 24, "unattended-gate-republish")
-
-        indexer.incremental_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert_current_code_state(indexer, store, paths, "unattended-gate-republish")
-        # Asserted after a run that actually republishes the sidecar. Placed
-        # after the cancelled run above it proved nothing: a cancelled run
-        # never rewrites the sidecar, so the marker could not have appeared
-        # there whether the mitigation existed or not.
-        #
-        # The gate reaches the non-destructive publication path, not the
-        # interim compromise that left superseded points searchable beside the
-        # re-encoded ones.
-        assert "__code_superseded_regime__" not in indexer._read_meta_raw()
-
-        # An operator asking for a rebuild still gets one; only the unattended
-        # path is barred from destroying data.
-        rebuilt = indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert rebuilt.added > 0
-        assert store.count_code() == rebuilt.added
     _assert_code_resources_released()
 
 

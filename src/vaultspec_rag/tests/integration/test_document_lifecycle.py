@@ -12,13 +12,8 @@ from ..._store_models import DocumentChunk, DocumentPayload
 from ...api import clean
 from ...config._settings import get_config
 from ...indexer import CodebaseIndexer
-from ...indexer._document_meta import (
-    DocumentFileMetadata,
-    DocumentIndexMetadata,
-    document_metadata_path,
-    write_document_meta,
-)
 from ...indexer._preprocess_cache import preprocess_cache_dir
+from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 from ...registry import get_registry
 from ...store_runtime import VaultStore
@@ -94,24 +89,6 @@ def test_code_job_and_cleanup_preserve_document_state(
     cache_sentinel = cache_root / "document-cache-sentinel.json"
     cache_sentinel.write_bytes(b'{"document":"preserved"}')
     chunk = _document_chunk(embedding_model.dimension)
-    metadata_path = document_metadata_path(tmp_path)
-    write_document_meta(
-        metadata_path,
-        DocumentIndexMetadata(
-            membership_fingerprint="membership-v1",
-            content_fingerprint="content-v1",
-            policy_snapshot="policy-v1",
-            files=(
-                DocumentFileMetadata(
-                    document.name,
-                    chunk.payload.content_fingerprint,
-                    (chunk.id,),
-                ),
-            ),
-            generation_id="document-generation-v1",
-        ),
-    )
-    metadata_before = metadata_path.read_bytes()
     cache_before = cache_sentinel.read_bytes()
 
     store = VaultStore(tmp_path, embedding_dim=embedding_model.dimension)
@@ -122,21 +99,20 @@ def test_code_job_and_cleanup_preserve_document_state(
         result = indexer.full_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
+            authority=RunAuthority.REBUILD,
         )
         assert result.files == 1
         assert result.total > 0
         assert not sentinel.exists()
         assert store.get_all_document_content_ids() == ids_before
-        assert metadata_path.read_bytes() == metadata_before
         assert cache_sentinel.read_bytes() == cache_before
     finally:
         store.close()
 
-    assert clean(tmp_path, clean_type="code", registry=get_registry()) == ["codebase"]
+    assert clean(tmp_path, clean_type="code", registry=get_registry()) == ["code"]
     reopened = VaultStore(tmp_path, embedding_dim=embedding_model.dimension)
     try:
         assert reopened.get_all_document_content_ids() == ids_before
-        assert metadata_path.read_bytes() == metadata_before
         assert cache_sentinel.read_bytes() == cache_before
         assert not sentinel.exists()
     finally:

@@ -8,16 +8,250 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
+from starlette.requests import Request
 
 from ... import jobs as _jobs
+from ...indexer._run_ledger_models import RunAuthority
+from ...job_control import RunControlToken
+from ...job_dispatch import (
+    _admit_attempt_mode,
+    _AttemptDispatch,
+    _run_indexing_attempt,
+)
+from ...job_manager.manager import JobManager
+from ...job_manager.models import JobAttemptContext
+from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...server import ServerRouteRuntime, create_http_app
+from ...server._routes import InvalidJobRequestError, validated_index_request
 from ...service import ServiceRegistry
+from ...service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
 
-    from ...job_manager.manager import JobManager
+
+def _job_request() -> Request:
+    return Request(
+        cast(
+            "Any",
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/jobs",
+                "headers": [],
+            },
+        )
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mode", "authority"),
+    [
+        (JobMode.INCREMENTAL, RunAuthority.PUBLICATION),
+        (JobMode.INCREMENTAL, RunAuthority.REBUILD),
+        (JobMode.REBUILD, RunAuthority.REBUILD),
+    ],
+)
+async def test_generic_service_admission_preserves_closed_authority(
+    tmp_path: Path,
+    mode: JobMode,
+    authority: RunAuthority,
+) -> None:
+    """The generic HTTP adapter must retain the exact admitted enum member."""
+    (tmp_path / ".vault").mkdir()
+    spec, _initiator, _paused, _key, _admission = await validated_index_request(
+        _job_request(),
+        {
+            "operation": "index",
+            "source": "vault",
+            "project_root": str(tmp_path),
+            "mode": mode.value,
+            "authority": authority.value,
+        },
+    )
+
+    assert spec.mode is mode
+    assert spec.authority is authority
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("case", "mode", "raw_authority"),
+    [
+        ("missing", JobMode.INCREMENTAL, None),
+        ("empty", JobMode.INCREMENTAL, ""),
+        ("non-text", JobMode.INCREMENTAL, 1),
+        ("unknown", JobMode.INCREMENTAL, "migration"),
+        ("publication-rebuild", JobMode.REBUILD, "publication"),
+        ("audit-incremental", JobMode.INCREMENTAL, "audit_verification"),
+    ],
+)
+async def test_generic_service_admission_rejects_invalid_authority(
+    tmp_path: Path,
+    case: str,
+    mode: JobMode,
+    raw_authority: object,
+) -> None:
+    """Missing, open-vocabulary, and forbidden authority shapes fail closed."""
+    del case
+    (tmp_path / ".vault").mkdir()
+    payload: dict[str, object] = {
+        "operation": "index",
+        "source": "vault",
+        "project_root": str(tmp_path),
+        "mode": mode.value,
+    }
+    if raw_authority is not None:
+        payload["authority"] = raw_authority
+
+    with pytest.raises(InvalidJobRequestError) as raised:
+        await validated_index_request(_job_request(), payload)
+
+    assert raised.value.code == "invalid_job_spec"
+
+
+def _attempt_contract(
+    *,
+    tmp_path: Path,
+    mode: JobMode,
+    persisted_authority: RunAuthority,
+    context_authority: RunAuthority,
+) -> tuple[JobAttemptContext, _AttemptDispatch, ServiceRegistry]:
+    """Build one real manager-owned attempt and its persisted dispatch contract."""
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=2,
+        state_path=None,
+    )
+    created = manager.create(
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.DOCUMENT,
+            project_root=str(tmp_path),
+            mode=mode,
+            authority=persisted_authority,
+        ),
+        JobInitiator("test", "authority-dispatch-guard", str(tmp_path)),
+    )
+    assert created.job is not None
+    task = asyncio.current_task()
+    assert task is not None
+    context = JobAttemptContext(
+        manager,
+        created.job.id,
+        1,
+        task,
+        RunControlToken(),
+        context_authority,
+    )
+    registry = ServiceRegistry()
+    dispatch = _AttemptDispatch(
+        source=JobSource.DOCUMENT,
+        manager=manager,
+        job_id=created.job.id,
+        root=tmp_path,
+        mode=mode,
+        authority=persisted_authority,
+        registry=registry,
+    )
+    return context, dispatch, registry
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mode", "persisted_authority", "context_authority", "message"),
+    [
+        (
+            JobMode.REBUILD,
+            RunAuthority.PUBLICATION,
+            RunAuthority.PUBLICATION,
+            "publication authority cannot run a full index attempt",
+        ),
+        (
+            JobMode.INCREMENTAL,
+            RunAuthority.AUDIT_VERIFICATION,
+            RunAuthority.AUDIT_VERIFICATION,
+            "audit-verification authority cannot run a publication index attempt",
+        ),
+        (
+            JobMode.INCREMENTAL,
+            RunAuthority.REBUILD,
+            RunAuthority.PUBLICATION,
+            "attempt authority does not match its persisted dispatch authority",
+        ),
+    ],
+)
+async def test_attempt_dispatch_refuses_unsupported_authority_before_execution(
+    tmp_path: Path,
+    mode: JobMode,
+    persisted_authority: RunAuthority,
+    context_authority: RunAuthority,
+    message: str,
+) -> None:
+    """The indexer boundary must reject widening, audit, and stale authority."""
+    context, dispatch, registry = _attempt_contract(
+        tmp_path=tmp_path,
+        mode=mode,
+        persisted_authority=persisted_authority,
+        context_authority=context_authority,
+    )
+    try:
+        with pytest.raises(RuntimeError, match=message):
+            _admit_attempt_mode(context, dispatch)
+    finally:
+        registry.close_all()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mode", "authority", "expected_clean"),
+    [
+        (JobMode.INCREMENTAL, RunAuthority.PUBLICATION, False),
+        (JobMode.INCREMENTAL, RunAuthority.REBUILD, False),
+        (JobMode.REBUILD, RunAuthority.REBUILD, True),
+    ],
+)
+async def test_admitted_authority_preserves_requested_dispatch_mode(
+    tmp_path: Path,
+    mode: JobMode,
+    authority: RunAuthority,
+    expected_clean: bool,
+) -> None:
+    """Persisted mode remains the cost selector after authority admission."""
+    context, dispatch, registry = _attempt_contract(
+        tmp_path=tmp_path,
+        mode=mode,
+        persisted_authority=authority,
+        context_authority=authority,
+    )
+    try:
+        assert _admit_attempt_mode(context, dispatch) is expected_clean
+    finally:
+        registry.close_all()
+
+
+@pytest.mark.unit
+async def test_attempt_runner_checks_authority_before_admission(
+    tmp_path: Path,
+) -> None:
+    """The concrete runner checks authority before cancellation or preflight."""
+    context, dispatch, registry = _attempt_contract(
+        tmp_path=tmp_path,
+        mode=JobMode.REBUILD,
+        persisted_authority=RunAuthority.PUBLICATION,
+        context_authority=RunAuthority.PUBLICATION,
+    )
+    context.control.request_cancel()
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="publication authority cannot run a full index attempt",
+        ):
+            _run_indexing_attempt(context, dispatch=dispatch)
+    finally:
+        registry.close_all()
 
 
 def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
@@ -30,6 +264,7 @@ def _make_vault_roots(tmp_path: Path) -> tuple[Path, Path]:
 
 def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
     """Create one real large terminal record before the ASGI overlap probe."""
+    from ...indexer._run_ledger_models import RunAuthority
     from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 
     entry = manager.create(
@@ -38,6 +273,7 @@ def _seed_persistence_backpressure(manager: JobManager, root: Path) -> None:
             source=JobSource.VAULT,
             project_root=str(root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         JobInitiator(
             kind="test",
@@ -102,6 +338,39 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
             transport=transport,
             base_url="http://testserver",
         ) as client:
+            missing_authority = await client.post(
+                "/jobs",
+                headers=headers,
+                json={
+                    "operation": "index",
+                    "source": "vault",
+                    "project_root": str(target_root),
+                    "mode": "incremental",
+                    "start_paused": True,
+                },
+            )
+            assert missing_authority.status_code == 400
+            assert missing_authority.json()["code"] == "invalid_job_spec"
+
+            for mode, authority in (
+                ("rebuild", "publication"),
+                ("incremental", "audit_verification"),
+            ):
+                unsupported_authority = await client.post(
+                    "/jobs",
+                    headers=headers,
+                    json={
+                        "operation": "index",
+                        "source": "vault",
+                        "project_root": str(target_root),
+                        "mode": mode,
+                        "authority": authority,
+                        "start_paused": True,
+                    },
+                )
+                assert unsupported_authority.status_code == 400
+                assert unsupported_authority.json()["code"] == "invalid_job_spec"
+
             created = await _assert_mutation_overlaps_auth_probe(
                 client,
                 client.post(
@@ -112,12 +381,15 @@ async def test_job_mutations_keep_real_asgi_loop_responsive(
                         "source": "vault",
                         "project_root": str(target_root),
                         "mode": "incremental",
+                        "authority": "publication",
                         "start_paused": True,
                     },
                 ),
             )
             assert created.status_code == 202, created.text
             job = cast("dict[str, object]", created.json()["job"])
+            spec = cast("dict[str, object]", job["spec"])
+            assert spec["authority"] == "publication"
             job_id = str(job["id"])
 
             cancelled = await _assert_mutation_overlaps_auth_probe(

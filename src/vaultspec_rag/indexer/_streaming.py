@@ -27,6 +27,7 @@ from ._streaming_types import (
     DocumentSliceRequest,
     ListConvertible,
     SparseVectorLike,
+    StoreMutationLifecycle,
     VaultStreamRequest,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "_stream_encode_and_upsert_vault",
     "encode_and_upsert_code_slice",
     "encode_and_upsert_document_slice",
+    "execute_store_mutation",
     "report_forward_entry",
     "report_forward_exit",
 ]
@@ -315,13 +317,49 @@ def _encode_slice_vector_fields(request: _VectorEncodeRequest) -> None:
 class StoreWriteTask:
     """One ordered storage hand-off from the encoding thread.
 
-    ``write`` performs the synchronous store mutation plus any
-    storage-confirmed accounting; ``release`` drops the slice's vector-bearing
-    fields and always runs once the task settles, successful or not.
+    ``write`` performs only the external mutation. The optional lifecycle is
+    applied around it by the writer, so intent is durable before the store is
+    touched and acknowledgement is durable before vector fields are released.
     """
 
     write: Callable[[], None]
     release: Callable[[], None]
+    mutation_lifecycle: StoreMutationLifecycle | None = None
+    after_acknowledgement: Callable[[], None] | None = None
+
+
+def execute_store_mutation(
+    write: Callable[[], None],
+    lifecycle: StoreMutationLifecycle | None,
+    *,
+    after_acknowledgement: Callable[[], None] | None = None,
+) -> None:
+    """Bracket one store call with its durable receipt transitions.
+
+    A prepare reporting nothing left to apply skips the store call: the bytes
+    are already there and writing them again would be the collection-wide work
+    this path exists to avoid. The acknowledgement still runs, and must. It is
+    what records the storage-confirmed unit and the file state the published
+    proof is built from, and the state that gets here is precisely the one
+    where those may be missing - a mutation applied by an attempt that died
+    before confirming it. Skipping the acknowledgement there would drop the
+    file from the evidence and publish a breadth short of what storage holds.
+    """
+    if lifecycle is not None:
+        should_apply = lifecycle.prepare()
+        if not isinstance(should_apply, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - callback boundary
+            raise TypeError("mutation lifecycle prepare must return a bool")
+        if not should_apply:
+            if after_acknowledgement is not None:
+                after_acknowledgement()
+            return
+    write()
+    if lifecycle is not None:
+        lifecycle.mark_applied()
+        if lifecycle.confirm_when_stored:
+            lifecycle.confirm()
+    if after_acknowledgement is not None:
+        after_acknowledgement()
 
 
 class UnsettledStoreWriterError(RuntimeError):
@@ -379,7 +417,11 @@ class _SliceWriter:
                 return
             try:
                 if self._failure is None:
-                    task.write()
+                    execute_store_mutation(
+                        task.write,
+                        task.mutation_lifecycle,
+                        after_acknowledgement=task.after_acknowledgement,
+                    )
             except BaseException as exc:
                 self._failure = exc
             finally:
@@ -509,6 +551,8 @@ class _VaultSliceRequest:
     before_forward: Callable[[str], None] | None = None
     after_forward: Callable[[str], None] | None = None
     on_encode_bucket: Callable[[str, EncodeBucketProgress], None] | None = None
+    mutation_lifecycle: StoreMutationLifecycle | None = None
+    after_acknowledgement: Callable[[], None] | None = None
 
 
 def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
@@ -552,10 +596,15 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
         )
         request.run_control.checkpoint()
         if request.writer is None:
-            request.store.upsert_document_chunks(
-                request.slice_chunks,
-                write_policy=None,
-                wait=request.ingest_wait,
+            execute_store_mutation(
+                partial(
+                    request.store.upsert_document_chunks,
+                    request.slice_chunks,
+                    write_policy=None,
+                    wait=request.ingest_wait,
+                ),
+                request.mutation_lifecycle,
+                after_acknowledgement=request.after_acknowledgement,
             )
         else:
             request.writer.submit(
@@ -567,6 +616,8 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
                         wait=request.ingest_wait,
                     ),
                     release=partial(_release_vector_fields, request.slice_chunks),
+                    mutation_lifecycle=request.mutation_lifecycle,
+                    after_acknowledgement=request.after_acknowledgement,
                 ),
                 run_control=request.run_control,
             )
@@ -752,6 +803,23 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                 ):
                     slice_chunks = sorted_chunks[i : i + request.slice_size]
                     is_last = i + request.slice_size >= len(sorted_chunks)
+                    lifecycle = (
+                        request.checkpoint.chunk_lifecycle(
+                            slice_chunks,
+                            request.content_identities or {},
+                        )
+                        if request.checkpoint is not None
+                        else None
+                    )
+                    after_acknowledgement = (
+                        partial(
+                            request.checkpoint.record_confirmed_chunks,
+                            slice_chunks,
+                            request.content_identities or {},
+                        )
+                        if request.checkpoint is not None
+                        else None
+                    )
                     _encode_and_upsert_vault_slice(
                         _VaultSliceRequest(
                             slice_chunks=slice_chunks,
@@ -785,6 +853,8 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
                                 slice_index,
                                 len(slice_chunks),
                             ),
+                            mutation_lifecycle=lifecycle,
+                            after_acknowledgement=after_acknowledgement,
                         )
                     )
                     probe.checkpoint(f"slice-{i}-after-empty-cache")
@@ -826,6 +896,14 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
 
     if not request.chunks:
         return
+    if (
+        request.mutation_lifecycle is not None
+        and not request.mutation_lifecycle.confirm_when_stored
+    ):
+        raise ValueError(
+            "document slice mutations are synchronous and must confirm after "
+            "acknowledgement"
+        )
     handed_off = False
     try:
         request.run_control.checkpoint()
@@ -844,12 +922,15 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
         )
         request.run_control.checkpoint()
         if request.writer is None:
-            request.store.upsert_document_content_chunks(
-                request.chunks,
-                write_policy=request.write_policy,
+            execute_store_mutation(
+                partial(
+                    request.store.upsert_document_content_chunks,
+                    request.chunks,
+                    write_policy=request.write_policy,
+                ),
+                request.mutation_lifecycle,
+                after_acknowledgement=request.on_storage_confirmed,
             )
-            if request.on_storage_confirmed is not None:
-                request.on_storage_confirmed()
         else:
             request.writer.submit(
                 StoreWriteTask(
@@ -858,9 +939,10 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
                         request.chunks,
                         store=request.store,
                         write_policy=request.write_policy,
-                        on_storage_confirmed=request.on_storage_confirmed,
                     ),
                     release=partial(_release_vector_fields, request.chunks),
+                    mutation_lifecycle=request.mutation_lifecycle,
+                    after_acknowledgement=request.on_storage_confirmed,
                 ),
                 run_control=request.run_control,
             )
@@ -877,15 +959,12 @@ def _write_document_slice(
     *,
     store: VaultStore,
     write_policy: StoreWritePolicy | None,
-    on_storage_confirmed: Callable[[], None] | None,
 ) -> None:
-    """Publish one encoded document slice and confirm it, in writer order."""
+    """Publish one encoded document slice in writer order."""
     store.upsert_document_content_chunks(
         slice_chunks,
         write_policy=write_policy,
     )
-    if on_storage_confirmed is not None:
-        on_storage_confirmed()
 
 
 def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
@@ -923,6 +1002,13 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
 
     if not request.chunks:
         return
+    if (
+        request.mutation_lifecycle is not None
+        and request.mutation_lifecycle.confirm_when_stored is not request.ingest_wait
+    ):
+        raise ValueError(
+            "code slice mutation confirmation must match its ingest_wait barrier"
+        )
     try:
         request.run_control.checkpoint()
         _encode_slice_vector_fields(
@@ -941,14 +1027,17 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
             )
         )
         request.run_control.checkpoint()
-        request.store.upsert_code_chunks(
-            request.chunks,
-            write_policy=request.write_policy,
-            wait=request.ingest_wait,
-            collection=request.collection,
+        execute_store_mutation(
+            partial(
+                request.store.upsert_code_chunks,
+                request.chunks,
+                write_policy=request.write_policy,
+                wait=request.ingest_wait,
+                collection=request.collection,
+            ),
+            request.mutation_lifecycle,
+            after_acknowledgement=request.on_storage_confirmed,
         )
-        if request.on_storage_confirmed is not None:
-            request.on_storage_confirmed()
     finally:
         # A successful synchronous upsert is the durable boundary. Failed or
         # cancelled slices also discard partial vector fields so retained file

@@ -1,9 +1,10 @@
 """Unit tests for rag.indexer - extraction and doc preparation (no GPU)."""
 
+from __future__ import annotations
+
 import hashlib
+import sqlite3
 import tracemalloc
-from collections.abc import Generator
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -19,12 +20,14 @@ from ..indexer._chunking import (
     _is_binary,
 )
 from ..indexer._vault_prep import _extract_feature, _extract_title
-from .corpus import CorpusManifest
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
     from ..embeddings import EmbeddingModel
-    from ..indexer import CodebaseIndexer
     from ..store_runtime import VaultStore
+    from .corpus import CorpusManifest
 
 pytestmark = [pytest.mark.unit]
 
@@ -265,82 +268,9 @@ class TestChunkWithSplitterSearchOffset:
 class TestIncrementalIndexMetadata:
     """CodebaseIndexer metadata uses blake2b hex strings, not floats."""
 
-    def test_meta_values_are_blake2b_hex(self, tmp_path: Path):
-        import json
-
-        from ..indexer import CodebaseIndexer
-
-        # Write a source file.
-        src = tmp_path / "mod.py"
-        src.write_text("x = 1\n", encoding="utf-8")
-
-        # Construct an indexer just enough to test _write_meta / _load_meta.
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
-
-        with open(src, "rb") as f:
-            content_hash = hashlib.file_digest(f, "blake2b").hexdigest()
-        meta = {"mod.py": content_hash}
-        indexer._write_meta(meta, policy=indexer.resolve_policy_snapshot())
-
-        # Reload and verify types. The reserved embed-format marker is
-        # stamped on disk but stripped from the loaded mapping, so every
-        # loaded value is a hash.
-        raw = cast(
-            "dict[str, object]",
-            json.loads(indexer._meta_path.read_text(encoding="utf-8")),
-        )
-        assert raw.get("__code_embed_schema__")
-        loaded = indexer._load_meta()
-        assert "__code_embed_schema__" not in loaded
-        for key, val in loaded.items():
-            assert isinstance(key, str)
-            assert isinstance(val, str), (
-                f"Expected str hash, got {type(val).__name__}: {val}"
-            )
-            # Must be a valid hex string (128 chars for blake2b).
-            assert len(val) == 128
-            int(val, 16)  # raises ValueError if not valid hex
-
-        # Also verify via raw JSON - no floats.
-        raw = cast(
-            "dict[str, object]",
-            json.loads(indexer._meta_path.read_text(encoding="utf-8")),
-        )
-        for val in raw.values():
-            assert not isinstance(val, float), (
-                f"Metadata value is float, expected hex string: {val}"
-            )
-
 
 class TestIncrementalIndexUnhashedFiles:
     """Files that fail hashing must not appear in saved metadata."""
-
-    def test_metadata_excludes_unhashed_files(self, tmp_path: Path):
-        """current_hashes dict (used for metadata) must not include
-        files that failed read_bytes, preventing KeyError on save."""
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
-
-        # Simulate: two files scanned, but one failed hashing.
-        # current_files would have both, but current_hashes only has ok.py.
-        current_hashes = {"ok.py": "a" * 64}  # bad.py absent
-
-        # Writing current_hashes directly (the fix) must not raise.
-        indexer._write_meta(
-            current_hashes,
-            policy=indexer.resolve_policy_snapshot(),
-        )
-
-        loaded = indexer._load_meta()
-        assert "ok.py" in loaded
-        assert "bad.py" not in loaded
 
 
 class TestCodeChunkMetadataFields:
@@ -495,48 +425,6 @@ class TestGitignoreNegationPatterns:
 class TestHashingPermissionError:
     """read_bytes() in hashing loops must handle permission errors."""
 
-    def test_full_index_meta_skips_unreadable_file(self, tmp_path: Path):
-        """Metadata hashing in full_index skips files that raise OSError."""
-
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
-
-        # Create a readable file and write meta with its hash
-        good = tmp_path / "good.py"
-        good.write_text("x = 1\n", encoding="utf-8")
-        with open(good, "rb") as f:
-            good_hash = hashlib.file_digest(f, "blake2b").hexdigest()
-
-        meta = {"good.py": good_hash}
-        indexer._write_meta(meta, policy=indexer.resolve_policy_snapshot())
-
-        # Verify the meta was written correctly
-        loaded = indexer._load_meta()
-        assert loaded["good.py"] == good_hash
-        assert isinstance(loaded["good.py"], str)
-
-    def test_write_load_meta_roundtrip(self, tmp_path: Path):
-        """_write_meta and _load_meta correctly round-trip blake2b hashes."""
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = tmp_path / "sub" / "code_index_meta.json"
-
-        hashes = {
-            "foo.py": "a" * 64,
-            "bar/baz.rs": "b" * 64,
-        }
-        indexer._write_meta(hashes, policy=indexer.resolve_policy_snapshot())
-        # The loaded mapping is exactly the hashes: the embed-format
-        # marker is stamped on disk but never surfaces in id math.
-        assert indexer._load_meta() == hashes
-
 
 class TestMergeSmallCrossType:
     """_merge_small must produce node_type=None when merging
@@ -605,60 +493,6 @@ class TestForceSplitNonAscii:
 
 class TestCodebaseMetaRoundTrip:
     """_write_meta and _load_meta correctly persist hash metadata."""
-
-    def test_write_meta_persists_hashes_to_disk(self, tmp_path: Path) -> None:
-        """_write_meta writes a JSON file that _load_meta can read back."""
-        import json
-
-        from ..indexer import CodebaseIndexer
-        from ..indexer._code_meta import CONTENT_EPOCH_KEY, MEMBERSHIP_EPOCH_KEY
-        from ..indexer._content_policy import ContentKind
-
-        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = meta_path
-
-        hashes = {"src/foo.py": "abc123", "src/bar.py": "def456"}
-        policy = indexer.resolve_policy_snapshot()
-        indexer._write_meta(hashes, policy=policy)
-
-        assert meta_path.exists()
-        on_disk = cast(
-            "dict[str, object]", json.loads(meta_path.read_text(encoding="utf-8"))
-        )
-        assert on_disk.pop("__code_embed_schema__") == "2"
-        fingerprints = policy.fingerprints_for(ContentKind.CODE)
-        assert on_disk.pop(MEMBERSHIP_EPOCH_KEY) == fingerprints.membership
-        assert on_disk.pop(CONTENT_EPOCH_KEY) == fingerprints.content
-        assert on_disk == hashes
-
-    def test_load_meta_returns_written_hashes(self, tmp_path: Path) -> None:
-        """_load_meta round-trips what _write_meta wrote."""
-        from ..indexer import CodebaseIndexer
-
-        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = meta_path
-
-        hashes = {"src/foo.py": "aaa", "lib/baz.rs": "bbb"}
-        indexer._write_meta(hashes, policy=indexer.resolve_policy_snapshot())
-        assert indexer._load_meta() == hashes
-
-    def test_load_meta_returns_empty_when_missing(self, tmp_path: Path) -> None:
-        """_load_meta returns {} when no meta file exists."""
-        from ..indexer import CodebaseIndexer
-
-        meta_path: Path = tmp_path / ".rag" / "codebase_meta.json"
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path = meta_path
-
-        assert indexer._load_meta() == {}
 
 
 class TestExtractNameNonAscii:
@@ -978,319 +812,39 @@ class TestVaultragignore:
         assert "vendor/lib.py" not in rel
 
 
-class TestPublishedEvidenceRequiresStoredBreadth:
-    """Carried metadata is only trusted when the store still backs it.
+class TestCanonicalPublishedBreadth:
+    def test_current_ledger_without_proof_refuses(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from .._store_writes import workspace_volume_path
+        from ..indexer._publication_proof import ProofMissingError
+        from ..indexer._run_ledger_models import index_run_ledger_path
+        from ..indexer._run_ledger_runtime import RunLedger
 
-    Destruction is rarely total: a clean rebuild drops the code collection and
-    repopulates it incrementally, so an interrupted one leaves a non-empty
-    fragment that describes itself as whole. These tests pin the quantitative
-    half of the check - a present-but-short collection must be rejected, not
-    just an absent one - because an existence-only answer would let the
-    incremental diff conclude "nothing changed" and republish success over the
-    fragment, which is how a truncated index becomes permanent.
+        ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        RunLedger(ledger_path)
 
-    Each test here was proven able to fail, by mutating the one branch of
-    ``published_evidence_lost`` it pins and observing the named assertion -
-    not a setup or import error - fail, then restoring and observing it pass:
+        with pytest.raises(ProofMissingError, match="explicit rebuild"):
+            acquire_code_breadth_snapshot(tmp_path)
 
-    - short-collection: relaxing the comparison to ``live >= 0`` (the
-      pre-fix existence-only behaviour) fails on ``is True``.
-    - no-published-count: returning ``True`` for an absent count, i.e.
-      reading "cannot tell" as loss, fails on ``is False``.
-    - absent-collection: returning ``False`` when the collection does not
-      exist fails on ``is True``.
-    - intact-collection: tightening the comparison to ``live > claimed``, so
-      equality reads as a deficit, fails on ``is False``.
-    - empty-sidecar: returning ``True`` for absent carried file evidence
-      fails on ``is False``.
-
-    Each asserts the branch, not a log message: the shortfall and absent
-    cases share one return value, so a message matcher would pass on
-    whichever branch fired. Drive them through a real ``VaultStore`` or the
-    proof is worthless - a stubbed count proves nothing about the store the
-    predicate actually questions.
-    """
-
-    @staticmethod
-    def _indexer(tmp_path: Path, store: "VaultStore") -> "CodebaseIndexer":
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(tmp_path, cast("EmbeddingModel", None), store)
-        indexer._meta_path = tmp_path / "data" / "code_index_meta.json"
-        return indexer
-
-    @staticmethod
-    def _write_sidecar(
-        indexer: "CodebaseIndexer",
-        *,
-        files: dict[str, str],
-        published_points: int | None,
-    ) -> None:
-        import json
-
-        from .._index_breadth import PUBLISHED_POINTS_KEY
-        from ..indexer._code_meta import CODE_EMBED_SCHEMA, EMBED_SCHEMA_KEY
-
-        raw: dict[str, str] = {EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA, **files}
-        if published_points is not None:
-            raw[PUBLISHED_POINTS_KEY] = str(published_points)
-        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        indexer._meta_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
-
-    @staticmethod
-    def _store_chunks(store: "VaultStore", count: int) -> None:
-        """Upsert ``count`` real code points so the live count is non-zero."""
-        from .._store_models import CodeChunk
-        from ..store_schema import effective_dense_dim
-
-        dimension = effective_dense_dim()
-        chunks = [
-            CodeChunk(
-                id=f"src/mod.py:{ordinal}",
-                path="src/mod.py",
-                language="python",
-                content=f"x = {ordinal}\n",
-                line_start=ordinal,
-                line_end=ordinal,
-                vector=[0.0] * (dimension - 1) + [1.0],
-            )
-            for ordinal in range(count)
-        ]
-        store.upsert_code_chunks(chunks, write_policy=None)
-
-    def test_short_collection_is_rejected_though_it_exists(
-        self, tmp_path: Path
-    ) -> None:
-        """A present collection holding fewer points than published is lost.
-
-        This is the assertion that distinguishes the quantitative check from an
-        existence check: the collection exists and is non-empty, so an
-        existence-only guard returns False here and the truncation survives.
-        """
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            indexer = self._indexer(tmp_path, store)
-            self._store_chunks(store, 2)
-            self._write_sidecar(
-                indexer,
-                files={"src/mod.py": "a" * 128},
-                published_points=64,
-            )
-
-            assert store.code_collection_exists()
-            assert store.count_code() == 2
-            assert indexer._lifecycle.published_evidence_lost() is True
-        finally:
-            store.close()
-
-    def test_intact_collection_is_trusted(self, tmp_path: Path) -> None:
-        """A collection holding everything it published is not escalated."""
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            indexer = self._indexer(tmp_path, store)
-            self._store_chunks(store, 3)
-            self._write_sidecar(
-                indexer,
-                files={"src/mod.py": "a" * 128},
-                published_points=3,
-            )
-
-            assert indexer._lifecycle.published_evidence_lost() is False
-        finally:
-            store.close()
-
-    def test_sidecar_without_a_published_count_is_not_a_shortfall(
-        self, tmp_path: Path
-    ) -> None:
-        """An older sidecar claims no breadth, so ignorance must not escalate.
-
-        Escalating here would rebuild every root written before the count was
-        recorded, so the absent key has to read as "cannot tell" - over a
-        collection that is actually holding the content those files produced.
-        """
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            indexer = self._indexer(tmp_path, store)
-            self._store_chunks(store, 2)
-            self._write_sidecar(
-                indexer,
-                files={"src/mod.py": "a" * 128},
-                published_points=None,
-            )
-
-            assert indexer._lifecycle.published_evidence_lost() is False
-        finally:
-            store.close()
-
-    def test_an_empty_collection_under_named_files_is_lost_without_a_count(
-        self, tmp_path: Path
-    ) -> None:
-        """No count key cannot excuse a collection holding nothing at all.
-
-        Only files that produced content reach the sidecar - a source with
-        nothing to index is recorded as a rejection, not as an indexed path -
-        so a named file always stands for points that must be there. An empty
-        collection under one is loss, and the absent count is ignorance about
-        how much, never about whether.
-        """
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            indexer = self._indexer(tmp_path, store)
-            self._write_sidecar(
-                indexer,
-                files={"src/mod.py": "a" * 128},
-                published_points=None,
-            )
-
-            assert store.code_collection_exists()
-            assert store.count_code() == 0
-            # Catches the empty-collection branch being dropped: the surviving
-            # path returns False on an absent count and the root stays latched,
-            # diffing clean against a sidecar nothing backs.
-            assert indexer._lifecycle.published_evidence_lost() is True
-        finally:
-            store.close()
-
-    def test_absent_collection_is_still_rejected(self, tmp_path: Path) -> None:
-        """The total-destruction case the check already covered must survive."""
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            indexer = self._indexer(tmp_path, store)
-            self._write_sidecar(
-                indexer,
-                files={"src/mod.py": "a" * 128},
-                published_points=64,
-            )
-
-            assert not store.code_collection_exists()
-            assert indexer._lifecycle.published_evidence_lost() is True
-        finally:
-            store.close()
-
-    def test_empty_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
-        """With no carried file evidence there is nothing to be lost."""
-        from ..store_runtime import VaultStore
-
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_code_table()
-            indexer = self._indexer(tmp_path, store)
-            self._write_sidecar(indexer, files={}, published_points=64)
-
-            assert indexer._lifecycle.published_evidence_lost() is False
-        finally:
-            store.close()
-
-
-class TestPublishedFileBreadth:
-    """The breadth comparison a point count structurally cannot express.
-
-    A publication that covers a fraction of the files its own sidecar names
-    still stamps a self-consistent point count, because the figure it stamps is
-    the fragment's own. Only the file figures disagree.
-    """
-
-    @staticmethod
-    def _write_sidecar(root: Path, named: int, covered: str | None) -> None:
-        """Write a sidecar naming *named* files and claiming *covered* coverage."""
-        import json as _json
-
-        from .._index_breadth import PUBLISHED_FILES_KEY, index_meta_path
-        from .._source_types import PublicSourceType
-
-        reserved: dict[str, str] = {}
-        if covered is not None:
-            reserved[PUBLISHED_FILES_KEY] = covered
-        entries = {f"src/mod_{index}.py": f"hash{index}" for index in range(named)}
-        path = index_meta_path(root, PublicSourceType.CODE)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_json.dumps({**reserved, **entries}), encoding="utf-8")
-
-    def test_publication_covering_fewer_files_than_it_names_is_a_shortfall(
-        self, tmp_path: Path
-    ) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=442, covered="27")
-        shortfall = code_file_breadth_shortfall(tmp_path)
-        # Mutation this catches: returning None whenever the point counts agree,
-        # which is exactly the state a republished fragment leaves behind.
-        assert shortfall is not None
-        assert shortfall.named == 442
-        assert shortfall.covered == 27
-        assert shortfall.missing == 415
-
-    def test_full_coverage_is_not_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=12, covered="12")
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_sidecar_without_a_coverage_claim_is_never_a_shortfall(
-        self, tmp_path: Path
-    ) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        # A sidecar written before the key existed cannot be compared against,
-        # and must read as "cannot tell" rather than total loss.
-        self._write_sidecar(tmp_path, named=12, covered=None)
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_unusable_coverage_claim_is_never_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=12, covered="not-a-number")
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_absent_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-
-class TestCodeSidecarResolution:
-    """Where the constructor publishes, against where the readers look.
-
-    Every other test here rebinds the sidecar path onto the instance, so none
-    of them observes what the constructor resolved. A path resolved to the
-    other domain's filename still type-checks and still round-trips through
-    the writer that produced it; only an independent reader disagrees.
-    """
-
-    def test_the_indexer_publishes_where_the_code_breadth_reader_looks(
-        self, tmp_path: Path
-    ) -> None:
-        import json
-
-        from .._index_breadth import PUBLISHED_POINTS_KEY, read_reserved_count
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
-        )
-        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        indexer._meta_path.write_text(
-            json.dumps({PUBLISHED_POINTS_KEY: "91"}), encoding="utf-8"
+    def test_old_ledger_refuses_without_mutation(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from .._store_writes import workspace_volume_path
+        from ..indexer._run_ledger_models import (
+            RunLedgerRebuildRequiredError,
+            index_run_ledger_path,
         )
 
-        # Mutation this catches: resolving the constructor's sidecar under the
-        # vault filename, which leaves every code-breadth read consulting a
-        # file the code index never writes.
-        assert read_reserved_count(tmp_path, PUBLISHED_POINTS_KEY) == 91
+        ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(ledger_path) as connection:
+            connection.execute("CREATE TABLE old_runs (id TEXT PRIMARY KEY)")
+            connection.execute("INSERT INTO old_runs VALUES ('old')")
+        before = ledger_path.read_bytes()
+
+        with pytest.raises(RunLedgerRebuildRequiredError, match="rebuild"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+        assert ledger_path.read_bytes() == before
 
 
 class TestDataRootResolution:
@@ -1387,33 +941,11 @@ class TestDataRootResolution:
     def test_every_domain_publishes_into_the_one_directory(
         self, tmp_path: Path
     ) -> None:
-        """All three sidecars and the run ledger share a parent, and only that.
-
-        Each domain resolves its own path through its own entry point. Pinning
-        the shared parent is what catches a single domain being transposed onto
-        a directory of its own, which every same-domain round trip still
-        passes.
-        """
-        from .._index_breadth import index_meta_path
-        from .._source_types import PublicSourceType
-        from ..indexer._document_meta import document_metadata_path
+        """Every source publishes through the one canonical ledger."""
         from ..indexer._route_migration import prior_stored_owners
         from ..indexer._run_ledger_models import index_run_ledger_path
 
         root = tmp_path.resolve()
         expected = self._expected_data_root(root)
-        paths = {
-            index_meta_path(root, PublicSourceType.CODE),
-            index_meta_path(root, PublicSourceType.VAULT),
-            document_metadata_path(root),
-            index_run_ledger_path(expected),
-        }
-
-        assert {path.parent for path in paths} == {expected}
-        # Four distinct tenants, so a domain collapsed onto a neighbour's
-        # filename shows up as a shortfall here rather than as silent
-        # overwriting of the neighbour's record.
-        assert len(paths) == 4
-        # The ledger reader reaches the same directory: a root with no ledger
-        # in it must report no prior owners rather than raise.
+        assert index_run_ledger_path(expected).parent == expected
         assert prior_stored_owners(root, "src/mod.py") == frozenset()

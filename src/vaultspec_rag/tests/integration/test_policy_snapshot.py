@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
+from ..._publication_state import acquire_publication_snapshot
+from ..._source_types import PublicSourceType
 from ...config._settings import reset_config
 from ...config._types import EnvVar
-from ...indexer._code_meta import CONTENT_EPOCH_KEY, MEMBERSHIP_EPOCH_KEY
 from ...indexer._content_policy import (
     ContentKind,
     ContentRoute,
@@ -214,9 +215,10 @@ def _assert_published_snapshot(
 ) -> None:
     """Assert publication uses entry epochs while fresh resolution observes drift."""
     entry_code = entry_policy.fingerprints_for(ContentKind.CODE)
-    published = indexer._read_meta_raw()
-    assert published[MEMBERSHIP_EPOCH_KEY] == entry_code.membership
-    assert published[CONTENT_EPOCH_KEY] == entry_code.content
+    published = acquire_publication_snapshot(indexer.root_dir, PublicSourceType.CODE)
+    key = published.proof.compatibility_key
+    assert key.membership_identity == entry_code.membership
+    assert key.content_identity == entry_code.content
     fresh_policy = indexer.resolve_policy_snapshot()
     fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
     assert fresh_policy.fingerprints.snapshot != entry_policy.fingerprints.snapshot
@@ -225,8 +227,8 @@ def _assert_published_snapshot(
         fresh_policy.classify("a_payload.blob").disposition.kind is ContentKind.DOCUMENT
     )
     assert (
-        published[MEMBERSHIP_EPOCH_KEY],
-        published[CONTENT_EPOCH_KEY],
+        key.membership_identity,
+        key.content_identity,
     ) != (fresh_code.membership, fresh_code.content)
 
 

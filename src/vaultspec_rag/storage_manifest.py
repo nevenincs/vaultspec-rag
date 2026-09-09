@@ -45,6 +45,7 @@ __all__ = [
     "ManifestEntry",
     "ManifestReconcileResult",
     "SnapshotCollection",
+    "SnapshotPublicationProof",
     "StorageSnapshotManifest",
     "classify_root",
     "load_manifest",
@@ -166,6 +167,16 @@ class SnapshotCollection:
 
 
 @dataclass(frozen=True)
+class SnapshotPublicationProof:
+    """Canonical proof exported with the collection it certifies."""
+
+    source: str
+    collection: str
+    signature: dict[str, object]
+    evidence: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
 class StorageSnapshotManifest:
     """Portable description of one complete namespace archive."""
 
@@ -173,7 +184,7 @@ class StorageSnapshotManifest:
     root: str | None
     storage_schema_version: int
     collections: tuple[SnapshotCollection, ...]
-    metadata_files: tuple[str, ...] = ()
+    publication_proofs: tuple[SnapshotPublicationProof, ...]
 
 
 def snapshot_manifest_path(archive_namespace_dir: Path) -> Path:
@@ -212,7 +223,15 @@ def write_snapshot_manifest(
             }
             for item in manifest.collections
         ],
-        "metadata_files": list(manifest.metadata_files),
+        "publication_proofs": [
+            {
+                "source": proof.source,
+                "collection": proof.collection,
+                "signature": proof.signature,
+                "evidence": list(proof.evidence),
+            }
+            for proof in manifest.publication_proofs
+        ],
     }
     write_json_atomically(path, payload, JsonWriteOptions(indent=2, sort_keys=True))
     return path
@@ -221,15 +240,6 @@ def write_snapshot_manifest(
 def _declared_collections(prefix: str, backend: str) -> tuple[str, ...]:
     """Return exact collection names for a manifest namespace."""
     return store_schema.collection_names(prefix if backend == "server" else "")
-
-
-def _legacy_collections(prefix: str, backend: str) -> tuple[str, ...]:
-    """Infer the two collections known before document storage existed."""
-    collection_prefix = prefix if backend == "server" else ""
-    return (
-        collection_prefix + store_schema.VAULT_COLLECTION,
-        collection_prefix + store_schema.CODE_COLLECTION,
-    )
 
 
 def manifest_path() -> Path:
@@ -242,34 +252,31 @@ def manifest_path() -> Path:
 
 
 def _decode_collections(
-    record: dict[str, object], prefix: str, backend: str
-) -> tuple[str, ...]:
-    """Read a record's collection names, falling back to the legacy shape."""
+    record: dict[str, object],
+) -> tuple[str, ...] | None:
+    """Read an exact current-format collection list."""
     raw = record.get("collections")
     if not isinstance(raw, list):
-        return _legacy_collections(prefix, backend)
-    return tuple(value for value in cast("list[object]", raw) if isinstance(value, str))
+        return None
+    values = cast("list[object]", raw)
+    if any(not isinstance(value, str) or not value for value in values):
+        return None
+    return tuple(cast("str", value) for value in values)
 
 
-def _decode_schema_version(record: dict[str, object]) -> int:
-    """Read a record's storage schema version, defaulting to the first."""
-    raw = record.get("storage_schema_version", 1)
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        return 1
+def _decode_schema_version(record: dict[str, object]) -> int | None:
+    """Read the required current-format storage schema version."""
+    raw = record.get("storage_schema_version")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 1:
+        return None
     return raw
 
 
-def _decode_observed_points(record: dict[str, object]) -> int:
-    """Read a record's last observed point count, defaulting to never-observed.
-
-    Absent, malformed, or negative reads as ``-1`` (never observed) rather
-    than ``0``: an unreadable count treated as an observed zero would let the
-    next survey either invent movement that never happened, or call a settled
-    zero verified when nothing ever verified it.
-    """
-    raw = record.get("observed_points", -1)
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        return -1
+def _decode_observed_points(record: dict[str, object]) -> int | None:
+    """Read the required current-format observed point count."""
+    raw = record.get("observed_points")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < -1:
+        return None
     return raw
 
 
@@ -304,19 +311,32 @@ def _entry_from_record(prefix: str, record_obj: object) -> ManifestEntry | None:
     root = record.get("root")
     if not isinstance(root, str):
         return None
-    backend = str(record.get("backend", ""))
+    backend = record.get("backend")
+    last_indexed = record.get("last_indexed")
+    first_seen_orphaned = record.get("first_seen_orphaned")
+    collections = _decode_collections(record)
+    storage_schema_version = _decode_schema_version(record)
+    observed_points = _decode_observed_points(record)
+    if (
+        not isinstance(backend, str)
+        or backend not in {"server", "local"}
+        or not isinstance(last_indexed, str)
+        or not isinstance(first_seen_orphaned, str)
+        or collections is None
+        or storage_schema_version is None
+        or observed_points is None
+        or not isinstance(record.get("collection_identity"), dict)
+    ):
+        return None
     return ManifestEntry(
         prefix=prefix,
         root=root,
         backend=backend,
-        last_indexed=str(record.get("last_indexed", "")),
-        # Lenient: pre-upgrade manifests lack the field; absent means
-        # "never observed orphaned", so the first reclaim can happen no
-        # earlier than one full grace window after upgrade.
-        first_seen_orphaned=str(record.get("first_seen_orphaned", "")),
-        observed_points=_decode_observed_points(record),
-        storage_schema_version=_decode_schema_version(record),
-        collections=_decode_collections(record, prefix, backend),
+        last_indexed=last_indexed,
+        first_seen_orphaned=first_seen_orphaned,
+        observed_points=observed_points,
+        storage_schema_version=storage_schema_version,
+        collections=collections,
         collection_identity=_decode_identity(record),
     )
 
@@ -336,17 +356,15 @@ def load_manifest() -> dict[str, ManifestEntry]:
     path = manifest_path()
     try:
         raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    except OSError:
-        return {}
-    try:
         parsed: object = json.loads(raw)
-    except ValueError:
+    except (OSError, ValueError):
         return {}
     if not isinstance(parsed, dict):
         return {}
-    roots_obj = cast("dict[str, object]", parsed).get("roots")
+    document = cast("dict[str, object]", parsed)
+    if document.get("version") != 2:
+        return {}
+    roots_obj = document.get("roots")
     if not isinstance(roots_obj, dict):
         return {}
     roots = cast("dict[str, object]", roots_obj)

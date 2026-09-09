@@ -28,10 +28,12 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
+from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
 from ...synthetic import build_synthetic_vault
+from .._publication_assertions import published_content_identities
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -206,27 +208,27 @@ class TestStampOnlyChangeIsFree:
             store.close()
 
     @pytest.mark.timeout(300)
-    def test_the_stamp_bump_is_still_recorded_in_the_sidecar(
+    def test_the_stamp_bump_does_not_rewrite_canonical_proof(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
-        """Unchanged is a classification, not a refusal to look.
-
-        The sidecar must still absorb the new bytes, or every later run
-        re-derives the same "unchanged" answer from the same stale entry, and
-        the stat gate can never short-circuit it.
-        """
+        """Volatile frontmatter leaves the served content identity unchanged."""
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             paths = sorted(scan_vault(tmp_path))
             docs_dir = tmp_path / get_config().docs_dir
             sampled = _doc_id(paths[0], docs_dir)
-            before = indexer._load_meta()[sampled]
+            before = published_content_identities(tmp_path, PublicSourceType.VAULT)[
+                sampled
+            ]
 
             for path in paths:
                 _bump_stamp(path, "2026-07-29")
             indexer.incremental_index(reporter=NullProgressReporter())
 
-            assert indexer._load_meta()[sampled] != before
+            assert (
+                published_content_identities(tmp_path, PublicSourceType.VAULT)[sampled]
+                == before
+            )
         finally:
             store.close()
 

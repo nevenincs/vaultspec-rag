@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
     from ._reuse import DonorReuseContext
     from ._streaming import _SliceWriter
+    from ._vault_checkpoint import VaultRunCheckpoint
 
 # store point is built. A sparse entry exists as native index/value data plus
 # two Python list entries. The fixed allowance covers the dataclass, payload
@@ -57,6 +58,40 @@ class VaultStreamRequest:
     ingest_wait: bool = True
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
+    checkpoint: VaultRunCheckpoint | None = None
+    content_identities: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StoreMutationLifecycle:
+    """Ordered durable callbacks for one bounded external-store mutation.
+
+    ``prepare`` must persist the deterministic unit before the store is
+    touched, and returns whether the exact unit still requires application.
+    ``False`` means the store already holds it - either an earlier attempt
+    confirmed it, or one applied it and died before confirming - and skips
+    the store call alone. The caller's own post-write bookkeeping still runs,
+    because the second of those two states is exactly where it has not.
+
+    ``mark_applied`` runs only after the store acknowledges the request.
+    ``confirm_when_stored`` says whether ``confirm`` follows it there and
+    then: a synchronous write knows its bytes are durable at that point, while
+    an asynchronous one leaves the final transition to the ingest barrier that
+    owns it. It is answered relative to the store acknowledging, not to any
+    later callback.
+    """
+
+    prepare: Callable[[], bool]
+    mark_applied: Callable[[], None]
+    confirm: Callable[[], None]
+    confirm_when_stored: bool
+
+    def __post_init__(self) -> None:
+        for name in ("prepare", "mark_applied", "confirm"):
+            if not callable(getattr(self, name)):
+                raise TypeError(f"{name} must be callable")
+        if not isinstance(self.confirm_when_stored, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime request validation
+            raise TypeError("confirm_when_stored must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +109,7 @@ class DocumentSliceRequest:
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
     writer: _SliceWriter | None = None
+    mutation_lifecycle: StoreMutationLifecycle | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +152,7 @@ class CodeSliceRequest:
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
     collection: str | None = None
+    mutation_lifecycle: StoreMutationLifecycle | None = None
 
 
 @dataclass(frozen=True, slots=True)

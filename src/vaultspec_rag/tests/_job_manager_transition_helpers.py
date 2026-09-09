@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import PauseRequested, RunControlToken
 from ..job_models import (
     DesiredJobState,
@@ -45,6 +46,7 @@ def create_paused_vault_job(manager: JobManager) -> str:
         JobSource.VAULT,
         _TEST_PROJECT_ROOT,
         JobMode.INCREMENTAL,
+        RunAuthority.PUBLICATION,
     )
     initiator = JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT)
     created = manager.create(spec, initiator)

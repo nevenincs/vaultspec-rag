@@ -40,9 +40,10 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config._types import EnvVar
+from ..indexer._run_ledger_models import RunAuthority
 from ..registry import get_registry
 from ..serviceclient._compat import resolve_data_plane_service
-from ..serviceclient._transport import _try_http_reindex
+from ..serviceclient._transport import _try_http_index_audit, _try_http_reindex
 from ._app import (
     JSON_OPTION_HELP,
     CLIState,
@@ -104,7 +105,7 @@ def _index_route_label(via: str) -> str:
 
 
 def _index_source_label(source: str) -> str:
-    if source in {"code", "codebase"}:
+    if source == "code":
         return "Source code"
     if source == "vault":
         return "Vault"
@@ -121,7 +122,15 @@ def _parse_index_source(
     command: str,
     json_mode: bool,
 ) -> PublicSourceType:
-    """Parse a CLI source selection while retaining explicit legacy aliases."""
+    """Parse a CLI source selection, honouring the legacy spellings.
+
+    One vocabulary for the flag, whatever the verb does with it. Accepting
+    ``docs`` to index and refusing it to verify would be a split an operator
+    has no way to predict from the help, and it refused ``all`` - the flag's
+    own default - along with it, leaving no spelling that verified every
+    source. What exact verification actually requires is that the scope be
+    named rather than defaulted, and that is enforced on its own.
+    """
     try:
         return parse_source_type(value, allow_aliases=True)
     except SourceTypeParseError as exc:
@@ -220,8 +229,17 @@ class _ServiceDelegationRequest:
     exclude: list[str] | None
     json_mode: bool
     index_type: PublicSourceType
-    rebuild: bool
+    authority: RunAuthority
     target: pathlib.Path
+
+    @property
+    def rebuild(self) -> bool:
+        """Return the publication mode authorized by this exact request."""
+        if self.authority is RunAuthority.AUDIT_VERIFICATION:
+            raise ValueError(
+                "audit verification cannot use the publication reindex transport"
+            )
+        return self.authority is RunAuthority.REBUILD
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,11 +247,25 @@ class _IndexRunRequest:
     """One source selection that may execute locally or only scan."""
 
     index_type: PublicSourceType
-    rebuild: bool
+    authority: RunAuthority
     model: str | None
     exclude: list[str] | None
     target: pathlib.Path
     json_mode: bool
+
+    @property
+    def rebuild(self) -> bool:
+        """Return whether this publication request has explicit rebuild authority."""
+        if self.authority is RunAuthority.AUDIT_VERIFICATION:
+            raise ValueError(
+                "audit verification cannot use a publication index execution path"
+            )
+        return self.authority is RunAuthority.REBUILD
+
+
+def _publication_authority(*, rebuild: bool) -> RunAuthority:
+    """Bind one CLI publication request to its explicit persisted authority."""
+    return RunAuthority.REBUILD if rebuild else RunAuthority.PUBLICATION
 
 
 def _validate_dry_run_request(
@@ -471,6 +503,7 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
         request.rebuild,
         request.port,
         str(request.target),
+        authority=request.authority,
         initiator_kind="cli",
     )
     if (
@@ -592,6 +625,155 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
     return rendered
 
 
+def _index_parameter_is_explicit(ctx: typer.Context, name: str) -> bool:
+    try:
+        source = ctx.get_parameter_source(name)
+        return getattr(source, "name", "") != "DEFAULT"
+    except (AttributeError, LookupError) as exc:
+        logger.debug("click ParameterSource probe failed: %s", exc, exc_info=True)
+        return True
+
+
+def _validate_full_audit(  # noqa: PLR0913 - validates the exact CLI option set.
+    ctx: typer.Context,
+    *,
+    json_mode: bool,
+    rebuild: bool,
+    dry_run: bool,
+    borrow_gpu: bool,
+    model: str | None,
+    exclude: list[str] | None,
+    no_preprocess: bool,
+) -> None:
+    """Require an explicit, non-publication source and option set."""
+    if not _index_parameter_is_explicit(ctx, "index_type"):
+        message = "--full requires an explicit --type audit scope."
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index", "audit_requires_explicit_type", message, 2
+            )
+        _plain(f"Error: {message}")
+        raise typer.Exit(code=2)
+    conflicts = [
+        label
+        for label, selected in (
+            ("--rebuild", rebuild),
+            ("--dry-run", dry_run),
+            ("--borrow-gpu", borrow_gpu),
+            ("--model", model is not None),
+            ("--exclude", bool(exclude)),
+            ("--no-preprocess", no_preprocess),
+        )
+        if selected
+    ]
+    if not conflicts:
+        return
+    message = f"--full cannot be combined with {', '.join(conflicts)}."
+    if json_mode:
+        _emit_json_error_and_exit(
+            "index",
+            "audit_option_conflict",
+            message,
+            2,
+            conflicts=conflicts,
+        )
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=2)
+
+
+def _render_full_audit(
+    result: dict[str, object],
+    *,
+    json_mode: bool,
+) -> None:
+    data = {"mode": "audit_verification", "via": "service", **result}
+    ok = result.get("ok") is True
+    if json_mode:
+        _emit_json(
+            ok,
+            "index",
+            data=data,
+            error=None if ok else "audit_verification_failed",
+            message=None if ok else "Canonical publication verification failed.",
+        )
+        if not ok:
+            raise typer.Exit(code=1)
+        return
+
+    raw_domains = result.get("domains")
+    if isinstance(raw_domains, dict):
+        domains = cast("dict[str, object]", raw_domains)
+        for source in INDEX_SOURCES:
+            raw = domains.get(source)
+            if not isinstance(raw, dict):
+                continue
+            domain = cast("dict[str, object]", raw)
+            label = _index_source_label(source)
+            if domain.get("ok") is True:
+                _plain(
+                    f"{label} audit: consistent "
+                    f"({domain.get('matched_points', 0)}/"
+                    f"{domain.get('expected_points', 0)} points)."
+                )
+            else:
+                _plain(
+                    f"{label} audit: {domain.get('status', 'failed')}: "
+                    f"{domain.get('message') or domain.get('error_kind') or 'drift'}"
+                )
+    if not ok:
+        raise typer.Exit(code=1)
+
+
+def _handle_full_audit(
+    source: PublicSourceType,
+    target: pathlib.Path,
+    port: int | None,
+    *,
+    json_mode: bool,
+) -> None:
+    if port is None:
+        service = resolve_data_plane_service()
+        if service.reachable and not service.version.is_compatible:
+            _display_service_version_error(
+                service.version,
+                command="index",
+                json_mode=json_mode,
+            )
+            raise typer.Exit(code=1)
+        port = service.port
+    if port is None:
+        message = (
+            "Full audit verification requires the running service that owns "
+            "the active index store."
+        )
+        if json_mode:
+            _emit_json_error_and_exit(
+                "index",
+                "audit_service_required",
+                message,
+                1,
+                remediation=[server_status_command()],
+            )
+        _plain(f"Error: {message}")
+        raise typer.Exit(code=1)
+
+    result = _try_http_index_audit(
+        source,
+        port,
+        str(target),
+        authority=RunAuthority.AUDIT_VERIFICATION,
+    )
+    if result is None:
+        _display_port_unreachable_error(
+            port,
+            command="index audit",
+            json_mode=json_mode,
+            local_fallback_available=False,
+        )
+        raise typer.Exit(code=1)
+    _render_full_audit(result, json_mode=json_mode)
+
+
 @app.command(
     "index",
     help=(
@@ -621,6 +803,16 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         typer.Option(
             "--rebuild",
             help="Delete the selected index data before rebuilding it.",
+        ),
+    ] = False,
+    full: Annotated[
+        bool,
+        typer.Option(
+            "--full",
+            help=(
+                "Verify every stored payload against existing canonical proof "
+                "through the running service; never creates or repairs proof."
+            ),
         ),
     ] = False,
     port: PortOption = None,
@@ -688,11 +880,34 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
-    source = _parse_index_source(index_type, command="index", json_mode=json_mode)
+    if full:
+        _validate_full_audit(
+            ctx,
+            json_mode=json_mode,
+            rebuild=rebuild,
+            dry_run=dry_run,
+            borrow_gpu=borrow_gpu,
+            model=model,
+            exclude=exclude,
+            no_preprocess=no_preprocess,
+        )
+        source = _parse_index_source(
+            index_type,
+            command="index",
+            json_mode=json_mode,
+        )
+        _handle_full_audit(source, target, port, json_mode=json_mode)
+        return
+    source = _parse_index_source(
+        index_type,
+        command="index",
+        json_mode=json_mode,
+    )
+    authority = _publication_authority(rebuild=rebuild)
 
     if dry_run:
         _handle_dry_run(
-            _IndexRunRequest(source, rebuild, model, exclude, target, json_mode),
+            _IndexRunRequest(source, authority, model, exclude, target, json_mode),
             dry_run_limit,
             no_preprocess,
         )
@@ -701,7 +916,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     if rebuild:
         _validate_rebuild(ctx, json_mode)
 
-    request = _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    request = _IndexRunRequest(source, authority, model, exclude, target, json_mode)
     if borrow_gpu:
         try:
             _try_borrowed_in_process_indexing(
@@ -741,7 +956,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             exclude,
             json_mode,
             source,
-            rebuild,
+            authority,
             target,
         )
     ):
@@ -1009,7 +1224,11 @@ def handle_clean(
     """Delete selected index data without rebuilding it."""
     state: CLIState = ctx.obj
     target = state.target
-    source = _parse_index_source(clean_type, command="clean", json_mode=json_mode)
+    source = _parse_index_source(
+        clean_type,
+        command="clean",
+        json_mode=json_mode,
+    )
     canonical_clean_type = index_source_option(source)
     if json_mode and not yes:
         _emit_json_error_and_exit(
@@ -1074,5 +1293,5 @@ def handle_clean(
 
     _cli.console.print("Clean summary")
     for source in cleared:
-        label = _index_source_label("codebase" if source == "code" else source)
+        label = _index_source_label(source)
         _plain(f"{label} index: empty.")

@@ -26,6 +26,9 @@ class PublicSourceType(StrEnum):
     COMBINED = "combined"
 
 
+#: Legacy CLI spellings kept working at the operator boundary only. The
+#: service contracts stay closed to them: a caller opts in explicitly, so a
+#: wire payload naming an alias is still rejected.
 _ALIASES: Final = MappingProxyType(
     {
         "codebase": PublicSourceType.CODE,

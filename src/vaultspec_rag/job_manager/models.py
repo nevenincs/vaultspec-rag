@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     import asyncio
     from types import EllipsisType
 
+    from ..indexer._run_ledger_models import RunAuthority
     from ..job_control import RunControlToken
     from ..job_models import (
         IndexResilienceSnapshot,
@@ -136,6 +137,7 @@ class JobAttemptContext:
     attempt: int
     task: asyncio.Task[AttemptExit]
     control: RunControlToken
+    authority: RunAuthority
 
     def update_progress(
         self, step: str, completed: int = 0, total: int | None = None

@@ -390,7 +390,12 @@ def submit_clean_vault_rebuild(
         response = _do_http_call(
             port,
             "/reindex",
-            {"type": "vault", "clean": True, "project_root": str(root)},
+            {
+                "type": "vault",
+                "clean": True,
+                "authority": "rebuild",
+                "project_root": str(root),
+            },
             timeout=30,
         )
     except Exception as exc:

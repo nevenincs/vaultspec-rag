@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#archive-restore-contract'
 date: '2026-08-25'
-modified: '2026-08-25'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:467b8eae3e493751e01b57a6beeed71ed331b7b98c92cde2b020fbb276b51fca'
 related:
   - '[[2026-07-25-archive-restore-contract-P01-S01]]'

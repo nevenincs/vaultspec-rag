@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
+    from ..indexer._run_ledger_models import RunAuthority
     from ..job_models import DesiredJobState, JobMode, JobSource
     from ._discovery import MachineResolution
 
@@ -91,6 +92,7 @@ __all__ = [
     "_try_http_delete_job",
     "_try_http_get_job",
     "_try_http_health",
+    "_try_http_index_audit",
     "_try_http_reindex",
     "_try_http_retry_job",
     "_try_http_set_job_desired_state",
@@ -208,6 +210,7 @@ class _CreateJobRequest:
     source: JobSource
     project_root: str
     port: int | None
+    authority: RunAuthority
     mode: JobMode | None = None
     start_paused: bool = False
     initiator_kind: str = "cli"
@@ -854,12 +857,13 @@ def _do_http_call(
     return result
 
 
-def _try_http_reindex(
+def _try_http_reindex(  # noqa: PLR0913 - wire fields stay explicit and default-free.
     reindex_type: ReindexType,
     clean: bool,
     port: int,
     project_root: str,
     *,
+    authority: RunAuthority,
     initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
@@ -870,6 +874,7 @@ def _try_http_reindex(
         payload: dict[str, object] = {
             "type": source.value,
             "clean": clean,
+            "authority": authority.value,
             "project_root": project_root,
             "initiator_kind": initiator_kind,
         }
@@ -896,6 +901,53 @@ def _try_http_reindex(
             "ok": False,
             "error": "http_call_failed",
             "message": f"HTTP reindex on port {port} failed: {cls}: {exc}",
+        }
+
+
+def _try_http_index_audit(
+    audit_type: ReindexType,
+    port: int,
+    project_root: str,
+    *,
+    authority: RunAuthority,
+) -> dict[str, object] | None:
+    """Run exact non-seeding verification through the store-owning service."""
+    from ..indexer._run_ledger_models import RunAuthority as _RunAuthority
+
+    if authority is not _RunAuthority.AUDIT_VERIFICATION:
+        raise ValueError("index audit requires explicit audit-verification authority")
+    try:
+        source = parse_source_type(audit_type)
+    except SourceTypeParseError as exc:
+        return exc.as_error_envelope()
+    try:
+        result = _do_http_call(
+            port,
+            "/index/audit",
+            {
+                "type": source.value,
+                "authority": authority.value,
+                "project_root": project_root,
+            },
+            timeout=resolve_timeout(
+                None,
+                setting="service_reindex_timeout_seconds",
+                label="index audit",
+                default=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            ),
+        )
+        return result if result is not None else {}
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            logger.debug(
+                "HTTP index audit on port %s: connection refused (%s)", port, exc
+            )
+            return None
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP index audit on port {port} failed: {cls}: {exc}",
         }
 
 
@@ -988,13 +1040,16 @@ def _try_http_create_job(
     source: JobSource,
     project_root: str,
     port: int | None,
+    *,
+    authority: RunAuthority,
     **options: Unpack[CreateJobOptions],
 ) -> dict[str, object] | None:
-    request = _CreateJobRequest(source, project_root, port, **options)
+    request = _CreateJobRequest(source, project_root, port, authority, **options)
     payload: dict[str, object] = {
         "operation": "index",
         "source": request.source,
         "project_root": request.project_root,
+        "authority": request.authority.value,
         # Resolved here, not in the signature: the enum is annotation-only in
         # this module so the client keeps the domain out of its import graph.
         "mode": request.mode if request.mode is not None else _default_job_mode(),

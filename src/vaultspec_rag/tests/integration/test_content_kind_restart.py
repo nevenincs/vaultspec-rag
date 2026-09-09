@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ...progress import NullProgressReporter
-from ._helpers import _document_policy, _full_index_code_then_document
+from ._helpers import _document_policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -94,110 +94,6 @@ def _interrupt_document_indexing(
     return _InterruptedDocumentRun(ledger_path, committed, generation_id)
 
 
-def test_completed_source_generation_exposes_route_migration_evidence(
-    embedding_model: EmbeddingModel,
-    tmp_path: Path,
-) -> None:
-    from ... import store_schema
-    from ..._index_breadth import GENERATION_ID_KEY
-    from ...config._settings import get_config
-    from ...indexer import CodebaseIndexer
-    from ...indexer._code_meta import read_meta_raw
-    from ...indexer._content_policy import ContentKind
-    from ...indexer._file_state import FileStateKind
-    from ...indexer._run_ledger_models import (
-        FinalizationPhase,
-        RunTerminalState,
-        index_run_ledger_path,
-    )
-    from ...indexer._run_ledger_runtime import RunLedger
-    from ...store_runtime import VaultStore
-
-    source = tmp_path / "module.py"
-    source.write_text("def indexed_source() -> int:\n    return 23\n", encoding="utf-8")
-    store = VaultStore(tmp_path)
-    try:
-        indexer = CodebaseIndexer(tmp_path, embedding_model, store)
-        preflight = indexer.preflight_content()
-        indexer.full_index(reporter=NullProgressReporter(), preflight=preflight)
-
-        ledger = RunLedger(index_run_ledger_path(tmp_path / get_config().data_dir))
-        generation = ledger.latest_generation(
-            ContentKind.CODE,
-            collection_identity=store_schema.CODE_COLLECTION,
-        )
-        assert generation is not None
-        kind_fingerprints = preflight.policy.fingerprints_for(ContentKind.CODE)
-        assert (
-            generation.signature.policy_fingerprint
-            == preflight.policy.fingerprints.snapshot
-        )
-        assert generation.signature.membership_epoch == kind_fingerprints.membership
-        assert generation.signature.content_epoch == kind_fingerprints.content
-        assert generation.terminal_state is RunTerminalState.SUCCEEDED
-        assert generation.finalization_phase is FinalizationPhase.COMPACTED
-        states = list(ledger.iter_file_states(generation.generation_id))
-        assert [(state.rel_path, state.state, state.kind) for state in states] == [
-            ("module.py", FileStateKind.INDEXED, ContentKind.CODE)
-        ]
-        raw = read_meta_raw(indexer._meta_path)
-        assert raw[GENERATION_ID_KEY] == generation.generation_id
-        assert raw["module.py"] == states[0].content_hash
-    finally:
-        store.close()
-
-
-def test_code_and_document_publish_independent_generation_signatures(
-    embedding_model: EmbeddingModel,
-    tmp_path: Path,
-) -> None:
-    from ... import store_schema
-    from ...config._settings import get_config
-    from ...indexer._content_policy import ContentKind
-    from ...indexer._document_meta import read_document_meta
-    from ...indexer._run_ledger_models import index_run_ledger_path
-    from ...indexer._run_ledger_runtime import RunLedger
-    from ...store_runtime import VaultStore
-
-    (tmp_path / "module.py").write_text(
-        "def source() -> int:\n    return 7\n", encoding="utf-8"
-    )
-    document = tmp_path / "guide.txt"
-    document.write_text("Document-owned generation material.", encoding="utf-8")
-    policy = _document_policy("guide.txt")
-    store = VaultStore(tmp_path)
-    try:
-        _, document_indexer = _full_index_code_then_document(
-            tmp_path,
-            embedding_model,
-            store,
-            policy,
-        )
-
-        ledger = RunLedger(index_run_ledger_path(tmp_path / get_config().data_dir))
-        code_generation = ledger.latest_generation(
-            ContentKind.CODE,
-            collection_identity=store_schema.CODE_COLLECTION,
-        )
-        document_generation = ledger.latest_generation(
-            ContentKind.DOCUMENT,
-            collection_identity=store_schema.DOCUMENT_COLLECTION,
-        )
-        assert code_generation is not None and document_generation is not None
-        assert code_generation.generation_id != document_generation.generation_id
-        assert (
-            code_generation.signature.fingerprint
-            != document_generation.signature.fingerprint
-        )
-        metadata = read_document_meta(document_indexer._meta_path)
-        assert metadata is not None
-        assert metadata.complete
-        assert metadata.generation_id == document_generation.generation_id
-        assert [item.source_path for item in metadata.files] == ["guide.txt"]
-    finally:
-        store.close()
-
-
 def test_document_restart_reuses_confirmed_slices_and_publishes_once(
     clean_config: None,
     embedding_model: EmbeddingModel,
@@ -275,7 +171,11 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
         CodeRunConfiguration,
         CodeRunOpenRequest,
     )
-    from ...indexer._run_ledger_models import RunOperation, RunTerminalState
+    from ...indexer._run_ledger_models import (
+        RunAuthority,
+        RunOperation,
+        RunTerminalState,
+    )
     from ...indexer._run_policy import RunPolicy
     from ...indexer._streaming_types import CodeFileSegment
 
@@ -308,30 +208,34 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
     )
 
     def _open_code() -> CodeRunCheckpoint:
-        return CodeRunCheckpoint.open(
+        return CodeRunCheckpoint.open_generation(
             CodeRunOpenRequest(
                 data_root=data_root,
                 root_dir=tmp_path,
                 policy=policy,
                 run_policy=run_policy,
                 operation=RunOperation.FULL,
+                authority=RunAuthority.REBUILD,
                 clean=False,
                 model_identity="restart-model-v1",
+                backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
                 configuration=code_configuration,
             )
         )
 
     def _open_document() -> DocumentRunCheckpoint:
-        return DocumentRunCheckpoint.open(
+        return DocumentRunCheckpoint.open_generation(
             DocumentRunOpenRequest(
                 data_root=data_root,
                 root_dir=tmp_path,
                 policy=policy,
                 run_policy=run_policy,
                 operation=RunOperation.FULL,
+                authority=RunAuthority.REBUILD,
                 clean=False,
                 model_identity="restart-model-v1",
+                backend_identity="test-backend:content-kind-restart",
                 dense_dimensions=4,
                 configuration=document_configuration,
             )

@@ -270,6 +270,7 @@ def test_snapshot_manifest_records_the_stamped_identity(tmp_path: Path) -> None:
                     ),
                 ),
             ),
+            publication_proofs=(),
         ),
     )
 
@@ -302,6 +303,7 @@ def test_snapshot_manifest_writes_absent_identity_as_null(tmp_path: Path) -> Non
                     points=7,
                 ),
             ),
+            publication_proofs=(),
         ),
     )
 
@@ -331,6 +333,7 @@ def test_snapshot_manifest_stamps_its_own_completion_time(tmp_path: Path) -> Non
             root=None,
             storage_schema_version=STORAGE_SCHEMA_VERSION,
             collections=(),
+            publication_proofs=(),
         ),
     )
     after = datetime.now(UTC)

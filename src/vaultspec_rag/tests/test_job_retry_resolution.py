@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
@@ -32,7 +33,13 @@ _JOBS_LOGGER = "vaultspec_rag.jobs"
 
 
 def _spec(source: JobSource = JobSource.CODE) -> JobSpec:
-    return JobSpec(JobOperation.INDEX, source, _TEST_PROJECT_ROOT, JobMode.INCREMENTAL)
+    return JobSpec(
+        JobOperation.INDEX,
+        source,
+        _TEST_PROJECT_ROOT,
+        JobMode.INCREMENTAL,
+        RunAuthority.PUBLICATION,
+    )
 
 
 def _initiator(kind: str = "cli", command: str = "server job create") -> JobInitiator:

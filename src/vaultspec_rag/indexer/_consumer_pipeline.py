@@ -33,7 +33,6 @@ from ._chunk_producer import (
 from ._content_policy import AdmissionReason
 from ._file_state import FileStateKind
 from ._run_checkpoint import CodeRunConfiguration
-from ._run_ledger_models import RunOperation
 from ._slicing import iter_code_file_segments, iter_weighted_code_slices
 from ._streaming import (
     EncodeBucketReporter,
@@ -269,10 +268,6 @@ class CodeConsumerPipeline:
         )
         new_ids: set[str] = set()
         new_ids.update(checkpoint.ledger.iter_point_ids(checkpoint.generation_id))
-        if checkpoint.generation.signature.operation is not RunOperation.FULL:
-            new_ids.update(
-                checkpoint.ledger.iter_retained_point_ids(checkpoint.generation_id)
-            )
         metadata: dict[str, str] = {}
         total = [len(new_ids)]
         self._begin_support_measurement(paths)
@@ -651,6 +646,19 @@ class CodeConsumerPipeline:
                 if checkpoint is not None
                 else None
             )
+            mutation_lifecycle = (
+                checkpoint.mutation_lifecycle_for_units(
+                    tuple(
+                        checkpoint.unit_for(
+                            segment,
+                            consumer_run.metadata[segment.path],
+                        )
+                        for segment in weighted_slice.segments
+                    )
+                )
+                if checkpoint is not None
+                else None
+            )
             before_forward = partial(
                 report_forward_entry,
                 consumer_run.reporter,
@@ -708,6 +716,7 @@ class CodeConsumerPipeline:
                         ),
                         on_cuda_oom=_on_cuda_oom,
                         run_control=run_control,
+                        mutation_lifecycle=mutation_lifecycle,
                         reuse=consumer_run.donor_reuse,
                     )
                 )

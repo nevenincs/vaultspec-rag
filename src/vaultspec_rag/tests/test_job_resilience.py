@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..cli._service_jobs_presentation import _resilience_summary_lines
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
@@ -53,6 +54,7 @@ async def test_resilience_is_owned_persisted_and_shared_by_status_adapters(
             JobSource.CODE,
             str(tmp_path),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("cli", "server job create", str(tmp_path)),
     )

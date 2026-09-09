@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -12,8 +13,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypedDict
 
-from ._content_policy import ContentKind
-from ._file_state import validate_rel_path
+from .._source_types import PublicSourceType
+from ._file_state import FileState, validate_rel_path
+from ._publication_proof import (
+    PathDelta,
+    PathOutcome,
+    ProofAggregate,
+    ProofCompatibilityKey,
+    ProofMutationState,
+    ProofProvenance,
+    ProofReceiptState,
+    require_non_empty,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -22,9 +33,25 @@ __all__ = [
     "INDEX_RUN_LEDGER_FILENAME",
     "LEDGER_BUSY_TIMEOUT_SECONDS",
     "LEDGER_CONTENTION_ATTEMPTS",
+    "PUBLICATION_PROOF_SCHEMA",
     "CommitUnit",
     "CommitUnitKind",
+    "EffectivePublicationRead",
+    "FileStateTombstoneRow",
     "FinalizationPhase",
+    "PublicationEvidenceRow",
+    "PublicationMutationPointRow",
+    "PublicationMutationUnit",
+    "PublicationMutationUnitRow",
+    "PublicationPointCandidate",
+    "PublicationPointRow",
+    "PublicationProof",
+    "PublicationProofRow",
+    "PublicationReceipt",
+    "PublicationReceiptDeltaRow",
+    "PublicationReceiptPointRow",
+    "PublicationReceiptRow",
+    "RunAuthority",
     "RunGeneration",
     "RunLedgerCompatibilityError",
     "RunLedgerConcurrencyError",
@@ -32,6 +59,7 @@ __all__ = [
     "RunLedgerCorruptionError",
     "RunLedgerError",
     "RunLedgerIndexedPathCollisionError",
+    "RunLedgerRebuildRequiredError",
     "RunLedgerStateError",
     "RunOperation",
     "RunSignature",
@@ -90,7 +118,12 @@ def fetch_all[T](
 LEDGER_BUSY_TIMEOUT_SECONDS: Final = 10.0
 
 
-def open_ledger_connection(path: Path) -> sqlite3.Connection:
+def open_ledger_connection(
+    path: Path,
+    *,
+    read_only_preflight: Callable[[sqlite3.Connection], None] | None = None,
+    before_journal_mode: Callable[[sqlite3.Connection], None] | None = None,
+) -> sqlite3.Connection:
     """Open one ledger connection under the durable-state concurrency contract.
 
     Write-ahead logging is the load-bearing part. Under a rollback journal a
@@ -102,22 +135,50 @@ def open_ledger_connection(path: Path) -> sqlite3.Connection:
     fail a code run's commit. Write-ahead logging admits many readers alongside
     one writer and removes the escalation entirely.
 
-    The journal mode is a property of the database file, not of the connection,
-    so the first open converts the file and every later open reads the mode
-    back. A file that will not hold the conversion cannot honour the contract -
-    a network filesystem is the usual reason - and this raises rather than
+    A caller that gates durable format supplies ``read_only_preflight``. Existing
+    files are then inspected through a side-effect-free read-only connection
+    before a writable handle can create or alter journal sidecars. Immutable mode
+    protects WAL shared memory; an active rollback journal instead needs SQLite's
+    locked read-only snapshot. ``before_journal_mode`` may atomically initialize a
+    preflight-approved empty file before the normal WAL conversion. The returned
+    connection always uses WAL for durable files.
+
+    The journal mode is a property of the database file, not of the connection.
+    A file that will not hold the conversion cannot honour the contract - a
+    network filesystem is the usual reason - and this raises rather than
     returning a connection that would quietly reintroduce the starvation.
     """
+    if read_only_preflight is not None and path != Path(":memory:") and path.exists():
+        # Immutable mode cannot update WAL shared memory. With a live rollback
+        # journal, however, it could observe the writer's uncommitted in-place
+        # pages, so a normal read-only connection must honor the journal locks.
+        query = "mode=ro"
+        if not Path(f"{path}-journal").exists():
+            query += "&immutable=1"
+        preflight_connection = sqlite3.connect(
+            f"{path.resolve().as_uri()}?{query}",
+            uri=True,
+            timeout=LEDGER_BUSY_TIMEOUT_SECONDS,
+        )
+        try:
+            preflight_connection.row_factory = sqlite3.Row
+            read_only_preflight(preflight_connection)
+        finally:
+            preflight_connection.close()
+
     connection = sqlite3.connect(path, timeout=LEDGER_BUSY_TIMEOUT_SECONDS)
     try:
         connection.row_factory = sqlite3.Row
-        mode = _request_write_ahead_logging(connection)
-        if mode != "wal":
-            raise RunLedgerConcurrencyError(
-                f"run ledger {path} reports journal mode {mode!r} after requesting "
-                "write-ahead logging; this filesystem cannot support concurrent "
-                "indexing safely - a network-mounted data root is the usual cause"
-            )
+        if before_journal_mode is not None:
+            before_journal_mode(connection)
+        if path != Path(":memory:"):
+            mode = _request_write_ahead_logging(connection)
+            if mode != "wal":
+                raise RunLedgerConcurrencyError(
+                    f"run ledger {path} reports journal mode {mode!r} after requesting "
+                    "write-ahead logging; this filesystem cannot support concurrent "
+                    "indexing safely - a network-mounted data root is the usual cause"
+                )
         connection.execute("PRAGMA foreign_keys = ON")
     except BaseException:
         connection.close()
@@ -150,7 +211,12 @@ def _request_write_ahead_logging(connection: sqlite3.Connection) -> str:
 
 
 @contextmanager
-def ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
+def ledger_connection(
+    path: Path,
+    *,
+    read_only_preflight: Callable[[sqlite3.Connection], None] | None = None,
+    before_journal_mode: Callable[[sqlite3.Connection], None] | None = None,
+) -> Generator[sqlite3.Connection]:
     """Yield a ledger connection and close it when the block ends.
 
     ``sqlite3.Connection`` is itself a context manager, but that manager scopes
@@ -159,7 +225,11 @@ def ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
     until the collector happens to reclaim it. This scopes the handle, which is
     what the call sites mean.
     """
-    connection = open_ledger_connection(path)
+    connection = open_ledger_connection(
+        path,
+        read_only_preflight=read_only_preflight,
+        before_journal_mode=before_journal_mode,
+    )
     try:
         yield connection
     finally:
@@ -318,11 +388,142 @@ class GenerationRow(TypedDict):
     consecutive_failures: int
 
 
-SCHEMA_VERSION: Final = 6
+class PublicationProofRow(TypedDict):
+    """Flattened durable header for one current publication proof."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    storage_schema: int
+    payload_schema: int
+    embedding_schema_identity: str
+    chunking_schema_identity: str
+    membership_identity: str
+    content_identity: str
+    policy_identity: str
+    generation_id: str
+    revision: int
+    reservation_sequence: int
+    indexed_identities: int
+    retained_points: int
+    provenance: str
+    committed_at: float
+    verified_at: float | None
+
+
+class PublicationEvidenceRow(TypedDict):
+    """One normalized path evidence row in the current proof."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    rel_path: str
+    content_identity: str
+    evidence_generation_id: str
+
+
+class PublicationPointRow(TypedDict):
+    """One retained point identity belonging to normalized path evidence."""
+
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    rel_path: str
+    point_ordinal: int
+    point_id: str
+
+
+class PublicationReceiptRow(TypedDict):
+    """Durable state-machine header for one publication attempt."""
+
+    receipt_id: str
+    reservation_sequence: int
+    source_type: str
+    root_identity: str
+    backend_identity: str
+    collection_identity: str
+    storage_schema: int
+    payload_schema: int
+    embedding_schema_identity: str
+    chunking_schema_identity: str
+    membership_identity: str
+    content_identity: str
+    policy_identity: str
+    generation_id: str
+    parent_revision: int
+    target_revision: int
+    next_mutation_ordinal: int
+    state: str
+    reserved_at: float
+    sealed_at: float | None
+    rollback_started_at: float | None
+    committed_at: float | None
+    rolled_back_at: float | None
+
+
+class PublicationMutationUnitRow(TypedDict):
+    """One receipt-bound deterministic storage mutation and its durable state."""
+
+    receipt_id: str
+    mutation_ordinal: int
+    sealed_ordinal: int | None
+    unit_id: str
+    rel_path: str
+    unit_kind: str
+    source_digest: str | None
+    segment_ordinal: int
+    is_file_end: int
+    state: str
+    prepared_at: float
+    applied_at: float | None
+    confirmed_at: float | None
+
+
+class PublicationMutationPointRow(TypedDict):
+    """One exact point identity carried by a receipt mutation unit."""
+
+    receipt_id: str
+    mutation_ordinal: int
+    point_ordinal: int
+    point_id: str
+
+
+class PublicationReceiptDeltaRow(TypedDict):
+    """Deterministically ordered path transition retained for receipt replay."""
+
+    receipt_id: str
+    delta_ordinal: int
+    outcome: str
+    rel_path: str
+    target_rel_path: str | None
+    old_content_identity: str | None
+    new_content_identity: str | None
+
+
+class PublicationReceiptPointRow(TypedDict):
+    """Exact old or new retained point membership for one receipt delta."""
+
+    receipt_id: str
+    delta_ordinal: int
+    evidence_side: str
+    point_ordinal: int
+    point_id: str
+
+
+class FileStateTombstoneRow(TypedDict):
+    """One generation-local deletion that shadows inherited file state."""
+
+    generation_id: str
+    rel_path: str
+
+
+SCHEMA_VERSION: Final = 9
 FETCH_BATCH: Final = 256
-_DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
-REQUIRED_SCHEMA: Final = {
+_BASE_LEDGER_SCHEMA: Final = {
     "generations": frozenset(
         {
             "generation_id",
@@ -371,6 +572,136 @@ REQUIRED_SCHEMA: Final = {
     ),
 }
 
+PUBLICATION_PROOF_SCHEMA: Final = {
+    "publication_proofs": frozenset(PublicationProofRow.__annotations__),
+    "publication_evidence": frozenset(PublicationEvidenceRow.__annotations__),
+    "publication_points": frozenset(PublicationPointRow.__annotations__),
+    "publication_receipts": frozenset(PublicationReceiptRow.__annotations__),
+    "publication_mutation_units": frozenset(PublicationMutationUnitRow.__annotations__),
+    "publication_mutation_points": frozenset(
+        PublicationMutationPointRow.__annotations__
+    ),
+    "publication_receipt_deltas": frozenset(PublicationReceiptDeltaRow.__annotations__),
+    "publication_receipt_points": frozenset(PublicationReceiptPointRow.__annotations__),
+    "file_state_tombstones": frozenset(FileStateTombstoneRow.__annotations__),
+}
+
+REQUIRED_SCHEMA: Final = {**_BASE_LEDGER_SCHEMA, **PUBLICATION_PROOF_SCHEMA}
+
+# Named indexes are part of the durable schema contract, not optional tuning.
+# Each tuple is ``(table, ordered columns, unique, partial)`` and is verified on
+# every open of the exact current format.
+REQUIRED_INDEXES: Final[dict[str, tuple[str, tuple[str, ...], bool, bool]]] = {
+    "generations_active": (
+        "generations",
+        ("source_type", "terminal_state", "created_at"),
+        False,
+        False,
+    ),
+    "commit_units_path": (
+        "commit_units",
+        ("generation_id", "rel_path", "segment_ordinal"),
+        False,
+        False,
+    ),
+    "commit_point_ids_point": (
+        "commit_point_ids",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "file_states_state": (
+        "file_states",
+        ("generation_id", "state", "rel_path"),
+        False,
+        False,
+    ),
+    "publication_proofs_generation": (
+        "publication_proofs",
+        ("generation_id",),
+        False,
+        False,
+    ),
+    "publication_evidence_generation": (
+        "publication_evidence",
+        ("evidence_generation_id",),
+        False,
+        False,
+    ),
+    "publication_points_point": (
+        "publication_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "publication_receipts_generation": (
+        "publication_receipts",
+        ("generation_id", "state"),
+        False,
+        False,
+    ),
+    "publication_receipts_open": (
+        "publication_receipts",
+        (
+            "source_type",
+            "root_identity",
+            "backend_identity",
+            "collection_identity",
+        ),
+        True,
+        True,
+    ),
+    "publication_mutation_units_state": (
+        "publication_mutation_units",
+        ("receipt_id", "state", "mutation_ordinal"),
+        False,
+        False,
+    ),
+    "publication_mutation_units_sealed": (
+        "publication_mutation_units",
+        ("receipt_id", "sealed_ordinal"),
+        True,
+        True,
+    ),
+    "publication_mutation_points_point": (
+        "publication_mutation_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "publication_receipt_deltas_path": (
+        "publication_receipt_deltas",
+        ("receipt_id", "rel_path"),
+        True,
+        False,
+    ),
+    "publication_receipt_deltas_target": (
+        "publication_receipt_deltas",
+        ("receipt_id", "target_rel_path"),
+        False,
+        False,
+    ),
+    "publication_receipt_points_point": (
+        "publication_receipt_points",
+        ("point_id",),
+        False,
+        False,
+    ),
+    "file_state_tombstones_path": (
+        "file_state_tombstones",
+        ("rel_path", "generation_id"),
+        False,
+        False,
+    ),
+}
+
+REQUIRED_INDEX_PREDICATES: Final = {
+    "publication_receipts_open": (
+        "where state in ('reserved', 'sealed', 'rolling_back')"
+    ),
+    "publication_mutation_units_sealed": "where sealed_ordinal is not null",
+}
+
 
 def index_run_ledger_path(data_root: Path) -> Path:
     """Return the one shared per-root ledger path."""
@@ -383,6 +714,10 @@ class RunLedgerError(RuntimeError):
 
 class RunLedgerCompatibilityError(RunLedgerError):
     """The ledger schema or requested generation is incompatible."""
+
+
+class RunLedgerRebuildRequiredError(RunLedgerCompatibilityError):
+    """The persisted ledger format must be replaced by an explicit rebuild."""
 
 
 class RunLedgerCorruptionError(RunLedgerError):
@@ -445,6 +780,20 @@ class RunLedgerIndexedPathCollisionError(RunLedgerStateError):
         return (
             self.indexed_digest is not None and self.indexed_digest != self.unit_digest
         )
+
+
+class RunAuthority(StrEnum):
+    """Persisted permission class for indexing work and proof verification.
+
+    Authority is intentionally separate from :class:`RunOperation`: an operation
+    describes the shape of generation work, while this value records which work a
+    caller was explicitly allowed to perform.  The closed vocabulary contains no
+    migration or recovery authority; neither can be inferred after restart.
+    """
+
+    PUBLICATION = "publication"
+    REBUILD = "rebuild"
+    AUDIT_VERIFICATION = "audit_verification"
 
 
 class RunOperation(StrEnum):
@@ -510,7 +859,7 @@ class RunSignature:
 
     root_identity: str
     collection_identity: str
-    source_type: ContentKind
+    source_type: PublicSourceType
     operation: RunOperation
     clean: bool
     model_identity: str
@@ -522,7 +871,7 @@ class RunSignature:
     preprocessing_identity: str
     configuration_fingerprint: str
     policy_fingerprint: str
-    backend_identity: str = "legacy:unknown"
+    backend_identity: str
 
     def __post_init__(self) -> None:
         for name in (
@@ -539,8 +888,8 @@ class RunSignature:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be non-empty")
-        if not isinstance(self.source_type, ContentKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
-            raise TypeError("source_type must be a ContentKind")
+        if not isinstance(self.source_type, PublicSourceType):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("source_type must be a PublicSourceType")
         if not isinstance(self.operation, RunOperation):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("operation must be a RunOperation")
         for name in ("dense_dimensions", "embedding_schema", "payload_schema"):
@@ -579,7 +928,7 @@ class RunSignature:
 
 @dataclass(frozen=True, slots=True)
 class CommitUnit:
-    """One bounded storage mutation confirmed before ledger insertion."""
+    """One deterministic bounded storage mutation suitable for replay."""
 
     rel_path: str
     kind: CommitUnitKind
@@ -605,8 +954,8 @@ class CommitUnit:
         ):
             raise ValueError("deletion point_ids must be in canonical order")
         if self.kind is CommitUnitKind.UPSERT:
-            if not _is_digest(self.source_digest):
-                raise ValueError("upsert units require a lowercase BLAKE2b-512 digest")
+            if not isinstance(self.source_digest, str) or not self.source_digest:
+                raise ValueError("upsert units require a non-empty content identity")
         elif self.source_digest is not None:
             raise ValueError("deletion units must not carry a source digest")
         if self.kind is not CommitUnitKind.UPSERT and (
@@ -649,9 +998,480 @@ class RunGeneration:
         return self.terminal_state is RunTerminalState.SUCCEEDED
 
 
-def _is_digest(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == _DIGEST_REPR_LENGTH
-        and all(character in "0123456789abcdef" for character in value)
+def _require_timestamp(value: float, *, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError(f"{name} must be a timestamp")
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a finite non-negative timestamp")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationMutationUnit:
+    """Receipt-bound progress for one deterministic storage mutation."""
+
+    ordinal: int
+    unit: CommitUnit
+    state: ProofMutationState
+    prepared_at: float
+    applied_at: float | None = None
+    confirmed_at: float | None = None
+    sealed_ordinal: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.ordinal, bool)
+            or not isinstance(self.ordinal, int)  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            or self.ordinal < 0
+        ):
+            raise ValueError("ordinal must be a non-negative integer")
+        if not isinstance(self.unit, CommitUnit):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("unit must be a CommitUnit")
+        if not isinstance(self.state, ProofMutationState):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("state must be a ProofMutationState")
+        if self.sealed_ordinal is not None and (
+            isinstance(self.sealed_ordinal, bool)
+            or not isinstance(self.sealed_ordinal, int)  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            or self.sealed_ordinal < 0
+        ):
+            raise ValueError("sealed_ordinal must be a non-negative integer")
+        _require_timestamp(self.prepared_at, name="prepared_at")
+        required = {
+            ProofMutationState.PREPARED: 0,
+            ProofMutationState.APPLIED: 1,
+            ProofMutationState.CONFIRMED: 2,
+        }[self.state]
+        timestamps = (self.applied_at, self.confirmed_at)
+        if any(value is None for value in timestamps[:required]) or any(
+            value is not None for value in timestamps[required:]
+        ):
+            raise ValueError("mutation timestamps must match its state")
+        present = (
+            self.prepared_at,
+            *(value for value in timestamps if value is not None),
+        )
+        for name, value in zip(
+            ("prepared_at", "applied_at", "confirmed_at"),
+            present,
+            strict=False,
+        ):
+            _require_timestamp(value, name=name)
+        if present != tuple(sorted(present)):
+            raise ValueError("mutation timestamps must be monotonic")
+
+    @property
+    def identity(self) -> str:
+        """Return the deterministic idempotency identity of this mutation."""
+        return self.unit.identity
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationProof:
+    """Committed ledger projection of one exact publication proof revision."""
+
+    revision: int
+    reservation_sequence: int
+    compatibility_key: ProofCompatibilityKey
+    generation_id: str
+    aggregate: ProofAggregate
+    provenance: ProofProvenance
+    committed_at: float
+    verified_at: float | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("revision", "reservation_sequence"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("compatibility_key must be a ProofCompatibilityKey")
+        require_non_empty(self.generation_id, name="generation_id")
+        if not isinstance(self.aggregate, ProofAggregate):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("aggregate must be a ProofAggregate")
+        if not isinstance(self.provenance, ProofProvenance):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("provenance must be a ProofProvenance")
+        _require_timestamp(self.committed_at, name="committed_at")
+        if self.verified_at is not None:
+            _require_timestamp(self.verified_at, name="verified_at")
+            if self.verified_at > self.committed_at:
+                raise ValueError("verified_at must not follow committed_at")
+        if self.provenance is ProofProvenance.VERIFIED:
+            if self.verified_at is None:
+                raise ValueError("verified proof requires verified_at")
+        elif self.verified_at is not None:
+            raise ValueError("delta-derived proof must not carry verified_at")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationReceipt:
+    """Durable replay contract spanning external storage and proof commit."""
+
+    receipt_id: str
+    reservation_sequence: int
+    compatibility_key: ProofCompatibilityKey
+    generation_id: str
+    parent_revision: int
+    target_revision: int
+    state: ProofReceiptState
+    reserved_at: float
+    mutations: tuple[PublicationMutationUnit, ...] = ()
+    deltas: tuple[PathDelta, ...] = ()
+    sealed_at: float | None = None
+    rollback_started_at: float | None = None
+    committed_at: float | None = None
+    rolled_back_at: float | None = None
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.receipt_id, name="receipt_id")
+        if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("compatibility_key must be a ProofCompatibilityKey")
+        require_non_empty(self.generation_id, name="generation_id")
+        for name in ("reservation_sequence", "parent_revision", "target_revision"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.reservation_sequence == 0:
+            raise ValueError("reservation_sequence must be positive")
+        if self.target_revision != self.parent_revision + 1:
+            raise ValueError("target_revision must immediately follow parent_revision")
+        if not isinstance(self.state, ProofReceiptState):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("state must be a ProofReceiptState")
+        if not isinstance(self.mutations, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("mutations must be a tuple")
+        _validate_receipt_mutations(self.mutations)
+        if not isinstance(self.deltas, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+            raise TypeError("deltas must be a tuple")
+        _validate_receipt_deltas(self.deltas, parent_revision=self.parent_revision)
+        self._validate_timestamps()
+        self._validate_mutation_timestamps()
+        self._validate_sealed_mutations()
+        self._validate_terminal_mutations()
+
+    def _validate_terminal_mutations(self) -> None:
+        if self.state is ProofReceiptState.COMMITTED:
+            if not any(delta.changes_proof for delta in self.deltas):
+                raise ValueError("a no-op receipt must not commit a proof revision")
+            if any(
+                mutation.state is not ProofMutationState.CONFIRMED
+                for mutation in self.mutations
+            ):
+                raise ValueError(
+                    "committed receipt requires every mutation to be confirmed"
+                )
+        if self.state in {
+            ProofReceiptState.ROLLING_BACK,
+            ProofReceiptState.ROLLED_BACK,
+        } and any(
+            mutation.state is not ProofMutationState.CONFIRMED
+            for mutation in self.mutations
+        ):
+            raise ValueError("rolling-back receipt requires confirmed mutations")
+
+    @property
+    def is_open(self) -> bool:
+        """Return whether this receipt fences live proof reads."""
+        return self.state.is_open
+
+    def _validate_timestamps(self) -> None:
+        _require_timestamp(self.reserved_at, name="reserved_at")
+        optional_timestamps = {
+            "sealed_at": self.sealed_at,
+            "rollback_started_at": self.rollback_started_at,
+            "committed_at": self.committed_at,
+            "rolled_back_at": self.rolled_back_at,
+        }
+        for name, value in optional_timestamps.items():
+            if value is not None:
+                _require_timestamp(value, name=name)
+        actual_shape = tuple(
+            value is not None
+            for value in (
+                self.sealed_at,
+                self.rollback_started_at,
+                self.committed_at,
+                self.rolled_back_at,
+            )
+        )
+        allowed_shapes = {
+            ProofReceiptState.RESERVED: {(False, False, False, False)},
+            ProofReceiptState.SEALED: {(True, False, False, False)},
+            ProofReceiptState.ROLLING_BACK: {
+                (False, True, False, False),
+                (True, True, False, False),
+            },
+            ProofReceiptState.COMMITTED: {(True, False, True, False)},
+            ProofReceiptState.ROLLED_BACK: {
+                (False, True, False, True),
+                (True, True, False, True),
+            },
+        }[self.state]
+        if actual_shape not in allowed_shapes:
+            raise ValueError("receipt timestamps must match its state")
+        present = (
+            self.reserved_at,
+            *(
+                value
+                for value in (
+                    self.sealed_at,
+                    self.rollback_started_at,
+                    self.committed_at,
+                    self.rolled_back_at,
+                )
+                if value is not None
+            ),
+        )
+        if present != tuple(sorted(present)):
+            raise ValueError("receipt timestamps must be monotonic")
+
+    def _validate_mutation_timestamps(self) -> None:
+        closure_bound = (
+            self.committed_at
+            if self.committed_at is not None
+            else self.rollback_started_at
+        )
+        for mutation in self.mutations:
+            if mutation.prepared_at < self.reserved_at:
+                raise ValueError("mutation cannot precede receipt reservation")
+            mutation_at = (
+                mutation.confirmed_at
+                if mutation.confirmed_at is not None
+                else mutation.applied_at
+                if mutation.applied_at is not None
+                else mutation.prepared_at
+            )
+            if closure_bound is not None and mutation_at > closure_bound:
+                raise ValueError("mutation cannot follow receipt closure")
+
+    def _validate_sealed_mutations(self) -> None:
+        if self.sealed_at is None:
+            if self.deltas:
+                raise ValueError("receipt deltas exist only after sealing")
+            if any(mutation.sealed_ordinal is not None for mutation in self.mutations):
+                raise ValueError("unsealed receipt must not seal mutation identities")
+            return
+        sealed = sorted(self.mutations, key=lambda mutation: mutation.identity)
+        if tuple(mutation.sealed_ordinal for mutation in sealed) != tuple(
+            range(len(sealed))
+        ):
+            raise ValueError(
+                "sealed receipt must freeze every mutation in identity order"
+            )
+        _validate_mutation_coverage(self.deltas, self.mutations)
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationPointCandidate:
+    """One path-qualified backend identity offered to an effective read."""
+
+    rel_path: str
+    point_id: str
+
+    def __post_init__(self) -> None:
+        validate_rel_path(self.rel_path)
+        require_non_empty(self.point_id, name="point_id")
+
+
+@dataclass(frozen=True, slots=True)
+class EffectivePublicationRead:
+    """One receipt-bound snapshot of path state and retained candidates."""
+
+    receipt_id: str
+    generation_id: str
+    parent_revision: int
+    reservation_sequence: int
+    file_states: tuple[FileState, ...]
+    retained_candidates: frozenset[PublicationPointCandidate]
+
+    def __post_init__(self) -> None:
+        require_non_empty(self.receipt_id, name="receipt_id")
+        require_non_empty(self.generation_id, name="generation_id")
+        for name in ("parent_revision", "reservation_sequence"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+                raise TypeError(f"{name} must be an integer")
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if not isinstance(self.file_states, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("file_states must be a tuple")
+        if any(not isinstance(state, FileState) for state in self.file_states):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("file_states must contain only FileState values")
+        paths = tuple(state.rel_path for state in self.file_states)
+        if paths != tuple(sorted(paths)) or len(paths) != len(frozenset(paths)):
+            raise ValueError("file_states must use unique lexical path ordering")
+        if not isinstance(self.retained_candidates, frozenset):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("retained_candidates must be a frozenset")
+        if any(
+            not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+                candidate,
+                PublicationPointCandidate,
+            )
+            for candidate in self.retained_candidates
+        ):
+            raise TypeError(
+                "retained_candidates must contain PublicationPointCandidate values"
+            )
+
+
+def _validate_receipt_mutations(
+    mutations: tuple[PublicationMutationUnit, ...],
+) -> None:
+    if any(not isinstance(mutation, PublicationMutationUnit) for mutation in mutations):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError("mutations must contain only PublicationMutationUnit values")
+    if tuple(mutation.ordinal for mutation in mutations) != tuple(
+        range(len(mutations))
+    ):
+        raise ValueError("mutations must use contiguous ordinal ordering")
+    identities = tuple(mutation.identity for mutation in mutations)
+    if len(frozenset(identities)) != len(identities):
+        raise ValueError("mutation identities must be unique within a receipt")
+
+
+def _validate_mutation_coverage(
+    deltas: tuple[PathDelta, ...],
+    mutations: tuple[PublicationMutationUnit, ...],
+) -> None:
+    expected_points, expected_content = _expected_mutation_coverage(deltas)
+    actual_units: dict[tuple[CommitUnitKind, str], list[CommitUnit]] = {}
+    for mutation in mutations:
+        key = (mutation.unit.kind, mutation.unit.rel_path)
+        actual_units.setdefault(key, []).append(mutation.unit)
+    if actual_units.keys() != expected_points.keys():
+        raise ValueError("sealed mutations must exactly cover changed proof paths")
+
+    for key, units in actual_units.items():
+        _validate_mutation_group(
+            key,
+            units,
+            expected_points=expected_points[key],
+            expected_content=expected_content.get(key[1]),
+        )
+
+
+def _expected_mutation_coverage(
+    deltas: tuple[PathDelta, ...],
+) -> tuple[
+    dict[tuple[CommitUnitKind, str], frozenset[str]],
+    dict[str, str],
+]:
+    expected_points: dict[tuple[CommitUnitKind, str], frozenset[str]] = {}
+    expected_content: dict[str, str] = {}
+    for delta in deltas:
+        if not delta.changes_proof:
+            continue
+        if delta.new is not None:
+            expected_points[(CommitUnitKind.UPSERT, delta.new.rel_path)] = frozenset(
+                delta.new.point_ids
+            )
+            expected_content[delta.new.rel_path] = delta.new.content_identity
+        deletion = _expected_deletion(delta)
+        if deletion is not None:
+            deletion_kind, rel_path, deleted_points = deletion
+            expected_points[(deletion_kind, rel_path)] = deleted_points
+    return expected_points, expected_content
+
+
+def _expected_deletion(
+    delta: PathDelta,
+) -> tuple[CommitUnitKind, str, frozenset[str]] | None:
+    if delta.old is None:
+        return None
+    if delta.outcome in {PathOutcome.DELETE, PathOutcome.RENAME}:
+        return (
+            CommitUnitKind.DELETE_PATH,
+            delta.old.rel_path,
+            frozenset(delta.old.point_ids),
+        )
+    if delta.outcome not in {
+        PathOutcome.MODIFY,
+        PathOutcome.EMPTY,
+        PathOutcome.IGNORED,
+        PathOutcome.REJECTED,
+    }:
+        return None
+    new_points: frozenset[str] = (
+        frozenset(delta.new.point_ids) if delta.new is not None else frozenset()
     )
+    deleted_points = frozenset(delta.old.point_ids).difference(new_points)
+    if not deleted_points:
+        return None
+    return CommitUnitKind.DELETE_STALE, delta.old.rel_path, deleted_points
+
+
+def _validate_mutation_group(
+    key: tuple[CommitUnitKind, str],
+    units: list[CommitUnit],
+    *,
+    expected_points: frozenset[str],
+    expected_content: str | None,
+) -> None:
+    point_ids = tuple(point_id for unit in units for point_id in unit.point_ids)
+    if len(frozenset(point_ids)) != len(point_ids):
+        raise ValueError("sealed mutation point identities must not overlap")
+    if frozenset(point_ids) != expected_points:
+        raise ValueError("sealed mutations must match exact proof point membership")
+    kind, _rel_path = key
+    if kind is CommitUnitKind.UPSERT:
+        if any(unit.source_digest != expected_content for unit in units):
+            raise ValueError("upsert mutation content must match new proof evidence")
+        segments = sorted(units, key=lambda unit: unit.segment_ordinal)
+        if tuple(unit.segment_ordinal for unit in segments) != tuple(
+            range(len(segments))
+        ) or tuple(unit.is_file_end for unit in segments) != (
+            *(False for _ in segments[:-1]),
+            True,
+        ):
+            raise ValueError("upsert mutations must form one complete segment stream")
+    elif len(units) != 1:
+        raise ValueError("one deletion mutation must carry exact removed membership")
+
+
+def _validate_receipt_deltas(
+    deltas: tuple[PathDelta, ...], *, parent_revision: int
+) -> None:
+    if any(not isinstance(delta, PathDelta) for delta in deltas):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
+        raise TypeError("deltas must contain only PathDelta values")
+    if any(delta.expected_parent_revision != parent_revision for delta in deltas):
+        raise ValueError("every delta must name the receipt parent revision")
+    ordering = tuple(
+        (delta.rel_path, delta.target_rel_path or "", delta.outcome.value)
+        for delta in deltas
+    )
+    if ordering != tuple(sorted(ordering)):
+        raise ValueError("deltas must use canonical path ordering")
+    reserved_paths: set[str] = set()
+    for delta in deltas:
+        paths = (delta.rel_path,) + (
+            (delta.target_rel_path,) if delta.target_rel_path is not None else ()
+        )
+        if any(path in reserved_paths for path in paths):
+            raise ValueError("a receipt must not affect one path more than once")
+        reserved_paths.update(paths)
+    _validate_delta_point_ownership(deltas)
+
+
+def _validate_delta_point_ownership(deltas: tuple[PathDelta, ...]) -> None:
+    old_owners: dict[str, str] = {}
+    new_owners: dict[str, str] = {}
+    for delta in deltas:
+        for evidence, owners in (
+            (delta.old, old_owners),
+            (delta.new, new_owners),
+        ):
+            if evidence is None:
+                continue
+            for point_id in evidence.point_ids:
+                owner = owners.setdefault(point_id, evidence.rel_path)
+                if owner != evidence.rel_path:
+                    raise ValueError(
+                        "one point identity must not belong to multiple proof paths"
+                    )
+    transferred = {
+        point_id
+        for point_id in old_owners.keys() & new_owners.keys()
+        if old_owners[point_id] != new_owners[point_id]
+    }
+    if transferred:
+        raise ValueError("a receipt must not transfer point identity between paths")
