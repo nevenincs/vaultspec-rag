@@ -50,6 +50,9 @@ env:
 jobs:
   workflow-lint:
     name: Workflow Lint
+    # Runs for pushes and releases as before; a pull request reaches it only
+    # from this repository, never from a fork, for the reason above.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # Every job carries an explicit ceiling. Without one the default is six
     # hours, and a job that never gets a runner sits pending until GitHub's
     # 24h queue timeout retires it as `cancelled` - a word that reads as
@@ -100,7 +103,11 @@ jobs:
     #
     # A fork pull request runs here, on the fleet; see the trust note on the
     # triggers above for what that does and does not protect.
-    if: github.event_name == 'pull_request'
+    # A fork's pull request must never reach the self-hosted fleet: the
+    # workflow it would run is the fork's own, so admitting one hands a
+    # stranger execution on this hardware. Same-repo pull requests are
+    # unaffected, which is every pull request this project actually gets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
     concurrency:
       # Unlike the main-push jobs, superseding a pull request's own earlier
@@ -166,7 +173,11 @@ jobs:
     # needs no GPU, no model cache and no Hugging Face token: every test in
     # the class declares the fast tier, and the token gate applies only to the
     # GPU tiers.
-    if: github.event_name == 'pull_request'
+    # A fork's pull request must never reach the self-hosted fleet: the
+    # workflow it would run is the fork's own, so admitting one hands a
+    # stranger execution on this hardware. Same-repo pull requests are
+    # unaffected, which is every pull request this project actually gets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 25
     concurrency:
       group: ci-pr-gate-windows-${{ github.ref }}
@@ -442,6 +453,9 @@ jobs:
   # broken for every Windows contributor, not failing a triage backlog.
   windows-recipe-gate:
     name: Windows recipe gate
+    # Runs for pushes and releases as before; a pull request reaches it only
+    # from this repository, never from a fork, for the reason above.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
     concurrency:
       group: ci-windows-recipe-gate-${{ github.ref }}
