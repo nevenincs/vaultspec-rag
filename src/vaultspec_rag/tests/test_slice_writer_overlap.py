@@ -354,8 +354,21 @@ class TestSliceWriterContract:
         lifecycle.confirm()
         assert events == ["prepare", "store", "applied", "confirmed"]
 
-    def test_confirmed_exact_replay_skips_the_complete_store_path(self) -> None:
-        """Mutation: replaying an already-confirmed unit makes this guard red."""
+    def test_confirmed_exact_replay_skips_the_store_but_not_the_record(self) -> None:
+        """The store call is skipped; the checkpoint record still happens.
+
+        Both halves are the assertion. No ``store`` event proves the bytes are
+        not written twice, which is the cost this path exists to avoid. The
+        ``acknowledged`` event proves the unit is still recorded, because the
+        state that reaches here is the one where it may not be: a mutation an
+        earlier attempt applied and died before confirming. The file state the
+        published proof is built from is written by that callback alone, so a
+        guard that demanded silence here would be pinning a breadth shortfall
+        in place.
+
+        Mutation: returning before the acknowledgement fails this on the
+        second assertion, and the fault-injection restart suites with it.
+        """
         events: list[str] = []
         lifecycle = StoreMutationLifecycle(
             prepare=lambda: _record_prepare(events, should_apply=False),
@@ -370,7 +383,8 @@ class TestSliceWriterContract:
             after_acknowledgement=lambda: events.append("acknowledged"),
         )
 
-        assert events == ["prepare"]
+        assert "store" not in events
+        assert events == ["prepare", "acknowledged"]
 
     def test_code_and_document_slices_drive_lifecycle_and_code_barrier(
         self,

@@ -336,17 +336,22 @@ def execute_store_mutation(
 ) -> None:
     """Bracket one store call with its durable receipt transitions.
 
-    A prepare that reports the unit already applied ends the call there. The
-    write is skipped because the bytes are already stored, and the
-    acknowledgement with it: it records the same confirmation the ledger is
-    reporting, so replaying it would re-do durable work to reach the state
-    that answered the question. A replay of a confirmed unit costs nothing.
+    A prepare reporting nothing left to apply skips the store call: the bytes
+    are already there and writing them again would be the collection-wide work
+    this path exists to avoid. The acknowledgement still runs, and must. It is
+    what records the storage-confirmed unit and the file state the published
+    proof is built from, and the state that gets here is precisely the one
+    where those may be missing - a mutation applied by an attempt that died
+    before confirming it. Skipping the acknowledgement there would drop the
+    file from the evidence and publish a breadth short of what storage holds.
     """
     if lifecycle is not None:
         should_apply = lifecycle.prepare()
         if not isinstance(should_apply, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - callback boundary
             raise TypeError("mutation lifecycle prepare must return a bool")
         if not should_apply:
+            if after_acknowledgement is not None:
+                after_acknowledgement()
             return
     write()
     if lifecycle is not None:
