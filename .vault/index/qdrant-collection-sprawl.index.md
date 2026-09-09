@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#qdrant-collection-sprawl'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:320ba16209a2657cd84d9daf55b8abb919f5fea8d30a565716c4c3452fdce9f7'
+body_hash: 'sha256:64f9656474f367932d09ebf199da8d07c75ac0b8df781104cbc7130148745728'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -31,6 +31,11 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S15]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S16]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S17]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S18]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S19]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S20]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S21]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S22]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
@@ -71,6 +76,11 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 - `2026-09-08-qdrant-collection-sprawl-P02-S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate
 - `2026-09-08-qdrant-collection-sprawl-P02-S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count
 - `2026-09-08-qdrant-collection-sprawl-P02-S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path
+- `2026-09-08-qdrant-collection-sprawl-P03-S18` - Raise the archive size cap default so a full ephemeral drain does not evict the evidence it writes
+- `2026-09-08-qdrant-collection-sprawl-P03-S19` - State the unavailable in-place restore and name the portable recovery path on the operator-facing archive surface
+- `2026-09-08-qdrant-collection-sprawl-P03-S20` - Report total collection count and the ephemeral backlog size on the storage status route
+- `2026-09-08-qdrant-collection-sprawl-P03-S21` - Render the reported collection count and ephemeral backlog in the status output
+- `2026-09-08-qdrant-collection-sprawl-P03-S22` - Add a test covering the reported collection count and ephemeral backlog fields
 
 ### plan
 
