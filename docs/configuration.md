@@ -128,8 +128,9 @@ access, licensing, error-recovery, and dense-only policy. This page records the 
 authenticate downloads with `HF_TOKEN` or `hf auth login`, or set
 `VAULTSPEC_RAG_SPARSE_ENABLED=0` consistently in the service environment and reindex.
 Disabling sparse does not disable the dense encoder or reranker, so the service still
-requires `[gpu]` and a supported accelerator. The installation guide also describes
-the current all-model prefetch and readiness caveat for this toggle.
+requires `[gpu]` and a supported accelerator. Provisioning, warmup, and readiness all
+honour the toggle, so a dense-only install never provisions or probes the gated sparse
+repository.
 
 | Variable                            | Type    | Default                     | Controls                                       | CLI flag |
 | ----------------------------------- | ------- | --------------------------- | ---------------------------------------------- | -------- |

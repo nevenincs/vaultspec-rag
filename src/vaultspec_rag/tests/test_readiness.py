@@ -260,6 +260,35 @@ class TestModelsDimension:
             assert models.status == ReadinessStatus.NOT_READY
             assert models.detail
 
+    def test_disabled_sparse_is_never_probed_or_named_as_missing(self) -> None:
+        # Dense-only mode must never require the gated SPLADE repo: it is
+        # absent from the probed set entirely, and an absent cache entry for
+        # it can therefore never surface as a readiness failure.
+        from ..config._settings import get_config
+
+        prev = os.environ.get(EnvVar.SPARSE_ENABLED.value)
+        os.environ[EnvVar.SPARSE_ENABLED.value] = "0"
+        reset_config()
+        try:
+            cfg = get_config()
+            assert cfg.sparse_enabled is False
+            report = compute_readiness()
+            models = report.dimension("models")
+            assert models is not None
+            repos = cast("dict[str, object]", models.info["repos"])
+            assert isinstance(repos, dict)
+            assert str(cfg.sparse_model) not in repos
+            assert str(cfg.embedding_model) in repos
+            assert str(cfg.reranker_model) in repos
+            if models.status == ReadinessStatus.NOT_READY:
+                assert str(cfg.sparse_model) not in models.detail
+        finally:
+            if prev is None:
+                os.environ.pop(EnvVar.SPARSE_ENABLED.value, None)
+            else:
+                os.environ[EnvVar.SPARSE_ENABLED.value] = prev
+            reset_config()
+
 
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestQdrantDimension:
