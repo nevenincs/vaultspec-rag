@@ -95,23 +95,25 @@ def _run_storage_op[T](
 ) -> T:
     """Open a client to the managed server, run ``fn``, exit 3 if unreachable.
 
-    The client does not signal an unreachable server with ``OSError``: it wraps
-    the transport failure in its own ``ResponseHandlingException``, which is a
-    plain ``Exception``. Catching only the builtin types let that escape, and a
-    ``--json`` invocation then printed a traceback to stderr and NOTHING to
-    stdout - zero envelopes on an exit path, which is the one thing the
-    structured-outcome contract forbids, and unparseable for the broker the flag
-    exists to serve. Every API-level failure is caught for the same reason: no
-    exit path from a ``--json`` verb may leave stdout empty.
+    The client does not signal an unreachable server with ``OSError``, so the
+    shared transport class is what is caught here. Naming only the builtin
+    types let a wrapped transport failure escape, and a ``--json`` invocation
+    then printed a traceback to stderr and NOTHING to stdout - zero envelopes
+    on an exit path, which is the one thing the structured-outcome contract
+    forbids, and unparseable for the broker the flag exists to serve. Every
+    API-level failure is caught for the same reason: no exit path from a
+    ``--json`` verb may leave stdout empty.
     """
     from qdrant_client import QdrantClient
-    from qdrant_client.http.exceptions import ApiException, ResponseHandlingException
+    from qdrant_client.http.exceptions import ApiException
+
+    from .._qdrant_transport import TRANSPORT_FAILURES
 
     url = _resolve_server_url(command, json_mode)
     client = QdrantClient(url=url)
     try:
         return fn(client)
-    except (OSError, RuntimeError, ResponseHandlingException) as exc:
+    except TRANSPORT_FAILURES as exc:
         message = (
             f"Could not reach the managed Qdrant server at {url}. Start the "
             "service with `vaultspec-rag server start`."
