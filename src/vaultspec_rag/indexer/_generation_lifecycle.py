@@ -163,7 +163,7 @@ class CodeGenerationLifecycle:
         )
 
         def _open(spec: CodeGenerationOpenRequest) -> CodeRunCheckpoint:
-            return CodeRunCheckpoint.open(
+            return CodeRunCheckpoint.open_generation(
                 CodeRunOpenRequest(
                     data_root=self._data_root,
                     root_dir=self._root_dir,

@@ -334,14 +334,19 @@ def execute_store_mutation(
     *,
     after_acknowledgement: Callable[[], None] | None = None,
 ) -> None:
-    """Bracket one store call with its durable receipt transitions."""
+    """Bracket one store call with its durable receipt transitions.
+
+    A prepare that reports the unit already applied ends the call there. The
+    write is skipped because the bytes are already stored, and the
+    acknowledgement with it: it records the same confirmation the ledger is
+    reporting, so replaying it would re-do durable work to reach the state
+    that answered the question. A replay of a confirmed unit costs nothing.
+    """
     if lifecycle is not None:
         should_apply = lifecycle.prepare()
         if not isinstance(should_apply, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - callback boundary
             raise TypeError("mutation lifecycle prepare must return a bool")
         if not should_apply:
-            if after_acknowledgement is not None:
-                after_acknowledgement()
             return
     write()
     if lifecycle is not None:

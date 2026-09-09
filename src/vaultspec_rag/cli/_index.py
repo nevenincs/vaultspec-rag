@@ -786,10 +786,13 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         str,
         typer.Option(
             "--type",
-            help=("What to index: vault, code, document, or combined."),
+            help=(
+                "What to index: vault, code, document, or combined. "
+                "Aliases: docs, codebase, all."
+            ),
             show_default=True,
         ),
-    ] = "combined",
+    ] = "all",
     model: Annotated[
         str | None,
         typer.Option("--model", help="Override the embedding model name."),
@@ -818,7 +821,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             "--dry-run",
             help=(
                 "Show the resolved code/document admission summary without indexing. "
-                "Use with --type code, document, or the default combined."
+                "Use with --type code, document, combined, or the default all alias."
             ),
         ),
     ] = False,
@@ -1194,7 +1197,7 @@ def handle_clean(
         str,
         typer.Argument(
             help=(
-                "What to delete: vault, code, document, or combined. "
+                "What to delete: vault, code, document, or combined/all. "
                 "Required so nothing is deleted by accident."
             ),
         ),

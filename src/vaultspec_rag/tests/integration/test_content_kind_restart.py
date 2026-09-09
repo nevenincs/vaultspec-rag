@@ -208,7 +208,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
     )
 
     def _open_code() -> CodeRunCheckpoint:
-        return CodeRunCheckpoint.open(
+        return CodeRunCheckpoint.open_generation(
             CodeRunOpenRequest(
                 data_root=data_root,
                 root_dir=tmp_path,
@@ -225,7 +225,7 @@ def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> No
         )
 
     def _open_document() -> DocumentRunCheckpoint:
-        return DocumentRunCheckpoint.open(
+        return DocumentRunCheckpoint.open_generation(
             DocumentRunOpenRequest(
                 data_root=data_root,
                 root_dir=tmp_path,

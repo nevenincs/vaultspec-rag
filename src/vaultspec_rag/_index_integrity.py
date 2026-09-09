@@ -78,6 +78,7 @@ __all__ = [
     "AUDIT_VERDICT_CONSISTENT",
     "AUDIT_VERDICT_DRIFT",
     "REASON_COUNT_UNAVAILABLE",
+    "REASON_PROOF_UNREADABLE",
     "SHRUNKEN_LOG_INTERVAL_SECONDS",
     "VERDICT_CONSISTENT",
     "VERDICT_SHRUNKEN",
@@ -125,6 +126,12 @@ _AUDIT_PAYLOAD_CONTRACTS = {
 #: figure never reached the envelope site. Degraded, never fatal: a count that
 #: could not be taken proves nothing about the collection either way.
 REASON_COUNT_UNAVAILABLE = "count_unavailable"
+
+#: No canonical proof could be read for this root and source, so nothing
+#: about its breadth is known. Distinct from a count that failed: there is
+#: no claim to compare against, which is also the state a root that has
+#: never been indexed is in.
+REASON_PROOF_UNREADABLE = "proof_unreadable"
 
 #: Minimum spacing between ERROR lines for one root and domain. The response
 #: envelope carries the verdict on every single search, so the log line exists
@@ -198,6 +205,44 @@ class IndexIntegrity(NamedTuple):
         ):
             block["missing_count"] = self.claimed_count - self.live_count
         return block
+
+
+def unverifiable_integrity(
+    source: PublicSourceType, reason: str = REASON_PROOF_UNREADABLE
+) -> IndexIntegrity:
+    """Return the verdict for a source whose proof could not be read.
+
+    A search over a root that was never indexed, or whose proof is older than
+    the current format, still has to answer: it returns nothing and says so.
+    Reporting no breadth is honest; refusing the request would turn a first
+    search into an error, and claiming zero would read as a verified empty
+    index and latch there.
+    """
+    return IndexIntegrity(
+        verdict=VERDICT_UNVERIFIABLE,
+        source=source.value,
+        claimed_count=None,
+        live_count=None,
+        generation_id=None,
+        reason=reason,
+    )
+
+
+def acquire_index_integrity_snapshot_if_proven(
+    root: pathlib.Path, source: PublicSourceType
+) -> IndexIntegritySnapshot | None:
+    """Acquire the proof token, or ``None`` when no proof can be read.
+
+    The serving path needs the fence when there is one and must not fail
+    without it, so the typed rebuild-required outcome is turned into an
+    absence here rather than raised through a read-only request.
+    """
+    from .indexer._publication_proof import ProofUnverifiableError
+
+    try:
+        return acquire_index_integrity_snapshot(root, source)
+    except ProofUnverifiableError:
+        return None
 
 
 def acquire_index_integrity_snapshot(

@@ -190,7 +190,7 @@ class RunCheckpointBase:
     _embedding_schema: ClassVar[int]
 
     @classmethod
-    def open(cls, request: RunOpenRequest, /) -> Self:
+    def open_generation(cls, request: RunOpenRequest, /) -> Self:
         """Open or resume the compatible generation for one attempt.
 
         One body for every source type: the four facts that differ are

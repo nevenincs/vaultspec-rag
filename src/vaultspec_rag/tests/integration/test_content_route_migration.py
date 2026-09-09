@@ -113,7 +113,7 @@ def _document_checkpoint(
     run_policy: RunPolicy | None = None,
 ):
     policy = _resolved_policy(root)
-    checkpoint = DocumentRunCheckpoint.open(
+    checkpoint = DocumentRunCheckpoint.open_generation(
         DocumentRunOpenRequest(
             data_root=root / get_config().data_dir,
             root_dir=root,
@@ -468,7 +468,7 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
             ),
         ),
     )
-    checkpoint = DocumentRunCheckpoint.open(
+    checkpoint = DocumentRunCheckpoint.open_generation(
         DocumentRunOpenRequest(
             data_root=tmp_path / get_config().data_dir,
             root_dir=tmp_path,

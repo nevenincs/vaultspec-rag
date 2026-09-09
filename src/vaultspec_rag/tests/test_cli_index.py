@@ -313,7 +313,7 @@ class TestIndexRebuild:
         rem = typing.cast("list[str]", raw_rem)
         assert any("--type vault" in r for r in rem)
         assert any("--type code" in r for r in rem)
-        assert any("--type combined" in r for r in rem)
+        assert any("--type all" in r for r in rem)
 
     def test_index_bare_invocation_still_works(self, tmp_path: Path):
         """Bare `vaultspec-rag index` (no --rebuild) keeps the all default.
