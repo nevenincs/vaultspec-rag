@@ -105,7 +105,7 @@ def _index_route_label(via: str) -> str:
 
 
 def _index_source_label(source: str) -> str:
-    if source in {"code", "codebase"}:
+    if source == "code":
         return "Source code"
     if source == "vault":
         return "Vault"
@@ -780,12 +780,11 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         typer.Option(
             "--type",
             help=(
-                "What to index: vault, code, document, or combined. "
-                "Aliases: docs, codebase, all."
+                "What to index: vault, code, document, or combined."
             ),
             show_default=True,
         ),
-    ] = "all",
+    ] = "combined",
     model: Annotated[
         str | None,
         typer.Option("--model", help="Override the embedding model name."),
@@ -1285,5 +1284,5 @@ def handle_clean(
 
     _cli.console.print("Clean summary")
     for source in cleared:
-        label = _index_source_label("codebase" if source == "code" else source)
+        label = _index_source_label(source)
         _plain(f"{label} index: empty.")

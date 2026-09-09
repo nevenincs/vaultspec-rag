@@ -90,7 +90,9 @@ def write_archive(
                                     f"point-{index}" for index in range(points)
                                 ],
                             }
-                        ] if points else [],
+                        ]
+                        if points
+                        else [],
                     }
                 ],
             }

@@ -918,7 +918,7 @@ vaultspec-rag server storage migrate
 
 ## server storage restore
 
-Restore an archived namespace into a named destination root. The destination must hold no collections; there is no override.
+Restore an archived namespace into a named destination root. The destination must hold no collections; there is no override. Applying a restore needs a non-Windows Qdrant server. Previewing the destination with --dry-run works on any platform.
 
 ```bash
 vaultspec-rag server storage restore

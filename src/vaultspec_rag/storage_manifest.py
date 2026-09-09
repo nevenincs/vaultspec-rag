@@ -32,11 +32,14 @@ import threading
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import JsonWriteOptions, write_json_atomically
 from ._store_models import root_collection_prefix
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 __all__ = [
     "ManifestEntry",
@@ -54,6 +57,7 @@ __all__ = [
     "rekey_prefix",
     "remove_prefix",
     "remove_root",
+    "retain_collections",
     "reverse_map",
     "snapshot_manifest_path",
     "update_activity_stamps",
@@ -546,6 +550,52 @@ def record_restored_archive(
     return entry
 
 
+def retain_collections(prefix: str, destroyed: Iterable[str]) -> bool:
+    """Stop a namespace's entry naming collections a partial drop destroyed.
+
+    A drop that fails part-way leaves the entry standing, because part of the
+    namespace still stands. What it must not leave standing is the entry's
+    claim about what that namespace HOLDS. ``collections`` is read as the
+    record of which kinds exist - a namespace still naming a destroyed code
+    collection is still offered as a donor of code vectors - and the identity
+    map is provenance for collections that no longer have any.
+
+    Narrowing only, never widening: exactly the names handed in are dropped,
+    so a collection the manifest declared and this drop never reached keeps
+    its record. The caller passes what it actually destroyed, which is the
+    only set anything here can honestly claim is gone.
+
+    Args:
+        prefix: The namespace prefix whose entry to narrow.
+        destroyed: The collection names the drop removed before it failed.
+
+    Returns:
+        ``True`` if the entry changed, ``False`` if there was no entry or
+        nothing in it to narrow.
+    """
+    gone = frozenset(destroyed)
+    if not gone:
+        return False
+    with _LOCK:
+        entries = load_manifest()
+        entry = entries.get(prefix)
+        if entry is None:
+            return False
+        collections = tuple(name for name in entry.collections if name not in gone)
+        identity = {
+            name: value
+            for name, value in entry.collection_identity.items()
+            if name not in gone
+        }
+        if collections == entry.collections and identity == entry.collection_identity:
+            return False
+        entries[prefix] = replace(
+            entry, collections=collections, collection_identity=identity
+        )
+        _write_manifest(entries)
+    return True
+
+
 def remove_prefix(prefix: str) -> bool:
     """Drop the manifest entry for ``prefix`` and persist.
 
@@ -689,7 +739,7 @@ def update_orphan_stamps(statuses: dict[str, str], *, now_iso: str) -> dict[str,
 
 
 def update_activity_stamps(
-    observations: dict[str, tuple[str, int]], *, now_iso: str
+    observations: dict[str, tuple[str, int | None]], *, now_iso: str
 ) -> dict[str, str]:
     """Advance the persisted idle clocks from one survey's observations.
 
@@ -703,7 +753,7 @@ def update_activity_stamps(
     exists to prove a namespace has gone a whole TTL unused, and an indexer
     that writes without stamping is exactly the writer whose data would be
     destroyed. So the clock resets unless this cycle can positively confirm
-    the namespace held still, which takes three things to be true at once:
+    the namespace held still, which takes four things to be true at once:
 
     - a previous count exists to compare against. A FIRST observation
       confirms nothing - there is no earlier reading it could have held
@@ -711,6 +761,11 @@ def update_activity_stamps(
       orphan clock already works this way: an entry predating the field
       cannot be reclaimed until one full window has elapsed since the field
       appeared, and one observation is no more of a window here.
+    - this cycle actually counted the namespace. A count that could not be
+      taken is not a reading the next one may compare against, so it clears
+      the recorded count back to never-observed rather than persisting the
+      partial sum it happens to hold. Comparing across a cycle nobody could
+      see would let a blackout pass for confirmed stillness.
     - the count has not moved. Movement is direct evidence of a live writer,
       whether or not anything stamped a completed run.
     - the root was verifiable. An unreadable root is not evidence of
@@ -723,7 +778,9 @@ def update_activity_stamps(
 
     Args:
         observations: Mapping of collection prefix to its
-            ``(survey status, total stored points)`` for this cycle.
+            ``(survey status, total stored points)`` for this cycle. A
+            ``None`` count is a survey that could not finish counting the
+            namespace, which is an absence of evidence and never a zero.
         now_iso: ISO-8601 timestamp to stamp when activity is observed.
 
     Returns:
@@ -739,13 +796,14 @@ def update_activity_stamps(
             if entry is None:
                 continue
             held_still = (
-                entry.observed_points >= 0
+                points is not None
+                and entry.observed_points >= 0
                 and points == entry.observed_points
                 and status != "unverifiable"
             )
             updated = replace(
                 entry,
-                observed_points=points,
+                observed_points=-1 if points is None else points,
                 last_indexed=entry.last_indexed if held_still else now_iso,
             )
             if updated != entry:

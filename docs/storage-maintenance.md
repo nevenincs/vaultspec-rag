@@ -72,11 +72,13 @@ A namespace is only ever reclaimed automatically when all of the following hold:
 
 Reclamation is tiered. A namespace holding zero documents is dropped after 24 hours of continuous orphan-hood. A namespace holding data waits 7 days, then each of its collections is written to a snapshot archive, and the namespace is dropped only if every snapshot succeeded - a failed archive always cancels the drop.
 
+One class waits less. A namespace whose root lived under the OS temp directory was a throwaway sandbox, and an orphaned one is a sandbox that was torn down, so it is reclaimed after 24 hours whatever it holds. That shortens the waiting period and nothing else: a point-bearing temp-rooted namespace is still archived first and still not dropped if the archive fails. An absent root on an unreachable volume classifies `unverifiable` rather than `orphaned` and so never draws this window.
+
 The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception, temp-rooted namespaces - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
 
 The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
 
-The interval, both grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
+The interval, all three grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
 ## Shrinking collections you keep
 
@@ -117,7 +119,7 @@ One residue is left behind deliberately. The write-ahead log size is fixed when 
 
 ## Archives and how to restore them
 
-Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GiB; both bounds are configurable. The setting for the second is named
+Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 64 GiB; both bounds are configurable. The setting for the second is named
 `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`, and the number you give it is
 multiplied by 1024 three times, so it is read as GiB despite the name.
 
@@ -268,7 +270,7 @@ The token-gated `/metrics` route exports the rollup in Prometheus text format. A
 
 `store_drifted_collections` counts both collections still carrying oversized geometry and collections whose setting is already correct but whose merge is still running - so it reaching zero genuinely means the backend has finished converging, not merely that the settings have been written. Note that `maintenance_reconciled_bytes_total` credits only merges a cycle watched to completion; a merge that outlives its convergence budget still finishes, but its bytes go uncounted.
 
-The `GET /storage/survey` route carries a whole-backend rollup as a `totals` object: total bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling. The CLI `--json` survey emits the per-namespace list (`namespaces`, `returned`, `total`, `queried_root`) without that `totals` rollup.
+The `GET /storage/survey` route carries a whole-backend rollup as a `totals` object: total bytes, namespace count, total collection count, a per-status byte breakdown, the ephemeral backlog - the footprint still held by orphaned temp-rooted namespaces, the population next eligible for reclamation - and the count of namespaces whose point count could not be fully read - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling, and an unread count is never mistaken for a verified zero. The CLI `--json` survey emits the per-namespace list (`namespaces`, `returned`, `total`, `queried_root`) without that `totals` rollup.
 
 Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
