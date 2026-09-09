@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import typing
 
@@ -460,6 +461,18 @@ class TestCleanRequiredTarget:
 
 
 class TestIndexAuthorityBoundary:
+    def test_cli_publication_authority_is_required_and_closed(self) -> None:
+        """A default or a third publication authority fails this guard."""
+        from ..cli._index import _publication_authority
+        from ..indexer._run_ledger_models import RunAuthority
+
+        parameter = inspect.signature(_publication_authority).parameters["rebuild"]
+        assert parameter.default is inspect.Parameter.empty
+        assert {
+            _publication_authority(rebuild=False),
+            _publication_authority(rebuild=True),
+        } == {RunAuthority.PUBLICATION, RunAuthority.REBUILD}
+
     @pytest.mark.parametrize("request_kind", ["local", "service"])
     def test_audit_authority_cannot_enter_publication_paths(
         self,
@@ -578,8 +591,17 @@ class TestIndexAuthorityBoundary:
         self,
         tmp_path: Path,
         conflict: str,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from ..cli import _index as index_module
+
         (tmp_path / ".vaultspec").mkdir()
+
+        def forbidden_transport(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("an invalid audit request reached transport")
+
+        monkeypatch.setattr(index_module, "_try_http_index_audit", forbidden_transport)
+        monkeypatch.setattr(index_module, "_try_http_reindex", forbidden_transport)
 
         result = runner.invoke(
             app,

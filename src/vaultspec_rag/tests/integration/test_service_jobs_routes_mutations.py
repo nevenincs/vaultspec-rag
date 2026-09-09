@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
+from starlette.requests import Request
 
 from ... import jobs as _jobs
 from ...indexer._run_ledger_models import RunAuthority
@@ -21,12 +22,94 @@ from ...job_manager.manager import JobManager
 from ...job_manager.models import JobAttemptContext
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...server import ServerRouteRuntime, create_http_app
+from ...server._routes import InvalidJobRequestError, validated_index_request
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
     from pathlib import Path
+
+
+def _job_request() -> Request:
+    return Request(
+        cast(
+            "Any",
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/jobs",
+                "headers": [],
+            },
+        )
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mode", "authority"),
+    [
+        (JobMode.INCREMENTAL, RunAuthority.PUBLICATION),
+        (JobMode.INCREMENTAL, RunAuthority.REBUILD),
+        (JobMode.REBUILD, RunAuthority.REBUILD),
+    ],
+)
+async def test_generic_service_admission_preserves_closed_authority(
+    tmp_path: Path,
+    mode: JobMode,
+    authority: RunAuthority,
+) -> None:
+    """The generic HTTP adapter must retain the exact admitted enum member."""
+    (tmp_path / ".vault").mkdir()
+    spec, _initiator, _paused, _key, _admission = await validated_index_request(
+        _job_request(),
+        {
+            "operation": "index",
+            "source": "vault",
+            "project_root": str(tmp_path),
+            "mode": mode.value,
+            "authority": authority.value,
+        },
+    )
+
+    assert spec.mode is mode
+    assert spec.authority is authority
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("case", "mode", "raw_authority"),
+    [
+        ("missing", JobMode.INCREMENTAL, None),
+        ("empty", JobMode.INCREMENTAL, ""),
+        ("non-text", JobMode.INCREMENTAL, 1),
+        ("unknown", JobMode.INCREMENTAL, "migration"),
+        ("publication-rebuild", JobMode.REBUILD, "publication"),
+        ("audit-incremental", JobMode.INCREMENTAL, "audit_verification"),
+    ],
+)
+async def test_generic_service_admission_rejects_invalid_authority(
+    tmp_path: Path,
+    case: str,
+    mode: JobMode,
+    raw_authority: object,
+) -> None:
+    """Missing, open-vocabulary, and forbidden authority shapes fail closed."""
+    del case
+    (tmp_path / ".vault").mkdir()
+    payload: dict[str, object] = {
+        "operation": "index",
+        "source": "vault",
+        "project_root": str(tmp_path),
+        "mode": mode.value,
+    }
+    if raw_authority is not None:
+        payload["authority"] = raw_authority
+
+    with pytest.raises(InvalidJobRequestError) as raised:
+        await validated_index_request(_job_request(), payload)
+
+    assert raised.value.code == "invalid_job_spec"
 
 
 def _attempt_contract(

@@ -89,11 +89,31 @@ class TestPersistedJobStateRoundTrip:
             JobState.QUEUED,
             spec=replace(_spec(), authority=authority),
         )
-        state = _generation(snapshot)
+        state = PersistedManagerState(
+            jobs=(snapshot,),
+            bindings=(
+                (
+                    "closed-authority",
+                    IdempotencyBinding(
+                        signature=(snapshot.spec, snapshot.initiator, False),
+                        job_id=snapshot.id,
+                    ),
+                ),
+            ),
+        )
         path = tmp_path / "jobs-state.json"
 
         save_persisted_state(path, state)
 
+        payload = cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        binding = cast("list[dict[str, object]]", payload["idempotency"])[0]
+        assert cast("dict[str, object]", job["spec"])["authority"] == authority.value
+        assert (
+            cast("dict[str, object]", binding["spec"])["authority"] == authority.value
+        )
         assert load_persisted_state(path) == state
 
     def test_idempotency_spec_writes_the_same_explicit_authority(
@@ -122,6 +142,105 @@ class TestPersistedJobStateRoundTrip:
         encoded = cast("dict[str, object]", record["spec"])
 
         assert encoded["authority"] == RunAuthority.PUBLICATION.value
+
+    @pytest.mark.parametrize(
+        "authority",
+        [RunAuthority.PUBLICATION, RunAuthority.REBUILD],
+        ids=lambda authority: authority.value,
+    )
+    def test_authority_survives_dedup_retry_and_restart(
+        self,
+        tmp_path: Path,
+        authority: RunAuthority,
+    ) -> None:
+        """Changing authority at any lifecycle copy breaks this end-to-end guard."""
+        state_path = tmp_path / "jobs-state.json"
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=state_path,
+        )
+        initiator = JobInitiator("test", "closed-authority", str(tmp_path))
+        spec = JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+            authority,
+        )
+        other_authority = (
+            RunAuthority.REBUILD
+            if authority is RunAuthority.PUBLICATION
+            else RunAuthority.PUBLICATION
+        )
+        other_spec = replace(spec, authority=other_authority)
+
+        created = manager.create(
+            spec,
+            initiator,
+            idempotency_key="closed-authority-key",
+        )
+        assert created.code == "job_created"
+        assert created.job is not None
+        assert created.job.spec.authority is authority
+
+        replayed = manager.create(
+            spec,
+            initiator,
+            idempotency_key="closed-authority-key",
+        )
+        assert replayed.code == "idempotency_replayed"
+        assert replayed.job is not None
+        assert replayed.job.id == created.job.id
+        assert replayed.job.spec.authority is authority
+
+        conflict = manager.create(
+            other_spec,
+            initiator,
+            idempotency_key="closed-authority-key",
+        )
+        assert conflict.code == "idempotency_key_conflict"
+        assert conflict.job is not None
+        assert conflict.job.spec.authority is authority
+
+        distinct = manager.create(other_spec, initiator)
+        assert distinct.code == "job_created"
+        assert distinct.job is not None
+        assert distinct.job.spec.authority is other_authority
+
+        assert manager.fail_unstarted(created.job.id, result="retry me").code == (
+            "job_failed_before_dispatch"
+        )
+        retried = manager.retry(created.job.id)
+        assert retried.code == "job_retry_created"
+        assert retried.job is not None
+        assert retried.job.spec.authority is authority
+
+        restored = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=4,
+            state_path=state_path,
+        )
+        assert restored.restore_persisted().code == "job_state_restored"
+        restored_retry = restored.get(retried.job.id)
+        assert restored_retry is not None
+        assert restored_retry.spec.authority is authority
+
+        replayed_after_restart = restored.create(
+            spec,
+            initiator,
+            idempotency_key="closed-authority-key",
+        )
+        assert replayed_after_restart.code == "idempotency_replayed"
+        assert replayed_after_restart.job is not None
+        assert replayed_after_restart.job.id == created.job.id
+        assert replayed_after_restart.job.spec.authority is authority
+
+        deduplicated_after_restart = restored.create(spec, initiator)
+        assert deduplicated_after_restart.code == "active_job_exists"
+        assert deduplicated_after_restart.job is not None
+        assert deduplicated_after_restart.job.id == retried.job.id
+        assert deduplicated_after_restart.job.spec.authority is authority
 
     def test_a_whole_generation_of_distinct_jobs_survives_with_its_bindings(
         self, tmp_path: Path
@@ -394,6 +513,82 @@ class TestPersistedJobStateSchemaContract:
         self._rewrite(path, payload)
 
         with pytest.raises(TypeError, match="job authority must be a non-empty string"):
+            load_persisted_state(path)
+
+    @pytest.mark.parametrize(
+        ("value", "error_type", "message"),
+        [
+            ("", TypeError, "job authority must be a non-empty string"),
+            (1, TypeError, "job authority must be a non-empty string"),
+            ("migration", ValueError, "is not a valid RunAuthority"),
+        ],
+        ids=["empty", "non-text", "unknown"],
+    )
+    def test_current_job_specs_reject_non_authority_values(
+        self,
+        tmp_path: Path,
+        value: object,
+        error_type: type[Exception],
+        message: str,
+    ) -> None:
+        """A default or open-vocabulary decoder makes one of these cases load."""
+        path, payload = self._written_payload(tmp_path)
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        cast("dict[str, object]", job["spec"])["authority"] = value
+        self._rewrite(path, payload)
+
+        with pytest.raises(error_type, match=message):
+            load_persisted_state(path)
+
+    @pytest.mark.parametrize(
+        ("case", "error_type", "message"),
+        [
+            ("missing", TypeError, "job authority must be a non-empty string"),
+            ("unknown", ValueError, "is not a valid RunAuthority"),
+            (
+                "mismatched",
+                ValueError,
+                "does not identify equivalent work",
+            ),
+        ],
+    )
+    def test_idempotency_specs_require_the_same_closed_authority(
+        self,
+        tmp_path: Path,
+        case: str,
+        error_type: type[Exception],
+        message: str,
+    ) -> None:
+        """Bindings cannot omit, invent, or replace the job's authority."""
+        snapshot = _snapshot_in_state(JobState.QUEUED)
+        state = PersistedManagerState(
+            jobs=(snapshot,),
+            bindings=(
+                (
+                    "closed-authority",
+                    IdempotencyBinding(
+                        signature=(snapshot.spec, snapshot.initiator, False),
+                        job_id=snapshot.id,
+                    ),
+                ),
+            ),
+        )
+        path = tmp_path / "jobs-state.json"
+        save_persisted_state(path, state)
+        payload = cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+        record = cast("list[dict[str, object]]", payload["idempotency"])[0]
+        spec = cast("dict[str, object]", record["spec"])
+        if case == "missing":
+            del spec["authority"]
+        elif case == "unknown":
+            spec["authority"] = "migration"
+        else:
+            spec["authority"] = RunAuthority.REBUILD.value
+        self._rewrite(path, payload)
+
+        with pytest.raises(error_type, match=message):
             load_persisted_state(path)
 
     def test_a_file_from_a_newer_build_is_refused_as_newer_not_as_damaged(

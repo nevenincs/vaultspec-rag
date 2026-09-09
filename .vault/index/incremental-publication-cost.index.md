@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:67e7b6e671629efbcbae35f9a2e85791d49a82b0abba6ba46ea8cdfc494a49aa'
+body_hash: 'sha256:fedd7b117fba3e13be098291dc4798b9d02e54542914d96203889080c9ec0e30'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -27,6 +27,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S40]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S52]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S60]]'
+  - '[[2026-09-08-incremental-publication-cost-W03-P08-S62]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -36,6 +37,7 @@ related:
   - '[[2026-09-09-incremental-publication-cost-s39-cli-authority-audit]]'
   - '[[2026-09-09-incremental-publication-cost-s40-fail-closed-proof-audit]]'
   - '[[2026-09-09-incremental-publication-cost-s60-canonical-proof-verification-audit]]'
+  - '[[2026-09-09-incremental-publication-cost-s62-authority-lifecycle-audit]]'
 ---
 
 # `incremental-publication-cost` feature index
@@ -55,6 +57,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-09-incremental-publication-cost-s39-cli-authority-audit` - `incremental-publication-cost` audit: `s39 cli authority`
 - `2026-09-09-incremental-publication-cost-s40-fail-closed-proof-audit` - `incremental-publication-cost` audit: `S40 fail-closed proof audit`
 - `2026-09-09-incremental-publication-cost-s60-canonical-proof-verification-audit` - `incremental-publication-cost` audit: `S60 canonical-proof audit verification`
+- `2026-09-09-incremental-publication-cost-s62-authority-lifecycle-audit` - `incremental-publication-cost` audit: `S62 authority lifecycle`
 
 ### exec
 
@@ -77,6 +80,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W03-P08-S40` - Prove missing or old-format proof, schema drift, and corrupt receipts require typed rebuild refusal and that audit verification cannot seed proof
 - `2026-09-08-incremental-publication-cost-W03-P08-S52` - Carry required publication and verification authority through the exact job codec, every production constructor, immutable transition, and attempt context
 - `2026-09-08-incremental-publication-cost-W03-P08-S60` - Implement and activate service-owned CLI full audit verification using an atomic current-proof snapshot and bounded backend payload scans without creating or repairing proof, and permit only rebuild publication to establish missing proof
+- `2026-09-08-incremental-publication-cost-W03-P08-S62` - Prove explicit authority survives serialization, retry, restart, generic service admission, and CLI admission
 
 ### plan
 
