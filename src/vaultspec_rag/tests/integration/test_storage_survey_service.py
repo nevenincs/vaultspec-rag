@@ -248,6 +248,129 @@ def test_storage_survey_serves_cache_after_warmup(
     assert again.get("computed_at") == warmed_at
 
 
+def _expected_totals(
+    namespaces: list[dict[str, object]],
+) -> tuple[int, int, int]:
+    """Recompute ``collections``, ``ephemeral_backlog_bytes``, and
+    ``points_unverified_namespaces`` client-side.
+
+    Independent of the route's own aggregation, so a snapshot's reported
+    ``totals`` can be checked for internal consistency against the very
+    per-namespace list it was computed from, rather than against a second,
+    separately timed call that a live daemon's own background writes (WAL
+    checkpoints, manifest flushes) can drift out from under.
+    """
+    collections = sum(len(cast("list[object]", ns["collections"])) for ns in namespaces)
+    backlog = sum(
+        count(ns.get("footprint_bytes")) or 0
+        for ns in namespaces
+        if ns.get("status") == "orphaned" and ns.get("temp_rooted") is True
+    )
+    unverified = sum(1 for ns in namespaces if ns.get("points_verified") is False)
+    return collections, backlog, unverified
+
+
+@pytest.mark.usefixtures("live_service")
+def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    """``totals`` reports the whole-backend collection count and backlog.
+
+    ``collections`` sums every Qdrant collection across every namespace -
+    distinct from ``namespaces``, since one root can hold several
+    collections. ``ephemeral_backlog_bytes`` is the footprint of namespaces
+    that are both orphaned and temp-rooted: the population the ephemeral
+    grace window drains first. A namespace that is still live must not
+    count toward that backlog, even though its root sits under the same OS
+    temp directory pytest itself uses. Every namespace also carries its own
+    ``points_verified``, and ``totals`` rolls that up into
+    ``points_unverified_namespaces`` - a freshly indexed namespace has a
+    verified count, so it must not be counted there.
+
+    Each check recomputes the expected figures from the very namespace list
+    the same response carried, rather than from an earlier response: the
+    shared daemon this suite reuses is a live system whose other namespaces
+    keep changing footprint between calls (WAL checkpoints, manifest
+    flushes), so only a same-snapshot comparison is not itself flaky.
+    """
+    import shutil
+
+    from ..corpus import build_synthetic_vault
+
+    port, _status_dir = live_service
+
+    # tmp_path lives under the OS temp directory, so this root classifies
+    # temp-rooted once indexed.
+    root = tmp_path / "ephemeral-status-root"
+    root.mkdir()
+    build_synthetic_vault(root, n_docs=4, seed=91)
+    reindex = _do_http_call(
+        port,
+        "/reindex",
+        {"type": "vault", "clean": True, "project_root": str(root)},
+    )
+    assert reindex is not None and reindex.get("ok") is True, reindex
+    job_id = reindex.get("job_id")
+    assert isinstance(job_id, str)
+    _wait_for_job(port, job_id)
+
+    # Still live: temp-rooted, but not yet orphaned, so it must not be
+    # counted in the backlog. A namespace this survey just counted itself
+    # has a verified count.
+    live_check = _survey_root_call(port, root, fresh=True)
+    live_namespaces = cast("list[dict[str, object]]", live_check["namespaces"])
+    assert live_namespaces and live_namespaces[0]["status"] == "live"
+    assert live_namespaces[0]["temp_rooted"] is True
+    assert live_namespaces[0]["points_verified"] is True
+
+    still_live = _do_http_call(port, "/storage/survey?limit=1000&fresh=true", None)
+    assert still_live is not None
+    still_live_totals = cast("dict[str, object]", still_live["totals"])
+    still_live_namespaces = cast("list[dict[str, object]]", still_live["namespaces"])
+    expected_collections, expected_backlog, expected_unverified = _expected_totals(
+        still_live_namespaces
+    )
+    assert still_live_totals.get("collections") == expected_collections
+    assert still_live_totals.get("ephemeral_backlog_bytes") == expected_backlog
+    assert still_live_totals.get("points_unverified_namespaces") == expected_unverified
+    prefix = live_namespaces[0]["prefix"]
+    assert not any(
+        ns["prefix"] == prefix
+        and ns.get("status") == "orphaned"
+        and ns.get("temp_rooted") is True
+        for ns in still_live_namespaces
+    ), "a still-live namespace must not be counted in its own backlog"
+    assert not any(
+        ns["prefix"] == prefix and ns.get("points_verified") is False
+        for ns in still_live_namespaces
+    ), "a namespace this survey just counted must not read as unverified"
+
+    # Orphan it: the root is gone, the namespace remains, still temp-rooted.
+    shutil.rmtree(root)
+    orphaned = _survey_root_call(port, root, fresh=True)
+    orphaned_namespaces = cast("list[dict[str, object]]", orphaned["namespaces"])
+    assert orphaned_namespaces, "the namespace must survive its root's removal"
+    entry = orphaned_namespaces[0]
+    assert entry["status"] == "orphaned"
+    assert entry["temp_rooted"] is True
+    footprint = count(entry.get("footprint_bytes"))
+    assert footprint is not None and footprint > 0
+
+    after = _do_http_call(port, "/storage/survey?limit=1000&fresh=true", None)
+    assert after is not None
+    after_totals = cast("dict[str, object]", after["totals"])
+    after_namespaces = cast("list[dict[str, object]]", after["namespaces"])
+    after_expected_collections, after_expected_backlog, after_expected_unverified = (
+        _expected_totals(after_namespaces)
+    )
+    assert after_totals.get("collections") == after_expected_collections
+    assert after_totals.get("ephemeral_backlog_bytes") == after_expected_backlog
+    assert after_totals.get("points_unverified_namespaces") == after_expected_unverified
+    # Now that it is orphaned, its own footprint is part of the backlog.
+    assert after_expected_backlog >= footprint
+
+
 @pytest.mark.usefixtures("live_service")
 def test_storage_survey_fresh_recomputes_and_reseeds_cache(
     live_service: tuple[int, Path],
