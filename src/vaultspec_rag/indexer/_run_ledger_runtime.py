@@ -8,14 +8,12 @@ import time
 import uuid
 from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ._content_policy import ContentKind
-from ._file_state import FileState, FileStateKind, validate_rel_path
+from .._source_types import PublicSourceType
 from ._run_ledger_commits import RunLedgerCommitMethods
 from ._run_ledger_files import (
-    FileStateRow,
     RunLedgerFileMethods,
-    file_state_from_row,
 )
 from ._run_ledger_finalization import RunLedgerFinalizationMethods
 from ._run_ledger_models import (
@@ -43,7 +41,14 @@ from ._run_ledger_models import (
     open_ledger_connection,
     raise_if_lock_contention,
 )
-from ._run_ledger_publication import RunLedgerPublicationMethods
+from ._run_ledger_publication import (
+    RunLedgerPublicationMethods,
+    compatibility_for_signature,
+    publication_compatibility_from_row,
+)
+
+if TYPE_CHECKING:
+    from ._content_policy import ContentKind
 
 __all__ = ["RunLedger"]
 
@@ -241,7 +246,7 @@ class RunLedger(
                 ),
             )
             if not signature.clean:
-                parent_generation_id = self._carry_published_manifest(
+                parent_generation_id = self._published_proof_parent(
                     connection,
                     generation_id,
                     signature,
@@ -262,81 +267,34 @@ class RunLedger(
             assert row is not None
             return self._generation_from_row(row)
 
-    def _carry_published_manifest(
+    def _published_proof_parent(
         self,
         connection: sqlite3.Connection,
         generation_id: str,
         signature: RunSignature,
     ) -> str | None:
-        candidates: list[GenerationRow] = fetch_all(
+        del generation_id
+        key = compatibility_for_signature(signature)
+        row: sqlite3.Row | None = fetch_one(
             connection,
             """
-            SELECT * FROM generations
-            WHERE generation_id != ?
-              AND source_type = ?
-              AND collection_identity = ?
-              AND terminal_state = ?
-            ORDER BY updated_at DESC
+            SELECT * FROM publication_proofs
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
             """,
             (
-                generation_id,
-                signature.source_type.value,
-                signature.collection_identity,
-                RunTerminalState.SUCCEEDED.value,
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
             ),
         )
-        source_id: str | None = None
-        for candidate in candidates:
-            published = self._generation_from_row(candidate)
-            if (
-                published.signature.content_compatibility_fingerprint
-                != signature.content_compatibility_fingerprint
-            ):
-                continue
-            # A manifest whose cited evidence generation no longer exists
-            # cannot seed an incremental diff: every carried point would read
-            # as unretained and the publication purge would delete the whole
-            # collection. Refusing it leaves the caller no parent, which
-            # forces the full failure-safe reconciliation path instead.
-            #
-            # Stop rather than fall through to an older candidate. The newest
-            # compatible manifest is the one storage reflects; anything older
-            # describes points a later publication already replaced or purged,
-            # so carrying it would claim dead point ids and skip re-encoding
-            # the files it names - a worse diff than the one just refused.
-            dangling: object | None = fetch_one(
-                connection,
-                """
-                SELECT 1
-                FROM file_states AS states
-                LEFT JOIN generations AS evidence
-                  ON evidence.generation_id = states.evidence_generation_id
-                WHERE states.generation_id = ?
-                  AND evidence.generation_id IS NULL
-                LIMIT 1
-                """,
-                (published.generation_id,),
-            )
-            if dangling is not None:
-                return None
-            source_id = published.generation_id
-            break
-        if source_id is None:
+        if row is None:
             return None
-        connection.execute(
-            """
-            INSERT INTO file_states (
-                generation_id, rel_path, state, content_kind, content_hash,
-                admission_reason, error_kind, detail, evidence_generation_id
-            )
-            SELECT ?, rel_path, state, content_kind, content_hash,
-                   admission_reason, error_kind, detail,
-                   evidence_generation_id
-            FROM file_states WHERE generation_id = ?
-            """,
-            (generation_id, source_id),
-        )
-        return source_id
+        persisted = publication_compatibility_from_row(row)
+        if persisted != key:
+            return None
+        return column_text(row, "generation_id")
 
     def generation(self, generation_id: str) -> RunGeneration:
         """Return one generation or raise for an unknown identifier."""
@@ -374,47 +332,6 @@ class RunLedger(
                 parameters,
             )
         return self._generation_from_row(row) if row is not None else None
-
-    def latest_file_state(
-        self,
-        source_type: ContentKind,
-        *,
-        collection_identity: str,
-        rel_path: str,
-    ) -> FileState | None:
-        """Return the newest indexed ownership state across generations.
-
-        A newer incomplete clean generation carries no prior manifest. Looking
-        only at that generation would therefore hide points still certified by
-        an older generation and still present in storage. Rejections and
-        failures do not certify stored ownership and cannot mask that evidence.
-        """
-        validate_rel_path(rel_path)
-        with ledger_connection(self.path) as connection:
-            row: FileStateRow | None = fetch_one(
-                connection,
-                """
-                SELECT states.* FROM file_states AS states
-                JOIN generations AS generations
-                  ON generations.generation_id = states.generation_id
-                WHERE generations.source_type = ?
-                  AND generations.collection_identity = ?
-                  AND states.rel_path = ?
-                  AND states.state = ?
-                  AND states.content_kind = ?
-                ORDER BY generations.updated_at DESC,
-                         generations.created_at DESC
-                LIMIT 1
-                """,
-                (
-                    source_type.value,
-                    collection_identity,
-                    rel_path,
-                    FileStateKind.INDEXED.value,
-                    source_type.value,
-                ),
-            )
-        return file_state_from_row(row) if row is not None else None
 
     def _require_current_or_empty_schema(
         self,
@@ -780,8 +697,7 @@ class RunLedger(
                     (
                         unit_kind = 'upsert'
                         AND source_digest IS NOT NULL
-                        AND length(source_digest) = 128
-                        AND source_digest NOT GLOB '*[^0-9a-f]*'
+                        AND length(source_digest) > 0
                     ) OR
                     (unit_kind != 'upsert' AND source_digest IS NULL)
                 ),
@@ -1247,7 +1163,7 @@ def _signature_from_payload(payload: dict[str, object]) -> RunSignature:
     return RunSignature(
         root_identity=_typed_field(payload, "root_identity", str),
         collection_identity=_typed_field(payload, "collection_identity", str),
-        source_type=ContentKind(_typed_field(payload, "source_type", str)),
+        source_type=PublicSourceType(_typed_field(payload, "source_type", str)),
         operation=RunOperation(_typed_field(payload, "operation", str)),
         clean=_typed_field(payload, "clean", bool),
         model_identity=_typed_field(payload, "model_identity", str),

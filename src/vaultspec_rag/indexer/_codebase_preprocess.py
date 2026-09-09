@@ -9,7 +9,6 @@ this module's whole subject.
 from __future__ import annotations
 
 import logging
-import pathlib
 from typing import TYPE_CHECKING
 
 from ..job_control import NO_RUN_CONTROL
@@ -17,6 +16,7 @@ from . import _chunk_worker, _preprocess_glue
 from ._resolved_policy import preprocess_stale_note
 
 if TYPE_CHECKING:
+    import pathlib
     from collections.abc import Iterable
 
     from ..job_control import RunControl
@@ -106,56 +106,6 @@ class CodebasePreprocessMixin:
                 continue
             executable.append(path)
         return executable
-
-    def _preserved_disabled_metadata(
-        self,
-        policy: ResolvedIndexPolicy,
-        previous_metadata: dict[str, str],
-    ) -> dict[str, str]:
-        """Return published transform rows that off mode must retain stale."""
-        preserved: dict[str, str] = {}
-        for rel, content_hash in previous_metadata.items():
-            if not policy.transform_disabled(rel):
-                continue
-            if not (self.root_dir / pathlib.PurePosixPath(rel)).is_file():
-                continue
-            self._mark_preprocess_stale(rel)
-            preserved[rel] = content_hash
-        return preserved
-
-    def _prepare_disabled_full_preservation(
-        self,
-        policy: ResolvedIndexPolicy,
-        previous_metadata: dict[str, str],
-        *,
-        clean: bool,
-    ) -> tuple[dict[str, str], set[str] | None, bool]:
-        """Resolve stale rows and whether a destructive rebuild remains safe."""
-        preserved_metadata = self._preserved_disabled_metadata(
-            policy,
-            previous_metadata,
-        )
-        try:
-            preserved_ids: set[str] | None = (
-                set(self._get_chunk_ids_for_files(set(preserved_metadata)))
-                if preserved_metadata
-                else set()
-            )
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not resolve stored IDs for disabled preprocessing paths; "
-                "retaining failure-safe rebuild behavior",
-                exc_info=True,
-            )
-            preserved_ids = None
-        effective_clean = clean and not preserved_metadata
-        if clean and preserved_metadata:
-            logger.warning(
-                "Preprocessing is disabled for %d published path(s); retaining "
-                "their stored content as stale and using a failure-safe rebuild",
-                len(preserved_metadata),
-            )
-        return preserved_metadata, preserved_ids, effective_clean
 
     def _record_preprocess_result(self, res: FileChunkResult) -> None:
         """Accumulate a worker result's preprocess disposition."""

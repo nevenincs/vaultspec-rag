@@ -19,6 +19,7 @@ from vaultspec_core.config import (
     reset_config,
 )
 
+from .._source_types import PublicSourceType
 from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..indexer import CodebaseIndexer
@@ -402,7 +403,7 @@ def test_checkpoint_signature_drift_invalidates_before_reuse(
     signature = RunSignature(
         root_identity=str(tmp_path.resolve()),
         collection_identity="codebase-v1",
-        source_type=ContentKind.CODE,
+        source_type=PublicSourceType.CODE,
         operation=RunOperation.FULL,
         clean=False,
         model_identity="model-v1",

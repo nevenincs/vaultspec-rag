@@ -14,11 +14,14 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .. import api
-from .._index_breadth import index_meta_path
 from .._source_types import PublicSourceType
 from ..api import clean
+from ..indexer._run_ledger_models import RunAuthority, RunOperation
+from ..indexer._vault_checkpoint import VaultRunCheckpoint
+from ..job_control import NO_RUN_CONTROL
 from ..registry import get_registry, reset_registry
 from ..service import ProjectBusyError, ServiceRegistry
+from ..store_runtime import configured_backend_identity
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -38,28 +41,35 @@ def isolated_registry() -> Generator[ServiceRegistry]:
         reset_registry()
 
 
-def _write_vault_sidecar(root: Path) -> Path:
+def _publish_empty_vault_proof(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    sidecar = index_meta_path(root, PublicSourceType.VAULT)
-    sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text('{"state": "must-survive-busy-cleanup"}', encoding="utf-8")
-    return sidecar
+    checkpoint = VaultRunCheckpoint.open(
+        root,
+        backend_identity=configured_backend_identity(root),
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    checkpoint.publish_proof_transition()
+    checkpoint.publish_generation()
 
 
-def test_clean_rejects_a_leased_warm_project_before_mutating_sidecars(
+def test_clean_rejects_a_leased_warm_project_before_mutating_proof(
     tmp_path: Path,
     isolated_registry: ServiceRegistry,
 ) -> None:
     """Maintenance fails before deletion when a request currently pins a slot."""
     root = tmp_path / "leased-warm-project"
-    sidecar = _write_vault_sidecar(root)
+    _publish_empty_vault_proof(root)
     warm_slot = isolated_registry.peek_project(root)
 
     with isolated_registry.lease(root) as leased_slot:
         assert leased_slot is warm_slot
         with pytest.raises(ProjectBusyError):
             clean(root, clean_type="vault", registry=isolated_registry)
-        assert sidecar.exists(), "busy cleanup must not erase a breadth claim"
+        from .._publication_state import acquire_publication_snapshot
+
+        acquire_publication_snapshot(root, PublicSourceType.VAULT)
 
     assert isolated_registry.peek_project(root) is warm_slot
 
@@ -70,7 +80,7 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
 ) -> None:
     """Cleanup waits for the real cold lease that owns this root's storage lock."""
     root = tmp_path / "cold-store-lease"
-    sidecar = _write_vault_sidecar(root)
+    _publish_empty_vault_proof(root)
     completed = threading.Event()
     failures: list[BaseException] = []
     outcomes: list[list[str]] = []
@@ -89,7 +99,9 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
             assert not cold_store.client.collection_exists(cold_store.TABLE_NAME)
             worker.start()
             assert not completed.wait(timeout=0.25)
-            assert sidecar.exists(), "cleanup must not mutate before root admission"
+            from .._publication_state import acquire_publication_snapshot
+
+            acquire_publication_snapshot(root, PublicSourceType.VAULT)
     finally:
         worker.join(timeout=10)
 
@@ -98,7 +110,11 @@ def test_clean_waits_for_a_cold_store_lease_then_recreates_the_collection(
     )
     assert failures == []
     assert outcomes == [["vault"]]
-    assert not sidecar.exists()
+    from .._publication_state import acquire_publication_snapshot
+    from ..indexer._publication_proof import ProofMissingError
+
+    with pytest.raises(ProofMissingError):
+        acquire_publication_snapshot(root, PublicSourceType.VAULT)
     with isolated_registry.lease_store(root) as inspected_store:
         assert inspected_store.client.collection_exists(inspected_store.TABLE_NAME)
 

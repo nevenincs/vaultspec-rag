@@ -21,13 +21,12 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ... import jobs
-from ..._index_breadth import index_meta_path
-from ..._source_types import PublicSourceType
+from ..._store_writes import workspace_volume_path
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
-from ...indexer._run_ledger_models import RunAuthority
+from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ...indexer._vault_prep import prepare_document
 from ...job_control import (
     CancelRequested,
@@ -426,7 +425,7 @@ async def assert_cancelled_vault_stops_writes(
     # assertion below tolerates the sidecar being absent, so a path that did
     # not name the file the indexer writes would compare None against None and
     # report a pass without ever observing the writes it exists to forbid.
-    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
+    metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     metadata = metadata_path.read_bytes() if metadata_path.exists() else None
     metadata_mtime = (
         metadata_path.stat().st_mtime_ns if metadata_path.exists() else None

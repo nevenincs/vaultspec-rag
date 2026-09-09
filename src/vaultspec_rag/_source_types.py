@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Final, Literal, get_args
 
 __all__ = [
@@ -24,15 +23,6 @@ class PublicSourceType(StrEnum):
     CODE = "code"
     DOCUMENT = "document"
     COMBINED = "combined"
-
-
-_ALIASES: Final = MappingProxyType(
-    {
-        "codebase": PublicSourceType.CODE,
-        "docs": PublicSourceType.VAULT,
-        "all": PublicSourceType.COMBINED,
-    }
-)
 
 
 #: The concrete index sources - every PublicSourceType except COMBINED, which
@@ -74,7 +64,6 @@ class SourceTypeParseError(ValueError):
     """Structured rejection for an unknown or ill-typed source selection."""
 
     received: object
-    aliases_allowed: bool
 
     @property
     def allowed(self) -> tuple[str, ...]:
@@ -92,7 +81,6 @@ class SourceTypeParseError(ValueError):
             "error_kind": self.error_kind,
             "received": self.received,
             "allowed": list(self.allowed),
-            "aliases_allowed": self.aliases_allowed,
         }
 
     def as_error_envelope(self) -> dict[str, object]:
@@ -119,26 +107,16 @@ class SourceTypeParseError(ValueError):
 
 def parse_source_type(
     value: object,
-    *,
-    allow_aliases: bool = False,
 ) -> PublicSourceType:
-    """Parse one source selection without coercion or permissive fallback.
-
-    Compatibility aliases are accepted only when the caller opts in, keeping
-    canonical service contracts closed while allowing legacy CLI spellings at
-    their existing boundary.
-    """
+    """Parse one canonical source selection without coercion or fallback."""
     if isinstance(value, PublicSourceType):
         return value
     if isinstance(value, str):
         try:
             return PublicSourceType(value)
         except ValueError:
-            if allow_aliases:
-                resolved = _ALIASES.get(value)
-                if resolved is not None:
-                    return resolved
-    raise SourceTypeParseError(value, allow_aliases)
+            pass
+    raise SourceTypeParseError(value)
 
 
 #: Sources whose results carry no cross-collection point identity, so feedback

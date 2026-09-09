@@ -6,16 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
+from .._source_types import PublicSourceType
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
 from ._content_policy import ContentKind
-from ._document_meta import (
-    DOCUMENT_EMBED_SCHEMA,
-    publish_document_meta_from_file_states,
-)
-from ._file_state import FileStateKind
+from ._index_schema import DOCUMENT_EMBED_SCHEMA
 from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
+    RunAuthority,
     RunOperation,
     RunSignature,
     RunTerminalState,
@@ -83,13 +81,14 @@ class DocumentRunOpenRequest:
     dense_dimensions: int
     configuration: DocumentRunConfiguration
     backend_identity: str
+    authority: RunAuthority
 
 
 @dataclass(slots=True)
 class DocumentRunCheckpoint(RunCheckpointBase):
     """One document generation's durable storage and publication authority."""
 
-    _content_kind: ClassVar[ContentKind] = ContentKind.DOCUMENT
+    _content_kind: ClassVar[ContentKind | None] = ContentKind.DOCUMENT
     _kind_label: ClassVar[str] = "document"
 
     @classmethod
@@ -99,7 +98,7 @@ class DocumentRunCheckpoint(RunCheckpointBase):
         signature = RunSignature(
             root_identity=str(request.root_dir.resolve()),
             collection_identity=store_schema.DOCUMENT_COLLECTION,
-            source_type=ContentKind.DOCUMENT,
+            source_type=PublicSourceType.DOCUMENT,
             operation=request.operation,
             clean=request.clean,
             model_identity=request.model_identity,
@@ -115,7 +114,15 @@ class DocumentRunCheckpoint(RunCheckpointBase):
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = cls.start_compatible_generation(ledger, signature)
-        return cls(ledger, generation, request.policy, request.run_policy)
+        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
+        return cls(
+            ledger=ledger,
+            generation=generation,
+            policy=request.policy,
+            run_policy=request.run_policy,
+            authority=request.authority,
+            receipt=receipt,
+        )
 
     def unit_for(
         self,
@@ -162,22 +169,6 @@ class DocumentRunCheckpoint(RunCheckpointBase):
             self._record_indexed_file(unit.rel_path, unit.source_digest)
         return inserted
 
-    def current_files(self) -> dict[str, tuple[str, tuple[str, ...]]]:
-        """Return the current indexed manifest reconstructed from ledger rows."""
-        result: dict[str, tuple[str, tuple[str, ...]]] = {}
-        for state in self.ledger.iter_file_states(self.generation_id):
-            if state.state is not FileStateKind.INDEXED:
-                continue
-            assert state.content_hash is not None
-            ids = tuple(
-                self.ledger.iter_retained_point_ids(
-                    self.generation_id,
-                    rel_path=state.rel_path,
-                )
-            )
-            result[state.rel_path] = (state.content_hash, ids)
-        return result
-
     def mark_failed(self, detail: str) -> None:
         """Keep an unresolved generation resumable without certifying metadata."""
         if self.generation.terminal_state is RunTerminalState.RUNNING:
@@ -186,21 +177,3 @@ class DocumentRunCheckpoint(RunCheckpointBase):
                 RunTerminalState.FAILED,
                 detail=detail,
             )
-
-    def publish_metadata(self, meta_path: Path) -> int:
-        """Publish converged document rows and advance the durable phase."""
-        return self.publish_metadata_transition(
-            lambda fingerprints: publish_document_meta_from_file_states(
-                meta_path,
-                self.ledger.iter_file_states(self.generation_id),
-                point_ids_for_path=lambda path: self.ledger.iter_retained_point_ids(
-                    self.generation_id,
-                    rel_path=path,
-                ),
-                generation_id=self.generation_id,
-                membership_fingerprint=fingerprints.membership,
-                content_fingerprint=fingerprints.content,
-                policy_snapshot=self.policy.fingerprints.snapshot,
-                backend_identity=self.generation.signature.backend_identity,
-            )
-        )

@@ -94,7 +94,7 @@ def survey_generations(
         # answer differently the first time either moved.
         unreferenced = reclaimable_generation_collections(
             existing=(name for name in names if name.startswith(derived)),
-            served=(served, *_sidecar_referenced(root, derived, served)),
+            served=(served, *_proof_referenced(root, derived, served)),
         )
         reports.append(
             RootGenerations(root=str(root), served=served, unreferenced=unreferenced)
@@ -102,12 +102,12 @@ def survey_generations(
     return tuple(reports)
 
 
-def _sidecar_referenced(
+def _proof_referenced(
     root: str,
     derived: str,
     served: str,
 ) -> tuple[str, ...]:
-    """Return the generation collections *root*'s published sidecar names.
+    """Return the generation collections named by *root*'s committed proof.
 
     The served pointer is not the only reference a code generation can carry.
     Publication records the generation in the sidecar before it moves the
@@ -124,16 +124,18 @@ def _sidecar_referenced(
     turns out not to exist costs nothing: reclamation only ever acts on names
     storage actually reports.
     """
-    from ._index_breadth import read_code_breadth_claim
+    from ._publication_state import acquire_publication_snapshot
+    from ._source_types import PublicSourceType
     from ._store_models import generation_code_collection
 
-    claim = read_code_breadth_claim(pathlib.Path(root))
-    if claim is None or claim.generation_id is None:
-        return ()
+    snapshot = acquire_publication_snapshot(pathlib.Path(root), PublicSourceType.CODE)
+    snapshot.validate()
     referenced: list[str] = []
     for base in dict.fromkeys((derived, served)):
         try:
-            referenced.append(generation_code_collection(base, claim.generation_id))
+            referenced.append(
+                generation_code_collection(base, snapshot.proof.generation_id)
+            )
         except ValueError:
             continue
     return tuple(referenced)

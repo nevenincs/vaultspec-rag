@@ -62,7 +62,37 @@ def write_archive(
                         "identity": identity,
                     }
                 ],
-                "metadata_files": [],
+                "publication_proofs": [
+                    {
+                        "source": "vault",
+                        "signature": {
+                            "root_identity": "C:/archived/root",
+                            "collection_identity": "vault_docs",
+                            "source_type": "vault",
+                            "operation": "full",
+                            "clean": True,
+                            "model_identity": "archived-model",
+                            "dense_dimensions": 4,
+                            "embedding_schema": schema_version,
+                            "payload_schema": schema_version,
+                            "content_epoch": "archived-content",
+                            "membership_epoch": "archived-membership",
+                            "preprocessing_identity": "none",
+                            "configuration_fingerprint": "archived-config",
+                            "policy_fingerprint": "archived-policy",
+                            "backend_identity": "archived-backend",
+                        },
+                        "evidence": [
+                            {
+                                "rel_path": "doc.md",
+                                "content_identity": "archived-content-id",
+                                "point_ids": [
+                                    f"point-{index}" for index in range(points)
+                                ],
+                            }
+                        ] if points else [],
+                    }
+                ],
             }
         ),
         encoding="utf-8",

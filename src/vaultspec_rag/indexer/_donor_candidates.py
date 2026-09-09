@@ -37,18 +37,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 from .. import store_schema
-from .._index_breadth import index_meta_path
 from .._source_types import PublicSourceType
-from ._code_meta import CODE_EMBED_SCHEMA
-from ._code_meta import CONTENT_EPOCH_KEY as _CODE_CONTENT_EPOCH_KEY
-from ._code_meta import EMBED_SCHEMA_KEY as _CODE_EMBED_SCHEMA_KEY
-from ._document_meta import (
-    DOCUMENT_META_SCHEMA_VERSION,
-    DocumentMetadataError,
-    document_metadata_path,
-    read_document_meta,
+from ._index_schema import (
+    CODE_EMBED_SCHEMA,
+    DOCUMENT_EMBED_SCHEMA,
+    VAULT_POINT_SCHEMA,
 )
-from ._vault_meta import VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -152,7 +146,7 @@ class IneligibilityReason(enum.Enum):
     SCHEMA_UNAVAILABLE = "schema_unavailable"
     MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     CONTENT_EPOCH_MISMATCH = "content_epoch_mismatch"
-    SIDECAR_UNAVAILABLE = "sidecar_unavailable"
+    PROOF_UNAVAILABLE = "proof_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,10 +178,10 @@ class ModelIdentity:
 
 @dataclass(frozen=True, slots=True)
 class DonorRecordedState:
-    """What a donor root's sidecar records for one collection kind."""
+    """Compatibility identities from a donor's committed proof."""
 
-    content_epoch: str
-    embed_schema: str
+    content_identity: str
+    embedding_schema_identity: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,13 +243,13 @@ def expected_vector_schema() -> VectorSchema:
 def _embed_schema_marker(kind: CollectionKind) -> str:
     """Return the current embed-input format marker for one kind."""
     if kind is CollectionKind.CODE:
-        return CODE_EMBED_SCHEMA
+        return str(CODE_EMBED_SCHEMA)
     if kind is CollectionKind.VAULT:
         # Mirrors the vault indexer's point-layout version. A skew between
         # this literal and the writer's makes every vault donor ineligible
         # (fail closed) until the two are reconciled.
-        return "2"
-    return str(DOCUMENT_META_SCHEMA_VERSION)
+        return str(VAULT_POINT_SCHEMA)
+    return str(DOCUMENT_EMBED_SCHEMA)
 
 
 def current_model_identity(kind: CollectionKind) -> ModelIdentity:
@@ -270,54 +264,30 @@ def current_model_identity(kind: CollectionKind) -> ModelIdentity:
     )
 
 
-def _read_json_object(path: Path) -> dict[str, object]:
-    """Read one sidecar JSON object; any failure returns an empty mapping."""
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    try:
-        parsed: object = json.loads(raw)
-    except ValueError:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    return {key: value for key, value in parsed.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
-
-
 def read_donor_recorded_state(
     donor_root: Path | str, kind: CollectionKind
 ) -> DonorRecordedState | None:
-    """Read the donor root's sidecar-recorded state for one collection kind.
+    """Read compatibility identities from the donor's committed proof.
 
-    Fail closed: a missing root, a missing or unreadable sidecar, a sidecar
-    predating the epoch keys, or an incomplete document publication all
-    return ``None`` - the caller must treat that candidate as ineligible.
+    Missing, incompatible, corrupt, or concurrently changing proof makes the
+    candidate ineligible.
     """
+    from .._publication_state import acquire_publication_snapshot
+    from ._publication_proof import ProofReadConflictError, ProofUnverifiableError
+    from ._run_ledger_models import RunLedgerError
+
     root = Path(donor_root)
-    if kind is CollectionKind.DOCUMENT:
-        try:
-            meta = read_document_meta(document_metadata_path(root))
-        except (DocumentMetadataError, OSError):
-            return None
-        if meta is None or not meta.complete:
-            return None
-        return DonorRecordedState(
-            content_epoch=meta.content_fingerprint,
-            embed_schema=str(meta.meta_schema_version),
-        )
-    if kind is CollectionKind.CODE:
-        epoch_key, marker_key = _CODE_CONTENT_EPOCH_KEY, _CODE_EMBED_SCHEMA_KEY
-    else:
-        epoch_key, marker_key = VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
-    raw = _read_json_object(index_meta_path(root, index_meta_source(kind)))
-    epoch = raw.get(epoch_key)
-    marker = raw.get(marker_key)
-    if not isinstance(epoch, str) or not epoch:
+    source = PublicSourceType(kind.value)
+    try:
+        snapshot = acquire_publication_snapshot(root, source)
+        snapshot.validate()
+    except (OSError, ProofReadConflictError, ProofUnverifiableError, RunLedgerError):
         return None
-    if not isinstance(marker, str) or not marker:
-        return None
-    return DonorRecordedState(content_epoch=epoch, embed_schema=marker)
+    key = snapshot.proof.compatibility_key
+    return DonorRecordedState(
+        content_identity=key.content_identity,
+        embedding_schema_identity=key.embedding_schema_identity,
+    )
 
 
 def _git_common_dir(root: Path) -> Path | None:
@@ -561,17 +531,15 @@ def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibilit
     )
     state = read_donor_recorded_state(candidate.root, kind)
     if state is None:
-        reasons.append(IneligibilityReason.SIDECAR_UNAVAILABLE)
+        reasons.append(IneligibilityReason.PROOF_UNAVAILABLE)
     else:
-        # The embed-input format marker is the only model-adjacent identity
-        # persisted per root, so it is what the recorded-identity comparison
-        # can honestly gate on. The configured model names in ``model`` are
-        # process-global (both sides resolve them from the same live config),
-        # and no model revision is recorded anywhere - a same-dimensionality
-        # model swap is bounded by the per-point content verification at the
-        # seam, not by this gate.
-        if state.embed_schema != model.embed_schema:
+        model_payload = {"dense": model.dense_model, "sparse": model.sparse_model}
+        expected_embedding = (
+            f"{json.dumps(model_payload, sort_keys=True, separators=(',', ':'))}:"
+            f"{schema.dense_dim}:{model.embed_schema}"
+        )
+        if state.embedding_schema_identity != expected_embedding:
             reasons.append(IneligibilityReason.MODEL_IDENTITY_MISMATCH)
-        if state.content_epoch != expected_content_epoch:
+        if state.content_identity != expected_content_epoch:
             reasons.append(IneligibilityReason.CONTENT_EPOCH_MISMATCH)
     return DonorEligibility(eligible=not reasons, reasons=tuple(reasons))

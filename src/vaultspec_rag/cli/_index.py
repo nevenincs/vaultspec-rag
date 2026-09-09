@@ -121,11 +121,10 @@ def _parse_index_source(
     *,
     command: str,
     json_mode: bool,
-    allow_aliases: bool,
 ) -> PublicSourceType:
-    """Parse a CLI source selection under the caller's explicit alias policy."""
+    """Parse a canonical CLI source selection."""
     try:
-        return parse_source_type(value, allow_aliases=allow_aliases)
+        return parse_source_type(value)
     except SourceTypeParseError as exc:
         if json_mode:
             _emit_json_error_and_exit(
@@ -888,7 +887,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             index_type,
             command="index",
             json_mode=json_mode,
-            allow_aliases=False,
         )
         _handle_full_audit(source, target, port, json_mode=json_mode)
         return
@@ -896,7 +894,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         index_type,
         command="index",
         json_mode=json_mode,
-        allow_aliases=True,
     )
     authority = _publication_authority(rebuild=rebuild)
 
@@ -1192,7 +1189,7 @@ def handle_clean(
         str,
         typer.Argument(
             help=(
-                "What to delete: vault, code, document, or combined/all. "
+                "What to delete: vault, code, document, or combined. "
                 "Required so nothing is deleted by accident."
             ),
         ),
@@ -1223,7 +1220,6 @@ def handle_clean(
         clean_type,
         command="clean",
         json_mode=json_mode,
-        allow_aliases=True,
     )
     canonical_clean_type = index_source_option(source)
     if json_mode and not yes:

@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
+from .._source_types import PublicSourceType
 from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
-from ._code_meta import CODE_EMBED_SCHEMA, publish_meta_from_file_states
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ._file_state import FileState
+from ._index_schema import CODE_EMBED_SCHEMA
 from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
+    RunAuthority,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
@@ -87,13 +89,14 @@ class CodeRunOpenRequest:
     dense_dimensions: int
     configuration: CodeRunConfiguration
     backend_identity: str
+    authority: RunAuthority
 
 
 @dataclass(slots=True)
 class CodeRunCheckpoint(RunCheckpointBase):
     """One code generation's durable segment and publication authority."""
 
-    _content_kind: ClassVar[ContentKind] = ContentKind.CODE
+    _content_kind: ClassVar[ContentKind | None] = ContentKind.CODE
     _kind_label: ClassVar[str] = "code"
 
     @classmethod
@@ -103,12 +106,12 @@ class CodeRunCheckpoint(RunCheckpointBase):
         signature = RunSignature(
             root_identity=str(request.root_dir.resolve()),
             collection_identity=store_schema.CODE_COLLECTION,
-            source_type=ContentKind.CODE,
+            source_type=PublicSourceType.CODE,
             operation=request.operation,
             clean=request.clean,
             model_identity=request.model_identity,
             dense_dimensions=request.dense_dimensions,
-            embedding_schema=int(CODE_EMBED_SCHEMA),
+            embedding_schema=CODE_EMBED_SCHEMA,
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
             content_epoch=kind_fingerprints.content,
             membership_epoch=kind_fingerprints.membership,
@@ -119,11 +122,14 @@ class CodeRunCheckpoint(RunCheckpointBase):
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
         generation = cls.start_compatible_generation(ledger, signature)
+        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
         return cls(
             ledger=ledger,
             generation=generation,
             policy=request.policy,
             run_policy=request.run_policy,
+            authority=request.authority,
+            receipt=receipt,
         )
 
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
@@ -314,30 +320,4 @@ class CodeRunCheckpoint(RunCheckpointBase):
                 ),
                 content_hash=content_hash,
             ),
-        )
-
-    def publish_metadata(
-        self,
-        meta_path: Path,
-        *,
-        published_points: int,
-        published_files: int | None = None,
-    ) -> int:
-        """Publish exact converged ledger rows and advance the durable phase.
-
-        ``published_points`` is the collection point count as observed by the
-        caller after storage reconciliation, so the sidecar records the breadth
-        it actually describes rather than an estimate.
-        """
-        return self.publish_metadata_transition(
-            lambda fingerprints: publish_meta_from_file_states(
-                meta_path,
-                self.ledger.iter_file_states(self.generation_id),
-                generation_id=self.generation_id,
-                membership_epoch=fingerprints.membership,
-                content_epoch=fingerprints.content,
-                published_points_count=published_points,
-                published_files_count=published_files,
-                backend_identity=self.generation.signature.backend_identity,
-            )
         )

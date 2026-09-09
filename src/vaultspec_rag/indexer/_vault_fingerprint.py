@@ -15,15 +15,10 @@ never drift apart. A delta in the body means re-chunk and re-embed. A delta in
 the metadata alone means rebuild payloads and leave the vectors where they
 are. Neither means the run does nothing.
 
-The raw digest is carried alongside both, taken over the file's bytes exactly
-as stored. It is the byte-identity fast path, and it is the bridge to sidecars
-written under the old scheme: a stored bare digest is compared against it, so a
-corpus whose bytes have not moved since the last run under the old scheme
-migrates by re-labelling rather than by re-embedding. It must be over the true
-bytes for that comparison to mean anything - the old scheme digested bytes, so
-digesting a decoded-and-re-encoded copy instead would disagree for every file
-whose line endings the checkout translated, and spend a full corpus of GPU time
-once, which is precisely the cost this module exists to stop paying.
+The raw digest is carried alongside both and taken over the file's bytes exactly
+as stored. It is the byte-identity fast path; the body and metadata halves retain
+enough information to classify a changed current-format identity without reading
+unchanged files or rebuilding a corpus-wide manifest.
 """
 
 from __future__ import annotations
@@ -52,9 +47,7 @@ __all__ = [
     "parse",
 ]
 
-#: Scheme tag leading every fingerprint this module writes. A sidecar entry
-#: without it was written by the raw-digest scheme, which is a fact worth
-#: recognising rather than misreading - see :func:`parse`.
+#: Scheme tag leading every canonical vault content identity.
 SCHEME: Final = "v2"
 
 #: Field separator. Absent from hex digests and from the scheme tag, so a
@@ -63,7 +56,7 @@ _SEPARATOR: Final = "|"
 
 #: Digest width for the body half, in bytes. Thirty-two hex characters is far
 #: past the collision headroom any single vault can consume, and keeps the
-#: per-document sidecar entry short.
+#: per-document evidence row compact.
 _BODY_DIGEST_BYTES: Final = 16
 
 
@@ -91,26 +84,14 @@ class VaultFingerprint:
 
 
 def encode(fingerprint: VaultFingerprint) -> str:
-    """Render *fingerprint* as the single string the sidecar stores.
-
-    One string rather than a nested object because the sidecar is a flat
-    ``{document id: digest}`` map that reserved ``__``-prefixed keys already
-    share; widening its value type would break every reader of it for a shape
-    that carries no more information than this one does.
-    """
+    """Render *fingerprint* as one canonical content identity."""
     return _SEPARATOR.join(
         (SCHEME, fingerprint.raw, fingerprint.body, fingerprint.metadata)
     )
 
 
 def parse(stored: str) -> VaultFingerprint | None:
-    """Parse a sidecar value, or return ``None`` when it is not one of ours.
-
-    ``None`` is the honest answer for a bare raw digest written by the previous
-    scheme and for anything malformed. Both are handled the same way by
-    :func:`classify`, which falls back to comparing raw digests - the only
-    comparison a legacy entry can support.
-    """
+    """Parse a current vault content identity, or reject a malformed value."""
     parts = stored.split(_SEPARATOR)
     if len(parts) != 4 or parts[0] != SCHEME:
         return None
@@ -128,11 +109,7 @@ def fingerprint_bytes(
     """Fingerprint one vault document from the bytes read off disk.
 
     The raw digest is taken over those bytes exactly as stored, never over a
-    decoded-and-re-encoded copy. That is what makes it comparable to a sidecar
-    entry written under the previous scheme, which digested the file's bytes:
-    re-encoding would silently disagree for any file whose line endings the
-    checkout translated, and the cheap migration would degrade to a re-embed of
-    every such document.
+    decoded-and-re-encoded copy.
 
     The body digest covers ``VaultDocument.content`` - the exact string the
     chunker splits and the encoder embeds, already stripped by the shared
@@ -186,22 +163,13 @@ def fingerprint_path(path: pathlib.Path, root_dir: pathlib.Path) -> str:
 
 
 def classify(stored: str | None, current: str) -> VaultDelta:
-    """Decide what work *current* demands given what the sidecar holds.
+    """Decide what work *current* demands given canonical prior evidence.
 
-    A document the sidecar has never seen is :attr:`VaultDelta.BODY`: nothing
+    A document the proof has never seen is :attr:`VaultDelta.BODY`: nothing
     is stored for it, so everything about it is new.
 
-    A stored entry from the previous raw-digest scheme can only be compared
-    raw-to-raw. Equal means the bytes never moved, so nothing about the
-    document moved either and the entry migrates to the new scheme by being
-    rewritten - no encode, no payload rebuild. Unequal means the bytes moved
-    but the old scheme recorded nothing about *how*, so the safe answer is
-    :attr:`VaultDelta.BODY`. That is the one-time migration cost, and it is
-    bounded by the documents actually edited since the last run rather than by
-    the corpus.
-
-    A current value that is itself unparseable belongs to a path with no
-    recognised doc type. It is compared as a raw digest for the same reason.
+    A malformed identity is not compatible evidence and therefore requires a
+    body rebuild.
     """
     if stored is None:
         return VaultDelta.BODY
@@ -210,13 +178,7 @@ def classify(stored: str | None, current: str) -> VaultDelta:
     now = parse(current)
     before = parse(stored)
     if now is None or before is None:
-        # One side predates the scheme (or has no document behind it); the raw
-        # digest is the only field both sides are known to share.
-        return (
-            VaultDelta.UNCHANGED
-            if _raw_of(stored) == _raw_of(current)
-            else VaultDelta.BODY
-        )
+        return VaultDelta.BODY
     if before.body != now.body:
         return VaultDelta.BODY
     if before.metadata != now.metadata:
@@ -226,9 +188,3 @@ def classify(stored: str | None, current: str) -> VaultDelta:
     # a pure ``modified:`` stamp refresh, or canonicalisation churn the
     # digests are built to absorb. Exactly the class this module exists for.
     return VaultDelta.UNCHANGED
-
-
-def _raw_of(value: str) -> str:
-    """Return the raw digest a sidecar value carries, whatever its scheme."""
-    parsed = parse(value)
-    return parsed.raw if parsed is not None else value

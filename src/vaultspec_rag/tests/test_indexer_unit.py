@@ -1,9 +1,10 @@
 """Unit tests for rag.indexer - extraction and doc preparation (no GPU)."""
 
+from __future__ import annotations
+
 import hashlib
+import sqlite3
 import tracemalloc
-from collections.abc import Generator
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -19,12 +20,18 @@ from ..indexer._chunking import (
     _is_binary,
 )
 from ..indexer._vault_prep import _extract_feature, _extract_title
-from .corpus import CorpusManifest
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
     from ..embeddings import EmbeddingModel
     from ..indexer import CodebaseIndexer
+    from ..indexer._publication_proof import ProofCompatibilityKey, ProofProvenance
+    from ..indexer._run_ledger_models import RunGeneration
+    from ..indexer._run_ledger_runtime import RunLedger
     from ..store_runtime import VaultStore
+    from .corpus import CorpusManifest
 
 pytestmark = [pytest.mark.unit]
 
@@ -1012,7 +1019,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
     """
 
     @staticmethod
-    def _indexer(tmp_path: Path, store: "VaultStore") -> "CodebaseIndexer":
+    def _indexer(tmp_path: Path, store: VaultStore) -> CodebaseIndexer:
         from ..indexer import CodebaseIndexer
 
         indexer = CodebaseIndexer(tmp_path, cast("EmbeddingModel", None), store)
@@ -1021,7 +1028,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
 
     @staticmethod
     def _write_sidecar(
-        indexer: "CodebaseIndexer",
+        indexer: CodebaseIndexer,
         *,
         files: dict[str, str],
         published_points: int | None,
@@ -1038,7 +1045,7 @@ class TestPublishedEvidenceRequiresStoredBreadth:
         indexer._meta_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
     @staticmethod
-    def _store_chunks(store: "VaultStore", count: int) -> None:
+    def _store_chunks(store: VaultStore, count: int) -> None:
         """Upsert ``count`` real code points so the live count is non-zero."""
         from .._store_models import CodeChunk
         from ..store_schema import effective_dense_dim
@@ -1196,101 +1203,329 @@ class TestPublishedEvidenceRequiresStoredBreadth:
             store.close()
 
 
-class TestPublishedFileBreadth:
-    """The breadth comparison a point count structurally cannot express.
+def _seed_code_breadth_proof(
+    root: Path,
+    *,
+    retained_points: int,
+    indexed_identities: int,
+    provenance: ProofProvenance,
+    collection_identity: str | None = None,
+) -> tuple[RunLedger, ProofCompatibilityKey, RunGeneration]:
+    from .._source_types import PublicSourceType
+    from .._store_writes import workspace_volume_path
+    from ..indexer._publication_proof import ProofCompatibilityKey, ProofProvenance
+    from ..indexer._run_ledger_models import (
+        RunOperation,
+        RunSignature,
+        index_run_ledger_path,
+    )
+    from ..indexer._run_ledger_runtime import RunLedger
+    from ..store_runtime import configured_backend_identity
+    from ..store_schema import CODE_COLLECTION, STORAGE_SCHEMA_VERSION
 
-    A publication that covers a fraction of the files its own sidecar names
-    still stamps a self-consistent point count, because the figure it stamps is
-    the fragment's own. Only the file figures disagree.
-    """
+    collection = collection_identity or CODE_COLLECTION
+    backend_identity = configured_backend_identity(root)
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
+    generation = ledger.start_generation(
+        RunSignature(
+            root_identity=str(root.resolve()),
+            collection_identity=collection,
+            source_type=PublicSourceType.CODE,
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="breadth-model",
+            dense_dimensions=8,
+            embedding_schema=2,
+            payload_schema=STORAGE_SCHEMA_VERSION,
+            content_epoch="breadth-content",
+            membership_epoch="breadth-membership",
+            preprocessing_identity="breadth-chunking",
+            configuration_fingerprint="breadth-config",
+            policy_fingerprint="breadth-policy",
+            backend_identity=backend_identity,
+        )
+    )
+    key = ProofCompatibilityKey(
+        source_type=PublicSourceType.CODE,
+        root_identity=str(root.resolve()),
+        backend_identity=backend_identity,
+        collection_identity=collection,
+        storage_schema=STORAGE_SCHEMA_VERSION,
+        payload_schema=STORAGE_SCHEMA_VERSION,
+        embedding_schema_identity="breadth-model:8:2",
+        chunking_schema_identity="breadth-chunking",
+        membership_identity="breadth-membership",
+        content_identity="breadth-content",
+        policy_identity="breadth-policy",
+    )
+    verified_at = 1.0 if provenance is ProofProvenance.VERIFIED else None
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_proofs (
+                source_type, root_identity, backend_identity,
+                collection_identity, storage_schema, payload_schema,
+                embedding_schema_identity, chunking_schema_identity,
+                membership_identity, content_identity, policy_identity,
+                generation_id, revision, reservation_sequence,
+                indexed_identities, retained_points, provenance,
+                committed_at, verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 5, ?, ?, ?, 1.0, ?)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation.generation_id,
+                indexed_identities,
+                retained_points,
+                provenance.value,
+                verified_at,
+            ),
+        )
+    return ledger, key, generation
 
-    @staticmethod
-    def _write_sidecar(root: Path, named: int, covered: str | None) -> None:
-        """Write a sidecar naming *named* files and claiming *covered* coverage."""
-        import json as _json
 
-        from .._index_breadth import PUBLISHED_FILES_KEY, index_meta_path
-        from .._source_types import PublicSourceType
-
-        reserved: dict[str, str] = {}
-        if covered is not None:
-            reserved[PUBLISHED_FILES_KEY] = covered
-        entries = {f"src/mod_{index}.py": f"hash{index}" for index in range(named)}
-        path = index_meta_path(root, PublicSourceType.CODE)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_json.dumps({**reserved, **entries}), encoding="utf-8")
-
-    def test_publication_covering_fewer_files_than_it_names_is_a_shortfall(
-        self, tmp_path: Path
-    ) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=442, covered="27")
-        shortfall = code_file_breadth_shortfall(tmp_path)
-        # Mutation this catches: returning None whenever the point counts agree,
-        # which is exactly the state a republished fragment leaves behind.
-        assert shortfall is not None
-        assert shortfall.named == 442
-        assert shortfall.covered == 27
-        assert shortfall.missing == 415
-
-    def test_full_coverage_is_not_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=12, covered="12")
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_sidecar_without_a_coverage_claim_is_never_a_shortfall(
-        self, tmp_path: Path
-    ) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        # A sidecar written before the key existed cannot be compared against,
-        # and must read as "cannot tell" rather than total loss.
-        self._write_sidecar(tmp_path, named=12, covered=None)
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_unusable_coverage_claim_is_never_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        self._write_sidecar(tmp_path, named=12, covered="not-a-number")
-        assert code_file_breadth_shortfall(tmp_path) is None
-
-    def test_absent_sidecar_is_never_a_shortfall(self, tmp_path: Path) -> None:
-        from .._index_breadth import code_file_breadth_shortfall
-
-        assert code_file_breadth_shortfall(tmp_path) is None
+def _insert_open_breadth_receipt(
+    ledger: RunLedger,
+    key: ProofCompatibilityKey,
+    generation: RunGeneration,
+) -> None:
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_receipts (
+                receipt_id, reservation_sequence, source_type, root_identity,
+                backend_identity, collection_identity, storage_schema,
+                payload_schema, embedding_schema_identity,
+                chunking_schema_identity, membership_identity,
+                content_identity, policy_identity, generation_id,
+                parent_revision, target_revision, next_mutation_ordinal,
+                state, reserved_at, sealed_at, rollback_started_at,
+                committed_at, rolled_back_at
+            ) VALUES ('open-breadth', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      3, 4, 0, 'reserved', 2.0, NULL, NULL, NULL, NULL)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation.generation_id,
+            ),
+        )
 
 
-class TestCodeSidecarResolution:
-    """Where the constructor publishes, against where the readers look.
-
-    Every other test here rebinds the sidecar path onto the instance, so none
-    of them observes what the constructor resolved. A path resolved to the
-    other domain's filename still type-checks and still round-trips through
-    the writer that produced it; only an independent reader disagrees.
-    """
-
-    def test_the_indexer_publishes_where_the_code_breadth_reader_looks(
-        self, tmp_path: Path
+class TestCanonicalPublishedBreadth:
+    def test_point_breadth_uses_only_the_committed_canonical_proof(
+        self,
+        tmp_path: Path,
     ) -> None:
         import json
 
-        from .._index_breadth import PUBLISHED_POINTS_KEY, read_reserved_count
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path, cast("EmbeddingModel", None), cast("VaultStore", None)
+        from .._index_breadth import (
+            GENERATION_ID_KEY,
+            PUBLISHED_FILES_KEY,
+            PUBLISHED_POINTS_KEY,
+            acquire_code_breadth_snapshot,
+            index_meta_path,
         )
-        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        indexer._meta_path.write_text(
-            json.dumps({PUBLISHED_POINTS_KEY: "91"}), encoding="utf-8"
+        from .._source_types import PublicSourceType
+        from ..indexer._publication_proof import ProofProvenance
+
+        _seed_code_breadth_proof(
+            tmp_path,
+            retained_points=17,
+            indexed_identities=4,
+            provenance=ProofProvenance.VERIFIED,
+        )
+        sidecar = index_meta_path(tmp_path, PublicSourceType.CODE)
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            json.dumps(
+                {
+                    PUBLISHED_POINTS_KEY: "999",
+                    PUBLISHED_FILES_KEY: "998",
+                    GENERATION_ID_KEY: "sidecar-generation",
+                    "legacy.py": "sidecar-content",
+                }
+            ),
+            encoding="utf-8",
         )
 
-        # Mutation this catches: resolving the constructor's sidecar under the
-        # vault filename, which leaves every code-breadth read consulting a
-        # file the code index never writes.
-        assert read_reserved_count(tmp_path, PUBLISHED_POINTS_KEY) == 91
+        snapshot = acquire_code_breadth_snapshot(tmp_path)
+        shortfall = snapshot.finish(live_count=16)
+
+        assert shortfall is not None
+        assert shortfall.published == 17
+        assert shortfall.live == 16
+
+    def test_point_shortfall_compares_the_cheap_count_with_the_proof_aggregate(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from ..indexer._publication_proof import ProofProvenance
+
+        _seed_code_breadth_proof(
+            tmp_path,
+            retained_points=64,
+            indexed_identities=9,
+            provenance=ProofProvenance.DELTA_DERIVED,
+        )
+
+        snapshot = acquire_code_breadth_snapshot(tmp_path)
+        shortfall = snapshot.finish(live_count=2)
+
+        assert shortfall is not None
+        assert shortfall.published == 64
+        assert shortfall.live == 2
+
+    def test_missing_ledger_refuses_without_creating_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        from .._index_breadth import (
+            PUBLISHED_POINTS_KEY,
+            acquire_code_breadth_snapshot,
+            index_meta_path,
+        )
+        from .._source_types import PublicSourceType
+        from .._store_writes import workspace_volume_path
+        from ..indexer._publication_proof import (
+            ProofMissingError,
+            ProofUnverifiableReason,
+        )
+        from ..indexer._run_ledger_models import index_run_ledger_path
+
+        ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        sidecar = index_meta_path(tmp_path, PublicSourceType.CODE)
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            json.dumps({PUBLISHED_POINTS_KEY: "91"}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ProofMissingError, match="explicit rebuild") as raised:
+            acquire_code_breadth_snapshot(tmp_path)
+
+        assert raised.value.reason is ProofUnverifiableReason.MISSING
+        assert not ledger_path.exists()
+
+    def test_current_ledger_without_proof_refuses(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from .._store_writes import workspace_volume_path
+        from ..indexer._publication_proof import ProofMissingError
+        from ..indexer._run_ledger_models import index_run_ledger_path
+        from ..indexer._run_ledger_runtime import RunLedger
+
+        ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        RunLedger(ledger_path)
+
+        with pytest.raises(ProofMissingError, match="explicit rebuild"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+    def test_configured_backend_mismatch_refuses(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .. import store_runtime
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from ..indexer._publication_proof import (
+            ProofIncompatibleError,
+            ProofProvenance,
+        )
+
+        _seed_code_breadth_proof(
+            tmp_path,
+            retained_points=4,
+            indexed_identities=1,
+            provenance=ProofProvenance.VERIFIED,
+        )
+        monkeypatch.setattr(
+            store_runtime,
+            "configured_backend_identity",
+            lambda _root: "foreign-backend",
+        )
+
+        with pytest.raises(ProofIncompatibleError, match="backend"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+    def test_wrong_collection_identity_refuses(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from ..indexer._publication_proof import (
+            ProofIncompatibleError,
+            ProofProvenance,
+        )
+
+        _seed_code_breadth_proof(
+            tmp_path,
+            retained_points=4,
+            indexed_identities=1,
+            provenance=ProofProvenance.VERIFIED,
+            collection_identity="foreign-code-collection",
+        )
+
+        with pytest.raises(ProofIncompatibleError, match="storage projection"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+    def test_open_receipt_prevents_breadth_certification(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from ..indexer._publication_proof import (
+            ProofProvenance,
+            ProofReadConflictError,
+        )
+
+        ledger, key, generation = _seed_code_breadth_proof(
+            tmp_path,
+            retained_points=4,
+            indexed_identities=1,
+            provenance=ProofProvenance.VERIFIED,
+        )
+        _insert_open_breadth_receipt(ledger, key, generation)
+
+        with pytest.raises(ProofReadConflictError, match="open receipt"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+    def test_old_ledger_refuses_without_mutation(self, tmp_path: Path) -> None:
+        from .._index_breadth import acquire_code_breadth_snapshot
+        from .._store_writes import workspace_volume_path
+        from ..indexer._run_ledger_models import (
+            RunLedgerRebuildRequiredError,
+            index_run_ledger_path,
+        )
+
+        ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(ledger_path) as connection:
+            connection.execute("CREATE TABLE old_runs (id TEXT PRIMARY KEY)")
+            connection.execute("INSERT INTO old_runs VALUES ('old')")
+        before = ledger_path.read_bytes()
+
+        with pytest.raises(RunLedgerRebuildRequiredError, match="rebuild"):
+            acquire_code_breadth_snapshot(tmp_path)
+
+        assert ledger_path.read_bytes() == before
 
 
 class TestDataRootResolution:

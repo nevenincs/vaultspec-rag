@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from .._job_errors import JobErrorKind, classify_error_text
+from .._source_types import PublicSourceType
 from ..indexer._content_policy import ContentKind
 from ..indexer._publication_proof import (
     PathDelta,
@@ -394,7 +395,7 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
         document = ledger.start_generation(
             replace(
                 _signature(tmp_path),
-                source_type=ContentKind.DOCUMENT,
+                source_type=PublicSourceType.DOCUMENT,
                 collection_identity="document-v1",
             )
         )

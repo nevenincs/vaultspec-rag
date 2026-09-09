@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING, Final, Never
+from typing import TYPE_CHECKING, Final, Never, cast
 
 from .. import store_schema
 from .._source_types import PublicSourceType
@@ -38,20 +39,26 @@ from ._run_ledger_models import (
     PublicationMutationUnit,
     PublicationProof,
     PublicationReceipt,
+    RunAuthority,
     RunGeneration,
     RunLedgerCorruptionError,
     RunLedgerStateError,
+    RunOperation,
+    RunTerminalState,
     column_int,
     column_text,
     fetch_all,
     fetch_one,
     in_ledger_transaction,
     ledger_connection,
+    ledger_transaction,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
+
+    from ._run_ledger_models import RunSignature
 
 
 _OPEN_RECEIPT_SQL = "state IN ('reserved', 'sealed', 'rolling_back')"
@@ -69,10 +76,8 @@ def _stable_parameters(
     )
 
 
-def _compatibility_for_generation(
-    generation: RunGeneration,
-) -> ProofCompatibilityKey:
-    signature = generation.signature
+def compatibility_for_signature(signature: RunSignature) -> ProofCompatibilityKey:
+    """Project one generation signature onto canonical proof identity."""
     return ProofCompatibilityKey(
         source_type=PublicSourceType(signature.source_type.value),
         root_identity=signature.root_identity,
@@ -89,6 +94,12 @@ def _compatibility_for_generation(
         content_identity=signature.content_epoch,
         policy_identity=signature.policy_fingerprint,
     )
+
+
+def _compatibility_for_generation(
+    generation: RunGeneration,
+) -> ProofCompatibilityKey:
+    return compatibility_for_signature(generation.signature)
 
 
 def _row_number(row: sqlite3.Row, key: str) -> float:
@@ -116,7 +127,7 @@ def _row_optional_text(row: sqlite3.Row, key: str) -> str | None:
     return value
 
 
-def _compatibility_from_row(row: sqlite3.Row) -> ProofCompatibilityKey:
+def publication_compatibility_from_row(row: sqlite3.Row) -> ProofCompatibilityKey:
     return ProofCompatibilityKey(
         source_type=PublicSourceType(column_text(row, "source_type")),
         root_identity=column_text(row, "root_identity"),
@@ -137,7 +148,7 @@ def _proof_from_row(row: sqlite3.Row) -> PublicationProof:
         return PublicationProof(
             revision=column_int(row, "revision"),
             reservation_sequence=column_int(row, "reservation_sequence"),
-            compatibility_key=_compatibility_from_row(row),
+            compatibility_key=publication_compatibility_from_row(row),
             generation_id=column_text(row, "generation_id"),
             aggregate=ProofAggregate(
                 indexed_identities=column_int(row, "indexed_identities"),
@@ -158,7 +169,7 @@ def _require_exact_key(
     subject: str,
 ) -> ProofCompatibilityKey:
     try:
-        actual = _compatibility_from_row(row)
+        actual = publication_compatibility_from_row(row)
     except (KeyError, TypeError, ValueError) as exc:
         raise RunLedgerCorruptionError(
             f"stored {subject} compatibility key is malformed"
@@ -469,7 +480,7 @@ def _hydrate_receipt(
         receipt = PublicationReceipt(
             receipt_id=receipt_id,
             reservation_sequence=column_int(row, "reservation_sequence"),
-            compatibility_key=_compatibility_from_row(row),
+            compatibility_key=publication_compatibility_from_row(row),
             generation_id=column_text(row, "generation_id"),
             parent_revision=parent_revision,
             target_revision=column_int(row, "target_revision"),
@@ -593,6 +604,234 @@ class RunLedgerPublicationMethods:
             row = _require_proof_row(connection, key)
         return _proof_from_row(row)
 
+    def clear_publication_source(
+        self,
+        source_type: PublicSourceType,
+        root_identity: str,
+        backend_identity: str,
+    ) -> None:
+        """Invalidate one source before its backing storage is destroyed."""
+        if source_type is PublicSourceType.COMBINED:
+            raise ValueError("combined is not a stored publication source")
+        if not root_identity.strip() or not backend_identity.strip():
+            raise ValueError("publication identity fields must be non-empty")
+        now = time.time()
+        with ledger_transaction(self.path) as connection:
+            parameters = (source_type.value, root_identity, backend_identity)
+            connection.execute(
+                """
+                DELETE FROM publication_receipts
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ?
+                """,
+                parameters,
+            )
+            connection.execute(
+                """
+                DELETE FROM publication_proofs
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ?
+                """,
+                parameters,
+            )
+            rows: list[sqlite3.Row] = fetch_all(
+                connection,
+                """
+                SELECT generation_id, signature_json
+                FROM generations
+                WHERE source_type = ? AND terminal_state = ?
+                """,
+                (source_type.value, RunTerminalState.RUNNING.value),
+            )
+            for row in rows:
+                raw_payload = json.loads(column_text(row, "signature_json"))
+                if not isinstance(raw_payload, dict):
+                    raise RunLedgerCorruptionError(
+                        "generation signature is not an object"
+                    )
+                payload = cast("dict[str, object]", raw_payload)
+                if (
+                    payload.get("root_identity") != root_identity
+                    or payload.get("backend_identity") != backend_identity
+                ):
+                    continue
+                connection.execute(
+                    """
+                    UPDATE generations
+                    SET terminal_state = ?, finalization_phase = ?,
+                        terminal_detail = ?, updated_at = ?
+                    WHERE generation_id = ?
+                    """,
+                    (
+                        RunTerminalState.REBUILD_INCOMPLETE.value,
+                        FinalizationPhase.INGESTING.value,
+                        "backing storage explicitly cleared",
+                        now,
+                        column_text(row, "generation_id"),
+                    ),
+                )
+
+    def establish_verified_publication(
+        self,
+        generation_id: str,
+        authority: RunAuthority,
+        evidence: tuple[ProofEvidence, ...],
+    ) -> PublicationProof:
+        """Replace one projection's proof after an explicit full rebuild.
+
+        Rebuild is the sole proof-creation path. Its complete evidence is
+        accepted here only after storage reconciliation and committed in one
+        transaction before generation publication.
+        """
+        if authority is not RunAuthority.REBUILD:
+            raise PermissionError("verified publication requires rebuild authority")
+        if any(not isinstance(item, ProofEvidence) for item in evidence):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise TypeError("evidence must contain only ProofEvidence values")
+        paths = tuple(item.rel_path for item in evidence)
+        if len(set(paths)) != len(paths):
+            raise ValueError("verified publication evidence paths must be unique")
+        point_ids = tuple(point for item in evidence for point in item.point_ids)
+        if len(set(point_ids)) != len(point_ids):
+            raise ValueError("verified publication point ids must be unique")
+        committed_at = time.time()
+
+        def body(connection: sqlite3.Connection) -> PublicationProof:
+            generation = self._generation_from_row(
+                self._require_mutable_generation(connection, generation_id)
+            )
+            if generation.signature.operation is not RunOperation.FULL:
+                raise RunLedgerStateError(
+                    "verified publication requires a full rebuild generation"
+                )
+            if generation.finalization_phase not in {
+                FinalizationPhase.INGESTING,
+                FinalizationPhase.STALE_RECONCILED,
+            }:
+                raise RunLedgerStateError(
+                    "verified publication must precede metadata publication"
+                )
+            key = _compatibility_for_generation(generation)
+            stable = _stable_parameters(key)
+            open_receipt: sqlite3.Row | None = fetch_one(
+                connection,
+                f"""
+                SELECT 1 FROM publication_receipts
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ? AND collection_identity = ?
+                  AND {_OPEN_RECEIPT_SQL}
+                LIMIT 1
+                """,
+                stable,
+            )
+            if open_receipt is not None:
+                raise RunLedgerStateError(
+                    "cannot replace publication proof while a receipt is open"
+                )
+            previous: sqlite3.Row | None = fetch_one(
+                connection,
+                """
+                SELECT * FROM publication_proofs
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ? AND collection_identity = ?
+                """,
+                stable,
+            )
+            if previous is not None:
+                existing = _proof_from_row(previous)
+                if (
+                    existing.generation_id == generation_id
+                    and existing.compatibility_key == key
+                    and existing.provenance is ProofProvenance.VERIFIED
+                ):
+                    return existing
+            revision = 0 if previous is None else column_int(previous, "revision") + 1
+            sequence = (
+                0
+                if previous is None
+                else column_int(previous, "reservation_sequence") + 1
+            )
+            connection.execute(
+                """
+                DELETE FROM publication_proofs
+                WHERE source_type = ? AND root_identity = ?
+                  AND backend_identity = ? AND collection_identity = ?
+                """,
+                stable,
+            )
+            aggregate = ProofAggregate(
+                indexed_identities=len(evidence),
+                retained_points=len(point_ids),
+            )
+            connection.execute(
+                """
+                INSERT INTO publication_proofs (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, storage_schema, payload_schema,
+                    embedding_schema_identity, chunking_schema_identity,
+                    membership_identity, content_identity, policy_identity,
+                    generation_id, revision, reservation_sequence,
+                    indexed_identities, retained_points, provenance,
+                    committed_at, verified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    *stable,
+                    key.storage_schema,
+                    key.payload_schema,
+                    key.embedding_schema_identity,
+                    key.chunking_schema_identity,
+                    key.membership_identity,
+                    key.content_identity,
+                    key.policy_identity,
+                    generation_id,
+                    revision,
+                    sequence,
+                    aggregate.indexed_identities,
+                    aggregate.retained_points,
+                    ProofProvenance.VERIFIED.value,
+                    committed_at,
+                    committed_at,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO publication_evidence (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, content_identity,
+                    evidence_generation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (*stable, item.rel_path, item.content_identity, generation_id)
+                    for item in evidence
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO publication_points (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, point_ordinal, point_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (*stable, item.rel_path, ordinal, point_id)
+                    for item in evidence
+                    for ordinal, point_id in enumerate(item.point_ids)
+                ),
+            )
+            return PublicationProof(
+                revision=revision,
+                reservation_sequence=sequence,
+                compatibility_key=key,
+                generation_id=generation_id,
+                aggregate=aggregate,
+                provenance=ProofProvenance.VERIFIED,
+                committed_at=committed_at,
+                verified_at=committed_at,
+            )
+
+        return in_ledger_transaction(self.path, body)
+
     def assert_generation_proof_committed(
         self,
         connection: sqlite3.Connection,
@@ -665,7 +904,7 @@ class RunLedgerPublicationMethods:
             return
         try:
             receipt_state = ProofReceiptState(column_text(latest_receipt, "state"))
-            receipt_key = _compatibility_from_row(latest_receipt)
+            receipt_key = publication_compatibility_from_row(latest_receipt)
         except (KeyError, TypeError, ValueError) as exc:
             _receipt_corrupt("stored publication receipt header is malformed", exc)
         if (
@@ -764,7 +1003,7 @@ class RunLedgerPublicationMethods:
             )
         try:
             state = ProofReceiptState(column_text(row, "state"))
-            key = _compatibility_from_row(row)
+            key = publication_compatibility_from_row(row)
         except (KeyError, TypeError, ValueError) as exc:
             _receipt_corrupt("stored publication receipt header is malformed", exc)
         if state is not ProofReceiptState.SEALED:
@@ -818,6 +1057,45 @@ class RunLedgerPublicationMethods:
             try:
                 _require_proof_row(connection, key)
                 return _evidence_rows_for_paths(connection, key, unique_paths)
+            finally:
+                connection.rollback()
+
+    def publication_evidence_page(
+        self,
+        key: ProofCompatibilityKey,
+        *,
+        after_path: str | None = None,
+        limit: int = FETCH_BATCH,
+    ) -> dict[str, ProofEvidence]:
+        """Return one keyset-paginated page of canonical path evidence."""
+        if limit <= 0 or limit > FETCH_BATCH:
+            raise ValueError(f"limit must be between 1 and {FETCH_BATCH}")
+        if after_path is not None:
+            validate_rel_path(after_path)
+        with ledger_connection(self.path) as connection:
+            _begin_read(connection)
+            try:
+                _require_proof_row(connection, key)
+                parameters: tuple[object, ...] = (*_stable_parameters(key), limit)
+                after_clause = ""
+                if after_path is not None:
+                    after_clause = " AND rel_path > ?"
+                    parameters = (*_stable_parameters(key), after_path, limit)
+                rows: list[sqlite3.Row] = fetch_all(
+                    connection,
+                    f"""
+                    SELECT rel_path
+                    FROM publication_evidence
+                    WHERE source_type = ? AND root_identity = ?
+                      AND backend_identity = ? AND collection_identity = ?
+                      {after_clause}
+                    ORDER BY rel_path
+                    LIMIT ?
+                    """,
+                    parameters,
+                )
+                paths = tuple(column_text(row, "rel_path") for row in rows)
+                return _evidence_rows_for_paths(connection, key, paths)
             finally:
                 connection.rollback()
 
@@ -1474,7 +1752,7 @@ class RunLedgerPublicationMethods:
                 "publication proof disappeared during the backend read"
             )
         try:
-            actual = _compatibility_from_row(row)
+            actual = publication_compatibility_from_row(row)
         except (KeyError, TypeError, ValueError) as exc:
             raise RunLedgerCorruptionError(
                 "stored publication proof compatibility key is malformed"

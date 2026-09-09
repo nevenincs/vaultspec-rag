@@ -82,7 +82,7 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
-    from .._index_integrity import IndexIntegrity
+    from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
 logger = logging.getLogger("vaultspec_rag.server")
@@ -110,8 +110,6 @@ class SearchIndexStateInput:
     requested_root: object
     search_type: PublicSourceType | str
     published_points: float | None = None
-    named_files: float | None = None
-    covered_files: float | None = None
     integrity: IndexIntegrity | None = None
     integrity_repair_job_id: str | None = None
     #: Path of every result on the page, in rank order. Empty on the routes
@@ -235,7 +233,7 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
 
 def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
     try:
-        return parse_source_type(value, allow_aliases=False)
+        return parse_source_type(value)
     except SourceTypeParseError as exc:
         return JSONResponse(exc.as_error_envelope(), status_code=400)
 
@@ -261,7 +259,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
     figure it carries on the timing channel back into the shortfall the
     domain builder expects, and renders whatever that returns.
     """
-    from .._index_breadth import BreadthShortfall, FileBreadthShortfall
+    from .._index_breadth import BreadthShortfall
     from .._search_state import BreadthFindings, result_collapse, search_index_state
 
     count = int(input.indexed_count)
@@ -270,20 +268,12 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
         if input.published_points is None
         else BreadthShortfall(published=int(input.published_points), live=count)
     )
-    file_shortfall = (
-        None
-        if input.named_files is None or input.covered_files is None
-        else FileBreadthShortfall(
-            named=int(input.named_files), covered=int(input.covered_files)
-        )
-    )
     return search_index_state(
         indexed_count=count,
         requested_root=input.requested_root,
         search_type=input.search_type,
         findings=BreadthFindings(
             shortfall=shortfall,
-            file_shortfall=file_shortfall,
             integrity=input.integrity,
             integrity_repair_job_id=input.integrity_repair_job_id,
             collapse=result_collapse(input.result_paths),
@@ -294,6 +284,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
 def _search_integrity(
     request: SearchRequest,
     phase_timing: dict[str, float],
+    snapshot: IndexIntegritySnapshot,
 ) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
@@ -309,29 +300,15 @@ def _search_integrity(
     shrink turns into at most one supervised repair, whose job id (when known)
     rides back on the envelope beside the verdict that motivated it.
     """
-    from .._index_integrity import evaluate_index_integrity
     from .._integrity_remediation import note_integrity_verdict
-    from ..store_runtime import configured_backend_identity
-
-    backend_identity = configured_backend_identity(request.root)
 
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
         source = PublicSourceType.CODE
-        integrity = evaluate_index_integrity(
-            request.root,
-            source,
-            None if code_count is None else int(code_count),
-            backend_identity=backend_identity,
-        )
+        integrity = snapshot.finish(None if code_count is None else int(code_count))
     else:
         source = request.search_type
-        integrity = evaluate_index_integrity(
-            request.root,
-            source,
-            int(phase_timing["indexed_count"]),
-            backend_identity=backend_identity,
-        )
+        integrity = snapshot.finish(int(phase_timing["indexed_count"]))
     repair_job_id = note_integrity_verdict(request.root, source, integrity.verdict)
     return integrity, repair_job_id
 
@@ -418,8 +395,7 @@ def _classify_collection_disappearance(
     facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import evaluate_index_integrity
-    from ..store_runtime import configured_backend_identity
+    from .._index_integrity import acquire_index_integrity_snapshot
     from ._routes import canonical_job_snapshot
 
     return classify_qdrant_collection_disappearance(
@@ -435,12 +411,9 @@ def _classify_collection_disappearance(
                     # and carrying it keeps the daemon envelope uniform - every
                     # route response has the block, so absence still means only
                     # "old daemon".
-                    integrity=evaluate_index_integrity(
-                        facts.root,
-                        PublicSourceType(facts.source),
-                        None,
-                        backend_identity=configured_backend_identity(facts.root),
-                    ),
+                    integrity=acquire_index_integrity_snapshot(
+                        facts.root, PublicSourceType(facts.source)
+                    ).finish(None),
                     search_type=facts.source,
                 )
             ),
@@ -702,6 +675,16 @@ def _execute_search_request(
     """Execute and serialize one search off the event loop."""
     ticket = registry.acquire_compute_ticket()
     try:
+        from .._index_integrity import acquire_index_integrity_snapshot
+
+        integrity_source = (
+            PublicSourceType.CODE
+            if request.search_type is PublicSourceType.COMBINED
+            else request.search_type
+        )
+        integrity_snapshot = acquire_index_integrity_snapshot(
+            request.root, integrity_source
+        )
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
         results, phase_timing, combined = _dispatch_public_search(
@@ -719,15 +702,15 @@ def _execute_search_request(
             if request.search_type is PublicSourceType.COMBINED
             else int(phase_timing["indexed_count"])
         )
-        integrity, integrity_repair_job_id = _search_integrity(request, phase_timing)
+        integrity, integrity_repair_job_id = _search_integrity(
+            request, phase_timing, integrity_snapshot
+        )
         index_state = _search_index_state(
             SearchIndexStateInput(
                 indexed_count=indexed_count,
                 requested_root=request.root,
                 search_type=request.search_type,
                 published_points=phase_timing.get("published_points"),
-                named_files=phase_timing.get("named_files"),
-                covered_files=phase_timing.get("covered_files"),
                 integrity=integrity,
                 integrity_repair_job_id=integrity_repair_job_id,
                 result_paths=tuple(result.path for result in results),

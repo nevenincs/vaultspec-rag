@@ -124,6 +124,9 @@ class RunLedgerFinalizationMethods:
             """
             SELECT units.rel_path
             FROM commit_units AS units
+            JOIN generations AS generation
+              ON generation.generation_id = units.generation_id
+             AND generation.source_type != 'vault'
             LEFT JOIN file_states AS states
               ON states.generation_id = units.generation_id
              AND states.rel_path = units.rel_path

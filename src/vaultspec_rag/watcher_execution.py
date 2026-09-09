@@ -654,6 +654,7 @@ def _execute_project_incremental(
         result = runtime.vault_indexer.incremental_index(
             reporter=reporter,
             changed_paths=scope.paths,
+            authority=context.authority,
             run_control=context.control,
         )
         primary_graph_cache = slot.registry.peek_project(slot.root).graph_cache
@@ -671,6 +672,7 @@ def _execute_project_incremental(
             reporter=reporter,
             changed_paths=scope.paths,
             preflight=scope.code_preflight,
+            authority=context.authority,
             run_control=context.control,
         )
     if scope.document_preflight is None:
@@ -679,6 +681,7 @@ def _execute_project_incremental(
         reporter=reporter,
         changed_paths=scope.paths,
         preflight=scope.document_preflight,
+        authority=context.authority,
         run_control=context.control,
     )
 
