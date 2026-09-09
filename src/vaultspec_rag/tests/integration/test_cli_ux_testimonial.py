@@ -242,6 +242,7 @@ class TestSearchPowerUser:
                         "index",
                         "--type",
                         "code",
+                        "--rebuild",
                         "--borrow-gpu",
                     ],
                     capture_output=True,

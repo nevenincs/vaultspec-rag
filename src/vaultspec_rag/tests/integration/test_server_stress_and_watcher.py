@@ -304,40 +304,6 @@ async def _wait_for_path(path: Path) -> None:
     )
 
 
-async def _wait_for_code_payload(
-    slot: ProjectSlot,
-    *,
-    path: str,
-    expected_content: str,
-) -> None:
-    from qdrant_client import models
-
-    deadline = asyncio.get_running_loop().time() + _WATCHER_WAIT_SECONDS
-    while asyncio.get_running_loop().time() < deadline:
-        records, _offset = slot.store.client.scroll(
-            collection_name=slot.store.CODE_TABLE_NAME,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="path",
-                        match=models.MatchValue(value=path),
-                    )
-                ]
-            ),
-            limit=10,
-            with_payload=["content"],
-            with_vectors=False,
-        )
-        if any(
-            expected_content
-            in str(cast("object", (record.payload or {}).get("content", "")))
-            for record in records
-        ):
-            return
-        await asyncio.sleep(0.1)
-    pytest.fail("watcher did not converge the expected code payload")
-
-
 def _assert_watcher_resources_released(
     snapshot: JobSnapshot,
     slot: ProjectSlot,
@@ -619,13 +585,10 @@ class TestLargeIndexSearchHeadroom:
                 store,
                 options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
             )
-            bootstrap = (
-                root / "src" / "acceptance_workload" / "000" / ("module_000000.py")
-            )
-            indexer.incremental_index(
+            indexer.full_index(
+                clean=True,
                 reporter=NullProgressReporter(),
-                changed_paths=[bootstrap],
-                preflight=indexer.preflight_changed_paths([bootstrap]),
+                preflight=indexer.preflight_content(),
             )
             searcher = VaultSearcher(
                 root,
@@ -825,6 +788,7 @@ def _build_watched_code_project(
         runtime = lease.runtime
         runtime.vault_indexer.full_index(reporter=NullProgressReporter())
         runtime.code_indexer.full_index(
+            clean=True,
             reporter=NullProgressReporter(),
             preflight=runtime.code_indexer.preflight_content(),
         )
@@ -1012,15 +976,14 @@ async def test_watcher_cancel_preserves_dirtiness_and_submits_replacement(
 
 
 @pytest.mark.asyncio
-async def test_watcher_failure_is_bounded_and_restart_converges(
+async def test_watcher_failure_restart_requires_explicit_full_reindex(
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """A real store failure opens durable retry state; restart converges it."""
+    """Restart refuses unscoped recovery instead of guessing reindex authority."""
     registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
     slot, _trigger, target = _build_watched_code_project(root, registry)
-    relative = str(target.relative_to(root)).replace("\\", "/")
     state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
 
     await _start_watcher(root, cooldown=0.0)
@@ -1051,38 +1014,33 @@ async def test_watcher_failure_is_bounded_and_restart_converges(
         await _stop_watcher(root)
 
     registry.close_project(root)
-    recovered_slot = registry.peek_project(root)
+    registry.peek_project(root)
     await _start_watcher(root, cooldown=0.0)
     try:
         target.write_text(
             'def zebrafish_marker():\n    return "restart-converged"\n',
             encoding="utf-8",
         )
-        await _wait_for_code_payload(
-            recovered_slot,
-            path=relative,
-            expected_content="restart-converged",
-        )
-        settled = await _wait_for_watcher_state(
+        refused = await _wait_for_watcher_state(
             state_path,
-            lambda state: state.get("convergence_pending") is False,
-            "restart did not settle durable convergence",
+            lambda state: state.get("last_error_kind") == "full_reindex_required",
+            "restart did not refuse recovery after losing exact path scope",
         )
-        assert (settled["circuit_state"], settled["consecutive_failures"]) == (
-            "closed",
-            0,
+        assert (refused["circuit_state"], refused["convergence_pending"]) == (
+            "open",
+            True,
         )
     finally:
         await _stop_watcher(root)
 
 
 @pytest.mark.asyncio
-async def test_watcher_retries_intent_after_real_state_lock_contention(
+async def test_watcher_lock_contention_restart_requires_explicit_full_reindex(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """A process-held state lock delays intake without losing durable intent."""
+    """A restart refuses lock-delayed intent whose exact scope was not persisted."""
     registry, _manager = managed_watcher_runtime
     root = tmp_path.resolve()
     _slot, _trigger, target = _build_watched_code_project(root, registry)
@@ -1128,18 +1086,16 @@ async def test_watcher_retries_intent_after_real_state_lock_contention(
 
     await _start_watcher(root, cooldown=0.0)
     try:
-        slot = registry.peek_project(root)
-        await _wait_for_code_payload(
-            slot,
-            path=str(target.relative_to(root)).replace("\\", "/"),
-            expected_content="lock-contended",
-        )
-        settled = await _wait_for_watcher_state(
+        registry.peek_project(root)
+        refused = await _wait_for_watcher_state(
             state_path,
-            lambda state: state.get("convergence_pending") is False,
-            "replacement watcher did not settle contended intent",
+            lambda state: state.get("last_error_kind") == "full_reindex_required",
+            "replacement watcher did not refuse intent with lost path scope",
         )
-        assert settled["circuit_state"] == "closed"
+        assert (refused["circuit_state"], refused["convergence_pending"]) == (
+            "open",
+            True,
+        )
     finally:
         await _stop_watcher(root)
 
@@ -1214,15 +1170,14 @@ async def test_watcher_cancellation_releases_real_admitted_claim(
 
 
 @pytest.mark.asyncio
-async def test_watcher_refreshes_intent_committed_by_retiring_policy(
+async def test_watcher_refuses_unscoped_intent_from_retiring_policy(
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """Idle refresh observes dirty state committed by another policy owner."""
+    """Idle refresh refuses another policy owner's unscoped dirty state."""
     registry, _manager = managed_watcher_runtime
     root = tmp_path.resolve()
-    slot, _trigger, target = _build_watched_code_project(root, registry)
-    relative = str(target.relative_to(root)).replace("\\", "/")
+    _slot, _trigger, target = _build_watched_code_project(root, registry)
     target.write_text(
         'def zebrafish_marker():\n    return "retiring-policy-intent"\n',
         encoding="utf-8",
@@ -1233,31 +1188,28 @@ async def test_watcher_refreshes_intent_committed_by_retiring_policy(
         await _wait_for_path(state_path)
         retiring = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
         await asyncio.to_thread(retiring.mark_convergence_pending)
-        await _wait_for_code_payload(
-            slot,
-            path=relative,
-            expected_content="retiring-policy-intent",
-        )
-        settled = await _wait_for_watcher_state(
+        refused = await _wait_for_watcher_state(
             state_path,
-            lambda state: state.get("convergence_pending") is False,
-            "idle refresh did not settle external durable intent",
+            lambda state: state.get("last_error_kind") == "full_reindex_required",
+            "idle refresh did not refuse external unscoped intent",
         )
-        assert settled["attempt_generation"] is None
+        assert (refused["circuit_state"], refused["convergence_pending"]) == (
+            "open",
+            True,
+        )
     finally:
         await _stop_watcher(root)
 
 
 @pytest.mark.asyncio
-async def test_watcher_startup_retries_real_state_lock_contention(
+async def test_watcher_startup_lock_contention_preserves_full_reindex_refusal(
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """Canonical watcher startup survives another process holding state lock."""
+    """Startup lock retry preserves refusal for unscoped durable intent."""
     registry, _manager = managed_watcher_runtime
     root = tmp_path.resolve()
-    slot, _trigger, target = _build_watched_code_project(root, registry)
-    relative = str(target.relative_to(root)).replace("\\", "/")
+    _slot, _trigger, target = _build_watched_code_project(root, registry)
     target.write_text(
         'def zebrafish_marker():\n    return "startup-contention"\n',
         encoding="utf-8",
@@ -1278,19 +1230,17 @@ async def test_watcher_startup_retries_real_state_lock_contention(
         await _start_watcher(root, cooldown=0.0)
         await asyncio.sleep(0.1)
         assert not server._watcher_tasks[root].done()
-        await _wait_for_code_payload(
-            slot,
-            path=relative,
-            expected_content="startup-contention",
-        )
         await asyncio.to_thread(holder.wait, 10.0)
         assert holder.returncode == 0
-        settled = await _wait_for_watcher_state(
+        refused = await _wait_for_watcher_state(
             state_path,
-            lambda state: state.get("convergence_pending") is False,
-            "startup contention did not settle durable intent",
+            lambda state: state.get("last_error_kind") == "full_reindex_required",
+            "startup contention did not preserve unscoped refusal",
         )
-        assert settled["circuit_state"] == "closed"
+        assert (refused["circuit_state"], refused["convergence_pending"]) == (
+            "open",
+            True,
+        )
     finally:
         if root in server._watcher_tasks:
             await _stop_watcher(root)

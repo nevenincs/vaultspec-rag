@@ -21,6 +21,7 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
+from ..._job_errors import JobError, JobErrorKind
 from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
@@ -256,7 +257,7 @@ class TestCodeScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_gitignored_file_is_noop(
+    def test_gitignore_membership_change_requires_full_reindex(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
         store, code_indexer, _a, _b = _build_code(tmp_path, embedding_model)
@@ -266,13 +267,14 @@ class TestCodeScopedReindex:
             ignored.write_text("def ignored():\n    return 0\n", encoding="utf-8")
             meta_before = code_indexer._load_meta()
 
-            result = code_indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths={ignored},
-                preflight=code_indexer.preflight_changed_paths({ignored}),
-            )
+            with pytest.raises(JobError) as raised:
+                code_indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths={ignored},
+                    preflight=code_indexer.preflight_changed_paths({ignored}),
+                )
 
-            assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
             assert code_indexer._load_meta() == meta_before
         finally:
             store.close()

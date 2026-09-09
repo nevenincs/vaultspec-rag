@@ -435,14 +435,16 @@ def _embedding_dimension() -> int:
     return int(get_config().embedding_dimension)
 
 
-def _code_chunks(ids: tuple[str, ...], *, prefix: str) -> list[CodeChunk]:
+def _code_chunks(
+    ids: tuple[str, ...], *, prefix: str, id_prefix: str | None = None
+) -> list[CodeChunk]:
     """Return one real zero-vector code chunk per id, one file per chunk."""
     from ..._store_models import CodeChunk
 
     dimension = _embedding_dimension()
     return [
         CodeChunk(
-            id=f"{prefix}-{chunk_id}",
+            id=f"{id_prefix or prefix}-{chunk_id}",
             path=f"src/{prefix}/{chunk_id}.py",
             language="python",
             content=f"value_{chunk_id} = True",
@@ -890,7 +892,11 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
             )
             store.ensure_code_table(build_target)
             store.upsert_code_chunks(
-                _code_chunks(("n1", "n2", "n3", "n4", "n5"), prefix="new"),
+                _code_chunks(
+                    ("n1", "n2", "n3", "n4", "n5"),
+                    prefix="new",
+                    id_prefix="unit",
+                ),
                 write_policy=None,
                 collection=build_target,
             )
@@ -956,7 +962,7 @@ class TestResumedCodePublicationClaimsWhatItBuilt:
             assert build_target != prior
             store.ensure_code_table(build_target)
             store.upsert_code_chunks(
-                _code_chunks(("n1", "n2", "n3"), prefix="new"),
+                _code_chunks(("n1", "n2", "n3"), prefix="new", id_prefix="unit"),
                 write_policy=None,
                 collection=build_target,
             )

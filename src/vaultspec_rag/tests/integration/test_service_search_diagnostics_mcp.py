@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from concurrent.futures import Future
     from pathlib import Path
+    from typing import TextIO
 
     from mcp.types import CallToolResult
 
@@ -85,7 +86,10 @@ async def _mcp_search_after_concurrent_admission_async(
         env=env,
     )
     async with (
-        stdio_client(server) as (read_stream, write_stream),
+        stdio_client(server, errlog=cast("TextIO", sys.__stderr__)) as (
+            read_stream,
+            write_stream,
+        ),
         ClientSession(read_stream, write_stream) as session,
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)
@@ -151,14 +155,16 @@ def assert_mcp_unavailable_response(
     *,
     evidence: str,
 ) -> None:
-    assert response.is_error is True, evidence
+    assert response.is_error is False, evidence
     text = " ".join(
         block.text for block in response.content if isinstance(block, TextContent)
     )
     assert "index_unavailable" in text, evidence
     assert "vaultspec-rag server jobs" in text, evidence
-    structured = cast("dict[str, object] | None", response.structured_content)
-    assert structured is None or "results" not in structured, evidence
+    structured = cast("dict[str, object]", response.structured_content)
+    assert structured["ok"] is False, evidence
+    assert structured["error"] == "index_unavailable", evidence
+    assert "results" not in structured, evidence
 
 
 @contextmanager
@@ -233,7 +239,10 @@ async def _official_search_call(
         env=env,
     )
     async with (
-        stdio_client(server) as (read_stream, write_stream),
+        stdio_client(server, errlog=cast("TextIO", sys.__stderr__)) as (
+            read_stream,
+            write_stream,
+        ),
         ClientSession(read_stream, write_stream) as session,
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)

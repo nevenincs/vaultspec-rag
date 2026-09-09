@@ -134,7 +134,7 @@ async def _pause_and_resume_large_job(
     root: Path,
 ) -> None:
     """Pause and resume one publishing job through a released attempt."""
-    job_id = jobs.start_reindex_vault(root, clean=False)
+    job_id = jobs.start_reindex_vault(root, clean=True)
     live = await _wait_for_job(
         manager,
         job_id,
@@ -550,7 +550,7 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
             operation=JobOperation.INDEX,
             source=JobSource.CODE,
             project_root=str(root.resolve()),
-            mode=JobMode.INCREMENTAL,
+            mode=JobMode.REBUILD,
         ),
         _integration_initiator(root, "paused code discovery refresh"),
         start_paused=True,

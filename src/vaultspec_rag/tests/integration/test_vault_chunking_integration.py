@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, ClassVar, TypedDict
 
 import pytest
 
+from ..._job_errors import JobError, JobErrorKind
 from ...indexer._vault_meta import VAULT_POINT_SCHEMA, VAULT_POINT_SCHEMA_KEY
 from ...progress import NullProgressReporter
 from ..corpus import build_synthetic_vault
@@ -214,7 +215,7 @@ class TestChunkedVaultLifecycle:
         finally:
             store.close()
 
-    def test_old_point_layout_triggers_rebuild(
+    def test_old_point_layout_requires_explicit_rebuild(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
         from ..._index_breadth import index_meta_path
@@ -231,9 +232,14 @@ class TestChunkedVaultLifecycle:
             meta.pop(VAULT_POINT_SCHEMA_KEY)
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
-            result = indexer.incremental_index(reporter=NullProgressReporter())
-            # A layout rebuild re-adds every document instead of
-            # reporting a no-op incremental pass.
+            with pytest.raises(JobError) as raised:
+                indexer.incremental_index(reporter=NullProgressReporter())
+            assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+
+            result = indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+            )
             assert result.added == doc_total
             stamped: dict[str, object] = json.loads(
                 meta_path.read_text(encoding="utf-8")

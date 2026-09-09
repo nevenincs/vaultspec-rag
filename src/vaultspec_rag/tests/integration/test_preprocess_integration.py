@@ -667,13 +667,12 @@ class TestPreprocessEndToEnd:
         assert store.count_code() > before
 
     @pytest.mark.timeout(600)
-    def test_failing_preprocessor_never_converges_unchanged_source_hash(
+    def test_skipped_preprocessor_converges_stable_rejection(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         from ... import CodebaseIndexer
-        from ..._job_errors import JobError, JobErrorKind
         from ...config._settings import get_config
-        from ...indexer._content_policy import ContentKind
+        from ...indexer._content_policy import AdmissionReason, ContentKind
         from ...indexer._file_state import FileStateKind
         from ...indexer._run_ledger_models import (
             RunTerminalState,
@@ -698,14 +697,12 @@ class TestPreprocessEndToEnd:
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            generation_id = None
             for _attempt in range(2):
-                with pytest.raises(JobError) as raised:
-                    indexer.full_index(
-                        reporter=NullProgressReporter(),
-                        preflight=indexer.preflight_content(),
-                    )
-                assert raised.value.error_kind is JobErrorKind.EXTRACTION_RETRYABLE
+                result = indexer.full_index(
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+                assert result.preprocess_skipped == 1
                 assert "broken.pdf" not in indexer._load_meta()
                 assert store.get_code_ids_by_paths({"broken.pdf"}) == []
 
@@ -714,29 +711,29 @@ class TestPreprocessEndToEnd:
                 )
                 generation = ledger.latest_generation(ContentKind.CODE)
                 assert generation is not None
-                assert generation.terminal_state is RunTerminalState.FAILED
-                generation_id = generation_id or generation.generation_id
-                assert generation.generation_id == generation_id
+                assert generation.terminal_state is RunTerminalState.SUCCEEDED
                 state = next(
                     item
                     for item in ledger.iter_file_states(generation.generation_id)
                     if item.rel_path == "broken.pdf"
                 )
-                assert state.state is FileStateKind.EXTRACT_RETRYABLE
-                assert not state.converged
+                assert state.state is FileStateKind.POLICY_REJECTED
+                assert state.admission_reason is AdmissionReason.PREPROCESS_SKIPPED
+                assert state.converged
         finally:
             store.close()
 
     @pytest.mark.timeout(600)
-    def test_ignore_edit_prunes_stale_chunks_down_the_watcher_path(
+    def test_ignore_edit_requires_explicit_rebuild_before_pruning_stale_chunks(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
         # The consumer-reported drift scenario, end to end: index two source
         # files, then newly ignore one via .vaultragignore and forward ONLY the
         # ignore file down the scoped path (exactly what the watcher does).
-        # The membership-epoch check must force the unscoped reconcile and
-        # prune the newly-ignored file's chunks.
+        # The membership-epoch check must refuse to widen the scoped request;
+        # an explicit full rebuild then prunes the newly-ignored file.
         from ... import CodebaseIndexer
+        from ..._job_errors import JobError, JobErrorKind
         from ...store_runtime import VaultStore
 
         model = rag_components["model"]
@@ -760,12 +757,21 @@ class TestPreprocessEndToEnd:
 
             ignore = tmp_path / ".vaultragignore"
             ignore.write_text("drop.py\n", encoding="utf-8")
-            result = indexer.incremental_index(
+            with pytest.raises(JobError) as raised:
+                indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths=[ignore],
+                    preflight=indexer.preflight_changed_paths([ignore]),
+                )
+            assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert store.get_code_ids_by_paths({"drop.py"})
+
+            result = indexer.full_index(
+                clean=True,
                 reporter=NullProgressReporter(),
-                changed_paths=[ignore],
-                preflight=indexer.preflight_changed_paths([ignore]),
+                preflight=indexer.preflight_content(),
             )
-            assert result.removed >= 1
+            assert result.total == 1
             assert not store.get_code_ids_by_paths({"drop.py"}), (
                 "newly-ignored file's chunks were not pruned"
             )
@@ -882,13 +888,12 @@ class TestPreprocessEndToEnd:
             store.close()
 
     @pytest.mark.timeout(600)
-    def test_incremental_skip_remains_a_retryable_obligation(
+    def test_incremental_skip_converges_without_publishing_source_chunks(
         self, rag_components: RagComponentsWithManifest, tmp_path: Path
     ) -> None:
-        # Regression: the scoped/incremental path (used by
-        # the watcher) must retain preprocessing failures as retryable work.
+        # The scoped/incremental path used by the watcher applies the stable
+        # skip disposition without publishing content for the failed source.
         from ... import CodebaseIndexer
-        from ..._job_errors import JobError, JobErrorKind
         from ...store_runtime import VaultStore
 
         model = rag_components["model"]
@@ -902,19 +907,23 @@ class TestPreprocessEndToEnd:
             'extractor_version = "1"\n'
             'on_error = "skip"\n',
         )
-        broken = tmp_path / "broken.pdf"
-        broken.write_bytes(b"\x00\x01 binary")
-
         store = VaultStore(tmp_path)
         try:
             indexer = CodebaseIndexer(tmp_path, model, store)
-            with pytest.raises(JobError) as raised:
-                indexer.incremental_index(
-                    reporter=NullProgressReporter(),
-                    changed_paths=[broken],
-                    preflight=indexer.preflight_changed_paths([broken]),
-                )
-            assert raised.value.error_kind is JobErrorKind.EXTRACTION_RETRYABLE
+            indexer.full_index(
+                clean=True,
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+            broken = tmp_path / "broken.pdf"
+            broken.write_bytes(b"\x00\x01 binary")
+            result = indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                changed_paths=[broken],
+                preflight=indexer.preflight_changed_paths([broken]),
+            )
+            assert result.preprocess_skipped == 1
+            assert store.get_code_ids_by_paths({"broken.pdf"}) == []
             assert any("broken.pdf" in failure for failure in indexer._prep_skips)
         finally:
             store.close()
