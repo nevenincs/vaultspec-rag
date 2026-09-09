@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..._source_types import PublicSourceType
 from ..._store_search import HybridSearchRequest
 from ...config._settings import reset_config
 from ...config._types import EnvVar
@@ -26,6 +27,7 @@ from ...qdrant_runtime._constants import QDRANT_SERVER_VERSION
 from ...qdrant_runtime._resolve import resolve_binary
 from ...qdrant_runtime._supervise import QdrantSupervisor
 from .._ports import free_loopback_port
+from .._publication_assertions import published_content_identities
 from ..corpus import build_synthetic_vault
 from ._helpers import (
     _get_ephemeral_qdrant_port,
@@ -194,7 +196,7 @@ class TestServerModeRoundTrip:
 
             keep_rel = str(keep.relative_to(tmp_path)).replace("\\", "/")
             gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
-            assert code_indexer._get_chunk_ids_for_files({gone_rel})
+            assert code_indexer.store.get_code_ids_by_paths({gone_rel})
 
             gone.unlink()
             result = code_indexer.incremental_index(
@@ -204,9 +206,11 @@ class TestServerModeRoundTrip:
             )
 
             assert result.removed == 1
-            assert not code_indexer._get_chunk_ids_for_files({gone_rel})
-            assert code_indexer._get_chunk_ids_for_files({keep_rel})
-            assert gone_rel not in code_indexer._load_meta()
+            assert not code_indexer.store.get_code_ids_by_paths({gone_rel})
+            assert code_indexer.store.get_code_ids_by_paths({keep_rel})
+            assert gone_rel not in published_content_identities(
+                tmp_path, PublicSourceType.CODE
+            )
         finally:
             store.close()
 
@@ -290,7 +294,7 @@ class TestServerModeDeletionEviction:
             )
 
             gone_rel = str(gone.relative_to(tmp_path)).replace("\\", "/")
-            assert code_indexer._get_chunk_ids_for_files({gone_rel}), (
+            assert code_indexer.store.get_code_ids_by_paths({gone_rel}), (
                 "doomed file must have chunks before deletion (sanity)"
             )
 
@@ -312,11 +316,11 @@ class TestServerModeDeletionEviction:
             )
             assert result.removed == 1
 
-            assert not code_indexer._get_chunk_ids_for_files({gone_rel}), (
+            assert not code_indexer.store.get_code_ids_by_paths({gone_rel}), (
                 "deleted file's chunks must be evicted from the store (issue 192)"
             )
             keep_rel = str(keep.relative_to(tmp_path)).replace("\\", "/")
-            assert code_indexer._get_chunk_ids_for_files({keep_rel}), (
+            assert code_indexer.store.get_code_ids_by_paths({keep_rel}), (
                 "kept file's chunks must remain"
             )
             assert not any(

@@ -279,7 +279,7 @@ def _evaluate_claim(
     The comparison is exact and one-sided, no tolerance. Every publication
     counts the store immediately after storage reconciliation and writes the
     figure atomically with the generation it describes - for a rebuilt
-    generation the sidecar lands before the served pointer moves, and an
+    generation the proof lands before the served pointer moves, and an
     in-place incremental republishes the figure at the same protected commit
     edge that performs its deletions - so a complete served collection always
     reads back at least its claim. A count above the claim is the legitimate
@@ -433,7 +433,31 @@ def _required_payload_text(payload: dict[str, object], field: str) -> str:
     return value
 
 
-def _payload_value_matches(  # noqa: PLR0911 - explicit recursive type algebra.
+def _payload_container_matches(
+    value: object,
+    origin: object,
+    arguments: tuple[object, ...],
+) -> bool:
+    if origin is list:
+        if not isinstance(value, list) or len(arguments) != 1:
+            return False
+        return all(
+            _payload_value_matches(item, arguments[0])
+            for item in cast("list[object]", value)
+        )
+    if origin is dict:
+        if not isinstance(value, dict) or len(arguments) != 2:
+            return False
+        key_type, value_type = arguments
+        return all(
+            _payload_value_matches(key, key_type)
+            and _payload_value_matches(item, value_type)
+            for key, item in cast("dict[object, object]", value).items()
+        )
+    return False
+
+
+def _payload_value_matches(
     value: object,
     expected: object,
 ) -> bool:
@@ -447,22 +471,7 @@ def _payload_value_matches(  # noqa: PLR0911 - explicit recursive type algebra.
     arguments = get_args(expected)
     if origin in {types.UnionType, Union}:
         return any(_payload_value_matches(value, option) for option in arguments)
-    if origin is list:
-        if not isinstance(value, list) or len(arguments) != 1:
-            return False
-        items = cast("list[object]", value)
-        return all(_payload_value_matches(item, arguments[0]) for item in items)
-    if origin is dict:
-        if not isinstance(value, dict) or len(arguments) != 2:
-            return False
-        entries = cast("dict[object, object]", value)
-        key_type, value_type = arguments
-        return all(
-            _payload_value_matches(key, key_type)
-            and _payload_value_matches(item, value_type)
-            for key, item in entries.items()
-        )
-    return False
+    return _payload_container_matches(value, origin, arguments)
 
 
 def _validate_audit_payload_schema(

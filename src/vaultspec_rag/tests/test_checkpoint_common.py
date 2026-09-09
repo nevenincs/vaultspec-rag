@@ -17,27 +17,36 @@ fakes - so the assertions are about persisted state, not about call recording.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from .._source_types import PublicSourceType
 from ..indexer._checkpoint_common import (
+    RunCheckpointBase,
     classify_interrupted_generation,
     configuration_fingerprint,
 )
 from ..indexer._document_checkpoint import DocumentRunConfiguration
+from ..indexer._publication_proof import ProofMutationState
 from ..indexer._run_checkpoint import CodeRunConfiguration
 from ..indexer._run_ledger_models import (
+    CommitUnit,
+    CommitUnitKind,
+    RunAuthority,
     RunOperation,
     RunSignature,
     RunTerminalState,
     index_run_ledger_path,
 )
+from ..indexer._run_ledger_publication import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..indexer._run_policy import RunPolicy
 
 pytestmark = [pytest.mark.unit]
 
@@ -129,6 +138,109 @@ class TestClassifyInterruptedGeneration:
 
         assert result.terminal_state is RunTerminalState.CANCELLED
         assert result.terminal_detail == "operator requested cancellation"
+
+
+def test_empty_incremental_closes_receipt_without_rewriting_proof(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(index_run_ledger_path(tmp_path))
+    rebuilt = ledger.start_generation(replace(_signature(tmp_path, clean=True)))
+    original = ledger.establish_verified_publication(
+        rebuilt.generation_id,
+        RunAuthority.REBUILD,
+        (),
+    )
+    incremental = ledger.start_generation(
+        replace(
+            rebuilt.signature,
+            operation=RunOperation.INCREMENTAL,
+            clean=False,
+            configuration_fingerprint="configuration-v2",
+        )
+    )
+    key = compatibility_for_signature(incremental.signature)
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        incremental.generation_id,
+        expected_parent_revision=original.revision,
+    )
+    checkpoint = RunCheckpointBase(
+        ledger,
+        incremental,
+        None,
+        cast("RunPolicy", None),
+        RunAuthority.PUBLICATION,
+        receipt,
+    )
+
+    assert checkpoint.publish_proof_transition() == 0
+    assert ledger.active_publication_receipt(key) is None
+    current = ledger.publication_proof(key)
+    assert current.revision == original.revision
+    assert current.generation_id == original.generation_id
+
+
+def test_reopened_checkpoint_confirms_applied_mutation_without_replaying_store(
+    tmp_path: Path,
+) -> None:
+    """A crash after acknowledgement resumes at confirmation, not at the store."""
+    ledger = RunLedger(index_run_ledger_path(tmp_path))
+    rebuilt = ledger.start_generation(_signature(tmp_path, clean=True))
+    parent = ledger.establish_verified_publication(
+        rebuilt.generation_id,
+        RunAuthority.REBUILD,
+        (),
+    )
+    incremental = ledger.start_generation(
+        replace(
+            rebuilt.signature,
+            operation=RunOperation.INCREMENTAL,
+            clean=False,
+            configuration_fingerprint="configuration-v2",
+        )
+    )
+    key = compatibility_for_signature(incremental.signature)
+    receipt = ledger.reserve_publication_receipt(
+        key,
+        incremental.generation_id,
+        expected_parent_revision=parent.revision,
+    )
+    unit = CommitUnit(
+        rel_path="src/a.py",
+        kind=CommitUnitKind.UPSERT,
+        source_digest=f"sha256:{'a' * 64}",
+        segment_ordinal=0,
+        is_file_end=True,
+        point_ids=("point-a",),
+    )
+    lifecycle = RunCheckpointBase(
+        ledger,
+        incremental,
+        None,
+        cast("RunPolicy", None),
+        RunAuthority.PUBLICATION,
+        receipt,
+    ).mutation_lifecycle(unit)
+    assert lifecycle is not None
+    assert lifecycle.prepare()
+    lifecycle.mark_applied()
+
+    reopened = RunLedger(ledger.path)
+    active = reopened.active_publication_receipt(key)
+    assert active is not None
+    resumed = RunCheckpointBase(
+        reopened,
+        reopened.generation(incremental.generation_id),
+        None,
+        cast("RunPolicy", None),
+        RunAuthority.PUBLICATION,
+        active,
+    ).mutation_lifecycle(unit)
+    assert resumed is not None
+    assert not resumed.prepare()
+    mutation = reopened.active_publication_receipt(key)
+    assert mutation is not None
+    assert mutation.mutations[0].state is ProofMutationState.CONFIRMED
 
 
 class TestConfigurationFingerprint:

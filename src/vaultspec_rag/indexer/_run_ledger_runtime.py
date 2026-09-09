@@ -921,6 +921,7 @@ class RunLedger(
             """,
         )
 
+    # complexipy: ignore - exhaustive current-schema contract verification
     def _verify_schema(self, connection: sqlite3.Connection) -> None:
         self._verify_schema_objects(connection)
         self._verify_schema_tables(connection)

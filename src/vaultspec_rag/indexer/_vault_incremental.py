@@ -195,7 +195,7 @@ class VaultIncrementalMixin:
         root_dir: pathlib.Path
         store: VaultStore
         _gpu_lock: threading.Lock | None
-        _stat_gate_cache: _stat_gate.ResidentGateCache
+        _stat_gate_cache: _stat_gate.StatEvidenceStore
 
         # Provided by the indexer this mixes into.
         def _resolve_reuse(
@@ -280,8 +280,7 @@ class VaultIncrementalMixin:
             logger.warning("Cannot hash file, skipping: %s", doc_id)
         if full_membership:
             gate.prune(current_docs.keys())
-            gate.persist()
-        self._stat_gate_cache.retain(gate)
+        gate.persist()
         return outcome.hashes
 
     def _parse_documents(

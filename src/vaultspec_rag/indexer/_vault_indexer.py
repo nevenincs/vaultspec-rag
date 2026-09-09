@@ -98,14 +98,14 @@ class VaultIndexer(VaultIncrementalMixin):
 
         self._writer_lock: _threading.Lock = _threading.Lock()
         self._stat_gate_path = (
-            workspace_volume_path(root_dir.resolve()) / "vault_index.statgate.json"
+            workspace_volume_path(root_dir.resolve()) / "vault_index.statgate.sqlite3"
         )
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on. The gate digests through the
-        # split fingerprint, so its evidence and the sidecar it gates always
+        # split fingerprint, so its evidence and the proof it gates always
         # describe the same thing.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(
             self._stat_gate_path,
             digest=functools.partial(
                 _vault_fingerprint.fingerprint_path,
@@ -184,7 +184,7 @@ class VaultIndexer(VaultIncrementalMixin):
         clean: bool = False,
         *,
         reporter: ProgressReporter,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full re-index serialized through the indexer writer lock.
@@ -222,7 +222,7 @@ class VaultIndexer(VaultIncrementalMixin):
         clean: bool = False,
         *,
         reporter: ProgressReporter,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
@@ -439,7 +439,7 @@ class VaultIndexer(VaultIncrementalMixin):
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental re-index serialized through the writer lock.
@@ -485,7 +485,7 @@ class VaultIndexer(VaultIncrementalMixin):
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`.

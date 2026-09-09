@@ -1,5 +1,7 @@
 """CLI coverage for index, clean, and auto-delegation commands."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import inspect
@@ -63,12 +65,12 @@ class TestCleanCommand:
         root = make_workspace(tmp_path)
         result = runner.invoke(
             app,
-            ["--target", str(root), "clean", "all"],
+            ["--target", str(root), "clean", "combined"],
             input="n\n",
         )
 
         assert result.exit_code == 1
-        assert "Delete all search index data for" in result.output
+        assert "Delete combined search index data for" in result.output
         assert "Clean cancelled." in result.output
         assert "RAG index data" not in result.output
 
@@ -83,123 +85,13 @@ class TestCleanCommand:
         assert "Clean cancelled." in result.output
         assert "Aborted!" not in result.output
 
-    def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
-        from ..config._settings import get_config
-        from ..store_runtime import VaultStore
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        index_metadata_file = data_dir / str(cfg.index_metadata_file)
-        index_metadata_file.write_text('{"x": "y"}', encoding="utf-8")
-        code_index_metadata_file = data_dir / str(cfg.code_index_metadata_file)
-        code_index_metadata_file.write_text(
-            '{"src/app.py": "hash"}',
-            encoding="utf-8",
-        )
-
-        store = VaultStore(root)
-        try:
-            store.ensure_table()
-            store.ensure_code_table()
-        finally:
-            store.close()
-
-        result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
-        assert result.exit_code == 0, result.output
-        assert "Clean summary" in result.output
-        assert "Vault index: empty." in result.output
-        assert "Source code index: empty." in result.output
-        assert "Vault: empty" not in result.output
-        assert "Code: empty" not in result.output
-        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-            assert forbidden not in result.output
-
-        store = VaultStore(root)
-        try:
-            assert store.count() == 0
-            assert store.count_code() == 0
-        finally:
-            store.close()
-        assert not index_metadata_file.exists()
-        assert not code_index_metadata_file.exists()
-
-    @pytest.mark.parametrize(
-        ("selection", "removed_attr", "kept_attr"),
-        [
-            ("vault", "index_metadata_file", "code_index_metadata_file"),
-            ("codebase", "code_index_metadata_file", "index_metadata_file"),
-        ],
-    )
-    def test_clean_one_source_removes_only_its_own_sidecar(
-        self,
-        tmp_path: Path,
-        selection: str,
-        removed_attr: str,
-        kept_attr: str,
-    ) -> None:
-        """A selective clean must not resolve the other source's sidecar.
-
-        Cleaning everything cannot tell a correct resolution from one with the
-        two filenames transposed, because both files go either way. Only a
-        single-source clean observes which name each branch resolved.
-        """
-        from ..config._settings import get_config
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        removed = data_dir / str(getattr(cfg, removed_attr))
-        kept = data_dir / str(getattr(cfg, kept_attr))
-        removed.write_text('{"x": "y"}', encoding="utf-8")
-        kept.write_text('{"kept": "kept"}', encoding="utf-8")
-
-        result = runner.invoke(
-            app, ["--target", str(root), "clean", selection, "--yes"]
-        )
-
-        assert result.exit_code == 0, result.output
-        assert not removed.exists()
-        assert kept.read_text(encoding="utf-8") == '{"kept": "kept"}'
-
-    def test_clean_document_removes_only_the_document_record(
-        self, tmp_path: Path
-    ) -> None:
-        """The document record is named independently of the two index sidecars."""
-        from ..config._settings import get_config
-        from ..indexer._document_meta import document_metadata_path
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        survivors = [
-            data_dir / str(cfg.index_metadata_file),
-            data_dir / str(cfg.code_index_metadata_file),
-        ]
-        for survivor in survivors:
-            survivor.write_text('{"kept": "kept"}', encoding="utf-8")
-        record = document_metadata_path(root)
-        record.write_text('{"x": "y"}', encoding="utf-8")
-
-        result = runner.invoke(
-            app, ["--target", str(root), "clean", "document", "--yes"]
-        )
-
-        assert result.exit_code == 0, result.output
-        assert not record.exists()
-        for survivor in survivors:
-            assert survivor.read_text(encoding="utf-8") == '{"kept": "kept"}'
-
     def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = make_workspace(tmp_path)
         lock = _hold_local_index_lock(root)
         try:
             result = runner.invoke(
                 app,
-                ["--target", str(root), "clean", "all", "--yes"],
+                ["--target", str(root), "clean", "combined", "--yes"],
             )
         finally:
             lock.release()
@@ -421,7 +313,7 @@ class TestIndexRebuild:
         rem = typing.cast("list[str]", raw_rem)
         assert any("--type vault" in r for r in rem)
         assert any("--type code" in r for r in rem)
-        assert any("--type all" in r for r in rem)
+        assert any("--type combined" in r for r in rem)
 
     def test_index_bare_invocation_still_works(self, tmp_path: Path):
         """Bare `vaultspec-rag index` (no --rebuild) keeps the all default.
@@ -867,7 +759,7 @@ class TestIndexSummaryCLI:
                     str(tmp_path),
                     "index",
                     "--type",
-                    "all",
+                    "combined",
                     "--port",
                     str(server.server_port),
                 ],
@@ -1010,7 +902,7 @@ class TestIndexSummaryCLI:
                     str(tmp_path),
                     "index",
                     "--type",
-                    "all",
+                    "combined",
                     "--port",
                     str(server.server_port),
                 ],

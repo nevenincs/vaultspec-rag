@@ -465,6 +465,68 @@ def _persist_sealed_receipt_body(
             )
 
 
+def _require_mutation_slot_available(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    unit: CommitUnit,
+) -> None:
+    slot = fetch_one(
+        connection,
+        """
+        SELECT unit_id FROM publication_mutation_units
+        WHERE receipt_id = ? AND rel_path = ? AND unit_kind = ?
+          AND segment_ordinal = ?
+        """,
+        (receipt_id, unit.rel_path, unit.kind.value, unit.segment_ordinal),
+    )
+    if slot is not None:
+        raise RunLedgerStateError(
+            "publication mutation slot belongs to different evidence"
+        )
+
+
+def _require_mutation_points_available(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    point_ids: tuple[str, ...],
+) -> None:
+    for start in range(0, len(point_ids), FETCH_BATCH):
+        point_page = point_ids[start : start + FETCH_BATCH]
+        placeholders = ", ".join("?" for _point_id in point_page)
+        owner = fetch_one(
+            connection,
+            f"""
+            SELECT point_id FROM publication_mutation_points
+            WHERE receipt_id = ? AND point_id IN ({placeholders})
+            LIMIT 1
+            """,
+            (receipt_id, *point_page),
+        )
+        if owner is not None:
+            raise RunLedgerStateError(
+                "publication mutation point belongs to another unit"
+            )
+
+
+def _require_mutation_cursor(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    next_ordinal: int,
+) -> None:
+    if not next_ordinal:
+        return
+    predecessor = fetch_one(
+        connection,
+        """
+        SELECT 1 FROM publication_mutation_units
+        WHERE receipt_id = ? AND mutation_ordinal = ?
+        """,
+        (receipt_id, next_ordinal - 1),
+    )
+    if predecessor is None:
+        _receipt_corrupt("publication mutation cursor has no predecessor")
+
+
 class RunLedgerCommitMethods:
     if TYPE_CHECKING:
         path: Path
@@ -529,52 +591,10 @@ class RunLedgerCommitMethods:
                 raise RunLedgerStateError(
                     "cannot prepare a publication mutation after finalization begins"
                 )
-            slot: sqlite3.Row | None = fetch_one(
-                connection,
-                """
-                SELECT unit_id FROM publication_mutation_units
-                WHERE receipt_id = ? AND rel_path = ? AND unit_kind = ?
-                  AND segment_ordinal = ?
-                """,
-                (
-                    receipt_id,
-                    unit.rel_path,
-                    unit.kind.value,
-                    unit.segment_ordinal,
-                ),
-            )
-            if slot is not None:
-                raise RunLedgerStateError(
-                    "publication mutation slot belongs to different evidence"
-                )
-            for start in range(0, len(unit.point_ids), FETCH_BATCH):
-                point_page = unit.point_ids[start : start + FETCH_BATCH]
-                placeholders = ", ".join("?" for _point_id in point_page)
-                owner: sqlite3.Row | None = fetch_one(
-                    connection,
-                    f"""
-                    SELECT point_id FROM publication_mutation_points
-                    WHERE receipt_id = ? AND point_id IN ({placeholders})
-                    LIMIT 1
-                    """,
-                    (receipt_id, *point_page),
-                )
-                if owner is not None:
-                    raise RunLedgerStateError(
-                        "publication mutation point belongs to another unit"
-                    )
+            _require_mutation_slot_available(connection, receipt_id, unit)
+            _require_mutation_points_available(connection, receipt_id, unit.point_ids)
             next_ordinal = column_int(receipt_row, "next_mutation_ordinal")
-            if next_ordinal:
-                predecessor = fetch_one(
-                    connection,
-                    """
-                    SELECT 1 FROM publication_mutation_units
-                    WHERE receipt_id = ? AND mutation_ordinal = ?
-                    """,
-                    (receipt_id, next_ordinal - 1),
-                )
-                if predecessor is None:
-                    _receipt_corrupt("publication mutation cursor has no predecessor")
+            _require_mutation_cursor(connection, receipt_id, next_ordinal)
             cursor = connection.execute(
                 """
                 UPDATE publication_receipts

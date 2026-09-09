@@ -7,8 +7,6 @@ escalation matrix). None of these paths embed, so no GPU or vector store is
 constructed - the classification methods operate on the resolved config alone.
 """
 
-import json
-import os
 from collections.abc import Generator
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +19,6 @@ from vaultspec_core.config import (
 
 from .._source_types import PublicSourceType
 from ..config._settings import reset_config as reset_rag_config
-from ..config._types import EnvVar
 from ..indexer import CodebaseIndexer
 from ..indexer import _config_epoch as ce
 from ..indexer._content_policy import ContentKind
@@ -81,49 +78,6 @@ def _make_indexer(root: Path) -> CodebaseIndexer:
         root,
         cast("EmbeddingModel", None),
         cast("VaultStore", None),
-    )
-
-
-def _stamp(indexer: CodebaseIndexer) -> tuple[str, str]:
-    """Resolve current epochs and persist a sidecar stamped with them."""
-    policy = indexer.resolve_policy_snapshot()
-    membership, content = indexer._compute_code_epochs(policy)
-    indexer._membership_epoch = membership
-    indexer._content_epoch = content
-    indexer._write_meta(
-        {"anchor.py": "0" * 128},
-        policy=policy,
-    )
-    return membership, content
-
-
-def _classify_current(indexer: CodebaseIndexer) -> str:
-    policy = indexer.resolve_policy_snapshot()
-    membership, content = indexer._compute_code_epochs(policy)
-    return indexer._classify_config_drift(membership, content)
-
-
-def _write_preprocess_rule(
-    root: Path,
-    *,
-    pattern: str,
-    command: str,
-    target: ContentKind = ContentKind.DOCUMENT,
-) -> None:
-    """Write one real versioned preprocessing rule for drift coverage."""
-    (root / ".vaultragpreprocess.toml").write_text(
-        "\n".join(
-            (
-                "version = 2",
-                "[[rule]]",
-                f"pattern = {json.dumps(pattern)}",
-                f"command = {json.dumps(command)}",
-                f"target = {json.dumps(target.value)}",
-                'extractor_version = "1.0"',
-                "",
-            )
-        ),
-        encoding="utf-8",
     )
 
 
@@ -290,86 +244,6 @@ class TestVaultContentEpochFunction:
         assert ce.vault_content_epoch(vault_chunk_chars=3000) == ce.vault_content_epoch(
             vault_chunk_chars=3000
         )
-
-
-class TestCodeDriftClassification:
-    def test_no_drift_is_ok(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        _stamp(indexer)
-        assert _classify_current(indexer) == "ok"
-
-    def test_fresh_index_without_sidecar_is_ok(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        assert _classify_current(indexer) == "ok"
-
-    def test_newly_ignored_file_forces_unscoped(self, tmp_path: Path) -> None:
-        (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
-        (tmp_path / "drop.py").write_text("y = 2\n", encoding="utf-8")
-        indexer = _make_indexer(tmp_path)
-        _stamp(indexer)
-        # A newly-ignored file changes the membership epoch only.
-        (tmp_path / ".vaultragignore").write_text("drop.py\n", encoding="utf-8")
-        assert _classify_current(indexer) == "unscoped"
-
-    def test_newly_admitted_file_forces_unscoped(self, tmp_path: Path) -> None:
-        ignore = tmp_path / ".vaultragignore"
-        ignore.write_text("drop.py\n", encoding="utf-8")
-        indexer = _make_indexer(tmp_path)
-        _stamp(indexer)
-        # Removing the ignore pattern re-admits the file: membership drift.
-        ignore.write_text("\n", encoding="utf-8")
-        assert _classify_current(indexer) == "unscoped"
-
-    def test_html_strip_flip_forces_clean(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        _stamp(indexer)
-        name = EnvVar.HTML_STRIP.value
-        previous = os.environ.get(name)
-        try:
-            os.environ[name] = "0"
-            reset_rag_config()
-            assert _classify_current(indexer) == "clean"
-        finally:
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
-            reset_rag_config()
-
-    def test_legacy_sidecar_forces_unscoped_once(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        indexer._meta_path.parent.mkdir(parents=True, exist_ok=True)
-        # A sidecar from before this feature: file hashes and the embed marker,
-        # but neither epoch key.
-        indexer._meta_path.write_text(
-            json.dumps({"a.py": "0" * 128, "__code_embed_schema__": "2"}),
-            encoding="utf-8",
-        )
-        assert _classify_current(indexer) == "unscoped"
-
-    def test_preprocess_pattern_change_forces_unscoped(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        _write_preprocess_rule(tmp_path, pattern="*.pdf", command="x {path}")
-        _stamp(indexer)
-        _write_preprocess_rule(tmp_path, pattern="*.docx", command="x {path}")
-        assert _classify_current(indexer) == "unscoped"
-
-    def test_preprocess_command_change_forces_clean(self, tmp_path: Path) -> None:
-        indexer = _make_indexer(tmp_path)
-        _write_preprocess_rule(
-            tmp_path,
-            pattern="*.pdf",
-            command="old {path}",
-            target=ContentKind.CODE,
-        )
-        _stamp(indexer)
-        _write_preprocess_rule(
-            tmp_path,
-            pattern="*.pdf",
-            command="new {path}",
-            target=ContentKind.CODE,
-        )
-        assert _classify_current(indexer) == "clean"
 
 
 @pytest.mark.parametrize(

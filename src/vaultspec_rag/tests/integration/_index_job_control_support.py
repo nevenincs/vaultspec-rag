@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ... import jobs
+from ..._source_types import PublicSourceType
 from ..._store_writes import workspace_volume_path
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
@@ -44,6 +45,7 @@ from ...job_models import (
 from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
 from ...store_runtime import VaultStore
+from .._publication_assertions import published_content_identities
 from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
@@ -647,7 +649,10 @@ def assert_current_code_state(
     expected_paths = {
         str(path.relative_to(indexer.root_dir)).replace("\\", "/") for path in paths
     }
-    assert set(indexer._load_meta()) == expected_paths
+    assert (
+        set(published_content_identities(indexer.root_dir, PublicSourceType.CODE))
+        == expected_paths
+    )
     stored = _stored_code_content(store)
     assert set(stored) == expected_paths
     for ordinal, path in enumerate(paths):
@@ -716,7 +721,9 @@ def assert_revised_vault_publication(
     token: RunControlToken,
 ) -> None:
     assert store.get_all_ids() == publication.expected_ids
-    metadata_after = indexer._load_meta()
+    metadata_after = published_content_identities(
+        indexer.root_dir, PublicSourceType.VAULT
+    )
     assert set(metadata_after) == publication.expected_ids
     assert (
         metadata_after[publication.document_id]

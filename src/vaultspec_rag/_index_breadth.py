@@ -1,24 +1,4 @@
-"""How much breadth a published index claims, and where that claim lives.
-
-A neutral leaf shared by the indexers that write the claims and the search
-path that checks them. It exists as its own module so neither side has to
-import the other: the writers live behind the tree-sitter-bearing indexer
-package, while the reader sits on a search path that is deliberately
-model-free and must stay importable on a host with no GPU.
-
-A claim is a point count recorded when an index publishes, taken after storage
-reconciliation so it is exactly the breadth the sidecar describes. Without it
-a truncated collection is indistinguishable from a small one - the entries
-name which paths or documents are indexed, but nothing says how many points
-that should amount to, so a collection holding a fraction of its corpus reads
-as intact and answers searches as though it were whole.
-
-Two sidecars are covered, because both are flat key-to-hash maps whose
-reserved keys begin with ``__``: the code sidecar keyed by relative file path,
-and the vault sidecar keyed by document stem. They keep separate key names so
-one domain's figure can never be read as the other's, and share one parser so
-"cannot tell" means the same thing on both.
-"""
+"""Proof-fenced code breadth checks shared by search entry points."""
 
 from __future__ import annotations
 
@@ -185,7 +165,7 @@ def acquire_code_breadth_snapshot(root: pathlib.Path) -> CodeBreadthSnapshot:
     """Acquire canonical code breadth immediately before a backend count.
 
     Missing, obsolete, or incompatible proof is an explicit rebuild boundary;
-    it is never treated as an unknown-but-acceptable sidecar state.
+    it is never treated as an unknown-but-acceptable publication state.
     """
     from ._publication_state import acquire_publication_snapshot
 

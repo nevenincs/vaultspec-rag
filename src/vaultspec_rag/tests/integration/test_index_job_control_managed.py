@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import jobs
+from ..._source_types import PublicSourceType
 from ...concurrency import limiter_stats
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
@@ -36,6 +37,7 @@ from ...job_models import (
 )
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+from .._publication_assertions import published_content_identities
 
 if TYPE_CHECKING:
     from ...job_manager.manager import JobManager
@@ -157,7 +159,7 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
             preflight=indexer.preflight_content(),
         )
         assert_current_code_state(indexer, store, paths, "seed")
-        metadata_before = indexer._load_meta()
+        metadata_before = published_content_identities(tmp_path, PublicSourceType.CODE)
         paths = _write_code_files(tmp_path, len(paths), "clean-current")
 
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -209,7 +211,7 @@ def test_code_clean_rebuild_defers_pause_until_publication_is_current(
                     gpu_lock.release()
 
         assert_current_code_state(indexer, store, paths, "clean-current")
-        metadata_after = indexer._load_meta()
+        metadata_after = published_content_identities(tmp_path, PublicSourceType.CODE)
         assert metadata_after.keys() == metadata_before.keys()
         assert all(
             metadata_after[path] != old_hash
@@ -247,7 +249,7 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
         rel_path = str(changed_path.relative_to(tmp_path)).replace("\\", "/")
         old_ids = set(store.get_code_ids_by_paths({rel_path}))
         assert old_ids
-        metadata_before = indexer._load_meta()
+        metadata_before = published_content_identities(tmp_path, PublicSourceType.CODE)
         paths = _write_code_files(tmp_path, len(paths), "scoped-current")
 
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -283,7 +285,7 @@ def test_code_scoped_replacement_defers_pause_until_data_and_metadata_are_curren
         assert new_ids
         assert new_ids.isdisjoint(old_ids)
         assert_current_code_state(indexer, store, paths, "scoped-current")
-        metadata_after = indexer._load_meta()
+        metadata_after = published_content_identities(tmp_path, PublicSourceType.CODE)
         assert metadata_after.keys() == metadata_before.keys()
         assert all(
             metadata_after[path] != old_hash
@@ -336,8 +338,10 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
         "fresh reconciliation attempt did not start",
     )
     assert slot.store.get_all_ids() == expected_ids
-    with managed_facade_registry.compute_lease(root) as lease:
-        assert set(lease.runtime.vault_indexer._load_meta()) == expected_ids
+    assert (
+        set(published_content_identities(tmp_path, PublicSourceType.VAULT))
+        == expected_ids
+    )
     _assert_manager_resources_released(
         succeeded, managed_facade_registry, root, code=False
     )

@@ -10,6 +10,7 @@ step_id: 'S62'
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
 ---
+
 # Prove explicit authority survives serialization, retry, restart, generic service admission, and CLI admission
 
 ## Scope

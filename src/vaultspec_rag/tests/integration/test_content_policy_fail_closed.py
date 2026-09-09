@@ -25,7 +25,6 @@ pytestmark = [pytest.mark.integration]
 class PolicyBoundaryProject(TypedDict):
     indexer: CodebaseIndexer
     store: VaultStore
-    metadata_path: Path
     cache_root: Path
 
 
@@ -55,10 +54,8 @@ def _json_state(root: Path) -> dict[str, bytes]:
 def policy_boundary_project(
     tmp_path: Path,
 ) -> Generator[PolicyBoundaryProject]:
-    """Seed a real collection, sidecar, and cache behind conflicting routing."""
+    """Seed a real collection and cache behind conflicting routing."""
     from ... import CodebaseIndexer
-    from ..._index_breadth import index_meta_path
-    from ..._source_types import PublicSourceType
     from ..._store_models import CodeChunk
     from ...config._settings import get_config
     from ...indexer._content_policy import (
@@ -104,8 +101,6 @@ def policy_boundary_project(
     )
 
     data_root = tmp_path / get_config().data_dir
-    metadata_path = index_meta_path(tmp_path, PublicSourceType.CODE)
-    metadata_path.write_bytes(b'{"sentinel":"metadata"}')
     cache_root = preprocess_cache_dir(data_root)
     cache_root.mkdir(parents=True)
     (cache_root / "sentinel.json").write_bytes(b'{"sentinel":"cache"}')
@@ -125,7 +120,6 @@ def policy_boundary_project(
         yield PolicyBoundaryProject(
             indexer=indexer,
             store=store,
-            metadata_path=metadata_path,
             cache_root=cache_root,
         )
     finally:
@@ -204,10 +198,8 @@ def test_conflicting_routing_leaves_real_index_resources_unchanged(
 
     indexer = policy_boundary_project["indexer"]
     store = policy_boundary_project["store"]
-    metadata_path = policy_boundary_project["metadata_path"]
     cache_root = policy_boundary_project["cache_root"]
     before_ids = store.get_all_code_ids()
-    before_metadata = metadata_path.read_bytes()
     before_cache = _tree_bytes(cache_root)
 
     operation = getattr(indexer, entrypoint)
@@ -224,7 +216,6 @@ def test_conflicting_routing_leaves_real_index_resources_unchanged(
         operation(**kwargs)
 
     assert store.get_all_code_ids() == before_ids == {"existing-sentinel"}
-    assert metadata_path.read_bytes() == before_metadata
     assert _tree_bytes(cache_root) == before_cache
 
 

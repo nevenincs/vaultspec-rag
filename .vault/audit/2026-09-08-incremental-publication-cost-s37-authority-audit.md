@@ -9,6 +9,7 @@ body_hash: 'sha256:a273afe088ab5dfefba56c5c1f5d5285155f367ef6e9d492f9bb71a37d742
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
 ---
+
 # `incremental-publication-cost` audit: `S37 authority contract review`
 
 ## Scope

@@ -43,8 +43,6 @@ class CodebasePreprocessMixin:
         _prep_stale_paths: set[str]
         _chunk_execution_policy: _chunk_worker.ChunkExecutionPolicy
 
-        def _get_chunk_ids_for_files(self, rel_paths: set[str]) -> list[str]: ...
-
     def _resolve_preprocess_context(
         self,
         policy: ResolvedIndexPolicy,

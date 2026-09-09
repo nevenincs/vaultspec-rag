@@ -109,8 +109,6 @@ class TestPipelineParity:
             assert set(parallel_store.get_all_code_ids()) == set(
                 serial_store.get_all_code_ids(),
             )
-            # Content-hash metadata must match too (ADR parity constraint).
-            assert parallel_ix._load_meta() == serial_ix._load_meta()
             assert s_res.added > 0
         finally:
             serial_store.close()

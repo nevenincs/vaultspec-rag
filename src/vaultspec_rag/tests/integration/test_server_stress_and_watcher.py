@@ -839,7 +839,7 @@ def _code_chunk_ids(
     """Read real code-index metadata under an explicit compute lease."""
     chunk_ids: list[str] = []
     with registry.compute_lease(root) as lease:
-        chunk_ids = lease.runtime.code_indexer._get_chunk_ids_for_files(paths)
+        chunk_ids = lease.runtime.code_indexer.store.get_code_ids_by_paths(paths)
     return chunk_ids
 
 

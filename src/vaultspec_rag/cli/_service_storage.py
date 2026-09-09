@@ -180,12 +180,9 @@ def _emit_survey_json(
     _emit_json(True, _SURVEY_CMD, data=data)
 
 
-def _print_survey(surveys: list[NamespaceSurvey]) -> None:
+def _survey_summary(surveys: list[NamespaceSurvey]) -> tuple[str, int]:
     from ..storage_survey import is_temp_rooted
 
-    if not surveys:
-        typer.echo("No matching namespaces.")
-        return
     counts = {
         status: sum(1 for s in surveys if s.status == status)
         for status in ("orphaned", "unknown", "unverifiable", "live")
@@ -202,26 +199,33 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         summary += f"  [{temp_count} temp-rooted]"
     if unverified_count:
         summary += f"  [{unverified_count} unverified point counts]"
+    return summary, temp_count
+
+
+def _print_survey_namespace(survey: NamespaceSurvey) -> None:
+    from ..storage_survey import is_temp_rooted
+
+    root = survey.root if survey.root is not None else "(unattributable)"
+    marker = "  [temp]" if is_temp_rooted(survey.root) else ""
+    if not survey.points_verified:
+        marker += "  [unverified]"
+    typer.echo(
+        f"  {survey.status:<8} {survey.prefix}  {survey.points:>8} pts  "
+        f"{human_bytes(survey.footprint_bytes):>9}  {root}{marker}"
+    )
+    distinct = sorted(set(survey.models.values()))
+    if len(distinct) > 1:
+        typer.echo(f"           mixed embedding models: {', '.join(distinct)}")
+
+
+def _print_survey(surveys: list[NamespaceSurvey]) -> None:
+    if not surveys:
+        typer.echo("No matching namespaces.")
+        return
+    summary, temp_count = _survey_summary(surveys)
     typer.echo(summary)
-    for s in surveys:
-        root = s.root if s.root is not None else "(unattributable)"
-        marker = "  [temp]" if is_temp_rooted(s.root) else ""
-        # Distinguishes a real zero from a count that could not be taken -
-        # the same fact an uncounted collection would otherwise silently
-        # report as a verified zero.
-        if not s.points_verified:
-            marker += "  [unverified]"
-        typer.echo(
-            f"  {s.status:<8} {s.prefix}  {s.points:>8} pts  "
-            f"{human_bytes(s.footprint_bytes):>9}  {root}{marker}"
-        )
-        # Named only when the namespace holds more than one distinct model,
-        # which is the state worth an operator's attention: the collections
-        # under one root disagree about what built them. A single model, or
-        # none recorded, adds a line per namespace that says nothing.
-        distinct = sorted(set(s.models.values()))
-        if len(distinct) > 1:
-            typer.echo(f"           mixed embedding models: {', '.join(distinct)}")
+    for survey in surveys:
+        _print_survey_namespace(survey)
     unstamped = sum(1 for s in surveys if not s.models)
     if unstamped:
         typer.echo(

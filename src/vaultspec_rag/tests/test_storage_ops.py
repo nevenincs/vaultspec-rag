@@ -1098,7 +1098,7 @@ class TestPreDropRecount:
         )
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
-        assert decision.action == "archived_removed"
+        assert decision.action == "archived_removed", decision
         assert client.snapshotted == [collection]
         assert client.deleted == [collection]
 
