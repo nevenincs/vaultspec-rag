@@ -11,7 +11,7 @@ integration suite.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -295,3 +295,181 @@ class TestRestoreCarriesArchivedProvenance:
         )
 
         assert load_manifest()[prefix].collection_identity == {}
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestRetriedPartialDropStaysRestorable:
+    """A namespace archived twice keeps both attempts recoverable.
+
+    Archive-before-destroy holds at the moment of destruction and used to be
+    defeated at the moment of recovery. The archive destination is fixed per
+    namespace and its manifest is published in place, so the retry after a
+    partial drop - the designed, recorded path once a drop fails part-way -
+    surveyed only the survivor, archived only the survivor, and rewrote the
+    manifest to name only the survivor. The snapshot of the collection the
+    first attempt destroyed stayed on disk, named by nothing.
+
+    Nothing downstream could notice: recovery builds its destination names,
+    point counts, provenance and reported collection list from the manifest
+    records alone and never compares them against the directory. The operator
+    recovered half the namespace and was told it was whole.
+
+    The archiver is driven for real here rather than described. Only the
+    server is stood in for - snapshot creation is the one call a local backend
+    does not implement - and the merge, the manifest, the artifacts and the
+    reader are all the production ones.
+    """
+
+    @staticmethod
+    def _archived_twice(tmp_path: Path) -> tuple[Path, str, str]:
+        """Archive a two-collection namespace, destroy half of it, archive again.
+
+        The exact on-disk sequence a partial drop leaves behind: both
+        collections snapshotted, one destroyed by a drop that then failed, and
+        the next cycle's archive seeing only what survived.
+        """
+        from .._store_models import root_collection_prefix
+        from ..storage_manifest import record_collection_identity, record_root
+        from ..storage_reclamation import archive_prefix
+        from ..store_schema import CODE_COLLECTION, VAULT_COLLECTION
+        from .test_storage_ops import _CycleClient, _identity
+
+        root = tmp_path / "namespace"
+        root.mkdir()
+        prefix = root_collection_prefix(root)
+        code, vault = prefix + CODE_COLLECTION, prefix + VAULT_COLLECTION
+        record_root(root, backend="server")
+        record_collection_identity(
+            root,
+            backend="server",
+            collection=code,
+            identity=_identity(dense_model="superseded/dense"),
+        )
+        snapshots_dir = tmp_path / "snapshots"
+        archive_dir = tmp_path / "archive"
+        client = _CycleClient({code: 5, vault: 7}, snapshots_dir=snapshots_dir)
+
+        server = cast("QdrantClient", client)
+
+        archive_prefix(
+            server, prefix, snapshots_dir=snapshots_dir, archive_dir=archive_dir
+        )
+        # The partial drop: the loop destroyed the first collection and the
+        # second one's delete failed, so the namespace survives half gone.
+        client.delete_collection(collection_name=code)
+        archive_prefix(
+            server, prefix, snapshots_dir=snapshots_dir, archive_dir=archive_dir
+        )
+        return archive_dir / prefix.rstrip("_"), code, vault
+
+    def test_the_retry_still_names_the_earlier_artifact(self, tmp_path: Path) -> None:
+        """The published manifest names both collections, at their own counts.
+
+        Read straight off disk, ahead of the reader, because this is the claim
+        the reader's own refusal would otherwise mask: an overwritten manifest
+        leaves an unnamed artifact beside it, and the reader refuses that, so a
+        test that only called the reader would fail on a refusal rather than on
+        the record that went missing.
+
+        The counts are asserted per collection because they are what proves the
+        carried record is the FIRST attempt's. Both artifacts existing says
+        nothing on its own; a record describing five points for a collection
+        the second attempt never counted can only have come from the first.
+
+        Two mutations, each run alone against this test.
+
+        Returning nothing from the merge - the overwrite this closes - fails
+        the name assertion, observed reporting only the surviving collection.
+
+        Carrying every prior record indiscriminately instead, which is what a
+        merge that skipped its own rules would do, fails the same assertion
+        with the survivor named twice: once for the artifact this attempt wrote
+        and once for the one it replaced.
+        """
+        archive, code, vault = self._archived_twice(tmp_path)
+
+        payload = json.loads(
+            (archive / "snapshot-manifest.json").read_text(encoding="utf-8")
+        )
+
+        records = payload["collections"]
+        assert [record["name"] for record in records] == [code, vault]
+        assert {record["name"]: record["points"] for record in records} == {
+            code: 5,
+            vault: 7,
+        }
+
+    def test_both_attempts_artifacts_are_restorable_after_the_retry(
+        self, tmp_path: Path
+    ) -> None:
+        """The reader offers both collections, with real bytes behind each.
+
+        What the test above proves about the record, this proves about
+        recovery: the reader accepts the directory, resolves an artifact for
+        every collection, and carries the destroyed collection's provenance
+        rather than degrading it to unverifiable - which is the difference
+        between recovering a namespace and recovering something that merely
+        resembles one.
+
+        Mutation: returned nothing from the merge. Observed this fail on
+        ``read_archive`` refusing the directory outright, naming the first
+        attempt's artifact as one the manifest does not name - the second
+        guard catching what the first stopped preventing.
+        """
+        archive, code, vault = self._archived_twice(tmp_path)
+
+        read = read_archive(archive)
+
+        assert [item.source for item in read.collections] == [code, vault]
+        assert all(item.snapshot.is_file() for item in read.collections)
+        assert all(item.snapshot.stat().st_size > 0 for item in read.collections)
+        destroyed = next(item for item in read.collections if item.source == code)
+        assert destroyed.identity is not None
+        assert destroyed.identity.dense_model == "superseded/dense"
+
+
+def test_read_archive_refuses_a_snapshot_its_manifest_does_not_name(
+    tmp_path: Path,
+) -> None:
+    """An unaccounted artifact stops the recovery and is named in the refusal.
+
+    The second guard, independent of the archiver's merge so that it holds even
+    if the merge is regressed. What it prevents is not a crash: a
+    manifest-driven restore would quietly recover the subset it was told about
+    and report that subset as the whole namespace.
+
+    The artifact's own name is asserted, not just the refusal. An operator who
+    is stopped here has to be able to act, and a message saying only that
+    something is unaccounted for names no file to go and look at.
+
+    Mutation: removed the refusal. Observed this fail with DID NOT RAISE, the
+    archive reading as complete and offering one collection for restore while a
+    second artifact sat beside it.
+    """
+    archive = write_archive(tmp_path / "archive")
+    (archive / "from-an-earlier-attempt.snapshot").write_bytes(b"snapshot")
+
+    with pytest.raises(RuntimeError) as refusal:
+        read_archive(archive)
+
+    assert "does not name" in str(refusal.value)
+    assert "from-an-earlier-attempt.snapshot" in str(refusal.value)
+
+
+def test_read_archive_accepts_a_stray_file_that_is_not_a_snapshot(
+    tmp_path: Path,
+) -> None:
+    """The refusal is scoped to artifacts that carry data, and stays scoped.
+
+    The discriminator for the test above. A guard that refused any unlisted
+    file would satisfy that test just as well while turning an operator's own
+    note, left in an archive directory during a recovery, into a recovery that
+    cannot proceed - a failure invented by the guard rather than found by it.
+
+    Mutation: widened the refusal to every file the manifest does not name.
+    Observed this fail on the archive being refused for a text file.
+    """
+    archive = write_archive(tmp_path / "archive")
+    (archive / "operator-notes.txt").write_text("checked 2026", encoding="utf-8")
+
+    assert read_archive(archive).prefix == ARCHIVE_PREFIX
