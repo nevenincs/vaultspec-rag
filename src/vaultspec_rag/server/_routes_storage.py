@@ -151,102 +151,123 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     through rather than default it - it is exactly the fact an uncounted
     collection would otherwise silently report as a verified zero.
     """
-    import pathlib
-
-    from .. import store_schema
-    from .._store_models import root_collection_prefix
-    from ..generation_survey import survey_generations
-    from ..storage_survey import is_temp_rooted
-    from ..storage_survey_ops import backend_totals
-
-    # Whole-backend rollup, computed before any filter so consumers see
-    # true total size and per-status composition regardless of the view.
-    # ``collections``, ``ephemeral_backlog_bytes``, and
-    # ``points_unverified_namespaces`` are reported here too: pure
-    # observability so unbounded growth (and unread state) is visible before
-    # it is expensive, never a threshold anything downstream compares against.
-    totals: dict[str, object] = {
-        **backend_totals(request.surveys),
-        "collections": sum(len(s.collections) for s in request.surveys),
-        "ephemeral_backlog_bytes": sum(
-            s.footprint_bytes
-            for s in request.surveys
-            if s.status == "orphaned" and is_temp_rooted(s.root)
-        ),
-        "points_unverified_namespaces": sum(
-            1 for s in request.surveys if not s.points_verified
-        ),
-    }
-    status_filter = request.status_filter
-    limit = request.limit
-    root = request.root
-    computed_at = request.computed_at
-    source = request.source
-    surveys = request.surveys
-
-    if status_filter:
-        surveys = [s for s in surveys if s.status == status_filter]
-    queried_root: dict[str, str] | None = None
-    if root is not None:
-        prefix = root_collection_prefix(root)
-        queried_root = {
-            "root": str(pathlib.Path(root).resolve()),
-            "prefix": prefix,
-        }
-        surveys = [s for s in surveys if s.prefix == prefix]
-    total = len(surveys)
-    bounded = surveys[:limit]
-    # Which code collection each returned root actually serves, and which
-    # earlier generations nothing points at any more. Reported only: dropping
-    # one needs a granularity the prefix-scoped delete does not have, and a
-    # definition of when no reader still holds it. A root whose pointer could
-    # not be read contributes no entry at all, so it surfaces as "nothing
-    # known" rather than as debt something might later act on.
-    generations: dict[str, RootGenerations] = {
-        report.root: report
-        for report in survey_generations(
-            {
-                s.root: f"{s.prefix}{store_schema.CODE_COLLECTION}"
-                for s in bounded
-                if s.root
-            },
-            [name for s in bounded for name in s.collections],
-        )
-    }
+    surveys, queried_root = _filtered_surveys(
+        request.surveys, request.status_filter, request.root
+    )
+    bounded = surveys[: request.limit]
+    generations = _generation_reports(bounded)
     payload: dict[str, object] = {
         "namespaces": [
-            {
-                "prefix": s.prefix,
-                "root": s.root,
-                "status": s.status,
-                "collections": s.collections,
-                "points": s.points,
-                "vault_points": s.vault_points,
-                "code_points": s.code_points,
-                "document_points": s.document_points,
-                "footprint_bytes": s.footprint_bytes,
-                "points_verified": s.points_verified,
-                # What produced each collection. An empty map means the
-                # namespace predates stamping, which is an unknown rather than
-                # a problem - the survey has always reported how much is
-                # stored, and this is the first thing it can say about what
-                # made it.
-                "models": s.models,
-                "temp_rooted": is_temp_rooted(s.root),
-                **_generation_fields(generations.get(s.root or "")),
-            }
-            for s in bounded
+            _namespace_entry(s, generations.get(s.root or "")) for s in bounded
         ],
         "returned": len(bounded),
-        "total": total,
-        "limit": limit,
-        "computed_at": computed_at,
-        "source": source,
-        "totals": totals,
+        "total": len(surveys),
+        "limit": request.limit,
+        "computed_at": request.computed_at,
+        "source": request.source,
+        "totals": _backend_rollup(request.surveys),
     }
     if queried_root is not None:
         payload["queried_root"] = queried_root
     return payload
+
+
+def _backend_rollup(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+    """Roll up the whole backend, before any view filter narrows it.
+
+    Consumers see true total size and per-status composition regardless of
+    which view they asked for. ``collections``,
+    ``ephemeral_backlog_bytes``, and ``points_unverified_namespaces`` are pure
+    observability so unbounded growth (and unread state) is visible before it
+    is expensive, never a threshold anything downstream compares against.
+    """
+    from ..storage_survey import is_temp_rooted
+    from ..storage_survey_ops import backend_totals
+
+    return {
+        **backend_totals(surveys),
+        "collections": sum(len(s.collections) for s in surveys),
+        "ephemeral_backlog_bytes": sum(
+            s.footprint_bytes
+            for s in surveys
+            if s.status == "orphaned" and is_temp_rooted(s.root)
+        ),
+        "points_unverified_namespaces": sum(
+            1 for s in surveys if not s.points_verified
+        ),
+    }
+
+
+def _filtered_surveys(
+    surveys: list[NamespaceSurvey],
+    status_filter: str | None,
+    root: str | None,
+) -> tuple[list[NamespaceSurvey], dict[str, str] | None]:
+    """Narrow a survey to the requested view, and describe the root asked for.
+
+    The root view carries the authoritative computed prefix back to the caller,
+    derived through the one real derivation, so no consumer recomputes the
+    hash. An unindexed root still gets its prefix, with an empty list.
+    """
+    import pathlib
+
+    from .._store_models import root_collection_prefix
+
+    if status_filter:
+        surveys = [s for s in surveys if s.status == status_filter]
+    if root is None:
+        return surveys, None
+    prefix = root_collection_prefix(root)
+    queried_root = {"root": str(pathlib.Path(root).resolve()), "prefix": prefix}
+    return [s for s in surveys if s.prefix == prefix], queried_root
+
+
+def _generation_reports(
+    bounded: list[NamespaceSurvey],
+) -> dict[str, RootGenerations]:
+    """Report which code collection each root serves, and what nothing points at.
+
+    Reported only: dropping one needs a granularity the prefix-scoped delete
+    does not have, and a definition of when no reader still holds it. A root
+    whose pointer could not be read contributes no entry at all, so it
+    surfaces as "nothing known" rather than as debt something might later act
+    on.
+    """
+    from .. import store_schema
+    from ..generation_survey import survey_generations
+
+    served = {
+        s.root: f"{s.prefix}{store_schema.CODE_COLLECTION}" for s in bounded if s.root
+    }
+    known = [name for s in bounded for name in s.collections]
+    return {report.root: report for report in survey_generations(served, known)}
+
+
+def _namespace_entry(
+    survey: NamespaceSurvey, generations: RootGenerations | None
+) -> dict[str, Any]:
+    """Shape one namespace as the route reports it."""
+    from ..storage_survey import is_temp_rooted
+
+    return {
+        "prefix": survey.prefix,
+        "root": survey.root,
+        "status": survey.status,
+        "collections": survey.collections,
+        "points": survey.points,
+        "vault_points": survey.vault_points,
+        "code_points": survey.code_points,
+        "document_points": survey.document_points,
+        "footprint_bytes": survey.footprint_bytes,
+        "points_verified": survey.points_verified,
+        # What produced each collection. An empty map means the namespace
+        # predates stamping, which is an unknown rather than a problem - the
+        # survey has always reported how much is stored, and this is the first
+        # thing it can say about what made it.
+        "models": survey.models,
+        "temp_rooted": is_temp_rooted(survey.root),
+        **_generation_fields(generations),
+    }
 
 
 def _serve_survey_from_snapshot(

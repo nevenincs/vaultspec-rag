@@ -11,13 +11,15 @@ from ..._store_models import root_collection_prefix
 from ...qdrant_runtime._constants import (
     WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
 )
+from ...storage_archive import (
+    archive_prefix,
+)
 from ...storage_manifest import (
     load_manifest,
     record_collection_identity,
     record_root,
     remove_prefix,
 )
-from ...storage_reclamation import archive_prefix
 from ...storage_restore import RestoreRequest, restore_archive
 from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 from ._helpers import provisioned_qdrant_binary, serve_qdrant

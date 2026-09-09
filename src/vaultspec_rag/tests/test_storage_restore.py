@@ -329,8 +329,10 @@ class TestRetriedPartialDropStaysRestorable:
         the next cycle's archive seeing only what survived.
         """
         from .._store_models import root_collection_prefix
+        from ..storage_archive import (
+            archive_prefix,
+        )
         from ..storage_manifest import record_collection_identity, record_root
-        from ..storage_reclamation import archive_prefix
         from ..store_schema import CODE_COLLECTION, VAULT_COLLECTION
         from .test_storage_ops import _CycleClient, _identity
 
@@ -505,8 +507,10 @@ def test_an_archive_that_abandoned_part_way_leaves_nothing_unaccounted_for(
     abandoned attempt's snapshot.
     """
     from .._store_models import root_collection_prefix
+    from ..storage_archive import (
+        archive_prefix,
+    )
     from ..storage_manifest import record_root
-    from ..storage_reclamation import archive_prefix
     from ..store_schema import CODE_COLLECTION, VAULT_COLLECTION
     from .test_storage_ops import _CycleClient
 

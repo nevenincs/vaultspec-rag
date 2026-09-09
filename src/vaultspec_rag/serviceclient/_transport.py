@@ -1173,20 +1173,27 @@ def _storage_survey_route_path(args: dict[str, object]) -> str:
     return _bounded_route_path("/storage/survey", args, _STORAGE_SURVEY_PARAMS)
 
 
+def _watcher_route_path(args: dict[str, object]) -> str:
+    """Build the ``/watcher`` route path with its bounded filters."""
+    return _bounded_route_path("/watcher", args, _WATCHER_PARAMS)
+
+
+#: Admin tools whose route carries a bounded, filterable query string. Each
+#: builder takes the call's arguments and returns the path to GET.
+_FILTERED_ROUTES: dict[str, Callable[[dict[str, object]], str]] = {
+    "get_watcher_state": _watcher_route_path,
+    "get_logs": _logs_route_path,
+    "get_jobs": _jobs_route_path,
+    "get_search_activity": _search_activity_route_path,
+    "get_storage_survey": _storage_survey_route_path,
+}
+
+
 def _resolve_admin_call(
     tool_name: str, args: dict[str, object]
 ) -> tuple[str, dict[str, object] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
-    filtered_routes = {
-        "get_watcher_state": lambda args: _bounded_route_path(
-            "/watcher", args, _WATCHER_PARAMS
-        ),
-        "get_logs": _logs_route_path,
-        "get_jobs": _jobs_route_path,
-        "get_search_activity": _search_activity_route_path,
-        "get_storage_survey": _storage_survey_route_path,
-    }
-    filter_route = filtered_routes.get(tool_name)
+    filter_route = _FILTERED_ROUTES.get(tool_name)
     if filter_route is not None:
         return filter_route(args), None
     if tool_name in _GET_ROOT_ROUTES:

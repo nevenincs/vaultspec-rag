@@ -348,7 +348,7 @@ class TestAtomicJsonPublishHasOneWriter:
     #: spelling is a contract rather than an implementation detail. Delegating
     #: it would leave the sweeper matching nothing and its test vacuously
     #: green. Its durability step is shared; only the naming is its own.
-    NAMED_TEMP_CONTRACT: ClassVar[str] = "watcher_retry.py"
+    NAMED_TEMP_CONTRACT: ClassVar[str] = "watcher_retry_policy.py"
 
     @staticmethod
     def _call_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
