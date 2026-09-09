@@ -19,8 +19,11 @@ from typing import TYPE_CHECKING, cast
 
 import typer
 
-from .._job_values import count
+from .._job_values import count, flag
 from .._units import human_bytes
+from ..qdrant_runtime._constants import (
+    WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+)
 from ._app import JsonMode, server_storage_app
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _emit_json_error_and_exit, _plain_line
@@ -45,6 +48,15 @@ _PRUNE_CMD = "server.storage.prune"
 _MIGRATE_CMD = "server.storage.migrate"
 _RECONCILE_CMD = "server.storage.reconcile"
 _RESTORE_CMD = "server.storage.restore"
+
+#: Shared verbatim between the restore command's help text and its refusal
+#: wording, so an operator can learn the limitation before ever needing a
+#: restore, not only at the moment one is refused - and the two can never
+#: drift into stating it differently.
+_WINDOWS_RESTORE_NOTE = (
+    "Applying a restore needs a non-Windows Qdrant server. Previewing "
+    "the destination with --dry-run works on any platform."
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +159,7 @@ def _emit_survey_json(
                 "status": s.status,
                 "collections": s.collections,
                 "points": s.points,
+                "points_verified": s.points_verified,
                 "footprint_bytes": s.footprint_bytes,
                 "models": s.models,
                 "temp_rooted": is_temp_rooted(s.root),
@@ -172,6 +185,7 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
         for status in ("orphaned", "unknown", "unverifiable", "live")
     }
     temp_count = sum(1 for s in surveys if is_temp_rooted(s.root))
+    unverified_count = sum(1 for s in surveys if not s.points_verified)
     total = human_bytes(sum(s.footprint_bytes for s in surveys))
     summary = (
         f"{len(surveys)} namespaces  (orphaned={counts['orphaned']} "
@@ -180,10 +194,17 @@ def _print_survey(surveys: list[NamespaceSurvey]) -> None:
     )
     if temp_count:
         summary += f"  [{temp_count} temp-rooted]"
+    if unverified_count:
+        summary += f"  [{unverified_count} unverified point counts]"
     typer.echo(summary)
     for s in surveys:
         root = s.root if s.root is not None else "(unattributable)"
         marker = "  [temp]" if is_temp_rooted(s.root) else ""
+        # Distinguishes a real zero from a count that could not be taken -
+        # the same fact an uncounted collection would otherwise silently
+        # report as a verified zero.
+        if not s.points_verified:
+            marker += "  [unverified]"
         typer.echo(
             f"  {s.status:<8} {s.prefix}  {s.points:>8} pts  "
             f"{human_bytes(s.footprint_bytes):>9}  {root}{marker}"
@@ -248,6 +269,12 @@ def _survey_from_service(
             if isinstance(collections, list)
             else []
         )
+        # An older daemon that never published this field reads as verified
+        # (the dataclass default, matching a survey run without a counting
+        # pass); an explicit ``false`` is honoured rather than overwritten,
+        # which is the whole point of carrying it through - a value the
+        # client did not check must never read as one it did.
+        published_verified = flag(entry.get("points_verified"))
         surveys.append(
             NamespaceSurvey(
                 prefix=str(entry.get("prefix", "")),
@@ -259,6 +286,9 @@ def _survey_from_service(
                 # "not measured" (0) rather than raising on a malformed value.
                 points=count(entry.get("points")) or 0,
                 footprint_bytes=count(entry.get("footprint_bytes")) or 0,
+                points_verified=(
+                    True if published_verified is None else published_verified
+                ),
             )
         )
     raw_queried = result.get("queried_root")
@@ -1005,10 +1035,6 @@ def _restore_refusals() -> dict[str, str]:
     return has an entry: a refusal that reaches the operator as a bare token
     tells them what happened but not what to do about it.
     """
-    from ..qdrant_runtime._constants import (
-        WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
-    )
-
     return {
         "local_mode_unsupported": (
             "Restore applies to the managed server. A local-only store has a "
@@ -1025,10 +1051,7 @@ def _restore_refusals() -> dict[str, str]:
             "writes over existing data, and there is no flag that overrides it; "
             "choose an empty destination root or delete that namespace first."
         ),
-        WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: (
-            "Applying a restore needs a non-Windows Qdrant server. Previewing "
-            "the destination with --dry-run works on any platform."
-        ),
+        WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON: _WINDOWS_RESTORE_NOTE,
     }
 
 
@@ -1075,7 +1098,8 @@ def _render_restore(result: RestoreResult, json_mode: bool) -> None:
     "restore",
     help=(
         "Restore an archived namespace into a named destination root. The "
-        "destination must hold no collections; there is no override."
+        "destination must hold no collections; there is no override. "
+        f"{_WINDOWS_RESTORE_NOTE}"
     ),
 )
 def storage_restore(
