@@ -58,7 +58,9 @@ _OPEN_RECEIPT_SQL = "state IN ('reserved', 'sealed', 'rolling_back')"
 _CLOSED_PUBLICATION_RECEIPT_HISTORY_LIMIT: Final = FETCH_BATCH
 
 
-def _stable_parameters(key: ProofCompatibilityKey) -> tuple[object, ...]:
+def _stable_parameters(
+    key: ProofCompatibilityKey,
+) -> tuple[object, object, object, object]:
     return (
         key.source_type.value,
         key.root_identity,
@@ -506,6 +508,13 @@ def _proof_snapshot_row(
     connection: sqlite3.Connection,
     key: ProofCompatibilityKey,
 ) -> sqlite3.Row | None:
+    return _proof_snapshot_row_for_stable(connection, _stable_parameters(key))
+
+
+def _proof_snapshot_row_for_stable(
+    connection: sqlite3.Connection,
+    stable_identity: tuple[object, object, object, object],
+) -> sqlite3.Row | None:
     return fetch_one(
         connection,
         f"""
@@ -522,8 +531,38 @@ def _proof_snapshot_row(
         WHERE proof.source_type = ? AND proof.root_identity = ?
           AND proof.backend_identity = ? AND proof.collection_identity = ?
         """,
-        _stable_parameters(key),
+        stable_identity,
     )
+
+
+def _current_proof_snapshot_row(
+    connection: sqlite3.Connection,
+    identity: tuple[object, object, object],
+) -> sqlite3.Row | None:
+    rows: list[sqlite3.Row] = fetch_all(
+        connection,
+        f"""
+        SELECT proof.*,
+               EXISTS(
+                   SELECT 1 FROM publication_receipts AS receipt
+                   WHERE receipt.source_type = proof.source_type
+                     AND receipt.root_identity = proof.root_identity
+                     AND receipt.backend_identity = proof.backend_identity
+                     AND receipt.collection_identity = proof.collection_identity
+                     AND {_OPEN_RECEIPT_SQL.replace("state", "receipt.state")}
+               ) AS has_open_receipt
+        FROM publication_proofs AS proof
+        WHERE proof.source_type = ? AND proof.root_identity = ?
+          AND proof.backend_identity = ?
+        LIMIT 2
+        """,
+        identity,
+    )
+    if len(rows) > 1:
+        raise RunLedgerCorruptionError(
+            "multiple current publication proofs exist for one source projection"
+        )
+    return rows[0] if rows else None
 
 
 def _has_open_receipt(row: sqlite3.Row) -> bool:
@@ -1321,6 +1360,69 @@ class RunLedgerPublicationMethods:
             reservation_sequence=column_int(row, "reservation_sequence"),
             has_open_receipt=_has_open_receipt(row),
         )
+
+    def acquire_current_publication_snapshot(
+        self,
+        *,
+        source_type: PublicSourceType,
+        root_identity: str,
+        backend_identity: str,
+    ) -> tuple[PublicationProof, ProofReadToken]:
+        """Atomically select the current proof and its receipt-free read token.
+
+        Audit callers know the stable storage projection but deliberately do
+        not infer membership, content, policy, or pipeline identities from the
+        current source tree. Those values are part of the proof being audited,
+        so this lookup reads them from the one canonical proof row in the same
+        SQLite snapshot that checks for an open publication receipt.
+        """
+        if not isinstance(source_type, PublicSourceType):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise TypeError("source_type must be a PublicSourceType")
+        if source_type is PublicSourceType.COMBINED:
+            raise ValueError("publication proof selection requires one concrete source")
+        for name, value in (
+            ("root_identity", root_identity),
+            ("backend_identity", backend_identity),
+        ):
+            if not isinstance(value, str) or not value.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+                raise ValueError(f"{name} must be non-empty")
+        current_identity: tuple[object, object, object] = (
+            source_type.value,
+            root_identity,
+            backend_identity,
+        )
+        with ledger_connection(self.path) as connection:
+            _begin_read(connection)
+            try:
+                row = _current_proof_snapshot_row(connection, current_identity)
+                if row is None:
+                    incompatible: sqlite3.Row | None = fetch_one(
+                        connection,
+                        """
+                        SELECT 1 FROM publication_proofs
+                        WHERE source_type = ? AND root_identity = ?
+                        LIMIT 1
+                        """,
+                        (source_type.value, root_identity),
+                    )
+                    if incompatible is not None:
+                        raise ProofIncompatibleError(
+                            "publication proof exists for a different backend identity"
+                        )
+                    raise ProofMissingError(
+                        "publication proof does not exist; an explicit rebuild is "
+                        "required"
+                    )
+                proof = _proof_from_row(row)
+                token = ProofReadToken.from_snapshot(
+                    compatibility_key=proof.compatibility_key,
+                    revision=proof.revision,
+                    reservation_sequence=proof.reservation_sequence,
+                    has_open_receipt=_has_open_receipt(row),
+                )
+                return proof, token
+            finally:
+                connection.rollback()
 
     def validate_publication_read_token(self, token: ProofReadToken) -> None:
         """Reject a backend read if proof or open-receipt state changed."""

@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb3ef8708dac0b02a15de40eccc07a3042e26d8a0ac053853e7d0ba6e115968e'
+body_hash: 'sha256:3d707ea7e7c4cffa5d1ba52f69958659383f79338c058b9b509993eacf5fa92b'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -25,6 +25,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S38]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S39]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S52]]'
+  - '[[2026-09-08-incremental-publication-cost-W03-P08-S60]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
@@ -32,6 +33,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-s37-authority-audit]]'
   - '[[2026-09-09-incremental-publication-cost-s38-execution-admission-audit]]'
   - '[[2026-09-09-incremental-publication-cost-s39-cli-authority-audit]]'
+  - '[[2026-09-09-incremental-publication-cost-s60-canonical-proof-verification-audit]]'
 ---
 
 # `incremental-publication-cost` feature index
@@ -49,6 +51,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-s37-authority-audit` - `incremental-publication-cost` audit: `S37 authority contract review`
 - `2026-09-09-incremental-publication-cost-s38-execution-admission-audit` - `incremental-publication-cost` audit: `S38 execution admission review`
 - `2026-09-09-incremental-publication-cost-s39-cli-authority-audit` - `incremental-publication-cost` audit: `s39 cli authority`
+- `2026-09-09-incremental-publication-cost-s60-canonical-proof-verification-audit` - `incremental-publication-cost` audit: `S60 canonical-proof audit verification`
 
 ### exec
 
@@ -69,6 +72,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W03-P08-S38` - Enforce authority-specific execution admission for generic service jobs without widening scoped publication
 - `2026-09-08-incremental-publication-cost-W03-P08-S39` - Require CLI publication and rebuild requests to carry explicit authority through the reindex transport and validate it without granting scoped scan permission
 - `2026-09-08-incremental-publication-cost-W03-P08-S52` - Carry required publication and verification authority through the exact job codec, every production constructor, immutable transition, and attempt context
+- `2026-09-08-incremental-publication-cost-W03-P08-S60` - Implement and activate service-owned CLI full audit verification using an atomic current-proof snapshot and bounded backend payload scans without creating or repairing proof, and permit only rebuild publication to establish missing proof
 
 ### plan
 

@@ -401,6 +401,70 @@ class _VaultCatalogMixin:
         ]
         return rows, next_offset
 
+    def scroll_index_audit_content(
+        self,
+        collection: str,
+        *,
+        limit: int,
+        offset: PointId | None,
+    ) -> tuple[list[dict[str, Any]], PointId | None]:
+        """Read one bounded raw payload page without reconciling storage.
+
+        Exact verification must observe the backend as it is. Calling an
+        ``ensure_*`` function here would repair payload indexes or create an
+        absent collection before the audit could report that disagreement.
+        The collection is therefore restricted to this store's three active
+        source projections and scrolled directly through the read-only point
+        primitive.
+        """
+        if collection not in {
+            self.TABLE_NAME,
+            self.CODE_TABLE_NAME,
+            self.DOCUMENT_TABLE_NAME,
+        }:
+            raise ValueError(
+                "index audit collection is not an active source projection"
+            )
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise ValueError("index audit scroll limit must be a positive integer")
+        if limit > 1000:
+            raise ValueError("index audit scroll limit must not exceed 1000")
+        if not self._collection_exists(collection):
+            return [], None
+        with self._point_lock(collection):
+            records, next_offset = self._scroll(
+                collection_name=collection,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+        return (
+            [
+                {
+                    "id": record.id,
+                    "payload": dict(record.payload or {}),
+                    "vector": None,
+                }
+                for record in records
+            ],
+            next_offset,
+        )
+
+    def index_audit_point_id_matches(
+        self,
+        physical_id: object,
+        logical_id: str,
+    ) -> bool:
+        """Return whether a raw point ID matches its canonical logical identity."""
+        if not isinstance(logical_id, str) or not logical_id.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+            raise ValueError("index audit logical point identity must be non-empty")
+        return (
+            isinstance(physical_id, int)
+            and not isinstance(physical_id, bool)
+            and physical_id == self._stable_id(logical_id)
+        )
+
     def scroll_code_content(
         self,
         *,
