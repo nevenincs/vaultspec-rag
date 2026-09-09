@@ -744,7 +744,7 @@ def _search_prefer_filter(prefer: str | None, *, json_mode: bool = False) -> str
 
 def _validate_search_type(search_type: str, *, json_mode: bool) -> PublicSourceType:
     try:
-        return parse_source_type(search_type)
+        return parse_source_type(search_type, allow_aliases=True)
     except SourceTypeParseError as exc:
         if json_mode:
             _emit_json_error_and_exit(

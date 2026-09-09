@@ -778,7 +778,7 @@ def clean(
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
     """
-    source_type = parse_source_type(clean_type)
+    source_type = parse_source_type(clean_type, allow_aliases=True)
     root = _resolve(root_dir)
     from ._publication_state import clear_publication_state
 

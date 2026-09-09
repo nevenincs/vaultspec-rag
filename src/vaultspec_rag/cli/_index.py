@@ -121,10 +121,17 @@ def _parse_index_source(
     *,
     command: str,
     json_mode: bool,
+    allow_aliases: bool = True,
 ) -> PublicSourceType:
-    """Parse a canonical CLI source selection."""
+    """Parse a CLI source selection, honouring legacy spellings by default.
+
+    Aliases are an operator convenience on the publication verbs. Exact
+    verification is not a convenience: it reports on one named scope, so it
+    takes the canonical vocabulary and refuses anything it would have to
+    guess at, before it reaches the service.
+    """
     try:
-        return parse_source_type(value)
+        return parse_source_type(value, allow_aliases=allow_aliases)
     except SourceTypeParseError as exc:
         if json_mode:
             _emit_json_error_and_exit(
@@ -884,6 +891,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             index_type,
             command="index",
             json_mode=json_mode,
+            allow_aliases=False,
         )
         _handle_full_audit(source, target, port, json_mode=json_mode)
         return
