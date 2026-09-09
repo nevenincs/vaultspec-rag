@@ -30,7 +30,31 @@ from ..serviceclient._transport import _logs_route_path
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..server._search_readiness import ReadinessRevisionRegistry
+
 pytestmark = [pytest.mark.unit]
+
+
+async def _await_observer_registration(
+    readiness: ReadinessRevisionRegistry,
+    *,
+    timeout_seconds: float = 5.0,
+) -> None:
+    """Wait on a wall-clock bound for the route to register its readiness observer.
+
+    Bounded by a deadline rather than by a fixed number of event-loop turns.
+    How many awaits the admission path takes before it registers depends on
+    whether configuration is already resolved in this process, so a turn count
+    that suffices when an earlier test warmed the cache silently runs out when
+    the test executes cold, and reports an absent observer that does in fact
+    register a moment later.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    while loop.time() < deadline:
+        if readiness._observers:
+            return
+        await asyncio.sleep(0.001)
 
 
 class TestLogsRoutePath:
@@ -214,10 +238,7 @@ async def test_in_flight_wait_keeps_its_admitted_publication_target(
     )
 
     waiting = asyncio.create_task(_admit_requested_freshness(request, registry))
-    for _ in range(10):
-        if readiness._observers:
-            break
-        await asyncio.sleep(0)
+    await _await_observer_registration(readiness)
     assert len(readiness._observers) == 1
     readiness.notify_controller(tmp_path, "code", generation="second")
     readiness.publish_next(tmp_path, "code", generation="first")
@@ -229,10 +250,7 @@ async def test_in_flight_wait_keeps_its_admitted_publication_target(
     assert newly_admitted[0].revision == 2
     assert newly_admitted[0].generation == "second"
     second_wait = asyncio.create_task(_admit_requested_freshness(request, registry))
-    for _ in range(10):
-        if readiness._observers:
-            break
-        await asyncio.sleep(0)
+    await _await_observer_registration(readiness)
     assert len(readiness._observers) == 1
     assert not second_wait.done()
 
@@ -363,10 +381,7 @@ async def test_cancellation_propagates_and_unregisters_without_response(
         freshness_wait_seconds=30,
     )
     executing = asyncio.create_task(_execute_search_route(request, None, registry))
-    for _ in range(10):
-        if readiness._observers:
-            break
-        await asyncio.sleep(0)
+    await _await_observer_registration(readiness)
     assert len(readiness._observers) == 1
 
     executing.cancel()
@@ -430,10 +445,7 @@ async def test_asgi_disconnect_cancels_without_response_and_cleans_waiter(
             cast("Any", send),
         )
     )
-    for _ in range(20):
-        if readiness._observers:
-            break
-        await asyncio.sleep(0)
+    await _await_observer_registration(readiness)
     assert len(readiness._observers) == 1
 
     inbound.put_nowait({"type": "http.disconnect"})
@@ -488,10 +500,7 @@ async def test_outer_handler_cancellation_cleans_both_owned_tasks(
             _receive_only_request(receive), request, None, registry
         )
     )
-    for _ in range(20):
-        if readiness._observers:
-            break
-        await asyncio.sleep(0)
+    await _await_observer_registration(readiness)
     assert len(readiness._observers) == 1
 
     handling.cancel()

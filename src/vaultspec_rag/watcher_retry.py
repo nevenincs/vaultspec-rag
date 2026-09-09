@@ -21,6 +21,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from itertools import islice
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final, cast
 
 from . import _typed_fields
@@ -42,18 +43,25 @@ if TYPE_CHECKING:
 
 __all__ = [
     "WatcherCircuitState",
+    "WatcherPathEvent",
+    "WatcherPathObservation",
     "WatcherRetryDecision",
     "WatcherRetryPolicy",
     "WatcherRetryState",
     "WatcherRetryStateError",
     "WatcherRetryUnavailableError",
+    "WatcherScopeRefusal",
     "WatcherSource",
+    "is_valid_watcher_relative_path",
 ]
 
-_SCHEMA_VERSION: Final = 2
+_SCHEMA_VERSION: Final = 3
+_LEGACY_SCHEMA_VERSION: Final = 2
 _RECOVERY_MARKER_SCHEMA_VERSION: Final = 2
 _MAX_ERROR_DETAIL_CHARS: Final = 2048
-_MAX_STATE_BYTES: Final = 16 * 1024
+_DEFAULT_SCOPE_MAX_PATHS: Final = 100_000
+_DEFAULT_SCOPE_MAX_BYTES: Final = 8 * 1024 * 1024
+_ABSOLUTE_STATE_MAX_BYTES: Final = 64 * 1024 * 1024
 _MAX_RECOVERY_MARKER_BYTES: Final = 4 * 1024
 _STATE_DIRECTORY: Final = "watcher-retry"
 _STATE_LOCK_TIMEOUT_SECONDS: Final = 2.0
@@ -95,6 +103,47 @@ class WatcherCircuitState(StrEnum):
     HALF_OPEN = "half_open"
 
 
+class WatcherPathEvent(StrEnum):
+    """Durable filesystem evidence retained for an exact path."""
+
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+
+
+def is_valid_watcher_relative_path(value: str) -> bool:
+    """Return whether a path is canonical, non-empty, and root-relative."""
+    path = PurePosixPath(value)
+    return bool(
+        value
+        and not path.is_absolute()
+        and not path.parts[0].endswith(":")
+        and "\\" not in value
+        and all(part not in ("", ".", "..") for part in path.parts)
+    )
+
+
+class WatcherScopeRefusal(StrEnum):
+    """Typed reasons durable exact scope cannot authorize automatic work."""
+
+    FULL_REINDEX_REQUIRED = "full_reindex_required"
+    SCOPE_STATE_INVALID = "scope_state_invalid"
+    SCOPE_CAPACITY_EXCEEDED = "scope_capacity_exceeded"
+    CONTROLLER_SCHEMA_UNSUPPORTED = "controller_schema_unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class WatcherPathObservation:
+    """Canonical source-qualified root-relative path observation."""
+
+    relative_path: str
+    source: WatcherSource
+    first_observed_at: float
+    latest_observed_at: float
+    event_kinds: frozenset[WatcherPathEvent]
+    generation: int
+
+
 @dataclass(frozen=True, slots=True)
 class WatcherRetryState:
     """Immutable persistent watcher retry state."""
@@ -112,7 +161,13 @@ class WatcherRetryState:
     convergence_pending: bool
     unscoped_required: bool
     convergence_generation: int
+    pending_paths: tuple[WatcherPathObservation, ...]
+    captured_paths: tuple[WatcherPathObservation, ...]
+    scope_max_paths: int
+    scope_max_bytes: int
+    scope_refusal: WatcherScopeRefusal | None
     attempt_generation: int | None
+    attempt_job_id: str | None
     attempt_token: str | None
     attempt_started_at: float | None
     attempt_owner_pid: int | None
@@ -157,6 +212,8 @@ class _WatcherRetryOptions:
     max_seconds: float
     jitter_fraction: float
     failure_threshold: int
+    scope_max_paths: int = _DEFAULT_SCOPE_MAX_PATHS
+    scope_max_bytes: int = _DEFAULT_SCOPE_MAX_BYTES
     now: float | None = None
 
 
@@ -172,6 +229,8 @@ class WatcherRetryPolicy:
         "_owned_attempt_token",
         "_path",
         "_root",
+        "_scope_max_bytes",
+        "_scope_max_paths",
         "_scoped_generation",
         "_source",
         "_state",
@@ -196,6 +255,14 @@ class WatcherRetryPolicy:
         if type(options.failure_threshold) is not int or options.failure_threshold <= 0:
             raise ValueError("failure_threshold must be a positive integer")
         self._failure_threshold = options.failure_threshold
+        self._scope_max_paths = _positive_int_option(
+            "scope_max_paths", options.scope_max_paths
+        )
+        self._scope_max_bytes = _positive_int_option(
+            "scope_max_bytes", options.scope_max_bytes
+        )
+        if self._scope_max_bytes > _ABSOLUTE_STATE_MAX_BYTES:
+            raise ValueError("scope_max_bytes exceeds the durable state safety bound")
         self._root = options.canonical_root
         self._admission_handoff_started = False
         self._owned_attempt_token: str | None = None
@@ -205,7 +272,15 @@ class WatcherRetryPolicy:
         timestamp = _wall_time(options.now)
         with _locked_state(path):
             try:
-                loaded = _read_state(path) if path.exists() else None
+                loaded = (
+                    _read_state(
+                        path,
+                        scope_max_paths=self._scope_max_paths,
+                        scope_max_bytes=self._scope_max_bytes,
+                    )
+                    if path.exists()
+                    else None
+                )
             except OSError as exc:
                 raise _state_io_failure("read", path, exc) from exc
             except ValueError as exc:
@@ -227,7 +302,13 @@ class WatcherRetryPolicy:
                     convergence_pending=False,
                     unscoped_required=False,
                     convergence_generation=0,
+                    pending_paths=(),
+                    captured_paths=(),
+                    scope_max_paths=self._scope_max_paths,
+                    scope_max_bytes=self._scope_max_bytes,
+                    scope_refusal=None,
                     attempt_generation=None,
+                    attempt_job_id=None,
                     attempt_token=None,
                     attempt_started_at=None,
                     attempt_owner_pid=None,
@@ -238,7 +319,12 @@ class WatcherRetryPolicy:
             self._validate_authority(loaded)
             loaded = self._apply_recovery_markers_unlocked(loaded, timestamp)
             state_changed = False
-            if loaded.convergence_pending and not loaded.unscoped_required:
+            if (
+                loaded.convergence_pending
+                and not loaded.unscoped_required
+                and not loaded.pending_paths
+                and not loaded.captured_paths
+            ):
                 loaded = replace(
                     loaded,
                     last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
@@ -253,12 +339,23 @@ class WatcherRetryPolicy:
             if loaded.attempt_generation is not None and not _attempt_owner_is_live(
                 loaded
             ):
-                # An admitted attempt with no recorded outcome means its process
-                # vanished. Treat recovery as the next unavailable failure so a
-                # restart cannot collapse an established exponential delay.
-                failures = loaded.consecutive_failures + 1
-                loaded = replace(
-                    loaded,
+                loaded, recovered_changed = self._recover_abandoned_attempt(
+                    loaded, timestamp
+                )
+                state_changed |= recovered_changed
+            if state_changed:
+                _write_state(self._path, loaded)
+            self._state = loaded
+
+    def _recover_abandoned_attempt(
+        self, state: WatcherRetryState, timestamp: float
+    ) -> tuple[WatcherRetryState, bool]:
+        """Retain scoped fences for job reconciliation; refuse legacy scope loss."""
+        if state.attempt_job_id is None:
+            failures = state.consecutive_failures + 1
+            return (
+                replace(
+                    state,
                     consecutive_failures=failures,
                     last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
                     last_error_detail=(
@@ -268,10 +365,7 @@ class WatcherRetryPolicy:
                     ),
                     last_failure_at=timestamp,
                     next_retry_at=timestamp
-                    + self._retry_delay(
-                        failures,
-                        random_unit=random.random(),
-                    ),
+                    + self._retry_delay(failures, random_unit=random.random()),
                     circuit_state=WatcherCircuitState.OPEN,
                     convergence_pending=True,
                     unscoped_required=False,
@@ -281,11 +375,24 @@ class WatcherRetryPolicy:
                     attempt_owner_pid=None,
                     attempt_owner_create_time=None,
                     updated_at=timestamp,
+                ),
+                True,
+            )
+        # The adopted token blocks admission and lets ordinary settlement consume
+        # or restore the exact generation after canonical job history is checked.
+        token = state.attempt_token
+        if token is None:  # validated state makes this defensive only
+            raise WatcherRetryStateError(
+                "watcher recovery attempt has no admission token"
+            )
+        with _ACTIVE_ADMISSION_GUARD:
+            if token in _ADMISSION_RESERVATIONS:
+                raise WatcherRetryStateError(
+                    "watcher recovery admission token is already owned"
                 )
-                state_changed = True
-            if state_changed:
-                _write_state(self._path, loaded)
-            self._state = loaded
+            self._owned_attempt_token = token
+            _ADMISSION_RESERVATIONS[token] = True
+        return state, False
 
     @classmethod
     def for_root(
@@ -311,6 +418,8 @@ class WatcherRetryPolicy:
                 max_seconds=cfg.watch_retry_max_seconds,
                 jitter_fraction=cfg.watch_retry_jitter_fraction,
                 failure_threshold=cfg.watch_circuit_failure_threshold,
+                scope_max_paths=cfg.watch_scope_max_paths,
+                scope_max_bytes=cfg.watch_scope_max_bytes,
                 now=now,
             ),
         )
@@ -372,6 +481,53 @@ class WatcherRetryPolicy:
             )
             self._scoped_generation = committed.convergence_generation
             return committed
+
+    def mark_scope_pending(
+        self,
+        observations: tuple[WatcherPathObservation, ...],
+        *,
+        now: float | None = None,
+    ) -> WatcherRetryState:
+        """Durably merge one exact event batch without truncating authority."""
+        if not observations:
+            raise ValueError("exact watcher scope must not be empty")
+        timestamp = _wall_time(now)
+        for observation in observations:
+            _validate_path_observation(observation, source=self._source)
+        with _locked_state(self._path):
+            state = self._refresh_unlocked()
+            generation = state.convergence_generation + 1
+            merged = _merge_observations(
+                state.pending_paths,
+                observations,
+                generation=generation,
+            )
+            if len(merged) > self._scope_max_paths:
+                return self._commit_unlocked(
+                    _refuse_scope_capacity(state, timestamp=timestamp)
+                )
+            candidate = replace(
+                state,
+                convergence_pending=True,
+                convergence_generation=generation,
+                pending_paths=merged,
+                scope_max_paths=self._scope_max_paths,
+                scope_max_bytes=self._scope_max_bytes,
+                scope_refusal=None,
+                unscoped_required=False,
+                last_error_kind=None,
+                last_error_detail=None,
+                consecutive_failures=0,
+                next_retry_at=0.0,
+                circuit_state=WatcherCircuitState.CLOSED,
+                updated_at=timestamp,
+            )
+            if _state_payload_size(candidate) > self._scope_max_bytes:
+                return self._commit_unlocked(
+                    _refuse_scope_capacity(state, timestamp=timestamp)
+                )
+            self._scoped_generation = generation
+            return self._commit_unlocked(candidate)
 
     def refresh(self) -> WatcherRetryState:
         """Refresh this policy's cached view under the state authority lock."""
@@ -453,6 +609,7 @@ class WatcherRetryPolicy:
         attempt_token: str | None,
         *,
         now: float | None = None,
+        job_id: str | None = None,
     ) -> WatcherRetryDecision:
         """Commit a token published before asynchronous worker admission."""
         timestamp = _wall_time(now)
@@ -516,7 +673,16 @@ class WatcherRetryPolicy:
                     replace(
                         state,
                         circuit_state=circuit_state,
+                        pending_paths=(
+                            () if job_id is not None else state.pending_paths
+                        ),
+                        captured_paths=(
+                            state.pending_paths
+                            if job_id is not None
+                            else state.captured_paths
+                        ),
                         attempt_generation=attempt_generation,
+                        attempt_job_id=job_id,
                         attempt_token=attempt_token,
                         attempt_started_at=timestamp,
                         attempt_owner_pid=owner_pid,
@@ -604,6 +770,8 @@ class WatcherRetryPolicy:
                     unscoped_required=(
                         newer_generation_pending and state.unscoped_required
                     ),
+                    captured_paths=(),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -651,6 +819,9 @@ class WatcherRetryPolicy:
                     # pending bit and scope refresh both escalate for any
                     # instance that cannot scope the pending generation.
                     unscoped_required=state.unscoped_required,
+                    pending_paths=_restore_captured_paths(state),
+                    captured_paths=(),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -706,6 +877,18 @@ class WatcherRetryPolicy:
                     ),
                     convergence_pending=not requires_explicit_rebuild,
                     unscoped_required=False,
+                    pending_paths=(
+                        ()
+                        if requires_explicit_rebuild
+                        else _restore_captured_paths(state)
+                    ),
+                    captured_paths=(),
+                    scope_refusal=(
+                        WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+                        if requires_explicit_rebuild
+                        else state.scope_refusal
+                    ),
+                    attempt_job_id=None,
                     attempt_generation=None,
                     attempt_token=None,
                     attempt_started_at=None,
@@ -737,10 +920,22 @@ class WatcherRetryPolicy:
             raise WatcherRetryStateError(
                 "watcher retry state does not match its root/source authority"
             )
+        if state.scope_max_paths != self._scope_max_paths:
+            raise WatcherRetryStateError(
+                "watcher scope path bound does not match configured authority"
+            )
+        if state.scope_max_bytes != self._scope_max_bytes:
+            raise WatcherRetryStateError(
+                "watcher scope byte bound does not match configured authority"
+            )
 
     def _refresh_unlocked(self) -> WatcherRetryState:
         try:
-            state = _read_state(self._path)
+            state = _read_state(
+                self._path,
+                scope_max_paths=self._scope_max_paths,
+                scope_max_bytes=self._scope_max_bytes,
+            )
         except OSError as exc:
             raise _state_io_failure("read", self._path, exc) from exc
         except ValueError as exc:
@@ -903,6 +1098,8 @@ class WatcherRetryPolicy:
         if (
             state.convergence_pending
             and not state.unscoped_required
+            and not state.pending_paths
+            and not state.captured_paths
             and state.convergence_generation != self._scoped_generation
         ):
             state = self._commit_unlocked(
@@ -1124,12 +1321,11 @@ def _thread_lock_for(path: Path, *, deadline: float) -> _thread.LockType:
 
 def _write_state(path: Path, state: WatcherRetryState) -> None:
     try:
-        payload = asdict(state)
-        payload["source"] = state.source.value
-        payload["last_error_kind"] = (
-            state.last_error_kind.value if state.last_error_kind is not None else None
-        )
-        payload["circuit_state"] = state.circuit_state.value
+        payload = _state_payload(state)
+        if _encoded_payload_size(payload) > state.scope_max_bytes:
+            raise WatcherRetryStateError(
+                "scope_capacity_exceeded: watcher retry state exceeds configured bytes"
+            )
         write_json_atomically(
             path,
             payload,
@@ -1137,6 +1333,41 @@ def _write_state(path: Path, state: WatcherRetryState) -> None:
         )
     except OSError as exc:
         raise _state_io_failure("write", path, exc) from exc
+
+
+def _state_payload(state: WatcherRetryState) -> dict[str, object]:
+    payload = asdict(state)
+    payload["source"] = state.source.value
+    payload["last_error_kind"] = (
+        state.last_error_kind.value if state.last_error_kind is not None else None
+    )
+    payload["circuit_state"] = state.circuit_state.value
+    payload["scope_refusal"] = (
+        state.scope_refusal.value if state.scope_refusal is not None else None
+    )
+    for key in ("pending_paths", "captured_paths"):
+        raw_observations = cast("list[dict[str, object]]", payload[key])
+        for observation in raw_observations:
+            observation["source"] = str(observation["source"])
+            observation["event_kinds"] = sorted(
+                str(kind) for kind in cast("list[object]", observation["event_kinds"])
+            )
+    return cast("dict[str, object]", payload)
+
+
+def _encoded_payload_size(payload: dict[str, object]) -> int:
+    return len(
+        json.dumps(
+            payload,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+
+def _state_payload_size(state: WatcherRetryState) -> int:
+    return _encoded_payload_size(_state_payload(state))
 
 
 def _state_io_failure(
@@ -1252,22 +1483,48 @@ def _read_recovery_marker(
     return marker
 
 
-def _read_state(path: Path) -> WatcherRetryState:
-    if path.stat().st_size > _MAX_STATE_BYTES:
+def _read_state(
+    path: Path,
+    *,
+    scope_max_paths: int,
+    scope_max_bytes: int,
+) -> WatcherRetryState:
+    file_size = path.stat().st_size
+    if file_size > _ABSOLUTE_STATE_MAX_BYTES:
         raise ValueError("watcher retry state exceeds its size bound")
     parsed: object = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(parsed, dict):
         raise ValueError("watcher retry state must be a JSON object")
     raw = cast("dict[str, object]", parsed)
     schema_version = raw.get("schema_version")
-    if type(schema_version) is not int or schema_version != _SCHEMA_VERSION:
-        raise ValueError("unsupported watcher retry state schema")
+    if type(schema_version) is not int or schema_version not in {
+        _LEGACY_SCHEMA_VERSION,
+        _SCHEMA_VERSION,
+    }:
+        raise ValueError(
+            "controller_schema_unsupported: unsupported watcher retry state schema"
+        )
+    legacy = schema_version == _LEGACY_SCHEMA_VERSION
+    pending_paths = (
+        () if legacy else _path_observations(raw.get("pending_paths"), "pending_paths")
+    )
+    captured_paths = (
+        ()
+        if legacy
+        else _path_observations(raw.get("captured_paths"), "captured_paths")
+    )
+    convergence_pending = _required_bool(raw, "convergence_pending")
+    scope_refusal = (
+        WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+        if legacy and convergence_pending
+        else _optional_enum(raw.get("scope_refusal"), WatcherScopeRefusal)
+    )
     state = WatcherRetryState(
         schema_version=_SCHEMA_VERSION,
         canonical_root=_required_text(raw, "canonical_root"),
         source=WatcherSource(_required_text(raw, "source")),
         consecutive_failures=_nonnegative_int(raw, "consecutive_failures"),
-        last_error_kind=_optional_error_kind(raw.get("last_error_kind")),
+        last_error_kind=_optional_enum(raw.get("last_error_kind"), JobErrorKind),
         last_error_detail=_optional_text(raw.get("last_error_detail")),
         last_failure_at=_optional_timestamp(raw.get("last_failure_at")),
         last_durable_progress_at=_optional_timestamp(
@@ -1275,12 +1532,18 @@ def _read_state(path: Path) -> WatcherRetryState:
         ),
         next_retry_at=_timestamp(raw, "next_retry_at"),
         circuit_state=WatcherCircuitState(_required_text(raw, "circuit_state")),
-        convergence_pending=_required_bool(raw, "convergence_pending"),
+        convergence_pending=convergence_pending,
         unscoped_required=_required_bool(raw, "unscoped_required"),
         convergence_generation=_nonnegative_int(raw, "convergence_generation"),
+        pending_paths=pending_paths,
+        captured_paths=captured_paths,
+        scope_max_paths=scope_max_paths,
+        scope_max_bytes=scope_max_bytes,
+        scope_refusal=scope_refusal,
         attempt_generation=_optional_int_at_least(
             raw.get("attempt_generation"), "attempt_generation", 0
         ),
+        attempt_job_id=(None if legacy else _optional_text(raw.get("attempt_job_id"))),
         attempt_token=_optional_text(raw.get("attempt_token")),
         attempt_started_at=_optional_timestamp(raw.get("attempt_started_at")),
         attempt_owner_pid=_optional_positive_int(
@@ -1291,6 +1554,22 @@ def _read_state(path: Path) -> WatcherRetryState:
         ),
         updated_at=_timestamp(raw, "updated_at"),
     )
+    _validate_loaded_state(
+        state,
+        file_size=file_size,
+        scope_max_paths=scope_max_paths,
+        scope_max_bytes=scope_max_bytes,
+    )
+    return state
+
+
+def _validate_loaded_state(
+    state: WatcherRetryState,
+    *,
+    file_size: int,
+    scope_max_paths: int,
+    scope_max_bytes: int,
+) -> None:
     attempt_fields = (
         state.attempt_generation,
         state.attempt_token,
@@ -1308,12 +1587,45 @@ def _read_state(path: Path) -> WatcherRetryState:
             raise ValueError("active watcher attempt requires pending convergence")
         if state.attempt_generation > state.convergence_generation:
             raise ValueError("watcher attempt generation exceeds convergence")
+    _validate_loaded_scope(
+        state,
+        file_size=file_size,
+        scope_max_paths=scope_max_paths,
+        scope_max_bytes=scope_max_bytes,
+    )
     if (
         state.circuit_state is WatcherCircuitState.HALF_OPEN
         and state.attempt_generation is None
     ):
         raise ValueError("half-open watcher circuit requires an active attempt")
-    return state
+
+
+def _validate_loaded_scope(
+    state: WatcherRetryState,
+    *,
+    file_size: int,
+    scope_max_paths: int,
+    scope_max_bytes: int,
+) -> None:
+    observations = state.pending_paths + state.captured_paths
+    for observation in observations:
+        _validate_path_observation(observation, source=state.source)
+        if observation.generation > state.convergence_generation:
+            raise ValueError("watcher path generation exceeds convergence")
+    identities = [
+        (observation.source, observation.relative_path)
+        for observation in state.pending_paths
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("pending watcher paths must be unique")
+    if len(observations) > scope_max_paths:
+        raise ValueError("scope_capacity_exceeded: watcher path count exceeds bound")
+    if file_size > scope_max_bytes:
+        raise ValueError("scope_capacity_exceeded: watcher state exceeds byte bound")
+    if state.captured_paths and (
+        state.attempt_generation is None or state.attempt_job_id is None
+    ):
+        raise ValueError("captured watcher scope requires complete attempt/job fencing")
 
 
 def _required_field[T](
@@ -1341,6 +1653,127 @@ def _required_bool(raw: dict[str, object], key: str) -> bool:
     return _required_field(raw, key, _typed_fields.required_bool, "a boolean")
 
 
+def _path_observations(
+    value: object, field_name: str
+) -> tuple[WatcherPathObservation, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"watcher retry field {field_name!r} must be a list")
+    observations: list[WatcherPathObservation] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError(f"watcher retry field {field_name!r} has a malformed path")
+        raw = cast("dict[str, object]", item)
+        event_values = raw.get("event_kinds")
+        if not isinstance(event_values, list) or not event_values:
+            raise ValueError("watcher path event_kinds must be a non-empty list")
+        observations.append(
+            WatcherPathObservation(
+                relative_path=_required_text(raw, "relative_path"),
+                source=WatcherSource(_required_text(raw, "source")),
+                first_observed_at=_timestamp(raw, "first_observed_at"),
+                latest_observed_at=_timestamp(raw, "latest_observed_at"),
+                event_kinds=frozenset(
+                    WatcherPathEvent(
+                        _typed_fields.required_str(
+                            value,
+                            on_invalid=lambda: ValueError(
+                                "watcher path event kind must be non-empty text"
+                            ),
+                        )
+                    )
+                    for value in event_values
+                ),
+                generation=_required_positive(
+                    raw, "generation", _optional_positive_int
+                ),
+            )
+        )
+    return tuple(observations)
+
+
+def _validate_path_observation(
+    observation: WatcherPathObservation,
+    *,
+    source: WatcherSource,
+) -> None:
+    if not is_valid_watcher_relative_path(observation.relative_path):
+        raise ValueError("scope_state_invalid: watcher path must be root-relative")
+    if observation.source is not source:
+        raise ValueError(
+            "scope_state_invalid: watcher path has foreign source authority"
+        )
+    if observation.generation < 1 or not observation.event_kinds:
+        raise ValueError("scope_state_invalid: watcher path evidence is incomplete")
+    if (
+        not math.isfinite(observation.first_observed_at)
+        or not math.isfinite(observation.latest_observed_at)
+        or observation.first_observed_at < 0
+        or observation.latest_observed_at < observation.first_observed_at
+    ):
+        raise ValueError("scope_state_invalid: watcher path timestamps are invalid")
+
+
+def _merge_observations(
+    current: tuple[WatcherPathObservation, ...],
+    incoming: tuple[WatcherPathObservation, ...],
+    *,
+    generation: int,
+) -> tuple[WatcherPathObservation, ...]:
+    merged = {(item.source, item.relative_path): item for item in current}
+    for item in incoming:
+        key = (item.source, item.relative_path)
+        previous = merged.get(key)
+        merged[key] = replace(
+            item,
+            first_observed_at=(
+                min(previous.first_observed_at, item.first_observed_at)
+                if previous is not None
+                else item.first_observed_at
+            ),
+            event_kinds=(
+                previous.event_kinds | item.event_kinds
+                if previous is not None
+                else item.event_kinds
+            ),
+            generation=generation,
+        )
+    return tuple(sorted(merged.values(), key=lambda item: item.relative_path))
+
+
+def _restore_captured_paths(
+    state: WatcherRetryState,
+) -> tuple[WatcherPathObservation, ...]:
+    restored = {
+        (item.source, item.relative_path): item
+        for item in state.captured_paths + state.pending_paths
+    }
+    return tuple(sorted(restored.values(), key=lambda item: item.relative_path))
+
+
+def _refuse_scope_capacity(
+    state: WatcherRetryState,
+    *,
+    timestamp: float,
+) -> WatcherRetryState:
+    return replace(
+        state,
+        convergence_pending=True,
+        scope_refusal=WatcherScopeRefusal.SCOPE_CAPACITY_EXCEEDED,
+        last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
+        last_error_detail=(
+            "scope_capacity_exceeded: exact watcher scope exceeds configured capacity"
+        ),
+        circuit_state=WatcherCircuitState.OPEN,
+        updated_at=timestamp,
+    )
+
+
+def _positive_int_option(name: str, value: int) -> int:
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _optional_text(value: object) -> str | None:
     return _typed_fields.optional_str(
         value,
@@ -1350,9 +1783,9 @@ def _optional_text(value: object) -> str | None:
     )
 
 
-def _optional_error_kind(value: object) -> JobErrorKind | None:
+def _optional_enum[T: StrEnum](value: object, enum_type: type[T]) -> T | None:
     text = _optional_text(value)
-    return JobErrorKind(text) if text is not None else None
+    return enum_type(text) if text is not None else None
 
 
 def _nonnegative_int(raw: dict[str, object], key: str) -> int:

@@ -88,9 +88,26 @@ async def _admin_for_root(tool: str, project_root: str | None) -> dict[str, Any]
     return await _admin(tool, args)
 
 
-async def get_watcher_state(project_root: str | None = None) -> dict[str, Any]:
+async def get_watcher_state(
+    project_root: str | None = None,
+    *,
+    root: str | None = None,
+    source: str | None = None,
+    state: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
     """Report filesystem-watcher configuration and running state."""
-    return await _admin_for_root("get_watcher_state", project_root)
+    args: dict[str, object] = {}
+    for key, value in (
+        ("project_root", project_root),
+        ("root", root),
+        ("source", source),
+        ("state", state),
+        ("limit", limit),
+    ):
+        if value is not None:
+            args[key] = value
+    return await _admin("get_watcher_state", args)
 
 
 async def start_watcher(root: str) -> dict[str, Any]:

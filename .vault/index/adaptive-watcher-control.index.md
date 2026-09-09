@@ -1,0 +1,101 @@
+---
+generated: true
+tags:
+  - '#index'
+  - '#adaptive-watcher-control'
+date: '2026-09-08'
+modified: '2026-09-08'
+body_schema: 'body-v2'
+body_hash: 'sha256:c103ae6163c3f7bd9b0e9b2c26541076b14112e62d4f061576e034f7a3230c64'
+related:
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-S01]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-S02]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-S03]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P01-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P02-S04]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P02-S05]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P02-S06]]'
+  - '[[2026-09-08-adaptive-watcher-control-W01-P02-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P03-S07]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P03-S08]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P03-S09]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P03-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P04-S10]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P04-S11]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P04-S12]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P04-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-S13]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-S14]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-S15]]'
+  - '[[2026-09-08-adaptive-watcher-control-W02-P05-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-S16]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-S17]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-S18]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P06-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P07-S19]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P07-S20]]'
+  - '[[2026-09-08-adaptive-watcher-control-W03-P07-summary]]'
+  - '[[2026-09-08-adaptive-watcher-control-adr]]'
+  - '[[2026-09-08-adaptive-watcher-control-audit]]'
+  - '[[2026-09-08-adaptive-watcher-control-plan]]'
+  - '[[2026-09-08-adaptive-watcher-control-reference]]'
+  - '[[2026-09-08-adaptive-watcher-control-research]]'
+  - '[[2026-09-08-adaptive-watcher-control-s08-scheduler-audit]]'
+---
+
+# `adaptive-watcher-control` feature index
+
+Auto-generated index of all documents tagged with `#adaptive-watcher-control`.
+
+## Documents
+
+### adr
+
+- `2026-09-08-adaptive-watcher-control-adr` - `adaptive-watcher-control` adr: `durable adaptive automatic convergence` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-08-adaptive-watcher-control-audit` - `adaptive-watcher-control` audit: `whole-branch final review`
+- `2026-09-08-adaptive-watcher-control-s08-scheduler-audit` - `adaptive-watcher-control` audit: `scheduler lifecycle review`
+
+### exec
+
+- `2026-09-08-adaptive-watcher-control-W01-P01-S01` - Define controller state, reason, transition, measurement, scope, and snapshot models
+- `2026-09-08-adaptive-watcher-control-W01-P01-S02` - Implement virtual-clock adaptive coalescing, cooling, pressure, refusal, and convergence decisions
+- `2026-09-08-adaptive-watcher-control-W01-P01-S03` - Replace free watcher timing settings with validated policy bounds and compatibility mapping
+- `2026-09-08-adaptive-watcher-control-W01-P01-summary` - `adaptive-watcher-control` `W01.P01` summary
+- `2026-09-08-adaptive-watcher-control-W01-P02-S04` - Extend watcher durable state with versioned path observations, bounds, and refusal validation
+- `2026-09-08-adaptive-watcher-control-W01-P02-S05` - Make event merge, admission fencing, settlement, and cancellation handoff atomic
+- `2026-09-08-adaptive-watcher-control-W01-P02-S06` - Add virtual-clock and generated-sequence proofs for transitions, deadlines, scope safety, and restart
+- `2026-09-08-adaptive-watcher-control-W01-P02-summary` - `adaptive-watcher-control` `W01.P02` summary
+- `2026-09-08-adaptive-watcher-control-W02-P03-S07` - Implement earliest-deadline admission with rotating root and source ties
+- `2026-09-08-adaptive-watcher-control-W02-P03-S08` - Own controller registration, deadline scheduling, wakeups, and bounded reevaluation in the service
+- `2026-09-08-adaptive-watcher-control-W02-P03-S09` - Expose immutable job, search, GPU, storage, limiter, and quiesce measurement snapshots to admission
+- `2026-09-08-adaptive-watcher-control-W02-P03-summary` - `adaptive-watcher-control` `W02.P03` summary
+- `2026-09-08-adaptive-watcher-control-W02-P04-S10` - Replace fixed-timing slot reconciliation with durable controller collection and decisions
+- `2026-09-08-adaptive-watcher-control-W02-P04-S11` - Bind controller generations to canonical watcher job creation, coalescing, and settlement
+- `2026-09-08-adaptive-watcher-control-W02-P04-S12` - Reconcile restart, cancellation, failure, and terminal rebuild refusal without duplicate admission
+- `2026-09-08-adaptive-watcher-control-W02-P04-summary` - `adaptive-watcher-control` `W02.P04` summary
+- `2026-09-08-adaptive-watcher-control-W02-P05-S13` - Add canonical controller snapshots and structured transition evidence to service state, jobs, and logs
+- `2026-09-08-adaptive-watcher-control-W02-P05-S14` - Project identical controller facts through watcher and job HTTP routes
+- `2026-09-08-adaptive-watcher-control-W02-P05-S15` - Adapt controller state and stable reasons through CLI and MCP clients
+- `2026-09-08-adaptive-watcher-control-W02-P05-summary` - `adaptive-watcher-control` `W02.P05` summary
+- `2026-09-08-adaptive-watcher-control-W03-P06-S16` - Cover create, modify, delete, rename, active-job, cooldown, cancellation, failure, and restart convergence
+- `2026-09-08-adaptive-watcher-control-W03-P06-S17` - Demonstrate bounded batch frequency, maximum freshness, fair progress, and pressure recovery under load
+- `2026-09-08-adaptive-watcher-control-W03-P06-S18` - Assert service, HTTP, CLI, and MCP controller telemetry conformance
+- `2026-09-08-adaptive-watcher-control-W03-P06-summary` - `adaptive-watcher-control` `W03.P06` summary
+- `2026-09-08-adaptive-watcher-control-W03-P07-S19` - Add mutation-proved guards for trailing flush, freshness, refusal, exact recovery, fair rotation, and adapter ownership
+- `2026-09-08-adaptive-watcher-control-W03-P07-S20` - Document adaptive policy defaults, validation, telemetry, and rebuild-required remediation
+- `2026-09-08-adaptive-watcher-control-W03-P07-summary` - `adaptive-watcher-control` `W03.P07` summary
+
+### plan
+
+- `2026-09-08-adaptive-watcher-control-plan` - `adaptive-watcher-control` plan
+
+### reference
+
+- `2026-09-08-adaptive-watcher-control-reference` - `adaptive-watcher-control` reference: `current convergence topology`
+
+### research
+
+- `2026-09-08-adaptive-watcher-control-research` - `adaptive-watcher-control` research: `adaptive automatic convergence`

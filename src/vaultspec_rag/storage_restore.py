@@ -24,6 +24,26 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
 
 
+class ArchiveIntegrityError(RuntimeError):
+    """An archive does not describe what it holds, or holds what it names.
+
+    Distinct from a transport failure, which the operator surface otherwise
+    conflates it with: both arrived here as a bare ``RuntimeError``, so an
+    unreadable manifest or a missing artifact was reported as an unreachable
+    server and answered with "start the service" - advice that is wrong, and
+    that discards the only diagnostic saying which archive is broken.
+
+    A ``RuntimeError`` still, so callers that already treat an archive read as
+    fallible keep working unchanged; the subclass exists so the surface can
+    tell the two conditions apart.
+    """
+
+
+#: The extension qdrant gives every snapshot it writes, and so the extension
+#: an artifact in an archive directory carries.
+_SNAPSHOT_SUFFIX = ".snapshot"
+
+
 def _no_progress(_line: str) -> None:
     """Drop a progress line when no operator surface is attached."""
 
@@ -73,9 +93,11 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     try:
         raw: object = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
+        raise ArchiveIntegrityError(
+            f"archive manifest is unreadable: {manifest_path}"
+        ) from exc
     if not isinstance(raw, dict):
-        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive manifest is invalid: {manifest_path}")
     payload = cast("dict[str, object]", raw)
     prefix = payload.get("prefix")
     version = payload.get("storage_schema_version")
@@ -91,15 +113,24 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
         or not records
         or parse_iso_timestamp(completed_at, field="archive completed_at") is None
     ):
-        raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive manifest is incomplete: {manifest_path}")
     collection_records = cast("list[object]", records)
     collections = tuple(
         _read_collection(archive_dir, prefix, item, manifest_path)
         for item in collection_records
     )
     if len({item.source for item in collections}) != len(collections):
-        raise RuntimeError(f"archive manifest repeats a collection: {manifest_path}")
-    _read_metadata_files(archive_dir, payload.get("metadata_files"), manifest_path)
+        raise ArchiveIntegrityError(
+            f"archive manifest repeats a collection: {manifest_path}"
+        )
+    metadata_files = _read_metadata_files(
+        archive_dir, payload.get("metadata_files"), manifest_path
+    )
+    _refuse_unnamed_snapshots(
+        archive_dir,
+        {item.snapshot.name for item in collections} | set(metadata_files),
+        manifest_path,
+    )
     return ArchiveRead(prefix, version, collections)
 
 
@@ -107,7 +138,9 @@ def _read_collection(
     archive_dir: Path, prefix: str, value: object, manifest_path: Path
 ) -> ArchivedCollection:
     if not isinstance(value, dict):
-        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+        raise ArchiveIntegrityError(
+            f"archive manifest has an invalid record: {manifest_path}"
+        )
     record = cast("dict[str, object]", value)
     name, filename, points = (
         record.get("name"),
@@ -123,34 +156,87 @@ def _read_collection(
         or not isinstance(points, int)
         or points < 0
     ):
-        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+        raise ArchiveIntegrityError(
+            f"archive manifest has an invalid record: {manifest_path}"
+        )
     snapshot = archive_dir / filename
     try:
         if not snapshot.is_file() or snapshot.stat().st_size <= 0:
-            raise RuntimeError(f"archive snapshot is missing or empty: {snapshot}")
+            raise ArchiveIntegrityError(
+                f"archive snapshot is missing or empty: {snapshot}"
+            )
     except OSError as exc:
-        raise RuntimeError(f"archive snapshot is unreadable: {snapshot}") from exc
+        raise ArchiveIntegrityError(
+            f"archive snapshot is unreadable: {snapshot}"
+        ) from exc
     identity_raw = record.get("identity")
     identity = (
         None if identity_raw is None else CollectionIdentity.from_payload(identity_raw)
     )
     if identity_raw is not None and identity is None:
-        raise RuntimeError(f"archive identity is invalid: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive identity is invalid: {manifest_path}")
     return ArchivedCollection(name, snapshot, points, identity)
 
 
-def _read_metadata_files(archive_dir: Path, value: object, manifest_path: Path) -> None:
+def _read_metadata_files(
+    archive_dir: Path, value: object, manifest_path: Path
+) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive manifest is incomplete: {manifest_path}")
     metadata_files = cast("list[object]", value)
     for filename in metadata_files:
         if not isinstance(filename, str) or Path(filename).name != filename:
-            raise RuntimeError(
+            raise ArchiveIntegrityError(
                 f"archive manifest has invalid metadata: {manifest_path}"
             )
         artifact = archive_dir / filename
         if not artifact.is_file():
-            raise RuntimeError(f"archive metadata is missing: {artifact}")
+            raise ArchiveIntegrityError(f"archive metadata is missing: {artifact}")
+    return tuple(cast("list[str]", metadata_files))
+
+
+def _refuse_unnamed_snapshots(
+    archive_dir: Path, referenced: set[str], manifest_path: Path
+) -> None:
+    """Refuse an archive holding snapshot artifacts its manifest does not name.
+
+    Recovery is driven entirely by the manifest: the destination names, the
+    point counts, the provenance and the reported collection list are all
+    built from its records, and nothing is ever compared against what the
+    directory actually holds. An artifact the manifest omits is therefore not
+    restored, not reported, and not distinguishable in the result from an
+    archive that never held it - the operator recovers a subset of the
+    namespace and is told the count of what was named.
+
+    That is the one failure shape a reader cannot be expected to catch, which
+    is why it is refused here rather than warned about. Half a namespace
+    recovered under a success message is worse than a recovery that stopped
+    and said which files it could not account for.
+
+    A second guard on the archiver's merge, and deliberately independent of
+    it: it holds if that merge is regretted or regressed, if a retention
+    sweep half-removed a directory, or if an archive was assembled by hand.
+
+    Scoped to snapshot artifacts because those are the files that carry data.
+    A note or a checksum left beside them is not half a namespace, and
+    stopping a recovery over one would be its own failure.
+    """
+    try:
+        present = sorted(
+            path.name
+            for path in archive_dir.iterdir()
+            if path.is_file() and path.suffix == _SNAPSHOT_SUFFIX
+        )
+    except OSError as exc:
+        raise ArchiveIntegrityError(
+            f"archive directory is unreadable: {archive_dir}"
+        ) from exc
+    unnamed = [name for name in present if name not in referenced]
+    if unnamed:
+        raise ArchiveIntegrityError(
+            "archive holds snapshot artifacts its manifest does not name: "
+            f"{', '.join(unnamed)} beside {manifest_path}"
+        )
 
 
 def restore_archive(

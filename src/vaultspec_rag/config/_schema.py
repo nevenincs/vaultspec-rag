@@ -106,6 +106,17 @@ _SEARCH_FRESHNESS_WAIT_MAX = _NumericBound(
     minimum=0.0,
     maximum=300.0,
 )
+# Grace windows are the interval an observation has to survive before
+# destruction is allowed, so their floor is what makes them observations at
+# all. At zero the first cycle to see a namespace stamps its clock and then
+# finds the elapsed time is not less than the window, which authorises the
+# drop on a single scan - the same-cycle destruction the reclamation contract
+# forbids by name. The floor is one maintenance interval at the shipped
+# cadence, so the earliest a namespace can be reclaimed is the cycle AFTER
+# the one that first observed it.
+_GRACE_WINDOW_HOURS = _NumericBound(
+    "a finite number of hours no smaller than 1", integral=False, minimum=1.0
+)
 _CLOSED_UNIT_INTERVAL = _NumericBound(
     "a finite number between 0 and 1", integral=False, minimum=0.0, maximum=1.0
 )
@@ -205,6 +216,16 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
     "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
+    "watch_coalesce_min_seconds": EnvVar.WATCH_COALESCE_MIN_SECONDS,
+    "watch_coalesce_max_seconds": EnvVar.WATCH_COALESCE_MAX_SECONDS,
+    "watch_cooling_max_seconds": EnvVar.WATCH_COOLING_MAX_SECONDS,
+    "watch_maximum_freshness_seconds": EnvVar.WATCH_MAXIMUM_FRESHNESS_SECONDS,
+    "watch_measurement_reevaluation_seconds": (
+        EnvVar.WATCH_MEASUREMENT_REEVALUATION_SECONDS
+    ),
+    "watch_batch_path_limit": EnvVar.WATCH_BATCH_PATH_LIMIT,
+    "watch_scope_max_paths": EnvVar.WATCH_SCOPE_MAX_PATHS,
+    "watch_scope_max_bytes": EnvVar.WATCH_SCOPE_MAX_BYTES,
     # Document-preprocessing hook knobs (#185). ``preprocess_mode`` is
     # deliberately absent from this single-var override map: its env var is a
     # kill switch whose value is not the setting's value, so it is resolved by
@@ -245,6 +266,9 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "storage_autoprune_interval_minutes": EnvVar.STORAGE_AUTOPRUNE_INTERVAL_MINUTES,
     "storage_autoprune_grace_hours": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS,
     "storage_autoprune_grace_hours_data": EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_DATA,
+    "storage_autoprune_grace_hours_ephemeral": (
+        EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL
+    ),
     "storage_autoprune_archive_retention_days": (
         EnvVar.STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS
     ),
@@ -352,17 +376,32 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # Filesystem watcher. Zero means "no delay" for both, not "disabled".
     "watch_debounce_ms": _NON_NEGATIVE_INT,
     "watch_cooldown_s": _NON_NEGATIVE_NUMBER,
+    "watch_coalesce_min_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_coalesce_max_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_cooling_max_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_maximum_freshness_seconds": _POSITIVE_NUMBER,
+    "watch_measurement_reevaluation_seconds": _POSITIVE_NUMBER,
+    "watch_batch_path_limit": _POSITIVE_INT,
+    "watch_scope_max_paths": _POSITIVE_INT,
+    "watch_scope_max_bytes": _POSITIVE_INT,
     # Document preprocessing and splitting.
     "preprocess_max_emitted_bytes": _POSITIVE_INT,
     "document_chunk_chars_per_token": _POSITIVE_INT,
     "document_chunk_overlap_chars": _POSITIVE_INT,
     # Scheduled storage maintenance. The per-cycle caps admit zero, which is
-    # the same as the feature's own off switch; the grace windows admit zero
-    # so a harness can exercise reclamation without waiting, and the ephemeral
-    # idle window documents zero as its disable value.
+    # the same as the feature's own off switch. The three grace windows carry
+    # a floor instead: zero would let a namespace be destroyed in the cycle
+    # that first observed it.
+    #
+    # The idle window below is the deliberate exception, and reads opposite to
+    # them at the same value: zero DISABLES that tier, where zero on a grace
+    # window would make its tier maximally aggressive. The two are named alike
+    # and mean opposite things at zero, which is why only one of them admits
+    # it.
     "storage_autoprune_interval_minutes": _POSITIVE_NUMBER,
-    "storage_autoprune_grace_hours": _NON_NEGATIVE_NUMBER,
-    "storage_autoprune_grace_hours_data": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_grace_hours": _GRACE_WINDOW_HOURS,
+    "storage_autoprune_grace_hours_data": _GRACE_WINDOW_HOURS,
+    "storage_autoprune_grace_hours_ephemeral": _GRACE_WINDOW_HOURS,
     "storage_autoprune_archive_retention_days": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_archive_max_gb": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_max_per_cycle": _NON_NEGATIVE_INT,

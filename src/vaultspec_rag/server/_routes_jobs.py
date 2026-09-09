@@ -602,6 +602,15 @@ def _job_with_liveness(
     now: float,
 ) -> dict[str, object]:
     enriched = dict(record)
+    from ..api import controller_snapshot_envelope
+    from ._watcher import _controller_snapshot_by_job_id
+
+    controller = _controller_snapshot_by_job_id(str(record.get("id", "")))
+    if controller is not None:
+        enriched["controller"] = controller_snapshot_envelope(
+            controller,
+            observed_at=now,
+        )
     shaped_resilience = _job_resilience(record)
     if shaped_resilience is not None:
         enriched["resilience"] = shaped_resilience

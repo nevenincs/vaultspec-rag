@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from vaultspec_core.config import get_config as get_base_config
 
 from .._job_errors import JobError, JobErrorKind
 from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
@@ -168,6 +169,11 @@ _RESILIENCE_CONFIG_CASES: tuple[
         "embedded-local",
     ),
 )
+
+
+def _config_with_overrides(overrides: dict[str, object]) -> VaultSpecConfigWrapper:
+    return VaultSpecConfigWrapper(get_base_config(overrides), overrides)
+
 
 _RESILIENCE_ENV_VARS = tuple(case[1] for case in _RESILIENCE_CONFIG_CASES)
 
@@ -1048,6 +1054,104 @@ def test_watch_cooldown_s_env_override() -> None:
         reset_config()
 
 
+def test_adaptive_watcher_policy_defaults_are_bounded() -> None:
+    cfg = get_config()
+
+    assert cfg.watch_coalesce_min_seconds == 2.0
+    assert cfg.watch_coalesce_max_seconds == 30.0
+    assert cfg.watch_cooling_max_seconds == 120.0
+    assert cfg.watch_maximum_freshness_seconds == 300.0
+    assert cfg.watch_measurement_reevaluation_seconds == 5.0
+    assert cfg.watch_batch_path_limit == 10_000
+    assert cfg.watch_scope_max_paths == 100_000
+    assert cfg.watch_scope_max_bytes == 8 * 1024 * 1024
+
+
+def test_legacy_watcher_timing_inputs_map_to_adaptive_bounds() -> None:
+    cfg = _config_with_overrides(
+        {
+            "watch_debounce_ms": 750,
+            "watch_cooldown_s": 12.5,
+        }
+    )
+
+    assert cfg.watch_debounce_ms == 750
+    assert cfg.watch_cooldown_s == 12.5
+    assert cfg.watch_coalesce_min_seconds == 0.75
+    assert cfg.watch_coalesce_max_seconds == 0.75
+    assert cfg.watch_cooling_max_seconds == 12.5
+
+
+def test_adaptive_watcher_inputs_take_precedence_over_legacy_mapping() -> None:
+    cfg = _config_with_overrides(
+        {
+            "watch_debounce_ms": 750,
+            "watch_cooldown_s": 12.5,
+            "watch_coalesce_min_seconds": 3.0,
+            "watch_coalesce_max_seconds": 9.0,
+            "watch_cooling_max_seconds": 45.0,
+        }
+    )
+
+    assert cfg.watch_coalesce_min_seconds == 3.0
+    assert cfg.watch_coalesce_max_seconds == 9.0
+    assert cfg.watch_cooling_max_seconds == 45.0
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {
+                "watch_coalesce_min_seconds": 12.0,
+                "watch_coalesce_max_seconds": 6.0,
+            },
+            "watch_coalesce_max_seconds must be greater than or equal to "
+            "watch_coalesce_min_seconds",
+        ),
+        (
+            {
+                "watch_coalesce_max_seconds": 31.0,
+                "watch_maximum_freshness_seconds": 30.0,
+            },
+            "watch_maximum_freshness_seconds must be greater than or equal to "
+            "watch_coalesce_max_seconds",
+        ),
+        (
+            {
+                "watch_cooling_max_seconds": 31.0,
+                "watch_maximum_freshness_seconds": 30.0,
+            },
+            "watch_maximum_freshness_seconds must be greater than or equal to "
+            "watch_cooling_max_seconds",
+        ),
+        (
+            {
+                "watch_batch_path_limit": 101,
+                "watch_scope_max_paths": 100,
+            },
+            "watch_batch_path_limit must be less than or equal to "
+            "watch_scope_max_paths",
+        ),
+    ],
+)
+def test_adaptive_watcher_policy_rejects_inconsistent_relations(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config_with_overrides(overrides)
+
+
+def test_adaptive_watcher_policy_reads_environment_bounds() -> None:
+    previous = set_env(EnvVar.WATCH_MAXIMUM_FRESHNESS_SECONDS, "480.5")
+    try:
+        reset_config()
+        assert get_config().watch_maximum_freshness_seconds == 480.5
+    finally:
+        restore_env(EnvVar.WATCH_MAXIMUM_FRESHNESS_SECONDS, previous)
+        reset_config()
+
+
 @pytest.mark.parametrize(
     "raw",
     ["0", "false", "False", "no", "off", ""],
@@ -1485,4 +1589,55 @@ def test_preprocess_kill_switch_beats_an_explicit_configured_mode() -> None:
         assert get_config({"preprocess_mode": "default"}).preprocess_mode == "off"
     finally:
         restore_env(EnvVar.PREPROCESS, prev)
+        reset_config()
+
+
+_GRACE_WINDOW_VARS = (
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS,
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_DATA,
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL,
+)
+
+
+@pytest.mark.parametrize("env_var", _GRACE_WINDOW_VARS)
+def test_a_grace_window_refuses_a_same_cycle_value(env_var: EnvVar) -> None:
+    """No grace window may be set short enough to act on a first sighting.
+
+    A window is the interval an observation has to survive, so zero makes it
+    no observation at all: the cycle that first sees a namespace stamps its
+    clock, finds no elapsed time short of the window, and is cleared to
+    destroy on that single scan. The floor is one maintenance interval at the
+    shipped cadence, so the earliest a namespace can be reclaimed is the
+    cycle after the one that first observed it.
+
+    Mutation this catches: binding any of the three back to the non-negative
+    bound, which turns each rejection below into DID NOT RAISE.
+    """
+    for raw in ("0", "0.5"):
+        prev = set_env(env_var, raw)
+        try:
+            reset_config()
+            with pytest.raises(ValueError) as excinfo:
+                get_config()
+            assert env_var.value in str(excinfo.value)
+        finally:
+            restore_env(env_var, prev)
+            reset_config()
+
+
+def test_the_ephemeral_idle_switch_still_accepts_its_disable_value() -> None:
+    """The knob named almost identically to a window means the opposite at zero.
+
+    Zero on the idle tier turns that tier off; zero on a grace window would
+    have made its tier maximally aggressive. Asserted alongside the rejections
+    above because the risk is not that either value is wrong on its own - it
+    is that the two names are one word apart and an operator, or a later
+    change to the bounds table, treats them as the same kind of number.
+    """
+    prev = set_env(EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS, "0")
+    try:
+        reset_config()
+        assert get_config().storage_autoprune_ephemeral_idle_hours == 0.0
+    finally:
+        restore_env(EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS, prev)
         reset_config()
