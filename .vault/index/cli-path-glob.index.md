@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#cli-path-glob'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:18d6927ac81ea9235d14fbdf790b4b69bde47770134faf60ffa293e56dc07319'
 related:
   - '[[2026-05-30-cli-path-glob-adr]]'
