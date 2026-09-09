@@ -141,7 +141,10 @@ and MPS; this model-backend fallback does not mean CPU inference.
 The sparse encoder is
 [`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a BERT-based SPLADE
 model that maps text to a sparse vector over its vocabulary. It runs in fp16
-through `sentence-transformers` on the selected accelerator.
+through `sentence-transformers` on the selected accelerator. Unlike the other
+models on this page, it is gated and non-commercially licensed; see
+[the model cache and its first download](installation.md#the-model-cache-and-its-first-download)
+for the access and licence policy.
 
 SPLADE is also asymmetric: `encode_document` runs for indexing and `encode_query`
 runs for queries, mirroring the dense encoder's split for the same reason. The
