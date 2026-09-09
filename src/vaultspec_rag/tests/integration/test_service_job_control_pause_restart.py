@@ -16,9 +16,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import _job_admission, jobs
-from ..._index_breadth import index_meta_path
-from ..._source_types import PublicSourceType
-from ...indexer._run_ledger_models import RunAuthority
+from ..._store_writes import workspace_volume_path
+from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ...job_manager.manager import JobManager
 from ...job_models import (
     DesiredJobState,
@@ -199,7 +198,7 @@ async def _cancel_large_job(
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
     before_ids = slot.store.get_all_ids()
-    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
+    metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     before_metadata = metadata_path.read_bytes()
     cancelled_id: str | None = None
     with registry.compute_lease(root) as lease:

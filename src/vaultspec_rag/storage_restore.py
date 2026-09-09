@@ -5,17 +5,31 @@ from __future__ import annotations
 import json
 import sys
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from ._publication_state import clear_publication_state
+from ._source_types import PublicSourceType
 from ._store_models import root_collection_prefix
+from ._store_writes import workspace_volume_path
 from ._timestamps import parse_iso_timestamp
+from .indexer._publication_proof import ProofEvidence
+from .indexer._run_ledger_models import (
+    FinalizationPhase,
+    RunAuthority,
+    RunOperation,
+    RunSignature,
+    RunTerminalState,
+    index_run_ledger_path,
+)
+from .indexer._run_ledger_runtime import RunLedger
 from .qdrant_runtime._constants import (
     WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
 )
 from .storage_manifest import record_restored_archive, snapshot_manifest_path
 from .storage_survey import is_canonical_prefix
+from .store_runtime import configured_backend_identity
 from .store_schema import CollectionIdentity
 
 if TYPE_CHECKING:
@@ -45,6 +59,7 @@ class ArchiveRead:
     prefix: str
     schema_version: int
     collections: tuple[ArchivedCollection, ...]
+    publication_proofs: tuple[tuple[RunSignature, tuple[ProofEvidence, ...]], ...]
 
 
 @dataclass(frozen=True)
@@ -80,6 +95,7 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     prefix = payload.get("prefix")
     version = payload.get("storage_schema_version")
     records = payload.get("collections")
+    proof_records = payload.get("publication_proofs")
     completed_at = payload.get("completed_at")
     if (
         not isinstance(prefix, str)
@@ -89,6 +105,7 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
         or version < 1
         or not isinstance(records, list)
         or not records
+        or not isinstance(proof_records, list)
         or parse_iso_timestamp(completed_at, field="archive completed_at") is None
     ):
         raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
@@ -99,8 +116,19 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     )
     if len({item.source for item in collections}) != len(collections):
         raise RuntimeError(f"archive manifest repeats a collection: {manifest_path}")
-    _read_metadata_files(archive_dir, payload.get("metadata_files"), manifest_path)
-    return ArchiveRead(prefix, version, collections)
+    proof_items = cast("list[object]", proof_records)
+    proofs = tuple(
+        _read_publication_proof(item, manifest_path) for item in proof_items
+    )
+    collection_sources = {
+        item.source.removeprefix(prefix) for item in collections
+    }
+    proof_sources = {signature.collection_identity for signature, _ in proofs}
+    if len(proofs) != len(proof_sources) or proof_sources != collection_sources:
+        raise RuntimeError(
+            f"archive publication proofs do not match its collections: {manifest_path}"
+        )
+    return ArchiveRead(prefix, version, collections, proofs)
 
 
 def _read_collection(
@@ -139,18 +167,117 @@ def _read_collection(
     return ArchivedCollection(name, snapshot, points, identity)
 
 
-def _read_metadata_files(archive_dir: Path, value: object, manifest_path: Path) -> None:
-    if not isinstance(value, list):
-        raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
-    metadata_files = cast("list[object]", value)
-    for filename in metadata_files:
-        if not isinstance(filename, str) or Path(filename).name != filename:
-            raise RuntimeError(
-                f"archive manifest has invalid metadata: {manifest_path}"
+def _required[T](payload: dict[str, object], key: str, kind: type[T]) -> T:
+    value = payload.get(key)
+    if not isinstance(value, kind):
+        raise TypeError(f"{key} must be {kind.__name__}")
+    return value
+
+
+def _read_publication_proof(
+    value: object,
+    manifest_path: Path,
+) -> tuple[RunSignature, tuple[ProofEvidence, ...]]:
+    """Decode one mandatory canonical proof export without accepting old shapes."""
+    try:
+        if not isinstance(value, dict):
+            raise TypeError("proof record must be an object")
+        record = cast("dict[str, object]", value)
+        source = PublicSourceType(_required(record, "source", str))
+        signature_value = record.get("signature")
+        if not isinstance(signature_value, dict):
+            raise TypeError("signature must be an object")
+        signature_payload = cast("dict[str, object]", signature_value)
+        signature = RunSignature(
+            root_identity=_required(signature_payload, "root_identity", str),
+            collection_identity=_required(
+                signature_payload, "collection_identity", str
+            ),
+            source_type=PublicSourceType(
+                _required(signature_payload, "source_type", str)
+            ),
+            operation=RunOperation(_required(signature_payload, "operation", str)),
+            clean=_required(signature_payload, "clean", bool),
+            model_identity=_required(signature_payload, "model_identity", str),
+            dense_dimensions=_required(signature_payload, "dense_dimensions", int),
+            embedding_schema=_required(signature_payload, "embedding_schema", int),
+            payload_schema=_required(signature_payload, "payload_schema", int),
+            content_epoch=_required(signature_payload, "content_epoch", str),
+            membership_epoch=_required(signature_payload, "membership_epoch", str),
+            preprocessing_identity=_required(
+                signature_payload, "preprocessing_identity", str
+            ),
+            configuration_fingerprint=_required(
+                signature_payload, "configuration_fingerprint", str
+            ),
+            policy_fingerprint=_required(
+                signature_payload, "policy_fingerprint", str
+            ),
+            backend_identity=_required(signature_payload, "backend_identity", str),
+        )
+        if source is PublicSourceType.COMBINED or signature.source_type is not source:
+            raise ValueError("proof source disagrees with its signature")
+        evidence_value = record.get("evidence")
+        if not isinstance(evidence_value, list):
+            raise TypeError("evidence must be a list")
+        evidence_raw = cast("list[object]", evidence_value)
+        evidence: list[ProofEvidence] = []
+        for item in evidence_raw:
+            if not isinstance(item, dict):
+                raise TypeError("proof evidence must be an object")
+            row = cast("dict[str, object]", item)
+            point_ids_value = row.get("point_ids")
+            if not isinstance(point_ids_value, list):
+                raise TypeError("point_ids must be a list")
+            point_ids = cast("list[object]", point_ids_value)
+            if any(not isinstance(point_id, str) for point_id in point_ids):
+                raise TypeError("proof point_ids must contain strings")
+            evidence.append(
+                ProofEvidence(
+                    rel_path=_required(row, "rel_path", str),
+                    content_identity=_required(row, "content_identity", str),
+                    point_ids=tuple(cast("list[str]", point_ids)),
+                )
             )
-        artifact = archive_dir / filename
-        if not artifact.is_file():
-            raise RuntimeError(f"archive metadata is missing: {artifact}")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"archive publication proof is invalid: {manifest_path}"
+        ) from exc
+    return signature, tuple(evidence)
+
+
+def _restore_publication_proofs(
+    destination_root: Path,
+    proofs: tuple[tuple[RunSignature, tuple[ProofEvidence, ...]], ...],
+) -> None:
+    """Publish restored proof only after every collection recovery succeeds."""
+    resolved = destination_root.resolve()
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(resolved)))
+    backend_identity = configured_backend_identity(resolved)
+    for archived_signature, evidence in proofs:
+        signature = replace(
+            archived_signature,
+            root_identity=str(resolved),
+            backend_identity=backend_identity,
+            operation=RunOperation.FULL,
+            clean=True,
+        )
+        generation = ledger.start_generation(signature)
+        ledger.establish_verified_publication(
+            generation.generation_id,
+            RunAuthority.REBUILD,
+            evidence,
+        )
+        for phase in (
+            FinalizationPhase.STALE_RECONCILED,
+            FinalizationPhase.METADATA_PUBLISHED,
+            FinalizationPhase.GENERATION_PUBLISHED,
+        ):
+            ledger.advance_finalization(generation.generation_id, phase)
+        ledger.finish_generation(
+            generation.generation_id,
+            RunTerminalState.SUCCEEDED,
+        )
 
 
 def restore_archive(
@@ -214,6 +341,9 @@ def restore_archive(
             for item, name in zip(archive.collections, names, strict=True)
             if item.identity is not None
         }
+        _restore_publication_proofs(
+            request.destination_root, archive.publication_proofs
+        )
         record_restored_archive(
             request.destination_root,
             storage_schema_version=archive.schema_version,
@@ -221,6 +351,16 @@ def restore_archive(
             identities=identities,
         )
     except Exception:
+        backend_identity = configured_backend_identity(
+            request.destination_root.resolve()
+        )
+        for signature, _evidence in archive.publication_proofs:
+            with suppress(OSError, RuntimeError):
+                clear_publication_state(
+                    request.destination_root,
+                    signature.source_type,
+                    backend_identity,
+                )
         for name in reversed(restored):
             with suppress(OSError, RuntimeError):
                 client.delete_collection(collection_name=name)

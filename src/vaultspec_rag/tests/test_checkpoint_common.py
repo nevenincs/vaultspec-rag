@@ -21,11 +21,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._source_types import PublicSourceType
 from ..indexer._checkpoint_common import (
     classify_interrupted_generation,
     configuration_fingerprint,
 )
-from ..indexer._content_policy import ContentKind
 from ..indexer._document_checkpoint import DocumentRunConfiguration
 from ..indexer._run_checkpoint import CodeRunConfiguration
 from ..indexer._run_ledger_models import (
@@ -47,7 +47,7 @@ def _signature(root: Path, *, clean: bool) -> RunSignature:
     return RunSignature(
         root_identity=str(root.resolve()),
         collection_identity="source-v1",
-        source_type=ContentKind.CODE,
+        source_type=PublicSourceType.CODE,
         operation=RunOperation.FULL,
         clean=clean,
         model_identity="model-v1",

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
     from ._reuse import DonorReuseContext
     from ._streaming import _SliceWriter
+    from ._vault_checkpoint import VaultRunCheckpoint
 
 # store point is built. A sparse entry exists as native index/value data plus
 # two Python list entries. The fixed allowance covers the dataclass, payload
@@ -57,6 +58,8 @@ class VaultStreamRequest:
     ingest_wait: bool = True
     run_control: RunControl = NO_RUN_CONTROL
     reuse: DonorReuseContext | None = None
+    checkpoint: VaultRunCheckpoint | None = None
+    content_identities: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

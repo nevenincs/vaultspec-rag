@@ -256,11 +256,23 @@ def index(
     registry = get_registry()
     result: IndexResult | None = None
     with registry.compute_lease(root, model_name=model_name) as lease:
+        from .indexer._run_ledger_models import RunAuthority
+
+        authority = (
+            RunAuthority.REBUILD if (full or clean) else RunAuthority.PUBLICATION
+        )
         runtime = lease.runtime
         result = (
-            runtime.vault_indexer.full_index(clean=clean, reporter=rep)
+            runtime.vault_indexer.full_index(
+                clean=clean,
+                reporter=rep,
+                authority=authority,
+            )
             if (full or clean)
-            else runtime.vault_indexer.incremental_index(reporter=rep)
+            else runtime.vault_indexer.incremental_index(
+                reporter=rep,
+                authority=authority,
+            )
         )
         registry.peek_project(root).graph_cache.invalidate()
     if result is None:
@@ -293,17 +305,26 @@ def index_codebase(
     registry = get_registry()
     result: IndexResult | None = None
     with registry.compute_lease(root, model_name=options.model_name) as lease:
+        from .indexer._run_ledger_models import RunAuthority
+
+        authority = (
+            RunAuthority.REBUILD
+            if (options.full or options.clean)
+            else RunAuthority.PUBLICATION
+        )
         runtime = lease.runtime
         if options.full or options.clean:
             result = runtime.code_indexer.full_index(
                 clean=options.clean,
                 reporter=rep,
                 preflight=preflight,
+                authority=authority,
             )
         else:
             result = runtime.code_indexer.incremental_index(
                 reporter=rep,
                 preflight=preflight,
+                authority=authority,
             )
     if result is None:
         raise RuntimeError("code indexing lease ended without a result")
@@ -338,6 +359,13 @@ def index_documents(
     registry = get_registry()
     result: IndexResult | None = None
     with registry.compute_lease(root, model_name=options.model_name) as lease:
+        from .indexer._run_ledger_models import RunAuthority
+
+        authority = (
+            RunAuthority.REBUILD
+            if (options.full or options.clean)
+            else RunAuthority.PUBLICATION
+        )
         runtime = lease.runtime
         if options.full or options.clean:
             # The scoped-indexing guard above already raises when
@@ -348,12 +376,14 @@ def index_documents(
                 clean=options.clean,
                 reporter=rep,
                 preflight=cast("DocumentIndexPreflight", preflight),
+                authority=authority,
             )
         else:
             result = runtime.document_indexer.incremental_index(
                 reporter=rep,
                 changed_paths=options.changed_paths,
                 preflight=preflight,
+                authority=authority,
             )
     if result is None:
         raise RuntimeError("document indexing lease ended without a result")
@@ -570,7 +600,7 @@ def search_codebase(request: CodebaseSearchRequest) -> list[SearchResult]:
 
 
 def _code_breadth_timings(
-    root: pathlib.Path,
+    snapshot: object,
     indexed_count: int,
 ) -> dict[str, float]:
     """Return the carried completeness fields for *root*, empty when complete.
@@ -581,16 +611,14 @@ def _code_breadth_timings(
     root written by a build that recorded no breadth must not be reported as
     incomplete for want of evidence.
     """
-    from ._index_breadth import code_breadth_shortfall, code_file_breadth_shortfall
+    from ._index_breadth import CodeBreadthSnapshot
 
     carried: dict[str, float] = {}
-    shortfall = code_breadth_shortfall(root, indexed_count)
+    if not isinstance(snapshot, CodeBreadthSnapshot):
+        raise TypeError("snapshot must be a CodeBreadthSnapshot")
+    shortfall = snapshot.finish(indexed_count)
     if shortfall is not None:
         carried["published_points"] = float(shortfall.published)
-    file_shortfall = code_file_breadth_shortfall(root)
-    if file_shortfall is not None:
-        carried["named_files"] = float(file_shortfall.named)
-        carried["covered_files"] = float(file_shortfall.covered)
     return carried
 
 
@@ -621,12 +649,15 @@ def search_codebase_timed(
     )
     root = _resolve(request.root_dir)
     active_registry = registry if registry is not None else get_registry()
+    from ._index_breadth import acquire_code_breadth_snapshot
+
+    breadth_snapshot = acquire_code_breadth_snapshot(root)
     # Empty/unbuilt code index: return an empty result without loading the model.
     indexed_count = active_registry.code_chunk_count(root)
     # The completeness fact is settled here, once, from the count this path
     # already takes - so it costs no extra store round trip and every adapter
     # reads one conclusion rather than comparing figures for itself.
-    breadth = _code_breadth_timings(root, indexed_count)
+    breadth = _code_breadth_timings(breadth_snapshot, indexed_count)
     if indexed_count == 0:
         return [], {
             "indexed_count": indexed_count,
@@ -726,26 +757,25 @@ def get_related(
 def clean(
     root_dir: pathlib.Path,
     *,
-    clean_type: PublicSourceType
-    | Literal[
-        "vault", "code", "document", "combined", "all", "codebase", "docs"
-    ] = "all",
+    clean_type: PublicSourceType | Literal["vault", "code", "document", "combined"] = (
+        PublicSourceType.COMBINED
+    ),
     registry: ServiceRegistry,
 ) -> list[str]:
-    """Wipe the selected collections and their index metadata sidecars.
+    """Wipe the selected collections and invalidate their publication proofs.
 
     Does not load embedding models or touch GPUs.
 
     Args:
         root_dir: Workspace root directory.
-        clean_type: Canonical source type or an established compatibility alias.
+        clean_type: Canonical source type.
 
     Returns:
         List of cleared source labels (e.g. ['vault', 'codebase']).
     """
-    source_type = parse_source_type(clean_type, allow_aliases=True)
+    source_type = parse_source_type(clean_type)
     root = _resolve(root_dir)
-    from ._index_breadth import index_meta_path
+    from ._publication_state import clear_publication_state
 
     cleared: list[str] = []
 
@@ -755,22 +785,24 @@ def clean(
     do_document = source_type is PublicSourceType.DOCUMENT or combined
 
     with registry.lease_maintenance_store(root) as store:
-        # Sidecars go before collections, and the ordering is load-bearing: a
-        # sidecar is a breadth claim, and a crash between the two steps must
-        # never leave a claim standing over data that is already gone - a
-        # serve-time check would read that as a full index over an empty husk.
-        # The safe interruption is the reverse: intact data with no claim, which
-        # reads as honestly unverifiable.
         if do_vault:
-            index_meta_path(root, PublicSourceType.VAULT).unlink(missing_ok=True)
+            clear_publication_state(
+                root,
+                PublicSourceType.VAULT,
+                store.backend_identity,
+            )
         if do_code:
-            index_meta_path(root, PublicSourceType.CODE).unlink(missing_ok=True)
+            clear_publication_state(
+                root,
+                PublicSourceType.CODE,
+                store.backend_identity,
+            )
         if do_document:
-            # Documents publish a differently shaped record under an independently
-            # chosen name, so it resolves through its own owner rather than here.
-            from .indexer._document_meta import document_metadata_path
-
-            document_metadata_path(root).unlink(missing_ok=True)
+            clear_publication_state(
+                root,
+                PublicSourceType.DOCUMENT,
+                store.backend_identity,
+            )
 
         if do_vault:
             store.drop_table()
@@ -779,7 +811,7 @@ def clean(
         if do_code:
             store.drop_code_table()
             store.ensure_code_table()
-            cleared.append("codebase")
+            cleared.append("code")
         if do_document:
             store.drop_document_table()
             store.ensure_document_table()
@@ -1054,6 +1086,7 @@ def run_quality_probe(
     import tempfile
     from pathlib import Path
 
+    from .indexer._run_ledger_models import RunAuthority
     from .progress import NullProgressReporter
     from .synthetic import build_synthetic_vault
 
@@ -1066,7 +1099,10 @@ def run_quality_probe(
 
         with registry.compute_lease(root) as lease:
             runtime = lease.runtime
-            runtime.vault_indexer.full_index(reporter=NullProgressReporter())
+            runtime.vault_indexer.full_index(
+                reporter=NullProgressReporter(),
+                authority=RunAuthority.REBUILD,
+            )
 
             for needle, doc_id in needles:
                 results = runtime.searcher.search_vault(needle, top_k=5)

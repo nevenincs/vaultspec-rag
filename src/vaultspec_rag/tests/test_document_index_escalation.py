@@ -23,27 +23,16 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from typing import TYPE_CHECKING, Any, Never, cast
+from typing import TYPE_CHECKING, Never, cast
 
 import pytest
 
 from .. import store_schema
 from .._index_integrity import audit_index_sources
-from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from .._store_models import DocumentChunk, DocumentPayload
 from .._store_writes import workspace_volume_path
-from ..config._types import EnvVar
-from ..indexer._content_policy import ContentKind
-from ..indexer._document_indexer import DocumentIndexer
-from ..indexer._document_meta import (
-    DOCUMENT_EMBED_SCHEMA,
-    DocumentFileMetadata,
-    DocumentIndexMetadata,
-    document_metadata_path,
-    read_document_meta,
-    write_document_meta,
-)
+from ..indexer._index_schema import DOCUMENT_EMBED_SCHEMA
 from ..indexer._run_ledger_models import (
     SCHEMA_VERSION,
     RunAuthority,
@@ -53,15 +42,12 @@ from ..indexer._run_ledger_models import (
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
-from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore, configured_backend_identity
-from .conftest import managed_env
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ..indexer._publication_proof import ProofCompatibilityKey
-    from ..indexer._resolved_policy import ResolvedIndexPolicy
     from ..indexer._run_ledger_models import RunGeneration
 
 pytestmark = [pytest.mark.unit]
@@ -124,7 +110,7 @@ def _seed_document_proof(
         RunSignature(
             root_identity=str(root_dir.resolve()),
             collection_identity=generation_collection,
-            source_type=ContentKind.DOCUMENT,
+            source_type=PublicSourceType.DOCUMENT,
             operation=RunOperation.FULL,
             clean=True,
             model_identity="audit-model",
@@ -254,31 +240,6 @@ def _store_document_points(store: VaultStore, count: int) -> tuple[str, ...]:
     return tuple(chunk.id for chunk in chunks)
 
 
-def _publish_manifest(
-    meta_path: Path,
-    policy: ResolvedIndexPolicy,
-    point_ids: tuple[str, ...],
-) -> None:
-    """Publish a complete, current manifest citing an unresolvable generation."""
-    fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
-    write_document_meta(
-        meta_path,
-        DocumentIndexMetadata(
-            fingerprints.membership,
-            fingerprints.content,
-            policy.fingerprints.snapshot,
-            (
-                DocumentFileMetadata(
-                    _DELETED_SOURCE,
-                    _fingerprint(_DELETED_SOURCE),
-                    point_ids,
-                ),
-            ),
-            generation_id=_DANGLING_GENERATION,
-        ),
-    )
-
-
 def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> RunLedger:
     """Leave the ledger holding one document generation that cannot parent.
 
@@ -292,7 +253,7 @@ def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> Run
         RunSignature(
             root_identity=str(root_dir.resolve()),
             collection_identity=store_schema.DOCUMENT_COLLECTION,
-            source_type=ContentKind.DOCUMENT,
+            source_type=PublicSourceType.DOCUMENT,
             operation=RunOperation.FULL,
             clean=False,
             model_identity="retired-model",
@@ -478,41 +439,3 @@ def test_audit_malformed_open_receipt_requires_typed_corrupt_refusal(
 
     _assert_document_rebuild_required(result, error_kind="corrupt_receipt")
     assert ledger.path.read_bytes() == before
-
-
-@pytest.mark.parametrize("scoped", [False, True])
-def test_an_unparentable_ledger_requires_an_explicit_full_reconciliation(
-    tmp_path: Path,
-    scoped: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No compatible parent may broaden either incremental entry shape."""
-    with managed_env(**{EnvVar.SPARSE_ENABLED.value: "false"}):
-        store = VaultStore(tmp_path)
-        try:
-            store.ensure_document_table()
-            indexer = DocumentIndexer(tmp_path, cast("Any", None), store)
-            policy = indexer.resolve_policy_snapshot()
-            point_ids = _store_document_points(store, 2)
-            meta_path = document_metadata_path(tmp_path)
-            _publish_manifest(meta_path, policy, point_ids)
-            # The sidecar sits in the data root, which is also where the run
-            # ledger the indexer opens lives.
-            _retire_the_only_document_generation(tmp_path, meta_path.parent)
-
-            def _forbidden_full(*_args: object, **_kwargs: object) -> None:
-                pytest.fail("incremental indexing invoked full_index")
-
-            monkeypatch.setattr(DocumentIndexer, "full_index", _forbidden_full)
-
-            with pytest.raises(JobError) as raised:
-                indexer.incremental_index(
-                    reporter=NullProgressReporter(),
-                    changed_paths=(tmp_path / _DELETED_SOURCE,) if scoped else None,
-                )
-
-            assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-            assert store.count_document() == len(point_ids)
-            assert read_document_meta(meta_path) is not None
-        finally:
-            store.close()

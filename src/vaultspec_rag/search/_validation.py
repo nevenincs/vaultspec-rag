@@ -238,7 +238,7 @@ def validate_search_filters(
     """
     if options is None:
         options = SearchFilterOptions()
-    canonical = parse_source_type(search_type, allow_aliases=True)
+    canonical = parse_source_type(search_type)
     canonical_name = canonical.value
     _validate_prefer(options.prefer)
     _validate_doc_type(options.doc_type)

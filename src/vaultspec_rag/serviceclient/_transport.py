@@ -867,7 +867,7 @@ def _try_http_reindex(  # noqa: PLR0913 - wire fields stay explicit and default-
     initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
-        source = parse_source_type(reindex_type, allow_aliases=True)
+        source = parse_source_type(reindex_type)
     except SourceTypeParseError as exc:
         return exc.as_error_envelope()
     try:
@@ -917,7 +917,7 @@ def _try_http_index_audit(
     if authority is not _RunAuthority.AUDIT_VERIFICATION:
         raise ValueError("index audit requires explicit audit-verification authority")
     try:
-        source = parse_source_type(audit_type, allow_aliases=False)
+        source = parse_source_type(audit_type)
     except SourceTypeParseError as exc:
         return exc.as_error_envelope()
     try:
@@ -958,7 +958,7 @@ def _try_http_clean(
 ) -> dict[str, object] | None:
     """Clean one canonical domain through the resident service."""
     try:
-        source = parse_source_type(clean_type, allow_aliases=True)
+        source = parse_source_type(clean_type)
     except SourceTypeParseError as exc:
         return exc.as_error_envelope()
     try:

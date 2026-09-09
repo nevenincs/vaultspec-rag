@@ -14,23 +14,12 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._atomic_write import JsonWriteOptions, write_json_atomically
-from .._index_breadth import (
-    PUBLISHED_FILES_KEY,
-    PUBLISHED_POINTS_KEY,
-    index_meta_path,
-)
 from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
-from . import _chunk_worker, _code_meta, _stat_gate
+from . import _chunk_worker, _stat_gate
+from ._checkpoint_common import PublicationExecution
 from ._chunk_producer import CodeChunkProducer
-from ._code_meta import (
-    CODE_EMBED_SCHEMA,
-    CONTENT_EPOCH_KEY,
-    EMBED_SCHEMA_KEY,
-    MEMBERSHIP_EPOCH_KEY,
-)
 from ._codebase_preprocess import CodebasePreprocessMixin
 from ._consumer_pipeline import (
     CodeConsumerPipeline,
@@ -70,7 +59,12 @@ from ._index_lifecycle import (
     preprocess_completion_fields,
     run_index_lifecycle,
 )
-from ._run_ledger_models import RunLedgerCompatibilityError, RunOperation
+from ._run_ledger_models import (
+    FETCH_BATCH,
+    RunAuthority,
+    RunLedgerCompatibilityError,
+    RunOperation,
+)
 from ._support_budget import CodeSupportBudget
 from ._vault_prep import IndexResult
 
@@ -175,8 +169,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         # The data root also locates the generation lifecycle's artifacts and
         # the preprocess context, so it stays independent of the sidecar.
         self._data_root = workspace_volume_path(root_dir)
-        self._meta_path = index_meta_path(root_dir, PublicSourceType.CODE)
-        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        self._stat_gate_path = self._data_root / "code_index.statgate.json"
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
@@ -201,10 +194,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         self._prep_stale_paths: set[str] = set()
         self._prep_rule_total: int = 0
         self._prep_ok: int = 0
-        # Config epochs for the current run. Set at the start of each
-        # locked run from the same resolved inputs the scan uses, then stamped
-        # by ``_write_meta``; ``None`` means "not yet resolved this run" and the
-        # writer recomputes them as a fallback.
+        # Config epochs for the current run, resolved from the same immutable
+        # policy snapshot used by discovery and checkpoint compatibility.
         self._membership_epoch: str | None = None
         self._content_epoch: str | None = None
         # Per-run donor reuse state: resolved once when the encode pipeline
@@ -217,10 +208,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             CodeGenerationBindings(
                 root_dir=self.root_dir,
                 data_root=self._data_root,
-                meta_path=self._meta_path,
                 store=self.store,
-                load_meta=self._load_meta,
-                read_meta_raw=self._read_meta_raw,
             )
         )
         self._consumer_pipeline = CodeConsumerPipeline(
@@ -245,7 +233,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             self.store,
             self._lifecycle,
             self._pipeline_chunk_and_embed,
-            self._write_meta,
         )
 
     @property
@@ -317,48 +304,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Return this run's reuse telemetry block, or ``None`` when off."""
         stats = self._reuse_stats
         return stats.snapshot() if stats is not None else None
-
-    def _classify_config_drift(self, membership: str, content: str) -> str:
-        """Classify config drift against the stored epochs.
-
-        Returns ``"clean"`` (content drift - clean rebuild), ``"unscoped"``
-        (membership drift or a legacy sidecar missing the keys - force the
-        unscoped incremental), or ``"ok"`` (no drift, or a fresh index with no
-        sidecar to compare against). Content drift outranks membership drift
-        because the clean rebuild subsumes the membership reconcile.
-        """
-        return _code_meta.classify_config_drift(
-            self._read_meta_raw(), membership, content
-        )
-
-    def _config_drift_dispatch(
-        self,
-        changed_paths: Iterable[pathlib.Path] | None,
-        policy: ResolvedIndexPolicy,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> tuple[Iterable[pathlib.Path] | None, bool]:
-        """Stamp snapshot epochs and classify drift without reloading config.
-
-        Returns the possibly-nulled ``changed_paths`` (a membership mismatch,
-        or a legacy sidecar missing the keys, forces the unscoped incremental)
-        and whether a content mismatch requires a clean rebuild.
-        """
-        run_control.checkpoint()
-        membership, content = self._compute_code_epochs(policy)
-        run_control.checkpoint()
-        self._membership_epoch = membership
-        self._content_epoch = content
-        drift = self._classify_config_drift(membership, content)
-        if drift == "clean":
-            return changed_paths, True
-        if drift == "unscoped" and changed_paths is not None:
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                "code membership policy changed outside the authorized path scope; "
-                "request an explicit full code reindex",
-            )
-        return changed_paths, False
 
     def _scan_codebase(
         self,
@@ -571,6 +516,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         *,
         reporter: ProgressReporter,
         preflight: CodeIndexPreflight,
+        authority: RunAuthority,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full codebase re-index serialized through the writer lock.
@@ -590,11 +536,10 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             self._reset_reuse_state()
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
-                    clean=clean,
                     policy=resolved_policy,
                     discovered_paths=discovered_paths,
                     reporter=reporter,
-                    run_control=run_control,
+                    execution=PublicationExecution(authority, run_control),
                 ),
                 IndexLifecycleRequest(
                     event_logger=logger,
@@ -636,17 +581,9 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 existing_ids_before: set[str] = set()
             else:
                 self.store.ensure_code_table(self._lifecycle.active_build_target)
-                try:
-                    existing_ids_before = set(
-                        self.store.get_all_code_ids(self._lifecycle.active_build_target)
-                    )
-                except (OSError, RuntimeError):
-                    logger.warning(
-                        "Could not snapshot existing code-chunk IDs "
-                        "before rebuild; stale-chunk purge will be skipped",
-                        exc_info=True,
-                    )
-                    existing_ids_before = set()
+                existing_ids_before = set(
+                    self.store.get_all_code_ids(self._lifecycle.active_build_target)
+                )
             reporter.advance(1)
             return existing_ids_before
         finally:
@@ -654,12 +591,11 @@ class CodebaseIndexer(CodebasePreprocessMixin):
 
     def _full_index_locked(
         self,
-        clean: bool = False,
         *,
         policy: ResolvedIndexPolicy,
         discovered_paths: tuple[pathlib.Path, ...] | None = None,
         reporter: ProgressReporter,
-        run_control: RunControl = NO_RUN_CONTROL,
+        execution: PublicationExecution,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
 
@@ -684,6 +620,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         Raises:
             OSError: If source files cannot be read or hashed.
         """
+        run_control = execution.run_control
+        authority = execution.authority
         start = time.time()
         paths = self._prepare_full_paths(
             policy,
@@ -691,24 +629,39 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
-        previous_metadata = self._load_meta()
-        preserved_metadata, preserved_ids, effective_clean = (
-            self._prepare_disabled_full_preservation(
-                policy,
-                previous_metadata,
-                clean=clean,
-            )
+        from .._publication_state import (
+            acquire_publication_snapshot,
+            read_all_publication_evidence,
         )
+        from ._publication_proof import ProofMissingError
+
+        try:
+            previous_snapshot = acquire_publication_snapshot(
+                self.root_dir,
+                PublicSourceType.CODE,
+            )
+        except ProofMissingError:
+            previous_metadata = {}
+        else:
+            previous_metadata = {
+                rel: evidence.content_identity
+                for rel, evidence in read_all_publication_evidence(
+                    previous_snapshot
+                ).items()
+            }
+            previous_snapshot.validate()
+        effective_clean = authority is RunAuthority.REBUILD
         limits = self._consumer_pipeline.resolve_limits()
         checkpoint = self._lifecycle.open_checkpoint(
             CodeGenerationOpenRequest(
                 policy=policy,
                 operation=RunOperation.FULL,
-                clean=effective_clean,
+                clean=authority is RunAuthority.REBUILD,
                 configuration=limits.run_configuration,
                 dense_dimensions=limits.dense_dimension,
                 sparse_enabled=limits.sparse_enabled,
                 run_control=run_control,
+                authority=authority,
             )
         )
         resumed_publication = self._resume_pending_finalization(
@@ -786,10 +739,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 keep=meta.keys(),
             )
             published_ids = frozenset(new_ids)
-            new_ids.update(
-                existing_ids_before if preserved_ids is None else preserved_ids
-            )
-            meta.update(preserved_metadata)
 
             # A drifted path's replacement points carry new identities, so the
             # drift owner drops the superseded ones mid-run. They are still in
@@ -857,6 +806,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         preflight: CodeExecutionPreflight,
+        authority: RunAuthority,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
@@ -889,7 +839,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     discovered_paths=(
                         discovered_paths if changed_paths is None else None
                     ),
-                    run_control=run_control,
+                    execution=PublicationExecution(authority, run_control),
                 ),
                 IndexLifecycleRequest(
                     event_logger=logger,
@@ -910,9 +860,10 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         discovered_paths: tuple[pathlib.Path, ...] | None = None,
-        run_control: RunControl = NO_RUN_CONTROL,
+        execution: PublicationExecution,
     ) -> IndexResult:
         """Locked implementation of cooperative incremental indexing."""
+        run_control = execution.run_control
         run_control.checkpoint()
         if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
@@ -923,44 +874,38 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 "storage no longer backs the published code index metadata; "
                 "request an explicit full code reindex",
             )
-        needs_embed_rebuild = self._needs_embed_rebuild()
-        run_control.checkpoint()
-        if needs_embed_rebuild:
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                "code embedding input format changed; request an explicit full "
-                "code reindex",
-            )
-        changed_paths, escalate_clean = self._config_drift_dispatch(
-            changed_paths,
-            policy,
-            run_control=run_control,
-        )
-        if escalate_clean:
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                "code content-shaping policy changed; request an explicit full "
-                "code reindex",
-            )
+        self._membership_epoch, self._content_epoch = self._compute_code_epochs(policy)
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
                 policy=policy,
                 reporter=reporter,
-                run_control=run_control,
+                execution=execution,
             )
 
         start = time.time()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
-        previous_metadata = self._load_meta()
-        run_control.checkpoint()
+        from .._publication_state import (
+            acquire_publication_snapshot,
+            read_all_publication_evidence,
+        )
+
+        proof_snapshot = acquire_publication_snapshot(
+            self.root_dir,
+            PublicSourceType.CODE,
+        )
+        previous_metadata = {
+            rel: evidence.content_identity
+            for rel, evidence in read_all_publication_evidence(proof_snapshot).items()
+        }
         current_files, current_hashes = self._scan_and_hash_incremental_inputs(
             policy,
             reporter,
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
+        proof_snapshot.validate()
         disabled_current = {
             rel for rel in current_files if policy.transform_disabled(rel)
         }
@@ -968,9 +913,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             self._mark_preprocess_stale(rel)
             current_files.pop(rel, None)
             current_hashes.pop(rel, None)
-        current_hashes.update(
-            self._preserved_disabled_metadata(policy, previous_metadata)
-        )
         deleted_files = set(previous_metadata) - set(current_hashes)
         new_files, modified_files, to_index, paths_to_index, attempted_paths = (
             self._incremental_change_sets(
@@ -987,8 +929,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             policy=policy,
             operation=RunOperation.INCREMENTAL,
             limits=limits,
-            run_control=run_control,
             scope="code incremental",
+            execution=execution,
         )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
@@ -1016,13 +958,11 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             current_hashes.update(publication.published_hashes)
             self._incremental_commit.commit_replacement(
                 IncrementalReplacementRequest(
-                    policy=policy,
                     existing_ids=publication.existing_ids,
                     published_ids=publication.published_ids,
                     prior_ids_by_path=publication.prior_ids_by_path,
                     deleted_paths=deleted_files,
                     checkpoint=checkpoint,
-                    metadata=current_hashes,
                     files_count=len(attempted_paths),
                     protect_replacement=bool(modified_files or deleted_files),
                     reporter=reporter,
@@ -1074,8 +1014,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         policy: ResolvedIndexPolicy,
         operation: RunOperation,
         limits: CodePipelineLimits,
-        run_control: RunControl,
         scope: str,
+        execution: PublicationExecution,
     ) -> CodeRunCheckpoint:
         try:
             return self._lifecycle.open_checkpoint(
@@ -1086,14 +1026,15 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                     configuration=limits.run_configuration,
                     dense_dimensions=limits.dense_dimension,
                     sparse_enabled=limits.sparse_enabled,
-                    run_control=run_control,
+                    run_control=execution.run_control,
+                    authority=execution.authority,
                 )
             )
         except RunLedgerCompatibilityError as exc:
             logger.warning("%s ledger is incompatible: %s", scope, exc)
             raise JobError(
                 JobErrorKind.FULL_REINDEX_REQUIRED,
-                f"no compatible published code manifest ({exc}); request an "
+                f"no compatible committed code proof ({exc}); request an "
                 "explicit full code reindex",
             ) from exc
 
@@ -1189,7 +1130,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             logger.warning("Cannot hash file, skipping: %s", rel)
         if full_membership:
             gate.prune(to_hash.keys())
-        gate.persist()
+            gate.persist()
         self._stat_gate_cache.retain(gate)
         if gate.reused:
             logger.debug(
@@ -1207,23 +1148,39 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         changed_paths: Iterable[pathlib.Path],
         policy: ResolvedIndexPolicy,
         reporter: ProgressReporter,
-        run_control: RunControl = NO_RUN_CONTROL,
+        execution: PublicationExecution,
     ) -> IndexResult:
         """Reconcile only changed paths through the weighted pipeline."""
+        run_control = execution.run_control
         start = time.time()
         self._begin_preprocess_run(policy, run_control=run_control)
         run_control.checkpoint()
-        previous_metadata = self._load_meta()
-        run_control.checkpoint()
+        from .._publication_state import acquire_publication_snapshot
+
+        proof_snapshot = acquire_publication_snapshot(
+            self.root_dir,
+            PublicSourceType.CODE,
+        )
         to_hash, delete_files = self._scan_changed_paths(
             changed_paths,
             reporter,
             policy,
             run_control=run_control,
         )
+        affected = tuple(sorted(set(to_hash) | delete_files))
+        previous_metadata: dict[str, str] = {}
+        for start_at in range(0, len(affected), FETCH_BATCH):
+            evidence = proof_snapshot.ledger.publication_evidence_for_paths(
+                proof_snapshot.proof.compatibility_key,
+                affected[start_at : start_at + FETCH_BATCH],
+            )
+            previous_metadata.update(
+                {path: item.content_identity for path, item in evidence.items()}
+            )
+        proof_snapshot.validate()
         # A scoped run bypasses discovery, but the events it carries are the
         # membership truth a cached walk cannot see: a deleted path or a path
-        # absent from the published manifest (a create) invalidates the cache
+        # absent from the committed proof (a create) invalidates the cache
         # so the next unscoped walk re-observes the tree.
         if delete_files or any(rel not in previous_metadata for rel in to_hash):
             self._discovery.invalidate_scan_cache()
@@ -1245,8 +1202,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             policy=policy,
             operation=RunOperation.SCOPED_INCREMENTAL,
             limits=limits,
-            run_control=run_control,
             scope="scoped code",
+            execution=execution,
         )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
@@ -1271,19 +1228,13 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 ),
             )
         )
-        new_metadata = dict(previous_metadata)
-        new_metadata.update(publication.published_hashes)
-        for rel in delete_files:
-            new_metadata.pop(rel, None)
         self._incremental_commit.commit_replacement(
             IncrementalReplacementRequest(
-                policy=policy,
                 existing_ids=publication.existing_ids,
                 published_ids=publication.published_ids,
                 prior_ids_by_path=publication.prior_ids_by_path,
                 deleted_paths=delete_files,
                 checkpoint=checkpoint,
-                metadata=new_metadata,
                 files_count=len(attempted_paths),
                 protect_replacement=bool(modified_files or delete_files),
                 reporter=reporter,
@@ -1321,77 +1272,3 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             List of chunk ID strings stored for the given files.
         """
         return self.store.get_code_ids_by_paths(rel_paths)
-
-    def _needs_embed_rebuild(self) -> bool:
-        """Return True when stored vectors predate the embed-input format.
-
-        Chunk vectors embed a locational header alongside the chunk
-        text; older stores embedded the bare chunk text. Mixing the two
-        regimes (and querying them with the current instruction prompt)
-        silently degrades retrieval, so a marker mismatch triggers a
-        one-time clean rebuild. A missing sidecar over a non-empty
-        collection is treated the same way.
-        """
-        return _code_meta.needs_embed_rebuild(
-            self._read_meta_raw(), self.store.count_code
-        )
-
-    def _write_meta(
-        self,
-        meta: dict[str, str],
-        *,
-        policy: ResolvedIndexPolicy,
-        published_points: int | None = None,
-        published_files: int | None = None,
-    ) -> None:
-        """Atomically write content-hash metadata to the sidecar JSON file.
-
-        Uses write-to-temp + ``os.replace`` so a crash mid-write never
-        corrupts the metadata file. The current embedding-input format
-        version is stamped under a reserved key so later runs can
-        detect format changes.
-
-        Args:
-            meta: Mapping of relative file path to blake2b hex digest.
-            policy: Exact snapshot whose identity governs publication. Direct
-                callers must resolve and supply it explicitly.
-            published_points: Collection point count observed after storage
-                reconciliation, recording how much breadth this sidecar
-                describes. Omitted where the caller has no reconciled count to
-                offer, which leaves the sidecar silent on breadth rather than
-                stamping a figure nothing verified.
-
-        Raises:
-            OSError: If the metadata directory cannot be created or the
-                file cannot be written.
-        """
-        membership, content = self._compute_code_epochs(policy)
-        stamped = {**meta, EMBED_SCHEMA_KEY: CODE_EMBED_SCHEMA}
-        stamped[MEMBERSHIP_EPOCH_KEY] = membership
-        stamped[CONTENT_EPOCH_KEY] = content
-        if published_points is not None:
-            stamped[PUBLISHED_POINTS_KEY] = str(published_points)
-        # Stamped on the incremental path too, so a sidecar this writer
-        # produces is comparable rather than reading as "cannot tell".
-        if published_files is not None:
-            stamped[PUBLISHED_FILES_KEY] = str(published_files)
-        write_json_atomically(self._meta_path, stamped, JsonWriteOptions(indent=2))
-
-    def _read_meta_raw(self) -> dict[str, str]:
-        """Load the sidecar JSON verbatim, reserved keys included."""
-        return _code_meta.read_meta_raw(self._meta_path)
-
-    def _load_meta(self) -> dict[str, str]:
-        """Load codebase index metadata from the sidecar JSON file.
-
-        Reserved dunder keys (the embed-format marker) are stripped so
-        they can never participate in file-path set arithmetic - the
-        marker would otherwise be counted as a deleted file on every
-        incremental run.
-
-        Returns:
-            Mapping of relative file path to blake2b hex digest, or
-            an empty dict if the file does not exist or cannot be
-            parsed.
-        """
-        return _code_meta.load_meta(self._meta_path)

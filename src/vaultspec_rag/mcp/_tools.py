@@ -130,7 +130,7 @@ def restrict_to_read_only_tools() -> tuple[str, ...]:
 def _canonical_tool_source(value: object) -> str:
     """Return one closed-set source value or raise a structured tool error."""
     try:
-        return parse_source_type(value, allow_aliases=True).value
+        return parse_source_type(value).value
     except SourceTypeParseError as exc:
         raise ValueError(f"{exc.error_kind}: {exc}") from None
 

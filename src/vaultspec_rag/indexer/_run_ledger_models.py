@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypedDict
 
-from ._content_policy import ContentKind
+from .._source_types import PublicSourceType
 from ._file_state import FileState, validate_rel_path
 from ._publication_proof import (
     PathDelta,
@@ -521,7 +521,6 @@ class FileStateTombstoneRow(TypedDict):
 
 SCHEMA_VERSION: Final = 9
 FETCH_BATCH: Final = 256
-_DIGEST_REPR_LENGTH: Final = 128
 INDEX_RUN_LEDGER_FILENAME: Final = "index_runs.sqlite3"
 _BASE_LEDGER_SCHEMA: Final = {
     "generations": frozenset(
@@ -859,7 +858,7 @@ class RunSignature:
 
     root_identity: str
     collection_identity: str
-    source_type: ContentKind
+    source_type: PublicSourceType
     operation: RunOperation
     clean: bool
     model_identity: str
@@ -888,8 +887,8 @@ class RunSignature:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be non-empty")
-        if not isinstance(self.source_type, ContentKind):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
-            raise TypeError("source_type must be a ContentKind")
+        if not isinstance(self.source_type, PublicSourceType):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("source_type must be a PublicSourceType")
         if not isinstance(self.operation, RunOperation):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("operation must be a RunOperation")
         for name in ("dense_dimensions", "embedding_schema", "payload_schema"):
@@ -954,8 +953,8 @@ class CommitUnit:
         ):
             raise ValueError("deletion point_ids must be in canonical order")
         if self.kind is CommitUnitKind.UPSERT:
-            if not _is_digest(self.source_digest):
-                raise ValueError("upsert units require a lowercase BLAKE2b-512 digest")
+            if not isinstance(self.source_digest, str) or not self.source_digest:
+                raise ValueError("upsert units require a non-empty content identity")
         elif self.source_digest is not None:
             raise ValueError("deletion units must not carry a source digest")
         if self.kind is not CommitUnitKind.UPSERT and (
@@ -1488,11 +1487,3 @@ def _validate_delta_point_ownership(deltas: tuple[PathDelta, ...]) -> None:
     }
     if transferred:
         raise ValueError("a receipt must not transfer point identity between paths")
-
-
-def _is_digest(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == _DIGEST_REPR_LENGTH
-        and all(character in "0123456789abcdef" for character in value)
-    )

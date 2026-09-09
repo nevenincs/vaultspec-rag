@@ -33,12 +33,12 @@ if TYPE_CHECKING:
 from ..indexer._streaming import (
     StoreWriteTask,
     UnsettledStoreWriterError,
-    _execute_store_mutation,
     _release_cuda_cache,
     _SliceWriter,
     _stream_encode_and_upsert_vault,
     encode_and_upsert_code_slice,
     encode_and_upsert_document_slice,
+    execute_store_mutation,
 )
 from ..indexer._streaming_types import (
     CodeSliceRequest,
@@ -335,7 +335,7 @@ class TestSliceWriterContract:
             raise RuntimeError("injected mutation failure")
 
         with pytest.raises(RuntimeError, match="injected mutation failure"):
-            _execute_store_mutation(_fail, lifecycle)
+            execute_store_mutation(_fail, lifecycle)
         assert events == ["prepare", "store"]
 
     def test_async_acknowledgement_stays_applied_until_owning_barrier(self) -> None:
@@ -348,7 +348,7 @@ class TestSliceWriterContract:
             confirm_after_acknowledgement=False,
         )
 
-        _execute_store_mutation(lambda: events.append("store"), lifecycle)
+        execute_store_mutation(lambda: events.append("store"), lifecycle)
         assert events == ["prepare", "store", "applied"]
 
         lifecycle.confirm()
@@ -364,7 +364,7 @@ class TestSliceWriterContract:
             confirm_after_acknowledgement=False,
         )
 
-        _execute_store_mutation(
+        execute_store_mutation(
             lambda: events.append("store"),
             lifecycle,
             after_acknowledgement=lambda: events.append("acknowledged"),
@@ -456,7 +456,7 @@ class TestSliceWriterContract:
             confirm_after_acknowledgement=True,
         )
         with pytest.raises(CancelRequested):
-            _execute_store_mutation(write, lifecycle)
+            execute_store_mutation(write, lifecycle)
         assert store_calls == 0
 
     def test_a_cancel_during_close_leaves_no_live_writer_thread(self) -> None:

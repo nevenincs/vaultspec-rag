@@ -42,6 +42,7 @@ __all__ = [
     "ManifestEntry",
     "ManifestReconcileResult",
     "SnapshotCollection",
+    "SnapshotPublicationProof",
     "StorageSnapshotManifest",
     "classify_root",
     "load_manifest",
@@ -162,6 +163,15 @@ class SnapshotCollection:
 
 
 @dataclass(frozen=True)
+class SnapshotPublicationProof:
+    """Canonical proof exported with the collection it certifies."""
+
+    source: str
+    signature: dict[str, object]
+    evidence: tuple[dict[str, object], ...]
+
+
+@dataclass(frozen=True)
 class StorageSnapshotManifest:
     """Portable description of one complete namespace archive."""
 
@@ -169,7 +179,7 @@ class StorageSnapshotManifest:
     root: str | None
     storage_schema_version: int
     collections: tuple[SnapshotCollection, ...]
-    metadata_files: tuple[str, ...] = ()
+    publication_proofs: tuple[SnapshotPublicationProof, ...]
 
 
 def snapshot_manifest_path(archive_namespace_dir: Path) -> Path:
@@ -208,7 +218,14 @@ def write_snapshot_manifest(
             }
             for item in manifest.collections
         ],
-        "metadata_files": list(manifest.metadata_files),
+        "publication_proofs": [
+            {
+                "source": proof.source,
+                "signature": proof.signature,
+                "evidence": list(proof.evidence),
+            }
+            for proof in manifest.publication_proofs
+        ],
     }
     write_json_atomically(path, payload, JsonWriteOptions(indent=2, sort_keys=True))
     return path

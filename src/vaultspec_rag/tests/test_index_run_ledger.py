@@ -13,15 +13,7 @@ from pathlib import Path
 import pytest
 
 from .. import store_schema
-from .._index_breadth import GENERATION_ID_KEY
 from .._source_types import PublicSourceType
-from ..indexer._code_meta import (
-    CONTENT_EPOCH_KEY,
-    MEMBERSHIP_EPOCH_KEY,
-    load_meta,
-    publish_meta_from_file_states,
-    read_meta_raw,
-)
 from ..indexer._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._publication_proof import (
@@ -90,7 +82,7 @@ def _signature(
     return RunSignature(
         root_identity=str(root.resolve()),
         collection_identity="source-v1",
-        source_type=ContentKind.CODE,
+        source_type=PublicSourceType.CODE,
         operation=RunOperation.FULL,
         clean=False,
         model_identity="model-v1",
@@ -103,6 +95,63 @@ def _signature(
         configuration_fingerprint="configuration-v1",
         policy_fingerprint="policy-v1",
         backend_identity=backend_identity,
+    )
+
+
+def test_verified_proof_parents_incremental_without_copying_manifest_rows(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    full = ledger.start_generation(replace(_signature(tmp_path), clean=True))
+    evidence = (
+        ProofEvidence("src/a.py", _digest("a"), ("a:0",)),
+        ProofEvidence("src/b.py", _digest("b"), ("b:0", "b:1")),
+    )
+
+    proof = ledger.establish_verified_publication(
+        full.generation_id,
+        RunAuthority.REBUILD,
+        evidence,
+    )
+    assert proof.aggregate == ProofAggregate(indexed_identities=2, retained_points=3)
+    assert ledger.publication_evidence_page(proof.compatibility_key, limit=1) == {
+        "src/a.py": evidence[0]
+    }
+
+    incremental = ledger.start_generation(
+        replace(
+            full.signature,
+            operation=RunOperation.INCREMENTAL,
+            clean=False,
+            configuration_fingerprint="configuration-v2",
+        )
+    )
+    assert incremental.parent_generation_id == full.generation_id
+    assert list(ledger.iter_file_states(incremental.generation_id)) == []
+    assert list(ledger.iter_units(incremental.generation_id)) == []
+
+
+def test_clearing_publication_invalidates_proof_before_storage_removal(
+    tmp_path: Path,
+) -> None:
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(replace(_signature(tmp_path), clean=True))
+    proof = ledger.establish_verified_publication(
+        generation.generation_id,
+        RunAuthority.REBUILD,
+        (ProofEvidence("src/a.py", _digest("a"), ("a:0",)),),
+    )
+
+    ledger.clear_publication_source(
+        PublicSourceType.CODE,
+        str(tmp_path.resolve()),
+        "backend-v1",
+    )
+
+    with pytest.raises(ProofMissingError):
+        ledger.publication_proof(proof.compatibility_key)
+    assert ledger.generation(generation.generation_id).terminal_state is (
+        RunTerminalState.REBUILD_INCOMPLETE
     )
 
 
@@ -2718,7 +2767,7 @@ def test_shared_path_and_latest_generation_are_independent_per_kind(
     document = ledger.start_generation(
         replace(
             _signature(tmp_path),
-            source_type=ContentKind.DOCUMENT,
+            source_type=PublicSourceType.DOCUMENT,
             collection_identity="document-v1",
         )
     )
@@ -2991,7 +3040,7 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
 
     document = replace(
         _signature(tmp_path),
-        source_type=ContentKind.DOCUMENT,
+        source_type=PublicSourceType.DOCUMENT,
         collection_identity="document-v1",
     )
     running = ledger.start_generation(document)
@@ -3302,140 +3351,6 @@ def test_retained_point_iteration_stays_on_index_seeks(tmp_path: Path) -> None:
     # must seek the point primary key on both join columns.
     assert all("unit_id=?" in step for step in points_steps), plan
     assert not any("TEMP B-TREE" in step.upper() for step in plan), plan
-
-
-def test_metadata_publication_streams_only_converged_ledger_rows(
-    tmp_path: Path,
-) -> None:
-    ledger = RunLedger(tmp_path / "runs.sqlite3")
-    generation = ledger.start_generation(_signature(tmp_path))
-    content_hash = _digest("published")
-    ledger.record_storage_confirmed_unit(
-        generation.generation_id,
-        _unit("src/published.py", 0, 1, digest=content_hash),
-    )
-    ledger.record_file_state(
-        generation.generation_id,
-        FileState.indexed("src/published.py", ContentKind.CODE, content_hash),
-    )
-    ledger.record_file_state(
-        generation.generation_id,
-        FileState.policy_rejected(
-            "notes/ignored.md",
-            AdmissionDisposition(
-                kind=None,
-                admitted=False,
-                reason=AdmissionReason.IGNORED,
-            ),
-        ),
-    )
-    meta_path = tmp_path / "code_meta.json"
-    assert (
-        publish_meta_from_file_states(
-            meta_path,
-            ledger.iter_file_states(
-                generation.generation_id,
-                converged_only=True,
-                batch_size=1,
-            ),
-            generation_id=generation.generation_id,
-            membership_epoch="membership-v1",
-            content_epoch="content-v1",
-            published_points_count=1,
-        )
-        == 1
-    )
-    assert load_meta(meta_path) == {"src/published.py": content_hash}
-    raw = read_meta_raw(meta_path)
-    assert raw[GENERATION_ID_KEY] == generation.generation_id
-    assert raw[MEMBERSHIP_EPOCH_KEY] == "membership-v1"
-    assert raw[CONTENT_EPOCH_KEY] == "content-v1"
-
-    ledger.record_file_state(
-        generation.generation_id,
-        FileState.failed(
-            "src/unresolved.py",
-            FileStateKind.CHUNK_FAILED,
-            ContentKind.CODE,
-            "chunking failed",
-            content_hash=_digest("unresolved"),
-        ),
-    )
-    before = meta_path.read_bytes()
-    with pytest.raises(ValueError, match="unresolved"):
-        publish_meta_from_file_states(
-            meta_path,
-            ledger.iter_file_states(generation.generation_id),
-            generation_id=generation.generation_id,
-            membership_epoch="membership-v1",
-            content_epoch="content-v1",
-            published_points_count=1,
-        )
-    assert meta_path.read_bytes() == before
-
-
-def test_overlapping_metadata_publications_are_each_atomic(tmp_path: Path) -> None:
-    meta_path = tmp_path / "code_meta.json"
-    barrier = threading.Barrier(2)
-    errors: list[BaseException] = []
-
-    def states(prefix: str):
-        # Both publishers must reach the rendezvous or the barrier breaks and
-        # the failure surfaces as a BrokenBarrierError rather than as anything
-        # about atomicity. Five seconds was a hand-picked figure for two
-        # threads merely starting up; under a parallel run that is thread
-        # scheduling, which is what the canonical ceiling exists to bound.
-        barrier.wait(timeout=PROCESS_TIMEOUT_SECONDS)
-        for ordinal in range(200):
-            yield FileState.indexed(
-                f"src/{prefix}-{ordinal:04d}.py",
-                ContentKind.CODE,
-                _digest(f"{prefix}-{ordinal}"),
-            )
-
-    def publish(prefix: str) -> None:
-        try:
-            publish_meta_from_file_states(
-                meta_path,
-                states(prefix),
-                generation_id=f"generation-{prefix}",
-                membership_epoch="membership-v1",
-                content_epoch="content-v1",
-                published_points_count=1,
-            )
-        except BaseException as exc:
-            errors.append(exc)
-
-    threads = [
-        threading.Thread(target=publish, args=(prefix,)) for prefix in ("left", "right")
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=PROCESS_TIMEOUT_SECONDS)
-
-    assert not errors
-    # Named rather than bare: this fired on CI as an unadorned "assert False",
-    # which says nothing about whether a publisher was starved or the write
-    # itself is wrong - and those two want opposite investigations. The
-    # atomicity assertions below are only meaningful once both publishers have
-    # finished, so this is the precondition for them, not a result.
-    # Mutation: stalled one publisher past the join. Observed
-    # "publisher thread(s) still running after 10s: ['Thread-2 (publish)']".
-    # Restored, and it passes. Note the ceiling is unchanged at 10s, so this
-    # names the next occurrence rather than preventing it.
-    still_running = [thread.name for thread in threads if thread.is_alive()]
-    assert not still_running, (
-        f"publisher thread(s) still running after "
-        f"{PROCESS_TIMEOUT_SECONDS:.0f}s: {still_running}"
-    )
-    raw = read_meta_raw(meta_path)
-    winner = raw[GENERATION_ID_KEY].removeprefix("generation-")
-    assert winner in {"left", "right"}
-    published = load_meta(meta_path)
-    assert len(published) == 200
-    assert all(path.startswith(f"src/{winner}-") for path in published)
-    assert not list(tmp_path.glob(f".{meta_path.name}.*.tmp"))
 
 
 def test_reopening_a_drifted_path_supersedes_only_its_stale_upserts(

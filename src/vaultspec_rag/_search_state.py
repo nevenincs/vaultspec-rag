@@ -25,7 +25,7 @@ from ._source_types import PublicSourceType, parse_source_type
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from ._index_breadth import BreadthShortfall, FileBreadthShortfall
+    from ._index_breadth import BreadthShortfall
     from ._index_integrity import IndexIntegrity
 
 __all__ = [
@@ -82,10 +82,8 @@ def result_collapse(paths: Sequence[str]) -> dict[str, object] | None:
 class BreadthFindings:
     """Completeness conclusions one search settled, attached to its block.
 
-    ``shortfall`` and ``file_shortfall`` are present only over a demonstrated
-    deficit and carry the figures, so a renderer names them without comparing
-    counts for itself. Absence means complete or unknowable; a consumer must
-    not read it as either one alone.
+    ``shortfall`` is present only over a demonstrated deficit and carries the
+    figures, so a renderer names it without comparing counts for itself.
 
     ``integrity`` follows the opposite discipline: emitted whenever the
     serve-time check ran, ``consistent`` included, so an absent block means
@@ -94,7 +92,6 @@ class BreadthFindings:
     """
 
     shortfall: BreadthShortfall | None = None
-    file_shortfall: FileBreadthShortfall | None = None
     integrity: IndexIntegrity | None = None
     #: Id of the automatic repair job in flight for a shrunken verdict, set by
     #: the service path that queued it. Rendered as an additive key inside the
@@ -119,7 +116,7 @@ def search_index_state(
     :class:`BreadthFindings` for the presence discipline of each field.
     """
     requested_target = str(requested_root)
-    source = parse_source_type(search_type, allow_aliases=True).value
+    source = parse_source_type(search_type).value
     count = int(indexed_count)
     state: dict[str, object] = {
         "source": source,
@@ -132,10 +129,6 @@ def search_index_state(
     found = findings or BreadthFindings()
     if found.shortfall is not None:
         state["shortfall"] = found.shortfall.as_index_state_block()
-    # Independent of the point comparison: a republished fragment stamps a
-    # point count that agrees with itself, so only the file figures disagree.
-    if found.file_shortfall is not None:
-        state["file_shortfall"] = found.file_shortfall.as_index_state_block()
     if found.collapse is not None:
         state["result_collapse"] = dict(found.collapse)
     if found.integrity is not None:

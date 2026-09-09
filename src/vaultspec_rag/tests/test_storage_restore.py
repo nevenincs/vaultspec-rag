@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..storage_restore import RestoreRequest, read_archive, restore_archive
+from .._publication_state import acquire_publication_snapshot
+from .._source_types import PublicSourceType
+from ..storage_restore import (
+    RestoreRequest,
+    _restore_publication_proofs,
+    read_archive,
+    restore_archive,
+)
 from ._storage_archive import ARCHIVE_COLLECTION, ARCHIVE_PREFIX, write_archive
 
 if TYPE_CHECKING:
@@ -101,6 +108,22 @@ def test_read_archive_carries_the_archived_schema_generation(tmp_path: Path) -> 
     archive = write_archive(tmp_path / "old-archive", schema_version=1)
 
     assert read_archive(archive).schema_version == 1
+
+
+def test_restore_rekeys_and_publishes_archived_proof(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+) -> None:
+    archive = read_archive(write_archive(tmp_path / "archive"))
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    _restore_publication_proofs(destination, archive.publication_proofs)
+
+    snapshot = acquire_publication_snapshot(destination, PublicSourceType.VAULT)
+    assert snapshot.proof.aggregate.indexed_identities == 1
+    assert snapshot.proof.aggregate.retained_points == 7
+    assert snapshot.proof.compatibility_key.root_identity == str(destination.resolve())
 
 
 class TestRestoreRefusesRatherThanGuesses:

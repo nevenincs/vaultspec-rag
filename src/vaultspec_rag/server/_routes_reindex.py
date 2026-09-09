@@ -298,7 +298,6 @@ async def reindex_route(request: Request) -> JSONResponse:
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.VAULT.value),
-                allow_aliases=False,
             )
         except SourceTypeParseError as exc:
             return job_error(
@@ -385,7 +384,7 @@ async def audit_route(request: Request) -> JSONResponse:
         payload = await job_payload(request, required=True)
         raw_source = job_string(payload, "type")
         try:
-            source = parse_source_type(raw_source, allow_aliases=False)
+            source = parse_source_type(raw_source)
         except SourceTypeParseError as exc:
             raise InvalidJobRequestError("invalid_audit_request", str(exc)) from exc
         raw_authority = job_string(payload, "authority")
@@ -440,7 +439,6 @@ async def clean_route(request: Request) -> JSONResponse:
         try:
             source_type = parse_source_type(
                 payload.get("type", PublicSourceType.COMBINED.value),
-                allow_aliases=False,
             )
         except SourceTypeParseError as exc:
             return JSONResponse(exc.as_error_envelope(), status_code=400)

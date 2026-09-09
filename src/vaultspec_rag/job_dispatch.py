@@ -167,11 +167,13 @@ def _run_vault_attempt(
                         result = runtime.vault_indexer.full_index(
                             clean=not resumed,
                             reporter=reporter,
+                            authority=dispatch.authority,
                             run_control=context.control,
                         )
                     else:
                         result = runtime.vault_indexer.incremental_index(
                             reporter=reporter,
+                            authority=dispatch.authority,
                             run_control=context.control,
                         )
                 finally:
@@ -278,12 +280,14 @@ def _run_indexing_attempt(
                                 clean=not resumed,
                                 reporter=reporter,
                                 preflight=code_preflight,
+                                authority=dispatch.authority,
                                 run_control=context.control,
                             )
                             if clean
                             else code_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=code_preflight,
+                                authority=dispatch.authority,
                                 run_control=context.control,
                             )
                         )
@@ -294,12 +298,14 @@ def _run_indexing_attempt(
                                 clean=not resumed,
                                 reporter=reporter,
                                 preflight=document_preflight,
+                                authority=dispatch.authority,
                                 run_control=context.control,
                             )
                             if clean
                             else document_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=document_preflight,
+                                authority=dispatch.authority,
                                 run_control=context.control,
                             )
                         )

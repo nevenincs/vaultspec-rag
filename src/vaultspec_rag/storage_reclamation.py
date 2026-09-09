@@ -10,10 +10,17 @@ from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
+from ._publication_state import (
+    PublicationSnapshot,
+    acquire_publication_snapshot,
+    read_all_publication_evidence,
+)
 from ._rmtree import remove_tree
+from ._source_types import PublicSourceType
 from ._timestamps import parse_iso_timestamp
 from .storage_manifest import (
     SnapshotCollection,
+    SnapshotPublicationProof,
     StorageSnapshotManifest,
     load_manifest,
     snapshot_manifest_path,
@@ -37,6 +44,12 @@ if TYPE_CHECKING:
     from .storage_survey import NamespaceSurvey
 
 logger = logging.getLogger(__name__)
+
+_PUBLICATION_SOURCE_BY_COLLECTION = {
+    store_schema.VAULT_COLLECTION: PublicSourceType.VAULT,
+    store_schema.CODE_COLLECTION: PublicSourceType.CODE,
+    store_schema.DOCUMENT_COLLECTION: PublicSourceType.DOCUMENT,
+}
 
 
 @dataclass(frozen=True)
@@ -381,6 +394,45 @@ def _apply_cycle_cap(
     return _redecide(decision, "deferred", "over_cycle_cap")
 
 
+def _export_publication_proofs(
+    root: Path,
+    prefix: str,
+    collections: list[str],
+) -> tuple[tuple[SnapshotPublicationProof, ...], tuple[PublicationSnapshot, ...]]:
+    """Read and fence every proof required to make an archive restorable."""
+    exports: list[SnapshotPublicationProof] = []
+    snapshots: list[PublicationSnapshot] = []
+    for collection in collections:
+        logical_collection = collection.removeprefix(prefix)
+        try:
+            source = _PUBLICATION_SOURCE_BY_COLLECTION[logical_collection]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"cannot archive collection without a publication domain: {collection}"
+            ) from exc
+        snapshot = acquire_publication_snapshot(root, source)
+        evidence = read_all_publication_evidence(snapshot)
+        generation = snapshot.ledger.generation(snapshot.proof.generation_id)
+        exports.append(
+            SnapshotPublicationProof(
+                source=source.value,
+                signature=cast(
+                    "dict[str, object]", json.loads(generation.signature.canonical_json)
+                ),
+                evidence=tuple(
+                    {
+                        "rel_path": item.rel_path,
+                        "content_identity": item.content_identity,
+                        "point_ids": list(item.point_ids),
+                    }
+                    for item in evidence.values()
+                ),
+            )
+        )
+        snapshots.append(snapshot)
+    return tuple(exports), tuple(snapshots)
+
+
 def archive_prefix(
     client: QdrantClient,
     prefix: str,
@@ -419,7 +471,12 @@ def archive_prefix(
     # absent: an archive of an unstamped collection records no provenance
     # rather than the current process's, which never touched those vectors.
     entry = load_manifest().get(prefix)
-    identities = {} if entry is None else entry.collection_identity
+    if entry is None:
+        raise RuntimeError(f"cannot archive unattributed namespace: {prefix}")
+    publication_proofs, proof_snapshots = _export_publication_proofs(
+        Path(entry.root), prefix, targets
+    )
+    identities = entry.collection_identity
     for name in targets:
         points = int(client.count(collection_name=name).count)
         description = client.create_snapshot(collection_name=name, wait=True)
@@ -439,29 +496,27 @@ def archive_prefix(
                 identity=identities.get(name),
             )
         )
-    metadata_files: list[str] = []
-    if entry is not None:
-        from shutil import copy2
-
-        from .indexer._document_meta import document_metadata_path
-
-        document_meta = document_metadata_path(Path(entry.root))
-        if document_meta.is_file():
-            metadata_dest = dest_dir / document_meta.name
-            copy2(document_meta, metadata_dest)
-            metadata_files.append(metadata_dest.name)
+    point_count_by_collection = {
+        item.name.removeprefix(prefix): item.points for item in collection_artifacts
+    }
+    for snapshot in proof_snapshots:
+        proof = snapshot.proof
+        if (
+            point_count_by_collection[proof.compatibility_key.collection_identity]
+            != proof.aggregate.retained_points
+        ):
+            raise RuntimeError(
+                "cannot archive a collection whose live count disagrees with its proof"
+            )
+        snapshot.validate()
     manifest_path = write_snapshot_manifest(
         dest_dir,
         StorageSnapshotManifest(
             prefix=prefix,
-            root=entry.root if entry is not None else None,
-            storage_schema_version=(
-                entry.storage_schema_version
-                if entry is not None
-                else store_schema.STORAGE_SCHEMA_VERSION
-            ),
+            root=entry.root,
+            storage_schema_version=entry.storage_schema_version,
             collections=tuple(sorted(collection_artifacts, key=lambda item: item.name)),
-            metadata_files=tuple(sorted(metadata_files)),
+            publication_proofs=publication_proofs,
         ),
     )
     _verify_completed_archive(client, dest_dir, manifest_path)

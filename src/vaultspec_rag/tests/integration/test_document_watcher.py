@@ -9,6 +9,7 @@ import pytest
 from watchfiles import Change
 
 from ... import store_schema
+from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...indexer._content_policy import (
     AdmissionDisposition,
@@ -82,7 +83,7 @@ def _record_prior_code_owner(root: Path, rel_path: str) -> None:
     signature = RunSignature(
         root_identity=str(root.resolve()),
         collection_identity=store_schema.CODE_COLLECTION,
-        source_type=ContentKind.CODE,
+        source_type=PublicSourceType.CODE,
         operation=RunOperation.FULL,
         clean=False,
         model_identity="watcher-prior-owner-test",
@@ -121,7 +122,7 @@ def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
         RunSignature(
             root_identity=str(root.resolve()),
             collection_identity=store_schema.CODE_COLLECTION,
-            source_type=ContentKind.CODE,
+            source_type=PublicSourceType.CODE,
             operation=RunOperation.FULL,
             clean=True,
             model_identity="watcher-incomplete-clean-test",
