@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#index-completeness-guard'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:c45a5c0d0e2bfd592ea59f4165a0b3058f9d59c6cb0ff32282eb6a4892223a00'
+body_hash: 'sha256:cde893c1fe79f56e63072d330f9bf39230fc8272f416519ecb1b3f53a13c04b7'
 related:
   - '[[2026-07-25-index-completeness-guard-P01-S01]]'
   - '[[2026-07-25-index-completeness-guard-P01-S02]]'
@@ -29,7 +29,7 @@ Auto-generated index of all documents tagged with `#index-completeness-guard`.
 
 ### adr
 
-- `2026-07-25-index-completeness-guard-adr` - `index-completeness-guard` adr: `reconcile published evidence against stored breadth and refuse silent partial answers` | (**status:** `accepted`)
+- `2026-07-25-index-completeness-guard-adr` - `index-completeness-guard` adr: `reconcile published evidence against stored breadth and refuse silent partial answers` | (**status:** `superseded`)
 
 ### audit
 

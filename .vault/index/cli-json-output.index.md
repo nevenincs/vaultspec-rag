@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#cli-json-output'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:406515ef5b19b21020f6dc83dfe02fd55fbae1f5d2797105796215eac75e32f2'
 related:
   - '[[2026-05-30-cli-json-output-adr]]'

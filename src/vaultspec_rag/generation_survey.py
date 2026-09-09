@@ -217,6 +217,7 @@ def advance_generation_stamps(
     unreferenced: Iterable[str],
     held: Iterable[str],
     now_iso: str,
+    live: Iterable[str],
 ) -> dict[str, str]:
     """Advance the per-collection grace clocks from one observation.
 
@@ -225,8 +226,18 @@ def advance_generation_stamps(
     reset it. Anything in ``held`` - served again, a live reader, an unreadable
     pointer - has its stamp cleared, so a contrary observation restarts the
     window from zero rather than letting it accumulate across a gap.
+
+    A stamp naming a collection absent from ``live`` is dropped outright,
+    ahead of the ``held``/``unreferenced`` bookkeeping above. Its root can
+    disappear entirely - a deleted worktree, a namespace already swept by
+    another pass - so the collection never appears in either set again, and
+    the stamp would otherwise persist forever as debt nothing can act on.
+    ``live`` must be a confirmed listing: a caller unable to confirm one must
+    not narrow it to a guess, since that would drop a stamp for a collection
+    that merely could not be listed rather than one proven gone.
     """
-    advanced = dict(stamps)
+    live_names = frozenset(live)
+    advanced = {name: seen for name, seen in stamps.items() if name in live_names}
     for collection in held:
         advanced.pop(collection, None)
     for collection in unreferenced:

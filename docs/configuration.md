@@ -70,7 +70,7 @@ These variables choose between the supervised Qdrant server (the default) and th
 | `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                | -                          |
 | `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                       | -                          |
 | `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                  | -                          |
-| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds the supervisor waits for the managed server to accept requests | -                          |
+| `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
 
 ### Project and data locations
 
@@ -180,7 +180,7 @@ These bound the segment and queue geometry of one index run, its memory use, and
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`                 | Chunks buffered in the producer-to-consumer index queue                                                | -        |
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728` (128 MiB) | Byte cap on the buffered index queue, applying backpressure                                            | -        |
 | `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`                 | Seconds without index progress before the run is failed                                                | -        |
-| `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `1` (true)            | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
+| `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `0` (false)           | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
 | `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`             | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                                            | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`            | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device                                   | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB)                             | -        |
@@ -242,16 +242,19 @@ A failed auto-reindex retries with exponential backoff and a circuit breaker tha
 
 These variables control the daemon's scheduled storage-maintenance cycle. See the [storage and maintenance guide](storage-maintenance.md) for how a cycle runs.
 
+**Zero means opposite things on the two kinds of window here, so read the names carefully.** The three `GRACE_HOURS*` windows are how long a namespace has to stay observably dead before it may be destroyed; they are rejected below `1` hour, because at zero the cycle that first sees a namespace would also be allowed to drop it. `EPHEMERAL_IDLE_HOURS` is a tier's own on/off switch, and zero turns that tier off. So `..._EPHEMERAL_IDLE_HOURS=0` reclaims nothing, while a zero on `..._GRACE_HOURS_EPHEMERAL` would have reclaimed everything on sight - which is why only the idle knob accepts it.
+
 | Variable                                                 | Type    | Default    | Controls                                                                           | CLI flag |
 | -------------------------------------------------------- | ------- | ---------- | ---------------------------------------------------------------------------------- | -------- |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                        | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`       | float   | `60`       | Minutes between maintenance cycles                                                 | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed                     | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed (minimum `1`)       | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed (minimum `1`) | - |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds (minimum `1`; NOT the idle knob below) | - |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `64`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables)         | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables this tier) | -      |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                  | -        |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE`          | integer | `4`        | Maximum collections reconciled per cycle                                           | -        |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS`         | float   | `300`      | Per-collection wait for the merge to settle before reporting                       | -        |

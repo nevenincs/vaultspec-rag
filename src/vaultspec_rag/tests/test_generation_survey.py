@@ -451,6 +451,7 @@ class TestGenerationStampAdvance:
             unreferenced=["c_gold"],
             held=[],
             now_iso="2026-07-26T12:00:00+00:00",
+            live=["c_gold"],
         )
 
         assert advanced["c_gold"] == "2026-07-01T00:00:00+00:00"
@@ -469,6 +470,35 @@ class TestGenerationStampAdvance:
             unreferenced=[],
             held=["c_gold"],
             now_iso="2026-07-26T12:00:00+00:00",
+            live=["c_gold"],
         )
 
         assert "c_gold" not in advanced
+
+    def test_a_stamp_for_a_vanished_collection_is_dropped_but_a_live_one_survives(
+        self,
+    ) -> None:
+        """A collection gone from storage keeps no debt; a live one keeps its clock.
+
+        Proven able to fail: dropping the live-membership filter lets
+        ``c_vanished`` persist forever once its root disappears entirely,
+        since a generation whose root is gone is never named by ``held`` or
+        ``unreferenced`` again; and asserting only the drop would pass an
+        implementation that discarded every stamp regardless of membership,
+        so both outcomes are asserted from the same call.
+        """
+        from ..generation_survey import advance_generation_stamps
+
+        advanced = advance_generation_stamps(
+            {
+                "c_vanished": "2026-07-01T00:00:00+00:00",
+                "c_gold": "2026-07-01T00:00:00+00:00",
+            },
+            unreferenced=[],
+            held=[],
+            now_iso="2026-07-26T12:00:00+00:00",
+            live=["c_gold"],
+        )
+
+        assert "c_vanished" not in advanced
+        assert advanced["c_gold"] == "2026-07-01T00:00:00+00:00"

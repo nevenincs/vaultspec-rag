@@ -24,10 +24,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from . import store_schema
 from ._store_models import ROOT_COLLECTION_PREFIX_RE
 from .storage_manifest import ManifestEntry, classify_root
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = [
     "NamespaceSurvey",
@@ -91,6 +95,14 @@ class NamespaceSurvey:
         status: ``"live"``, ``"orphaned"``, or ``"unknown"``.
         collections: The stored collection names sharing this prefix.
         points: Total point count across the namespace's collections.
+        points_verified: Whether every collection under this prefix was
+            counted. ``False`` means at least one count failed and ``points``
+            is a partial floor rather than the namespace total, so nothing
+            may read it as one - least of all the tier selector, where an
+            uncounted namespace read as empty would be dropped without an
+            archive. A record built without a counting pass is stating the
+            total it was handed, which is why the default is ``True``; only
+            a counting pass that failed sets it ``False``.
         footprint_bytes: Total on-disk footprint, when known.
         models: The dense model stamped on each collection of this namespace,
             keyed by collection name. Absent keys are collections created
@@ -103,6 +115,7 @@ class NamespaceSurvey:
     status: str
     collections: list[str] = field(default_factory=list)
     points: int = 0
+    points_verified: bool = True
     vault_points: int = 0
     code_points: int = 0
     document_points: int = 0
@@ -113,7 +126,9 @@ class NamespaceSurvey:
     models: dict[str, str] = field(default_factory=dict)
 
 
-def _kind_points(names: list[str], counts: dict[str, int], suffix: str) -> int:
+def _kind_points(
+    names: list[str], counts: Mapping[str, int | None], suffix: str
+) -> int:
     """Return the bounded integer count for one declared collection kind.
 
     A kind's collection is either the declared name or a generation of it,
@@ -122,10 +137,15 @@ def _kind_points(names: list[str], counts: dict[str, int], suffix: str) -> int:
     every root currently served by a generation - a healthy index reading as
     empty on the one surface an operator checks.
 
+    A collection that could not be counted (``None``) contributes nothing
+    here, so a kind breakdown is a floor whenever the namespace reports
+    ``points_verified`` false. This is a reporting figure, never a tier input.
+
     The namespace total is unaffected: it sums every collection under the
     prefix without a kind filter, so reclamation tiering never saw this.
     """
-    return sum(counts.get(name, 0) for name in names if _belongs_to_kind(name, suffix))
+    matched = [counts.get(name, 0) for name in names if _belongs_to_kind(name, suffix)]
+    return sum(count for count in matched if count is not None)
 
 
 def _belongs_to_kind(collection_name: str, suffix: str) -> bool:
@@ -151,7 +171,7 @@ def classify_namespaces(
     collection_names: list[str],
     manifest: dict[str, ManifestEntry],
     *,
-    point_counts: dict[str, int] | None = None,
+    point_counts: Mapping[str, int | None] | None = None,
     footprints: dict[str, int] | None = None,
 ) -> list[NamespaceSurvey]:
     """Group collections by prefix and classify each namespace.
@@ -160,7 +180,13 @@ def classify_namespaces(
         collection_names: All stored collection names to survey.
         manifest: Prefix-to-entry mapping from
             :func:`storage_manifest.load_manifest`.
-        point_counts: Optional per-collection-name point counts.
+        point_counts: Optional per-collection-name point counts. A ``None``
+            value is an ATTEMPTED count that failed, and is carried through
+            as ``points_verified=False`` on the namespace holding it rather
+            than as a zero: zero is a claim, and a data-bearing namespace
+            claimed empty is routed to the tier that drops without archiving.
+            An ABSENT key is a count nobody asked for and stays zero, which
+            is what every caller passing no counts at all is saying.
         footprints: Optional per-collection-name byte footprints.
 
     Returns:
@@ -175,6 +201,7 @@ def classify_namespaces(
 
     surveys: list[NamespaceSurvey] = []
     for prefix, names in grouped.items():
+        measured = [counts.get(name, 0) for name in names]
         entry = manifest.get(prefix)
         if entry is None:
             root, status = None, "unknown"
@@ -193,7 +220,8 @@ def classify_namespaces(
                 status=status,
                 collections=sorted(names),
                 models=models,
-                points=sum(counts.get(n, 0) for n in names),
+                points=sum(count for count in measured if count is not None),
+                points_verified=all(count is not None for count in measured),
                 vault_points=_kind_points(
                     names,
                     counts,

@@ -28,7 +28,7 @@ from .storage_survey_ops import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
 
     from qdrant_client import QdrantClient
@@ -37,6 +37,10 @@ if TYPE_CHECKING:
     from .storage_survey import NamespaceSurvey
 
 logger = logging.getLogger(__name__)
+
+#: The extension qdrant gives every snapshot it writes, and so the one an
+#: artifact in an archive directory carries.
+_SNAPSHOT_SUFFIX = ".snapshot"
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,13 @@ class ReclaimPolicy:
         grace_hours_data: Continuous-orphan hours before a POINT-BEARING
             namespace may be archived and reclaimed. Deliberately longer:
             a namespace with points is semantic data.
+        grace_hours_ephemeral: Continuous-orphan hours before a TEMP-ROOTED
+            namespace may be reclaimed, replacing both windows above for
+            that class whatever it holds. Deliberately shorter: the root was
+            always throwaway AND is provably gone, which is stronger
+            evidence of death than a point count. Point count still selects
+            the TIER within this window, so a point-bearing one is archived
+            before it is dropped; only the waiting period changes.
         max_per_cycle: Hard cap on reclaims per cycle; the remainder waits.
         archive_retention_days: Age past which archived snapshots are
             deleted by the retention sweep.
@@ -70,6 +81,7 @@ class ReclaimPolicy:
 
     grace_hours: float = 24.0
     grace_hours_data: float = 168.0
+    grace_hours_ephemeral: float = 24.0
     max_per_cycle: int = 16
     archive_retention_days: float = 30.0
     archive_max_bytes: int = 20 * 1024**3
@@ -93,6 +105,12 @@ class ReclaimDecision:
         reason: Detail for pending/deferred/failed outcomes, else ``None``.
         points: Point count across the prefix's collections.
         footprint_bytes: On-disk footprint of the prefix.
+        removed_collections: The collections a ``failed`` outcome destroyed
+            before it failed, and empty for every other outcome. A drop is a
+            per-collection loop, so a failure part-way through has already
+            destroyed part of the namespace; the count of them travels in the
+            reason, but an operator who has to intervene needs to know WHICH
+            half is gone, and a count cannot say.
     """
 
     prefix: str
@@ -101,6 +119,7 @@ class ReclaimDecision:
     reason: str | None = None
     points: int = 0
     footprint_bytes: int = 0
+    removed_collections: tuple[str, ...] = ()
 
 
 def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
@@ -110,20 +129,34 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     least one collection could not be counted, and is never treated as a
     number: comparing a total that silently omits a collection would read a
     partial sum as agreement with the survey.
+
+    A slow server is one of the ways a collection cannot be counted, and the
+    client does not signal that with a builtin, so the whole transport class is
+    named here: a guard naming only the builtin types let a timeout past this
+    function and unwound the whole cycle instead of leaving one namespace
+    unverifiable.
+
+    Listing the collections is the other half of counting them, and it reaches
+    the same server over the same transport. Guarding only the per-collection
+    count left the enumeration able to fail out of a function whose whole
+    contract is that it never raises - a namespace cannot be counted when the
+    set of collections to count could not be read either.
     """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     total = 0
-    for collection in client.get_collections().collections:
-        if not collection.name.startswith(prefix):
-            continue
-        try:
+    try:
+        for collection in client.get_collections().collections:
+            if not collection.name.startswith(prefix):
+                continue
             total += int(client.count(collection_name=collection.name).count)
-        except (OSError, RuntimeError):
-            return None
+    except TRANSPORT_FAILURES:
+        return None
     return total
 
 
-def _active_index_prefixes() -> frozenset[str]:
-    """Return the collection prefixes an active index job is writing to.
+def _active_index_prefixes() -> frozenset[str] | None:
+    """Return the prefixes an active index job is writing to, or ``None``.
 
     The liveness signal automated destruction consults. Read-only: it reads
     the job registry's nonterminal set and maps each job's project root
@@ -137,19 +170,30 @@ def _active_index_prefixes() -> frozenset[str]:
     be attributed to a root is skipped - it cannot be matched to a prefix, and
     an unattributable job is not evidence about any particular namespace.
 
-    A registry that cannot be read yields the empty set rather than raising:
-    this runs inside a background cycle, and the pre-drop re-count and the
-    persisted grace windows both remain in force behind it.
+    ``None`` means the registry could not be read, and is never a set: the
+    empty set is a positive finding - nothing is busy - and it is the finding
+    that authorises destruction. Returning it for a read that failed turned an
+    absence of evidence into a verified negative, which is the inversion the
+    re-count beside this one refuses to make with a point total. Nor does a
+    later gate catch it: a queued or paused run has written nothing yet, so
+    the re-count agrees with the survey and the drop proceeds.
+
+    It still never raises. This runs inside a background cycle, and the answer
+    a caller cannot get is a deferral rather than an unwound cycle - which is
+    why the guard names the whole transport class rather than the builtins
+    alone, the client's own wrapper being a plain ``Exception`` they do not
+    cover.
     """
     from . import jobs
+    from ._qdrant_transport import TRANSPORT_FAILURES
     from ._store_models import root_collection_prefix
     from .job_models import JobOperation
 
     try:
         active = jobs.get_job_manager().active()
-    except (OSError, RuntimeError):
-        logger.exception("active-job probe failed; treating no namespace as busy")
-        return frozenset()
+    except TRANSPORT_FAILURES:
+        logger.exception("active-job probe failed; deferring every namespace")
+        return None
     prefixes: set[str] = set()
     for snapshot in active:
         if snapshot.spec.operation is not JobOperation.INDEX:
@@ -162,6 +206,38 @@ def _active_index_prefixes() -> frozenset[str]:
         except (OSError, ValueError):
             logger.debug("unattributable active job root %s", root, exc_info=True)
     return frozenset(prefixes)
+
+
+def _survey_tier(survey: NamespaceSurvey) -> str:
+    """Return the destruction tier a namespace's point count selects.
+
+    Point count picks the tier wherever destruction is decided, and this is
+    the one place that rule is written down. An unverified count picks the
+    protective tier: the empty tier drops without an archive, so reading a
+    namespace nobody could finish counting as empty is the single mis-tiering
+    that destroys data outright instead of deferring it.
+    """
+    if not survey.points_verified:
+        return "data"
+    return "empty" if survey.points == 0 else "data"
+
+
+def _unverified_points_pending(survey: NamespaceSurvey) -> ReclaimDecision:
+    """Hold a namespace whose survey could not finish counting it.
+
+    Every question left between here and a drop is asked of the point total:
+    which tier applies, and whether the count moved between the survey and
+    the act. A partial total answers neither, and a namespace waiting a cycle
+    for a total that is whole has lost nothing but time.
+    """
+    return ReclaimDecision(
+        survey.prefix,
+        "pending",
+        _survey_tier(survey),
+        reason="survey_points_unverifiable",
+        points=survey.points,
+        footprint_bytes=survey.footprint_bytes,
+    )
 
 
 def _evaluate_ephemeral(
@@ -183,7 +259,8 @@ def _evaluate_ephemeral(
     (``update_activity_stamps``), because an indexer that writes without
     stamping is exactly the writer whose data this tier would destroy. A
     missing or unparsable stamp is ``pending`` (never destroy on absent
-    evidence). ``unknown``/``unverifiable`` namespaces never reach this
+    evidence), and so is a survey that could not finish counting the
+    namespace. ``unknown``/``unverifiable`` namespaces never reach this
     function (they are not ``live``).
     """
     from .storage_survey import is_temp_rooted
@@ -193,10 +270,13 @@ def _evaluate_ephemeral(
         return decisions
     candidates = sorted(
         (s for s in surveys if s.status == "live" and is_temp_rooted(s.root)),
-        key=lambda s: (s.points > 0, s.prefix),
+        key=lambda s: (_survey_tier(s) == "data", s.prefix),
     )
     for survey in candidates:
-        tier = "empty" if survey.points == 0 else "data"
+        if not survey.points_verified:
+            decisions.append(_unverified_points_pending(survey))
+            continue
+        tier = _survey_tier(survey)
         stamped = parse_iso_timestamp(
             last_indexed.get(survey.prefix, ""), field="last_indexed"
         )
@@ -253,12 +333,15 @@ def evaluate_reclaim(
 
     Safety gates stacked per prefix: only ``orphaned`` survey entries are
     considered (``unknown``/``unverifiable``/``live`` never appear in the
-    output); a missing or unparsable grace stamp means the window has just
-    started (``pending``); the window length is tiered by whether the
-    namespace holds points; and eligible prefixes beyond
-    ``policy.max_per_cycle`` are ``deferred`` to the next cycle. Empty
-    namespaces are ordered before point-bearing ones so the riskless tier
-    always reclaims first under a tight cap.
+    output); a namespace the survey could not finish counting is ``pending``
+    whatever its partial total says, because both the window and the tier are
+    read off that total; a missing or unparsable grace stamp means the window
+    has just started (``pending``); the window length is the ephemeral one when the
+    root was temp-rooted and otherwise tiered by whether the namespace holds
+    points, while the tier itself is always the point count; and eligible
+    prefixes beyond ``policy.max_per_cycle`` are ``deferred`` to the next
+    cycle. Empty namespaces are ordered before point-bearing ones so the
+    riskless tier always reclaims first under a tight cap.
 
     Reachability is the only classification this function reads, and a
     collection's conformance verdict is deliberately not an input to it. The
@@ -291,7 +374,7 @@ def evaluate_reclaim(
     eligible: list[ReclaimDecision] = []
     orphaned = sorted(
         (s for s in surveys if s.status == "orphaned"),
-        key=lambda s: (s.points > 0, s.prefix),
+        key=lambda s: (_survey_tier(s) == "data", s.prefix),
     )
     for survey in orphaned:
         decision = _decide_orphan(survey, stamps, now=now, policy=policy)
@@ -313,9 +396,38 @@ def _decide_orphan(
     now: datetime,
     policy: ReclaimPolicy,
 ) -> ReclaimDecision:
-    """Decide one orphaned namespace against its tiered grace window."""
-    tier = "empty" if survey.points == 0 else "data"
-    window_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    """Decide one orphaned namespace against its tiered grace window.
+
+    Two inputs choose the window and they answer different questions. Point
+    count picks the TIER - empty drops, point-bearing archives first - and
+    picks it here unchanged. Ephemerality picks the WINDOW: a root created
+    under the OS temp directory and now provably absent was a throwaway that
+    was torn down, which is stronger evidence of death than either signal
+    alone and stronger than the point count the tiered windows key on.
+    Reading the point count alone gave a sandbox that cleaned up after
+    itself a longer window than one that leaked its directory - the same
+    temp-rootedness the live idle tier already trusts, discarded at the
+    moment it became best-evidenced.
+
+    The tier survives the shorter window rather than being folded into it,
+    because what the tier governs downstream - the archive that must
+    complete before any point-bearing drop - does not depend on how long the
+    namespace waited.
+
+    Neither input is read at all until the count is whole. A partial total
+    would pick the window and the tier from a number the survey did not
+    finish taking, and the tier it picks on a silent zero is the one that
+    drops without archiving.
+    """
+    from .storage_survey import is_temp_rooted
+
+    if not survey.points_verified:
+        return _unverified_points_pending(survey)
+    tier = _survey_tier(survey)
+    tiered_hours = policy.grace_hours if tier == "empty" else policy.grace_hours_data
+    window_hours = (
+        policy.grace_hours_ephemeral if is_temp_rooted(survey.root) else tiered_hours
+    )
     first_seen = parse_iso_timestamp(stamps.get(survey.prefix, ""), field="first_seen")
     if first_seen is None:
         return ReclaimDecision(
@@ -345,12 +457,23 @@ def _decide_orphan(
     )
 
 
-def _redecide(decision: ReclaimDecision, action: str, reason: str) -> ReclaimDecision:
+def _redecide(
+    decision: ReclaimDecision,
+    action: str,
+    reason: str,
+    *,
+    removed_collections: tuple[str, ...] = (),
+) -> ReclaimDecision:
     """Restate one namespace's decision, preserving its measured facts.
 
     Every gate that turns a reclaim into a ``deferred`` or ``failed`` outcome
     reports the same prefix, tier, point count and footprint it was handed;
     only the verdict and its reason change.
+
+    ``removed_collections`` is the one fact a gate can ADD rather than
+    preserve, and only the drop can add it: every other gate refuses before
+    anything is destroyed, so its outcome names nothing because nothing is
+    gone.
     """
     return ReclaimDecision(
         decision.prefix,
@@ -359,6 +482,7 @@ def _redecide(decision: ReclaimDecision, action: str, reason: str) -> ReclaimDec
         reason=reason,
         points=decision.points,
         footprint_bytes=decision.footprint_bytes,
+        removed_collections=removed_collections,
     )
 
 
@@ -450,6 +574,9 @@ def archive_prefix(
             metadata_dest = dest_dir / document_meta.name
             copy2(document_meta, metadata_dest)
             metadata_files.append(metadata_dest.name)
+    carried, carried_metadata = _carry_prior_archive_records(
+        dest_dir, fresh=collection_artifacts, fresh_metadata=metadata_files
+    )
     manifest_path = write_snapshot_manifest(
         dest_dir,
         StorageSnapshotManifest(
@@ -460,24 +587,141 @@ def archive_prefix(
                 if entry is not None
                 else store_schema.STORAGE_SCHEMA_VERSION
             ),
-            collections=tuple(sorted(collection_artifacts, key=lambda item: item.name)),
-            metadata_files=tuple(sorted(metadata_files)),
+            collections=tuple(
+                sorted([*collection_artifacts, *carried], key=lambda item: item.name)
+            ),
+            metadata_files=tuple(sorted({*metadata_files, *carried_metadata})),
         ),
     )
-    _verify_completed_archive(client, dest_dir, manifest_path)
+    _drop_unnamed_snapshots(dest_dir, manifest_path)
+    _verify_completed_archive(
+        client,
+        dest_dir,
+        manifest_path,
+        live_names=frozenset(item.name for item in collection_artifacts),
+    )
     archived.append(manifest_path)
     return archived
+
+
+def _carry_prior_archive_records(
+    dest_dir: Path,
+    *,
+    fresh: Sequence[SnapshotCollection],
+    fresh_metadata: Sequence[str],
+) -> tuple[tuple[SnapshotCollection, ...], tuple[str, ...]]:
+    """Return the records an earlier attempt left that this one must keep naming.
+
+    The archive destination is fixed per namespace and the manifest is
+    published in place, so a second attempt that wrote only its own records
+    would unname the first attempt's. That matters because the retry after a
+    partial drop is the designed path: the survey behind it sees only what
+    survived, so the collections the first attempt destroyed would be left
+    sitting in the archive under no manifest at all - present on disk, named
+    by nothing, and invisible to a restore that is driven entirely by the
+    manifest. The operator recovers half the namespace and is told it is
+    whole.
+
+    Three rules, each a different way a carried record could lie:
+
+    - A name this attempt archived wins outright. The collection is alive and
+      has just been re-snapshotted, so the older artifact describes vectors
+      that are no longer the current ones.
+    - A record whose artifact is no longer on disk is dropped rather than
+      carried. Republishing the name of a file that is gone would produce a
+      manifest no restore could satisfy.
+    - A record whose file this attempt rewrote under the same name is dropped
+      for the same reason as the first: the bytes are no longer the ones its
+      point count describes.
+
+    Dropping a record leaves its file behind, and the sweep after the
+    manifest is published is what removes it.
+    """
+    manifest_path = snapshot_manifest_path(dest_dir)
+    if not manifest_path.is_file():
+        return (), ()
+    prior = _read_archive_manifest(manifest_path)
+    fresh_names = {item.name for item in fresh}
+    written_files = {item.snapshot_file for item in fresh} | set(fresh_metadata)
+    carried = [
+        record
+        for record in prior.collections
+        if record.snapshot_file not in written_files
+        and record.name not in fresh_names
+        and (dest_dir / record.snapshot_file).is_file()
+    ]
+    carried_metadata = tuple(
+        name
+        for name in prior.metadata_files
+        if name not in written_files and (dest_dir / name).is_file()
+    )
+    return tuple(carried), carried_metadata
+
+
+def _drop_unnamed_snapshots(dest_dir: Path, manifest_path: Path) -> None:
+    """Leave the archive directory holding exactly what its manifest names.
+
+    A restore refuses a directory carrying a snapshot its manifest does not
+    name, because such a file is data recovery would silently omit. Publishing
+    a manifest is therefore only half of completing an archive: the other half
+    is that nothing else is left beside it.
+
+    Two things produce such a file, and one rule removes both. An attempt that
+    raised part-way through has already moved snapshots into the directory
+    under no manifest at all, and the next attempt takes fresh ones under
+    fresh names rather than adopting them. A collection re-archived while
+    still alive leaves the copy it superseded. Neither is data: the first was
+    never published, and the second has just been replaced by a newer snapshot
+    of the same live collection.
+
+    Only snapshot artifacts. A note or a checksum an operator left here is not
+    this function's to remove, and a restore does not refuse over one either.
+
+    Raises rather than shrugging. A file that cannot be removed stays unnamed,
+    which is the condition a restore refuses, so failing the archive here
+    defers the namespace instead of destroying more of it into a directory
+    recovery would go on to reject.
+    """
+    named = {
+        record.snapshot_file
+        for record in _read_archive_manifest(manifest_path).collections
+    }
+    try:
+        stale = [
+            path
+            for path in dest_dir.iterdir()
+            if path.is_file()
+            and path.suffix == _SNAPSHOT_SUFFIX
+            and path.name not in named
+        ]
+    except OSError as exc:
+        raise RuntimeError(f"archive directory is unreadable: {dest_dir}") from exc
+    for path in stale:
+        try:
+            path.unlink()
+        except OSError as exc:
+            message = f"unnamed archive snapshot could not be removed: {path}"
+            raise RuntimeError(message) from exc
 
 
 def _verify_completed_archive(
     client: QdrantClient,
     archive_dir: Path,
     manifest_path: Path,
+    *,
+    live_names: frozenset[str],
 ) -> None:
-    """Re-read a completed archive and prove it still describes live data."""
-    records = _read_archive_records(manifest_path)
-    for name, snapshot_file, points in records:
-        artifact = archive_dir / snapshot_file
+    """Re-read a completed archive and prove it still describes live data.
+
+    Every record is checked for its artifact, because a manifest naming a file
+    that is not there is not a completed archive. The point re-count is asked
+    only of the collections this call archived: a record carried over from an
+    earlier attempt describes a collection the drop that followed it already
+    destroyed, and counting one that no longer exists would fail the archive
+    for having preserved it.
+    """
+    for record in _read_archive_manifest(manifest_path).collections:
+        artifact = archive_dir / record.snapshot_file
         if artifact.parent != archive_dir or not artifact.is_file():
             raise RuntimeError(f"archived snapshot file not found: {artifact}")
         try:
@@ -486,16 +730,25 @@ def _verify_completed_archive(
         except OSError as exc:
             message = f"archived snapshot file is unreadable: {artifact}"
             raise RuntimeError(message) from exc
-        current_points = int(client.count(collection_name=name).count)
-        if current_points != points:
+        if record.name not in live_names:
+            continue
+        current_points = int(client.count(collection_name=record.name).count)
+        if current_points != record.points:
             raise RuntimeError(
-                f"archived snapshot point count changed for {name}: "
-                f"expected {points}, found {current_points}"
+                f"archived snapshot point count changed for {record.name}: "
+                f"expected {record.points}, found {current_points}"
             )
 
 
-def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ...]:
-    """Load the snapshot records from a non-empty completed archive manifest."""
+def _read_archive_manifest(manifest_path: Path) -> StorageSnapshotManifest:
+    """Load a non-empty completed archive manifest, whole.
+
+    One reader for the persisted form, because the two callers ask the same
+    question of it. Verification needs the records to prove they still stand
+    up; a re-archive needs them, their provenance and the metadata list to
+    decide what it must keep naming, and a merge that read the records through
+    a narrower view would silently drop the provenance it was preserving.
+    """
     try:
         if manifest_path.stat().st_size <= 0:
             raise RuntimeError(f"archive manifest is empty: {manifest_path}")
@@ -504,15 +757,34 @@ def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ..
         raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
-    raw_records = cast("dict[str, object]", payload).get("collections")
+    fields = cast("dict[str, object]", payload)
+    raw_records = fields.get("collections")
     if not isinstance(raw_records, list):
         message = f"archive manifest has no collection records: {manifest_path}"
         raise RuntimeError(message)
     records = cast("list[object]", raw_records)
-    return tuple(_archive_record(record, manifest_path) for record in records)
+    prefix = fields.get("prefix")
+    root = fields.get("root")
+    version = fields.get("storage_schema_version")
+    if (
+        not isinstance(prefix, str)
+        or (root is not None and not isinstance(root, str))
+        or isinstance(version, bool)
+        or not isinstance(version, int)
+    ):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    return StorageSnapshotManifest(
+        prefix=prefix,
+        root=root,
+        storage_schema_version=version,
+        collections=tuple(_archive_record(record, manifest_path) for record in records),
+        metadata_files=_archive_metadata_files(
+            fields.get("metadata_files"), manifest_path
+        ),
+    )
 
 
-def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]:
+def _archive_record(record: object, manifest_path: Path) -> SnapshotCollection:
     """Validate one persisted snapshot record before using its file name."""
     if not isinstance(record, dict):
         raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
@@ -529,7 +801,32 @@ def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]
         or points < 0
     ):
         raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
-    return name, snapshot_file, points
+    identity_payload = fields.get("identity")
+    identity = (
+        None
+        if identity_payload is None
+        else store_schema.CollectionIdentity.from_payload(identity_payload)
+    )
+    if identity_payload is not None and identity is None:
+        # Carried verbatim or not at all. Re-publishing this record with the
+        # provenance stripped would turn a corrupt archive into one that reads
+        # as merely unstamped, which is a claim about the vectors nobody made.
+        raise RuntimeError(f"archive identity is invalid: {manifest_path}")
+    return SnapshotCollection(
+        name=name, snapshot_file=snapshot_file, points=points, identity=identity
+    )
+
+
+def _archive_metadata_files(value: object, manifest_path: Path) -> tuple[str, ...]:
+    """Validate the persisted metadata list before any name in it is used."""
+    if not isinstance(value, list):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    names = cast("list[object]", value)
+    for name in names:
+        if not isinstance(name, str) or Path(name).name != name:
+            message = f"archive manifest has invalid metadata: {manifest_path}"
+            raise RuntimeError(message)
+    return tuple(cast("list[str]", names))
 
 
 def sweep_archive(
@@ -651,22 +948,83 @@ class MaintenanceResult:
     generations: list[DeleteResult] = field(default_factory=list)
 
 
+def _archive_and_settle(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    snapshots_dir: Path,
+    archive_dir: Path,
+    observed: int,
+) -> tuple[list[Path], ReclaimDecision | None]:
+    """Archive the namespace, then confirm nothing moved across the copy.
+
+    The data tier's own half of the pre-drop sequence, kept beside the gate it
+    completes rather than inline, so each of its three refusals is a named
+    fact about the archive instead of a branch in the middle of the drop.
+
+    Returns the artifacts written and the outcome that must replace the drop,
+    or ``None`` when the copy is whole and the drop may proceed. Artifacts
+    come back on the refusing paths too: those files exist, the retention
+    sweep bounds them, and reporting them is how an operator learns the
+    archive happened.
+
+    Args:
+        client: Qdrant client for the managed server.
+        decision: The eligible ``reclaim_data`` decision.
+        snapshots_dir: The server's snapshots tree.
+        archive_dir: The bounded archive destination.
+        observed: The point total the pre-drop gate established.
+    """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
+    try:
+        archived = archive_prefix(
+            client,
+            decision.prefix,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+        )
+    except TRANSPORT_FAILURES as exc:
+        # A snapshot is the slowest call in the cycle and the likeliest to
+        # time out. The client wraps that timeout in its own plain
+        # ``Exception``, so naming only the builtins here turned one slow
+        # namespace into an aborted cycle that reclaimed nothing.
+        return [], _redecide(decision, "failed", f"archive_failed: {exc}")
+    # The snapshot is a point-in-time copy. A write landing during it tears
+    # the copy, and the delete that follows would then destroy the delta the
+    # copy missed - the one loss an archive cannot undo.
+    settled = _prefix_points(client, decision.prefix)
+    if settled is None:
+        # Its own reason, never the movement one. An inequality test against
+        # ``None`` is true, so an unverifiable re-count used to defer under a
+        # reason asserting the points had changed - safe outcome, false
+        # statement. "A writer landed during the archive" and "nobody could
+        # take the count" are different facts with different remedies,
+        # exactly as they are at the gate before this one.
+        return archived, _redecide(
+            decision, "deferred", "points_unverifiable_after_archive"
+        )
+    if settled != observed:
+        return archived, _redecide(
+            decision, "deferred", "points_changed_during_archive"
+        )
+    return archived, None
+
+
 def _apply_reclaim(
     client: QdrantClient,
     decision: ReclaimDecision,
     *,
     snapshots_dir: Path,
     archive_dir: Path,
-    active_prefixes: Callable[[], frozenset[str]],
+    active_prefixes: Callable[[], frozenset[str] | None],
 ) -> tuple[ReclaimDecision, list[Path]]:
     """Destroy one eligible namespace, or defer it, under the pre-drop gates.
 
     Separated from the cycle so the gates read as one ordered sequence rather
     than as branches interleaved with the cycle's bookkeeping. Every exit is a
     decision plus whatever archive artifacts were written, including on a
-    deferral after a torn snapshot: those files exist, the retention sweep
-    bounds them, and reporting them is how an operator learns the archive
-    happened.
+    deferral after a torn or unverifiable archive.
 
     Args:
         client: Qdrant client for the managed server.
@@ -675,38 +1033,62 @@ def _apply_reclaim(
         archive_dir: The bounded archive destination.
         active_prefixes: Liveness probe, called here rather than once per
             cycle so a run that started during an earlier namespace's archive
-            is still seen.
+            is still seen. ``None`` from it is not an empty set: it means the
+            probe could not answer, and the namespace defers.
 
     Returns:
         The outcome decision and the archive paths written.
     """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
     if isinstance(gate, ReclaimDecision):
         return gate, []
-    observed = gate
     archived: list[Path] = []
     if decision.action == "reclaim_data":
-        try:
-            archived = archive_prefix(
-                client,
-                decision.prefix,
-                snapshots_dir=snapshots_dir,
-                archive_dir=archive_dir,
-            )
-        except (OSError, RuntimeError) as exc:
-            return _redecide(decision, "failed", f"archive_failed: {exc}"), []
-        # The snapshot is a point-in-time copy. A write landing during it
-        # tears the copy, and the delete below would then destroy the delta
-        # the copy missed - the one loss an archive cannot undo.
-        settled = _prefix_points(client, decision.prefix)
-        if settled != observed:
-            return (
-                _redecide(decision, "deferred", "points_changed_during_archive"),
-                archived,
-            )
-    result = delete_prefix(client, decision.prefix, dry_run=False)
+        archived, refused = _archive_and_settle(
+            client,
+            decision,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+            observed=gate,
+        )
+        if refused is not None:
+            return refused, archived
+    try:
+        result = delete_prefix(client, decision.prefix, dry_run=False)
+    except TRANSPORT_FAILURES as exc:
+        # The drop reports its own server failures rather than raising them,
+        # so what reaches here today is the local half: forgetting the
+        # manifest entry writes a file, and that write happens AFTER the
+        # collections are gone. The whole transport class is named anyway,
+        # because this is the only call in the cycle that destroys as it
+        # fails - an escape from it would carry an already-destroyed
+        # namespace out with no outcome recorded, which is the one failure
+        # mode a later deferral cannot repair, and that is too much to rest
+        # on a callee's promise not to raise.
+        return _redecide(decision, "failed", f"drop_failed: {exc}"), archived
     if result.status != "removed":
-        return _redecide(decision, "failed", result.reason or result.status), archived
+        destroyed = tuple(result.collections)
+        if destroyed:
+            # The reason carries how many; this carries which. A drop that
+            # destroyed part of a namespace and then stopped is the one
+            # outcome an operator has to act on by hand, and "1/2 gone" does
+            # not say which one to go looking for.
+            logger.warning(
+                "namespace %s partially destroyed before the drop failed: %s",
+                decision.prefix,
+                ", ".join(destroyed),
+            )
+        return (
+            _redecide(
+                decision,
+                "failed",
+                result.reason or result.status,
+                removed_collections=destroyed,
+            ),
+            archived,
+        )
     return (
         ReclaimDecision(
             decision.prefix,
@@ -723,12 +1105,19 @@ def _pre_drop_reclaim_gate(
     client: QdrantClient,
     decision: ReclaimDecision,
     *,
-    active_prefixes: Callable[[], frozenset[str]],
+    active_prefixes: Callable[[], frozenset[str] | None],
 ) -> int | ReclaimDecision:
     """Return the stable point count, or one precise pre-drop deferral."""
     # Liveness first. An archive taken across a live writer is torn, so this
     # gate has to precede the archive, not just the drop.
-    if decision.prefix in active_prefixes():
+    active = active_prefixes()
+    if active is None:
+        # Its own reason, never the busy one. "A job is running on this
+        # namespace" and "we cannot tell whether one is" are different facts
+        # with different remedies, and an operator reading a deferral has to
+        # be able to tell which of the two held the namespace back.
+        return _redecide(decision, "deferred", "liveness_unverifiable")
+    if decision.prefix in active:
         return _redecide(decision, "deferred", "active_index_job")
     # Re-count immediately before acting, in BOTH tiers. The survey reading
     # can be many minutes stale by the time this prefix's turn arrives, and
@@ -815,7 +1204,7 @@ class MaintenanceCycleRequest:
     snapshots_dir: Path
     archive_dir: Path
     dry_run: bool = False
-    active_prefixes: Callable[[], frozenset[str]] = _active_index_prefixes
+    active_prefixes: Callable[[], frozenset[str] | None] = _active_index_prefixes
 
 
 def run_maintenance_cycle(
@@ -835,8 +1224,9 @@ def run_maintenance_cycle(
 
     Two gates stand between a decision and the drop, both re-evaluated per
     namespace immediately before acting on it rather than once per cycle:
-    a liveness check (no active index job may own the prefix) and a re-count
-    against the surveyed point total (any movement defers). The data tier
+    a liveness check (no active index job may own the prefix, and the probe
+    must have been able to say so) and a re-count against the surveyed point
+    total (any movement defers). The data tier
     re-counts a second time across its archive, because a write landing
     during the snapshot tears it and the delete would then destroy the delta
     the copy missed. Deferral is always the safe answer: the namespace is
@@ -853,8 +1243,9 @@ def run_maintenance_cycle(
             (grace stamps are still advanced - observation is not
             destruction).
         active_prefixes: Liveness probe returning the collection prefixes an
-            active index job is writing to. Defaults to the job registry;
-            injectable so the gate is testable without a live daemon.
+            active index job is writing to, or ``None`` when it could not
+            establish them. Defaults to the job registry; injectable so the
+            gate is testable without a live daemon.
 
     Returns:
         A :class:`MaintenanceResult` for the jobs registry and rollup.
@@ -869,9 +1260,14 @@ def run_maintenance_cycle(
     # The ephemeral tier's idle clock, advanced from what the stored data is
     # doing rather than from index-run stamps alone. Reading the manifest
     # directly here would see only what an indexer chose to stamp, which is
-    # the blind spot this tier cannot afford.
+    # the blind spot this tier cannot afford. A namespace the survey could
+    # not finish counting reports no total at all, so a partial sum can never
+    # be the reading a later cycle agrees with.
     last_indexed = update_activity_stamps(
-        {s.prefix: (s.status, s.points) for s in surveys},
+        {
+            s.prefix: (s.status, s.points if s.points_verified else None)
+            for s in surveys
+        },
         now_iso=request.now.isoformat(),
     )
     decisions = evaluate_reclaim(
@@ -1013,7 +1409,15 @@ def _drop_generation_collections(
     *,
     dry_run: bool,
 ) -> tuple[list[DeleteResult], set[str]]:
-    """Drop each droppable generation; a failed drop rejoins the held set."""
+    """Drop each droppable generation; a failed drop rejoins the held set.
+
+    The whole transport class is named, not the builtins alone. This is a
+    per-collection loop, so a server that stops answering part-way through it
+    used to abort the pass - and with it the cycle it runs at the head of,
+    before a single orphan had been considered.
+    """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     results: list[DeleteResult] = []
     dropped: set[str] = set()
     for collection in droppable:
@@ -1022,7 +1426,7 @@ def _drop_generation_collections(
             continue
         try:
             client.delete_collection(collection_name=collection)
-        except (OSError, RuntimeError) as exc:
+        except TRANSPORT_FAILURES as exc:
             results.append(DeleteResult(collection, "failed", reason=str(exc)))
             held.append(collection)
             continue
@@ -1063,6 +1467,11 @@ def reclaim_superseded_generations(
     so a failure part-way leaves the clocks untouched rather than crediting a
     window that did not run.
 
+    A server that cannot answer ends this pass, never the cycle around it.
+    This pass runs first, so an escape from either of its two server calls
+    aborted the tick before any orphan was considered - a slow generation
+    listing suppressing the reclamation the cycle exists to do.
+
     Args:
         client: Qdrant client for the managed server.
         roots: Root path to that root's derived code collection name.
@@ -1072,9 +1481,23 @@ def reclaim_superseded_generations(
         reader_present: Predicate answering whether a root has a live lease.
         dry_run: When True, plan and mutate nothing.
     """
+    from ._qdrant_transport import TRANSPORT_FAILURES
     from .generation_survey import advance_generation_stamps, survey_generations
 
-    live = [c.name for c in request.client.get_collections().collections]
+    try:
+        live = [c.name for c in request.client.get_collections().collections]
+    except TRANSPORT_FAILURES:
+        # Nothing can be decided without the live set: which generations a
+        # root still serves, which are unreferenced, and which stamps name
+        # collections that no longer exist all read from it. The clocks are
+        # handed back untouched rather than emptied, because the caller
+        # persists this map wholesale and an empty one would restart every
+        # window on a read that failed.
+        logger.warning(
+            "generation pass skipped: collection listing unavailable",
+            exc_info=True,
+        )
+        return [], dict(request.stamps)
     reports = survey_generations(request.roots, live)
     results, droppable, held, unreferenced = _evaluate_generation_reports(
         reports,
@@ -1103,5 +1526,6 @@ def reclaim_superseded_generations(
         unreferenced=(name for name in unreferenced if name not in dropped),
         held=[*held, *dropped],
         now_iso=request.now.isoformat(),
+        live=live,
     )
     return results, advanced

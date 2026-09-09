@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
     from qdrant_client import QdrantClient
 
+    from ..storage_reclamation import MaintenanceResult, ReclaimDecision
+
 #: Includes the helpers a sibling suite imports from here. Declared so a
 #: checker reads them as this module's surface rather than as helpers it
 #: defines and never calls.
@@ -61,10 +63,10 @@ __all__ = [
     "_collection_of",
     "_identity",
     "_orphaned_namespace",
+    "_outcome_for",
     "_run_cycle",
     "_survey",
     "_temp_survey",
-    "isolate_manifest_dir",
 ]
 
 
@@ -78,12 +80,6 @@ _POLICY = ReclaimPolicy(
     archive_retention_days=30.0,
     archive_max_bytes=10_000,
 )
-
-
-@pytest.fixture(autouse=True)
-def isolate_manifest_dir(isolated_status_dir: Path) -> None:
-    """Resolve the manifest under a temp managed dir for every test here."""
-    del isolated_status_dir
 
 
 def _survey(
@@ -131,8 +127,13 @@ def _identity(**overrides: Unpack[_IdentityOverrides]) -> CollectionIdentity:
     return CollectionIdentity(**base)
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestOrphanStamps:
-    """The persisted grace clock: stamp, preserve, reset."""
+    """The persisted grace clock: stamp, preserve, reset.
+
+    The manifest these stamps live in is machine-global state, so the class
+    relocates it per test.
+    """
 
     def test_new_orphan_is_stamped(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
@@ -428,14 +429,24 @@ def _temp_survey(
     prefix: str,
     points: int = 0,
     footprint: int = 2_100,
+    *,
+    status: str = "live",
 ) -> NamespaceSurvey:
+    """Return a survey whose root is under the OS temp directory.
+
+    ``status`` defaults to the leak signature this helper was written for - a
+    harness temp dir that still exists - and is overridable because the same
+    temp root under a different classification is what separates the class
+    from the classification: one temp-rooted namespace is reclaimable and
+    another is untouchable, and the difference is only ever the status.
+    """
     import pathlib
     import tempfile
 
     return NamespaceSurvey(
         prefix=prefix,
         root=str(pathlib.Path(tempfile.gettempdir()) / f"vaultspec-livetest-{prefix}"),
-        status="live",
+        status=status,
         collections=[f"{prefix}vault_docs"],
         points=points,
         footprint_bytes=footprint,
@@ -519,8 +530,13 @@ class TestEphemeralIdleTier:
         assert by_prefix[ephemeral_prefix].reason == "over_cycle_cap"
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestLastIndexedStamping:
-    """record_root's last_indexed stamp is the ephemeral activity clock."""
+    """record_root's last_indexed stamp is the ephemeral activity clock.
+
+    The manifest this stamp lives in is machine-global state, so the class
+    relocates it per test.
+    """
 
     def test_fresh_stamp_overwrites_and_persists(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
@@ -846,6 +862,12 @@ class _CycleClient:
     races the gates exist to catch - ``counts_after_survey`` is a writer
     landing points between the survey and the drop, ``counts_after_snapshot``
     is one landing points during the archive, tearing it.
+
+    ``uncountable_after_survey`` is the third of that family and is scoped
+    the same way. A namespace the SURVEY cannot count never reaches the
+    pre-drop gates at all - it is held at evaluation, on the total the
+    survey could not take - so a stand-in that refused every count would
+    exercise a gate the cycle no longer arrives at.
     """
 
     def __init__(
@@ -855,17 +877,24 @@ class _CycleClient:
         snapshots_dir: Path | None = None,
         counts_after_survey: dict[str, int] | None = None,
         counts_after_snapshot: dict[str, int] | None = None,
-        uncountable: bool = False,
+        uncountable_after_survey: bool = False,
     ) -> None:
         self._counts = dict(counts)
         self._snapshots_dir = snapshots_dir
         self._after_survey = counts_after_survey
         self._after_snapshot = counts_after_snapshot
-        self._uncountable = uncountable
+        self._uncountable_after_survey = uncountable_after_survey
         self._survey_calls = len(counts)
         self._count_calls = 0
+        self._snapshots_taken = 0
         self.deleted: list[str] = []
         self.snapshotted: list[str] = []
+        #: Collections whose NEXT snapshot raises and whose following one
+        #: succeeds, which is how an attempt that abandons part-way is
+        #: followed by one that completes. Assigned after construction rather
+        #: than passed in: the constructor already carries every knob the
+        #: cycle's own gates need, and this one belongs to the archiver.
+        self.aborting_snapshots: set[str] = set()
 
     def get_collections(self) -> object:
         return SimpleNamespace(
@@ -873,7 +902,7 @@ class _CycleClient:
         )
 
     def count(self, *, collection_name: str) -> object:
-        if self._uncountable:
+        if self._uncountable_after_survey and self._count_calls >= self._survey_calls:
             raise RuntimeError("collection count unavailable")
         value = self._counts[collection_name]
         self._count_calls += 1
@@ -888,7 +917,16 @@ class _CycleClient:
         del wait
         assert self._snapshots_dir is not None, "snapshots_dir required to archive"
         self.snapshotted.append(collection_name)
-        name = f"{collection_name}.snapshot"
+        if collection_name in self.aborting_snapshots:
+            self.aborting_snapshots.discard(collection_name)
+            raise OSError("snapshot timed out")
+        # Distinct per snapshot, as qdrant's own names are: it stamps each one
+        # with the moment it was taken, so two snapshots of one collection are
+        # two files. A stand-in reusing one name per collection would let every
+        # later attempt overwrite the residue of an earlier one, which is
+        # precisely the residue the archive has to account for.
+        self._snapshots_taken += 1
+        name = f"{collection_name}-{self._snapshots_taken}.snapshot"
         holder = self._snapshots_dir / collection_name
         holder.mkdir(parents=True, exist_ok=True)
         (holder / name).write_bytes(b"snapshot")
@@ -907,19 +945,48 @@ def _collection_of(prefix: str) -> str:
     return prefix + VAULT_COLLECTION
 
 
-def _orphaned_namespace(tmp_path: Path, *, now: datetime) -> str:
-    """Record a root, remove it, and age its orphan clock past both windows.
+def _outcome_for(result: MaintenanceResult, prefix: str) -> ReclaimDecision:
+    """Return the cycle's single outcome for *prefix*, asserting it exists.
 
-    Uses the orphan tier rather than the ephemeral one so the pre-drop gates
-    can be exercised without also depending on temp-rootedness.
+    A cycle that stopped early reports nothing at all for the namespaces
+    behind the failure, and an absent outcome must read as the named
+    continuation failure it is rather than as a lookup error on the way to an
+    assertion that never ran.
     """
-    root = tmp_path / "vanished-root"
+    matched = [d for d in result.decisions if d.prefix == prefix]
+    assert len(matched) == 1, f"cycle reported no outcome for {prefix}"
+    return matched[0]
+
+
+def _orphaned_namespace(
+    tmp_path: Path,
+    *,
+    now: datetime,
+    name: str = "vanished-root",
+    aged_hours: float = 1000.0,
+) -> str:
+    """Record a root, remove it, and age its orphan clock by *aged_hours*.
+
+    Uses the orphan tier rather than the live ephemeral-idle one, so the
+    pre-drop gates are reached through a vanished root rather than through an
+    activity clock. The default age is past every window at once, which is
+    what a gate test wants: eligibility is a given and the gate is the only
+    thing left that can hold the namespace back.
+
+    ``aged_hours`` is for the tests that need the opposite - an age inside one
+    window and outside another - because which window applied is only
+    observable from a stamp the two windows disagree about.
+
+    ``name`` distinguishes roots so one test can stand up several namespaces,
+    which is what a per-namespace failure has to be observed against.
+    """
+    root = tmp_path / name
     root.mkdir()
     entry = record_root(root, backend="server")
     root.rmdir()
     update_orphan_stamps(
         {entry.prefix: "orphaned"},
-        now_iso=(now - timedelta(hours=1000)).isoformat(),
+        now_iso=(now - timedelta(hours=aged_hours)).isoformat(),
     )
     return entry.prefix
 
@@ -929,10 +996,15 @@ def _run_cycle(
     tmp_path: Path,
     *,
     now: datetime = _NOW,
-    active: frozenset[str] = frozenset(),
+    active: frozenset[str] | None = frozenset(),
     policy: ReclaimPolicy | None = None,
 ):
-    """Run one real maintenance cycle against *client*, reconcile disabled."""
+    """Run one real maintenance cycle against *client*, reconcile disabled.
+
+    ``active`` is what the liveness probe answers. The empty default is a
+    positive finding - nothing is busy - and ``None`` is the probe failing to
+    establish anything, which the gate must not read as the same thing.
+    """
     return run_maintenance_cycle(
         MaintenanceCycleRequest(
             client=cast("QdrantClient", client),
@@ -946,12 +1018,16 @@ def _run_cycle(
     )
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestPreDropRecount:
     """Both tiers re-count immediately before destroying anything.
 
     An archive makes loss recoverable, never prevented, so the data tier
     needs this check at least as much as the empty tier - and a snapshot torn
     by a concurrent write cannot even offer recovery of the delta it missed.
+
+    The orphan stamp these namespaces carry is machine-global state, so the
+    class relocates it per test.
     """
 
     def test_data_tier_defers_when_points_moved_since_the_survey(
@@ -994,9 +1070,16 @@ class TestPreDropRecount:
     def test_uncountable_namespace_defers_rather_than_dropping(
         self, tmp_path: Path
     ) -> None:
+        """A re-count that cannot be taken defers, on the tier with no archive.
+
+        Surveyed empty and eligible on the riskless tier, so nothing but this
+        gate stands between the namespace and a drop that writes no snapshot.
+        Letting the gate borrow the survey's own number would make the
+        unverifiable count agree with it by construction.
+        """
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
         collection = _collection_of(prefix)
-        client = _CycleClient({collection: 10}, uncountable=True)
+        client = _CycleClient({collection: 0}, uncountable_after_survey=True)
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
         assert decision.action == "deferred"
@@ -1020,8 +1103,13 @@ class TestPreDropRecount:
         assert client.deleted == [collection]
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestLivenessGate:
-    """An active index job's namespace is never destroyed under it."""
+    """An active index job's namespace is never destroyed under it.
+
+    The orphan stamp these namespaces carry is machine-global state, so the
+    class relocates it per test.
+    """
 
     def test_active_index_job_defers_before_the_archive(self, tmp_path: Path) -> None:
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
@@ -1086,8 +1174,13 @@ class TestActiveIndexPrefixes:
             jobs.reset()
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestActivityClock:
-    """The ephemeral idle clock advances on observation, not only on stamps."""
+    """The ephemeral idle clock advances on observation, not only on stamps.
+
+    The activity stamp lives in the machine-global manifest, so the class
+    relocates it per test.
+    """
 
     def _record(self, tmp_path: Path, *, stale_hours: float) -> str:
         root = tmp_path / "harness-root"
@@ -1152,8 +1245,13 @@ class TestActivityClock:
         )
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestEphemeralTierNeedsObservedStability:
-    """A temp-rooted namespace survives until observations agree for a TTL."""
+    """A temp-rooted namespace survives until observations agree for a TTL.
+
+    The activity stamp these namespaces carry is machine-global state, so
+    the class relocates it per test.
+    """
 
     def _live_temp_namespace(self, tmp_path: Path) -> str:
         root = tmp_path / "temp-harness-root"

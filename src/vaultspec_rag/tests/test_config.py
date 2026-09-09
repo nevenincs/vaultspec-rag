@@ -1486,3 +1486,54 @@ def test_preprocess_kill_switch_beats_an_explicit_configured_mode() -> None:
     finally:
         restore_env(EnvVar.PREPROCESS, prev)
         reset_config()
+
+
+_GRACE_WINDOW_VARS = (
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS,
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_DATA,
+    EnvVar.STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL,
+)
+
+
+@pytest.mark.parametrize("env_var", _GRACE_WINDOW_VARS)
+def test_a_grace_window_refuses_a_same_cycle_value(env_var: EnvVar) -> None:
+    """No grace window may be set short enough to act on a first sighting.
+
+    A window is the interval an observation has to survive, so zero makes it
+    no observation at all: the cycle that first sees a namespace stamps its
+    clock, finds no elapsed time short of the window, and is cleared to
+    destroy on that single scan. The floor is one maintenance interval at the
+    shipped cadence, so the earliest a namespace can be reclaimed is the
+    cycle after the one that first observed it.
+
+    Mutation this catches: binding any of the three back to the non-negative
+    bound, which turns each rejection below into DID NOT RAISE.
+    """
+    for raw in ("0", "0.5"):
+        prev = set_env(env_var, raw)
+        try:
+            reset_config()
+            with pytest.raises(ValueError) as excinfo:
+                get_config()
+            assert env_var.value in str(excinfo.value)
+        finally:
+            restore_env(env_var, prev)
+            reset_config()
+
+
+def test_the_ephemeral_idle_switch_still_accepts_its_disable_value() -> None:
+    """The knob named almost identically to a window means the opposite at zero.
+
+    Zero on the idle tier turns that tier off; zero on a grace window would
+    have made its tier maximally aggressive. Asserted alongside the rejections
+    above because the risk is not that either value is wrong on its own - it
+    is that the two names are one word apart and an operator, or a later
+    change to the bounds table, treats them as the same kind of number.
+    """
+    prev = set_env(EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS, "0")
+    try:
+        reset_config()
+        assert get_config().storage_autoprune_ephemeral_idle_hours == 0.0
+    finally:
+        restore_env(EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS, prev)
+        reset_config()
