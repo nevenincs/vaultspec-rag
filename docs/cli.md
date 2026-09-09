@@ -655,6 +655,10 @@ None.
 | --- | --- | --- | --- | --- |
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+| `--root` | str | no | - | Only report controllers for this project root. |
+| `--source` | str | no | - | Only report this index source. |
+| `--state` | str | no | - | Only report controllers in this state. |
+| `--limit` | int range | no | 256 | Most controllers to report. |
 
 ## server updates start
 
