@@ -12,6 +12,10 @@ that deep-link back into the original document. vaultspec-rag does not infer own
 from directory names or ship client-specific file rules; it owns the contract and runs
 your extractor.
 
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+
 ## How it works
 
 1. Add a version-2 `.vaultragpreprocess.toml` to your project root (a sibling of

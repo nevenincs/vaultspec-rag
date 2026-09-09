@@ -15,6 +15,10 @@ then follow "Verify the install."
 A base or `[mcp]` client installation is intentionally model-free and cannot perform
 this tutorial's `server start` step by itself. There is no `[rag]` extra.
 
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+
 Once verification succeeds, return here for Step 2.
 
 ## Step 2: Start the service and index your project

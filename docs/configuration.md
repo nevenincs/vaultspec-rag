@@ -4,6 +4,11 @@ This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag decla
 
 A test in the suite checks every variable name, type, and default on this page against the shipped settings object. Adding, renaming, or re-defaulting a knob fails that test until this page is updated.
 
+Examples use the installed-tool form and call `vaultspec-rag` directly. If
+vaultspec-rag is a project dependency, prefix each command with `uv run`; see
+the [installation guide](installation.md) for lane selection, including the
+standalone tool and no-install routes.
+
 ## On this page
 
 - [Resolution order](#resolution-order) - which source wins when more than one sets a value

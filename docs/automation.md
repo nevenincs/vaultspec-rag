@@ -10,6 +10,11 @@ Every command accepts `--json` except `server warmup`.
 Read `ok`, `error`, and the process exit code, plus any per-item results required
 by the [command reference](cli.md).
 
+Examples use the installed-tool form and call `vaultspec-rag` directly. If
+vaultspec-rag is a project dependency, prefix each command with `uv run`; see
+the [installation guide](installation.md) for lane selection, including the
+standalone tool and no-install routes.
+
 ## Before you start
 
 You need vaultspec-rag installed and a project indexed. See
