@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:786e6467e22194dbb9e88e852e8a5734211c7f4f06b81fc28106bca1ad0f4c7a'
+body_hash: 'sha256:071cb7bd7326fa584b5730355cde3085bec3c70913c6449cb1366a1c171f21f9'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -94,10 +94,10 @@ Delivers the headroom that stops the drain evicting its own recovery evidence, s
 
 Delivers cleanup of the superseded generation names and stale ledger entries, and isolates the tests that were writing namespaces into the operator's real backend.
 
-- [ ] `P04.S23` - Drop grace-ledger entries naming collections that no longer exist when the ledger is next written; `src/vaultspec_rag/generation_stamps.py`.
-- [ ] `P04.S24` - Add a test proving ledger entries for absent collections are pruned and live entries are preserved; `src/vaultspec_rag/tests/test_generation_survey.py`.
-- [ ] `P04.S25` - Point the qdrant storage-dir at a temp path in the storage-ops tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_ops.py`.
-- [ ] `P04.S26` - Point the qdrant storage-dir at a temp path in the storage-survey tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_survey.py`.
+- [x] `P04.S23` - Drop grace-ledger entries naming collections that no longer exist when the ledger is next written; `src/vaultspec_rag/generation_stamps.py`.
+- [x] `P04.S24` - Add a test proving ledger entries for absent collections are pruned and live entries are preserved; `src/vaultspec_rag/tests/test_generation_survey.py`.
+- [x] `P04.S25` - Point the qdrant storage-dir at a temp path in the storage-ops tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_ops.py`.
+- [x] `P04.S26` - Point the qdrant storage-dir at a temp path in the storage-survey tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_survey.py`.
 
 ## Parallelization
 
