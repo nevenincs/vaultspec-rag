@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import asyncio  # noqa: TC003
 import logging
+import os
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
@@ -18,14 +19,16 @@ from . import jobs as _jobs
 from ._backoff import capped_exponential
 from .job_manager.models import JobExecutionResult  # noqa: TC001
 from .job_models import (
+    JobMode,
+    JobOperation,
     JobSnapshot,
     JobSource,
     JobState,
 )
 from .logging_config import log_event
 from .watcher_retry import (
-    WatcherRetryPolicy,  # noqa: TC001
-    WatcherSource,  # noqa: TC001
+    WatcherRetryPolicy,
+    WatcherSource,
 )
 
 if TYPE_CHECKING:
@@ -472,3 +475,119 @@ def release_missing_job(
         replacement_backoff_seconds=f"{delay:.0f}",
         pending_paths=pending_count,
     )
+
+
+async def reconcile_restarted_slot(
+    slot: WatcherConvergenceSlot,
+    manager: _jobs.JobManager,
+) -> None:
+    """Reconcile one durable attempt fence with canonical manager history."""
+    state = slot.retry_policy.state
+    with slot.lock:
+        slot.pending_paths.update(
+            slot.root / observation.relative_path for observation in state.pending_paths
+        )
+    generation = state.attempt_generation
+    job_id = state.attempt_job_id
+    if generation is None or job_id is None:
+        return
+
+    snapshot = manager.get(job_id)
+    if snapshot is None or not _is_exact_watcher_job(slot, snapshot):
+        detail = (
+            "the fenced watcher job is absent from bounded canonical history"
+            if snapshot is None
+            else "the fenced job does not match its watcher root/source authority"
+        )
+        await _settle_recovered_attempt(
+            slot,
+            generation,
+            JobState.FAILED,
+            detail=detail,
+            force_refusal=True,
+        )
+        return
+
+    if not snapshot.state.is_terminal:
+        captured = frozenset(
+            slot.root / observation.relative_path
+            for observation in state.captured_paths
+        )
+        with slot.lock:
+            slot.job_id = snapshot.id
+            slot.watcher_owned = True
+            slot.held_paths.update(captured)
+            slot.attempt_paths[snapshot.attempt.number] = captured
+            slot.retry_attempt_generations[snapshot.attempt.number] = generation
+            slot.observed_state = snapshot.state
+        return
+
+    await _settle_recovered_attempt(
+        slot,
+        generation,
+        snapshot.state,
+        detail=snapshot.result or snapshot.error_kind or snapshot.state.value,
+        force_refusal=snapshot.error_kind == "full_reindex_required",
+    )
+
+
+def _is_exact_watcher_job(slot: WatcherConvergenceSlot, snapshot: JobSnapshot) -> bool:
+    """Verify a history record names this exact incremental watcher authority."""
+    canonical_root = os.path.normcase(str(slot.root.resolve()))
+    return (
+        snapshot.spec.operation is JobOperation.INDEX
+        and snapshot.spec.mode is JobMode.INCREMENTAL
+        and snapshot.spec.source is slot.source
+        and snapshot.spec.project_root is not None
+        and os.path.normcase(str(Path(snapshot.spec.project_root).resolve()))
+        == canonical_root
+        and snapshot.initiator.kind == "watcher"
+        and snapshot.initiator.command == slot.command
+        and snapshot.initiator.project_root is not None
+        and os.path.normcase(str(Path(snapshot.initiator.project_root).resolve()))
+        == canonical_root
+    )
+
+
+async def _settle_recovered_attempt(
+    slot: WatcherConvergenceSlot,
+    generation: int,
+    state: JobState,
+    *,
+    detail: str,
+    force_refusal: bool,
+) -> None:
+    """Settle a recovered fence before making its paths live again."""
+    from ._job_errors import JobError, JobErrorKind
+    from .watcher_durability import (
+        WatcherAttemptOutcome,
+        WatcherSettlement,
+        settle_watcher_attempt,
+    )
+
+    if state is JobState.SUCCEEDED:
+        settlement = WatcherSettlement(WatcherAttemptOutcome.SUCCEEDED)
+    elif force_refusal:
+        settlement = WatcherSettlement(
+            WatcherAttemptOutcome.FAILED,
+            JobError(JobErrorKind.FULL_REINDEX_REQUIRED, detail),
+        )
+    elif state is JobState.FAILED:
+        settlement = WatcherSettlement(
+            WatcherAttemptOutcome.FAILED,
+            RuntimeError(detail),
+        )
+    else:
+        settlement = WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED)
+    recovered = await settle_watcher_attempt(
+        slot.retry_policy,
+        generation,
+        settlement,
+        source=WatcherSource(slot.source.value),
+        root_dir=slot.root,
+    )
+    with slot.lock:
+        slot.pending_paths.update(
+            slot.root / observation.relative_path
+            for observation in recovered.pending_paths
+        )

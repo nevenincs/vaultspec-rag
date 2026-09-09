@@ -114,7 +114,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "on the machines that never exercise it",
     ),
     "test_cli_storage_migrate.py": (
-        7,
+        6,
         "scripts the stores a migrate command opens so its EXIT STATUS can be "
         "asserted. Reaching that code for real needs a live Qdrant server and "
         "populated collections on both backends, which the unit tier has not "
@@ -172,6 +172,22 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "substitute only its externally-owned observations, with sentinels "
         "that fail if a holder, no-device diagnosis, CUDA re-probe, or receipt "
         "postcondition is bypassed",
+    ),
+    "test_watcher_controller_intake.py": (
+        6,
+        "the intake durability tests intercept the persistence boundary to prove "
+        "commit-before-ack and cancellation ordering; the scheduler wiring test "
+        "captures registration and supplies an otherwise host-dependent storage "
+        "measurement; and the pre-creation recovery test forces failures at the "
+        "preflight and manager boundaries. Real equivalents require crashing or "
+        "changing the service's live storage state at an exact instruction boundary",
+    ),
+    "test_watcher_recovery.py": (
+        1,
+        "restart reconciliation requires a durable attempt whose recorded owner is "
+        "provably dead; substituting the process-liveness observation avoids killing "
+        "a real owner while every durable scope and job-history transition remains "
+        "real",
     ),
 }
 

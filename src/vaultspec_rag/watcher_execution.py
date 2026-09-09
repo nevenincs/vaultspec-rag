@@ -36,12 +36,24 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .service_quiesce import QuiesceAdmissionClosedError
+from .watcher_controller import (
+    ControllerReason,
+    ControllerScope,
+    ControllerState,
+    ScopeObservation,
+    WatcherController,
+)
 from .watcher_durability import (
+    WatcherAttemptOutcome,
+    WatcherSettlement,
+    admit_scoped_watcher_attempt,
     raise_if_cancellation_requested,
     run_durable_retry_transaction,
+    settle_watcher_attempt,
 )
 from .watcher_retry import (
-    WatcherRetryDecision,
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherRetryState,
     WatcherRetryStateError,
     WatcherSource,
@@ -65,79 +77,212 @@ if TYPE_CHECKING:
     from .service import ProjectComputeRuntime
 
 logger = logging.getLogger(__name__)
+_REBUILD_REMEDIATION = "Run an explicit full reindex before resuming automatic updates."
 
 
-async def submit_watcher_job(
-    slot: WatcherConvergenceSlot,
+def controller_scope_from_retry_state(
+    state: WatcherRetryState,
     *,
-    now: float,
-    retry_decision: WatcherRetryDecision,
-    secondary_graph_cache: GraphCache | None,
-) -> None:
-    """Admit and bind one manager-owned watcher attempt, or coalesce on dedupe."""
-    candidate_paths = slot.dirty_paths()
+    monotonic_now: float | None = None,
+    wall_now: float | None = None,
+) -> ControllerScope:
+    """Translate one durable exact-scope snapshot onto the process clock."""
+    process_now = time.monotonic() if monotonic_now is None else monotonic_now
+    persisted_now = time.time() if wall_now is None else wall_now
+
+    def translate(item: WatcherPathObservation) -> ScopeObservation:
+        first_age = max(0.0, persisted_now - item.first_observed_at)
+        latest_age = max(0.0, persisted_now - item.latest_observed_at)
+        return ScopeObservation(
+            relative_path=item.relative_path,
+            source=item.source,
+            first_observed_at=max(0.0, process_now - first_age),
+            latest_observed_at=max(0.0, process_now - latest_age),
+            event_kinds=frozenset(
+                WatcherPathEvent(event) for event in item.event_kinds
+            ),
+            generation=item.generation,
+        )
+
+    return ControllerScope(
+        generation=state.convergence_generation,
+        pending=tuple(translate(item) for item in state.pending_paths),
+        captured_generation=(
+            state.attempt_generation if state.captured_paths else None
+        ),
+        captured=tuple(translate(item) for item in state.captured_paths),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ScopedAdmission:
+    generation: int
+    candidate_paths: frozenset[Path]
+
+
+def _refuse_unscoped(controller: WatcherController) -> None:
+    controller.refuse(
+        ControllerReason.FULL_REINDEX_REQUIRED,
+        remediation=_REBUILD_REMEDIATION,
+    )
+
+
+async def _capture_scoped_admission(
+    slot: WatcherConvergenceSlot,
+    controller: WatcherController,
+    proposed_job_id: str,
+) -> _ScopedAdmission | None:
+    retry_source = WatcherSource(slot.source.value)
+    retry_state, refresh_cancelled = await run_durable_retry_transaction(
+        slot.retry_policy.refresh,
+        source=retry_source,
+        root_dir=slot.root,
+        action="refresh_scoped_admission",
+    )
+    raise_if_cancellation_requested(refresh_cancelled)
+    if retry_state.scope_refusal is not None or retry_state.unscoped_required:
+        _refuse_unscoped(controller)
+        return None
+    if not retry_state.pending_paths:
+        return None
+    decision = await admit_scoped_watcher_attempt(
+        slot.retry_policy,
+        proposed_job_id,
+        source=retry_source,
+        root_dir=slot.root,
+    )
+    generation = decision.attempt_generation
+    if not decision.admitted or generation is None:
+        return None
+    candidate_paths = frozenset(
+        slot.root / item.relative_path
+        for item in slot.retry_policy.state.captured_paths
+    )
+    if candidate_paths and not decision.requires_unscoped:
+        return _ScopedAdmission(generation, candidate_paths)
+    await settle_watcher_attempt(
+        slot.retry_policy,
+        generation,
+        WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED),
+        source=retry_source,
+        root_dir=slot.root,
+    )
+    _refuse_unscoped(controller)
+    return None
+
+
+async def _preflight_scoped_paths(
+    slot: WatcherConvergenceSlot,
+    candidate_paths: frozenset[Path],
+) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
     code_preflight = None
     document_preflight = None
     if slot.source is JobSource.CODE:
-        policy_resolver = (
-            _job_admission.validate_code_index_policy
-            if retry_decision.requires_unscoped
-            else partial(
+        code_preflight = await _run_in_thread(
+            partial(
                 _job_admission.validate_scoped_code_index_policy,
                 changed_paths=candidate_paths,
-            )
-        )
-        code_preflight = await _run_in_thread(
-            policy_resolver,
+            ),
             slot.root,
         )
     elif slot.source is JobSource.DOCUMENT:
-        policy_resolver = (
-            _job_admission.validate_document_index_policy
-            if retry_decision.requires_unscoped
-            else partial(
+        document_preflight = await _run_in_thread(
+            partial(
                 _job_admission.validate_scoped_document_index_policy,
                 changed_paths=candidate_paths,
-            )
+            ),
+            slot.root,
         )
-        document_preflight = await _run_in_thread(policy_resolver, slot.root)
         await _run_in_thread(
             _job_admission.validate_document_support_profile,
             slot.root,
             document_preflight,
         )
-    manager = _jobs.get_job_manager()
-    generation = retry_decision.attempt_generation
-    if generation is None:
-        raise WatcherRetryStateError("admitted watcher attempt has no generation")
-    with slot.lock:
-        slot.retry_attempt_generations[1] = generation
-        if retry_decision.requires_unscoped:
-            slot.retry_unscoped_attempts.add(1)
-    outcome = await _run_in_thread(
-        partial(
-            manager.create,
-            JobSpec(
-                operation=JobOperation.INDEX,
-                source=slot.source,
-                project_root=str(slot.root),
-                mode=JobMode.INCREMENTAL,
-                authority=RunAuthority.PUBLICATION,
-            ),
-            JobInitiator(
-                kind="watcher",
-                command=slot.command,
-                project_root=str(slot.root),
-            ),
-            job_id=uuid.uuid4().hex,
-        )
+    return code_preflight, document_preflight
+
+
+async def _restore_uncreated_admission(
+    slot: WatcherConvergenceSlot,
+    controller: WatcherController,
+    admission: _ScopedAdmission,
+) -> None:
+    """Restore an exact fence when orchestration failed before job creation."""
+    retry_state = await settle_watcher_attempt(
+        slot.retry_policy,
+        admission.generation,
+        WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED),
+        source=WatcherSource(slot.source.value),
+        root_dir=slot.root,
     )
+    controller.observe(controller_scope_from_retry_state(retry_state))
+    from .server._watcher import _wake_watcher_scheduler
+
+    _wake_watcher_scheduler()
+
+
+async def submit_watcher_job(
+    slot: WatcherConvergenceSlot,
+    *,
+    controller: WatcherController,
+    now: float,
+    secondary_graph_cache: GraphCache | None,
+) -> None:
+    """Fence exact controller scope to one canonical manager job and dispatch."""
+    manager = _jobs.get_job_manager()
+    with slot.lock:
+        existing_job_id = slot.job_id
+        settlement = slot.settlement_task
+    if settlement is not None:
+        if not settlement.done():
+            return
+        await settlement
+        with slot.lock:
+            if slot.settlement_task is settlement:
+                slot.settlement_task = None
+    if existing_job_id is not None:
+        existing = manager.get(existing_job_id)
+        if existing is not None:
+            if observe_managed_job(slot, existing, now=now):
+                sync_legacy_snapshot(existing, result=None, error=None)
+            return
+
+    proposed_job_id = uuid.uuid4().hex
+    admission = await _capture_scoped_admission(slot, controller, proposed_job_id)
+    if admission is None:
+        return
+    with slot.lock:
+        slot.retry_attempt_generations[1] = admission.generation
+    try:
+        code_preflight, document_preflight = await _preflight_scoped_paths(
+            slot, admission.candidate_paths
+        )
+        outcome = await _run_in_thread(
+            partial(
+                manager.create,
+                JobSpec(
+                    operation=JobOperation.INDEX,
+                    source=slot.source,
+                    project_root=str(slot.root),
+                    mode=JobMode.INCREMENTAL,
+                    authority=RunAuthority.PUBLICATION,
+                ),
+                JobInitiator(
+                    kind="watcher",
+                    command=slot.command,
+                    project_root=str(slot.root),
+                ),
+                job_id=proposed_job_id,
+            )
+        )
+    except BaseException:
+        if manager.get(proposed_job_id) is None:
+            await _restore_uncreated_admission(slot, controller, admission)
+        raise
     if outcome.status is JobOutcomeStatus.ERROR or outcome.job is None:
         await _settle_retry_failure(
             slot,
             RuntimeError(outcome.message),
             attempt=1,
-            action="record_admission_failure",
         )
         schedule_replacement(
             slot,
@@ -153,9 +298,7 @@ async def submit_watcher_job(
         slot.job_id = snapshot.id
         slot.watcher_owned = created
         slot.observed_state = snapshot.state
-        slot.retry_attempt_generations[snapshot.attempt.number] = generation
-        if retry_decision.requires_unscoped:
-            slot.retry_unscoped_attempts.add(snapshot.attempt.number)
+        slot.retry_attempt_generations[snapshot.attempt.number] = admission.generation
 
     if not created:
         # The equivalent job may have captured the filesystem before this
@@ -173,16 +316,19 @@ async def submit_watcher_job(
         await _settle_retry_interrupted(
             slot,
             attempt=snapshot.attempt.number,
-            action="record_coalesced_admission",
         )
+        controller.observe(controller_scope_from_retry_state(slot.retry_policy.state))
         return
+
+    controller.admit(snapshot.id)
 
     await _dispatch_created_watcher_job(
         _CreatedWatcherJobRequest(
+            controller=controller,
             slot=slot,
             manager=manager,
             snapshot=snapshot,
-            candidate_paths=candidate_paths,
+            candidate_paths=admission.candidate_paths,
             code_preflight=code_preflight,
             document_preflight=document_preflight,
             secondary_graph_cache=secondary_graph_cache,
@@ -192,6 +338,7 @@ async def submit_watcher_job(
 
 @dataclass(frozen=True, slots=True)
 class _CreatedWatcherJobRequest:
+    controller: WatcherController
     slot: WatcherConvergenceSlot
     manager: _jobs.JobManager
     snapshot: JobSnapshot
@@ -199,6 +346,16 @@ class _CreatedWatcherJobRequest:
     code_preflight: CodeExecutionPreflight | None
     document_preflight: DocumentExecutionPreflight | None
     secondary_graph_cache: GraphCache | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ManagedSettlement:
+    slot: WatcherConvergenceSlot
+    controller: WatcherController
+    snapshot: JobSnapshot
+    duration_seconds: float
+    result: JobExecutionResult | None
+    error: BaseException | None
 
 
 async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> None:
@@ -237,21 +394,27 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
         )
 
     def _on_started(started: JobSnapshot) -> None:
+        if request.controller.snapshot.state is ControllerState.ADMITTED:
+            request.controller.advance(ControllerReason.JOB_STARTED)
         _job_progress.record_progress(started.id, "queued")
 
     def _on_finished(
         finished: JobSnapshot,
-        _duration_seconds: float,
+        duration_seconds: float,
         result: JobExecutionResult | None,
         error: BaseException | None,
     ) -> None:
         if finished.state.is_terminal:
             settlement = asyncio.create_task(
                 _settle_and_observe_managed_job(
-                    slot,
-                    finished,
-                    result=result,
-                    error=error,
+                    _ManagedSettlement(
+                        slot,
+                        request.controller,
+                        finished,
+                        duration_seconds,
+                        result,
+                        error,
+                    )
                 ),
                 name=f"vaultspec-watcher-retry-{finished.id}",
             )
@@ -279,6 +442,7 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
     if bound.status is JobOutcomeStatus.ERROR:
         await _finish_unstarted_watcher_failure(
             slot,
+            request.controller,
             UnstartedFailure(
                 manager=manager,
                 job_id=job_id,
@@ -308,6 +472,7 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
                 return
         await _finish_unstarted_watcher_failure(
             slot,
+            request.controller,
             UnstartedFailure(
                 manager=manager,
                 job_id=job_id,
@@ -338,6 +503,7 @@ async def _dispatch_created_watcher_job(request: _CreatedWatcherJobRequest) -> N
 
 async def _finish_unstarted_watcher_failure(
     slot: WatcherConvergenceSlot,
+    controller: WatcherController,
     failure: UnstartedFailure,
 ) -> None:
     """Durably settle an orchestration failure before releasing its slot."""
@@ -349,8 +515,15 @@ async def _finish_unstarted_watcher_failure(
         slot,
         error,
         attempt=failure.attempt,
-        action=failure.action,
     )
+    if controller.snapshot.state in {
+        ControllerState.ADMITTED,
+        ControllerState.RUNNING,
+    }:
+        controller.release(controller_scope_from_retry_state(retry_state))
+        from .server._watcher import _wake_watcher_scheduler
+
+        _wake_watcher_scheduler()
     failed = await _run_in_thread(failure.manager.get, failure.job_id)
     await _run_in_thread(
         partial(
@@ -427,20 +600,18 @@ async def _settle_retry_failure(
     error: BaseException,
     *,
     attempt: int,
-    action: str,
 ) -> WatcherRetryState:
     """Persist one managed orchestration or execution failure."""
     generation, _requires_unscoped = _retry_generation_for_attempt(slot, attempt)
     retry_source = WatcherSource(slot.source.value)
-    state, cancellation_requested = await run_durable_retry_transaction(
-        partial(slot.retry_policy.record_failure, error, generation),
+    state = await settle_watcher_attempt(
+        slot.retry_policy,
+        generation,
+        WatcherSettlement(WatcherAttemptOutcome.FAILED, error),
         source=retry_source,
         root_dir=slot.root,
-        action=action,
-        cancellation_fallback=slot.retry_policy.write_recovery_marker,
     )
     _clear_retry_generation(slot, generation)
-    raise_if_cancellation_requested(cancellation_requested)
     log_event(
         logger,
         "service.watcher",
@@ -459,20 +630,18 @@ async def _settle_retry_interrupted(
     slot: WatcherConvergenceSlot,
     *,
     attempt: int,
-    action: str,
 ) -> WatcherRetryState:
     """Release one managed claim while retaining durable dirty intent."""
     generation, _requires_unscoped = _retry_generation_for_attempt(slot, attempt)
     retry_source = WatcherSource(slot.source.value)
-    state, cancellation_requested = await run_durable_retry_transaction(
-        lambda: slot.retry_policy.record_interrupted(generation),
+    state = await settle_watcher_attempt(
+        slot.retry_policy,
+        generation,
+        WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED),
         source=retry_source,
         root_dir=slot.root,
-        action=action,
-        cancellation_fallback=slot.retry_policy.write_recovery_marker,
     )
     _clear_retry_generation(slot, generation)
-    raise_if_cancellation_requested(cancellation_requested)
     return state
 
 
@@ -489,44 +658,52 @@ async def _settle_managed_retry(
     )
     retry_source = WatcherSource(slot.source.value)
     if snapshot.state is JobState.SUCCEEDED:
-        state, cancellation_requested = await run_durable_retry_transaction(
-            lambda: slot.retry_policy.record_success(generation),
-            source=retry_source,
-            root_dir=slot.root,
-            action="record_success",
-            cancellation_fallback=slot.retry_policy.write_recovery_marker,
-        )
+        settlement = WatcherSettlement(WatcherAttemptOutcome.SUCCEEDED)
     elif snapshot.state is JobState.FAILED:
-        failure = error or RuntimeError(snapshot.result or "watcher indexing failed")
-        state, cancellation_requested = await run_durable_retry_transaction(
-            partial(slot.retry_policy.record_failure, failure, generation),
-            source=retry_source,
-            root_dir=slot.root,
-            action="record_failure",
-            cancellation_fallback=slot.retry_policy.write_recovery_marker,
+        settlement = WatcherSettlement(
+            WatcherAttemptOutcome.FAILED,
+            error or RuntimeError(snapshot.result or "watcher indexing failed"),
         )
     else:
-        state, cancellation_requested = await run_durable_retry_transaction(
-            lambda: slot.retry_policy.record_interrupted(generation),
-            source=retry_source,
-            root_dir=slot.root,
-            action="record_interrupted",
-            cancellation_fallback=slot.retry_policy.write_recovery_marker,
-        )
+        settlement = WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED)
+    state = await settle_watcher_attempt(
+        slot.retry_policy,
+        generation,
+        settlement,
+        source=retry_source,
+        root_dir=slot.root,
+    )
     _clear_retry_generation(slot, generation)
-    raise_if_cancellation_requested(cancellation_requested)
     return state
 
 
 async def _settle_and_observe_managed_job(
-    slot: WatcherConvergenceSlot,
-    snapshot: JobSnapshot,
-    *,
-    result: JobExecutionResult | None,
-    error: BaseException | None,
+    request: _ManagedSettlement,
 ) -> None:
     """Settle durable retry truth before releasing the convergence slot."""
-    retry_state = await _settle_managed_retry(slot, snapshot, error=error)
+    slot = request.slot
+    controller = request.controller
+    snapshot = request.snapshot
+    retry_state = await _settle_managed_retry(slot, snapshot, error=request.error)
+    scope = controller_scope_from_retry_state(retry_state)
+    if snapshot.state is JobState.SUCCEEDED:
+        if controller.snapshot.state is ControllerState.RUNNING:
+            controller.complete(
+                scope,
+                run_duration=max(0.0, request.duration_seconds),
+                publication_duration=0.0,
+            )
+    elif controller.snapshot.state in {
+        ControllerState.ADMITTED,
+        ControllerState.RUNNING,
+    }:
+        controller.release(
+            scope,
+            superseded=snapshot.state is JobState.SUPERSEDED,
+        )
+    from .server._watcher import _wake_watcher_scheduler
+
+    _wake_watcher_scheduler()
     manager = _jobs.get_job_manager()
     settled = manager.get(snapshot.id)
     base = settled.resilience if settled is not None else snapshot.resilience
@@ -542,9 +719,13 @@ async def _settle_and_observe_managed_job(
         slot,
         snapshot,
         now=time.monotonic(),
-        error=error,
+        error=request.error,
     ):
-        sync_legacy_snapshot(snapshot, result=result, error=error)
+        sync_legacy_snapshot(
+            snapshot,
+            result=request.result,
+            error=request.error,
+        )
 
 
 def _track_retry_settlement(

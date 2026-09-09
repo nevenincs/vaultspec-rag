@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -21,9 +22,12 @@ from ..watcher_durability import (
 )
 from ..watcher_retry import (
     WatcherCircuitState,
+    WatcherPathEvent,
+    WatcherPathObservation,
     WatcherRetryPolicy,
     WatcherRetryState,
     WatcherRetryStateError,
+    WatcherScopeRefusal,
     WatcherSource,
     _WatcherRetryOptions,
 )
@@ -59,6 +63,165 @@ def _policy(
             now=now,
         ),
     )
+
+
+def _path_observation(
+    path: str,
+    *,
+    generation: int = 1,
+    first: float = 1.0,
+    latest: float = 2.0,
+) -> WatcherPathObservation:
+    return WatcherPathObservation(
+        relative_path=path,
+        source=WatcherSource.CODE,
+        first_observed_at=first,
+        latest_observed_at=latest,
+        event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+        generation=generation,
+    )
+
+
+def test_exact_scope_round_trips_and_merges_path_evidence(tmp_path: Path) -> None:
+    state_path = tmp_path / "state" / "code.json"
+    policy = _policy(state_path, tmp_path)
+    policy.mark_scope_pending((_path_observation("src/b.py"),), now=2.0)
+    merged = policy.mark_scope_pending(
+        (
+            WatcherPathObservation(
+                relative_path="src/b.py",
+                source=WatcherSource.CODE,
+                first_observed_at=3.0,
+                latest_observed_at=4.0,
+                event_kinds=frozenset({WatcherPathEvent.DELETED}),
+                generation=2,
+            ),
+            _path_observation("src/a.py", generation=2),
+        ),
+        now=4.0,
+    )
+
+    assert [item.relative_path for item in merged.pending_paths] == [
+        "src/a.py",
+        "src/b.py",
+    ]
+    assert merged.pending_paths[1].first_observed_at == 1.0
+    assert merged.pending_paths[1].event_kinds == {
+        WatcherPathEvent.MODIFIED,
+        WatcherPathEvent.DELETED,
+    }
+    restarted = _policy(state_path, tmp_path, now=5.0)
+    assert restarted.state.pending_paths == merged.pending_paths
+    assert restarted.state.scope_refusal is None
+    assert restarted.state.last_error_kind is None
+
+
+def test_scope_count_overflow_refuses_without_truncating_last_complete_scope(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "code.json"
+    policy = WatcherRetryPolicy(
+        state_path,
+        _WatcherRetryOptions(
+            canonical_root=os.path.normcase(str(tmp_path.resolve())),
+            source=WatcherSource.CODE,
+            base_seconds=10.0,
+            max_seconds=25.0,
+            jitter_fraction=0.0,
+            failure_threshold=3,
+            scope_max_paths=1,
+            now=0.0,
+        ),
+    )
+    accepted = policy.mark_scope_pending((_path_observation("src/a.py"),), now=1.0)
+
+    refused = policy.mark_scope_pending((_path_observation("src/b.py"),), now=2.0)
+
+    assert refused.scope_refusal is WatcherScopeRefusal.SCOPE_CAPACITY_EXCEEDED
+    assert refused.pending_paths == accepted.pending_paths
+    assert refused.convergence_generation == accepted.convergence_generation
+    assert refused.circuit_state is WatcherCircuitState.OPEN
+
+
+def test_scope_byte_overflow_refuses_without_persisting_partial_scope(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "code.json"
+    policy = WatcherRetryPolicy(
+        state_path,
+        _WatcherRetryOptions(
+            canonical_root=os.path.normcase(str(tmp_path.resolve())),
+            source=WatcherSource.CODE,
+            base_seconds=10.0,
+            max_seconds=25.0,
+            jitter_fraction=0.0,
+            failure_threshold=3,
+            scope_max_bytes=2048,
+            now=0.0,
+        ),
+    )
+
+    refused = policy.mark_scope_pending(
+        (_path_observation(f"src/{'a' * 1500}.py"),),
+        now=1.0,
+    )
+
+    assert refused.scope_refusal is WatcherScopeRefusal.SCOPE_CAPACITY_EXCEEDED
+    assert refused.pending_paths == ()
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["pending_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "observation",
+    [
+        _path_observation("../escape.py"),
+        WatcherPathObservation(
+            relative_path="src/file.py",
+            source=WatcherSource.VAULT,
+            first_observed_at=1.0,
+            latest_observed_at=2.0,
+            event_kinds=frozenset({WatcherPathEvent.MODIFIED}),
+            generation=1,
+        ),
+    ],
+)
+def test_invalid_or_foreign_scope_fails_closed(
+    tmp_path: Path,
+    observation: WatcherPathObservation,
+) -> None:
+    policy = _policy(tmp_path / "state" / "code.json", tmp_path)
+
+    with pytest.raises(ValueError, match="scope_state_invalid"):
+        policy.mark_scope_pending((observation,), now=1.0)
+
+    assert not policy.state.convergence_pending
+
+
+def test_schema_two_pending_intent_migrates_to_typed_rebuild_refusal(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "state" / "code.json"
+    _policy(state_path, tmp_path)
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 2
+    payload["convergence_pending"] = True
+    for field in (
+        "pending_paths",
+        "captured_paths",
+        "scope_max_paths",
+        "scope_max_bytes",
+        "scope_refusal",
+        "attempt_job_id",
+    ):
+        payload.pop(field)
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    migrated = _policy(state_path, tmp_path, now=3.0)
+
+    assert migrated.state.schema_version == 3
+    assert migrated.state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    assert migrated.state.circuit_state is WatcherCircuitState.OPEN
 
 
 #: A hold long enough that the lock is only ever freed by the test releasing

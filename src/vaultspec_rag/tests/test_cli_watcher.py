@@ -15,6 +15,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
@@ -148,6 +149,101 @@ _UPDATES_COMMAND_IDS = {
     "stop": "service.updates.stop",
     "timing": "service.updates.timing",
 }
+
+
+def test_updates_status_forwards_controller_filters_and_renders_service_facts() -> None:
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "debounce_ms": 250,
+        "cooldown_s": 2.0,
+        "watching": [],
+        "controllers": [
+            {
+                "root": _TEST_PROJECT_ROOT,
+                "source": "code",
+                "state": "backpressured",
+                "reason": "gpu_pressure",
+                "pending_count": 3,
+                "oldest_age_seconds": 7.5,
+                "next_decision_at": 50.0,
+                "freshness_deadline": 80.0,
+                "backpressure": ["gpu_pressure"],
+                "measurement": {"gpu_pressure": True},
+                "last_transition": {"reason": "gpu_pressure"},
+                "remediation": "Wait for GPU pressure to clear.",
+            }
+        ],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            [
+                "server",
+                "updates",
+                "status",
+                "--root",
+                _TEST_PROJECT_ROOT,
+                "--source",
+                "code",
+                "--state",
+                "backpressured",
+                "--limit",
+                "12",
+                "--port",
+                str(port),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert _UpdatesHTTPHandler.requests == [
+        {
+            "method": "GET",
+            "path": (
+                "/watcher?"
+                + urllib.parse.urlencode(
+                    {
+                        "limit": 12,
+                        "root": _TEST_PROJECT_ROOT,
+                        "source": "code",
+                        "state": "backpressured",
+                    }
+                )
+            ),
+        }
+    ]
+    assert "State: backpressured (gpu_pressure)" in result.output
+    assert "Pending: 3; oldest age: 7.5 seconds" in result.output
+    assert "Remediation: Wait for GPU pressure to clear." in result.output
+
+
+def test_updates_status_json_preserves_canonical_controller_envelope() -> None:
+    controller = {
+        "root": _TEST_PROJECT_ROOT,
+        "source": "vault",
+        "state": "refused",
+        "reason": "full_reindex_required",
+        "pending_count": 0,
+        "oldest_age_seconds": None,
+        "next_decision_at": None,
+        "freshness_deadline": 80.0,
+        "backpressure": [],
+        "measurement": None,
+        "last_transition": None,
+        "remediation": "Request an explicit rebuild.",
+    }
+    payload: dict[str, object] = {
+        "watch_enabled": True,
+        "watching": [],
+        "controllers": [controller],
+    }
+    with _updates_http_server(payload) as (_server, port):
+        result = runner.invoke(
+            app,
+            ["server", "updates", "status", "--json", "--port", str(port)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data"]["controllers"] == [controller]
 
 
 def _help_command_names(output: str) -> list[str]:

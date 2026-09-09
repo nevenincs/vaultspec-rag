@@ -1008,3 +1008,128 @@ class TestReindexIsNotBoundedByTheLifecycleTimeout:
         # is the same 30 s deadline with extra documentation.
         source = inspect.getsource(_transport._try_http_reindex)
         assert "DEFAULT_REINDEX_TIMEOUT_SECONDS" in source
+
+
+class TestAdaptiveWatcherArchitecture:
+    """Automatic convergence retains one durable, bounded authority."""
+
+    def test_quiet_tree_deadline_is_scheduled_and_wakes(self) -> None:
+        """Collection has a finite deadline and the service owns its wakeup."""
+        import inspect
+
+        from ..server._watcher import _WatcherScheduler
+        from ..watcher_controller import WatcherController
+
+        observe = inspect.getsource(WatcherController.observe)
+        scheduler = inspect.getsource(_WatcherScheduler)
+        # Mutation check: replacing the observe-time min with its left operand
+        # fails on the first assertion; deleting wake's set call fails on the second.
+        assert "min(now + self._coalesce_delay(scope), freshness)" in observe, (
+            "quiet-tree collection must be capped by its freshness deadline"
+        )
+        assert "self._wakeup.set()" in scheduler, (
+            "controller deadlines and events must wake the service scheduler"
+        )
+
+    def test_maximum_freshness_caps_ordinary_deferral(self) -> None:
+        """Both collection and ordinary pressure stop at the oldest-event bound."""
+        import inspect
+
+        from ..watcher_controller import WatcherController
+
+        freshness = inspect.getsource(WatcherController._freshness_deadline)
+        pressure = inspect.getsource(WatcherController._backpressure)
+        # Mutation check: removing either maximum-freshness addition or pressure
+        # min fails on the assertion naming the missing cap.
+        assert "oldest + self._limits.maximum_freshness_seconds" in freshness, (
+            "freshness must derive from the oldest exact observation"
+        )
+        assert "deadline = min(deadline, freshness)" in pressure, (
+            "ordinary pressure must not defer beyond maximum freshness"
+        )
+
+    def test_rebuild_refusal_is_terminal_to_retry_admission(self) -> None:
+        """Retry cannot turn lost exact scope into automatic work."""
+        import inspect
+
+        from ..watcher_retry import WatcherRetryPolicy
+
+        admission = inspect.getsource(WatcherRetryPolicy.admit_reserved)
+        normalized = " ".join(admission.split())
+        # Mutation check: changing this identity comparison to never match fails
+        # on the refusal predicate assertion, not merely module import.
+        assert (
+            "terminal_scope_loss = ( state.last_error_kind is "
+            "JobErrorKind.FULL_REINDEX_REQUIRED )"
+        ) in normalized
+        assert "if not state.convergence_pending or terminal_scope_loss" in admission, (
+            "terminal rebuild refusal must precede every retry admission"
+        )
+
+    def test_restart_requires_exact_scope_and_incremental_job_authority(self) -> None:
+        """Recovery validates the canonical fence and never widens its paths."""
+        import inspect
+
+        from ..watcher_runtime import _is_exact_watcher_job, _settle_recovered_attempt
+
+        authority = inspect.getsource(_is_exact_watcher_job)
+        settlement = inspect.getsource(_settle_recovered_attempt)
+        # Mutation check: deleting the incremental-mode condition fails on the
+        # exact-authority assertion; changing pending_paths to captured_paths
+        # fails on the exact restored-scope assertion.
+        required = (
+            "snapshot.spec.mode is JobMode.INCREMENTAL",
+            "snapshot.spec.source is slot.source",
+            "snapshot.spec.project_root is not None",
+            "snapshot.initiator.command == slot.command",
+        )
+        assert all(clause in authority for clause in required), (
+            "restart recovery must validate exact root/source/job authority"
+        )
+        assert "for observation in recovered.pending_paths" in settlement
+        assert "paths=None" not in authority + settlement, (
+            "restart recovery must never manufacture unscoped authority"
+        )
+
+    def test_equal_deadlines_rotate_after_the_previous_selection(self) -> None:
+        """Fair selection records its turn and advances across exact ties."""
+        import inspect
+
+        from ..watcher_admission import WatcherAdmissionArbiter, _rotate_after
+
+        select = inspect.getsource(WatcherAdmissionArbiter.select)
+        rotate = inspect.getsource(_rotate_after)
+        # Mutation check: removing the last-selected assignment fails on the
+        # ownership assertion; returning tied[0] in-loop fails on advancement.
+        assert "self._last_selected = _key(selected)" in select, (
+            "the arbiter must retain the prior fair turn"
+        )
+        assert "if _key(snapshot) > previous" in rotate, (
+            "equal-deadline selection must advance after the prior key"
+        )
+
+    def test_adapters_do_not_own_controller_scheduling(self) -> None:
+        """HTTP, CLI, and MCP project service facts without controller decisions."""
+        import ast
+        import inspect
+
+        from ..cli import _service_watcher
+        from ..mcp import _tools
+        from ..server import _routes_jobs, _routes_registry
+
+        forbidden = {"WatcherController", "ControllerLimits", "ControllerMeasurement"}
+        offenders: list[str] = []
+        for module in (_service_watcher, _tools, _routes_jobs, _routes_registry):
+            tree = ast.parse(inspect.getsource(module))
+            names = {
+                node.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Name) and node.id in forbidden
+            }
+            if names:
+                offenders.append(f"{module.__name__}: {sorted(names)}")
+        # Mutation check: adding ``WatcherController`` as an executable adapter
+        # name fails here with that module in the offender list.
+        assert not offenders, "adapter-owned scheduling symbols: " + "; ".join(
+            offenders
+        )

@@ -223,11 +223,22 @@ A floor has to cover the resident stack a load creates, plus the largest demand 
 
 ### Automatic updates
 
-| Variable                          | Type    | Default    | Controls                                                     | CLI flag                     |
-| --------------------------------- | ------- | ---------- | ------------------------------------------------------------ | ---------------------------- |
-| `VAULTSPEC_RAG_WATCH_ENABLED`     | boolean | `1` (true) | Filesystem auto-reindex on/off (`0` = pull-only)             | `--updates` / `--no-updates` |
-| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Debounce window coalescing change events before reindex (ms) | `--update-delay-ms`          |
-| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Per-source re-index cooldown after a completed run (s)       | `--repeat-update-delay-s`    |
+| Variable                          | Type    | Default    | Controls                                                           | CLI flag                     |
+| --------------------------------- | ------- | ---------- | ------------------------------------------------------------------ | ---------------------------- |
+| `VAULTSPEC_RAG_WATCH_ENABLED`     | boolean | `1` (true) | Filesystem auto-reindex on/off (`0` = pull-only)                   | `--updates` / `--no-updates` |
+| `VAULTSPEC_RAG_WATCH_DEBOUNCE_MS` | integer | `2000`     | Compatibility input mapped to both adaptive coalescing bounds (ms) | `--update-delay-ms`          |
+| `VAULTSPEC_RAG_WATCH_COOLDOWN_S`  | float   | `30`       | Compatibility input mapped to the adaptive cooling maximum (s)     | `--repeat-update-delay-s`    |
+
+| Variable                                               | Type    | Default           | Controls                                                                 | CLI flag |
+| ------------------------------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------ | -------- |
+| `VAULTSPEC_RAG_WATCH_COALESCE_MIN_SECONDS`             | float   | `2`               | Minimum adaptive coalescing delay                                        | -        |
+| `VAULTSPEC_RAG_WATCH_COALESCE_MAX_SECONDS`             | float   | `30`              | Maximum adaptive coalescing delay; cannot exceed maximum freshness       | -        |
+| `VAULTSPEC_RAG_WATCH_COOLING_MAX_SECONDS`              | float   | `120`             | Maximum post-success adaptive cooling delay                              | -        |
+| `VAULTSPEC_RAG_WATCH_MAXIMUM_FRESHNESS_SECONDS`        | float   | `300`             | Oldest ordinary-pressure event age before admission                      | -        |
+| `VAULTSPEC_RAG_WATCH_MEASUREMENT_REEVALUATION_SECONDS` | float   | `5`               | Maximum interval between service-measurement reevaluations               | -        |
+| `VAULTSPEC_RAG_WATCH_BATCH_PATH_LIMIT`                 | integer | `10000`           | Pending path count that makes work ready; cannot exceed scope path limit | -        |
+| `VAULTSPEC_RAG_WATCH_SCOPE_MAX_PATHS`                  | integer | `100000`          | Maximum durable exact paths per controller                               | -        |
+| `VAULTSPEC_RAG_WATCH_SCOPE_MAX_BYTES`                  | integer | `8388608` (8 MiB) | Maximum serialized durable exact-scope size per controller               | -        |
 
 A failed auto-reindex retries with exponential backoff and a circuit breaker that stops retrying a persistently failing source.
 
