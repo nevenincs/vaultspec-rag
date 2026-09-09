@@ -191,64 +191,112 @@ def _emit_survey_json(
     _emit_json(True, _SURVEY_CMD, data=data)
 
 
-def _survey_summary(surveys: list[NamespaceSurvey]) -> tuple[str, int]:
+#: Namespace statuses the survey header names, in the order it names them.
+_SURVEY_STATUSES = ("orphaned", "unknown", "unverifiable", "live")
+
+
+@dataclass(frozen=True, slots=True)
+class _SurveyTallies:
+    """Whole-listing counts the header and the footnotes both report.
+
+    Taken once and passed to both, because a header claiming one temp-rooted
+    namespace above a footnote counted separately is the kind of disagreement
+    an operator reads as the listing being wrong about everything else too.
+    """
+
+    namespaces: int
+    by_status: dict[str, int]
+    temp_rooted: int
+    points_unverified: int
+    unstamped: int
+    footprint_bytes: int
+
+
+def _survey_tallies(surveys: list[NamespaceSurvey]) -> _SurveyTallies:
+    """Count one survey listing across every dimension it reports."""
     from ..storage_survey import is_temp_rooted
 
-    counts = {
-        status: sum(1 for s in surveys if s.status == status)
-        for status in ("orphaned", "unknown", "unverifiable", "live")
-    }
-    temp_count = sum(1 for s in surveys if is_temp_rooted(s.root))
-    unverified_count = sum(1 for s in surveys if not s.points_verified)
-    total = human_bytes(sum(s.footprint_bytes for s in surveys))
-    summary = (
-        f"{len(surveys)} namespaces  (orphaned={counts['orphaned']} "
-        f"unknown={counts['unknown']} unverifiable={counts['unverifiable']} "
-        f"live={counts['live']})  {total} on disk"
+    return _SurveyTallies(
+        namespaces=len(surveys),
+        by_status={
+            status: sum(1 for s in surveys if s.status == status)
+            for status in _SURVEY_STATUSES
+        },
+        temp_rooted=sum(1 for s in surveys if is_temp_rooted(s.root)),
+        points_unverified=sum(1 for s in surveys if not s.points_verified),
+        unstamped=sum(1 for s in surveys if not s.models),
+        footprint_bytes=sum(s.footprint_bytes for s in surveys),
     )
-    if temp_count:
-        summary += f"  [{temp_count} temp-rooted]"
-    if unverified_count:
-        summary += f"  [{unverified_count} unverified point counts]"
-    return summary, temp_count
 
 
-def _print_survey_namespace(survey: NamespaceSurvey) -> None:
+def _survey_summary_line(tallies: _SurveyTallies) -> str:
+    """Compose the one-line header describing the whole listing."""
+    counts = tallies.by_status
+    summary = (
+        f"{tallies.namespaces} namespaces  (orphaned={counts['orphaned']} "
+        f"unknown={counts['unknown']} unverifiable={counts['unverifiable']} "
+        f"live={counts['live']})  {human_bytes(tallies.footprint_bytes)} on disk"
+    )
+    if tallies.temp_rooted:
+        summary += f"  [{tallies.temp_rooted} temp-rooted]"
+    if tallies.points_unverified:
+        summary += f"  [{tallies.points_unverified} unverified point counts]"
+    return summary
+
+
+def _survey_namespace_lines(survey: NamespaceSurvey) -> list[str]:
+    """Render one namespace as the line, plus any line its state has earned."""
     from ..storage_survey import is_temp_rooted
 
     root = survey.root if survey.root is not None else "(unattributable)"
     marker = "  [temp]" if is_temp_rooted(survey.root) else ""
+    # Distinguishes a real zero from a count that could not be taken -
+    # the same fact an uncounted collection would otherwise silently
+    # report as a verified zero.
     if not survey.points_verified:
         marker += "  [unverified]"
-    typer.echo(
+    lines = [
         f"  {survey.status:<8} {survey.prefix}  {survey.points:>8} pts  "
         f"{human_bytes(survey.footprint_bytes):>9}  {root}{marker}"
-    )
+    ]
+    # Named only when the namespace holds more than one distinct model,
+    # which is the state worth an operator's attention: the collections
+    # under one root disagree about what built them. A single model, or
+    # none recorded, adds a line per namespace that says nothing.
     distinct = sorted(set(survey.models.values()))
     if len(distinct) > 1:
-        typer.echo(f"           mixed embedding models: {', '.join(distinct)}")
+        lines.append(f"           mixed embedding models: {', '.join(distinct)}")
+    return lines
+
+
+def _survey_footnotes(tallies: _SurveyTallies) -> list[str]:
+    """Explain the listing's unknowns, and what an operator can do about them."""
+    footnotes: list[str] = []
+    if tallies.unstamped:
+        footnotes.append(
+            f"{tallies.unstamped} namespace(s) predate model stamping; what "
+            "produced them is unknown until they are next rebuilt"
+        )
+    if tallies.temp_rooted:
+        footnotes.append(
+            "Temp-rooted namespaces are usually leaked test/demo harness "
+            "indexes; reclaim with: vaultspec-rag server storage delete "
+            "--root <dir> --yes"
+        )
+    return footnotes
 
 
 def _print_survey(surveys: list[NamespaceSurvey]) -> None:
     if not surveys:
         typer.echo("No matching namespaces.")
         return
-    summary, temp_count = _survey_summary(surveys)
-    typer.echo(summary)
+    tallies = _survey_tallies(surveys)
+    typer.echo(_survey_summary_line(tallies))
     for survey in surveys:
-        _print_survey_namespace(survey)
-    unstamped = sum(1 for s in surveys if not s.models)
-    if unstamped:
-        typer.echo(
-            f"{unstamped} namespace(s) predate model stamping; what produced "
-            "them is unknown until they are next rebuilt"
-        )
-    if temp_count:
-        typer.echo(
-            "Temp-rooted namespaces are usually leaked test/demo harness "
-            "indexes; reclaim with: vaultspec-rag server storage delete "
-            "--root <dir> --yes"
-        )
+        for line in _survey_namespace_lines(survey):
+            typer.echo(line)
+    for footnote in _survey_footnotes(tallies):
+        typer.echo(footnote)
 
 
 def _survey_from_service(

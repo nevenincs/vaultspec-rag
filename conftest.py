@@ -42,6 +42,8 @@ _singleton_pair_owned = False
 _session_failed = False
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from vaultspec_rag.cli._gpu_lease import BorrowerServiceTarget
 
 _gpu_borrower_target: BorrowerServiceTarget | None = None
@@ -51,6 +53,143 @@ _gpu_borrower_target: BorrowerServiceTarget | None = None
 # They are imported inside the hooks below rather than here: this module runs
 # before the pytest session pins its root, and the guarded effects above must
 # stay the first thing that happens.
+
+
+# ===========================================================================
+#  fsync suppression
+#
+#  WHY THIS IS HERE AND NOT A CONFIGURATION KNOB. Roughly twenty modules
+#  publish state by writing a temp file and replacing the destination. A
+#  handful of them ask for DURABILITY too - the bytes and the rename forced to
+#  disk - which is an `os.fsync` on the way through, and `vaultspec-core`'s
+#  own `atomic_write`, which this package calls to seed the framework tree,
+#  fsyncs every single file it writes.
+#
+#  ATOMICITY IS NOT WHAT FSYNC BUYS. It comes from the exclusively-created
+#  temp file and the rename; a reader sees the old bytes or the new ones and
+#  never a partial write, fsync or no fsync. What fsync buys is survival
+#  across power loss, and NO TEST IN THIS SUITE ASSERTS THAT. It cannot: a
+#  test process that is still running has not lost power.
+#
+#  WORSE THAN THE COST IS ITS SHAPE. An fsync serialises at the DEVICE. Add
+#  workers and the wall-clock does not fall, because the queue they are all
+#  waiting on is one disk - which is what makes a suite refuse to
+#  parallelise, and why this is the single largest lever on the runtime.
+#
+#  THE NARROW EXCEPTION. A test that can genuinely OBSERVE the suppression
+#  carries `@pytest.mark.durable` and gets the real call back for its
+#  duration. The bar for that mark is a measured difference between a
+#  suppressed run and a restored one, recorded where the mark is applied - not
+#  a hunch that a test looks timing-sensitive. A marker handed out for
+#  flakiness hollows out the rule it is an exception to.
+#
+#  WHAT IT IS WORTH HERE. Three alternating pairs of the accelerator-free lane
+#  on one Windows workstation, twelve workers, warm caches: 197.9s / 208.6s /
+#  224.1s with the real call, against 157.0s / 150.8s / 160.0s with it
+#  suppressed. Every suppressed run beat every restored one, and 5083 calls
+#  went - the same count all three times. That is about a quarter of the
+#  runtime, which is real and is also far less than the same change is worth
+#  elsewhere, for a reason worth knowing: this package already separates
+#  DURABLE writes from merely atomic ones, and only a handful of call sites
+#  ask for durability. Most of what remains arrives from a dependency whose
+#  own atomic write fsyncs unconditionally.
+#
+#  NOTHING CARRIES THE MARKER TODAY, and that is a finding rather than an
+#  omission. Two wall-clock-bounded tests do go red under suppression - a
+#  force-close bounded at 5s taking 5.9s, and an HTTP deadline of 120ms
+#  measured at 126ms. Neither is an observation of the missing fsync: run
+#  alone, both still fail intermittently, so what changed is the SHAPE of the
+#  load. The lane was disk-bound and is now CPU-bound, and twelve workers that
+#  used to wait on one device now compete for cores. Marking those `durable`
+#  would restore an fsync inside a test whose failure came from outside it - a
+#  marker that fixes nothing while spending the exception. Their bounds are
+#  the thing to revisit.
+#
+#  Production never learns about any of this: the substitution lives in this
+#  file, `dev/guards/test_production_never_imports_pytest.py` holds that line,
+#  and the count is announced in the run header so no reader has to know the
+#  mechanism to know it happened.
+# ===========================================================================
+
+_real_fsync = os.fsync
+_real_fdatasync = getattr(os, "fdatasync", None)
+_fsync_suppressed = 0
+#: Non-zero while a `durable`-marked test is running, so nested calls made by
+#: its own fixtures are covered too.
+_fsync_restored_depth = 0
+
+
+def _suppressed_fsync(descriptor: int) -> None:
+    """Count the call and return, unless a `durable` test asked for the real one."""
+    if _fsync_restored_depth:
+        _real_fsync(descriptor)
+        return
+    global _fsync_suppressed
+    _fsync_suppressed += 1
+
+
+def _suppressed_fdatasync(descriptor: int) -> None:
+    """The data-only variant, suppressed on the same terms."""
+    if _fsync_restored_depth and _real_fdatasync is not None:
+        _real_fdatasync(descriptor)
+        return
+    global _fsync_suppressed
+    _fsync_suppressed += 1
+
+
+os.fsync = _suppressed_fsync
+if _real_fdatasync is not None:
+    os.fdatasync = _suppressed_fdatasync
+
+
+@pytest.fixture(autouse=True)
+def _durable_writes(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Give a `durable`-marked test the real ``fsync`` back for its duration."""
+    if request.node.get_closest_marker("durable") is None:
+        yield
+        return
+    global _fsync_restored_depth
+    _fsync_restored_depth += 1
+    try:
+        yield
+    finally:
+        _fsync_restored_depth -= 1
+
+
+#: Counts shipped back from xdist workers. The suppression happens in whichever
+#: process does the writing, and under `-n auto` that is never the process that
+#: prints the summary - so a controller reporting only its OWN counter reports
+#: zero while thousands of calls are being absorbed in the workers beside it. A
+#: substitution that announces itself and then understates its own reach by
+#: three orders of magnitude is worse than one that says nothing.
+_FSYNC_KEY = "vaultspec_rag_fsync_suppressed"
+_fsync_from_workers = 0
+
+
+def pytest_report_header() -> str:
+    """Announce the substitution, so nobody has to find it to know it is on."""
+    return (
+        "fsync: SUPPRESSED for this session (atomicity comes from the O_EXCL "
+        "temp plus the rename; durability across power loss is asserted by no "
+        "test). Tests marked `durable` run with the real call."
+    )
+
+
+def pytest_testnodedown(node: object, error: object) -> None:
+    """Collect a finished xdist worker's suppression count."""
+    del error
+    global _fsync_from_workers
+    output = getattr(node, "workeroutput", None)
+    if isinstance(output, dict):
+        _fsync_from_workers += int(output.get(_FSYNC_KEY, 0))
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Report how many calls the suppression absorbed, across every process."""
+    total = _fsync_suppressed + _fsync_from_workers
+    terminalreporter.write_line(
+        f"fsync: {total} call(s) suppressed this session."
+    )
 
 
 def _load_dotenv_if_available() -> None:
@@ -222,6 +361,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     del exitstatus
     global _session_failed
     _session_failed = bool(getattr(session, "testsfailed", 0))
+    # `workeroutput` exists only in an xdist worker; this is how its count
+    # reaches the process that prints the summary.
+    output = getattr(session.config, "workeroutput", None)
+    if isinstance(output, dict):
+        output[_FSYNC_KEY] = _fsync_suppressed
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:

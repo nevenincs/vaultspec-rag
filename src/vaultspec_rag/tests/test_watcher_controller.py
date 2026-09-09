@@ -24,8 +24,10 @@ from ..watcher_retry import (
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 

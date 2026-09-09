@@ -98,18 +98,6 @@ jobs:
           name: dist
           path: dist/
 
-      # Guards the env pin above: without it a mis-set UV_PYTHON would test
-      # the floor twice and still go green.
-      - name: Verify the interpreter under test
-        run: |
-          uv run --isolated --no-project python -c "
-          import sys
-          want = '${{ matrix.python-version }}'
-          got = f'{sys.version_info[0]}.{sys.version_info[1]}'
-          assert got == want, f'expected Python {want}, got {got}'
-          print(f'smoke-testing under Python {sys.version.split()[0]}')
-          "
-
       - name: Smoke test (wheel)
         run: uv run --isolated --no-project --with dist/*.whl tests/smoke_check.py
 

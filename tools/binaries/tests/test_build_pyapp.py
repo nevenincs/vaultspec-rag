@@ -245,27 +245,30 @@ def test_embedded_python_series_satisfies_requires_python(
 
 
 def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
-    """The script is not orphaned: the binaries workflow is its automated caller.
+    """The script is not orphaned: the binaries workflow is its automated caller."""
+    from dev.guards._workflows import final_commands, named
 
-    The workflow reaches the builder through the release recipe rather than
-    inlining the command, so the chain is asserted one hop at a time. Asserting
-    only the workflow text would fail the moment the call site moved behind the
-    recipe, and asserting only the recipe would not notice a workflow that had
-    stopped calling it at all.
-    """
     workflow = repo_root / ".github" / "workflows" / "binaries.yml"
     text = workflow.read_text(encoding="utf-8")
-    assert "just release-binaries" in text
-
-    recipe = repo_root / "justfile"
-    recipe_text = recipe.read_text(encoding="utf-8")
+    # Through the RECIPE, because that is how the workflow now reaches the
+    # builder: the job calls `just release-binaries` rather than repeating its
+    # command line, which is what the CI/justfile contract requires of every
+    # `run:` step. This assertion used to search the workflow for the builder's
+    # own invocation, and went permanently red the day the job stopped
+    # carrying one - asserting a coupling the repository had deliberately
+    # replaced, and reporting the improvement as a regression.
+    assert "just release-binaries" in text, (
+        "binaries.yml no longer calls the release-binaries recipe"
+    )
     # The dotted form, not the file path: see
     # test_no_call_site_runs_a_packaged_tool_as_a_script for why the path form
     # cannot resolve this package. Pinning the path here is what let the broken
     # invocation pass its own test.
-    assert "-m tools.binaries.build_pyapp" in recipe_text
-    assert "--tag" in recipe_text
-    assert "--outdir" in recipe_text
+    commands = named(final_commands("release-binaries"))
+    assert any("-m tools.binaries.build_pyapp" in command for command in commands), (
+        f"`just release-binaries` no longer reaches the builder: {commands}"
+    )
+    assert any("--tag" in command and "--outdir" in command for command in commands)
 
 
 def test_the_justfile_exposes_a_local_build_recipe(repo_root: Path) -> None:
