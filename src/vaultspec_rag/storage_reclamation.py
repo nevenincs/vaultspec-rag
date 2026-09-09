@@ -752,6 +752,69 @@ class MaintenanceResult:
     generations: list[DeleteResult] = field(default_factory=list)
 
 
+def _archive_and_settle(
+    client: QdrantClient,
+    decision: ReclaimDecision,
+    *,
+    snapshots_dir: Path,
+    archive_dir: Path,
+    observed: int,
+) -> tuple[list[Path], ReclaimDecision | None]:
+    """Archive the namespace, then confirm nothing moved across the copy.
+
+    The data tier's own half of the pre-drop sequence, kept beside the gate it
+    completes rather than inline, so each of its three refusals is a named
+    fact about the archive instead of a branch in the middle of the drop.
+
+    Returns the artifacts written and the outcome that must replace the drop,
+    or ``None`` when the copy is whole and the drop may proceed. Artifacts
+    come back on the refusing paths too: those files exist, the retention
+    sweep bounds them, and reporting them is how an operator learns the
+    archive happened.
+
+    Args:
+        client: Qdrant client for the managed server.
+        decision: The eligible ``reclaim_data`` decision.
+        snapshots_dir: The server's snapshots tree.
+        archive_dir: The bounded archive destination.
+        observed: The point total the pre-drop gate established.
+    """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
+    try:
+        archived = archive_prefix(
+            client,
+            decision.prefix,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+        )
+    except TRANSPORT_FAILURES as exc:
+        # A snapshot is the slowest call in the cycle and the likeliest to
+        # time out. The client wraps that timeout in its own plain
+        # ``Exception``, so naming only the builtins here turned one slow
+        # namespace into an aborted cycle that reclaimed nothing.
+        return [], _redecide(decision, "failed", f"archive_failed: {exc}")
+    # The snapshot is a point-in-time copy. A write landing during it tears
+    # the copy, and the delete that follows would then destroy the delta the
+    # copy missed - the one loss an archive cannot undo.
+    settled = _prefix_points(client, decision.prefix)
+    if settled is None:
+        # Its own reason, never the movement one. An inequality test against
+        # ``None`` is true, so an unverifiable re-count used to defer under a
+        # reason asserting the points had changed - safe outcome, false
+        # statement. "A writer landed during the archive" and "nobody could
+        # take the count" are different facts with different remedies,
+        # exactly as they are at the gate before this one.
+        return archived, _redecide(
+            decision, "deferred", "points_unverifiable_after_archive"
+        )
+    if settled != observed:
+        return archived, _redecide(
+            decision, "deferred", "points_changed_during_archive"
+        )
+    return archived, None
+
+
 def _apply_reclaim(
     client: QdrantClient,
     decision: ReclaimDecision,
@@ -765,9 +828,7 @@ def _apply_reclaim(
     Separated from the cycle so the gates read as one ordered sequence rather
     than as branches interleaved with the cycle's bookkeeping. Every exit is a
     decision plus whatever archive artifacts were written, including on a
-    deferral after a torn snapshot: those files exist, the retention sweep
-    bounds them, and reporting them is how an operator learns the archive
-    happened.
+    deferral after a torn or unverifiable archive.
 
     Args:
         client: Qdrant client for the managed server.
@@ -787,31 +848,17 @@ def _apply_reclaim(
     gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
     if isinstance(gate, ReclaimDecision):
         return gate, []
-    observed = gate
     archived: list[Path] = []
     if decision.action == "reclaim_data":
-        try:
-            archived = archive_prefix(
-                client,
-                decision.prefix,
-                snapshots_dir=snapshots_dir,
-                archive_dir=archive_dir,
-            )
-        except TRANSPORT_FAILURES as exc:
-            # A snapshot is the slowest call in the cycle and the likeliest to
-            # time out. The client wraps that timeout in its own plain
-            # ``Exception``, so naming only the builtins here turned one slow
-            # namespace into an aborted cycle that reclaimed nothing.
-            return _redecide(decision, "failed", f"archive_failed: {exc}"), []
-        # The snapshot is a point-in-time copy. A write landing during it
-        # tears the copy, and the delete below would then destroy the delta
-        # the copy missed - the one loss an archive cannot undo.
-        settled = _prefix_points(client, decision.prefix)
-        if settled != observed:
-            return (
-                _redecide(decision, "deferred", "points_changed_during_archive"),
-                archived,
-            )
+        archived, refused = _archive_and_settle(
+            client,
+            decision,
+            snapshots_dir=snapshots_dir,
+            archive_dir=archive_dir,
+            observed=gate,
+        )
+        if refused is not None:
+            return refused, archived
     try:
         result = delete_prefix(client, decision.prefix, dry_run=False)
     except TRANSPORT_FAILURES as exc:
