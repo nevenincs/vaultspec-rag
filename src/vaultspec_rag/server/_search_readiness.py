@@ -82,7 +82,7 @@ class _AsyncioDeadlineScheduler:
         return True
 
 
-def _canonical_root(value: str | Path) -> str:
+def _canonical_root(value: object) -> str:
     if not isinstance(value, (str, Path)) or (
         isinstance(value, str) and not value.strip()
     ):
@@ -100,14 +100,14 @@ def _concrete_source(value: object) -> IndexSource:
     return cast("IndexSource", value)
 
 
-def _identity(value: str | None, *, field: str) -> None:
+def _identity(value: object, *, field: str) -> None:
     if value is not None and (
         not isinstance(value, str) or not value or len(value) > _MAX_IDENTITY_LENGTH
     ):
         raise ValueError(f"{field} must contain 1 to {_MAX_IDENTITY_LENGTH} characters")
 
 
-def _revision(value: int | None, *, field: str) -> None:
+def _revision(value: object, *, field: str) -> None:
     if value is not None and (
         not isinstance(value, int) or isinstance(value, bool) or value < 0
     ):
@@ -122,7 +122,10 @@ class ReadinessSourceKey:
     source: IndexSource
 
     def __post_init__(self) -> None:
-        if not isinstance(self.canonical_root, str) or not self.canonical_root:
+        if (
+            not isinstance(cast("object", self.canonical_root), str)
+            or not self.canonical_root
+        ):
             raise ValueError("canonical_root must be a non-empty string")
         if _canonical_root(self.canonical_root) != self.canonical_root:
             raise ValueError("canonical_root must be an absolute normalized path")
@@ -145,7 +148,7 @@ class ReadinessRevisionSnapshot:
     controller_revision: int | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.key, ReadinessSourceKey):
+        if not isinstance(cast("object", self.key), ReadinessSourceKey):
             raise ValueError("key must be a ReadinessSourceKey")
         _identity(self.published_generation, field="published_generation")
         _identity(self.desired_generation, field="desired_generation")
@@ -162,11 +165,15 @@ class PublicationTarget:
     generation: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.key, ReadinessSourceKey):
+        if not isinstance(cast("object", self.key), ReadinessSourceKey):
             raise ValueError("key must be a ReadinessSourceKey")
         _identity(self.generation, field="generation")
         _revision(self.revision, field="revision")
-        if self.revision is None:
+        # ``_revision`` tolerates None because the snapshot fields it also
+        # validates are genuinely optional. A target's revision is not: it is
+        # the condition the wait is admitted against, and a None reaching here
+        # through an untyped path would make every publication satisfy it.
+        if cast("object", self.revision) is None:
             raise ValueError("revision must be a non-negative integer")
 
 
@@ -186,7 +193,7 @@ class ReadinessRevisionRegistry:
         deadline_scheduler: ReadinessDeadlineScheduler | None = None,
     ) -> None:
         if (
-            not isinstance(max_observers, int)
+            not isinstance(cast("object", max_observers), int)
             or isinstance(max_observers, bool)
             or max_observers <= 0
         ):
@@ -303,8 +310,8 @@ class ReadinessRevisionRegistry:
     ) -> bool:
         """Wait until every target is published, returning false at the deadline."""
         if (
-            isinstance(timeout_seconds, bool)
-            or not isinstance(timeout_seconds, (int, float))
+            isinstance(cast("object", timeout_seconds), bool)
+            or not isinstance(cast("object", timeout_seconds), (int, float))
             or not isfinite(timeout_seconds)
             or timeout_seconds < 0
         ):

@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from ._source_types import (
     INDEX_SOURCES,
@@ -108,14 +108,14 @@ class SearchWaitCause(StrEnum):
     OTHER_SERVICE_CAPACITY = "other_service_capacity"
 
 
-def _bounded_text(value: str | None, *, field: str, limit: int) -> None:
+def _bounded_text(value: object, *, field: str, limit: int) -> None:
     if value is None:
         return
     if not isinstance(value, str) or not value or len(value) > limit:
         raise ValueError(f"{field} must contain 1 to {limit} characters")
 
 
-def _non_negative_finite(value: float | None, *, field: str) -> None:
+def _non_negative_finite(value: object, *, field: str) -> None:
     if value is not None and (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -176,7 +176,7 @@ class WaitObservation:
     remaining_bound_seconds: float
 
     def __post_init__(self) -> None:
-        if not isinstance(self.cause, SearchWaitCause):
+        if not isinstance(cast("object", self.cause), SearchWaitCause):
             raise ValueError("cause must be a SearchWaitCause")
         for field in (
             "waited_seconds",
@@ -205,7 +205,10 @@ class WaitObservation:
 
 
 def _validate_source_fact_structure(fact: SearchSourceFact) -> None:
-    if not isinstance(fact.source, str) or fact.source not in INDEX_SOURCES:
+    if (
+        not isinstance(cast("object", fact.source), str)
+        or fact.source not in INDEX_SOURCES
+    ):
         raise ValueError(f"source must be a concrete index source, got {fact.source!r}")
     for field, expected in (
         ("availability", SearchAvailability),
@@ -213,18 +216,18 @@ def _validate_source_fact_structure(fact: SearchSourceFact) -> None:
         ("absence_authority", AbsenceAuthority),
         ("wait_policy", FreshnessWaitPolicy),
     ):
-        if not isinstance(getattr(fact, field), expected):
+        if not isinstance(cast("object", getattr(fact, field)), expected):
             raise ValueError(f"{field} must be a {expected.__name__}")
-    if not isinstance(fact.generation, GenerationEvidence):
+    if not isinstance(cast("object", fact.generation), GenerationEvidence):
         raise ValueError("generation must be GenerationEvidence")
-    if not isinstance(fact.retryable, bool):
+    if not isinstance(cast("object", fact.retryable), bool):
         raise ValueError("retryable must be a boolean")
-    if not isinstance(fact.waits, tuple) or not all(
-        isinstance(item, WaitObservation) for item in fact.waits
+    if not isinstance(cast("object", fact.waits), tuple) or not all(
+        isinstance(cast("object", item), WaitObservation) for item in fact.waits
     ):
         raise ValueError("waits must be an immutable tuple of WaitObservation")
-    if not isinstance(fact.evidence, tuple) or not all(
-        isinstance(item, str) for item in fact.evidence
+    if not isinstance(cast("object", fact.evidence), tuple) or not all(
+        isinstance(cast("object", item), str) for item in fact.evidence
     ):
         raise ValueError("evidence must be an immutable tuple of strings")
 
@@ -317,13 +320,50 @@ class SearchReadinessAggregate:
     usable_source_count: int
     degraded_sources: tuple[IndexSource, ...]
 
+    def _validate_counts(self) -> None:
+        if (
+            not isinstance(cast("object", self.source_count), int)
+            or isinstance(self.source_count, bool)
+            or self.source_count <= 0
+        ):
+            raise ValueError("source_count must be positive")
+        if (
+            not isinstance(cast("object", self.usable_source_count), int)
+            or isinstance(self.usable_source_count, bool)
+            or not 0 <= self.usable_source_count <= self.source_count
+        ):
+            raise ValueError("usable_source_count must fit within source_count")
+
+    def _validate_consistency(self) -> None:
+        degraded_count = len(self.degraded_sources)
+        unavailable_count = self.source_count - self.usable_source_count
+        if not unavailable_count <= degraded_count <= self.source_count:
+            raise ValueError("degraded_sources contradict the aggregate source counts")
+        if self.freshness is SearchFreshness.CURRENT:
+            if degraded_count != unavailable_count:
+                raise ValueError(
+                    "current aggregate cannot contain freshness degradation"
+                )
+        elif not degraded_count:
+            raise ValueError("non-current aggregate requires a degraded source")
+        if (
+            self.availability is SearchAvailability.USABLE
+            and not self.usable_source_count
+        ):
+            raise ValueError("usable aggregate requires at least one usable source")
+        if (
+            self.availability is not SearchAvailability.USABLE
+            and self.usable_source_count
+        ):
+            raise ValueError("non-usable aggregate cannot report usable sources")
+
     @classmethod
     def from_sources(
         cls,
         sources: tuple[SearchSourceFact, ...],
     ) -> SearchReadinessAggregate:
-        if not isinstance(sources, tuple) or not all(
-            isinstance(fact, SearchSourceFact) for fact in sources
+        if not isinstance(cast("object", sources), tuple) or not all(
+            isinstance(cast("object", fact), SearchSourceFact) for fact in sources
         ):
             raise ValueError("sources must be an immutable tuple of source facts")
         if not sources:
@@ -362,7 +402,7 @@ class SearchReadinessAggregate:
             )
             else AbsenceAuthority.NON_AUTHORITATIVE
         )
-        degraded = tuple(
+        degraded: tuple[IndexSource, ...] = tuple(
             fact.source
             for fact in sources
             if fact.availability is not SearchAvailability.USABLE
@@ -383,48 +423,17 @@ class SearchReadinessAggregate:
             ("freshness", SearchFreshness),
             ("absence_authority", AbsenceAuthority),
         ):
-            if not isinstance(getattr(self, field), expected):
+            if not isinstance(cast("object", getattr(self, field)), expected):
                 raise ValueError(f"{field} must be a {expected.__name__}")
-        if not isinstance(self.degraded_sources, tuple) or not all(
-            isinstance(source, str) and source in INDEX_SOURCES
+        if not isinstance(cast("object", self.degraded_sources), tuple) or not all(
+            isinstance(cast("object", source), str) and source in INDEX_SOURCES
             for source in self.degraded_sources
         ):
             raise ValueError("degraded_sources must be an immutable tuple of sources")
-        if (
-            not isinstance(self.source_count, int)
-            or isinstance(self.source_count, bool)
-            or self.source_count <= 0
-        ):
-            raise ValueError("source_count must be positive")
-        if (
-            not isinstance(self.usable_source_count, int)
-            or isinstance(self.usable_source_count, bool)
-            or not 0 <= self.usable_source_count <= self.source_count
-        ):
-            raise ValueError("usable_source_count must fit within source_count")
+        self._validate_counts()
         if len(set(self.degraded_sources)) != len(self.degraded_sources):
             raise ValueError("degraded_sources cannot contain duplicates")
-        degraded_count = len(self.degraded_sources)
-        unavailable_count = self.source_count - self.usable_source_count
-        if not unavailable_count <= degraded_count <= self.source_count:
-            raise ValueError("degraded_sources contradict the aggregate source counts")
-        if (
-            self.freshness is SearchFreshness.CURRENT
-            and degraded_count != unavailable_count
-        ):
-            raise ValueError("current aggregate cannot contain freshness degradation")
-        if self.freshness is not SearchFreshness.CURRENT and not degraded_count:
-            raise ValueError("non-current aggregate requires a degraded source")
-        if (
-            self.availability is SearchAvailability.USABLE
-            and not self.usable_source_count
-        ):
-            raise ValueError("usable aggregate requires at least one usable source")
-        if (
-            self.availability is not SearchAvailability.USABLE
-            and self.usable_source_count
-        ):
-            raise ValueError("non-usable aggregate cannot report usable sources")
+        self._validate_consistency()
         if self.absence_authority is AbsenceAuthority.AUTHORITATIVE and (
             self.availability is not SearchAvailability.USABLE
             or self.freshness is not SearchFreshness.CURRENT

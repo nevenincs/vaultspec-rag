@@ -18,7 +18,6 @@ from .._operator_commands import (
     server_start_command,
     server_status_command,
 )
-from .._search_state import MAX_SEARCH_EVIDENCE_ITEMS
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..api import CodebaseSearchRequest, VaultSearchRequest
@@ -43,6 +42,12 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+)
+from ._search_readiness_render import (
+    render_readiness as _render_readiness_payload,
+)
+from ._search_readiness_render import (
+    render_string_remediation as _render_string_remediation_payload,
 )
 
 if TYPE_CHECKING:
@@ -192,134 +197,12 @@ def _handle_service_success(
     _render_partial_domain_failures(payload)
 
 
-_READINESS_IDENTIFIER_DISPLAY_LIMIT = 256
-_READINESS_REMEDIATION_DISPLAY_LIMIT = 1_024
-
-
-def _bounded_readiness_identifier(
-    value: object, *, limit: int = _READINESS_IDENTIFIER_DISPLAY_LIMIT
-) -> str | None:
-    """Return one bounded identifier exactly as supplied by the service."""
-    if not isinstance(value, (str, int)) or isinstance(value, bool):
-        return None
-    rendered = str(value)
-    if not rendered:
-        return None
-    if len(rendered) <= limit:
-        return rendered
-    return f"{rendered[: limit - 1]}…"
-
-
 def _render_readiness(payload: dict[str, object]) -> set[str]:
-    """Render canonical readiness fields without deriving a new verdict."""
-    rendered_remediation: set[str] = set()
-    raw_readiness = payload.get("readiness")
-    if not isinstance(raw_readiness, dict):
-        return rendered_remediation
-    readiness = cast("dict[str, object]", raw_readiness)
-    raw_aggregate = readiness.get("aggregate")
-    if isinstance(raw_aggregate, dict):
-        aggregate = cast("dict[str, object]", raw_aggregate)
-        state = [
-            value
-            for key in ("availability", "freshness", "absence_authority")
-            if isinstance((value := aggregate.get(key)), str) and value
-        ]
-        if state:
-            _plain(f"Readiness: {' / '.join(state)}")
-
-    raw_sources = readiness.get("sources")
-    if not isinstance(raw_sources, list):
-        return rendered_remediation
-    remaining_waits = MAX_SEARCH_EVIDENCE_ITEMS
-    for raw_source in cast("list[object]", raw_sources)[:MAX_SEARCH_EVIDENCE_ITEMS]:
-        if not isinstance(raw_source, dict):
-            continue
-        source = cast("dict[str, object]", raw_source)
-        _render_readiness_source(source, rendered_remediation)
-        remaining_waits = _render_readiness_waits(source, remaining_waits)
-    return rendered_remediation
-
-
-def _render_readiness_source(
-    source: dict[str, object], rendered_remediation: set[str]
-) -> None:
-    """Render one supplied source state and its bounded generation identities."""
-    identity = _bounded_readiness_identifier(source.get("source"))
-    details = [
-        value
-        for key in ("availability", "freshness")
-        if isinstance((value := source.get(key)), str) and value
-    ]
-    reason = _bounded_readiness_identifier(source.get("reason_code"))
-    if reason is not None:
-        details.append(f"reason={reason}")
-    raw_generation = source.get("generation")
-    if isinstance(raw_generation, dict):
-        generation = cast("dict[str, object]", raw_generation)
-        for key in (
-            "served_generation",
-            "served_revision",
-            "desired_generation",
-            "desired_revision",
-        ):
-            value = _bounded_readiness_identifier(generation.get(key))
-            if value is not None:
-                details.append(f"{key}={value}")
-    if identity is not None and details:
-        _plain(f"  {identity}: {', '.join(details)}")
-    raw_evidence = source.get("evidence")
-    if isinstance(raw_evidence, list):
-        evidence = [
-            value
-            for item in cast("list[object]", raw_evidence)[:MAX_SEARCH_EVIDENCE_ITEMS]
-            if (value := _bounded_readiness_identifier(item)) is not None
-        ]
-        if evidence:
-            _plain(f"    Evidence: {', '.join(evidence)}")
-    remediation = source.get("remediation")
-    if isinstance(remediation, str) and remediation:
-        bounded = _bounded_readiness_identifier(
-            remediation, limit=_READINESS_REMEDIATION_DISPLAY_LIMIT
-        )
-        if bounded is not None and remediation not in rendered_remediation:
-            _plain(f"    Next action: {bounded}")
-            rendered_remediation.add(remediation)
-
-
-def _render_readiness_waits(source: dict[str, object], remaining: int) -> int:
-    """Render at most the remaining number of supplied canonical waits."""
-    raw_waits = source.get("waits")
-    if not isinstance(raw_waits, list):
-        return remaining
-    source_id = _bounded_readiness_identifier(source.get("source"))
-    for raw_wait in cast("list[object]", raw_waits):
-        if remaining == 0:
-            break
-        if not isinstance(raw_wait, dict):
-            continue
-        wait = cast("dict[str, object]", raw_wait)
-        cause = _bounded_readiness_identifier(wait.get("cause"))
-        if cause is None:
-            continue
-        waited = wait.get("waited_seconds")
-        bound = wait.get("configured_bound_seconds")
-        remainder = wait.get("remaining_bound_seconds")
-        prefix = f"{source_id} " if source_id is not None else ""
-        _plain(f"  Wait {prefix}{cause}: {waited}s / {bound}s ({remainder}s remaining)")
-        remaining -= 1
-    return remaining
+    return _render_readiness_payload(payload, _plain)
 
 
 def _render_string_remediation(payload: dict[str, object], rendered: set[str]) -> None:
-    """Render the canonical scalar remediation form used by search failures."""
-    remediation = payload.get("remediation")
-    if isinstance(remediation, str) and remediation and remediation not in rendered:
-        bounded = _bounded_readiness_identifier(
-            remediation, limit=_READINESS_REMEDIATION_DISPLAY_LIMIT
-        )
-        if bounded is not None:
-            _plain(f"Next action: {bounded}")
+    _render_string_remediation_payload(payload, rendered, _plain)
 
 
 def _render_shortfall_warnings(payload: dict[str, object]) -> None:

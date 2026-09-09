@@ -1,0 +1,49 @@
+{
+  "schema": "search-readiness-comparison-v1",
+  "issue": 471,
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.15",
+    "gpu_service_used": false
+  },
+  "command": "uv run python -c 'import json,statistics; from vaultspec_rag.tests.benchmarks.bench_concurrency import run_readiness_control_benchmark; rows=[run_readiness_control_benchmark(\".\",32).to_dict() for _ in range(5)]; print(json.dumps(rows,indent=2))'",
+  "accepted_no_wait_budget": {
+    "scope": "CPU-only satisfied-target registry admission, 32 concurrent callers",
+    "maximum_batch_wall_seconds": 0.005,
+    "minimum_admissions_per_second": 6400.0,
+    "basis": "Tenfold headroom over the observed maximum 0.000458-second batch; this isolates readiness admission from retrieval, limiter, GPU, and storage work."
+  },
+  "measured_cpu_control": {
+    "concurrency": 32,
+    "samples": 5,
+    "immediate_batch_wall_seconds": [
+      0.000458,
+      0.000191,
+      0.000269,
+      0.000188,
+      0.000191
+    ],
+    "immediate_median_wall_seconds": 0.000191,
+    "immediate_minimum_observed_admissions_per_second": 69868.996,
+    "bounded_two_wave_wall_seconds": [
+      0.002659,
+      0.002925,
+      0.002686,
+      0.003049,
+      0.002385
+    ],
+    "bounded_median_wall_seconds": 0.002686,
+    "bounded_waiters_per_sample": 64,
+    "waiter_cleanup_verified_all_samples": true,
+    "cleanup_evidence": "Each sample uses a registry capped at 32 observers, then completes two consecutive 32-waiter waves; the second full wave succeeds only after the first wave unregisters."
+  },
+  "live_service_comparison": {
+    "status": "unavailable",
+    "reason": "No explicitly compatible resident GPU service was supplied; GPU discipline forbids starting a competing service for this step.",
+    "no_wait_latency_seconds": null,
+    "search_throughput_rps": null,
+    "search_limiter_concurrency": null,
+    "gpu_queue_wait_seconds": null,
+    "bounded_readiness_wait_seconds": null
+  }
+}

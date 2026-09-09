@@ -54,7 +54,7 @@ unchanged, followed by mutation proof of that assertion.
 
 1. Replace the lifecycle test's `{200, 503}` allowance with a bounded wait for the contractually
    justified outcome, or test store reopening without using search as an ambiguous proxy.
-2. Mutation-prove every newly introduced or rewritten refusal guard in one uninterrupted
+1. Mutation-prove every newly introduced or rewritten refusal guard in one uninterrupted
    break/red/restore/green sequence and record the exact mutation and assertion at the test.
-3. Extend each watcher scope-loss refusal test with a direct assertion that no changed payload or
+1. Extend each watcher scope-loss refusal test with a direct assertion that no changed payload or
    replacement generation was published before explicit full-reindex authority was supplied.

@@ -180,7 +180,7 @@ These bound the segment and queue geometry of one index run, its memory use, and
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_CHUNKS`            | integer | `512`                 | Chunks buffered in the producer-to-consumer index queue                                                | -        |
 | `VAULTSPEC_RAG_INDEX_QUEUE_MAX_BYTES`             | integer | `134217728` (128 MiB) | Byte cap on the buffered index queue, applying backpressure                                            | -        |
 | `VAULTSPEC_RAG_INDEX_NO_PROGRESS_TIMEOUT_SECONDS` | float   | `900`                 | Seconds without index progress before the run is failed                                                | -        |
-| `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `1` (true)            | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
+| `VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR`             | boolean | `0` (false)           | Queue one failure-safe reindex when a search finds the served index shrunken below its published claim | -        |
 | `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB`             | float   | `16384`               | Resident-memory ceiling enforced at index checkpoints (MiB)                                            | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB`            | float   | `0` (auto-derive)     | CUDA-memory ceiling override in MiB; `0` derives one from the device                                   | -        |
 | `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB`           | float   | `2048`                | Memory reserved below the device total when the ceiling auto-derives (MiB)                             | -        |
@@ -215,6 +215,7 @@ A floor has to cover the resident stack a load creates, plus the largest demand 
 | `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)               | -                                        |
 | `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                           | -                                        |
 | `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | float   | `300`                        | Client connection and read budget for service-handled searches (seconds)             | `--timeout`                              |
+| `VAULTSPEC_RAG_SEARCH_FRESHNESS_WAIT_MAX_SECONDS` | float | `30`                    | Maximum bounded wait accepted for search freshness (seconds)                         | `--freshness-wait-seconds`               |
 | `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                          | -                                        |
 | `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                         | -                                        |
 | `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                          | -                                        |

@@ -867,6 +867,7 @@ try:
                 "top_k": 10,
                 "project_root": str(target),
                 "type": "code",
+                "freshness_policy": "immediate",
             },
         },
         {

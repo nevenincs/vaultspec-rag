@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from .._search_state import SearchReadinessAggregate, SearchSourceFact
 from .._source_types import PublicSourceType
@@ -59,11 +60,11 @@ class SearchDomainOutcome:
     detail: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, PublicSourceType):
+        if not isinstance(cast("object", self.source), PublicSourceType):
             raise ValueError("a domain outcome source must be a PublicSourceType")
         if self.source is PublicSourceType.COMBINED:
             raise ValueError("a domain outcome cannot use the combined source")
-        if not isinstance(self.source_fact, SearchSourceFact):
+        if not isinstance(cast("object", self.source_fact), SearchSourceFact):
             raise ValueError("a domain outcome requires a SearchSourceFact")
         if self.source_fact.source != self.source.value:
             raise ValueError("a domain outcome source fact carries the wrong source")

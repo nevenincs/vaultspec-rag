@@ -115,6 +115,8 @@ vaultspec-rag search
 | `--verbose` | boolean | no | off | Show model loading and progress messages during local search. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 | `--timeout` | float | no | - | Connection and read timeout budget in seconds for searches handled by the service (default 300 seconds; override with VAULTSPEC_RAG_SEARCH_TIMEOUT). |
+| `--freshness-policy` | str | no | immediate | Return immediately or wait within a bounded publication window. |
+| `--freshness-wait-seconds` | float | no | - | Publication wait bound in seconds; requires --freshness-policy bounded. |
 
 ## index
 
