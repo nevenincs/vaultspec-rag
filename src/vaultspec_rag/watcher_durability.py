@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
@@ -20,8 +21,10 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 from .logging_config import log_event
 from .watcher_retry import (
+    WatcherPathObservation,
     WatcherRetryDecision,
     WatcherRetryPolicy,
+    WatcherRetryState,
     WatcherRetryUnavailableError,
     WatcherSource,
 )
@@ -37,6 +40,22 @@ _CANCELLATION_DURABILITY_SECONDS = 3.0
 _CANCELLATION_FALLBACK_SECONDS = 2.0
 _STATE_TRANSACTION_WORKER_SLOTS = threading.BoundedSemaphore(4)
 _CANCELLATION_FALLBACK_WORKER_SLOTS = threading.BoundedSemaphore(2)
+
+
+class WatcherAttemptOutcome(StrEnum):
+    """Durable settlement outcomes for one fenced watcher attempt."""
+
+    SUCCEEDED = "succeeded"
+    INTERRUPTED = "interrupted"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class WatcherSettlement:
+    """Outcome evidence for one fenced watcher attempt."""
+
+    outcome: WatcherAttemptOutcome
+    error: BaseException | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +349,24 @@ async def _persist_convergence_pending(
     return cancellation_requested
 
 
+async def persist_watcher_observations(
+    policy: WatcherRetryPolicy,
+    observations: tuple[WatcherPathObservation, ...],
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+) -> bool:
+    """Commit accepted exact path evidence before delivering cancellation."""
+    _state, cancellation_requested = await run_durable_retry_transaction(
+        lambda: policy.mark_scope_pending(observations, now=time.time()),
+        source=source,
+        root_dir=root_dir,
+        action="mark_scope_pending",
+        cancellation_fallback=policy.write_recovery_marker,
+    )
+    return cancellation_requested
+
+
 async def _await_shielded_persist_outcomes(
     tasks: list[asyncio.Task[bool]],
 ) -> tuple[list[bool | BaseException], bool]:
@@ -426,6 +463,78 @@ async def admit_watcher_attempt(
             cancellation_fallback=policy.write_recovery_marker,
         )
     raise asyncio.CancelledError
+
+
+async def admit_scoped_watcher_attempt(
+    policy: WatcherRetryPolicy,
+    job_id: str,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+) -> WatcherRetryDecision:
+    """Atomically capture exact pending scope with its attempt and job fence."""
+    if not policy.state.pending_paths:
+        raise ValueError("scoped watcher admission requires exact pending paths")
+    attempt_token = policy.reserve_admission()
+    decision, cancellation_requested = await run_durable_retry_transaction(
+        lambda: policy.admit_reserved(
+            attempt_token,
+            now=time.time(),
+            job_id=job_id,
+        ),
+        source=source,
+        root_dir=root_dir,
+        action="admit_scoped",
+        cancellation_fallback=policy.write_recovery_marker,
+    )
+    if not cancellation_requested:
+        return decision
+    generation = decision.attempt_generation
+    if decision.admitted and generation is not None:
+        await settle_watcher_attempt(
+            policy,
+            generation,
+            WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED),
+            source=source,
+            root_dir=root_dir,
+        )
+    raise asyncio.CancelledError
+
+
+async def settle_watcher_attempt(
+    policy: WatcherRetryPolicy,
+    attempt_generation: int,
+    settlement: WatcherSettlement,
+    *,
+    source: WatcherSource,
+    root_dir: Path,
+) -> WatcherRetryState:
+    """Settle captured scope atomically before exposing cancellation."""
+    operation = _settlement_operation(policy, attempt_generation, settlement)
+    state, cancellation_requested = await run_durable_retry_transaction(
+        operation,
+        source=source,
+        root_dir=root_dir,
+        action=f"settle_{settlement.outcome.value}",
+        cancellation_fallback=policy.write_recovery_marker,
+    )
+    raise_if_cancellation_requested(cancellation_requested)
+    return state
+
+
+def _settlement_operation(
+    policy: WatcherRetryPolicy,
+    attempt_generation: int,
+    settlement: WatcherSettlement,
+) -> Callable[[], WatcherRetryState]:
+    if settlement.outcome is WatcherAttemptOutcome.SUCCEEDED:
+        return lambda: policy.record_success(attempt_generation)
+    if settlement.outcome is WatcherAttemptOutcome.INTERRUPTED:
+        return lambda: policy.record_interrupted(attempt_generation)
+    error = settlement.error
+    if error is None:
+        raise ValueError("failed watcher settlement requires an error")
+    return lambda: policy.record_failure(error, attempt_generation)
 
 
 def raise_if_cancellation_requested(requested: bool) -> None:

@@ -247,16 +247,27 @@ _UPDATES_TIMING_COMMAND = "service.updates.timing"
 
 
 @server_watcher_app.command("status")
-def service_watcher_status(
+def service_watcher_status(  # noqa: PLR0913 - each value is a public CLI option
     port: PortOption = None,
     json_mode: JsonMode = False,
+    root: Annotated[str | None, typer.Option("--root")] = None,
+    source: Annotated[str | None, typer.Option("--source")] = None,
+    state: Annotated[str | None, typer.Option("--state")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=0, max=256)] = 256,
 ) -> None:
     """Show automatic index update settings and projects."""
     resolved_port = port if port is not None else _default_service_port()
     if resolved_port is None:
         _watcher_service_unreachable(_UPDATES_STATUS_COMMAND, json_mode)
         return
-    result = _try_http_admin("get_watcher_state", {}, resolved_port)
+    args: dict[str, object] = {"limit": limit}
+    if root:
+        args["root"] = root
+    if source:
+        args["source"] = source
+    if state:
+        args["state"] = state
+    result = _try_http_admin("get_watcher_state", args, resolved_port)
     if result is None:
         _watcher_service_unreachable(
             _UPDATES_STATUS_COMMAND, json_mode, port=resolved_port
@@ -277,6 +288,38 @@ def service_watcher_status(
     _print_update_address(resolved_port)
     _plain(f"Automatic index updates: {mode}")
     _print_update_timing(result)
+    raw_controllers = result.get("controllers")
+    controllers = (
+        cast("list[object]", raw_controllers)
+        if isinstance(raw_controllers, list)
+        else []
+    )
+    for raw_controller in controllers:
+        if not isinstance(raw_controller, dict):
+            continue
+        controller = cast("dict[str, object]", raw_controller)
+        _plain(
+            "Controller: "
+            f"{controller.get('root', 'unknown')} "
+            f"[{controller.get('source', 'unknown')}]"
+        )
+        _plain(
+            f"  State: {controller.get('state', 'unknown')} "
+            f"({controller.get('reason', 'unknown')})"
+        )
+        _plain(
+            f"  Pending: {controller.get('pending_count', 0)}; "
+            f"oldest age: {controller.get('oldest_age_seconds')} seconds"
+        )
+        _plain(
+            f"  Next decision: {controller.get('next_decision_at')}; "
+            f"freshness deadline: {controller.get('freshness_deadline')}"
+        )
+        _plain(f"  Backpressure: {controller.get('backpressure', [])}")
+        _plain(f"  Measurements: {controller.get('measurement')}")
+        _plain(f"  Last transition: {controller.get('last_transition')}")
+        if remediation := controller.get("remediation"):
+            _plain(f"  Remediation: {remediation}")
     if not watching:
         _cli.console.print("No projects currently have automatic index updates.")
         return

@@ -38,6 +38,21 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
 
 
+class ArchiveIntegrityError(RuntimeError):
+    """An archive does not describe what it holds, or holds what it names.
+
+    Distinct from a transport failure, which the operator surface otherwise
+    conflates it with: both arrived here as a bare ``RuntimeError``, so an
+    unreadable manifest or a missing artifact was reported as an unreachable
+    server and answered with "start the service" - advice that is wrong, and
+    that discards the only diagnostic saying which archive is broken.
+
+    A ``RuntimeError`` still, so callers that already treat an archive read as
+    fallible keep working unchanged; the subclass exists so the surface can
+    tell the two conditions apart.
+    """
+
+
 #: The extension qdrant gives every snapshot it writes, and so the extension
 #: an artifact in an archive directory carries.
 _SNAPSHOT_SUFFIX = ".snapshot"
@@ -115,7 +130,7 @@ def _archive_header(
         or not isinstance(proofs, list)
         or parse_iso_timestamp(completed_at, field="archive completed_at") is None
     ):
-        raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive manifest is incomplete: {manifest_path}")
     return prefix, version, cast("list[object]", records), cast("list[object]", proofs)
 
 
@@ -132,7 +147,7 @@ def _validate_archive_proofs(
         or len(proofs) != len(proof_collections)
         or not proof_collections.issubset(collection_names)
     ):
-        raise RuntimeError(
+        raise ArchiveIntegrityError(
             f"archive publication proofs do not match its collections: {manifest_path}"
         )
 
@@ -143,9 +158,11 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     try:
         raw: object = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
+        raise ArchiveIntegrityError(
+            f"archive manifest is unreadable: {manifest_path}"
+        ) from exc
     if not isinstance(raw, dict):
-        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive manifest is invalid: {manifest_path}")
     payload = cast("dict[str, object]", raw)
     prefix, version, collection_records, proof_items = _archive_header(
         payload, manifest_path
@@ -155,7 +172,9 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
         for item in collection_records
     )
     if len({item.source for item in collections}) != len(collections):
-        raise RuntimeError(f"archive manifest repeats a collection: {manifest_path}")
+        raise ArchiveIntegrityError(
+            f"archive manifest repeats a collection: {manifest_path}"
+        )
     proofs = tuple(_read_publication_proof(item, manifest_path) for item in proof_items)
     _validate_archive_proofs(collections, proofs, manifest_path)
     _refuse_unnamed_snapshots(
@@ -170,7 +189,9 @@ def _read_collection(
     archive_dir: Path, prefix: str, value: object, manifest_path: Path
 ) -> ArchivedCollection:
     if not isinstance(value, dict):
-        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+        raise ArchiveIntegrityError(
+            f"archive manifest has an invalid record: {manifest_path}"
+        )
     record = cast("dict[str, object]", value)
     name, filename, points = (
         record.get("name"),
@@ -186,19 +207,25 @@ def _read_collection(
         or not isinstance(points, int)
         or points < 0
     ):
-        raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
+        raise ArchiveIntegrityError(
+            f"archive manifest has an invalid record: {manifest_path}"
+        )
     snapshot = archive_dir / filename
     try:
         if not snapshot.is_file() or snapshot.stat().st_size <= 0:
-            raise RuntimeError(f"archive snapshot is missing or empty: {snapshot}")
+            raise ArchiveIntegrityError(
+                f"archive snapshot is missing or empty: {snapshot}"
+            )
     except OSError as exc:
-        raise RuntimeError(f"archive snapshot is unreadable: {snapshot}") from exc
+        raise ArchiveIntegrityError(
+            f"archive snapshot is unreadable: {snapshot}"
+        ) from exc
     identity_raw = record.get("identity")
     identity = (
         None if identity_raw is None else CollectionIdentity.from_payload(identity_raw)
     )
     if identity_raw is not None and identity is None:
-        raise RuntimeError(f"archive identity is invalid: {manifest_path}")
+        raise ArchiveIntegrityError(f"archive identity is invalid: {manifest_path}")
     return ArchivedCollection(name, snapshot, points, identity)
 
 
@@ -274,7 +301,7 @@ def _read_publication_proof(
                 )
             )
     except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError(
+        raise ArchiveIntegrityError(
             f"archive publication proof is invalid: {manifest_path}"
         ) from exc
     return ArchivedPublicationProof(collection, signature, tuple(evidence))
@@ -347,10 +374,12 @@ def _refuse_unnamed_snapshots(
             if path.is_file() and path.suffix == _SNAPSHOT_SUFFIX
         )
     except OSError as exc:
-        raise RuntimeError(f"archive directory is unreadable: {archive_dir}") from exc
+        raise ArchiveIntegrityError(
+            f"archive directory is unreadable: {archive_dir}"
+        ) from exc
     unnamed = [name for name in present if name not in referenced]
     if unnamed:
-        raise RuntimeError(
+        raise ArchiveIntegrityError(
             "archive holds snapshot artifacts its manifest does not name: "
             f"{', '.join(unnamed)} beside {manifest_path}"
         )
