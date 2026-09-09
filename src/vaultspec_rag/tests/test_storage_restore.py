@@ -411,10 +411,16 @@ class TestRetriedPartialDropStaysRestorable:
         between recovering a namespace and recovering something that merely
         resembles one.
 
-        Mutation: returned nothing from the merge. Observed this fail on
-        ``read_archive`` refusing the directory outright, naming the first
-        attempt's artifact as one the manifest does not name - the second
-        guard catching what the first stopped preventing.
+        Two mutations, each run alone against this test.
+
+        Returning nothing from the merge fails the collection assertion,
+        observed offering only the survivor: the archive reads as complete and
+        is a namespace short.
+
+        Carrying every prior record indiscriminately fails on ``read_archive``
+        refusing the manifest for naming the survivor twice, which is the
+        reader's own guard against a record that cannot map to one
+        destination.
         """
         archive, code, vault = self._archived_twice(tmp_path)
 
@@ -473,3 +479,55 @@ def test_read_archive_accepts_a_stray_file_that_is_not_a_snapshot(
     (archive / "operator-notes.txt").write_text("checked 2026", encoding="utf-8")
 
     assert read_archive(archive).prefix == ARCHIVE_PREFIX
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+def test_an_archive_that_abandoned_part_way_leaves_nothing_unaccounted_for(
+    tmp_path: Path,
+) -> None:
+    """An abandoned attempt does not make the next complete archive unrestorable.
+
+    The companion to the refusal, and the reason the archiver has to sweep
+    rather than only publish. An attempt that raises part-way has already
+    moved snapshots into the directory under no manifest at all, and the next
+    attempt takes fresh ones under fresh names rather than adopting them. Left
+    alone, that residue is a snapshot the published manifest does not name -
+    so recovery would refuse an archive that is in fact complete, permanently,
+    over a file that was never published and describes nothing the archive
+    still needs.
+
+    That is the sequence this codebase must expect rather than tolerate: a
+    server too slow to finish an archive is the condition the whole reclaim
+    path is built around, and the retry is its designed answer.
+
+    Mutation: dropped the sweep and published the manifest alone. Observed
+    this fail on ``read_archive`` refusing the completed archive, naming the
+    abandoned attempt's snapshot.
+    """
+    from .._store_models import root_collection_prefix
+    from ..storage_manifest import record_root
+    from ..storage_reclamation import archive_prefix
+    from ..store_schema import CODE_COLLECTION, VAULT_COLLECTION
+    from .test_storage_ops import _CycleClient
+
+    root = tmp_path / "namespace"
+    root.mkdir()
+    prefix = root_collection_prefix(root)
+    code, vault = prefix + CODE_COLLECTION, prefix + VAULT_COLLECTION
+    record_root(root, backend="server")
+    snapshots_dir = tmp_path / "snapshots"
+    archive_dir = tmp_path / "archive"
+    # Sorted order reaches the code collection first, so its snapshot lands
+    # before the vault one raises and the attempt is abandoned holding it.
+    client = _CycleClient({code: 5, vault: 7}, snapshots_dir=snapshots_dir)
+    client.aborting_snapshots = {vault}
+    server = cast("QdrantClient", client)
+    with pytest.raises(OSError, match="timed out"):
+        archive_prefix(
+            server, prefix, snapshots_dir=snapshots_dir, archive_dir=archive_dir
+        )
+
+    archive_prefix(server, prefix, snapshots_dir=snapshots_dir, archive_dir=archive_dir)
+
+    read = read_archive(archive_dir / prefix.rstrip("_"))
+    assert [item.source for item in read.collections] == [code, vault]
