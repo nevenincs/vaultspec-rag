@@ -201,6 +201,18 @@ class TestScopedPublicationStaysProportional:
             f"_vault_incremental.py:{SCOPED_ENTRY_POINT}",
         }, found
 
+    def test_the_package_scan_actually_reaches_the_package(self) -> None:
+        """The two package-wide rules below pass over an empty file list.
+
+        Same shape as the scoped-entry-point pin above: both are `assert not
+        offenders`, so a helper that stopped finding production modules would
+        retire them without failing anything.
+        """
+        names = {path.name for path in every_production_file()}
+
+        assert len(names) > 100, len(names)
+        assert {"store_catalog.py", "store_runtime.py"} <= names, sorted(names)[:10]
+
     def test_only_declared_owners_read_a_whole_collection(self) -> None:
         """A collection-wide read anywhere else has to be argued for first."""
         offenders: dict[str, list[str]] = {}
