@@ -12,9 +12,9 @@ import contextlib
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from ._source_types import PublicSourceType, parse_source_type
+from ._source_types import PublicSourceType, SelectableSource, parse_source_type
 from .progress import NullProgressReporter
 from .registry import get_registry
 from .search._result_shaping import PHASE_MODEL_LOAD, PHASE_PROJECT_LEASE
@@ -764,9 +764,7 @@ def get_related(
 def clean(
     root_dir: pathlib.Path,
     *,
-    clean_type: PublicSourceType | Literal["vault", "code", "document", "combined"] = (
-        PublicSourceType.COMBINED
-    ),
+    clean_type: PublicSourceType | SelectableSource = PublicSourceType.COMBINED,
     registry: ServiceRegistry,
 ) -> list[str]:
     """Wipe the selected collections and invalidate their publication proofs.

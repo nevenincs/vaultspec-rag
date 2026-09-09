@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
 from .._source_types import PublicSourceType
-from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
+from ._checkpoint_common import RunCheckpointBase
 from ._content_policy import ContentKind
 from ._index_schema import DOCUMENT_EMBED_SCHEMA
 from ._run_ledger_models import (
@@ -15,11 +15,8 @@ from ._run_ledger_models import (
     CommitUnitKind,
     RunAuthority,
     RunOperation,
-    RunSignature,
     RunTerminalState,
-    index_run_ledger_path,
 )
-from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
@@ -90,39 +87,9 @@ class DocumentRunCheckpoint(RunCheckpointBase):
 
     _content_kind: ClassVar[ContentKind | None] = ContentKind.DOCUMENT
     _kind_label: ClassVar[str] = "document"
-
-    @classmethod
-    def open(cls, request: DocumentRunOpenRequest, /) -> DocumentRunCheckpoint:
-        """Open or resume the compatible document generation for one attempt."""
-        fingerprints = request.policy.fingerprints_for(ContentKind.DOCUMENT)
-        signature = RunSignature(
-            root_identity=str(request.root_dir.resolve()),
-            collection_identity=store_schema.DOCUMENT_COLLECTION,
-            source_type=PublicSourceType.DOCUMENT,
-            operation=request.operation,
-            clean=request.clean,
-            model_identity=request.model_identity,
-            dense_dimensions=request.dense_dimensions,
-            embedding_schema=DOCUMENT_EMBED_SCHEMA,
-            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
-            content_epoch=fingerprints.content,
-            membership_epoch=fingerprints.membership,
-            preprocessing_identity=request.policy.fingerprints.execution,
-            configuration_fingerprint=configuration_fingerprint(request.configuration),
-            policy_fingerprint=request.policy.fingerprints.snapshot,
-            backend_identity=request.backend_identity,
-        )
-        ledger = RunLedger(index_run_ledger_path(request.data_root))
-        generation = cls.start_compatible_generation(ledger, signature)
-        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
-        return cls(
-            ledger=ledger,
-            generation=generation,
-            policy=request.policy,
-            run_policy=request.run_policy,
-            authority=request.authority,
-            receipt=receipt,
-        )
+    _collection_identity: ClassVar[str] = store_schema.DOCUMENT_COLLECTION
+    _source_type: ClassVar[PublicSourceType] = PublicSourceType.DOCUMENT
+    _embedding_schema: ClassVar[int] = DOCUMENT_EMBED_SCHEMA
 
     def unit_for(
         self,

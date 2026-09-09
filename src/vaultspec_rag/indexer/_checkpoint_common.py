@@ -29,43 +29,85 @@ import hashlib
 import json
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
+from .. import store_schema
 from ._file_state import FileState, FileStateKind
-from ._publication_proof import PathDelta, PathOutcome, ProofEvidence
+from ._publication_proof import (
+    PathDelta,
+    PathOutcome,
+    ProofEvidence,
+    ProofReceiptState,
+)
 from ._run_ledger_models import (
     FETCH_BATCH,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
-    ProofReceiptState,
     RunAuthority,
     RunLedgerCompatibilityError,
     RunLedgerStateError,
     RunOperation,
+    RunSignature,
     RunTerminalState,
+    index_run_ledger_path,
 )
+from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from pathlib import Path
 
     from _typeshed import DataclassInstance
 
+    from .._source_types import PublicSourceType
     from ..job_control import RunControl
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._run_ledger_models import PublicationReceipt, RunGeneration, RunSignature
-    from ._run_ledger_runtime import RunLedger
+    from ._run_ledger_models import PublicationReceipt, RunGeneration
     from ._run_policy import RunPolicy
     from ._streaming_types import StoreMutationLifecycle
 
 __all__ = [
     "PublicationExecution",
     "RunCheckpointBase",
+    "RunOpenRequest",
     "classify_interrupted_generation",
     "configuration_fingerprint",
 ]
+
+
+class RunOpenRequest(Protocol):
+    """The compatibility inputs every source type opens a generation from.
+
+    Structural rather than a base class: each source declares its own frozen
+    request with its own configuration shape, and this names only the fields
+    the shared open path actually reads.
+    """
+
+    @property
+    def data_root(self) -> Path: ...
+    @property
+    def root_dir(self) -> Path: ...
+    @property
+    def policy(self) -> ResolvedIndexPolicy: ...
+    @property
+    def run_policy(self) -> RunPolicy: ...
+    @property
+    def operation(self) -> RunOperation: ...
+    @property
+    def clean(self) -> bool: ...
+    @property
+    def model_identity(self) -> str: ...
+    @property
+    def dense_dimensions(self) -> int: ...
+    @property
+    def configuration(self) -> DataclassInstance: ...
+    @property
+    def backend_identity(self) -> str: ...
+    @property
+    def authority(self) -> RunAuthority: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +185,48 @@ class RunCheckpointBase:
 
     _content_kind: ClassVar[ContentKind | None]
     _kind_label: ClassVar[str]
+    _collection_identity: ClassVar[str]
+    _source_type: ClassVar[PublicSourceType]
+    _embedding_schema: ClassVar[int]
+
+    @classmethod
+    def open(cls, request: RunOpenRequest, /) -> Self:
+        """Open or resume the compatible generation for one attempt.
+
+        One body for every source type: the four facts that differ are
+        the class constants above, so a change to how a generation is
+        opened cannot reach one source and miss the other.
+        """
+        assert cls._content_kind is not None
+        fingerprints = request.policy.fingerprints_for(cls._content_kind)
+        signature = RunSignature(
+            root_identity=str(request.root_dir.resolve()),
+            collection_identity=cls._collection_identity,
+            source_type=cls._source_type,
+            operation=request.operation,
+            clean=request.clean,
+            model_identity=request.model_identity,
+            dense_dimensions=request.dense_dimensions,
+            embedding_schema=cls._embedding_schema,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch=fingerprints.content,
+            membership_epoch=fingerprints.membership,
+            preprocessing_identity=request.policy.fingerprints.execution,
+            configuration_fingerprint=configuration_fingerprint(request.configuration),
+            policy_fingerprint=request.policy.fingerprints.snapshot,
+            backend_identity=request.backend_identity,
+        )
+        ledger = RunLedger(index_run_ledger_path(request.data_root))
+        generation = cls.start_compatible_generation(ledger, signature)
+        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
+        return cls(
+            ledger=ledger,
+            generation=generation,
+            policy=request.policy,
+            run_policy=request.run_policy,
+            authority=request.authority,
+            receipt=receipt,
+        )
 
     @classmethod
     def start_compatible_generation(
