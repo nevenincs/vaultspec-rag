@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:38185266dd7a48f4fc1ce0a27bc349f31b5b24ea06792f11abc537e484761679'
+body_hash: 'sha256:e70817ffcc093383e5610c2e13ec91f1539df9b79d082d48405ecd70ec96b645'
 ---
 
 <!-- RETIRED: S13, S14, S15, S18, S19, S23, S24 -->
@@ -82,7 +82,7 @@ Ensure old or missing proof can only be replaced by an explicit rebuild while au
 - [x] `W03.P08.S39` - Require CLI publication and rebuild requests to carry explicit authority through the reindex transport and validate it without granting scoped scan permission; `src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/mcp/_tools.py, src/vaultspec_rag/_integrity_remediation.py, src/vaultspec_rag/tests/test_integrity_remediation.py, src/vaultspec_rag/tests`.
 - [x] `W03.P08.S60` - Implement and activate service-owned CLI full audit verification using an atomic current-proof snapshot and bounded backend payload scans without creating or repairing proof, and permit only rebuild publication to establish missing proof; `src/vaultspec_rag/_index_integrity.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/indexer/_run_ledger_publication.py, src/vaultspec_rag/store_catalog.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/tests/test_index_integrity.py, src/vaultspec_rag/tests/test_cli_index.py, src/vaultspec_rag/tests/test_server_routes.py, src/vaultspec_rag/tests/test_store.py`.
 - [x] `W03.P08.S40` - Prove missing or old-format proof, schema drift, and corrupt receipts require typed rebuild refusal and that audit verification cannot seed proof; `src/vaultspec_rag/indexer/_run_ledger_publication.py, src/vaultspec_rag/tests/test_document_index_escalation.py`.
-- [ ] `W03.P08.S62` - Prove explicit authority survives serialization, retry, restart, generic service admission, and CLI admission; `src/vaultspec_rag/tests/test_job_contracts_persistence.py, src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py, src/vaultspec_rag/tests/test_cli_index.py`.
+- [x] `W03.P08.S62` - Prove explicit authority survives serialization, retry, restart, generic service admission, and CLI admission; `src/vaultspec_rag/tests/test_job_contracts_persistence.py, src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py, src/vaultspec_rag/tests/test_cli_index.py`.
 
 ### Phase `W03.P07` - cut over canonical proof readers
 
