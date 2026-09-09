@@ -63,6 +63,40 @@ _EPHEMERAL_ONLY = ReclaimPolicy(
 )
 
 
+class _UncountableAfterArchiveClient(_CycleClient):
+    """A cycle client whose counts stop answering once the archive is complete.
+
+    Scoped to exactly that moment. A stand-in refusing every count is held at
+    the pre-drop gate, which reports its own reason, so the settle re-count
+    under test is never reached; one refusing from the snapshot onward fails
+    the archive's own verification instead, which is fail-closed and also not
+    this branch. Two counts follow the snapshot for a single-collection
+    namespace - the archive verifier's, then the settle - so the second is
+    the one refused.
+    """
+
+    def __init__(
+        self,
+        counts: dict[str, int],
+        *,
+        snapshots_dir: Path,
+    ) -> None:
+        super().__init__(counts, snapshots_dir=snapshots_dir)
+        self._counts_after_snapshot: int | None = None
+
+    def create_snapshot(self, *, collection_name: str, wait: bool = True) -> object:
+        taken = super().create_snapshot(collection_name=collection_name, wait=wait)
+        self._counts_after_snapshot = 0
+        return taken
+
+    def count(self, *, collection_name: str) -> object:
+        if self._counts_after_snapshot is not None:
+            self._counts_after_snapshot += 1
+            if self._counts_after_snapshot > 1:
+                raise RuntimeError("collection count unavailable")
+        return super().count(collection_name=collection_name)
+
+
 def _ephemeral_orphan(tmp_path: Path, *, name: str) -> str:
     """Return an aged orphan whose vanished root was under the OS temp dir.
 
@@ -214,6 +248,21 @@ class TestEphemeralWindowKeepsEveryDestructionGate:
         ``assert moved.deleted == []``: a writer that landed points between the
         survey and this namespace's turn is invisible to a gate that never
         compares.
+
+        Removing the ``settled is None`` branch from ``_archive_and_settle``
+        fails ``assert settle_decision.reason ==
+        "points_unverifiable_after_archive"``, observed reporting
+        ``points_changed_during_archive``. The namespace still defers,
+        because an inequality against a missing count is true - which is the
+        defect: it reports that the points changed during the archive when
+        nothing was observed to change, and nothing could be observed at all.
+
+        Reading the missing count as a number instead - assigning ``observed``
+        to it, as any handler that merely stops the deferral would - fails
+        ``assert settle.deleted == []``. A count that could not be taken
+        agrees with itself by construction once it borrows the gate's number,
+        so the archive is accepted as whole and the namespace is destroyed on
+        a reading nobody took.
         """
         unverifiable_prefix = _ephemeral_orphan(tmp_path, name="sandbox-uncountable")
         # Surveyed empty, so the archive gate is not in the way and this gate
@@ -253,6 +302,26 @@ class TestEphemeralWindowKeepsEveryDestructionGate:
         moved_decision = _outcome_for(moved_result, moved_prefix)
         assert moved_decision.action == "deferred"
         assert moved_decision.reason == "points_changed_since_survey"
+
+        # The same distinction on the far side of the archive. The data tier
+        # re-counts a second time across its own snapshot, and that reading
+        # can fail too - at which point "a writer landed during the archive"
+        # and "nobody could take the count" are again different facts.
+        settle_prefix = _ephemeral_orphan(tmp_path, name="sandbox-unsettleable")
+        settle = _UncountableAfterArchiveClient(
+            {_collection_of(settle_prefix): 10},
+            snapshots_dir=tmp_path / "snapshots",
+        )
+
+        settle_result = _run_cycle(settle, tmp_path, policy=_EPHEMERAL_ONLY)
+
+        # Reached the archive, which is what places the failure after it, and
+        # stopped short of the drop.
+        assert settle.snapshotted == [_collection_of(settle_prefix)]
+        assert settle.deleted == []
+        settle_decision = _outcome_for(settle_result, settle_prefix)
+        assert settle_decision.action == "deferred"
+        assert settle_decision.reason == "points_unverifiable_after_archive"
 
     def test_the_short_window_never_reaches_an_unattributable_namespace(
         self, tmp_path: Path
