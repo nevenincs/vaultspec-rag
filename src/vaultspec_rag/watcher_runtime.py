@@ -27,7 +27,6 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .watcher_retry import (
-    WatcherRetryPolicy,
     WatcherSource,
 )
 
@@ -37,6 +36,7 @@ if TYPE_CHECKING:
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
     from .service import ServiceRegistry
+    from .watcher_retry_policy import WatcherRetryPolicy
 
 logger = logging.getLogger(__name__)
 # Operator cancellation deliberately leaves watcher convergence dirty. Retry

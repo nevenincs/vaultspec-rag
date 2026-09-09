@@ -736,7 +736,9 @@ class TestLedgerConcurrencyContract:
         the affected index needs a clean rebuild.
         """
         from .._job_errors import JobErrorKind, classify_error_text, remediation
-        from ..watcher_retry import _classify_failure
+        from ..watcher_retry_policy import (
+            _classify_failure,
+        )
 
         observed = (
             "ingest verification failed for r01fa8eefb788_codebase_docs: "
@@ -769,7 +771,9 @@ class TestLedgerConcurrencyContract:
 
         from .._job_errors import JobErrorKind
         from ..indexer._run_ledger_models import RunLedgerContentionError
-        from ..watcher_retry import _classify_failure
+        from ..watcher_retry_policy import (
+            _classify_failure,
+        )
 
         kind, retryable = _classify_failure(
             RunLedgerContentionError(
@@ -1142,7 +1146,9 @@ class TestAdaptiveWatcherArchitecture:
         """Retry cannot turn lost exact scope into automatic work."""
         import inspect
 
-        from ..watcher_retry import WatcherRetryPolicy
+        from ..watcher_retry_policy import (
+            WatcherRetryPolicy,
+        )
 
         admission = inspect.getsource(WatcherRetryPolicy.admit_reserved)
         normalized = " ".join(admission.split())

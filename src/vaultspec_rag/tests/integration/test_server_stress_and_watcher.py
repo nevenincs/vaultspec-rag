@@ -36,7 +36,12 @@ from ...registry import get_registry, reset_registry
 from ...server import WatcherStartOutcome
 from ...server import _watcher as watcher_lifecycle
 from ...store_runtime import VaultStore
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_retry import (
+    WatcherSource,
+)
+from ...watcher_retry_policy import (
+    WatcherRetryPolicy,
+)
 from ..benchmarks.bench_large_index_resilience import (
     CorpusSpec,
     measure_full_index,
@@ -939,8 +944,9 @@ async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_histor
             "import os, sys",
             "from pathlib import Path",
             "from vaultspec_rag.watcher_retry import (WatcherPathEvent, "
-            "WatcherPathObservation, WatcherRetryPolicy, WatcherSource, "
-            "_WatcherRetryOptions)",
+            "WatcherPathObservation, WatcherSource)",
+            "from vaultspec_rag.watcher_retry_policy import ("
+            "WatcherRetryPolicy, _WatcherRetryOptions)",
             "state, root = Path(sys.argv[1]), Path(sys.argv[2]).resolve()",
             "policy = WatcherRetryPolicy(state, _WatcherRetryOptions("
             "canonical_root=os.path.normcase(str(root)), source=WatcherSource.CODE, "
