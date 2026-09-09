@@ -68,6 +68,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QdrantSupervisor",
     "active_supervisor",
+    "ready_ceiling_seconds",
+    "ready_timeout_seconds",
     "runtime_state",
     "set_active_supervisor",
     "start_supervised_from_config",
@@ -251,12 +253,12 @@ def _quarantine_collection(storage_dir: Path, name: str) -> Path:
 _READY_CEILING_MULTIPLE = 4.0
 
 
-def _ready_ceiling_seconds(patience: float) -> float:
+def ready_ceiling_seconds(patience: float) -> float:
     """Total-wait bound for a readiness *patience* window, in seconds."""
     return patience * _READY_CEILING_MULTIPLE
 
 
-def _ready_timeout_seconds() -> float:
+def ready_timeout_seconds() -> float:
     """Resolve the qdrant readiness patience window from the settings object.
 
     A large managed store loads every collection before answering ``/readyz``;
@@ -645,7 +647,7 @@ class QdrantSupervisor:
         it had recovered and forces the next attempt to start over, so tolerance
         here is cheaper than a truncated start.
 
-        The total wait is bounded by :func:`_ready_ceiling_seconds` so a child
+        The total wait is bounded by :func:`ready_ceiling_seconds` so a child
         that chatters without ever serving cannot hold daemon startup open
         indefinitely.
 
@@ -666,7 +668,7 @@ class QdrantSupervisor:
         Args:
             timeout: Seconds of no observable progress to tolerate; ``None``
                 resolves the env-overridable default via
-                :func:`_ready_timeout_seconds`.
+                :func:`ready_timeout_seconds`.
 
         Returns:
             True once the server answers ready; False on child death, on the
@@ -674,8 +676,8 @@ class QdrantSupervisor:
             All three are logged, and distinguishably.
         """
         if timeout is None:
-            timeout = _ready_timeout_seconds()
-        ceiling = _ready_ceiling_seconds(timeout)
+            timeout = ready_timeout_seconds()
+        ceiling = ready_ceiling_seconds(timeout)
         started = time.monotonic()
         ceiling_deadline = started + ceiling
         progress_deadline = started + timeout
@@ -748,9 +750,9 @@ class QdrantSupervisor:
         Args:
             timeout: Seconds of no observable progress to tolerate while
                 waiting for readiness, under the ceiling
-                :func:`_ready_ceiling_seconds` derives from it; ``None``
+                :func:`ready_ceiling_seconds` derives from it; ``None``
                 resolves the env-overridable default via
-                :func:`_ready_timeout_seconds`.
+                :func:`ready_timeout_seconds`.
             auto_quarantine: When ``True`` (default), quarantine an identified
                 corrupt collection and retry; when ``False``, fail on the first
                 non-ready exit without touching the store.
@@ -760,7 +762,7 @@ class QdrantSupervisor:
                 collection can be recovered (the child is terminated first).
         """
         if timeout is None:
-            timeout = _ready_timeout_seconds()
+            timeout = ready_timeout_seconds()
         quarantined = 0
         while True:
             self.spawn()
@@ -799,7 +801,7 @@ class QdrantSupervisor:
                 raise RuntimeError(
                     f"qdrant server on port {self.http_port} failed to become "
                     f"ready; it was allowed {timeout:.0f}s without observable "
-                    f"progress under a {_ready_ceiling_seconds(timeout):.0f}s "
+                    f"progress under a {ready_ceiling_seconds(timeout):.0f}s "
                     f"hard ceiling. The store stays unavailable until a start "
                     f"succeeds. See {self.log_path}.{cause}"
                 )
@@ -827,13 +829,13 @@ class QdrantSupervisor:
         Args:
             timeout: Seconds of no observable progress to tolerate while
                 waiting for readiness; ``None`` resolves the env-overridable
-                default via :func:`_ready_timeout_seconds`.
+                default via :func:`ready_timeout_seconds`.
 
         Returns:
             True when the restarted child reports ready.
         """
         if timeout is None:
-            timeout = _ready_timeout_seconds()
+            timeout = ready_timeout_seconds()
         self.restart_count += 1
         if not self.stop():
             logger.error(
