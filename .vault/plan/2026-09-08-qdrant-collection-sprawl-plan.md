@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:184e10e77977591bdaa6e8b0044f1827e46d33b022922cf802976adb1c639770'
+body_hash: 'sha256:9990f6622f2631f3c6f89aa4f10edb4053a2a903768333b98c06eed642c23786'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -72,6 +72,14 @@ Delivers the two prerequisites without which no retention change executes: a rea
 - [x] `P01.S37` - Add a guard test proving a transport timeout in the superseded-generation pass still lets the orphan pass run; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
 - [x] `P01.S38` - Derive the service-start readiness deadline from the resolved qdrant patience window and its ceiling so the command stops abandoning a start that will succeed; `src/vaultspec_rag/cli/_service_start.py`.
 - [x] `P01.S39` - Add a test pinning that raising the qdrant readiness knob widens the service-start wait; `src/vaultspec_rag/tests/test_cli_server.py`.
+- [ ] `P01.S43` - Admit the client's non-2xx server-failure type into the shared transport class, so a server that answers with an error is treated the same as one that cannot answer; `src/vaultspec_rag/_qdrant_transport.py`.
+- [ ] `P01.S44` - Correct the shared transport docstring's claim that a malformed response escapes, since the client wraps a schema mismatch in the same type; `src/vaultspec_rag/_qdrant_transport.py`.
+- [ ] `P01.S45` - Add a guard test faulting the drop loop with a non-2xx server response rather than a programming error, so the class boundary is asserted at its ambiguous member; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [ ] `P01.S46` - Merge the archive of a retried partial drop into the snapshot manifest already on disk instead of overwriting it, so the first attempt's artifacts stay named; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P01.S47` - Refuse to restore an archive directory holding snapshot artifacts its manifest does not name, rather than reporting a partial recovery as complete; `src/vaultspec_rag/storage_restore.py`.
+- [ ] `P01.S48` - Add a guard test proving a retried partial drop leaves both attempts' artifacts restorable; `src/vaultspec_rag/tests/test_storage_restore.py`.
+- [ ] `P01.S49` - Narrow a namespace's recorded collections to what survived when a drop reports partial, so the manifest stops naming what is gone; `src/vaultspec_rag/storage_survey_ops.py`.
+- [ ] `P01.S50` - Carry the removed collection names onto the recorded outcome of a partial drop, not only their count; `src/vaultspec_rag/storage_reclamation.py`.
 
 ### Phase `P02` - discriminate retention by namespace class
 
@@ -99,6 +107,7 @@ Delivers the headroom that stops the drain evicting its own recovery evidence, s
 - [x] `P03.S20` - Report total collection count and the ephemeral backlog size on the storage status route; `src/vaultspec_rag/server/_routes_storage.py`.
 - [x] `P03.S21` - Render the reported collection count and ephemeral backlog in the status output; `src/vaultspec_rag/cli/_status_render.py`.
 - [x] `P03.S22` - Add a test covering the reported collection count and ephemeral backlog fields; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
+- [ ] `P03.S51` - Collapse the duplicated status summary renderers behind one implementation taking the values that differ; `src/vaultspec_rag/cli/_status_render.py`.
 
 ### Phase `P04` - dispose of residue and stop seeding it
 
@@ -108,6 +117,8 @@ Delivers cleanup of the superseded generation names and stale ledger entries, an
 - [x] `P04.S24` - Add a test proving ledger entries for absent collections are pruned and live entries are preserved; `src/vaultspec_rag/tests/test_generation_survey.py`.
 - [x] `P04.S25` - Point the qdrant storage-dir at a temp path in the storage-ops tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_ops.py`.
 - [x] `P04.S26` - Point the qdrant storage-dir at a temp path in the storage-survey tests that reach the managed backend; `src/vaultspec_rag/tests/test_storage_survey.py`.
+- [ ] `P04.S52` - State the constraint directly in the two reclaim guard-test docstrings that cite a development record instead; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [ ] `P04.S53` - Repair the two comment sentences left broken across lines in the environment example; `.env.example`.
 
 ## Parallelization
 
