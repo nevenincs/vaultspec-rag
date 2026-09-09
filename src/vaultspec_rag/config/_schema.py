@@ -100,6 +100,17 @@ _POSITIVE_NUMBER = _NumericBound(
 _NON_NEGATIVE_NUMBER = _NumericBound(
     "a finite non-negative number", integral=False, minimum=0.0
 )
+# Grace windows are the interval an observation has to survive before
+# destruction is allowed, so their floor is what makes them observations at
+# all. At zero the first cycle to see a namespace stamps its clock and then
+# finds the elapsed time is not less than the window, which authorises the
+# drop on a single scan - the same-cycle destruction the reclamation contract
+# forbids by name. The floor is one maintenance interval at the shipped
+# cadence, so the earliest a namespace can be reclaimed is the cycle AFTER
+# the one that first observed it.
+_GRACE_WINDOW_HOURS = _NumericBound(
+    "a finite number of hours no smaller than 1", integral=False, minimum=1.0
+)
 _CLOSED_UNIT_INTERVAL = _NumericBound(
     "a finite number between 0 and 1", integral=False, minimum=0.0, maximum=1.0
 )
@@ -352,13 +363,19 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "document_chunk_chars_per_token": _POSITIVE_INT,
     "document_chunk_overlap_chars": _POSITIVE_INT,
     # Scheduled storage maintenance. The per-cycle caps admit zero, which is
-    # the same as the feature's own off switch; the grace windows admit zero
-    # so a harness can exercise reclamation without waiting, and the ephemeral
-    # idle window documents zero as its disable value.
+    # the same as the feature's own off switch. The three grace windows carry
+    # a floor instead: zero would let a namespace be destroyed in the cycle
+    # that first observed it.
+    #
+    # The idle window below is the deliberate exception, and reads opposite to
+    # them at the same value: zero DISABLES that tier, where zero on a grace
+    # window would make its tier maximally aggressive. The two are named alike
+    # and mean opposite things at zero, which is why only one of them admits
+    # it.
     "storage_autoprune_interval_minutes": _POSITIVE_NUMBER,
-    "storage_autoprune_grace_hours": _NON_NEGATIVE_NUMBER,
-    "storage_autoprune_grace_hours_data": _NON_NEGATIVE_NUMBER,
-    "storage_autoprune_grace_hours_ephemeral": _NON_NEGATIVE_NUMBER,
+    "storage_autoprune_grace_hours": _GRACE_WINDOW_HOURS,
+    "storage_autoprune_grace_hours_data": _GRACE_WINDOW_HOURS,
+    "storage_autoprune_grace_hours_ephemeral": _GRACE_WINDOW_HOURS,
     "storage_autoprune_archive_retention_days": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_archive_max_gb": _NON_NEGATIVE_NUMBER,
     "storage_autoprune_max_per_cycle": _NON_NEGATIVE_INT,

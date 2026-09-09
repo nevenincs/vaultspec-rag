@@ -242,17 +242,19 @@ A failed auto-reindex retries with exponential backoff and a circuit breaker tha
 
 These variables control the daemon's scheduled storage-maintenance cycle. See the [storage and maintenance guide](storage-maintenance.md) for how a cycle runs.
 
+**Zero means opposite things on the two kinds of window here, so read the names carefully.** The three `GRACE_HOURS*` windows are how long a namespace has to stay observably dead before it may be destroyed; they are rejected below `1` hour, because at zero the cycle that first sees a namespace would also be allowed to drop it. `EPHEMERAL_IDLE_HOURS` is a tier's own on/off switch, and zero turns that tier off. So `..._EPHEMERAL_IDLE_HOURS=0` reclaims nothing, while a zero on `..._GRACE_HOURS_EPHEMERAL` would have reclaimed everything on sight - which is why only the idle knob accepts it.
+
 | Variable                                                 | Type    | Default    | Controls                                                                           | CLI flag |
 | -------------------------------------------------------- | ------- | ---------- | ---------------------------------------------------------------------------------- | -------- |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                        | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`       | float   | `60`       | Minutes between maintenance cycles                                                 | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed                     | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds | -    |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed (minimum `1`)       | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed (minimum `1`) | - |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds (minimum `1`; NOT the idle knob below) | - |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `64`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables)         | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables this tier) | -      |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                  | -        |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE`          | integer | `4`        | Maximum collections reconciled per cycle                                           | -        |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS`         | float   | `300`      | Per-collection wait for the merge to settle before reporting                       | -        |
