@@ -342,9 +342,18 @@ def _windows_image_matches(
         result = subprocess.run(  # fixed argv, no shell, trusted pid
             ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
             capture_output=True,
-            text=True,
             check=False,
             timeout=timeout,
+            # STATED, never ambient. `text=True` alone decodes under whatever
+            # encoding the process happens to have, strictly - and a console
+            # tool on Windows emits the OEM codepage, not the ANSI one, so a
+            # single byte outside ASCII raises UnicodeDecodeError. That lands
+            # in a probe whose contract is to RETURN a verdict, turning "this
+            # pid is not the one you are looking for" into a crash. The ASCII
+            # range is identical in every candidate encoding, which is what
+            # makes a replacing UTF-8 read safe for the substring test below.
+            encoding="utf-8",
+            errors="replace",
         )
     except subprocess.TimeoutExpired:
         logger.debug("image inspection for pid %d exceeded %.3fs", pid, timeout)
