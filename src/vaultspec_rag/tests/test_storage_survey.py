@@ -1,7 +1,15 @@
 """Unit tests for storage-namespace survey classification.
 
-Pure logic: no GPU, no Qdrant, no service. Exercises grouping by prefix
-and live/orphaned/unknown classification against a synthetic manifest.
+Mostly pure logic: no GPU, no Qdrant, no service. Exercises grouping by
+prefix and live/orphaned/unknown classification against a synthetic
+manifest.
+
+The last class is the exception and reaches a whole maintenance cycle,
+because what it has to observe is not a classification but a continuation:
+the survey is the first thing the cycle does and every namespace's fate is
+behind it, so a survey that fails on one collection is the cheapest way to
+destroy a cycle. Proving it does not takes a second namespace to still
+arrive at an outcome.
 """
 
 from __future__ import annotations
@@ -9,9 +17,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 from ..storage_manifest import ManifestEntry
 from ..storage_survey import classify_namespaces
+from .test_storage_ops import (
+    _NOW,
+    _collection_of,
+    _CycleClient,
+    _orphaned_namespace,
+    _outcome_for,
+    _run_cycle,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -172,3 +189,111 @@ def test_temp_rooted_false_for_project_roots_and_none() -> None:
 
     assert is_temp_rooted(None) is False
     assert is_temp_rooted(r"C:\projects\real-project") is False
+
+
+class _SurveyTimeoutClient(_CycleClient):
+    """A cycle client whose point count times out for one named collection.
+
+    It times out on every call for that collection, the survey's and any
+    later gate's alike. A stand-in that answered the second time would let a
+    broken survey guard be rescued downstream, and the survey is what is
+    under test here.
+    """
+
+    def __init__(
+        self,
+        counts: dict[str, int],
+        *,
+        snapshots_dir: Path,
+        times_out: str,
+    ) -> None:
+        super().__init__(counts, snapshots_dir=snapshots_dir)
+        self._times_out = times_out
+
+    def count(self, *, collection_name: str) -> object:
+        if collection_name == self._times_out:
+            # The real client wraps every transport failure in this type,
+            # which is a plain Exception and a subclass of neither builtin -
+            # the whole reason a guard naming only the builtins let a read
+            # timeout past it.
+            raise ResponseHandlingException(TimeoutError("timed out"))
+        return super().count(collection_name=collection_name)
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestSurveyTimeoutDoesNotUnwindTheCycle:
+    """One uncountable collection costs its own namespace a cycle, nothing more.
+
+    The grace clocks these carry live in the machine-global manifest, so the
+    class relocates it. The classification tests above need no such thing.
+    """
+
+    def test_a_timed_out_count_leaves_the_cycle_running_and_the_namespace_held(
+        self, tmp_path: Path
+    ) -> None:
+        """The survey skips past it, and the next namespace still gets a verdict.
+
+        Two mutations, each run alone against this test and each observed to
+        fail on the assertion named beside it.
+
+        Narrowing the survey's count guard back to the two builtin types
+        fails ``pytest.fail("the survey's transport timeout unwound ...")``:
+        the client's wrapper is a subclass of neither, so it walks out of
+        ``gather_survey`` and takes the cycle with it before any namespace
+        has a decision.
+
+        Swallowing the timeout broadly - keeping the widened guard but
+        recording the uncountable collection as zero points, which is what
+        this path did before - fails
+        ``assert held.action == "pending"``. That mutation passes every test
+        that only asserts nothing escaped and nothing was deleted: the cycle
+        does continue, and the pre-drop re-count does catch the namespace on
+        its way to the drop. What it loses is the tier. Surveyed as zero, the
+        namespace is admitted to the EMPTY tier, which is the one that drops
+        without writing an archive first, and it survives only because a
+        later gate happens to hold it. The assertions on the action, the
+        reason and the tier are what separate a namespace that was never
+        eligible from one that was eligible on a number nobody took.
+        """
+        first, second = sorted(
+            (
+                _orphaned_namespace(tmp_path, now=_NOW, name="sandbox-one"),
+                _orphaned_namespace(tmp_path, now=_NOW, name="sandbox-two"),
+            )
+        )
+        # The timeout lands on whichever collection the survey reaches FIRST,
+        # so everything the cycle does afterwards is downstream of surviving
+        # it. Collections share one suffix, so sorting the prefixes sorts the
+        # names the survey enumerates.
+        held_collection = _collection_of(first)
+        reached_collection = _collection_of(second)
+        client = _SurveyTimeoutClient(
+            {held_collection: 10, reached_collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            times_out=held_collection,
+        )
+
+        try:
+            result = _run_cycle(client, tmp_path)
+        except ResponseHandlingException as escaped:
+            pytest.fail(
+                "the survey's transport timeout unwound the whole maintenance "
+                "cycle instead of leaving one collection uncounted: "
+                f"{escaped!r}"
+            )
+
+        # Continuation, stated as an outcome rather than as an absence of a
+        # raise: the namespace behind the slow one was surveyed, decided, and
+        # acted on.
+        reached = _outcome_for(result, second)
+        assert reached.action == "archived_removed"
+        assert client.deleted == [reached_collection]
+
+        held = _outcome_for(result, first)
+        assert held.action == "pending"
+        assert held.reason == "survey_points_unverifiable"
+        # The protective tier. An uncountable namespace read as empty is
+        # routed to the tier that destroys without archiving, so this is the
+        # assertion that a partial total was not quietly believed.
+        assert held.tier == "data"
+        assert held_collection not in client.deleted

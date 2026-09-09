@@ -962,7 +962,9 @@ def test_completed_archive_rejects_a_missing_real_snapshot(
         snapshot.unlink()
 
         with pytest.raises(RuntimeError, match="archived snapshot file not found"):
-            _verify_completed_archive(client, namespace_dir, manifest_path)
+            _verify_completed_archive(
+                client, namespace_dir, manifest_path, live_names=frozenset({name})
+            )
     finally:
         client.close()
 
