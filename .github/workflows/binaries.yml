@@ -331,6 +331,12 @@ jobs:
           #   target: aarch64-unknown-linux-gnu
     # Artifact builds run on the shared self-hosted fleet (hosted multiplatform
     # runners are cost-prohibitive); see publish.yml for the same constraint.
+    # A matrix job names its runner through `${ matrix.runner }`, which is
+    # invisible to any check grepping for `self-hosted` - and these are the
+    # longest-running jobs in the fleet, so the six-hour default ceiling was
+    # in force exactly where it costs the most. `dev/guards/
+    # test_ci_jobs_reach_a_verdict.py` resolves the matrix and holds this.
+    timeout-minutes: 90
     runs-on: ${{ matrix.runner }}
     # Empty for the Windows leg, which GitHub reads as "no container".
     container: ${{ matrix.container }}

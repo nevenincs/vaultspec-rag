@@ -1,0 +1,78 @@
+name: Code Health
+
+# ADVISORY MEASUREMENT, ON A SCHEDULE, OFF THE MERGE PATH.
+#
+# These scanners report leads, not verdicts: vulture infers reachability it
+# cannot always see, bandit reports this project's deliberate subprocess
+# design alongside anything real, and deptry reports imports that resolve
+# transitively. None of them can fail a build, by design.
+#
+# They used to run as a job in `ci.yml`, on every push to main. On a fleet of
+# one Linux runner and one Windows runner - shared across every repository in
+# the account, and strictly serial - that job spent about six minutes of the
+# merge path producing output nothing gates on, while the runs behind it
+# queued. A measurement whose result nobody blocks on does not need to be
+# taken on every commit; it needs to be taken often enough that a trend is
+# visible, and read.
+#
+# Weekly, then, and on demand. The findings are the same findings; what
+# changed is that they no longer stand between a merge and its verdict.
+on:
+  schedule:
+    # Sunday 04:00 UTC - off the working week, and off the release cadence, so
+    # it never contends with a merge or a publish for the one Linux runner.
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NO_COLOR: "1"
+
+concurrency:
+  # A schedule that fires while the previous run is still queued should not
+  # stack: one report a week is the point. This workflow never runs on a
+  # branch whose verdict anything depends on, so collapsing onto one group is
+  # the correct behaviour here rather than the hazard it is in `ci.yml`.
+  group: code-health
+  cancel-in-progress: false
+
+jobs:
+  code-health:
+    name: "Audit: Code Health (Linux)"
+    timeout-minutes: 30
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+
+      - name: Initialize the worktree
+        run: just init
+
+      # The aggregate, not a hand-listed subset of it. `audit-all` keeps going
+      # after a finding so one red dimension never hides the rest, and its
+      # membership is data in `dev/toolchain.py`, so a dimension added there
+      # joins this report without anyone editing this file.
+      - name: Every advisory dimension
+        run: just audit-all
