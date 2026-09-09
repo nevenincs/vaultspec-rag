@@ -40,6 +40,7 @@ from .._source_types import (
 from .._store_locks import VaultStoreLockedError
 from .._store_writes import InsufficientDiskSpaceError
 from ..config._types import EnvVar
+from ..indexer._run_ledger_models import RunAuthority
 from ..registry import get_registry
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._transport import _try_http_reindex
@@ -220,8 +221,17 @@ class _ServiceDelegationRequest:
     exclude: list[str] | None
     json_mode: bool
     index_type: PublicSourceType
-    rebuild: bool
+    authority: RunAuthority
     target: pathlib.Path
+
+    @property
+    def rebuild(self) -> bool:
+        """Return the publication mode authorized by this exact request."""
+        if self.authority is RunAuthority.AUDIT_VERIFICATION:
+            raise ValueError(
+                "audit verification cannot use the publication reindex transport"
+            )
+        return self.authority is RunAuthority.REBUILD
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,11 +239,25 @@ class _IndexRunRequest:
     """One source selection that may execute locally or only scan."""
 
     index_type: PublicSourceType
-    rebuild: bool
+    authority: RunAuthority
     model: str | None
     exclude: list[str] | None
     target: pathlib.Path
     json_mode: bool
+
+    @property
+    def rebuild(self) -> bool:
+        """Return whether this publication request has explicit rebuild authority."""
+        if self.authority is RunAuthority.AUDIT_VERIFICATION:
+            raise ValueError(
+                "audit verification cannot use a publication index execution path"
+            )
+        return self.authority is RunAuthority.REBUILD
+
+
+def _publication_authority(*, rebuild: bool) -> RunAuthority:
+    """Bind one CLI publication request to its explicit persisted authority."""
+    return RunAuthority.REBUILD if rebuild else RunAuthority.PUBLICATION
 
 
 def _validate_dry_run_request(
@@ -471,6 +495,7 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
         request.rebuild,
         request.port,
         str(request.target),
+        authority=request.authority,
         initiator_kind="cli",
     )
     if (
@@ -689,10 +714,11 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     state: CLIState = ctx.obj
     target = state.target
     source = _parse_index_source(index_type, command="index", json_mode=json_mode)
+    authority = _publication_authority(rebuild=rebuild)
 
     if dry_run:
         _handle_dry_run(
-            _IndexRunRequest(source, rebuild, model, exclude, target, json_mode),
+            _IndexRunRequest(source, authority, model, exclude, target, json_mode),
             dry_run_limit,
             no_preprocess,
         )
@@ -701,7 +727,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     if rebuild:
         _validate_rebuild(ctx, json_mode)
 
-    request = _IndexRunRequest(source, rebuild, model, exclude, target, json_mode)
+    request = _IndexRunRequest(source, authority, model, exclude, target, json_mode)
     if borrow_gpu:
         try:
             _try_borrowed_in_process_indexing(
@@ -741,7 +767,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             exclude,
             json_mode,
             source,
-            rebuild,
+            authority,
             target,
         )
     ):

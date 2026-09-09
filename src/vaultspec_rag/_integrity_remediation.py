@@ -41,6 +41,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from ._index_integrity import VERDICT_CONSISTENT, VERDICT_SHRUNKEN
+from .indexer._run_ledger_models import RunAuthority
 
 if TYPE_CHECKING:
     import pathlib
@@ -130,7 +131,12 @@ def _spawn_repair(
                 _Source.DOCUMENT: start_reindex_documents,
                 _Source.VAULT: start_reindex_vault,
             }
-            job_id = starters[source](root, False, initiator_kind="integrity")
+            job_id = starters[source](
+                root,
+                False,
+                authority=RunAuthority.PUBLICATION,
+                initiator_kind="integrity",
+            )
         except Exception:
             # The next observation past the spacing interval asks again; a
             # failed admission must degrade the repair, never the search.

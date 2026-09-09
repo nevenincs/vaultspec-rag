@@ -26,6 +26,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict
 
 from .._source_types import SourceTypeParseError, parse_source_type
+from ..indexer._run_ledger_models import RunAuthority
 from ..serviceclient._search_transport import document_search_filters, try_http_search
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -506,6 +507,7 @@ async def _reindex_source(
             False,
             port,
             _resolve_project_root(project_root),
+            authority=RunAuthority.PUBLICATION,
             initiator_kind="mcp",
         )
     )

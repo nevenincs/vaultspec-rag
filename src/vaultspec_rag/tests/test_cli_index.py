@@ -459,6 +459,74 @@ class TestCleanRequiredTarget:
         assert result.exit_code != 0
 
 
+class TestIndexAuthorityBoundary:
+    @pytest.mark.parametrize("request_kind", ["local", "service"])
+    def test_audit_authority_cannot_enter_publication_paths(
+        self,
+        tmp_path: Path,
+        request_kind: str,
+    ) -> None:
+        """Audit uses its own non-mutating path; publication paths fail closed."""
+        from .._source_types import PublicSourceType
+        from ..cli._index import _IndexRunRequest, _ServiceDelegationRequest
+        from ..indexer._run_ledger_models import RunAuthority
+
+        if request_kind == "local":
+            request = _IndexRunRequest(
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                None,
+                None,
+                tmp_path,
+                False,
+            )
+        else:
+            request = _ServiceDelegationRequest(
+                8765,
+                None,
+                False,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                tmp_path,
+            )
+
+        with pytest.raises(ValueError, match="audit verification"):
+            _ = request.rebuild
+
+    def test_benchmark_reindex_uses_canonical_publication_wire_contract(self) -> None:
+        """Operational callers must use the same exact route vocabulary as the CLI."""
+        from .benchmarks.bench_concurrency import ServiceTarget, _start_reindex
+
+        requests: list[tuple[str, dict[str, object], float]] = []
+
+        class _CaptureTarget(ServiceTarget):
+            def post(
+                self,
+                path: str,
+                payload: dict[str, object],
+                timeout: float,
+            ) -> dict[str, object]:
+                requests.append((path, payload, timeout))
+                return {"job_id": "benchmark-job"}
+
+        job_id = _start_reindex(_CaptureTarget(port=0, token=""), "project", 4.0)
+
+        assert job_id == "benchmark-job"
+        assert requests == [
+            (
+                "/reindex",
+                {
+                    "type": "code",
+                    "clean": False,
+                    "authority": "publication",
+                    "project_root": "project",
+                    "initiator_kind": "benchmark",
+                },
+                4.0,
+            )
+        ]
+
+
 class TestIndexSummaryCLI:
     """Human index summaries are covered through the CLI command surface."""
 
@@ -525,6 +593,7 @@ class TestIndexSummaryCLI:
         assert {req["project_root"] for req in requests} == {str(tmp_path)}
         assert {req["initiator_kind"] for req in requests} == {"cli"}
         assert {req["clean"] for req in requests} == {False}
+        assert {req["authority"] for req in requests} == {"publication"}
 
         lines = [line.strip() for line in result.output.splitlines() if line.strip()]
         assert lines == [
@@ -532,6 +601,65 @@ class TestIndexSummaryCLI:
             "Source code re-index job queued on service: code-job",
             "Documents re-index job queued on service: document-job",
             "Check progress with: vaultspec-rag server jobs",
+        ]
+
+    def test_index_rebuild_delegates_with_explicit_rebuild_authority(
+        self, tmp_path: Path
+    ) -> None:
+        """The CLI must not rely on the reindex route to infer full-work consent."""
+        import http.server
+        import threading
+
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
+
+        class _RebuildServiceHandler(QuietHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                requests.append(_parsed_json_object(self.rfile.read(length)))
+                response = {
+                    "ok": True,
+                    "job_id": "code-rebuild-job",
+                    "status": "queued",
+                }
+                encoded = json.dumps(response).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _RebuildServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "code",
+                    "--rebuild",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            {
+                "type": "code",
+                "clean": True,
+                "authority": "rebuild",
+                "project_root": str(tmp_path),
+                "initiator_kind": "cli",
+            }
         ]
 
     def test_index_all_handles_sparse_service_summary_without_unknown_text(
@@ -874,6 +1002,7 @@ try:
             "body": {
                 "type": "vault",
                 "clean": False,
+                "authority": "publication",
                 "project_root": str(target),
                 "initiator_kind": "cli",
             },
@@ -950,6 +1079,7 @@ finally:
         assert reindex == {
             "type": "vault",
             "clean": False,
+            "authority": "publication",
             "project_root": str(tmp_path / "project"),
             "initiator_kind": "cli",
         }

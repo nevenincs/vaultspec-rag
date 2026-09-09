@@ -856,12 +856,13 @@ def _do_http_call(
     return result
 
 
-def _try_http_reindex(
+def _try_http_reindex(  # noqa: PLR0913 - wire fields stay explicit and default-free.
     reindex_type: ReindexType,
     clean: bool,
     port: int,
     project_root: str,
     *,
+    authority: RunAuthority,
     initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
@@ -872,6 +873,7 @@ def _try_http_reindex(
         payload: dict[str, object] = {
             "type": source.value,
             "clean": clean,
+            "authority": authority.value,
             "project_root": project_root,
             "initiator_kind": initiator_kind,
         }
