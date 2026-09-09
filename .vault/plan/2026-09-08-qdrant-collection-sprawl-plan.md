@@ -8,9 +8,9 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
-modified: '2026-09-08'
+modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:4660586e121c7e8bb90daa568fa13290aab4a54cf33d9a0f68ba5ce5af505c37'
+body_hash: 'sha256:786e6467e22194dbb9e88e852e8a5734211c7f4f06b81fc28106bca1ad0f4c7a'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -84,11 +84,11 @@ Delivers the core decision: an orphaned temp-rooted namespace draws its own shor
 
 Delivers the headroom that stops the drain evicting its own recovery evidence, states the platform restore limitation honestly, and surfaces collection count so this growth is visible without a manual audit.
 
-- [ ] `P03.S18` - Raise the archive size cap default so a full ephemeral drain does not evict the evidence it writes; `src/vaultspec_rag/config/_settings.py`.
-- [ ] `P03.S19` - State the unavailable in-place restore and name the portable recovery path on the operator-facing archive surface; `src/vaultspec_rag/cli/_service_storage.py`.
-- [ ] `P03.S20` - Report total collection count and the ephemeral backlog size on the storage status route; `src/vaultspec_rag/server/_routes_storage.py`.
-- [ ] `P03.S21` - Render the reported collection count and ephemeral backlog in the status output; `src/vaultspec_rag/cli/_status_render.py`.
-- [ ] `P03.S22` - Add a test covering the reported collection count and ephemeral backlog fields; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
+- [x] `P03.S18` - Raise the archive size cap default so a full ephemeral drain does not evict the evidence it writes; `src/vaultspec_rag/config/_settings.py`.
+- [x] `P03.S19` - State the unavailable in-place restore and name the portable recovery path on the operator-facing archive surface; `src/vaultspec_rag/cli/_service_storage.py`.
+- [x] `P03.S20` - Report total collection count and the ephemeral backlog size on the storage status route; `src/vaultspec_rag/server/_routes_storage.py`.
+- [x] `P03.S21` - Render the reported collection count and ephemeral backlog in the status output; `src/vaultspec_rag/cli/_status_render.py`.
+- [x] `P03.S22` - Add a test covering the reported collection count and ephemeral backlog fields; `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`.
 
 ### Phase `P04` - dispose of residue and stop seeding it
 
