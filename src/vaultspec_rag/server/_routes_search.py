@@ -284,7 +284,7 @@ def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
 def _search_integrity(
     request: SearchRequest,
     phase_timing: dict[str, float],
-    snapshot: IndexIntegritySnapshot,
+    snapshot: IndexIntegritySnapshot | None,
 ) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
@@ -300,8 +300,16 @@ def _search_integrity(
     shrink turns into at most one supervised repair, whose job id (when known)
     rides back on the envelope beside the verdict that motivated it.
     """
+    from .._index_integrity import unverifiable_integrity
     from .._integrity_remediation import note_integrity_verdict
 
+    if snapshot is None:
+        source = (
+            PublicSourceType.CODE
+            if request.search_type is PublicSourceType.COMBINED
+            else request.search_type
+        )
+        return unverifiable_integrity(source), None
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
         source = PublicSourceType.CODE
@@ -395,8 +403,16 @@ def _classify_collection_disappearance(
     facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import acquire_index_integrity_snapshot
+    from .._index_integrity import (
+        acquire_index_integrity_snapshot_if_proven,
+        unverifiable_integrity,
+    )
     from ._routes import canonical_job_snapshot
+
+    disappeared_source = PublicSourceType(facts.source)
+    disappeared = acquire_index_integrity_snapshot_if_proven(
+        facts.root, disappeared_source
+    )
 
     return classify_qdrant_collection_disappearance(
         exc,
@@ -411,9 +427,11 @@ def _classify_collection_disappearance(
                     # and carrying it keeps the daemon envelope uniform - every
                     # route response has the block, so absence still means only
                     # "old daemon".
-                    integrity=acquire_index_integrity_snapshot(
-                        facts.root, PublicSourceType(facts.source)
-                    ).finish(None),
+                    integrity=(
+                        unverifiable_integrity(disappeared_source)
+                        if disappeared is None
+                        else disappeared.finish(None)
+                    ),
                     search_type=facts.source,
                 )
             ),
@@ -675,14 +693,14 @@ def _execute_search_request(
     """Execute and serialize one search off the event loop."""
     ticket = registry.acquire_compute_ticket()
     try:
-        from .._index_integrity import acquire_index_integrity_snapshot
+        from .._index_integrity import acquire_index_integrity_snapshot_if_proven
 
         integrity_source = (
             PublicSourceType.CODE
             if request.search_type is PublicSourceType.COMBINED
             else request.search_type
         )
-        integrity_snapshot = acquire_index_integrity_snapshot(
+        integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
             request.root, integrity_source
         )
         notes: dict[str, object] = {}

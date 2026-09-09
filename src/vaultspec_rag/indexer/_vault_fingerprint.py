@@ -162,13 +162,23 @@ def fingerprint_path(path: pathlib.Path, root_dir: pathlib.Path) -> str:
     return fingerprint_bytes(path, root_dir, path.read_bytes())
 
 
+def _raw_of(value: str) -> str:
+    """Return the raw digest a recorded identity carries, whatever its shape."""
+    parsed = parse(value)
+    return parsed.raw if parsed is not None else value
+
+
 def classify(stored: str | None, current: str) -> VaultDelta:
     """Decide what work *current* demands given canonical prior evidence.
 
     A document the proof has never seen is :attr:`VaultDelta.BODY`: nothing
     is stored for it, so everything about it is new.
 
-    A malformed identity is not compatible evidence and therefore requires a
+    A value that carries no split is compared as a bare digest. That is the
+    recorded identity for a path with no recognised doc type, which has no
+    front matter to separate from a body, so the digest is all either side
+    has. Equal digests mean the bytes never moved and nothing needs doing;
+    unequal means they did, and with no split recorded the safe answer is a
     body rebuild.
     """
     if stored is None:
@@ -178,7 +188,11 @@ def classify(stored: str | None, current: str) -> VaultDelta:
     now = parse(current)
     before = parse(stored)
     if now is None or before is None:
-        return VaultDelta.BODY
+        return (
+            VaultDelta.UNCHANGED
+            if _raw_of(stored) == _raw_of(current)
+            else VaultDelta.BODY
+        )
     if before.body != now.body:
         return VaultDelta.BODY
     if before.metadata != now.metadata:

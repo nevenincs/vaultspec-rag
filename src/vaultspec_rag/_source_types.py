@@ -9,10 +9,8 @@ from typing import Final, Literal, get_args
 
 __all__ = [
     "INDEX_SOURCES",
-    "SELECTABLE_SOURCES",
     "IndexSource",
     "PublicSourceType",
-    "SelectableSource",
     "SourceTypeParseError",
     "parse_source_type",
     "unsupported_feedback_envelope",
@@ -57,16 +55,6 @@ IndexSource = Literal["vault", "code", "document"]
 #: there is only one spelling left to edit.
 INDEX_SOURCES: tuple[str, ...] = get_args(IndexSource)
 
-#: Every selection an operator may name, including the ``combined`` fan-out.
-#: Distinct from ``IndexSource`` because a caller that accepts a fan-out and one
-#: that indexes a single corpus are answering different questions; both used to
-#: spell their own four-value Literal, which is one vocabulary written twice.
-SelectableSource = Literal["vault", "code", "document", "combined"]
-
-#: The selectable vocabulary at runtime, derived rather than re-declared, for
-#: the same reason ``INDEX_SOURCES`` is.
-SELECTABLE_SOURCES: tuple[str, ...] = get_args(SelectableSource)
-
 #: ``IndexSource`` itself is still hand-written, because a ``Literal`` cannot
 #: be computed from ``StrEnum`` members at a level a type checker honours.
 #: This is the other half of the pair the Literal cannot self-check: catch it
@@ -82,13 +70,6 @@ if set(INDEX_SOURCES) != _NON_COMBINED_SOURCES:
         "_source_types.py to match every non-combined PublicSourceType member"
     )
     raise RuntimeError(_drift_message)
-
-if set(SELECTABLE_SOURCES) != {member.value for member in PublicSourceType}:
-    _selectable_drift = (
-        "SelectableSource has drifted from PublicSourceType: update the "
-        "Literal in _source_types.py to match every PublicSourceType member"
-    )
-    raise RuntimeError(_selectable_drift)
 
 
 @dataclass(frozen=True, slots=True)

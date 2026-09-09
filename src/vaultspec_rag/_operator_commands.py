@@ -16,10 +16,10 @@ module's business.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from ._source_types import PublicSourceType, SelectableSource
+    from ._source_types import PublicSourceType
 
 __all__ = [
     "SERVICE_NOT_RUNNING_MESSAGE",
@@ -148,8 +148,21 @@ SERVICE_NOT_RUNNING_MESSAGE = (
 
 def index_source_option(
     source: PublicSourceType,
-) -> SelectableSource:
-    """Return the canonical ``--type`` value for *source*."""
+) -> Literal["vault", "code", "document", "all"]:
+    """Return the ``--type`` value for *source*, in the CLI's own spelling.
+
+    ``COMBINED`` is spelled ``all`` on the command line. The translation was
+    written inline where the index verb reports what it ran, and the four
+    source spellings were hand-enumerated where it offers a rebuild - so a new
+    source type would have been missing from the remediation an operator is
+    handed, while still being accepted by the flag.
+    """
+    from ._source_types import PublicSourceType as _Source
+
+    if source is _Source.COMBINED:
+        return "all"
+    # The remaining members are exactly these three, which is what lets a
+    # caller hand this to an API accepting only those spellings.
     return source.value
 
 

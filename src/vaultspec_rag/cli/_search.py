@@ -509,17 +509,22 @@ def _try_in_process_search(
     # exists to print never reached an operator whose store was actually busy.
     breadth_snapshot = None
     if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED):
-        from .._index_breadth import acquire_code_breadth_snapshot
+        from .._index_breadth import acquire_code_breadth_snapshot_if_proven
 
-        breadth_snapshot = acquire_code_breadth_snapshot(target)
+        breadth_snapshot = acquire_code_breadth_snapshot_if_proven(target)
     integrity_source = (
         PublicSourceType.CODE
         if search_type is PublicSourceType.COMBINED
         else search_type
     )
-    from .._index_integrity import acquire_index_integrity_snapshot
+    from .._index_integrity import (
+        acquire_index_integrity_snapshot_if_proven,
+        unverifiable_integrity,
+    )
 
-    integrity_snapshot = acquire_index_integrity_snapshot(target, integrity_source)
+    integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
+        target, integrity_source
+    )
     try:
         counts = {
             PublicSourceType.VAULT: get_registry().vault_doc_count(target),
@@ -546,7 +551,11 @@ def _try_in_process_search(
         )
         # A combined search reconciles the code domain, mirroring the combined
         # shortfall above; single-domain searches reconcile their own.
-        integrity = integrity_snapshot.finish(counts[integrity_source])
+        integrity = (
+            unverifiable_integrity(integrity_source)
+            if integrity_snapshot is None
+            else integrity_snapshot.finish(counts[integrity_source])
+        )
         envelope["index_state"] = search_index_state(
             indexed_count=(
                 sum(counts.values())
@@ -639,7 +648,8 @@ def _try_in_process_search(
                         ),
                     )
                 )
-        integrity_snapshot.publication.validate()
+        if integrity_snapshot is not None:
+            integrity_snapshot.publication.validate()
         # The block above is built before the search runs, because its counts
         # come from the store rather than from the answer. The collapse signal
         # is the one finding that cannot be known until there IS an answer, so
@@ -1058,7 +1068,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             metavar="vault|code|document|combined",
             help=(
                 "Search area: vault documentation, source code, extracted documents, "
-                "or all three with combined."
+                "or all three with combined. Aliases: docs, codebase, all."
             ),
             show_default=True,
         ),

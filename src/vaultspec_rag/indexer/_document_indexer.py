@@ -804,7 +804,7 @@ class DocumentIndexer:
             sort_keys=True,
             separators=(",", ":"),
         )
-        checkpoint = DocumentRunCheckpoint.open(
+        checkpoint = DocumentRunCheckpoint.open_generation(
             DocumentRunOpenRequest(
                 data_root=self._data_root,
                 root_dir=self.root_dir,

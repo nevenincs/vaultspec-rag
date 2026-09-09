@@ -139,6 +139,18 @@ def shortfall_warnings(index_state: Mapping[str, object]) -> list[ShortfallWarni
                 why="These results are drawn from an incomplete index",
             )
         )
+    files = _shortfall_figures(index_state, "file_shortfall")
+    if files is not None:
+        warnings.append(
+            ShortfallWarning(
+                deficit=(
+                    f"this index names {files.get('named_count')} files but "
+                    f"holds content for only {files.get('covered_count')}"
+                ),
+                missing=f"{files.get('missing_count')} are missing",
+                why="A file absent from the index cannot be found by any query",
+            )
+        )
     # Third kind, and the only one derived from the answer rather than from a
     # claim. It fires exactly where the other two cannot: a fragment that
     # republished its own figures is self-consistent, so every count agrees
@@ -159,6 +171,24 @@ def shortfall_warnings(index_state: Mapping[str, object]) -> list[ShortfallWarni
             )
         )
     return warnings
+
+
+def acquire_code_breadth_snapshot_if_proven(
+    root: pathlib.Path,
+) -> CodeBreadthSnapshot | None:
+    """Acquire code breadth, or ``None`` when no proof can be read.
+
+    The rebuild boundary above is a publication rule. A search is a read: a
+    root that was never indexed has published no breadth to fall short of, and
+    answering it with a refusal would make a first search an error rather than
+    an empty, actionable result.
+    """
+    from .indexer._publication_proof import ProofUnverifiableError
+
+    try:
+        return acquire_code_breadth_snapshot(root)
+    except ProofUnverifiableError:
+        return None
 
 
 def acquire_code_breadth_snapshot(root: pathlib.Path) -> CodeBreadthSnapshot:

@@ -90,7 +90,7 @@ vaultspec-rag search
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--type` | str | no | vault | Search area: vault documentation, source code, extracted documents, or all three with combined. |
+| `--type` | str | no | vault | Search area: vault documentation, source code, extracted documents, or all three with combined. Aliases: docs, codebase, all. |
 | `--max-results`, `--limit` | int | no | 10 | Maximum number of results to show. Default 10 keeps the output focused. |
 | `--language` | str | no | - | Only show code results in this programming language. |
 | `--path` | str | no | - | Only show code results from this one exact project-relative path. Use --include-path to select a subtree or a glob. |
@@ -132,12 +132,12 @@ None.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `--type` | str | no | combined | What to index: vault, code, document, or combined. |
+| `--type` | str | no | all | What to index: vault, code, document, or combined. Aliases: docs, codebase, all. |
 | `--model` | str | no | - | Override the embedding model name. |
 | `--rebuild` | boolean | no | off | Delete the selected index data before rebuilding it. |
 | `--full` | boolean | no | off | Verify every stored payload against existing canonical proof through the running service; never creates or repairs proof. |
 | `--port` | int | no | - | Service port (defaults to running service). |
-| `--dry-run` | boolean | no | off | Show the resolved code/document admission summary without indexing. Use with --type code, document, or the default combined. |
+| `--dry-run` | boolean | no | off | Show the resolved code/document admission summary without indexing. Use with --type code, document, combined, or the default all alias. |
 | `--dry-run-limit` | int | no | 50 | Maximum source-code file paths to show in human dry-run output. JSON output still includes every path. |
 | `--exclude` | str | no | - | Ad-hoc exclusion pattern (repeatable, gitignore syntax). |
 | `--borrow-gpu` | boolean | no | off | Acquire a borrower lease, pause a compatible running service, then run this index command locally before resuming it. |
@@ -157,7 +157,7 @@ vaultspec-rag clean
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `clean_type` | str | yes | required | What to delete: vault, code, document, or combined. Required so nothing is deleted by accident. |
+| `clean_type` | str | yes | required | What to delete: vault, code, document, or combined/all. Required so nothing is deleted by accident. |
 
 ### Options
 
