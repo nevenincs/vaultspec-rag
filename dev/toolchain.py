@@ -265,6 +265,7 @@ LINT_ALL = (
     "size",
     "docs-version",
     "citations",
+    "docs-conventions",
     "type-strict",
     "vault",
     "docs-cli",
@@ -382,6 +383,11 @@ LINT = Verb(
             "citations",
             "Check every citation resolves to a real source.",
             (uv_run("python", "tools/citation_gate.py"),),
+        ),
+        Target(
+            "docs-conventions",
+            "Check manual invocation lanes, version examples, and PATH checks.",
+            (uv_run("python", "tools/check_docs_conventions.py"),),
         ),
         Target(
             "absolute-imports",
