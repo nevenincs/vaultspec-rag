@@ -602,6 +602,6 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
     added_rel = str(added.relative_to(root)).replace("\\", "/")
     removed_rel = str(removed.relative_to(root)).replace("\\", "/")
     with registry.compute_lease(root) as lease:
-        assert lease.runtime.code_indexer._get_chunk_ids_for_files({added_rel})
-        assert not lease.runtime.code_indexer._get_chunk_ids_for_files({removed_rel})
+        assert lease.runtime.code_indexer.store.get_code_ids_by_paths({added_rel})
+        assert not lease.runtime.code_indexer.store.get_code_ids_by_paths({removed_rel})
     assert_released(completed, slot)

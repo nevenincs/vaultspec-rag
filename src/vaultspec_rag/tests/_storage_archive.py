@@ -65,6 +65,7 @@ def write_archive(
                 "publication_proofs": [
                     {
                         "source": "vault",
+                        "collection": ARCHIVE_COLLECTION,
                         "signature": {
                             "root_identity": "C:/archived/root",
                             "collection_identity": "vault_docs",

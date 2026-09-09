@@ -1,5 +1,7 @@
 """Unit tests for VaultSpecConfigWrapper RAG-specific keys."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import os

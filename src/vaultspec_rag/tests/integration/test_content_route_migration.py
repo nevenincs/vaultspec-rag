@@ -43,7 +43,7 @@ from ...indexer._route_migration import (
     reconcile_origin_after_destination,
     resume_pending_migrations,
 )
-from ...indexer._run_ledger_models import RunOperation
+from ...indexer._run_ledger_models import RunAuthority, RunOperation
 from ...indexer._run_policy import RunPolicy
 from ...job_control import CancelRequested, RunControlToken
 from ...store_runtime import VaultStore
@@ -120,6 +120,7 @@ def _document_checkpoint(
             policy=policy,
             run_policy=run_policy or RunPolicy(no_progress_timeout_seconds=60.0),
             operation=RunOperation.FULL,
+            authority=RunAuthority.REBUILD,
             clean=False,
             model_identity="route-migration-test",
             backend_identity="test-backend:content-route-migration",
@@ -474,6 +475,7 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
             policy=policy,
             run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
             operation=RunOperation.FULL,
+            authority=RunAuthority.REBUILD,
             clean=False,
             model_identity="route-migration-page-test",
             backend_identity="test-backend:content-route-migration",

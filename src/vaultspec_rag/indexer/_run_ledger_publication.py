@@ -1,5 +1,7 @@
 """Bounded publication-proof reads and receipt-backed proof commits."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import json
@@ -301,6 +303,52 @@ def _receipt_corrupt(message: str, exc: BaseException | None = None) -> Never:
     raise error from exc
 
 
+def _mutation_from_rows(
+    ordinal: int,
+    rows: list[sqlite3.Row],
+) -> PublicationMutationUnit:
+    first = rows[0]
+    indexed_points: list[tuple[int, str]] = []
+    for row in rows:
+        raw_ordinal = row["point_ordinal"]
+        raw_point = row["point_id"]
+        if raw_ordinal is None or raw_point is None:
+            raise ValueError("mutation unit has no point identities")
+        if isinstance(raw_ordinal, bool) or not isinstance(raw_ordinal, int):
+            raise TypeError("mutation point ordinal must be an integer")
+        if not isinstance(raw_point, str):
+            raise TypeError("mutation point identity must be text")
+        indexed_points.append((raw_ordinal, raw_point))
+    if tuple(index for index, _point in indexed_points) != tuple(
+        range(len(indexed_points))
+    ):
+        raise ValueError("mutation point ordinals are not contiguous")
+    unit = CommitUnit(
+        rel_path=column_text(first, "rel_path"),
+        kind=CommitUnitKind(column_text(first, "unit_kind")),
+        source_digest=_row_optional_text(first, "source_digest"),
+        segment_ordinal=column_int(first, "segment_ordinal"),
+        is_file_end=column_int(first, "is_file_end") != 0,
+        point_ids=tuple(point for _index, point in indexed_points),
+    )
+    if column_text(first, "unit_id") != unit.identity:
+        raise ValueError("stored mutation identity is not deterministic")
+    sealed_value = first["sealed_ordinal"]
+    if sealed_value is not None and (
+        isinstance(sealed_value, bool) or not isinstance(sealed_value, int)
+    ):
+        raise TypeError("sealed ordinal must be an integer or null")
+    return PublicationMutationUnit(
+        ordinal=ordinal,
+        unit=unit,
+        state=ProofMutationState(column_text(first, "state")),
+        prepared_at=_row_number(first, "prepared_at"),
+        applied_at=_row_optional_number(first, "applied_at"),
+        confirmed_at=_row_optional_number(first, "confirmed_at"),
+        sealed_ordinal=sealed_value,
+    )
+
+
 def _mutation_rows(
     connection: sqlite3.Connection,
     receipt_id: str,
@@ -326,53 +374,55 @@ def _mutation_rows(
             by_ordinal[column_int(row, "mutation_ordinal")].append(row)
         if tuple(by_ordinal) != tuple(range(len(by_ordinal))):
             raise ValueError("mutation ordinals are not contiguous")
-        mutations: list[PublicationMutationUnit] = []
-        for ordinal, unit_rows in by_ordinal.items():
-            first = unit_rows[0]
-            points: list[str] = []
-            point_ordinals: list[int] = []
-            for row in unit_rows:
-                raw_ordinal = row["point_ordinal"]
-                raw_point = row["point_id"]
-                if raw_ordinal is None or raw_point is None:
-                    raise ValueError("mutation unit has no point identities")
-                if isinstance(raw_ordinal, bool) or not isinstance(raw_ordinal, int):
-                    raise TypeError("mutation point ordinal must be an integer")
-                if not isinstance(raw_point, str):
-                    raise TypeError("mutation point identity must be text")
-                point_ordinals.append(raw_ordinal)
-                points.append(raw_point)
-            if tuple(point_ordinals) != tuple(range(len(point_ordinals))):
-                raise ValueError("mutation point ordinals are not contiguous")
-            unit = CommitUnit(
-                rel_path=column_text(first, "rel_path"),
-                kind=CommitUnitKind(column_text(first, "unit_kind")),
-                source_digest=_row_optional_text(first, "source_digest"),
-                segment_ordinal=column_int(first, "segment_ordinal"),
-                is_file_end=column_int(first, "is_file_end") != 0,
-                point_ids=tuple(points),
-            )
-            if column_text(first, "unit_id") != unit.identity:
-                raise ValueError("stored mutation identity is not deterministic")
-            sealed_value = first["sealed_ordinal"]
-            if sealed_value is not None and (
-                isinstance(sealed_value, bool) or not isinstance(sealed_value, int)
-            ):
-                raise TypeError("sealed ordinal must be an integer or null")
-            mutations.append(
-                PublicationMutationUnit(
-                    ordinal=ordinal,
-                    unit=unit,
-                    state=ProofMutationState(column_text(first, "state")),
-                    prepared_at=_row_number(first, "prepared_at"),
-                    applied_at=_row_optional_number(first, "applied_at"),
-                    confirmed_at=_row_optional_number(first, "confirmed_at"),
-                    sealed_ordinal=sealed_value,
-                )
-            )
-        return tuple(mutations)
+        return tuple(
+            _mutation_from_rows(ordinal, unit_rows)
+            for ordinal, unit_rows in by_ordinal.items()
+        )
     except (KeyError, RunLedgerCorruptionError, TypeError, ValueError) as exc:
         _receipt_corrupt("stored publication mutation units are malformed", exc)
+
+
+def _delta_evidence(
+    rel_path: str,
+    content_identity: str | None,
+    points: list[tuple[int, str]],
+) -> ProofEvidence | None:
+    if (content_identity is None) != (not points):
+        raise ValueError("receipt evidence is incomplete")
+    if content_identity is None:
+        return None
+    return ProofEvidence(
+        rel_path=rel_path,
+        content_identity=content_identity,
+        point_ids=tuple(point for _index, point in points),
+    )
+
+
+def _delta_from_header(
+    header: sqlite3.Row,
+    points: dict[tuple[int, str], list[tuple[int, str]]],
+    parent_revision: int,
+) -> PathDelta:
+    ordinal = column_int(header, "delta_ordinal")
+    rel_path = column_text(header, "rel_path")
+    target_rel_path = _row_optional_text(header, "target_rel_path")
+    new_path = target_rel_path if target_rel_path is not None else rel_path
+    return PathDelta(
+        outcome=PathOutcome(column_text(header, "outcome")),
+        expected_parent_revision=parent_revision,
+        rel_path=rel_path,
+        target_rel_path=target_rel_path,
+        old=_delta_evidence(
+            rel_path,
+            _row_optional_text(header, "old_content_identity"),
+            points.pop((ordinal, "old"), []),
+        ),
+        new=_delta_evidence(
+            new_path,
+            _row_optional_text(header, "new_content_identity"),
+            points.pop((ordinal, "new"), []),
+        ),
+    )
 
 
 def _delta_rows(
@@ -415,48 +465,9 @@ def _delta_rows(
                 range(len(values))
             ):
                 raise ValueError("receipt point ordinals are not contiguous")
-        deltas: list[PathDelta] = []
-        for header in headers:
-            ordinal = column_int(header, "delta_ordinal")
-            rel_path = column_text(header, "rel_path")
-            target_rel_path = _row_optional_text(header, "target_rel_path")
-            old_content = _row_optional_text(header, "old_content_identity")
-            new_content = _row_optional_text(header, "new_content_identity")
-            old_points = points.pop((ordinal, "old"), [])
-            new_points = points.pop((ordinal, "new"), [])
-            if (old_content is None) != (not old_points):
-                raise ValueError("old receipt evidence is incomplete")
-            if (new_content is None) != (not new_points):
-                raise ValueError("new receipt evidence is incomplete")
-            old = (
-                ProofEvidence(
-                    rel_path=rel_path,
-                    content_identity=old_content,
-                    point_ids=tuple(point for _index, point in old_points),
-                )
-                if old_content is not None
-                else None
-            )
-            new_path = target_rel_path if target_rel_path is not None else rel_path
-            new = (
-                ProofEvidence(
-                    rel_path=new_path,
-                    content_identity=new_content,
-                    point_ids=tuple(point for _index, point in new_points),
-                )
-                if new_content is not None
-                else None
-            )
-            deltas.append(
-                PathDelta(
-                    outcome=PathOutcome(column_text(header, "outcome")),
-                    expected_parent_revision=parent_revision,
-                    rel_path=rel_path,
-                    target_rel_path=target_rel_path,
-                    old=old,
-                    new=new,
-                )
-            )
+        deltas = [
+            _delta_from_header(header, points, parent_revision) for header in headers
+        ]
         if points:
             raise ValueError("receipt points name a missing delta or evidence side")
         return tuple(deltas)
@@ -583,6 +594,27 @@ def _has_open_receipt(row: sqlite3.Row) -> bool:
     return value != 0
 
 
+def _require_receipt_ready_to_commit(receipt: PublicationReceipt) -> None:
+    if receipt.state is ProofReceiptState.ROLLED_BACK:
+        raise RunLedgerStateError("rolled-back publication receipt cannot commit")
+    if receipt.state is not ProofReceiptState.SEALED:
+        raise RunLedgerStateError("publication receipt must be sealed before commit")
+    if not any(delta.changes_proof for delta in receipt.deltas):
+        raise RunLedgerStateError("a no-op receipt must not advance the proof")
+    if any(
+        mutation.state is not ProofMutationState.CONFIRMED
+        for mutation in receipt.mutations
+    ):
+        raise RunLedgerStateError("publication receipt has unconfirmed mutation units")
+
+
+def _receipt_committed_at(receipt: PublicationReceipt, now: float) -> float:
+    return max(
+        now,
+        receipt.sealed_at if receipt.sealed_at is not None else receipt.reserved_at,
+    )
+
+
 class RunLedgerPublicationMethods:
     """Source-neutral publication proof and receipt operations."""
 
@@ -694,76 +726,85 @@ class RunLedgerPublicationMethods:
         if len(set(point_ids)) != len(point_ids):
             raise ValueError("verified publication point ids must be unique")
         committed_at = time.time()
+        return in_ledger_transaction(
+            self.path,
+            lambda connection: self._establish_verified_publication_body(
+                connection,
+                generation_id,
+                evidence,
+                point_ids,
+                committed_at,
+            ),
+        )
 
-        def body(connection: sqlite3.Connection) -> PublicationProof:
-            generation = self._generation_from_row(
-                self._require_mutable_generation(connection, generation_id)
+    def _establish_verified_publication_body(
+        self,
+        connection: sqlite3.Connection,
+        generation_id: str,
+        evidence: tuple[ProofEvidence, ...],
+        point_ids: tuple[str, ...],
+        committed_at: float,
+    ) -> PublicationProof:
+        generation = self._generation_from_row(
+            self._require_mutable_generation(connection, generation_id)
+        )
+        if generation.signature.operation is not RunOperation.FULL:
+            raise RunLedgerStateError(
+                "verified publication requires a full rebuild generation"
             )
-            if generation.signature.operation is not RunOperation.FULL:
-                raise RunLedgerStateError(
-                    "verified publication requires a full rebuild generation"
-                )
-            if generation.finalization_phase not in {
-                FinalizationPhase.INGESTING,
-                FinalizationPhase.STALE_RECONCILED,
-            }:
-                raise RunLedgerStateError(
-                    "verified publication must precede metadata publication"
-                )
-            key = _compatibility_for_generation(generation)
-            stable = _stable_parameters(key)
-            open_receipt: sqlite3.Row | None = fetch_one(
+        if generation.finalization_phase not in {
+            FinalizationPhase.INGESTING,
+            FinalizationPhase.STALE_RECONCILED,
+        }:
+            raise RunLedgerStateError(
+                "verified publication must precede metadata publication"
+            )
+        key = _compatibility_for_generation(generation)
+        stable = _stable_parameters(key)
+        if (
+            fetch_one(
                 connection,
                 f"""
-                SELECT 1 FROM publication_receipts
-                WHERE source_type = ? AND root_identity = ?
-                  AND backend_identity = ? AND collection_identity = ?
-                  AND {_OPEN_RECEIPT_SQL}
-                LIMIT 1
-                """,
+            SELECT 1 FROM publication_receipts
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+              AND {_OPEN_RECEIPT_SQL}
+            LIMIT 1
+            """,
                 stable,
             )
-            if open_receipt is not None:
-                raise RunLedgerStateError(
-                    "cannot replace publication proof while a receipt is open"
-                )
-            previous: sqlite3.Row | None = fetch_one(
-                connection,
-                """
-                SELECT * FROM publication_proofs
-                WHERE source_type = ? AND root_identity = ?
-                  AND backend_identity = ? AND collection_identity = ?
-                """,
-                stable,
+            is not None
+        ):
+            raise RunLedgerStateError(
+                "cannot replace publication proof while a receipt is open"
             )
-            if previous is not None:
-                existing = _proof_from_row(previous)
-                if (
-                    existing.generation_id == generation_id
-                    and existing.compatibility_key == key
-                    and existing.provenance is ProofProvenance.VERIFIED
-                ):
-                    return existing
-            revision = 0 if previous is None else column_int(previous, "revision") + 1
-            sequence = (
-                0
-                if previous is None
-                else column_int(previous, "reservation_sequence") + 1
-            )
-            connection.execute(
-                """
+        previous = _proof_row(connection, key)
+        if previous is not None:
+            existing = _proof_from_row(previous)
+            if (
+                existing.generation_id == generation_id
+                and existing.compatibility_key == key
+                and existing.provenance is ProofProvenance.VERIFIED
+            ):
+                return existing
+        revision = 0 if previous is None else column_int(previous, "revision") + 1
+        sequence = (
+            0 if previous is None else column_int(previous, "reservation_sequence") + 1
+        )
+        connection.execute(
+            """
                 DELETE FROM publication_proofs
                 WHERE source_type = ? AND root_identity = ?
                   AND backend_identity = ? AND collection_identity = ?
                 """,
-                stable,
-            )
-            aggregate = ProofAggregate(
-                indexed_identities=len(evidence),
-                retained_points=len(point_ids),
-            )
-            connection.execute(
-                """
+            stable,
+        )
+        aggregate = ProofAggregate(
+            indexed_identities=len(evidence),
+            retained_points=len(point_ids),
+        )
+        connection.execute(
+            """
                 INSERT INTO publication_proofs (
                     source_type, root_identity, backend_identity,
                     collection_identity, storage_schema, payload_schema,
@@ -774,63 +815,61 @@ class RunLedgerPublicationMethods:
                     committed_at, verified_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    *stable,
-                    key.storage_schema,
-                    key.payload_schema,
-                    key.embedding_schema_identity,
-                    key.chunking_schema_identity,
-                    key.membership_identity,
-                    key.content_identity,
-                    key.policy_identity,
-                    generation_id,
-                    revision,
-                    sequence,
-                    aggregate.indexed_identities,
-                    aggregate.retained_points,
-                    ProofProvenance.VERIFIED.value,
-                    committed_at,
-                    committed_at,
-                ),
-            )
-            connection.executemany(
-                """
+            (
+                *stable,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation_id,
+                revision,
+                sequence,
+                aggregate.indexed_identities,
+                aggregate.retained_points,
+                ProofProvenance.VERIFIED.value,
+                committed_at,
+                committed_at,
+            ),
+        )
+        connection.executemany(
+            """
                 INSERT INTO publication_evidence (
                     source_type, root_identity, backend_identity,
                     collection_identity, rel_path, content_identity,
                     evidence_generation_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (*stable, item.rel_path, item.content_identity, generation_id)
-                    for item in evidence
-                ),
-            )
-            connection.executemany(
-                """
+            (
+                (*stable, item.rel_path, item.content_identity, generation_id)
+                for item in evidence
+            ),
+        )
+        connection.executemany(
+            """
                 INSERT INTO publication_points (
                     source_type, root_identity, backend_identity,
                     collection_identity, rel_path, point_ordinal, point_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    (*stable, item.rel_path, ordinal, point_id)
-                    for item in evidence
-                    for ordinal, point_id in enumerate(item.point_ids)
-                ),
-            )
-            return PublicationProof(
-                revision=revision,
-                reservation_sequence=sequence,
-                compatibility_key=key,
-                generation_id=generation_id,
-                aggregate=aggregate,
-                provenance=ProofProvenance.VERIFIED,
-                committed_at=committed_at,
-                verified_at=committed_at,
-            )
-
-        return in_ledger_transaction(self.path, body)
+            (
+                (*stable, item.rel_path, ordinal, point_id)
+                for item in evidence
+                for ordinal, point_id in enumerate(item.point_ids)
+            ),
+        )
+        return PublicationProof(
+            revision=revision,
+            reservation_sequence=sequence,
+            compatibility_key=key,
+            generation_id=generation_id,
+            aggregate=aggregate,
+            provenance=ProofProvenance.VERIFIED,
+            committed_at=committed_at,
+            verified_at=committed_at,
+        )
 
     def assert_generation_proof_committed(
         self,
@@ -1349,29 +1388,8 @@ class RunLedgerPublicationMethods:
             receipt = _hydrate_receipt(connection, row)
             if receipt.state is ProofReceiptState.COMMITTED:
                 return self._committed_receipt_replay(connection, receipt)
-            if receipt.state is ProofReceiptState.ROLLED_BACK:
-                raise RunLedgerStateError(
-                    "rolled-back publication receipt cannot commit"
-                )
-            if receipt.state is not ProofReceiptState.SEALED:
-                raise RunLedgerStateError(
-                    "publication receipt must be sealed before commit"
-                )
-            receipt_committed_at = max(
-                committed_at,
-                receipt.sealed_at
-                if receipt.sealed_at is not None
-                else receipt.reserved_at,
-            )
-            if not any(delta.changes_proof for delta in receipt.deltas):
-                raise RunLedgerStateError("a no-op receipt must not advance the proof")
-            if any(
-                mutation.state is not ProofMutationState.CONFIRMED
-                for mutation in receipt.mutations
-            ):
-                raise RunLedgerStateError(
-                    "publication receipt has unconfirmed mutation units"
-                )
+            _require_receipt_ready_to_commit(receipt)
+            receipt_committed_at = _receipt_committed_at(receipt, committed_at)
             proof = self._validate_receipt_authority(connection, receipt)
             generation = self._require_compatible_receipt_generation(
                 connection,

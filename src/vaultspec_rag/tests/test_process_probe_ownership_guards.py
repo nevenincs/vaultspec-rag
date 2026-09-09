@@ -23,55 +23,27 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestFinalizationPhaseWalkHasOneCopy:
-    """The durable metadata-publication transition exists once, on the base.
+    """Durable publication phases are owned by the ledger and restore replay."""
 
-    ``CodeRunCheckpoint`` and ``DocumentRunCheckpoint`` each carried the same
-    phase walk: INGESTING to STALE_RECONCILED, bail unless STALE_RECONCILED,
-    publish, advance to METADATA_PUBLISHED. Only the publish call differed.
-
-    The duplicated part is a DURABLE transition - it survives a restart - so
-    two copies could disagree about when metadata is publishable and the
-    disagreement would persist across runs. The base already declared
-    ``_content_kind`` and ``_kind_label`` for exactly this, and its docstring
-    already promised subclasses inherit the generation-publication decisions.
-    """
-
-    def test_only_the_base_advances_the_finalization_phase(self) -> None:
-        # Keys on STALE_RECONCILED: it appears only in the walk that advances
-        # through it, so a second mention means a second copy of the durable
-        # transition. Reading the phase elsewhere is fine and stays uncaught.
+    def test_only_canonical_owners_advance_the_finalization_phase(self) -> None:
+        owners = {
+            "_checkpoint_common.py",
+            "_run_ledger_publication.py",
+            "storage_restore.py",
+        }
         find_offenders = [
             f"{path.relative_to(_PACKAGE_ROOT).as_posix()}:{number}"
             for path in _production_sources()
-            if path.name != "_checkpoint_common.py"
+            if path.name not in owners
             for number, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1
             )
             if "FinalizationPhase.STALE_RECONCILED" in line
         ]
         assert not find_offenders, (
-            f"the finalization phase walk is duplicated at {find_offenders}; call "
-            "RunCheckpointBase.publish_metadata_transition so the durable "
-            "transition has one definition"
+            f"publication finalization escaped its canonical owners at "
+            f"{find_offenders}; use RunLedger publication operations"
         )
-
-    def test_each_subclass_supplies_only_its_publish_call(self) -> None:
-        import inspect
-
-        from ..indexer._checkpoint_common import RunCheckpointBase
-        from ..indexer._document_checkpoint import DocumentRunCheckpoint
-        from ..indexer._run_checkpoint import CodeRunCheckpoint
-
-        assert hasattr(RunCheckpointBase, "publish_metadata_transition")
-        for cls in (CodeRunCheckpoint, DocumentRunCheckpoint):
-            source = inspect.getsource(cls.publish_metadata)
-            assert "publish_metadata_transition" in source, (
-                f"{cls.__name__}.publish_metadata must go through the shared "
-                "transition rather than walking the phases itself"
-            )
-            # The label the envelope emits is built from _kind_label, so each
-            # subclass must still declare the one it had.
-            assert cls._kind_label in {"code", "document"}
 
 
 class TestShortfallProseHasOneHome:
@@ -339,11 +311,6 @@ class TestAtomicJsonPublishHasOneWriter:
     side without the gap being visible.
     """
 
-    #: Streams its sidecar entry by entry and fsyncs the handle, so the whole
-    #: document is never held in memory. That is a different operation, not a
-    #: copy of this one: it exists because the code sidecar can be large.
-    STREAMING: ClassVar[str] = "_code_meta.py"
-
     #: Writes its recovery marker to a temp whose NAME a reaper globs, so the
     #: spelling is a contract rather than an implementation detail. Delegating
     #: it would leave the sweeper matching nothing and its test vacuously
@@ -405,7 +372,7 @@ class TestAtomicJsonPublishHasOneWriter:
         function and asks whether it does BOTH, at any distance and in either
         spelling.
         """
-        excluded = {"_atomic_write.py", self.STREAMING, self.NAMED_TEMP_CONTRACT}
+        excluded = {"_atomic_write.py", self.NAMED_TEMP_CONTRACT}
         find_offenders = [
             f"{path.name}:{node.lineno} {node.name}"
             for path, tree in parsed_production_sources(_production_sources(), excluded)

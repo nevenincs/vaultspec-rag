@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import pytest
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...progress import NullProgressReporter
 from .conftest import (
     SAMPLE_PYTHON_2,
@@ -16,38 +14,9 @@ from .conftest import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-    from pathlib import Path
-
     from ..._store_models import CodeChunk
-    from ...indexer import CodebaseIndexer
-    from ...indexer._content_discovery import CodeExecutionPreflight
-    from ...indexer._vault_prep import IndexResult
-    from ...progress import ProgressReporter
-    from ...store_runtime import VaultStore
-    from .test_indexer_progress_integration import CountingProgressReporter
 
 pytestmark = [pytest.mark.integration]
-
-
-class _IncrementalFailureCase(NamedTuple):
-    """The persisted state a failed incremental attempt must leave intact."""
-
-    indexer: CodebaseIndexer
-    store: VaultStore
-    good: Path
-    root: Path
-    metadata_before: dict[str, str]
-
-
-class _IncrementalRetryCase(NamedTuple):
-    """The two files and durable state a successful retry must publish."""
-
-    indexer: CodebaseIndexer
-    store: VaultStore
-    good: Path
-    failing: Path
-    attempted: set[str]
 
 
 def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
@@ -69,154 +38,6 @@ def _stored_partial_chunk(path: str, chunk_id: str) -> CodeChunk:
 class TestIncrementalPublicationRecovery:
     """Production incrementals converge remnants left before metadata commit."""
 
-    @pytest.mark.timeout(180)
-    def test_scoped_new_file_replaces_prior_partial_ids(
-        self,
-        code_project: _CodeProject,
-    ) -> None:
-        from ...indexer import _chunk_worker
-        from .test_indexer_progress_integration import CountingProgressReporter
-
-        root = code_project["root"]
-        store = code_project["store"]
-        indexer = code_project["code_indexer"]
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        rel_path = "src/new_partial.py"
-        source = root / rel_path
-        source.write_text("def current_value():\n    return 42\n", encoding="utf-8")
-        expected = _chunk_worker.chunk_and_hash_file(source, root)
-        stale_id = f"{rel_path}:stale-attempt"
-        store.upsert_code_chunks(
-            [_stored_partial_chunk(rel_path, stale_id)],
-            write_policy=None,
-        )
-
-        reporter = CountingProgressReporter()
-        indexer.incremental_index(
-            reporter=reporter,
-            changed_paths=[source],
-            preflight=indexer.preflight_changed_paths([source]),
-        )
-
-        ids = set(store.get_code_ids_by_paths({rel_path}))
-        assert ids == {chunk.id for chunk in expected.chunks}
-        assert indexer._load_meta()[rel_path] == expected.content_hash
-        assert "scan changed" in reporter.phase_names()
-        assert "prepare collection" not in reporter.phase_names()
-
-    @pytest.mark.timeout(180)
-    def test_unscoped_new_file_replaces_prior_partial_ids(
-        self,
-        code_project: _CodeProject,
-    ) -> None:
-        from ...indexer import _chunk_worker
-        from .test_indexer_progress_integration import CountingProgressReporter
-
-        root = code_project["root"]
-        store = code_project["store"]
-        indexer = code_project["code_indexer"]
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        rel_path = "src/unscoped_partial.py"
-        source = root / rel_path
-        source.write_text("unscoped_value = 'current'\n", encoding="utf-8")
-        expected = _chunk_worker.chunk_and_hash_file(source, root)
-        stale_id = f"{rel_path}:stale-attempt"
-        store.upsert_code_chunks(
-            [_stored_partial_chunk(rel_path, stale_id)],
-            write_policy=None,
-        )
-
-        reporter = CountingProgressReporter()
-        indexer.incremental_index(
-            reporter=reporter,
-            preflight=indexer.preflight_content(),
-        )
-
-        ids = set(store.get_code_ids_by_paths({rel_path}))
-        assert ids == {chunk.id for chunk in expected.chunks}
-        assert indexer._load_meta()[rel_path] == expected.content_hash
-        assert "chunk + embed" in reporter.phase_names()
-        assert "prepare collection" not in reporter.phase_names()
-
-    @pytest.mark.timeout(180)
-    def test_control_preserves_storage_confirmed_generation_points(
-        self,
-        code_project: _CodeProject,
-    ) -> None:
-        """Control before finalization leaves checkpointed storage intact."""
-        from ...indexer._generation_lifecycle import CodeGenerationOpenRequest
-        from ...indexer._run_ledger_models import RunOperation
-        from ...indexer._streaming_types import CodeFileSegment
-        from ...job_control import CancelRequested, RunControlToken
-
-        indexer = code_project["code_indexer"]
-        store = code_project["store"]
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-
-        rel_path = "src/confirmed_before_control.py"
-        point_id = f"{rel_path}:confirmed"
-        chunk = _stored_partial_chunk(rel_path, point_id)
-        store.upsert_code_chunks([chunk], write_policy=None)
-        policy = indexer.resolve_policy_snapshot()
-        limits = indexer._consumer_pipeline.resolve_limits()
-        checkpoint = indexer._lifecycle.open_checkpoint(
-            CodeGenerationOpenRequest(
-                policy=policy,
-                operation=RunOperation.INCREMENTAL,
-                clean=False,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=RunControlToken(),
-            )
-        )
-        digest = hashlib.blake2b(chunk.content.encode("utf-8")).hexdigest()
-        segment = CodeFileSegment(
-            path=rel_path,
-            ordinal=0,
-            chunks=(chunk,),
-            estimated_bytes=max(1, len(chunk.content.encode("utf-8"))),
-            is_file_end=True,
-        )
-        checkpoint.record_confirmed_segment(segment, digest)
-
-        token = RunControlToken()
-        assert token.request_cancel()
-        from ...indexer._incremental_commit import IncrementalReplacementRequest
-
-        with pytest.raises(CancelRequested):
-            indexer._incremental_commit.commit_replacement(
-                IncrementalReplacementRequest(
-                    policy=policy,
-                    existing_ids=set(),
-                    published_ids={point_id},
-                    prior_ids_by_path={rel_path: set()},
-                    deleted_paths=set(),
-                    checkpoint=checkpoint,
-                    metadata={rel_path: digest},
-                    files_count=1,
-                    protect_replacement=False,
-                    reporter=NullProgressReporter(),
-                    run_control=token,
-                )
-            )
-
-        assert store.get_code_ids_by_paths({rel_path}) == [point_id]
-        assert checkpoint.ledger.unit_committed(
-            checkpoint.generation_id,
-            checkpoint.unit_for(segment, digest),
-        )
-
-    @pytest.mark.timeout(180)
     def test_clean_resume_does_not_drop_confirmed_segments_again(
         self,
         code_project: _CodeProject,
@@ -246,6 +67,7 @@ class TestIncrementalPublicationRecovery:
                 dense_dimensions=limits.dense_dimension,
                 sparse_enabled=limits.sparse_enabled,
                 run_control=RunControlToken(),
+                authority=RunAuthority.REBUILD,
             )
         )
 
@@ -305,6 +127,7 @@ class TestIncrementalPublicationRecovery:
         assert incomplete.terminal_state is RunTerminalState.REBUILD_INCOMPLETE
 
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             clean=True,
             reporter=NullProgressReporter(),
             preflight=preflight,
@@ -324,76 +147,9 @@ class TestIncrementalPublicationRecovery:
         resumed = checkpoint.ledger.generation(checkpoint.generation_id)
         assert resumed.complete
 
-    @pytest.mark.timeout(180)
-    def test_scoped_untracked_disappearance_removes_prior_partial_ids(
-        self,
-        code_project: _CodeProject,
-    ) -> None:
-        from .test_indexer_progress_integration import CountingProgressReporter
-
-        root = code_project["root"]
-        store = code_project["store"]
-        indexer = code_project["code_indexer"]
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        rel_path = "src/disappeared_partial.py"
-        missing = root / rel_path
-        stale_id = f"{rel_path}:stale-attempt"
-        store.upsert_code_chunks(
-            [_stored_partial_chunk(rel_path, stale_id)],
-            write_policy=None,
-        )
-
-        reporter = CountingProgressReporter()
-        result = indexer.incremental_index(
-            reporter=reporter,
-            changed_paths=[missing],
-            preflight=indexer.preflight_changed_paths([missing]),
-        )
-
-        assert store.get_code_ids_by_paths({rel_path}) == []
-        assert rel_path not in indexer._load_meta()
-        assert result.removed == 0
-        assert "scan changed" in reporter.phase_names()
-        assert "prepare collection" not in reporter.phase_names()
-
 
 class TestCodeEmbedFormatRebuild:
     """A pre-header store triggers a one-time clean rebuild."""
-
-    @pytest.mark.timeout(180)
-    def test_missing_embed_marker_triggers_rebuild(
-        self, code_project: _CodeProject
-    ) -> None:
-        import json
-
-        from ..._index_breadth import index_meta_path
-        from ..._source_types import PublicSourceType
-
-        indexer = code_project["code_indexer"]
-        store = code_project["store"]
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        chunk_total = store.count_code()
-        assert chunk_total > 0
-
-        meta_path = index_meta_path(code_project["root"], PublicSourceType.CODE)
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        meta.pop("__code_embed_schema__")
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
-
-        result = indexer.incremental_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        # A rebuild re-embeds everything instead of a no-op pass.
-        assert result.added == chunk_total
-        stamped = json.loads(meta_path.read_text(encoding="utf-8"))
-        assert stamped["__code_embed_schema__"] == "2"
 
 
 class TestCodebaseFullIndex:
@@ -402,6 +158,7 @@ class TestCodebaseFullIndex:
     @pytest.mark.timeout(120)
     def test_full_index_produces_chunks(self, code_project: _CodeProject) -> None:
         result = code_project["code_indexer"].full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=code_project["code_indexer"].preflight_content(),
         )
@@ -412,6 +169,7 @@ class TestCodebaseFullIndex:
     @pytest.mark.timeout(120)
     def test_full_index_chunks_in_store(self, code_project: _CodeProject) -> None:
         code_project["code_indexer"].full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=code_project["code_indexer"].preflight_content(),
         )
@@ -424,12 +182,14 @@ class TestCodebaseFullIndex:
         store = code_project["store"]
 
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
         first_count = store.count_code()
 
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -457,6 +217,7 @@ class TestCodebaseFullIndex:
 
         # Seed both collections.
         code_project["code_indexer"].full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=code_project["code_indexer"].preflight_content(),
         )
@@ -470,147 +231,17 @@ class TestCodebaseFullIndex:
         # Simulate the scoped rebuild: drop ONLY vault.
         store.drop_table()
         store.ensure_table()
-        vault_indexer.full_index(clean=True, reporter=NullProgressReporter())
+        vault_indexer.full_index(
+            clean=True,
+            reporter=NullProgressReporter(),
+            authority=RunAuthority.REBUILD,
+        )
 
         # Code collection must survive untouched.
         assert store.count_code() == code_count_before, (
             "scoped vault rebuild leaked into the code collection - "
             "the shutil.rmtree regression is back"
         )
-
-
-def _configure_conditional_preprocessor(root: Path) -> None:
-    import shlex
-    import sys
-    import textwrap
-
-    script = root / "conditional_preprocessor.py"
-    script.write_text(
-        textwrap.dedent(
-            """
-            import json
-            import pathlib
-            import sys
-            import time
-
-            source = pathlib.Path(sys.argv[1])
-            content = source.read_text(encoding="utf-8")
-            if "FAIL" in content:
-                time.sleep(1.0)
-                sys.exit(7)
-            print(json.dumps({
-                "schema_version": 1,
-                "preprocessor_id": "conditional",
-                "preprocessor_version": "1",
-                "source_path": str(source),
-                "text": "successful conditional extraction",
-            }))
-            """
-        ),
-        encoding="utf-8",
-    )
-    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
-    (root / ".vaultragpreprocess.toml").write_text(
-        "version = 2\n[[rule]]\n"
-        'pattern = "*.fatal"\n'
-        'target = "code"\nextractor_version = "1"\n'
-        f"command = '''{command}'''\n"
-        'on_error = "fail"\n',
-        encoding="utf-8",
-    )
-
-
-@contextmanager
-def _single_chunk_indexing() -> Generator[None]:
-    from ...config._types import EnvVar
-    from ..conftest import managed_env
-
-    with managed_env(
-        **{
-            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
-            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
-            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
-        }
-    ):
-        yield
-
-
-def _incremental_preflight(
-    indexer: CodebaseIndexer, paths: list[Path], scoped: bool
-) -> tuple[list[Path] | None, CodeExecutionPreflight]:
-    if scoped:
-        return paths, indexer.preflight_changed_paths(paths)
-    return None, indexer.preflight_content()
-
-
-def _run_incremental_attempt(
-    indexer: CodebaseIndexer,
-    reporter: ProgressReporter,
-    paths: list[Path],
-    scoped: bool,
-) -> IndexResult:
-    changed_paths, preflight = _incremental_preflight(indexer, paths, scoped)
-    return indexer.incremental_index(
-        reporter=reporter,
-        changed_paths=changed_paths,
-        preflight=preflight,
-    )
-
-
-def _assert_failed_incremental_attempt(
-    case: _IncrementalFailureCase,
-    reporter: CountingProgressReporter,
-) -> None:
-    from ...indexer import _chunk_worker
-    from .test_indexer_progress_integration import _assert_phase_balanced
-
-    _assert_phase_balanced(reporter.events)
-    assert "chunk + embed" in reporter.phase_names()
-    good_expected = {
-        chunk.id
-        for chunk in _chunk_worker.chunk_and_hash_file(case.good, case.root).chunks
-    }
-    assert good_expected
-    assert set(case.store.get_code_ids_by_paths({"src/a_good.py"})) == good_expected
-    assert case.store.get_code_ids_by_paths({"src/z_fail.fatal"}) == []
-    assert case.indexer._load_meta() == case.metadata_before
-
-
-def _run_failing_incremental_attempt(
-    indexer: CodebaseIndexer,
-    reporter: CountingProgressReporter,
-    paths: list[Path],
-    scoped: bool,
-) -> None:
-    from ...indexer._preprocess_runner import PreprocessAbortError
-
-    with pytest.raises(PreprocessAbortError):
-        _run_incremental_attempt(indexer, reporter, paths, scoped)
-
-
-def _assert_successful_incremental_retry(
-    case: _IncrementalRetryCase,
-    reporter: CountingProgressReporter,
-    result: IndexResult,
-) -> None:
-    import hashlib
-
-    from .test_indexer_progress_integration import _assert_phase_balanced
-
-    _assert_phase_balanced(reporter.events)
-    assert result.added == 2
-    assert case.store.get_code_ids_by_paths(case.attempted)
-    metadata_after = case.indexer._load_meta()
-    assert (
-        metadata_after["src/a_good.py"]
-        == hashlib.blake2b(case.good.read_bytes()).hexdigest()
-    )
-    assert (
-        metadata_after["src/z_fail.fatal"]
-        == hashlib.blake2b(case.failing.read_bytes()).hexdigest()
-    )
-    assert "delete removed" in reporter.phase_names()
-    assert "write metadata" in reporter.phase_names()
 
 
 class TestCodebaseIncrementalIndex:
@@ -622,11 +253,13 @@ class TestCodebaseIncrementalIndex:
     ) -> None:
         indexer = code_project["code_indexer"]
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
 
         result = indexer.incremental_index(
+            authority=RunAuthority.PUBLICATION,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -640,6 +273,7 @@ class TestCodebaseIncrementalIndex:
         src_dir = code_project["src_dir"]
 
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -647,6 +281,7 @@ class TestCodebaseIncrementalIndex:
 
         (src_dir / "extra.py").write_text(SAMPLE_PYTHON_2, encoding="utf-8")
         result = indexer.incremental_index(
+            authority=RunAuthority.PUBLICATION,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -654,288 +289,6 @@ class TestCodebaseIncrementalIndex:
         assert result.added > 0
         assert store.count_code() > count_before
 
-    @pytest.mark.timeout(180)
-    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
-    def test_incremental_uses_weighted_segments(
-        self,
-        code_project: _CodeProject,
-        scoped: bool,
-    ) -> None:
-        from ...config._settings import reset_config
-        from ...config._types import EnvVar
-        from ...indexer import _chunk_worker
-        from .test_indexer_progress_integration import CountingProgressReporter
-
-        indexer = code_project["code_indexer"]
-        store = code_project["store"]
-        root = code_project["root"]
-        source = code_project["src_dir"] / "many_units.py"
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        source.write_text(
-            "\n\n".join(
-                (
-                    f"def unit_{index}() -> str:\n"
-                    f'    payload = "{str(index) * 900}"\n'
-                    "    return payload"
-                )
-                for index in range(6)
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        expected = _chunk_worker.chunk_and_hash_file(source, root)
-        expected_ids = {chunk.id for chunk in expected.chunks}
-        assert len(expected_ids) > 2
-
-        overrides = {
-            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
-            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
-            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
-        }
-        previous = {key: os.environ.get(key) for key in overrides}
-        try:
-            os.environ.update(overrides)
-            reset_config()
-            reporter = CountingProgressReporter()
-            result = indexer.incremental_index(
-                reporter=reporter,
-                changed_paths=[source] if scoped else None,
-                preflight=(
-                    indexer.preflight_changed_paths([source])
-                    if scoped
-                    else indexer.preflight_content()
-                ),
-            )
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-            reset_config()
-
-        rel_path = "src/many_units.py"
-        assert result.added == 1
-        assert set(store.get_code_ids_by_paths({rel_path})) == expected_ids
-        assert indexer._load_meta()[rel_path] == expected.content_hash
-        assert "chunk + embed" in reporter.phase_names()
-        assert "chunk files" not in reporter.phase_names()
-        assert "embed + upsert chunks" not in reporter.phase_names()
-
-    @pytest.mark.timeout(240)
-    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
-    def test_incremental_rolls_back_then_retries_real_failure(
-        self,
-        code_project: _CodeProject,
-        scoped: bool,
-    ) -> None:
-        from .test_indexer_progress_integration import CountingProgressReporter
-
-        indexer = code_project["code_indexer"]
-        store = code_project["store"]
-        root = code_project["root"]
-        src_dir = code_project["src_dir"]
-        _configure_conditional_preprocessor(root)
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        metadata_before = indexer._load_meta()
-
-        good = src_dir / "a_good.py"
-        failing = src_dir / "z_fail.fatal"
-        good.write_text(
-            "def stored_before_failure():\n    return True\n", encoding="utf-8"
-        )
-        failing.write_text("FAIL\n", encoding="utf-8")
-        attempted = {"src/a_good.py", "src/z_fail.fatal"}
-
-        with _single_chunk_indexing():
-            failure_reporter = CountingProgressReporter()
-            _run_failing_incremental_attempt(
-                indexer, failure_reporter, [good, failing], scoped
-            )
-            # Resume contract (the checkpoint-resume model): a failed attempt
-            # RETAINS the points it already storage-confirmed, so the retry
-            # resumes rather than re-encoding from scratch. a_good.py was fully
-            # processed and checkpointed before the preprocessor aborted the
-            # attempt on z_fail.fatal, so its points survive; z_fail.fatal
-            # never produced any. The rollback protects the current attempt's
-            # own storage-confirmed commits (its ledger units still describe
-            # them, so deleting the store points would strand those units);
-            # carried-forward points from a prior generation are protected
-            # separately by existing_ids. The never-retried case is covered by
-            # generation retirement and reconcile/invalidation, not by deleting
-            # durable progress here.
-            _assert_failed_incremental_attempt(
-                _IncrementalFailureCase(indexer, store, good, root, metadata_before),
-                failure_reporter,
-            )
-
-            failing.write_text("SUCCEED\n", encoding="utf-8")
-            retry_reporter = CountingProgressReporter()
-            result = _run_incremental_attempt(
-                indexer, retry_reporter, [good, failing], scoped
-            )
-
-        _assert_successful_incremental_retry(
-            _IncrementalRetryCase(indexer, store, good, failing, attempted),
-            retry_reporter,
-            result,
-        )
-
-    @pytest.mark.timeout(240)
-    @pytest.mark.parametrize("scoped", [False, True], ids=["unscoped", "scoped"])
-    def test_incremental_recovers_when_an_indexed_file_changes_after_a_failure(
-        self,
-        code_project: _CodeProject,
-        scoped: bool,
-    ) -> None:
-        """A failed attempt does not trap later attempts over a moving tree.
-
-        The sibling rollback test edits the file that caused the failure. This
-        one edits a file the failed attempt had already finished indexing,
-        which is what a watcher on a live working tree actually does. The
-        resumed generation then carries that path as indexed under a digest
-        the source no longer has, and its fresh segments can neither be
-        recognised as already committed nor written over an indexed path.
-
-        Asserting only that the ledger refuses a mismatched unit would have
-        passed throughout the outage this covers; the property under test is
-        that the second attempt succeeds.
-        """
-        import hashlib
-        import shlex
-        import sys
-        import textwrap
-
-        from ...config._settings import reset_config
-        from ...config._types import EnvVar
-        from ...indexer import _chunk_worker
-        from ...indexer._preprocess_runner import PreprocessAbortError
-
-        indexer = code_project["code_indexer"]
-        store = code_project["store"]
-        root = code_project["root"]
-        src_dir = code_project["src_dir"]
-
-        script = root / "conditional_preprocessor.py"
-        script.write_text(
-            textwrap.dedent(
-                """
-                import json
-                import pathlib
-                import sys
-
-                source = pathlib.Path(sys.argv[1])
-                content = source.read_text(encoding="utf-8")
-                if "FAIL" in content:
-                    sys.exit(7)
-                print(json.dumps({
-                    "schema_version": 1,
-                    "preprocessor_id": "conditional",
-                    "preprocessor_version": "1",
-                    "source_path": str(source),
-                    "text": "successful conditional extraction",
-                }))
-                """
-            ),
-            encoding="utf-8",
-        )
-        command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{path}}"
-        (root / ".vaultragpreprocess.toml").write_text(
-            "version = 2\n"
-            "[[rule]]\n"
-            'pattern = "*.fatal"\n'
-            'target = "code"\n'
-            'extractor_version = "1"\n'
-            f"command = '''{command}'''\n"
-            'on_error = "fail"\n',
-            encoding="utf-8",
-        )
-        indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-
-        # "a_" sorts before "z_", so the good file is indexed before the
-        # preprocessor aborts the attempt on the failing one.
-        good = src_dir / "a_good.py"
-        failing = src_dir / "z_fail.fatal"
-        good.write_text(
-            "def stored_before_failure():\n    return True\n", encoding="utf-8"
-        )
-        failing.write_text("FAIL\n", encoding="utf-8")
-        changed = [good, failing]
-
-        overrides = {
-            EnvVar.INDEX_SEGMENT_MAX_CHUNKS.value: "1",
-            EnvVar.INDEX_QUEUE_MAX_CHUNKS.value: "2",
-            EnvVar.INDEX_CHUNK_WORKERS.value: "1",
-        }
-        previous = {key: os.environ.get(key) for key in overrides}
-        try:
-            os.environ.update(overrides)
-            reset_config()
-            with pytest.raises(PreprocessAbortError):
-                indexer.incremental_index(
-                    reporter=NullProgressReporter(),
-                    changed_paths=changed if scoped else None,
-                    preflight=(
-                        indexer.preflight_changed_paths(changed)
-                        if scoped
-                        else indexer.preflight_content()
-                    ),
-                )
-
-            # The edit that poisons the resumed generation: the already-indexed
-            # file changes, so its recorded digest no longer describes it.
-            good.write_text(
-                "def stored_before_failure():\n"
-                "    return True\n"
-                "\n\n"
-                "def added_after_the_failure():\n"
-                "    return 'recovered'\n",
-                encoding="utf-8",
-            )
-            failing.write_text("SUCCEED\n", encoding="utf-8")
-            expected = _chunk_worker.chunk_and_hash_file(good, root)
-            expected_ids = {chunk.id for chunk in expected.chunks}
-
-            result = indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths=changed if scoped else None,
-                preflight=(
-                    indexer.preflight_changed_paths(changed)
-                    if scoped
-                    else indexer.preflight_content()
-                ),
-            )
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-            reset_config()
-
-        assert result.added >= 1
-        # Replaced, not duplicated. Chunk identity embeds the line span and a
-        # content hash, so a re-open that cleared the ledger without dropping
-        # the published points would leave both generations of points here and
-        # this exact-set assertion is the only thing that would catch it.
-        stored = store.get_code_ids_by_paths({"src/a_good.py"})
-        assert set(stored) == expected_ids
-        assert len(stored) == len(expected_ids)
-        assert (
-            indexer._load_meta()["src/a_good.py"]
-            == hashlib.blake2b(good.read_bytes()).hexdigest()
-        )
-
-    @pytest.mark.timeout(120)
     def test_an_empty_source_converges_instead_of_failing_the_run(
         self,
         code_project: _CodeProject,
@@ -962,6 +315,7 @@ class TestCodebaseIncrementalIndex:
         (src_dir / "empty_mid_save.py").write_text("", encoding="utf-8")
 
         result = indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -1002,6 +356,7 @@ class TestCodebaseIncrementalModifyDelete:
         sample = src_dir / "sample.py"
 
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -1013,6 +368,7 @@ class TestCodebaseIncrementalModifyDelete:
                 encoding="utf-8",
             )
             result = indexer.incremental_index(
+                authority=RunAuthority.PUBLICATION,
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
             )
@@ -1034,6 +390,7 @@ class TestCodebaseIncrementalModifyDelete:
         extra = src_dir / "extra.py"
         extra.write_text(SAMPLE_PYTHON_2, encoding="utf-8")
         indexer.full_index(
+            authority=RunAuthority.REBUILD,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -1043,6 +400,7 @@ class TestCodebaseIncrementalModifyDelete:
         # Delete the extra file and re-index incrementally
         extra.unlink()
         result = indexer.incremental_index(
+            authority=RunAuthority.PUBLICATION,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )

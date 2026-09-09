@@ -167,13 +167,13 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         from .._store_writes import workspace_volume_path
 
         # The data root also locates the generation lifecycle's artifacts and
-        # the preprocess context, so it stays independent of the sidecar.
+        # the preprocess context, so it stays independent of durable proof.
         self._data_root = workspace_volume_path(root_dir)
-        self._stat_gate_path = self._data_root / "code_index.statgate.json"
+        self._stat_gate_path = self._data_root / "code_index.statgate.sqlite3"
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(self._stat_gate_path)
         # Per-run document-preprocessing state (#185). Both are reset at the
         # start of each full/incremental run; the writer lock serialises runs
         # so instance-scoped state is safe. ``_prep_ctx`` is the context handed
@@ -516,7 +516,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         *,
         reporter: ProgressReporter,
         preflight: CodeIndexPreflight,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full codebase re-index serialized through the writer lock.
@@ -806,7 +806,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         preflight: CodeExecutionPreflight,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental codebase re-index serialized through the writer lock.
@@ -1130,8 +1130,7 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             logger.warning("Cannot hash file, skipping: %s", rel)
         if full_membership:
             gate.prune(to_hash.keys())
-            gate.persist()
-        self._stat_gate_cache.retain(gate)
+        gate.persist()
         if gate.reused:
             logger.debug(
                 "stat gate reused %d code hashes, rehashed %d",
@@ -1257,18 +1256,3 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             reuse=self._reuse_snapshot(),
             drift=self._lifecycle.drift_snapshot(),
         )
-
-    def _get_chunk_ids_for_files(
-        self,
-        rel_paths: set[str],
-    ) -> list[str]:
-        """Return chunk IDs from the store that belong to the given files.
-
-        Args:
-            rel_paths: Set of file paths (relative to the project
-                root) whose chunk IDs should be retrieved.
-
-        Returns:
-            List of chunk ID strings stored for the given files.
-        """
-        return self.store.get_code_ids_by_paths(rel_paths)

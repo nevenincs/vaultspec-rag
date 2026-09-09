@@ -1,5 +1,7 @@
 """Real SQLite behavior for resumable indexing generations."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import hashlib
@@ -33,7 +35,6 @@ from ..indexer._publication_proof import (
 )
 from ..indexer._run_ledger_commits import (
     RunLedgerCommitMethods,
-    retained_point_ids_sql,
 )
 from ..indexer._run_ledger_models import (
     FETCH_BATCH,

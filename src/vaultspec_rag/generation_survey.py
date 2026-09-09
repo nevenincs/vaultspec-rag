@@ -92,9 +92,12 @@ def survey_generations(
         # "reclaimable" means. Restating that rule here would be a second
         # definition of the one question a drop depends on, and the two would
         # answer differently the first time either moved.
+        proof_referenced = _proof_referenced(root, derived, served)
+        if proof_referenced is None:
+            continue
         unreferenced = reclaimable_generation_collections(
             existing=(name for name in names if name.startswith(derived)),
-            served=(served, *_proof_referenced(root, derived, served)),
+            served=(served, *proof_referenced),
         )
         reports.append(
             RootGenerations(root=str(root), served=served, unreferenced=unreferenced)
@@ -106,15 +109,15 @@ def _proof_referenced(
     root: str,
     derived: str,
     served: str,
-) -> tuple[str, ...]:
+) -> tuple[str, ...] | None:
     """Return the generation collections named by *root*'s committed proof.
 
     The served pointer is not the only reference a code generation can carry.
-    Publication records the generation in the sidecar before it moves the
-    pointer, so between those two writes - and forever, if the process dies
-    between them - a generation is named by a manifest that the pointer does
+    Publication commits canonical proof before it moves the pointer, so
+    between those writes - and forever, if the process dies between them - a
+    generation is named by proof that the pointer does
     not name. Reclaiming it there destroys the collection the published
-    metadata describes and leaves a claim standing over nothing, which is the
+    proof describes and leaves a claim standing over nothing, which is the
     one outcome the whole detection-before-removal separation exists to
     prevent.
 
@@ -127,8 +130,15 @@ def _proof_referenced(
     from ._publication_state import acquire_publication_snapshot
     from ._source_types import PublicSourceType
     from ._store_models import generation_code_collection
+    from .indexer._publication_proof import ProofUnverifiableError
+    from .indexer._run_ledger_models import RunLedgerError
 
-    snapshot = acquire_publication_snapshot(pathlib.Path(root), PublicSourceType.CODE)
+    try:
+        snapshot = acquire_publication_snapshot(
+            pathlib.Path(root), PublicSourceType.CODE
+        )
+    except (ProofUnverifiableError, RunLedgerError):
+        return None
     snapshot.validate()
     referenced: list[str] = []
     for base in dict.fromkeys((derived, served)):

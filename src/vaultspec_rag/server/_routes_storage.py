@@ -109,6 +109,47 @@ def _generation_fields(report: RootGenerations | None) -> dict[str, Any]:
     }
 
 
+def _survey_totals(surveys: list[NamespaceSurvey]) -> dict[str, object]:
+    from ..storage_survey import is_temp_rooted
+    from ..storage_survey_ops import backend_totals
+
+    return {
+        **backend_totals(surveys),
+        "collections": sum(len(survey.collections) for survey in surveys),
+        "ephemeral_backlog_bytes": sum(
+            survey.footprint_bytes
+            for survey in surveys
+            if survey.status == "orphaned" and is_temp_rooted(survey.root)
+        ),
+        "points_unverified_namespaces": sum(
+            1 for survey in surveys if not survey.points_verified
+        ),
+    }
+
+
+def _survey_namespace_payload(
+    survey: NamespaceSurvey,
+    generations: dict[str, RootGenerations],
+) -> dict[str, object]:
+    from ..storage_survey import is_temp_rooted
+
+    return {
+        "prefix": survey.prefix,
+        "root": survey.root,
+        "status": survey.status,
+        "collections": survey.collections,
+        "points": survey.points,
+        "vault_points": survey.vault_points,
+        "code_points": survey.code_points,
+        "document_points": survey.document_points,
+        "footprint_bytes": survey.footprint_bytes,
+        "points_verified": survey.points_verified,
+        "models": survey.models,
+        "temp_rooted": is_temp_rooted(survey.root),
+        **_generation_fields(generations.get(survey.root or "")),
+    }
+
+
 def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     """Shape a classified survey as the bounded route response.
 
@@ -156,8 +197,6 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     from .. import store_schema
     from .._store_models import root_collection_prefix
     from ..generation_survey import survey_generations
-    from ..storage_survey import is_temp_rooted
-    from ..storage_survey_ops import backend_totals
 
     # Whole-backend rollup, computed before any filter so consumers see
     # true total size and per-status composition regardless of the view.
@@ -165,18 +204,7 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     # ``points_unverified_namespaces`` are reported here too: pure
     # observability so unbounded growth (and unread state) is visible before
     # it is expensive, never a threshold anything downstream compares against.
-    totals: dict[str, object] = {
-        **backend_totals(request.surveys),
-        "collections": sum(len(s.collections) for s in request.surveys),
-        "ephemeral_backlog_bytes": sum(
-            s.footprint_bytes
-            for s in request.surveys
-            if s.status == "orphaned" and is_temp_rooted(s.root)
-        ),
-        "points_unverified_namespaces": sum(
-            1 for s in request.surveys if not s.points_verified
-        ),
-    }
+    totals = _survey_totals(request.surveys)
     status_filter = request.status_filter
     limit = request.limit
     root = request.root
@@ -215,27 +243,7 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     }
     payload: dict[str, object] = {
         "namespaces": [
-            {
-                "prefix": s.prefix,
-                "root": s.root,
-                "status": s.status,
-                "collections": s.collections,
-                "points": s.points,
-                "vault_points": s.vault_points,
-                "code_points": s.code_points,
-                "document_points": s.document_points,
-                "footprint_bytes": s.footprint_bytes,
-                "points_verified": s.points_verified,
-                # What produced each collection. An empty map means the
-                # namespace predates stamping, which is an unknown rather than
-                # a problem - the survey has always reported how much is
-                # stored, and this is the first thing it can say about what
-                # made it.
-                "models": s.models,
-                "temp_rooted": is_temp_rooted(s.root),
-                **_generation_fields(generations.get(s.root or "")),
-            }
-            for s in bounded
+            _survey_namespace_payload(survey, generations) for survey in bounded
         ],
         "returned": len(bounded),
         "total": total,

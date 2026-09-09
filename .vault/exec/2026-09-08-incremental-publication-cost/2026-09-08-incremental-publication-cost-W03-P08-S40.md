@@ -10,6 +10,7 @@ step_id: 'S40'
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
 ---
+
 # Prove missing or old-format proof, schema drift, and corrupt receipts require typed rebuild refusal and that audit verification cannot seed proof
 
 ## Scope

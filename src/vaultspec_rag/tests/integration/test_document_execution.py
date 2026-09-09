@@ -545,8 +545,9 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
     embedding_model: EmbeddingModel,
     tmp_path: Path,
 ) -> None:
+    from ..._publication_state import acquire_publication_snapshot
+    from ..._source_types import PublicSourceType
     from ...indexer import DocumentIndexer
-    from ...indexer._document_meta import document_metadata_path, read_document_meta
     from ...progress import NullProgressReporter
     from ...store_runtime import VaultStore
 
@@ -577,14 +578,10 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        metadata = read_document_meta(document_metadata_path(tmp_path))
         assert first.preprocess_skipped == 1
-        # A failed extraction must never publish complete/certified hash
-        # metadata. A failed generation stays resumable without certifying a
-        # sidecar at all - no sidecar is written (previously an empty,
-        # incomplete sidecar was), which is the stronger guarantee: any
-        # published metadata here, complete or not, fails this assertion.
-        assert metadata is None
+        proof = acquire_publication_snapshot(tmp_path, PublicSourceType.DOCUMENT).proof
+        assert proof.aggregate.indexed_identities == 0
+        assert proof.aggregate.retained_points == 0
         assert store.count_document() == 0
 
         second = indexer.incremental_index(

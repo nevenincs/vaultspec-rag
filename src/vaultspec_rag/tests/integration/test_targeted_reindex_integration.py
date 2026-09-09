@@ -21,9 +21,11 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
+from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
 from ...progress import NullProgressReporter
+from .._publication_assertions import published_content_identities
 from ..corpus import build_synthetic_vault
 
 if TYPE_CHECKING:
@@ -73,7 +75,7 @@ class TestVaultScopedReindex:
             target_id = _vault_doc_id(target, docs_dir)
             other_id = _vault_doc_id(other, docs_dir)
 
-            meta_before = indexer._load_meta()
+            meta_before = published_content_identities(tmp_path, PublicSourceType.VAULT)
 
             # Edit BOTH files on disk, but hand the indexer only `target`.
             target.write_text(
@@ -90,7 +92,7 @@ class TestVaultScopedReindex:
                 changed_paths={target},
             )
 
-            meta_after = indexer._load_meta()
+            meta_after = published_content_identities(tmp_path, PublicSourceType.VAULT)
             # Only the named path was reconciled.
             assert result.updated == 1
             assert result.added == 0
@@ -130,7 +132,9 @@ class TestVaultScopedReindex:
             ids_after = store.get_all_ids()
             assert target_id not in ids_after
             assert other_id in ids_after
-            assert target_id not in indexer._load_meta()
+            assert target_id not in published_content_identities(
+                tmp_path, PublicSourceType.VAULT
+            )
         finally:
             store.close()
 
@@ -140,7 +144,7 @@ class TestVaultScopedReindex:
     ) -> None:
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
-            meta_before = indexer._load_meta()
+            meta_before = published_content_identities(tmp_path, PublicSourceType.VAULT)
             count_before = store.count()
 
             stray = tmp_path / "not_a_vault_doc.md"
@@ -153,7 +157,10 @@ class TestVaultScopedReindex:
 
             assert (result.added, result.updated, result.removed) == (0, 0, 0)
             assert store.count() == count_before
-            assert indexer._load_meta() == meta_before
+            assert (
+                published_content_identities(tmp_path, PublicSourceType.VAULT)
+                == meta_before
+            )
         finally:
             store.close()
 
@@ -209,7 +216,7 @@ class TestCodeScopedReindex:
         try:
             a_rel = str(a.relative_to(tmp_path)).replace("\\", "/")
             b_rel = str(b.relative_to(tmp_path)).replace("\\", "/")
-            meta_before = code_indexer._load_meta()
+            meta_before = published_content_identities(tmp_path, PublicSourceType.CODE)
 
             # Edit both, hand the indexer only `a`.
             a.write_text("def alpha():\n    return 'alpha-two'\n", encoding="utf-8")
@@ -221,7 +228,7 @@ class TestCodeScopedReindex:
                 preflight=code_indexer.preflight_changed_paths({a}),
             )
 
-            meta_after = code_indexer._load_meta()
+            meta_after = published_content_identities(tmp_path, PublicSourceType.CODE)
             assert result.updated == 1
             assert result.added == 0
             assert result.removed == 0
@@ -239,7 +246,7 @@ class TestCodeScopedReindex:
             a_rel = str(a.relative_to(tmp_path)).replace("\\", "/")
             b_rel = str(b.relative_to(tmp_path)).replace("\\", "/")
 
-            assert code_indexer._get_chunk_ids_for_files({a_rel})
+            assert code_indexer.store.get_code_ids_by_paths({a_rel})
             a.unlink()
 
             result = code_indexer.incremental_index(
@@ -249,9 +256,11 @@ class TestCodeScopedReindex:
             )
 
             assert result.removed == 1
-            assert not code_indexer._get_chunk_ids_for_files({a_rel})
-            assert code_indexer._get_chunk_ids_for_files({b_rel})
-            assert a_rel not in code_indexer._load_meta()
+            assert not code_indexer.store.get_code_ids_by_paths({a_rel})
+            assert code_indexer.store.get_code_ids_by_paths({b_rel})
+            assert a_rel not in published_content_identities(
+                tmp_path, PublicSourceType.CODE
+            )
         finally:
             store.close()
 
@@ -264,7 +273,7 @@ class TestCodeScopedReindex:
             (tmp_path / ".gitignore").write_text("pkg/ignored.py\n", encoding="utf-8")
             ignored = tmp_path / "pkg" / "ignored.py"
             ignored.write_text("def ignored():\n    return 0\n", encoding="utf-8")
-            meta_before = code_indexer._load_meta()
+            meta_before = published_content_identities(tmp_path, PublicSourceType.CODE)
 
             result = code_indexer.incremental_index(
                 reporter=NullProgressReporter(),
@@ -273,6 +282,9 @@ class TestCodeScopedReindex:
             )
 
             assert (result.added, result.updated, result.removed) == (0, 0, 0)
-            assert code_indexer._load_meta() == meta_before
+            assert (
+                published_content_identities(tmp_path, PublicSourceType.CODE)
+                == meta_before
+            )
         finally:
             store.close()

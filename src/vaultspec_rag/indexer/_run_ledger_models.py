@@ -1190,50 +1190,42 @@ class PublicationReceipt:
         for name, value in optional_timestamps.items():
             if value is not None:
                 _require_timestamp(value, name=name)
-        valid_shape = {
-            ProofReceiptState.RESERVED: (
-                self.sealed_at is None
-                and self.rollback_started_at is None
-                and self.committed_at is None
-                and self.rolled_back_at is None
-            ),
-            ProofReceiptState.SEALED: (
-                self.sealed_at is not None
-                and self.rollback_started_at is None
-                and self.committed_at is None
-                and self.rolled_back_at is None
-            ),
-            ProofReceiptState.ROLLING_BACK: (
-                self.rollback_started_at is not None
-                and self.committed_at is None
-                and self.rolled_back_at is None
-            ),
-            ProofReceiptState.COMMITTED: (
-                self.sealed_at is not None
-                and self.rollback_started_at is None
-                and self.committed_at is not None
-                and self.rolled_back_at is None
-            ),
-            ProofReceiptState.ROLLED_BACK: (
-                self.rollback_started_at is not None
-                and self.committed_at is None
-                and self.rolled_back_at is not None
-            ),
-        }[self.state]
-        if not valid_shape:
-            raise ValueError("receipt timestamps must match its state")
-        terminal_at = (
-            self.committed_at if self.committed_at is not None else self.rolled_back_at
+        actual_shape = tuple(
+            value is not None
+            for value in (
+                self.sealed_at,
+                self.rollback_started_at,
+                self.committed_at,
+                self.rolled_back_at,
+            )
         )
+        allowed_shapes = {
+            ProofReceiptState.RESERVED: {(False, False, False, False)},
+            ProofReceiptState.SEALED: {(True, False, False, False)},
+            ProofReceiptState.ROLLING_BACK: {
+                (False, True, False, False),
+                (True, True, False, False),
+            },
+            ProofReceiptState.COMMITTED: {(True, False, True, False)},
+            ProofReceiptState.ROLLED_BACK: {
+                (False, True, False, True),
+                (True, True, False, True),
+            },
+        }[self.state]
+        if actual_shape not in allowed_shapes:
+            raise ValueError("receipt timestamps must match its state")
         present = (
             self.reserved_at,
-            *((self.sealed_at,) if self.sealed_at is not None else ()),
             *(
-                (self.rollback_started_at,)
-                if self.rollback_started_at is not None
-                else ()
+                value
+                for value in (
+                    self.sealed_at,
+                    self.rollback_started_at,
+                    self.committed_at,
+                    self.rolled_back_at,
+                )
+                if value is not None
             ),
-            *((terminal_at,) if terminal_at is not None else ()),
         )
         if present != tuple(sorted(present)):
             raise ValueError("receipt timestamps must be monotonic")

@@ -15,6 +15,7 @@ from pathlib import Path  # noqa: TC003
 
 import pytest
 
+from ..._source_types import PublicSourceType
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import VaultIndexer
 from ...indexer._streaming import _stream_encode_and_upsert_vault
@@ -28,6 +29,7 @@ from ...job_control import (
 )
 from ...progress import NullProgressReporter
 from ...store_runtime import VaultStore
+from .._publication_assertions import published_content_identities
 
 pytestmark = pytest.mark.integration
 
@@ -120,7 +122,7 @@ def test_clean_rebuild_defers_pause_until_complete_publication(
         )
         assert seeded.added == len(documents)
         assert store.get_all_ids() == expected_ids
-        metadata_before = indexer._load_meta()
+        metadata_before = published_content_identities(tmp_path, PublicSourceType.VAULT)
         revised_document = documents[0]
         revised_path = tmp_path / ".vault" / revised_document.path
         revised_marker = "delta content published by the protected rebuild"

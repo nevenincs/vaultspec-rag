@@ -12,9 +12,9 @@ This module answers two read-only questions for the encode seam:
 * **Eligibility** - may a specific candidate actually serve as a donor? Every
   gate must pass: same collection kind, identical dense dimensionality and
   named-vector layout, identical recorded embedding-model identity, and
-  content-epoch sentinel equality between the donor root's sidecar and the
+  content identity equality between the donor's canonical proof and the
   indexing root's effective epoch. Any gate that cannot be evaluated (missing
-  or unreadable donor sidecar, unreachable donor schema) fails closed: the
+  or unreadable proof, unreachable donor schema) fails closed: the
   candidate is ineligible.
 
 Ranking is a hit-rate heuristic only - it decides which donors are consulted
@@ -119,14 +119,8 @@ def index_meta_source(
     Two vocabularies describe the same corpora: a collection kind names what a
     namespace stores, a public source type names what a caller asked for. Any
     holder of a kind that needs a reader keyed by source has to cross between
-    them, and a site crossing inline reads as a place to resolve the sidecar
-    inline too - which is how the same path resolution ends up written twice
-    and one copy misses the next change.
-
-    The domain is the two kinds publishing an index-metadata sidecar.
-    Documents publish a differently shaped record reached through its own
-    path, so admitting that kind would buy a runtime rejection where the type
-    already says the call cannot be written.
+    them. The type excludes documents because this helper is retained only by
+    the code and vault call sites.
     """
     return (
         PublicSourceType.CODE if kind is CollectionKind.CODE else PublicSourceType.VAULT
@@ -162,13 +156,8 @@ class VectorSchema:
 class ModelIdentity:
     """The embedding-model identity the system records today.
 
-    ``dense_model`` and ``sparse_model`` are the configured model names
-    (process-global; no per-root record of them exists). ``embed_schema`` is
-    the per-root embed-input format marker stamped into the kind's sidecar -
-    the only model-adjacent identity persisted per root. Model *revision* is
-    not recorded anywhere today, so it cannot be gated on; the dims gate
-    catches a revision swap that changes dimensionality, and the per-point
-    content verification at the seam bounds the residual risk.
+    ``dense_model`` and ``sparse_model`` are the configured model names and
+    ``embed_schema`` is the canonical proof's embedding identity.
     """
 
     dense_model: str
@@ -353,20 +342,19 @@ def _served_donor_collection(
     root: str | None,
     kind: CollectionKind,
     derived: str,
-) -> str:
+) -> str | None:
     """Return the collection a donor root serves for *kind*.
 
-    Falls back to *derived* when the donor's root is unrecorded or its pointer
-    cannot be read. That is the safe direction: the derived name is the one the
-    donor's namespace declares, so an unreadable pointer consults either real
-    data or a collection the store reports as absent - a miss the seam encodes
-    normally. Neither outcome invents a collection.
+    Code donors without a readable publication pointer are ineligible. Their
+    derived namespace is not evidence that any collection is published.
     """
-    if kind is not CollectionKind.CODE or not root:
+    if kind is not CollectionKind.CODE:
         return derived
-    from .._store_models import resolve_served_code_collection
+    if not root:
+        return None
+    from .._store_models import read_served_code_collection
 
-    return resolve_served_code_collection(root, derived)
+    return read_served_code_collection(root)
 
 
 def discover_donor_candidates(
@@ -431,6 +419,8 @@ def discover_donor_candidates(
         if derived not in entry.collections:
             continue
         collection = _served_donor_collection(entry.root, kind, derived)
+        if collection is None:
+            continue
         candidates.append(
             DonorCandidate(
                 prefix=prefix,
@@ -476,11 +466,11 @@ def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibilit
       collection fails closed), otherwise both sides resolve from the same
       live config and are identical by construction;
     * the donor's recorded embedding-model identity equals the expected one;
-    * the donor sidecar's content-epoch sentinel for the kind equals
+    * the donor proof's content identity for the kind equals
       ``expected_content_epoch`` (the indexing root's effective epoch,
       computed by the caller).
 
-    A missing or unreadable donor sidecar fails closed as ineligible.
+    A missing or unreadable donor proof fails closed as ineligible.
 
     Args:
         candidate: The discovered candidate under evaluation.

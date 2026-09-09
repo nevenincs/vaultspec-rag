@@ -10,6 +10,7 @@ step_id: 'S04'
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
 ---
+
 # Create and migrate normalized proof, receipt, mutation-unit, and tombstone tables with post-migration schema verification
 
 ## Scope

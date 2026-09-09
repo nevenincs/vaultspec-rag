@@ -1,5 +1,7 @@
 """Service-domain storage reclamation and scheduled maintenance."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import json
@@ -17,7 +19,9 @@ from ._publication_state import (
 )
 from ._rmtree import remove_tree
 from ._source_types import PublicSourceType
+from ._store_models import read_served_pointer
 from ._timestamps import parse_iso_timestamp
+from .indexer._publication_proof import ProofUnverifiableError
 from .storage_manifest import (
     SnapshotCollection,
     SnapshotPublicationProof,
@@ -44,12 +48,6 @@ if TYPE_CHECKING:
     from .storage_survey import NamespaceSurvey
 
 logger = logging.getLogger(__name__)
-
-_PUBLICATION_SOURCE_BY_COLLECTION = {
-    store_schema.VAULT_COLLECTION: PublicSourceType.VAULT,
-    store_schema.CODE_COLLECTION: PublicSourceType.CODE,
-    store_schema.DOCUMENT_COLLECTION: PublicSourceType.DOCUMENT,
-}
 
 #: The extension qdrant gives every snapshot it writes, and so the one an
 #: artifact in an archive directory carries.
@@ -518,6 +516,25 @@ def _apply_cycle_cap(
     return _redecide(decision, "deferred", "over_cycle_cap")
 
 
+def _active_publication_collections(
+    root: Path,
+    prefix: str,
+    collections: list[str],
+) -> dict[PublicSourceType, str]:
+    available = set(collections)
+    active = {
+        PublicSourceType.VAULT: prefix + store_schema.VAULT_COLLECTION,
+        PublicSourceType.DOCUMENT: prefix + store_schema.DOCUMENT_COLLECTION,
+    }
+    pointer = read_served_pointer(root)
+    if not pointer.verifiable:
+        raise RuntimeError("cannot archive code without a verifiable served pointer")
+    active[PublicSourceType.CODE] = (
+        pointer.collection or prefix + store_schema.CODE_COLLECTION
+    )
+    return {source: name for source, name in active.items() if name in available}
+
+
 def _export_publication_proofs(
     root: Path,
     prefix: str,
@@ -526,20 +543,21 @@ def _export_publication_proofs(
     """Read and fence every proof required to make an archive restorable."""
     exports: list[SnapshotPublicationProof] = []
     snapshots: list[PublicationSnapshot] = []
-    for collection in collections:
-        logical_collection = collection.removeprefix(prefix)
+    active = _active_publication_collections(root, prefix, collections)
+    for source, collection in active.items():
         try:
-            source = _PUBLICATION_SOURCE_BY_COLLECTION[logical_collection]
-        except KeyError as exc:
-            raise RuntimeError(
-                f"cannot archive collection without a publication domain: {collection}"
-            ) from exc
-        snapshot = acquire_publication_snapshot(root, source)
+            snapshot = acquire_publication_snapshot(root, source)
+        except ProofUnverifiableError:
+            # The source root and its per-root ledger may already be gone.
+            # Archive the physical collection without inventing authority;
+            # restore leaves it unreadable until an explicit rebuild.
+            continue
         evidence = read_all_publication_evidence(snapshot)
         generation = snapshot.ledger.generation(snapshot.proof.generation_id)
         exports.append(
             SnapshotPublicationProof(
                 source=source.value,
+                collection=collection,
                 signature=cast(
                     "dict[str, object]", json.loads(generation.signature.canonical_json)
                 ),
@@ -621,12 +639,12 @@ def archive_prefix(
             )
         )
     point_count_by_collection = {
-        item.name.removeprefix(prefix): item.points for item in collection_artifacts
+        item.name: item.points for item in collection_artifacts
     }
-    for snapshot in proof_snapshots:
+    for export, snapshot in zip(publication_proofs, proof_snapshots, strict=True):
         proof = snapshot.proof
         if (
-            point_count_by_collection[proof.compatibility_key.collection_identity]
+            point_count_by_collection[export.collection]
             != proof.aggregate.retained_points
         ):
             raise RuntimeError(
@@ -881,10 +899,12 @@ def _archive_publication_proofs(
             raise RuntimeError(f"archive proof is invalid: {manifest_path}")
         fields = cast("dict[str, object]", record)
         source = fields.get("source")
+        collection = fields.get("collection")
         signature = fields.get("signature")
         evidence = fields.get("evidence")
         if (
             not isinstance(source, str)
+            or not isinstance(collection, str)
             or not isinstance(signature, dict)
             or not isinstance(evidence, list)
         ):
@@ -895,6 +915,7 @@ def _archive_publication_proofs(
         proofs.append(
             SnapshotPublicationProof(
                 source=source,
+                collection=collection,
                 signature=cast("dict[str, object]", signature),
                 evidence=tuple(cast("list[dict[str, object]]", rows)),
             )

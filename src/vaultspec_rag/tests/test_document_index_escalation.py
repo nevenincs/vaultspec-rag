@@ -30,7 +30,6 @@ import pytest
 from .. import store_schema
 from .._index_integrity import audit_index_sources
 from .._source_types import PublicSourceType
-from .._store_models import DocumentChunk, DocumentPayload
 from .._store_writes import workspace_volume_path
 from ..indexer._index_schema import DOCUMENT_EMBED_SCHEMA
 from ..indexer._run_ledger_models import (
@@ -38,11 +37,10 @@ from ..indexer._run_ledger_models import (
     RunAuthority,
     RunOperation,
     RunSignature,
-    RunTerminalState,
     index_run_ledger_path,
 )
 from ..indexer._run_ledger_runtime import RunLedger
-from ..store_runtime import VaultStore, configured_backend_identity
+from ..store_runtime import configured_backend_identity
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -218,62 +216,6 @@ def _insert_open_receipt(
 
 def _fingerprint(value: str) -> str:
     return hashlib.blake2b(value.encode("utf-8")).hexdigest()
-
-
-def _store_document_points(store: VaultStore, count: int) -> tuple[str, ...]:
-    """Upsert real document points so the manifest's claim is fully backed."""
-    dimension = store_schema.effective_dense_dim()
-    chunks = [
-        DocumentChunk(
-            id=f"{_DELETED_SOURCE}::{ordinal}",
-            payload=DocumentPayload(
-                source_path=_DELETED_SOURCE,
-                unit_ordinal=ordinal,
-                content_fingerprint=_fingerprint(_DELETED_SOURCE),
-                content=f"paragraph {ordinal}\n",
-            ),
-            vector=[0.1] * dimension,
-        )
-        for ordinal in range(count)
-    ]
-    store.upsert_document_content_chunks(chunks, write_policy=None)
-    return tuple(chunk.id for chunk in chunks)
-
-
-def _retire_the_only_document_generation(root_dir: Path, data_root: Path) -> RunLedger:
-    """Leave the ledger holding one document generation that cannot parent.
-
-    A parent must have succeeded, so an attempt that died before publication
-    is unusable however recent it is. Together with the sidecar's unresolvable
-    evidence id, this is a ledger that answers every question and can still
-    parent nothing.
-    """
-    ledger = RunLedger(index_run_ledger_path(data_root))
-    generation = ledger.start_generation(
-        RunSignature(
-            root_identity=str(root_dir.resolve()),
-            collection_identity=store_schema.DOCUMENT_COLLECTION,
-            source_type=PublicSourceType.DOCUMENT,
-            operation=RunOperation.FULL,
-            clean=False,
-            model_identity="retired-model",
-            backend_identity="test-backend:document-escalation",
-            dense_dimensions=8,
-            embedding_schema=DOCUMENT_EMBED_SCHEMA,
-            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
-            content_epoch=_fingerprint("content"),
-            membership_epoch=_fingerprint("membership"),
-            preprocessing_identity=_fingerprint("execution"),
-            configuration_fingerprint=_fingerprint("configuration"),
-            policy_fingerprint=_fingerprint("snapshot"),
-        )
-    )
-    ledger.finish_generation(
-        generation.generation_id,
-        RunTerminalState.FAILED,
-        detail="attempt died before publication",
-    )
-    return ledger
 
 
 def test_audit_missing_ledger_requires_rebuild_without_creating_state(

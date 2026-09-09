@@ -322,11 +322,11 @@ class DocumentIndexer:
         from .._store_writes import workspace_volume_path
 
         self._data_root = workspace_volume_path(self.root_dir)
-        self._stat_gate_path = self._data_root / "document_index.statgate.json"
+        self._stat_gate_path = self._data_root / "document_index.statgate.sqlite3"
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(self._stat_gate_path)
         # Bounded-staleness cache of the document discovery walk, keyed by
         # policy fingerprint. Scoped runs bypass discovery and invalidate it,
         # because the events they carry are membership truth a cached walk
@@ -994,7 +994,6 @@ class DocumentIndexer:
         }
         gate.prune(discovered.keys())
         gate.persist()
-        self._stat_gate_cache.retain(gate)
         if gate.reused:
             logger.debug(
                 "stat gate reused %d document hashes, rehashed %d",
@@ -1098,7 +1097,7 @@ class DocumentIndexer:
         clean: bool = False,
         reporter: ProgressReporter,
         preflight: DocumentIndexPreflight | None = None,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
@@ -1284,7 +1283,7 @@ class DocumentIndexer:
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         preflight: DocumentExecutionPreflight | None = None,
-        authority: RunAuthority,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile changed documents, or discover changes when scope is omitted."""

@@ -779,9 +779,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
         str,
         typer.Option(
             "--type",
-            help=(
-                "What to index: vault, code, document, or combined."
-            ),
+            help=("What to index: vault, code, document, or combined."),
             show_default=True,
         ),
     ] = "combined",

@@ -10,6 +10,7 @@ step_id: 'S37'
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
 ---
+
 # Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority
 
 ## Scope

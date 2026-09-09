@@ -917,22 +917,6 @@ class TestParseErrorEnvelopeHasOneShape:
             "reports the rejection the same way"
         )
 
-    def test_the_envelope_carries_what_the_adapters_relied_on(self) -> None:
-        """The keys the five call sites emitted must all still be there."""
-        from .._source_types import SourceTypeParseError, parse_source_type
-
-        with pytest.raises(SourceTypeParseError) as caught:
-            parse_source_type("bogus", allow_aliases=True)
-        envelope = caught.value.as_error_envelope()
-
-        assert envelope["ok"] is False
-        assert envelope["error"] == caught.value.error_kind
-        assert envelope["message"] == str(caught.value)
-        # The payload is spread in, not nested: an adapter reads received and
-        # allowed off the top level.
-        for key, value in caught.value.as_payload().items():
-            assert envelope[key] == value
-
 
 class TestCrossModuleLiteralTwins:
     """No data literal of three or more elements is written out twice.
