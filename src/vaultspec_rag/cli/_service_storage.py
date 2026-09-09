@@ -935,13 +935,19 @@ def storage_migrate(
     # A real migrate copies every point of every collection across two
     # backends; naming the collection in flight is the only signal that
     # distinguishes a large copy from a stalled one.
+    # A migrate copies every point across two backends, so it is the verb most
+    # likely to outlast a transport read window. The client signals that with
+    # its own wrapper rather than a builtin, and letting it past here would
+    # surface a traceback and NO envelope on a --json path.
+    from .._qdrant_transport import TRANSPORT_FAILURES
+
     try:
         with StartupStatusReporter(json_mode=json_mode) as progress:
             progress.announce(f"Migrating {root} to the {to_backend} backend...")
             results = migrate_collections(
                 src, dst, name_map, dry_run=preview, on_progress=progress.stage
             )
-    except (OSError, RuntimeError) as exc:
+    except TRANSPORT_FAILURES as exc:
         _emit_or_echo_error(
             _MIGRATE_CMD,
             "migrate_failed",
