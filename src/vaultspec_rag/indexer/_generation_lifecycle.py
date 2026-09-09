@@ -33,7 +33,6 @@ from ._run_ledger_models import (
     FETCH_BATCH,
     CommitUnitKind,
     FinalizationPhase,
-    RunLedgerStateError,
     RunTerminalState,
 )
 from ._run_policy import RunPolicy
@@ -445,14 +444,17 @@ class CodeGenerationLifecycle:
         """Return bounded deterministic point evidence grouped by path."""
         result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
         if retained:
-            if checkpoint.receipt is None:
-                raise RunLedgerStateError(
-                    "retained reads require a publication receipt"
-                )
+            from ._run_ledger_publication import compatibility_for_signature
+
+            key = (
+                checkpoint.receipt.compatibility_key
+                if checkpoint.receipt is not None
+                else compatibility_for_signature(checkpoint.generation.signature)
+            )
             ordered = tuple(sorted(rel_paths))
             for start in range(0, len(ordered), FETCH_BATCH):
                 evidence = checkpoint.ledger.publication_evidence_for_paths(
-                    checkpoint.receipt.compatibility_key,
+                    key,
                     ordered[start : start + FETCH_BATCH],
                 )
                 for rel, item in evidence.items():

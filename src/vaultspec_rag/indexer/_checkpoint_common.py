@@ -38,6 +38,7 @@ from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    ProofReceiptState,
     RunAuthority,
     RunLedgerCompatibilityError,
     RunLedgerStateError,
@@ -287,13 +288,32 @@ class RunCheckpointBase:
 
     def publish_proof_transition(self) -> int:
         """Commit canonical proof before advancing the publication phase."""
-        if self.generation.finalization_phase is FinalizationPhase.INGESTING:
+        phase = self.generation.finalization_phase
+        if phase not in {
+            FinalizationPhase.INGESTING,
+            FinalizationPhase.STALE_RECONCILED,
+        }:
+            return 0
+        changed = 0
+        if phase is FinalizationPhase.INGESTING:
+            changed = self._seal_publication_proof()
             self.generation = self.ledger.advance_finalization(
                 self.generation_id,
                 FinalizationPhase.STALE_RECONCILED,
             )
-        if self.generation.finalization_phase is not FinalizationPhase.STALE_RECONCILED:
-            return 0
+        if self.receipt is not None:
+            receipt = self.ledger.active_publication_receipt(
+                self.receipt.compatibility_key
+            )
+            if receipt is not None and receipt.state is ProofReceiptState.SEALED:
+                self.ledger.commit_publication_receipt(receipt.receipt_id)
+        self.generation = self.ledger.advance_finalization(
+            self.generation_id,
+            FinalizationPhase.METADATA_PUBLISHED,
+        )
+        return changed
+
+    def _seal_publication_proof(self) -> int:
         if self.authority is RunAuthority.REBUILD:
             evidence = self._verified_evidence()
             self.ledger.establish_verified_publication(
@@ -301,27 +321,19 @@ class RunCheckpointBase:
                 self.authority,
                 tuple(evidence),
             )
-            changed = len(evidence)
-        else:
-            if self.receipt is None:
-                from ._run_ledger_publication import compatibility_for_signature
+            return len(evidence)
+        if self.receipt is not None:
+            return self._seal_incremental_proof()
+        from ._run_ledger_publication import compatibility_for_signature
 
-                proof = self.ledger.publication_proof(
-                    compatibility_for_signature(self.generation.signature)
-                )
-                if proof.generation_id != self.generation_id:
-                    raise RunLedgerStateError(
-                        "incremental publication has neither receipt nor "
-                        "committed proof"
-                    )
-                changed = 0
-            else:
-                changed = self._commit_incremental_proof()
-        self.generation = self.ledger.advance_finalization(
-            self.generation_id,
-            FinalizationPhase.METADATA_PUBLISHED,
+        proof = self.ledger.publication_proof(
+            compatibility_for_signature(self.generation.signature)
         )
-        return changed
+        if proof.generation_id != self.generation_id:
+            raise RunLedgerStateError(
+                "incremental publication has neither receipt nor committed proof"
+            )
+        return 0
 
     def _verified_evidence(self) -> list[ProofEvidence]:
         evidence: list[ProofEvidence] = []
@@ -343,7 +355,7 @@ class RunCheckpointBase:
                 )
         return evidence
 
-    def _commit_incremental_proof(self) -> int:
+    def _seal_incremental_proof(self) -> int:
         if self.receipt is None:
             raise RunLedgerStateError("incremental publication has no receipt")
         receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)
@@ -392,7 +404,6 @@ class RunCheckpointBase:
             )
             return 0
         self.ledger.seal_publication_receipt(receipt.receipt_id, tuple(deltas))
-        self.ledger.commit_publication_receipt(receipt.receipt_id)
         return len(deltas)
 
     @staticmethod

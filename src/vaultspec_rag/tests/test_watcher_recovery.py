@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
     DesiredJobState,
     JobAttempt,
@@ -30,6 +31,7 @@ from ..watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
     WatcherRetryPolicy,
+    WatcherRetryState,
     WatcherScopeRefusal,
     WatcherSource,
     _WatcherRetryOptions,
@@ -87,10 +89,12 @@ def _fenced_policy(
     )
     assert decision.admitted
     _ADMISSION_RESERVATIONS.clear()
-    monkeypatch.setattr(
-        "vaultspec_rag.watcher_retry._attempt_owner_is_live", lambda _state: False
-    )
+    monkeypatch.setattr("vaultspec_rag.watcher_retry._attempt_owner_is_live", _not_live)
     return WatcherRetryPolicy(state_path, _options(tmp_path))
+
+
+def _not_live(_state: WatcherRetryState) -> bool:
+    return False
 
 
 def _snapshot(root: Path, state: JobState) -> JobSnapshot:
@@ -102,6 +106,7 @@ def _snapshot(root: Path, state: JobState) -> JobSnapshot:
             source=JobSource.CODE,
             project_root=str(root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         state=state,
         desired_state=DesiredJobState.RUNNING,
@@ -138,6 +143,23 @@ def _snapshot(root: Path, state: JobState) -> JobSnapshot:
 def _slot(root: Path, policy: WatcherRetryPolicy) -> WatcherConvergenceSlot:
     return WatcherConvergenceSlot(
         JobSource.CODE, root.resolve(), ServiceRegistry(), policy
+    )
+
+
+def _missing_history(_root: Path) -> JobSnapshot | None:
+    return None
+
+
+def _rebuild_history(root: Path) -> JobSnapshot:
+    snapshot = _snapshot(root, JobState.SUCCEEDED)
+    return replace(snapshot, spec=replace(snapshot.spec, mode=JobMode.REBUILD))
+
+
+def _foreign_history(root: Path) -> JobSnapshot:
+    snapshot = _snapshot(root, JobState.SUCCEEDED)
+    return replace(
+        snapshot,
+        spec=replace(snapshot.spec, project_root=str(root / "foreign")),
     )
 
 
@@ -197,20 +219,9 @@ async def test_restart_reattaches_live_job_and_blocks_duplicate_admission(
 @pytest.mark.parametrize(
     "history",
     [
-        lambda _root: None,
-        lambda root: replace(
-            _snapshot(root, JobState.SUCCEEDED),
-            spec=replace(
-                _snapshot(root, JobState.SUCCEEDED).spec, mode=JobMode.REBUILD
-            ),
-        ),
-        lambda root: replace(
-            _snapshot(root, JobState.SUCCEEDED),
-            spec=replace(
-                _snapshot(root, JobState.SUCCEEDED).spec,
-                project_root=str(root / "foreign"),
-            ),
-        ),
+        _missing_history,
+        _rebuild_history,
+        _foreign_history,
     ],
 )
 async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(

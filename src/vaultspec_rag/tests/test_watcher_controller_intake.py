@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from ..watcher_admission import AdmissionSelection
+
 pytestmark = pytest.mark.unit
 
 
@@ -94,7 +96,11 @@ async def test_exact_scope_is_durable_before_legacy_slot_acknowledgement(
     changed = tmp_path.resolve() / "src" / "example.py"
     persisted_before_ack: list[bool] = []
 
-    async def persist(policy, observations, **_kwargs):
+    async def persist(
+        policy: WatcherRetryPolicy,
+        observations: tuple[WatcherPathObservation, ...],
+        **_kwargs: object,
+    ) -> bool:
         persisted_before_ack.append(binding.slot.dirty_paths() == frozenset())
         policy.mark_scope_pending(observations, now=time.time())
         return False
@@ -139,7 +145,13 @@ async def test_cancellation_is_delivered_after_every_source_commit(
     document = _binding(root, WatcherSource.DOCUMENT, registry)
     committed: list[WatcherSource] = []
 
-    async def persist(policy, observations, *, source, **_kwargs):
+    async def persist(
+        policy: WatcherRetryPolicy,
+        observations: tuple[WatcherPathObservation, ...],
+        *,
+        source: WatcherSource,
+        **_kwargs: object,
+    ) -> bool:
         policy.mark_scope_pending(observations, now=time.time())
         committed.append(source)
         return source is WatcherSource.CODE
@@ -215,13 +227,21 @@ async def test_production_reevaluation_consumes_service_measurement(
     binding = _ready_binding(tmp_path.resolve())
     callbacks: dict[str, object] = {}
 
-    def register(_controller, *, reevaluate, admit) -> None:
+    def register(
+        _controller: WatcherController,
+        *,
+        reevaluate: Callable[[], Awaitable[None] | None],
+        admit: Callable[[AdmissionSelection], Awaitable[None] | None],
+    ) -> None:
         callbacks.update(reevaluate=reevaluate, admit=admit)
 
-    def capture(_registry, **kwargs) -> WatcherServiceMeasurement:
+    def capture(
+        _registry: ServiceRegistry,
+        **kwargs: object,
+    ) -> WatcherServiceMeasurement:
         measurement = ControllerMeasurement(
-            generation=kwargs["generation"],
-            observed_at=kwargs["observed_at"],
+            generation=cast("int", kwargs["generation"]),
+            observed_at=cast("float", kwargs["observed_at"]),
             storage_available=False,
             service_quiesced=False,
         )
@@ -265,13 +285,13 @@ async def test_precreation_exception_restores_exact_durable_scope(
     binding = _ready_binding(tmp_path.resolve())
 
     class FailingManager:
-        def get(self, _job_id: str):
+        def get(self, _job_id: str) -> None:
             return None
 
-        def create(self, *_args, **_kwargs):
+        def create(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError("create exploded")
 
-    async def preflight(*_args, **_kwargs):
+    async def preflight(*_args: object, **_kwargs: object) -> tuple[None, None]:
         if failure_site == "preflight":
             raise RuntimeError("preflight exploded")
         return None, None

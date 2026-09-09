@@ -1232,9 +1232,9 @@ def _resolve_admin_call(
     tool_name: str, args: dict[str, object]
 ) -> tuple[str, dict[str, object] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
-    filtered_routes = {
-        "get_watcher_state": lambda args: _bounded_route_path(
-            "/watcher", args, _WATCHER_PARAMS
+    filtered_routes: dict[str, Callable[[dict[str, object]], str]] = {
+        "get_watcher_state": lambda route_args: _bounded_route_path(
+            "/watcher", route_args, _WATCHER_PARAMS
         ),
         "get_logs": _logs_route_path,
         "get_jobs": _jobs_route_path,

@@ -548,6 +548,7 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
     from ..._publication_state import acquire_publication_snapshot
     from ..._source_types import PublicSourceType
     from ...indexer import DocumentIndexer
+    from ...indexer._publication_proof import ProofMissingError
     from ...progress import NullProgressReporter
     from ...store_runtime import VaultStore
 
@@ -579,14 +580,17 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
             preflight=indexer.preflight_content(),
         )
         assert first.preprocess_skipped == 1
-        proof = acquire_publication_snapshot(tmp_path, PublicSourceType.DOCUMENT).proof
-        assert proof.aggregate.indexed_identities == 0
-        assert proof.aggregate.retained_points == 0
+        with pytest.raises(ProofMissingError):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.DOCUMENT)
         assert store.count_document() == 0
 
-        second = indexer.incremental_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
+        with pytest.raises(ProofMissingError):
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+        second = indexer.full_index(
+            reporter=NullProgressReporter(), preflight=indexer.preflight_content()
         )
         assert second.preprocess_skipped == 1
         assert attempts.read_text() == "2"

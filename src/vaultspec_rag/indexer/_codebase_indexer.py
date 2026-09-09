@@ -1177,6 +1177,9 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 {path: item.content_identity for path, item in evidence.items()}
             )
         proof_snapshot.validate()
+        # A rejected create has no prior storage identity to remove. Retain
+        # only rejected or deleted paths canonical proof says were served.
+        delete_files.intersection_update(previous_metadata)
         # A scoped run bypasses discovery, but the events it carries are the
         # membership truth a cached walk cannot see: a deleted path or a path
         # absent from the committed proof (a create) invalidates the cache

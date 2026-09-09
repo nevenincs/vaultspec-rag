@@ -33,6 +33,11 @@ if TYPE_CHECKING:
     from .progress import ProgressReporter
     from .search import SearchResult
     from .service import ServiceRegistry
+    from .watcher_controller import (
+        ControllerMeasurement,
+        ControllerSnapshot,
+        ControllerTransition,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -1176,47 +1181,33 @@ class _WatcherState(TypedDict):
     controllers_truncated: bool
 
 
-def controller_snapshot_envelope(
-    snapshot: object,
+def _controller_clock(
+    snapshot: ControllerSnapshot,
     *,
-    observed_at: float | None = None,
-    monotonic_at: float | None = None,
-) -> dict[str, object]:
-    """Return the canonical bounded projection of one watcher controller."""
-    from .watcher_controller import ControllerSnapshot
-
-    if not isinstance(snapshot, ControllerSnapshot):
-        raise TypeError("snapshot must be a ControllerSnapshot")
+    observed_at: float | None,
+    monotonic_at: float | None,
+) -> tuple[float, float]:
+    """Resolve the wall and process clocks used by one controller projection."""
     reference_process = (
         snapshot.observed_at if snapshot.monotonic_at is None else snapshot.monotonic_at
     )
     if observed_at is None and monotonic_at is None:
-        wall_now = snapshot.observed_at
-        process_now = reference_process
-    elif observed_at is not None and monotonic_at is None:
-        wall_now = observed_at
-        process_now = reference_process + (observed_at - snapshot.observed_at)
-    elif observed_at is None:
+        return snapshot.observed_at, reference_process
+    if observed_at is not None and monotonic_at is None:
+        return observed_at, reference_process + (observed_at - snapshot.observed_at)
+    if observed_at is None:
         assert monotonic_at is not None
-        process_now = monotonic_at
-        wall_now = snapshot.observed_at + (monotonic_at - reference_process)
-    else:
-        wall_now = observed_at
-        assert monotonic_at is not None
-        process_now = monotonic_at
+        return snapshot.observed_at + (monotonic_at - reference_process), monotonic_at
+    assert monotonic_at is not None
+    return observed_at, monotonic_at
 
-    def wall_timestamp(value: float | None) -> float | None:
-        return None if value is None else wall_now + (value - process_now)
 
-    observations = snapshot.scope.pending + snapshot.scope.captured
-    first_observed = min(
-        (item.first_observed_at for item in observations), default=None
-    )
-    latest_observed = max(
-        (item.latest_observed_at for item in observations), default=None
-    )
-    measurement = snapshot.measurement
-    measurement_fields = {
+def _measurement_fields(
+    measurement: ControllerMeasurement | None,
+    wall_timestamp: Callable[[float | None], float | None],
+) -> dict[str, object]:
+    """Project an optional controller measurement into route-safe fields."""
+    return {
         "generation": None if measurement is None else measurement.generation,
         "observed_at": (
             None if measurement is None else wall_timestamp(measurement.observed_at)
@@ -1240,6 +1231,54 @@ def controller_snapshot_envelope(
             None if measurement is None else measurement.service_quiesced
         ),
     }
+
+
+def _transition_fields(
+    transition: ControllerTransition | None,
+    wall_timestamp: Callable[[float | None], float | None],
+) -> dict[str, object] | None:
+    """Project an optional controller transition into route-safe fields."""
+    if transition is None:
+        return None
+    return {
+        "source_state": transition.source_state.value,
+        "destination_state": transition.destination_state.value,
+        "reason": transition.reason.value,
+        "wall_time": transition.wall_time,
+        "deadline": wall_timestamp(transition.deadline),
+        "measurement_generation": transition.measurement_generation,
+    }
+
+
+def controller_snapshot_envelope(
+    snapshot: object,
+    *,
+    observed_at: float | None = None,
+    monotonic_at: float | None = None,
+) -> dict[str, object]:
+    """Return the canonical bounded projection of one watcher controller."""
+    from .watcher_controller import ControllerSnapshot
+
+    if not isinstance(snapshot, ControllerSnapshot):
+        raise TypeError("snapshot must be a ControllerSnapshot")
+    wall_now, process_now = _controller_clock(
+        snapshot,
+        observed_at=observed_at,
+        monotonic_at=monotonic_at,
+    )
+
+    def wall_timestamp(value: float | None) -> float | None:
+        return None if value is None else wall_now + (value - process_now)
+
+    observations = snapshot.scope.pending + snapshot.scope.captured
+    first_observed = min(
+        (item.first_observed_at for item in observations), default=None
+    )
+    latest_observed = max(
+        (item.latest_observed_at for item in observations), default=None
+    )
+    measurement = snapshot.measurement
+    measurement_fields = _measurement_fields(measurement, wall_timestamp)
     unavailable = sorted(
         key
         for key, value in measurement_fields.items()
@@ -1267,18 +1306,7 @@ def controller_snapshot_envelope(
         "measurement": measurement_fields,
         "measurement_unavailable": unavailable,
         "backpressure": [reason.value for reason in snapshot.backpressure],
-        "last_transition": (
-            None
-            if transition is None
-            else {
-                "source_state": transition.source_state.value,
-                "destination_state": transition.destination_state.value,
-                "reason": transition.reason.value,
-                "wall_time": transition.wall_time,
-                "deadline": wall_timestamp(transition.deadline),
-                "measurement_generation": transition.measurement_generation,
-            }
-        ),
+        "last_transition": _transition_fields(transition, wall_timestamp),
         "job_id": snapshot.job_id,
         "retry_at": wall_timestamp(snapshot.retry_at),
         "circuit_state": snapshot.circuit_state.value,

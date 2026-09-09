@@ -10,6 +10,7 @@ related:
   - "[[2026-09-08-adaptive-watcher-control-plan]]"
   - "[[2026-09-08-adaptive-watcher-control-adr]]"
 ---
+
 # `adaptive-watcher-control` audit: `scheduler lifecycle review`
 
 ## Scope

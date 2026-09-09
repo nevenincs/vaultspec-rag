@@ -27,18 +27,18 @@ from vaultspec_core.vaultcore import (
 from ..job_control import NO_RUN_CONTROL
 from . import _stat_gate, _vault_fingerprint
 from ._run_ledger_models import FETCH_BATCH, CommitUnitKind, RunAuthority, RunOperation
-from ._streaming import _stream_encode_and_upsert_vault
+from ._streaming import _stream_encode_and_upsert_vault, execute_store_mutation
 from ._streaming_types import VaultStreamRequest
 from ._vault_checkpoint import VaultRunCheckpoint
 from ._vault_fingerprint import VaultDelta
-from ._vault_prep import IndexResult, prepare_document
+from ._vault_prep import IndexResult, prepare_document, split_document
 
 if TYPE_CHECKING:
     import pathlib
     import threading
     from collections.abc import Generator, Iterable, Iterator
 
-    from .._store_models import VaultDocument
+    from .._store_models import VaultChunk, VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..progress import ProgressReporter
@@ -74,6 +74,15 @@ class _VaultEncodeWork:
     run_control: RunControl
     checkpoint: VaultRunCheckpoint
     content_identities: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class _PayloadRefreshPlan:
+    """Point-addressed payload writes justified for changed documents."""
+
+    chunks: list[VaultChunk]
+    documents: int
+    deferred: set[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +125,17 @@ class _VaultClassification:
             body=self.body | doc_ids,
             metadata=self.metadata - doc_ids,
         )
+
+
+def _group_chunks_by_document(chunks: list[VaultChunk]) -> list[list[VaultChunk]]:
+    """Group contiguous chunks by their parent document."""
+    groups: list[list[VaultChunk]] = []
+    for chunk in chunks:
+        if groups and groups[-1][0].doc_id == chunk.doc_id:
+            groups[-1].append(chunk)
+        else:
+            groups.append([chunk])
+    return groups
 
 
 def classify_documents(
@@ -364,10 +384,13 @@ class VaultIncrementalMixin:
         path and missed on the scoped one is invisible until a watcher-driven
         edit behaves differently from an operator-driven one.
         """
-        classification = _VaultClassification(
-            body=classification.body | classification.metadata,
-            metadata=set(),
+        plan = self._plan_payload_refresh(
+            classification.metadata,
+            work.id_to_path,
+            work.reporter,
+            run_control=work.run_control,
         )
+        classification = classification.defer_to_body(plan.deferred)
 
         docs_to_index = self._parse_documents(
             new_ids | classification.body,
@@ -386,11 +409,83 @@ class VaultIncrementalMixin:
                 content_identities=work.content_identities,
             )
         )
+        self._apply_payload_refresh(plan.chunks, work)
         return _VaultReconcileOutcome(
             re_embedded=len(classification.body),
-            payload_updated=0,
+            payload_updated=plan.documents,
             reuse=reuse_stats,
         )
+
+    def _plan_payload_refresh(
+        self,
+        doc_ids: set[str],
+        id_to_path: dict[str, pathlib.Path],
+        reporter: ProgressReporter,
+        *,
+        run_control: RunControl,
+    ) -> _PayloadRefreshPlan:
+        """Build exact payload writes, deferring uncertain point shapes."""
+        if not doc_ids:
+            return _PayloadRefreshPlan([], 0, set())
+        from ..config._settings import get_config
+
+        stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
+        docs = self._prepare_documents_bounded(
+            [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
+            reporter,
+            run_control=run_control,
+            skip_errors=False,
+        )
+        prepared = {doc.id for doc in docs}
+        deferred = doc_ids - prepared
+        chunks: list[VaultChunk] = []
+        documents = 0
+        chunk_chars = int(get_config().vault_chunk_chars)
+        for doc in docs:
+            run_control.checkpoint()
+            doc_chunks = split_document(doc, chunk_chars)
+            if stored_ordinals.get(doc.id, set()) != set(range(len(doc_chunks))):
+                deferred.add(doc.id)
+                continue
+            chunks.extend(doc_chunks)
+            documents += 1
+        return _PayloadRefreshPlan(chunks, documents, deferred)
+
+    def _apply_payload_refresh(
+        self,
+        chunks: list[VaultChunk],
+        work: VaultReconcileInputs,
+    ) -> None:
+        """Overwrite exact payloads under the canonical mutation receipt."""
+        with controlled_phase(
+            work.reporter,
+            work.run_control,
+            "upsert payloads",
+            len(chunks),
+        ):
+            for doc_chunks in _group_chunks_by_document(chunks):
+                work.run_control.checkpoint()
+
+                def write_payloads(current: list[VaultChunk] = doc_chunks) -> None:
+                    self.store.overwrite_vault_chunk_payloads(
+                        current,
+                        write_policy=None,
+                    )
+
+                execute_store_mutation(
+                    write_payloads,
+                    work.checkpoint.chunk_lifecycle(
+                        doc_chunks,
+                        work.content_identities,
+                    ),
+                    after_acknowledgement=lambda current=doc_chunks: (
+                        work.checkpoint.record_confirmed_chunks(
+                            current,
+                            work.content_identities,
+                        )
+                    ),
+                )
+                work.reporter.advance(len(doc_chunks))
 
     def _prepare_documents_bounded(
         self,
