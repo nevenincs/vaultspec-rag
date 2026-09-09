@@ -209,6 +209,16 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "watch_enabled": EnvVar.WATCH_ENABLED,
     "watch_debounce_ms": EnvVar.WATCH_DEBOUNCE_MS,
     "watch_cooldown_s": EnvVar.WATCH_COOLDOWN_S,
+    "watch_coalesce_min_seconds": EnvVar.WATCH_COALESCE_MIN_SECONDS,
+    "watch_coalesce_max_seconds": EnvVar.WATCH_COALESCE_MAX_SECONDS,
+    "watch_cooling_max_seconds": EnvVar.WATCH_COOLING_MAX_SECONDS,
+    "watch_maximum_freshness_seconds": EnvVar.WATCH_MAXIMUM_FRESHNESS_SECONDS,
+    "watch_measurement_reevaluation_seconds": (
+        EnvVar.WATCH_MEASUREMENT_REEVALUATION_SECONDS
+    ),
+    "watch_batch_path_limit": EnvVar.WATCH_BATCH_PATH_LIMIT,
+    "watch_scope_max_paths": EnvVar.WATCH_SCOPE_MAX_PATHS,
+    "watch_scope_max_bytes": EnvVar.WATCH_SCOPE_MAX_BYTES,
     # Document-preprocessing hook knobs (#185). ``preprocess_mode`` is
     # deliberately absent from this single-var override map: its env var is a
     # kill switch whose value is not the setting's value, so it is resolved by
@@ -358,6 +368,14 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     # Filesystem watcher. Zero means "no delay" for both, not "disabled".
     "watch_debounce_ms": _NON_NEGATIVE_INT,
     "watch_cooldown_s": _NON_NEGATIVE_NUMBER,
+    "watch_coalesce_min_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_coalesce_max_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_cooling_max_seconds": _NON_NEGATIVE_NUMBER,
+    "watch_maximum_freshness_seconds": _POSITIVE_NUMBER,
+    "watch_measurement_reevaluation_seconds": _POSITIVE_NUMBER,
+    "watch_batch_path_limit": _POSITIVE_INT,
+    "watch_scope_max_paths": _POSITIVE_INT,
+    "watch_scope_max_bytes": _POSITIVE_INT,
     # Document preprocessing and splitting.
     "preprocess_max_emitted_bytes": _POSITIVE_INT,
     "document_chunk_chars_per_token": _POSITIVE_INT,
