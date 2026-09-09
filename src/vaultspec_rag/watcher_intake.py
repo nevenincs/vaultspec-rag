@@ -51,7 +51,6 @@ from .watcher_policy import (
 from .watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
 )
 from .watcher_runtime import (
@@ -66,6 +65,7 @@ if TYPE_CHECKING:
 
     from .graph_cache import GraphCache
     from .indexer._resolved_policy import ResolvedIndexPolicy
+    from .watcher_retry_policy import WatcherRetryPolicy
 
 logger = logging.getLogger(__name__)
 # The native watcher uses this bound only to observe shutdown. Controller

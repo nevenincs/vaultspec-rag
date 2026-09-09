@@ -27,7 +27,9 @@ from ...indexer._document_meta import (
     write_document_meta,
 )
 from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
-from ...storage_reclamation import archive_prefix
+from ...storage_archive import (
+    archive_prefix,
+)
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore
 from ._helpers import provisioned_qdrant_binary, serve_qdrant

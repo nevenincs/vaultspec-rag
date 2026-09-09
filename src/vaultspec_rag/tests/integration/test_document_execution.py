@@ -61,7 +61,13 @@ from ...job_models import (
 )
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
+from ...watcher_retry import (
+    WatcherSource,
+)
+from ...watcher_retry_policy import (
+    WatcherRetryPolicy,
+    _WatcherRetryOptions,
+)
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:

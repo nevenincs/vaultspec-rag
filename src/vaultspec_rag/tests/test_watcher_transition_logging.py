@@ -35,7 +35,13 @@ from ..job_models import (
     JobTimestamps,
 )
 from ..service import ServiceRegistry
-from ..watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
+from ..watcher_retry import (
+    WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
+    _WatcherRetryOptions,
+)
 from ..watcher_runtime import (
     WatcherConvergenceSlot,
     _log_managed_transition,

@@ -34,7 +34,12 @@ from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
 from ...watcher_intake import _classify_watcher_changes
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_retry import (
+    WatcherSource,
+)
+from ...watcher_retry_policy import (
+    WatcherRetryPolicy,
+)
 from ...watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
 if TYPE_CHECKING:

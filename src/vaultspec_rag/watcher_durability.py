@@ -23,10 +23,12 @@ from .logging_config import log_event
 from .watcher_retry import (
     WatcherPathObservation,
     WatcherRetryDecision,
-    WatcherRetryPolicy,
     WatcherRetryState,
     WatcherRetryUnavailableError,
     WatcherSource,
+)
+from .watcher_retry_policy import (
+    WatcherRetryPolicy,
 )
 
 if TYPE_CHECKING:

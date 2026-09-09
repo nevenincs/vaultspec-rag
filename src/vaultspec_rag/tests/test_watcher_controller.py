@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vaultspec_rag.watcher_controller import (
+from ..watcher_controller import (
     ControllerLimits,
     ControllerMeasurement,
     ControllerReason,
@@ -20,12 +20,14 @@ from vaultspec_rag.watcher_controller import (
     ScopeObservation,
     WatcherController,
 )
-from vaultspec_rag.watcher_retry import (
+from ..watcher_retry import (
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 
