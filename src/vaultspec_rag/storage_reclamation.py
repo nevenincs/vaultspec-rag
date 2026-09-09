@@ -119,11 +119,11 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     number: comparing a total that silently omits a collection would read a
     partial sum as agreement with the survey.
 
-    A slow server is one of the ways a collection cannot be counted. The client
-    does not signal that with a builtin: it wraps the underlying read timeout
-    in ``ResponseHandlingException``, a plain ``Exception``, so a guard naming
-    only the builtin types let a timeout past this function and unwound the
-    whole cycle instead of leaving one namespace unverifiable.
+    A slow server is one of the ways a collection cannot be counted, and the
+    client does not signal that with a builtin, so the whole transport class is
+    named here: a guard naming only the builtin types let a timeout past this
+    function and unwound the whole cycle instead of leaving one namespace
+    unverifiable.
 
     Listing the collections is the other half of counting them, and it reaches
     the same server over the same transport. Guarding only the per-collection
@@ -131,7 +131,7 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
     contract is that it never raises - a namespace cannot be counted when the
     set of collections to count could not be read either.
     """
-    from qdrant_client.http.exceptions import ResponseHandlingException
+    from ._qdrant_transport import TRANSPORT_FAILURES
 
     total = 0
     try:
@@ -139,7 +139,7 @@ def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
             if not collection.name.startswith(prefix):
                 continue
             total += int(client.count(collection_name=collection.name).count)
-    except (OSError, RuntimeError, ResponseHandlingException):
+    except TRANSPORT_FAILURES:
         return None
     return total
 
@@ -169,18 +169,18 @@ def _active_index_prefixes() -> frozenset[str] | None:
 
     It still never raises. This runs inside a background cycle, and the answer
     a caller cannot get is a deferral rather than an unwound cycle - which is
-    why the guard names the client's transport failure alongside the builtins,
-    that being a plain ``Exception`` the builtins do not cover.
+    why the guard names the whole transport class rather than the builtins
+    alone, the client's own wrapper being a plain ``Exception`` they do not
+    cover.
     """
-    from qdrant_client.http.exceptions import ResponseHandlingException
-
     from . import jobs
+    from ._qdrant_transport import TRANSPORT_FAILURES
     from ._store_models import root_collection_prefix
     from .job_models import JobOperation
 
     try:
         active = jobs.get_job_manager().active()
-    except (OSError, RuntimeError, ResponseHandlingException):
+    except TRANSPORT_FAILURES:
         logger.exception("active-job probe failed; deferring every namespace")
         return None
     prefixes: set[str] = set()
@@ -782,7 +782,7 @@ def _apply_reclaim(
     Returns:
         The outcome decision and the archive paths written.
     """
-    from qdrant_client.http.exceptions import ResponseHandlingException
+    from ._qdrant_transport import TRANSPORT_FAILURES
 
     gate = _pre_drop_reclaim_gate(client, decision, active_prefixes=active_prefixes)
     if isinstance(gate, ReclaimDecision):
@@ -797,7 +797,7 @@ def _apply_reclaim(
                 snapshots_dir=snapshots_dir,
                 archive_dir=archive_dir,
             )
-        except (OSError, RuntimeError, ResponseHandlingException) as exc:
+        except TRANSPORT_FAILURES as exc:
             # A snapshot is the slowest call in the cycle and the likeliest to
             # time out. The client wraps that timeout in its own plain
             # ``Exception``, so naming only the builtins here turned one slow
