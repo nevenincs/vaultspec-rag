@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -17,6 +18,7 @@ from ..storage_reclamation import (
 )
 from ..storage_reconciliation import GeometryEntry, plan_reconcile
 from ..store_schema import (
+    CODE_COLLECTION,
     SERVER_SEGMENT_NUMBER,
 )
 from .test_storage_ops import (
@@ -657,6 +659,23 @@ def _read_timeout() -> Exception:
     return ResponseHandlingException(httpx.ReadTimeout("timed out"))
 
 
+@dataclass(frozen=True)
+class _TransportFaults:
+    """Which of a cycle client's server calls fail, and with what.
+
+    One value rather than a keyword per call, so a test names only the call it
+    is faulting and every other call is visibly untouched.
+    """
+
+    snapshots: frozenset[str] = frozenset()
+    recounts: frozenset[str] = frozenset()
+    deletes: frozenset[str] = frozenset()
+
+
+#: No fault at all - the stand-in behaves as the plain cycle client.
+_NO_FAULTS = _TransportFaults()
+
+
 class _TimeoutClient(_CycleClient):
     """A cycle client whose named collections time out on one call each.
 
@@ -673,12 +692,10 @@ class _TimeoutClient(_CycleClient):
         counts: dict[str, int],
         *,
         snapshots_dir: Path | None = None,
-        snapshot_timeouts: frozenset[str] = frozenset(),
-        recount_timeouts: frozenset[str] = frozenset(),
+        faults: _TransportFaults = _NO_FAULTS,
     ) -> None:
         super().__init__(counts, snapshots_dir=snapshots_dir)
-        self._snapshot_timeouts = snapshot_timeouts
-        self._recount_timeouts = recount_timeouts
+        self._faults = faults
         self._counted: dict[str, int] = {}
 
     def count(self, *, collection_name: str) -> object:
@@ -688,18 +705,27 @@ class _TimeoutClient(_CycleClient):
         # the second visit, so only the second is failed. Failing the survey's
         # count instead would degrade the namespace to zero points long before
         # the gate under test was ever consulted.
-        if collection_name in self._recount_timeouts and seen > 1:
+        if collection_name in self._faults.recounts and seen > 1:
             raise _read_timeout()
         return super().count(collection_name=collection_name)
 
     def create_snapshot(self, *, collection_name: str, wait: bool = True) -> object:
-        if collection_name in self._snapshot_timeouts:
+        if collection_name in self._faults.snapshots:
             # Recorded before raising: the attempt is what the ordering
             # assertions read, and a snapshot that timed out was still asked
             # for.
             self.snapshotted.append(collection_name)
             raise _read_timeout()
         return super().create_snapshot(collection_name=collection_name, wait=wait)
+
+    def delete_collection(self, *, collection_name: str) -> None:
+        # Nothing is recorded for a delete that raised: unlike a snapshot,
+        # whose attempt is the interesting event, a delete either removed the
+        # collection or it did not, and ``deleted`` is what the partial-drop
+        # assertions read as the destruction that really happened.
+        if collection_name in self._faults.deletes:
+            raise _read_timeout()
+        super().delete_collection(collection_name=collection_name)
 
 
 class TestTransportTimeoutIsolation:
@@ -746,7 +772,7 @@ class TestTransportTimeoutIsolation:
         client = _TimeoutClient(
             {stalled: 10, healthy: 10},
             snapshots_dir=tmp_path / "snapshots",
-            snapshot_timeouts=frozenset({stalled}),
+            faults=_TransportFaults(snapshots=frozenset({stalled})),
         )
 
         result = _run_cycle(client, tmp_path)
@@ -779,7 +805,7 @@ class TestTransportTimeoutIsolation:
         client = _TimeoutClient(
             {stalled: 10, healthy: 10},
             snapshots_dir=tmp_path / "snapshots",
-            recount_timeouts=frozenset({stalled}),
+            faults=_TransportFaults(recounts=frozenset({stalled})),
         )
 
         result = _run_cycle(client, tmp_path)
@@ -793,3 +819,69 @@ class TestTransportTimeoutIsolation:
         # behind it, which is the continuation this test exists for.
         assert client.snapshotted == [healthy]
         assert client.deleted == [healthy]
+
+    def test_a_drop_timeout_records_the_partial_destruction_and_the_cycle_goes_on(
+        self, tmp_path: Path
+    ) -> None:
+        """A timeout part-way through a drop is reported, not raised away.
+
+        The severe one. The drop is a per-collection loop, so a server that
+        stops answering in the middle of it has ALREADY destroyed part of the
+        namespace. Before the guard was widened the wrapped read timeout
+        escaped ``delete_prefix``, escaped ``_apply_reclaim`` and unwound the
+        tick, leaving a half-deleted namespace with its manifest entry intact
+        and no outcome recorded anywhere - destruction with no record of it.
+
+        The stalled namespace is given two collections so the partial state is
+        observable at all: with one, a failed drop removes nothing and the
+        interesting case never arises. ``codebase_docs`` sorts before
+        ``vault_docs``, so the drop loop provably destroys the first before
+        the second raises.
+
+        Three mutations, each run alone against this test.
+
+        Narrowing the drop guard in ``delete_prefix`` back to
+        ``(OSError, RuntimeError)`` fails
+        ``assert failed.reason == "delete_failed after 1/2: timed out"``,
+        observed reporting ``drop_failed: timed out``. The apply path's own
+        guard stops the escape, but it stands outside the loop and so knows
+        nothing about what the loop had already destroyed - the namespace is
+        recorded as failed while the fact that half of it is gone is not
+        recorded at all, which is the whole of what makes a partial drop
+        worse than a missed reclaim.
+
+        Swallowing the failure broadly instead - continuing the loop past it,
+        as any handler that merely stops the exception would - fails
+        ``assert failed.action == "failed"``, observed reporting
+        ``archived_removed``: the namespace is reported reclaimed while half
+        of it still exists and its manifest entry has been forgotten.
+
+        Removing both guards, which is the state the audit found, does not
+        land on an assertion at all: the wrapped timeout escapes
+        ``run_maintenance_cycle`` and the test errors with
+        ``ResponseHandlingException: timed out``. That is the production
+        failure being closed rather than a proof about this test, which is
+        why the two mutations above are the ones it is trusted on.
+        """
+        first, second = self._two_orphans(tmp_path)
+        stalled_code = first + CODE_COLLECTION
+        stalled_vault = _collection_of(first)
+        healthy = _collection_of(second)
+        client = _TimeoutClient(
+            {stalled_code: 5, stalled_vault: 5, healthy: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            faults=_TransportFaults(deletes=frozenset({stalled_vault})),
+        )
+
+        result = _run_cycle(client, tmp_path)
+
+        failed, survivor = _outcome_for(result, first), _outcome_for(result, second)
+        assert failed.action == "failed"
+        # Asserted whole. The counts are the whole point: an operator reading
+        # this has to learn that one of the two collections is gone, and a
+        # reason that said only "timed out" would read as a namespace nothing
+        # happened to.
+        assert failed.reason == "delete_failed after 1/2: timed out"
+        # The destruction that really happened, and the continuation past it.
+        assert client.deleted == [stalled_code, healthy]
+        assert survivor.action == "archived_removed"
