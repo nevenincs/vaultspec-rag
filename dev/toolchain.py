@@ -122,6 +122,14 @@ class Target:
             tests were collected") counts as a visible skip rather than a pass.
         aggregate: When true this target summarises the targets it references
             and fails when every one of them was skipped.
+        reports: When true this target's FINDINGS are leads rather than a
+            verdict: it exits zero with findings on the board, while its own
+            breakage still propagates. Declared rather than inferred, because
+            the advisory wrapping lives in three different places - an argv
+            prefix, a ``ToolOrSkip`` field, and inside a harness instrument's
+            own ``main`` - so no reader of the steps can tell reliably, and
+            the one property a caller needs to know is whether this can fail
+            a build.
     """
 
     name: str
@@ -132,6 +140,7 @@ class Target:
     gate: Gate | None = None
     lane: bool = False
     aggregate: bool = False
+    reports: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,6 +266,8 @@ LINT_ALL = (
     "docs-version",
     "citations",
     "type-strict",
+    "vault",
+    "docs-cli",
 )
 
 LINT = Verb(
@@ -377,6 +388,24 @@ LINT = Verb(
             "Check the package uses absolute imports throughout.",
             (uv_run("python", "tools/absolute_import_gate.py"),),
         ),
+        # The read-only counterpart to ``fix vault``. It existed only as a
+        # raw command pasted into one CI job, which is why it could not join
+        # the aggregate below and why the workflow had to carry a job of its
+        # own to run it.
+        Target(
+            "vault",
+            "Check the vault's structure, frontmatter and links.",
+            (uv_run("vaultspec-core", "vault", "check", "all"),),
+        ),
+        # The generated CLI reference had a `check-` recipe in the justfile and
+        # no entry here, so it was outside `all` - and outside CI, which runs
+        # the aggregate. A gate the registry does not know about is a gate that
+        # exists in `just --list` and nowhere else.
+        Target(
+            "docs-cli",
+            "Check the generated CLI reference matches the live command surface.",
+            (uv_run("python", "-m", "dev.generate_cli_reference", "--check"),),
+        ),
         Target(
             "all",
             "Run every gating dimension; one red dimension never hides the rest.",
@@ -491,16 +520,19 @@ AUDIT = Verb(
                     "-q",
                 ),
             ),
+            reports=True,
         ),
         Target(
             "dead-code",
             "Report unreachable code (vulture).",
             (_advisory(3, "vulture"),),
+            reports=True,
         ),
         Target(
             "dependencies",
             "Report undeclared and unused dependencies (deptry).",
             (_advisory(1, "deptry", PACKAGE),),
+            reports=True,
         ),
         Target(
             "duplication",
@@ -513,18 +545,25 @@ AUDIT = Verb(
                     advisory_finding_exit=1,
                 ),
             ),
+            reports=True,
         ),
         Target(
             "complexity",
             "Report test-tree cognitive and cyclomatic complexity.",
             (dev_module("complexity", "audit"),),
+            reports=True,
         ),
+        # `deps` is deliberately NOT a member. It is the one target in this
+        # verb that GATES, it has a job of its own, and composing it into the
+        # advisory dashboard meant the same OSV query ran twice for one
+        # commit - once as a verdict somebody acts on, once inside a report
+        # that cannot fail. The aggregate is every ADVISORY dimension, which
+        # is what makes it safe to run on a schedule rather than on the merge
+        # path. `ci all` reaches the gate directly.
         Target(
             "all",
-            "Report every dimension; one red dimension does not hide the rest.",
+            "Report every advisory dimension; one red never hides the rest.",
             (
-                Echo("=== dependency advisories ==="),
-                Ref("deps"),
                 Echo("=== security ==="),
                 Ref("security"),
                 Echo("=== dead code ==="),
@@ -537,6 +576,7 @@ AUDIT = Verb(
                 Ref("complexity"),
             ),
             keep_going=True,
+            reports=True,
         ),
     ),
 )
@@ -750,7 +790,6 @@ CI = Verb(
                 # teaches people to stop reading it. A published advisory
                 # against a pinned version is not a lead, it is a verdict.
                 _verb("audit", "deps"),
-                uv_run("vaultspec-core", "vault", "check", "all"),
                 _verb("test", "all"),
                 # BUILD IS PART OF CI, and this repository is where that was
                 # measured: the wheel build broke on the release path and

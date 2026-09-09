@@ -20,13 +20,24 @@ from dev.__main__ import _execute
 from dev.runner import Cmd, Ref
 from dev.toolchain import VERBS, Target, Verb
 
-#: Targets deliberately outside their verb's ``all``, and why. Each is a
-#: SELECTION within a target that ``all`` already runs, so including it would
-#: run the same tests twice rather than cover anything new. Both claims are
+#: Targets deliberately outside their verb's ``all``, and why. Most are a
+#: SELECTION within a target that ``all`` already runs, so including one would
+#: run the same tests twice rather than cover anything new; those claims are
 #: checked against real pytest collection by the marker guards in this tree.
+#: The audit entry is a different reason and is checked elsewhere - see it.
 EXEMPT: dict[tuple[str, str], str] = {
     ("test", "fast"): "the unit tier, a subset of the python lane",
     ("test", "provisioning"): "five files the python lane already collects",
+    ("audit", "deps"): (
+        "the one target in this verb that GATES, and it holds a CI job of its "
+        "own. `audit all` is a report that cannot fail, which is the wrong "
+        "home for a verdict: running it in both took the same "
+        "published-advisory query twice for one commit, and the copy inside "
+        "the report is what teaches a reader the whole dashboard is optional. "
+        "`ci all` reaches it directly, and "
+        "dev/guards/test_advisory_aggregate_holds_no_gate.py fails if it "
+        "stops doing so - so this exemption cannot become a dropped gate."
+    ),
 }
 
 
