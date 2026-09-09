@@ -93,8 +93,28 @@ class VaultSpecConfigWrapper:
         "storage_autoprune_interval_minutes": 60.0,
         "storage_autoprune_grace_hours": 24.0,
         "storage_autoprune_grace_hours_data": 168.0,
+        # Ephemeral-orphan window: an orphaned namespace whose root was
+        # under the OS temp directory draws this instead of either window
+        # above. Both signals are needed and each is weak alone - the root
+        # was always throwaway AND it is provably gone - which is stronger
+        # evidence of death than the point count the other two windows key
+        # on. Point count still selects the TIER within this choice, so a
+        # point-bearing one is still archived before it is dropped; only
+        # the waiting period changes. An absent root on an unreachable
+        # volume classifies unverifiable rather than orphaned and never
+        # reaches this window at all.
+        "storage_autoprune_grace_hours_ephemeral": 24.0,
         "storage_autoprune_archive_retention_days": 30.0,
-        "storage_autoprune_archive_max_gb": 20.0,
+        # 64.0, not the original 20.0: the ephemeral window above makes every
+        # temp-rooted orphan eligible on the first cycle after it lands, and
+        # sweep_archive evicts oldest-first with no floor on age, so a cap
+        # already near full turns over within one or two cycles of that
+        # drain - collapsing the 30-day retention above to about one cycle
+        # exactly when the evidence is most wanted. 64.0 covers a full
+        # ephemeral drain plus the non-temp orphans behind it. This is real,
+        # ongoing disk cost accepted deliberately for that headroom, not a
+        # one-time allowance; once the backlog clears it is mostly unused.
+        "storage_autoprune_archive_max_gb": 64.0,
         "storage_autoprune_max_per_cycle": 16,
         # Ephemeral idle-TTL tier: a temp-rooted namespace whose
         # persisted last_indexed stamp is older than this is treated as
@@ -964,6 +984,7 @@ class VaultSpecConfigWrapper:
     storage_autoprune_interval_minutes: float
     storage_autoprune_grace_hours: float
     storage_autoprune_grace_hours_data: float
+    storage_autoprune_grace_hours_ephemeral: float
     storage_autoprune_archive_retention_days: float
     storage_autoprune_archive_max_gb: float
     storage_autoprune_max_per_cycle: int

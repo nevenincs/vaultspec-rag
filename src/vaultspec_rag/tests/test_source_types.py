@@ -19,21 +19,10 @@ def test_canonical_source_types_round_trip(source: PublicSourceType) -> None:
     assert parse_source_type(source) is source
 
 
-@pytest.mark.parametrize(
-    ("alias", "expected"),
-    [
-        ("codebase", PublicSourceType.CODE),
-        ("docs", PublicSourceType.VAULT),
-        ("all", PublicSourceType.COMBINED),
-    ],
-)
-def test_compatibility_aliases_require_explicit_authority(
-    alias: str,
-    expected: PublicSourceType,
-) -> None:
+@pytest.mark.parametrize("alias", ["codebase", "docs", "all"])
+def test_noncanonical_source_names_are_rejected(alias: str) -> None:
     with pytest.raises(SourceTypeParseError):
         parse_source_type(alias)
-    assert parse_source_type(alias, allow_aliases=True) is expected
 
 
 @pytest.mark.parametrize("value", ["", "unknown", "Document", 1, None, ["code"]])
@@ -44,5 +33,4 @@ def test_unknown_source_type_has_structured_error(value: object) -> None:
         "error_kind": "unknown_source_type",
         "received": value,
         "allowed": ["vault", "code", "document", "combined"],
-        "aliases_allowed": False,
     }

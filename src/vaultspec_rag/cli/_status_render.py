@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+from .._job_values import count
 from .._loopback_http import FAST_CONNECT_TIMEOUT_SECONDS, probe_loopback_connect
 from .._operator_commands import (
     port_option,
@@ -27,6 +31,7 @@ from .._operator_commands import (
 )
 from .._process_probe import pid_alive as _pid_alive
 from .._timestamps import age_seconds
+from .._units import human_bytes
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
@@ -676,15 +681,71 @@ def _jobs_summary_from_result(result: dict[str, object] | None) -> dict[str, obj
     }
 
 
-def _status_jobs_summary(port: int, port_listening: bool) -> dict[str, object]:
+def _storage_summary_from_result(result: dict[str, object] | None) -> dict[str, object]:
+    """Shape the survey route's whole-backend ``totals`` for the status view.
+
+    ``limit=1`` bounds the namespace list the route ships back; ``totals`` is
+    computed over the whole survey regardless. A local-only store refuses the
+    route with ``server_mode_required``, which reports as unavailable rather
+    than as an error - a local store has one namespace and nothing to grow.
+    """
+    if not isinstance(result, dict) or result.get("ok") is False:
+        return {"available": False}
+    totals = result.get("totals")
+    totals_dict = cast("dict[str, object]", totals) if isinstance(totals, dict) else {}
+    return {
+        "available": True,
+        "collections": totals_dict.get("collections"),
+        "ephemeral_backlog_bytes": totals_dict.get("ephemeral_backlog_bytes"),
+        "points_unverified_namespaces": totals_dict.get("points_unverified_namespaces"),
+    }
+
+
+@dataclass(frozen=True)
+class _StatusProbe:
+    """One diagnostic route the status view summarises.
+
+    Everything that differs between the summaries, named as a value, so that
+    what they share can be written once.
+
+    Attributes:
+        name: What a failed probe is reported under.
+        route: The admin route to call.
+        params: The route's bounds. Every operator-facing list is bounded and
+            the two want different bounds, so each states its own.
+        shape: Reduces the route's answer to the fields the status view
+            renders. An absent or refused answer reaches it as ``None``.
+    """
+
+    name: str
+    route: str
+    params: dict[str, object]
+    shape: Callable[[dict[str, object] | None], dict[str, object]]
+
+
+def _status_probe_summary(
+    probe: _StatusProbe, port: int, port_listening: bool
+) -> dict[str, object]:
+    """Ask one diagnostic route for what the status view shows about it.
+
+    What the summaries share is the part that matters. A silent port is
+    reported as unavailable without a call being attempted, and a probe that
+    raises is reported as unavailable rather than failing the verb around it,
+    because ``server status`` has to answer when the thing it is describing is
+    broken.
+    """
     if not port_listening:
         return {"available": False}
     try:
-        return _jobs_summary_from_result(
-            _try_http_admin("get_jobs", {"limit": 5}, port),
-        )
+        return probe.shape(_try_http_admin(probe.route, probe.params, port))
     except Exception as exc:
-        return probe_unavailable("jobs", exc)
+        return probe_unavailable(probe.name, exc)
+
+
+_JOBS_PROBE = _StatusProbe("jobs", "get_jobs", {"limit": 5}, _jobs_summary_from_result)
+_STORAGE_PROBE = _StatusProbe(
+    "storage", "get_storage_survey", {"limit": 1}, _storage_summary_from_result
+)
 
 
 def _status_next_action(
@@ -782,11 +843,13 @@ def _status_operational_summary(
     *,
     explicit_port: bool = False,
 ) -> dict[str, object]:
-    jobs = _status_jobs_summary(port, port_listening)
+    jobs = _status_probe_summary(_JOBS_PROBE, port, port_listening)
+    storage = _status_probe_summary(_STORAGE_PROBE, port, port_listening)
     port_arg = port_option(port if explicit_port else None)
     findings = degradation_findings(health)
     operational: dict[str, object] = {
         "jobs": jobs,
+        "storage": storage,
         "degraded": [finding.as_dict(port_arg=port_arg) for finding in findings],
         "next_action": _status_next_action(
             state,
@@ -823,6 +886,26 @@ def _print_operational_detail(
             _print_current_job_detail(jobs_dict)
         else:
             _print_detail_line("Processed jobs", NOT_REPORTED)
+    storage = operational.get("storage")
+    if isinstance(storage, dict):
+        storage_dict = cast("dict[str, object]", storage)
+        if storage_dict.get("available") is True:
+            collections = count(storage_dict.get("collections"))
+            collections_label: object = (
+                collections if collections is not None else NOT_REPORTED
+            )
+            # Distinguishes a real zero from a count that could not be
+            # taken, the same fact an uncounted collection would otherwise
+            # silently report as a verified zero.
+            unverified = count(storage_dict.get("points_unverified_namespaces"))
+            if unverified:
+                collections_label = f"{collections_label}  [{unverified} unverified]"
+            _print_detail_line("Collections", collections_label)
+            backlog_bytes = count(storage_dict.get("ephemeral_backlog_bytes"))
+            backlog_label = NOT_REPORTED
+            if backlog_bytes is not None:
+                backlog_label = human_bytes(backlog_bytes)
+            _print_detail_line("Ephemeral backlog", backlog_label)
     _print_next_action(operational.get("next_action"))
 
 

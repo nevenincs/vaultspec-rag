@@ -944,3 +944,78 @@ class TestPlatformDrainBudget:
         assert graceful_drain_seconds_for("win32") != graceful_drain_seconds_for(
             "linux"
         )
+
+
+class TestServiceStartReadinessDeadline:
+    """The start wait must cover the readiness budget the daemon may spend.
+
+    A cold start on a large store can legitimately sit in the qdrant
+    readiness wait for the supervisor's whole ceiling, which is a multiple of
+    an operator-tunable patience window. The command that abandons before
+    that reports a failed start for one that then succeeds behind the
+    operator - the one scenario a raised window exists to survive - so the
+    two numbers have to move together.
+
+    Driven through the real settings object rather than substituted: the knob
+    is read at request construction, so setting the environment variable and
+    resetting the config is the whole mechanism.
+    """
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    @staticmethod
+    def _deadline_for(raw: str, log_path: Path) -> float:
+        from ..cli._service_start import _ServiceReadinessRequest
+
+        os.environ[EnvVar.QDRANT_READY_TIMEOUT] = raw
+        reset_rag_config()
+        try:
+            return _ServiceReadinessRequest(
+                pid=1,
+                port=1,
+                log_path=log_path,
+                json_mode=False,
+                started_at=0.0,
+            ).deadline
+        finally:
+            os.environ.pop(EnvVar.QDRANT_READY_TIMEOUT, None)
+            reset_rag_config()
+
+    def test_raising_the_readiness_knob_widens_the_start_wait(
+        self, tmp_path: Path
+    ) -> None:
+        """Tripling the patience window triples the wait it has to cover.
+
+        Mutation this catches: restoring a constant deadline on
+        ``_ServiceReadinessRequest``, observed failing
+        ``assert generous > modest`` on ``300.0 > 300.0`` - both readings
+        become the same number. The difference is then asserted against the
+        supervisor's own ceiling function rather than a literal, so a
+        deadline computed from a second copy of the multiple would not
+        satisfy it either.
+        """
+        from ..qdrant_runtime._supervise import ready_ceiling_seconds
+
+        log_path = tmp_path / "service.log"
+        modest = self._deadline_for("300", log_path)
+        generous = self._deadline_for("900", log_path)
+
+        widened = ready_ceiling_seconds(900.0) - ready_ceiling_seconds(300.0)
+        assert generous > modest
+        assert generous - modest == widened
+
+    def test_the_wait_outlasts_the_readiness_ceiling_it_must_cover(
+        self, tmp_path: Path
+    ) -> None:
+        """The daemon's qdrant wait alone can reach the ceiling; the CLI waits past it.
+
+        Mutation this catches: dropping the provisioning and model-load
+        allowance, observed failing this assertion on ``1200.0 > 1200.0`` -
+        a start that spent its whole readiness budget would then have no time
+        left to load a model in.
+        """
+        from ..qdrant_runtime._supervise import ready_ceiling_seconds
+
+        deadline = self._deadline_for("300", tmp_path / "service.log")
+
+        assert deadline > ready_ceiling_seconds(300.0)

@@ -277,7 +277,7 @@ def _render_empty_service_results(
 
 
 def _search_type_result_label(search_type: str) -> str:
-    if search_type in ("code", "codebase"):
+    if search_type == "code":
         return "source code"
     if search_type == "vault":
         return "vault document"
@@ -289,7 +289,7 @@ def _search_type_result_label(search_type: str) -> str:
 
 
 def _search_type_count_label(search_type: str) -> str:
-    if search_type in ("code", "codebase"):
+    if search_type == "code":
         return "source code sections"
     if search_type == "vault":
         return "vault documents"

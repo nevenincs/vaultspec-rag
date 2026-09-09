@@ -338,7 +338,7 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
         partial(
             try_http_search,
             full_query,
-            _canonical_tool_source("codebase"),
+            _canonical_tool_source("code"),
             top_k,
             port,
             _resolve_project_root(project_root),
@@ -491,7 +491,7 @@ async def reindex_codebase(
     project_root: str | None = None,
 ) -> dict[str, Any]:
     """Re-index the source codebase incrementally."""
-    return await _reindex_source("codebase", project_root)
+    return await _reindex_source("code", project_root)
 
 
 async def _reindex_source(
