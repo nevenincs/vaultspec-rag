@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#cli-tree-overhaul'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:976f76d12b4ac1b59797c109fb1175451aac59ab4c121e0e1884e6e9f5a22f09'
 related:
   - '[[2026-06-06-cli-tree-overhaul-W01-P01-S36]]'
