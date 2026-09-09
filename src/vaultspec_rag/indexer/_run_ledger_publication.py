@@ -360,7 +360,7 @@ def _mutation_rows(
                 )
             )
         return tuple(mutations)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, RunLedgerCorruptionError, TypeError, ValueError) as exc:
         _receipt_corrupt("stored publication mutation units are malformed", exc)
 
 
@@ -449,7 +449,7 @@ def _delta_rows(
         if points:
             raise ValueError("receipt points name a missing delta or evidence side")
         return tuple(deltas)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, RunLedgerCorruptionError, TypeError, ValueError) as exc:
         _receipt_corrupt("stored publication deltas are malformed", exc)
 
 
@@ -489,7 +489,7 @@ def _hydrate_receipt(
         return receipt
     except ProofRebuildRequiredError:
         raise
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, RunLedgerCorruptionError, TypeError, ValueError) as exc:
         _receipt_corrupt("stored publication receipt is malformed", exc)
 
 
@@ -1414,11 +1414,50 @@ class RunLedgerPublicationMethods:
                         "required"
                     )
                 proof = _proof_from_row(row)
+                generation_row: GenerationRow | None = fetch_one(
+                    connection,
+                    "SELECT * FROM generations WHERE generation_id = ?",
+                    (proof.generation_id,),
+                )
+                if generation_row is None:
+                    raise RunLedgerCorruptionError(
+                        "publication proof cites a missing generation"
+                    )
+                generation = self._generation_from_row(generation_row)
+                if _compatibility_for_generation(generation) != proof.compatibility_key:
+                    raise ProofIncompatibleError(
+                        "publication proof generation ancestry is incompatible"
+                    )
+                has_open_receipt = _has_open_receipt(row)
+                if has_open_receipt:
+                    receipt_row: sqlite3.Row | None = fetch_one(
+                        connection,
+                        f"""
+                        SELECT * FROM publication_receipts
+                        WHERE source_type = ? AND root_identity = ?
+                          AND backend_identity = ? AND collection_identity = ?
+                          AND {_OPEN_RECEIPT_SQL}
+                        """,
+                        _stable_parameters(proof.compatibility_key),
+                    )
+                    if receipt_row is None:
+                        _receipt_corrupt(
+                            "open publication receipt snapshot is inconsistent"
+                        )
+                    receipt = _hydrate_receipt(connection, receipt_row)
+                    if (
+                        receipt.compatibility_key != proof.compatibility_key
+                        or receipt.parent_revision != proof.revision
+                        or receipt.reservation_sequence != proof.reservation_sequence
+                    ):
+                        _receipt_corrupt(
+                            "open publication receipt does not match the current proof"
+                        )
                 token = ProofReadToken.from_snapshot(
                     compatibility_key=proof.compatibility_key,
                     revision=proof.revision,
                     reservation_sequence=proof.reservation_sequence,
-                    has_open_receipt=_has_open_receipt(row),
+                    has_open_receipt=has_open_receipt,
                 )
                 return proof, token
             finally:
