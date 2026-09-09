@@ -31,8 +31,10 @@ from ..watcher_intake import (
 from ..watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
 )
 from ..watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
@@ -40,12 +42,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from ..indexer._codebase_indexer import CodeExecutionPreflight
+    from ..indexer._document_indexer import DocumentExecutionPreflight
     from ..job_models import JobSnapshot
     from ..watcher_admission import AdmissionSelection
-    from ..watcher_execution import (
-        CodeExecutionPreflight,
-        DocumentExecutionPreflight,
-    )
 
 pytestmark = pytest.mark.unit
 

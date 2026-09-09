@@ -25,13 +25,15 @@ from ..job_models import (
 )
 from ..service import ServiceRegistry
 from ..watcher_retry import (
-    _ADMISSION_RESERVATIONS,
     WatcherCircuitState,
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherScopeRefusal,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    _ADMISSION_RESERVATIONS,
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
@@ -90,7 +92,7 @@ def _fenced_policy(
     assert decision.admitted
     _ADMISSION_RESERVATIONS.clear()
     monkeypatch.setattr(
-        "vaultspec_rag.watcher_retry._attempt_owner_is_live", _owner_is_not_live
+        "vaultspec_rag.watcher_retry_policy._attempt_owner_is_live", _owner_is_not_live
     )
     return WatcherRetryPolicy(state_path, _options(tmp_path))
 
