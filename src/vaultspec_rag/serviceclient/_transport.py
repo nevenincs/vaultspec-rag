@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
+    from ..indexer._run_ledger_models import RunAuthority
     from ..job_models import DesiredJobState, JobMode, JobSource
     from ._discovery import MachineResolution
 
@@ -208,6 +209,7 @@ class _CreateJobRequest:
     source: JobSource
     project_root: str
     port: int | None
+    authority: RunAuthority
     mode: JobMode | None = None
     start_paused: bool = False
     initiator_kind: str = "cli"
@@ -988,13 +990,16 @@ def _try_http_create_job(
     source: JobSource,
     project_root: str,
     port: int | None,
+    *,
+    authority: RunAuthority,
     **options: Unpack[CreateJobOptions],
 ) -> dict[str, object] | None:
-    request = _CreateJobRequest(source, project_root, port, **options)
+    request = _CreateJobRequest(source, project_root, port, authority, **options)
     payload: dict[str, object] = {
         "operation": "index",
         "source": request.source,
         "project_root": request.project_root,
+        "authority": request.authority.value,
         # Resolved here, not in the signature: the enum is annotation-only in
         # this module so the client keeps the domain out of its import graph.
         "mode": request.mode if request.mode is not None else _default_job_mode(),

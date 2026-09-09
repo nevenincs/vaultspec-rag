@@ -25,6 +25,7 @@ import pytest
 from ... import jobs
 from ...concurrency import reset_limiters
 from ...config._settings import get_config, reset_config
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import JobState
 from ...registry import get_registry, reset_registry
 from ...server._routes import _service_job_snapshot
@@ -144,7 +145,11 @@ async def reuse_job_manager(
 
 async def _run_rebuild_job(manager: JobManager, root: Path) -> str:
     """Run one production rebuild job to completion and return its id."""
-    job_id = jobs.start_reindex_codebase(root, clean=True)
+    job_id = jobs.start_reindex_codebase(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
     joined = await manager.wait_for_attempt(
         job_id,
         timeout_seconds=_JOB_WAIT_SECONDS,

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from .. import jobs as jobs_module
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
 from ..job_models import (
@@ -49,7 +50,13 @@ class TestEncodeAdmissionGate:
 
     @staticmethod
     def _encode_spec(root: str) -> JobSpec:
-        return JobSpec(JobOperation.INDEX, JobSource.VAULT, root, JobMode.REBUILD)
+        return JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            root,
+            JobMode.REBUILD,
+            RunAuthority.REBUILD,
+        )
 
     @staticmethod
     async def _wait_admitted(
@@ -204,18 +211,103 @@ class TestEncodeAdmissionGate:
         assert started is not None
         assert admitted >= started
 
+    @pytest.mark.asyncio
+    async def test_dispatch_context_carries_the_exact_persisted_authority(self) -> None:
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
+        created = manager.create(
+            self._encode_spec(_TEST_PROJECT_ROOT),
+            JobInitiator("test", "authority-transport", None),
+        )
+        assert created.job is not None
+        observed: list[RunAuthority] = []
+
+        def runner(context: JobAttemptContext) -> JobExecutionResult:
+            observed.append(context.authority)
+            return JobExecutionResult(summary="authority observed")
+
+        assert manager.bind_dispatch(created.job.id, runner).code == "dispatch_bound"
+        assert (await manager.dispatch_async(created.job.id)).code == "attempt_started"
+        await self._wait_terminal(manager, created.job.id)
+
+        assert observed == [RunAuthority.REBUILD]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mode", "authority"),
+        [
+            (JobMode.REBUILD, RunAuthority.PUBLICATION),
+            (JobMode.INCREMENTAL, RunAuthority.AUDIT_VERIFICATION),
+        ],
+    )
+    async def test_dispatch_refuses_authority_the_current_runner_cannot_honor(
+        self,
+        mode: JobMode,
+        authority: RunAuthority,
+    ) -> None:
+        manager = JobManager(
+            quiesce_controller=ServiceQuiesceController(),
+            max_nonterminal=2,
+            state_path=None,
+        )
+        created = manager.create(
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.VAULT,
+                _TEST_PROJECT_ROOT,
+                mode,
+                authority,
+            ),
+            JobInitiator("test", "authority-refusal", None),
+        )
+        assert created.job is not None
+        ran = False
+
+        def runner(context: JobAttemptContext) -> JobExecutionResult:
+            nonlocal ran
+            del context
+            ran = True
+            return JobExecutionResult(summary="must not run")
+
+        assert manager.bind_dispatch(created.job.id, runner).code == "dispatch_bound"
+        refused = await manager.dispatch_async(created.job.id)
+
+        assert refused.code == "job_authority_not_executable"
+        assert ran is False
+
     def test_only_encode_bearing_specs_take_the_encode_slot(self) -> None:
         from ..job_models import is_encode_bearing
 
         for source in (JobSource.VAULT, JobSource.CODE, JobSource.DOCUMENT):
             assert is_encode_bearing(
-                JobSpec(JobOperation.INDEX, source, _TEST_PROJECT_ROOT, JobMode.REBUILD)
+                JobSpec(
+                    JobOperation.INDEX,
+                    source,
+                    _TEST_PROJECT_ROOT,
+                    JobMode.REBUILD,
+                    RunAuthority.REBUILD,
+                )
             )
         assert not is_encode_bearing(
-            JobSpec(JobOperation.MAINTENANCE, JobSource.MAINTENANCE, None, None)
+            JobSpec(
+                JobOperation.MAINTENANCE,
+                JobSource.MAINTENANCE,
+                None,
+                None,
+                RunAuthority.PUBLICATION,
+            )
         )
         assert not is_encode_bearing(
-            JobSpec(JobOperation.INDEX, JobSource.MAINTENANCE, None, None)
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.MAINTENANCE,
+                None,
+                None,
+                RunAuthority.PUBLICATION,
+            )
         )
 
     def test_encode_slot_is_single_capacity_and_reported(self) -> None:

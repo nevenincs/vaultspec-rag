@@ -18,6 +18,7 @@ from typing import cast
 import pytest
 
 from ... import _job_values
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import RunControlToken
 from ...job_manager.manager import JobManager
 from ...job_manager.models import ResourceUpdate
@@ -80,6 +81,7 @@ class TestManagedJobQuarantine:
             JobSource.VAULT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("http", "POST /jobs", str(tmp_path))
         manager.create(spec, initiator, idempotency_key="validation-1")
@@ -174,6 +176,7 @@ class TestManagedJobQuarantine:
                 JobSource.VAULT,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("watcher", "watcher_vault_index", str(tmp_path)),
         )
@@ -330,6 +333,7 @@ class TestManagedJobQuarantine:
                 JobSource.CODE,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("cli", "server job create", str(tmp_path)),
         )
@@ -403,6 +407,7 @@ class TestManagedJobQuarantine:
                 JobSource.VAULT,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("http", "POST /jobs", str(tmp_path)),
         )

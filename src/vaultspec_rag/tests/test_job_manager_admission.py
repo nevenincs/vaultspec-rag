@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -43,6 +44,7 @@ class TestManagedJobAdmission:
             JobSource.VAULT,
             _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("cli", "server job create", _TEST_PROJECT_ROOT)
 
@@ -68,6 +70,7 @@ class TestManagedJobAdmission:
                 JobSource.CODE,
                 _TEST_PROJECT_ROOT_OTHER,
                 JobMode.REBUILD,
+                RunAuthority.REBUILD,
             ),
             initiator,
         )
@@ -84,6 +87,7 @@ class TestManagedJobAdmission:
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         )
         initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
 
@@ -95,6 +99,7 @@ class TestManagedJobAdmission:
                 JobSource.CODE,
                 _TEST_PROJECT_ROOT_DIFFERENT,
                 JobMode.REBUILD,
+                RunAuthority.REBUILD,
             ),
             initiator,
             idempotency_key="request-7",
@@ -169,6 +174,7 @@ class TestManagedJobAdmission:
             JobSource.VAULT,
             _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
 
@@ -200,6 +206,7 @@ class TestManagedJobAdmission:
                 JobSource.MAINTENANCE,
                 None,
                 None,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("schedule", "storage maintenance", None),
         )
@@ -209,6 +216,7 @@ class TestManagedJobAdmission:
                 JobSource.MAINTENANCE,
                 None,
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("schedule", "invalid index", None),
         )
@@ -218,6 +226,7 @@ class TestManagedJobAdmission:
                 JobSource.VAULT,
                 None,
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("http", "POST /jobs", None),
         )
@@ -227,6 +236,7 @@ class TestManagedJobAdmission:
                 JobSource.CODE,
                 "relative/project",
                 JobMode.REBUILD,
+                RunAuthority.REBUILD,
             ),
             JobInitiator("cli", "server job create", "relative/project"),
         )
@@ -249,12 +259,14 @@ class TestManagedJobAdmission:
             JobSource.CODE,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         alias = JobSpec(
             JobOperation.INDEX,
             JobSource.CODE,
             str(tmp_path / "uncreated" / ".."),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
 
         created = manager.create(canonical, initiator)

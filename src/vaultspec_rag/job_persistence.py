@@ -1,25 +1,8 @@
-"""Versioned codec and atomic filesystem storage for canonical job state.
+"""Exact-current codec and atomic filesystem storage for canonical job state.
 
-How this file format is allowed to change
------------------------------------------
-
-The daemon writes this file itself on every lifecycle transition and reads it
-back on the next start, so a reader that refuses what an earlier writer emitted
-costs an operator their whole job history. Two properties keep a routine change
-from having that consequence:
-
-- **Growth is additive and does not move the version.** The reader takes only
-  the keys it knows and defaults every optional one, so a file carrying fields
-  a build has never heard of loads cleanly, and so does a file predating a
-  field that build now writes. Adding an optional field is therefore not a
-  format change at all, which is what keeps ``version`` from moving for
-  reasons that never justified it.
-- **``version`` is a supported range, not one number.** It moves only for a
-  re-layout no additive read can absorb, and :data:`_MINIMUM_READABLE_VERSION`
-  stays behind when it does, so the build that introduces a new layout still
-  reads every file written before it. A file numbered above what a build knows
-  is refused rather than read blind, because guessing at a layout that has
-  genuinely changed is how a misread record becomes a wrong decision.
+The daemon writes this file on every lifecycle transition and reads it on the
+next start. Required execution authority is part of the current layout, so a
+different version is refused rather than normalized, migrated, or inferred.
 """
 
 from __future__ import annotations
@@ -27,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from . import _typed_fields
@@ -62,6 +45,8 @@ from .job_models import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from .indexer._run_ledger_models import RunAuthority
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -79,12 +64,7 @@ MAX_IDEMPOTENCY_KEY_LENGTH = 256
 _SCHEMA = "vaultspec.rag.jobs"
 
 #: The newest layout this build emits and can interpret.
-_VERSION = 1
-
-#: The oldest layout this build still reads. Raising ``_VERSION`` for a real
-#: re-layout must leave this behind, so the release that changes the layout
-#: still loads every file written before it.
-_MINIMUM_READABLE_VERSION = 1
+_VERSION = 2
 
 #: How long an unpublished temporary must have sat untouched before recovery
 #: reclaims it. A publication holds the write lock and completes in
@@ -294,12 +274,7 @@ def _idempotency_binding_to_dict(
     return {
         "key": key,
         "job_id": binding.job_id,
-        "spec": {
-            "operation": spec.operation.value,
-            "source": spec.source.value,
-            "project_root": spec.project_root,
-            "mode": spec.mode.value if spec.mode is not None else None,
-        },
+        "spec": spec.to_dict(),
         "initiator": {
             "kind": initiator.kind,
             "command": initiator.command,
@@ -327,10 +302,7 @@ def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
     root = _required_mapping(payload, "job state")
     _validate_schema_header(root)
     raw_jobs = _required_list(root.get("jobs"), "jobs")
-    jobs = [
-        _normalize_legacy_start_paused(_job_snapshot_from_dict(item))
-        for item in raw_jobs
-    ]
+    jobs = [_job_snapshot_from_dict(item) for item in raw_jobs]
     ids = [job.id for job in jobs]
     if len(ids) != len(set(ids)):
         raise ValueError("persisted job IDs must be unique")
@@ -367,20 +339,7 @@ def _parse_persisted_manager_state(payload: object) -> PersistedManagerState:
 
 
 def _validate_schema_header(root: dict[str, object]) -> None:
-    """Accept every layout this build reads, and name what it refuses and why.
-
-    One message for three unrelated conditions left an operator unable to tell
-    a file this build predates from one it cannot parse at all, so each states
-    the direction of the mismatch and the range that would have been read.
-
-    Only one of the three carries a dedicated type. A file numbered above this
-    range is intact and a newer build wrote it, which is a condition a caller
-    must be able to act on differently. The other two are not: a layout older
-    than the readable floor is one this build genuinely cannot interpret and
-    has no newer sibling to preserve it for, and a foreign schema is not this
-    format at all. Both stay plain refusals so neither can ever be reported as
-    an intact file waiting for a build that reads it.
-    """
+    """Require the exact current layout and distinguish a newer writer."""
     schema = root.get("schema")
     if schema != _SCHEMA:
         raise ValueError(
@@ -392,39 +351,14 @@ def _validate_schema_header(root: dict[str, object]) -> None:
     if version > _VERSION:
         raise NewerStateVersionError(
             version,
-            minimum_readable=_MINIMUM_READABLE_VERSION,
+            minimum_readable=_VERSION,
             maximum_readable=_VERSION,
         )
-    if version < _MINIMUM_READABLE_VERSION:
+    if version < _VERSION:
         raise ValueError(
             f"job-state version {version} is no longer readable; this build "
-            f"reads versions {_MINIMUM_READABLE_VERSION} to {_VERSION}"
+            f"reads only version {_VERSION}"
         )
-
-
-def _normalize_legacy_start_paused(job: JobSnapshot) -> JobSnapshot:
-    """Upgrade the exact start-paused timestamp shape emitted by the v1 writer."""
-    timestamps = job.timestamps
-    acknowledgement = timestamps.control_acknowledged_at
-    if (
-        job.state is JobState.PAUSED
-        and job.desired_state is DesiredJobState.PAUSED
-        and job.attempt.number == 1
-        and timestamps.started_at is None
-        and timestamps.finished_at is None
-        and timestamps.control_requested_at is None
-        and acknowledgement is not None
-        and acknowledgement == timestamps.created_at
-        and timestamps.state_changed_at == timestamps.created_at
-    ):
-        return replace(
-            job,
-            timestamps=replace(
-                timestamps,
-                control_requested_at=acknowledgement,
-            ),
-        )
-    return job
 
 
 def _validate_persisted_generation(
@@ -433,7 +367,7 @@ def _validate_persisted_generation(
 ) -> None:
     by_id = {job.id: job for job in jobs}
     active_identities: set[
-        tuple[JobOperation, JobSource, JobMode | None, str | None]
+        tuple[JobOperation, JobSource, JobMode | None, RunAuthority, str | None]
     ] = set()
     for job in jobs:
         _validate_persisted_job(job)
@@ -626,6 +560,8 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
 
 
 def _job_spec_from_dict(value: object) -> JobSpec:
+    from .indexer._run_ledger_models import RunAuthority
+
     raw = _required_mapping(value, "job spec")
     mode = _optional_str(raw.get("mode"), "job mode")
     return JobSpec(
@@ -633,6 +569,7 @@ def _job_spec_from_dict(value: object) -> JobSpec:
         source=JobSource(_required_str(raw.get("source"), "job source")),
         project_root=_optional_str(raw.get("project_root"), "job project_root"),
         mode=JobMode(mode) if mode is not None else None,
+        authority=RunAuthority(_required_str(raw.get("authority"), "job authority")),
     )
 
 

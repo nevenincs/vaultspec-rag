@@ -14,6 +14,7 @@ from ... import _job_values
 from ... import jobs as _managed_jobs
 from ..._job_errors import JobError, JobErrorKind, remediation
 from ...cli import app
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import RunControlToken
 from ...job_manager._control import AttemptTerminal
 from ...job_models import (
@@ -48,6 +49,7 @@ async def _seed_terminal_resilience_job(
             source=JobSource.CODE,
             project_root=str(project_root),
             mode=JobMode.REBUILD,
+            authority=RunAuthority.REBUILD,
         ),
         JobInitiator("cli", "server jobs", str(project_root)),
         start_paused=outcome_name == "controlled",

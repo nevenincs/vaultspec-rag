@@ -16,6 +16,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 if TYPE_CHECKING:
     import anyio
 
+    from ..indexer._run_ledger_models import RunAuthority
     from .manager import JobManager
     from .state import JobLifecycleState
 
@@ -32,6 +33,7 @@ from ..job_control import (
 )
 from ..job_models import (
     DesiredJobState,
+    JobMode,
     JobOutcome,
     JobOutcomeStatus,
     JobSnapshot,
@@ -76,6 +78,7 @@ class _DispatchAdmission:
     binding: JobDispatchBinding
     attempt: int
     control: RunControlToken
+    authority: RunAuthority
 
 
 class JobManagerExecution(JobManagerState):
@@ -190,6 +193,7 @@ class JobManagerExecution(JobManagerState):
             binding=binding,
             attempt=managed.snapshot.attempt.number,
             control=RunControlToken(),
+            authority=managed.snapshot.spec.authority,
         )
 
     def _dispatch_runtime_refusal_locked(
@@ -197,6 +201,19 @@ class JobManagerExecution(JobManagerState):
         managed: ManagedJob,
     ) -> JobOutcome | None:
         """Return the exact state refusal that prevents attempt admission."""
+        from ..indexer._run_ledger_models import RunAuthority
+
+        authority = managed.snapshot.spec.authority
+        mode = managed.snapshot.spec.mode
+        if authority is RunAuthority.AUDIT_VERIFICATION or (
+            mode is JobMode.REBUILD and authority is not RunAuthority.REBUILD
+        ):
+            return self._error(
+                "dispatch",
+                "job_authority_not_executable",
+                "The current execution binding cannot honor this job authority.",
+                managed,
+            )
         if managed.runtime.task is not None:
             return self._error(
                 "dispatch",
@@ -326,6 +343,7 @@ class JobManagerExecution(JobManagerState):
                     attempt=admission.attempt,
                     control=admission.control,
                     binding=admission.binding,
+                    authority=admission.authority,
                 ),
                 name=f"vaultspec-job-{job_id}-attempt-{admission.attempt}",
             )
@@ -369,9 +387,7 @@ class JobManagerExecution(JobManagerState):
                 self._run_attempt_after_start(
                     start_gate,
                     job_id=job_id,
-                    attempt=admission.attempt,
-                    control=admission.control,
-                    binding=admission.binding,
+                    admission=admission,
                 ),
                 name=f"vaultspec-job-{job_id}-attempt-{admission.attempt}",
             )
@@ -541,6 +557,7 @@ class JobManagerExecution(JobManagerState):
         attempt: int,
         control: RunControlToken,
         binding: JobDispatchBinding,
+        authority: RunAuthority,
     ) -> AttemptExit:
         task = asyncio.current_task()
         if task is None:
@@ -556,6 +573,7 @@ class JobManagerExecution(JobManagerState):
             attempt=attempt,
             task=task,
             control=control,
+            authority=authority,
         )
         started = time.perf_counter()
         result: JobExecutionResult | None = None
@@ -613,17 +631,16 @@ class JobManagerExecution(JobManagerState):
         start_gate: asyncio.Event,
         *,
         job_id: str,
-        attempt: int,
-        control: RunControlToken,
-        binding: JobDispatchBinding,
+        admission: _DispatchAdmission,
     ) -> AttemptExit:
         """Hold execution until its runtime ownership is durably published."""
         await start_gate.wait()
         return await self._run_attempt(
             job_id=job_id,
-            attempt=attempt,
-            control=control,
-            binding=binding,
+            attempt=admission.attempt,
+            control=admission.control,
+            binding=admission.binding,
+            authority=admission.authority,
         )
 
     def _attempt_limiter(self, job_id: str) -> anyio.CapacityLimiter:

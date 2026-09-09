@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._atomic_write import write_json_atomically
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     DesiredJobState,
@@ -79,6 +80,48 @@ class TestPersistedJobStateRoundTrip:
         state = _generation(snapshot)
         save_persisted_state(path, state)
         assert load_persisted_state(path) == state
+
+    @pytest.mark.parametrize("authority", list(RunAuthority))
+    def test_every_explicit_authority_survives_the_job_codec(
+        self, tmp_path: Path, authority: RunAuthority
+    ) -> None:
+        snapshot = _snapshot_in_state(
+            JobState.QUEUED,
+            spec=replace(_spec(), authority=authority),
+        )
+        state = _generation(snapshot)
+        path = tmp_path / "jobs-state.json"
+
+        save_persisted_state(path, state)
+
+        assert load_persisted_state(path) == state
+
+    def test_idempotency_spec_writes_the_same_explicit_authority(
+        self, tmp_path: Path
+    ) -> None:
+        snapshot = _snapshot_in_state(JobState.QUEUED)
+        state = PersistedManagerState(
+            jobs=(snapshot,),
+            bindings=(
+                (
+                    "authority-key",
+                    IdempotencyBinding(
+                        signature=(snapshot.spec, snapshot.initiator, False),
+                        job_id=snapshot.id,
+                    ),
+                ),
+            ),
+        )
+        path = tmp_path / "jobs-state.json"
+
+        save_persisted_state(path, state)
+        payload = cast(
+            "dict[str, object]", json.loads(path.read_text(encoding="utf-8"))
+        )
+        record = cast("list[dict[str, object]]", payload["idempotency"])[0]
+        encoded = cast("dict[str, object]", record["spec"])
+
+        assert encoded["authority"] == RunAuthority.PUBLICATION.value
 
     def test_a_whole_generation_of_distinct_jobs_survives_with_its_bindings(
         self, tmp_path: Path
@@ -283,17 +326,13 @@ class TestPersistedJobStateRoundTrip:
         }
         assert loaded.capabilities == snapshot.capabilities
 
-    def test_a_start_paused_record_from_an_older_writer_gains_its_request_stamp(
+    def test_old_start_paused_timestamp_shape_is_refused_without_normalization(
         self, tmp_path: Path
     ) -> None:
-        # The one deliberate asymmetry in the round trip. An older writer
-        # emitted a start-paused job with an acknowledgement and no request,
-        # which no current state machine can produce; loading repairs it. The
-        # result is intentionally NOT the snapshot that was written.
         spec = _spec()
         acknowledged = 1000.0
-        legacy = JobSnapshot(
-            id="job-legacy",
+        old_shape = JobSnapshot(
+            id="job-old-shape",
             revision=1,
             spec=spec,
             state=JobState.PAUSED,
@@ -314,22 +353,17 @@ class TestPersistedJobStateRoundTrip:
             resilience=None,
         )
         path = tmp_path / "jobs-state.json"
-        save_persisted_state(path, _generation(legacy))
-        loaded = load_persisted_state(path).jobs[0]
-        assert loaded.timestamps.control_requested_at == acknowledged
-        assert loaded == replace(
-            legacy,
-            timestamps=replace(legacy.timestamps, control_requested_at=acknowledged),
-        )
+        save_persisted_state(path, _generation(old_shape))
+
+        with pytest.raises(
+            ValueError,
+            match="control acknowledgement lacks a request",
+        ):
+            load_persisted_state(path)
 
 
 class TestPersistedJobStateSchemaContract:
-    """What a build accepts must not narrow to the exact file it writes.
-
-    A reader pinned to one version turns every future layout change into an
-    operator losing their history, which is the failure this states, and
-    tests, the boundaries of.
-    """
+    """The current codec accepts only its exact authority-bearing layout."""
 
     def _written_payload(self, tmp_path: Path) -> tuple[Path, dict[str, object]]:
         path = tmp_path / "jobs-state.json"
@@ -341,6 +375,27 @@ class TestPersistedJobStateSchemaContract:
     def _rewrite(self, path: Path, payload: dict[str, object]) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def test_version_one_is_refused_after_the_required_authority_cutover(
+        self, tmp_path: Path
+    ) -> None:
+        path, payload = self._written_payload(tmp_path)
+        payload["version"] = 1
+        self._rewrite(path, payload)
+
+        with pytest.raises(ValueError, match="version 1 is no longer readable"):
+            load_persisted_state(path)
+
+    def test_current_job_specs_require_persisted_authority(
+        self, tmp_path: Path
+    ) -> None:
+        path, payload = self._written_payload(tmp_path)
+        job = cast("list[dict[str, object]]", payload["jobs"])[0]
+        del cast("dict[str, object]", job["spec"])["authority"]
+        self._rewrite(path, payload)
+
+        with pytest.raises(TypeError, match="job authority must be a non-empty string"):
+            load_persisted_state(path)
+
     def test_a_file_from_a_newer_build_is_refused_as_newer_not_as_damaged(
         self, tmp_path: Path
     ) -> None:
@@ -349,7 +404,7 @@ class TestPersistedJobStateSchemaContract:
         # the numbers as fields, so a caller can tell an intact file it is too
         # old for from a damaged one without matching on message text.
         path, payload = self._written_payload(tmp_path)
-        declared = 2
+        declared = 3
         payload["version"] = declared
         self._rewrite(path, payload)
         with pytest.raises(NewerStateVersionError) as caught:
@@ -517,7 +572,13 @@ class TestPersistedJobStateWriteSide:
             state_path=state_path,
         )
         created = manager.create(
-            JobSpec(JobOperation.INDEX, JobSource.CODE, root, JobMode.INCREMENTAL),
+            JobSpec(
+                JobOperation.INDEX,
+                JobSource.CODE,
+                root,
+                JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
+            ),
             JobInitiator("service", "reindex_codebase", root),
         )
         assert created.job is not None

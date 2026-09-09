@@ -46,6 +46,7 @@ from .. import _job_evidence
 from .. import jobs as _jobs
 from .._store_locks import VaultStoreLockedError
 from ..gpu_borrow_lease import is_borrower_capability
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import JobOutcome
 from ..logging_config import (
     InvalidManagedLogSourceError,
@@ -294,6 +295,7 @@ async def validated_index_request(
     operation = job_string(payload, "operation", default="index")
     source = job_string(payload, "source")
     mode = job_string(payload, "mode", default="incremental")
+    raw_authority = job_string(payload, "authority")
     if operation != JobOperation.INDEX.value:
         raise InvalidJobRequestError(
             "invalid_job_spec",
@@ -314,6 +316,21 @@ async def validated_index_request(
             "invalid_job_spec",
             f"mode must be one of {allowed}.",
         )
+    try:
+        authority = RunAuthority(raw_authority)
+    except ValueError as exc:
+        allowed = ", ".join(f"'{member}'" for member in RunAuthority)
+        raise InvalidJobRequestError(
+            "invalid_job_spec",
+            f"authority must be one of {allowed}.",
+        ) from exc
+    if authority is RunAuthority.AUDIT_VERIFICATION or (
+        mode == JobMode.REBUILD.value and authority is not RunAuthority.REBUILD
+    ):
+        raise InvalidJobRequestError(
+            "invalid_job_spec",
+            "The current index runner cannot honor the requested authority.",
+        )
     raw_root = job_string(payload, "project_root")
     if not Path(raw_root).expanduser().is_absolute():
         raise InvalidJobRequestError(
@@ -330,6 +347,7 @@ async def validated_index_request(
         source=JobSource(source),
         project_root=str(root),
         mode=JobMode(mode),
+        authority=authority,
     )
     admission = await _validate_index_job_spec(spec)
     initiator = _validated_initiator(

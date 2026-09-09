@@ -44,6 +44,7 @@ from ...indexer._preprocess_config import (
     load_preprocess_rules,
 )
 from ...indexer._preprocess_runner import run_preprocessor
+from ...indexer._run_ledger_models import RunAuthority
 from ...indexer._run_policy import RunPolicy
 from ...indexer._slicing import iter_weighted_document_slices
 from ...indexer._streaming_types import DocumentSliceStreamRequest
@@ -335,6 +336,7 @@ async def test_document_attempt_honors_cancellation_before_admission(
             JobSource.DOCUMENT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "cancel before admission", str(tmp_path)),
     )
@@ -343,7 +345,14 @@ async def test_document_attempt_honors_cancellation_before_admission(
     assert task is not None
     control = RunControlToken()
     control.request_cancel()
-    context = JobAttemptContext(manager, created.job.id, 1, task, control)
+    context = JobAttemptContext(
+        manager,
+        created.job.id,
+        1,
+        task,
+        control,
+        created.job.spec.authority,
+    )
     registry = ServiceRegistry()
     try:
         with pytest.raises(CancelRequested):
@@ -462,6 +471,7 @@ def test_document_retry_state_and_resource_profile_are_independent(
                 source=JobSource.DOCUMENT,
                 mode=JobMode.INCREMENTAL,
                 project_root=str(tmp_path),
+                authority=RunAuthority.PUBLICATION,
             )
         )
         is None
