@@ -119,7 +119,7 @@ One residue is left behind deliberately. The write-ahead log size is fixed when 
 
 ## Archives and how to restore them
 
-Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 20 GiB; both bounds are configurable. The setting for the second is named
+Snapshot archives land in `~/.vaultspec-rag/qdrant-server/archive/<prefix>/`, one subdirectory per reclaimed namespace and one `.snapshot` file per collection. Each maintenance cycle deletes archives older than 30 days, then evicts oldest-first if the archive directory exceeds 64 GiB; both bounds are configurable. The setting for the second is named
 `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`, and the number you give it is
 multiplied by 1024 three times, so it is read as GiB despite the name.
 
@@ -270,7 +270,7 @@ The token-gated `/metrics` route exports the rollup in Prometheus text format. A
 
 `store_drifted_collections` counts both collections still carrying oversized geometry and collections whose setting is already correct but whose merge is still running - so it reaching zero genuinely means the backend has finished converging, not merely that the settings have been written. Note that `maintenance_reconciled_bytes_total` credits only merges a cycle watched to completion; a merge that outlives its convergence budget still finishes, but its bytes go uncounted.
 
-The `GET /storage/survey` route carries a whole-backend rollup as a `totals` object: total bytes, namespace count, and a per-status byte breakdown - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling. The CLI `--json` survey emits the per-namespace list (`namespaces`, `returned`, `total`, `queried_root`) without that `totals` rollup.
+The `GET /storage/survey` route carries a whole-backend rollup as a `totals` object: total bytes, namespace count, total collection count, a per-status byte breakdown, the ephemeral backlog - the footprint still held by orphaned temp-rooted namespaces, the population next eligible for reclamation - and the count of namespaces whose point count could not be fully read - so a pile of live-but-leaked namespaces is visible even though it never counts as dangling, and an unread count is never mistaken for a verified zero. The CLI `--json` survey emits the per-namespace list (`namespaces`, `returned`, `total`, `queried_root`) without that `totals` rollup.
 
 Tuning the schedule, grace windows, cap, and archive bounds is covered by the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 

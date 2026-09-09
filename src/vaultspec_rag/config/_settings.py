@@ -105,7 +105,16 @@ class VaultSpecConfigWrapper:
         # reaches this window at all.
         "storage_autoprune_grace_hours_ephemeral": 24.0,
         "storage_autoprune_archive_retention_days": 30.0,
-        "storage_autoprune_archive_max_gb": 20.0,
+        # 64.0, not the original 20.0: the ephemeral window above makes every
+        # temp-rooted orphan eligible on the first cycle after it lands, and
+        # sweep_archive evicts oldest-first with no floor on age, so a cap
+        # already near full turns over within one or two cycles of that
+        # drain - collapsing the 30-day retention above to about one cycle
+        # exactly when the evidence is most wanted. 64.0 covers a full
+        # ephemeral drain plus the non-temp orphans behind it. This is real,
+        # ongoing disk cost accepted deliberately for that headroom, not a
+        # one-time allowance; once the backlog clears it is mostly unused.
+        "storage_autoprune_archive_max_gb": 64.0,
         "storage_autoprune_max_per_cycle": 16,
         # Ephemeral idle-TTL tier: a temp-rooted namespace whose
         # persisted last_indexed stamp is older than this is treated as
