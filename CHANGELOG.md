@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.4.27](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.26...vaultspec-rag-v0.4.27) (2026-09-09)
+
+
+### Features
+
+* **dev:** add the `just init` worktree initialization package ([e38e048](https://github.com/nevenincs/vaultspec-rag/commit/e38e048b67e4c87a75c6516e04c6b7c05a3d8fb5))
+* **dev:** add the `just init` worktree initialization package ([e83fb0f](https://github.com/nevenincs/vaultspec-rag/commit/e83fb0f7b46865fd0e550dfb6a81ab80b0a7cd68))
+* **dev:** add the `just init` worktree initialization package ([81c7c44](https://github.com/nevenincs/vaultspec-rag/commit/81c7c44306eece8eb4f02499c38328260ed7eb5d))
+* **dev:** annotate the diff with lint and type findings under CI ([e1af738](https://github.com/nevenincs/vaultspec-rag/commit/e1af738ebe00001fcb2439637608300542cbce8c))
+* **justfile:** make `just init` the worktree entry point ([c11cd43](https://github.com/nevenincs/vaultspec-rag/commit/c11cd436d37f1e975cb25c1b2a16768186935788))
+* **status:** render the collection count, ephemeral backlog, and unverified marker ([e14b832](https://github.com/nevenincs/vaultspec-rag/commit/e14b832476dc359cc77d50b7284437ce822e6410))
+* **storage:** report collection count, ephemeral backlog, and unverified counts on the survey route ([0e3b62c](https://github.com/nevenincs/vaultspec-rag/commit/0e3b62c083201730925109415f52369df9c56b18))
+
+
+### Bug Fixes
+
+* **audit:** audit every pinned surface, not just what uv audit can see ([f227715](https://github.com/nevenincs/vaultspec-rag/commit/f227715e31db47fcc4526fe454944b0511ce3831))
+* **audit:** stop advisory dimensions swallowing scanner breakage ([d036a9a](https://github.com/nevenincs/vaultspec-rag/commit/d036a9aaa2194d469a5f3f1a65b9f65a2ce65f74))
+* **build:** default `just build` to the new all aggregate ([f6796f2](https://github.com/nevenincs/vaultspec-rag/commit/f6796f28c1d1c85d0f8d36e6c855994975dc73b9))
+* clear the Python gates across src, tools and dev ([941c05e](https://github.com/nevenincs/vaultspec-rag/commit/941c05efd5464d3b99d8d9e94db537e31b79b938))
+* **cli:** draw the start wait from the readiness budget it must cover ([f8ddd2c](https://github.com/nevenincs/vaultspec-rag/commit/f8ddd2c372cc0dd96016d4382360f43375dfc8d8))
+* **cli:** keep a slow migration inside the envelope contract ([161f160](https://github.com/nevenincs/vaultspec-rag/commit/161f160bb07b3ffb09f34e43a5b8d6f29e6d9698))
+* **config:** refuse a grace window short enough to act on a first sighting ([301db3f](https://github.com/nevenincs/vaultspec-rag/commit/301db3fc7484b1554294ff067c6305134d5db1c3))
+* **dev:** clear the Python gate, and lint workflows through the pinned recipe ([b07a397](https://github.com/nevenincs/vaultspec-rag/commit/b07a397778adea9ec9c5b6831221d6c310cbf1b5))
+* **dev:** give the init report an argument-typed dict ([9c73314](https://github.com/nevenincs/vaultspec-rag/commit/9c73314b97b278cbae40ae4db26d67dd0c333f40))
+* **dev:** make every aggregate run every step, as the contract says ([a331ea3](https://github.com/nevenincs/vaultspec-rag/commit/a331ea3f4cfebc51c2aed7d83a4542d59631c0ef))
+* **dev:** speak UTF-8 everywhere, not just around complexipy ([a54fb13](https://github.com/nevenincs/vaultspec-rag/commit/a54fb13b6b8d719f4c3a6f3ccfcde52f449ded69))
+* **dev:** stop `audit all` silencing the one dimension that gates ([7bed628](https://github.com/nevenincs/vaultspec-rag/commit/7bed628549c297ebd2563f6a24b6a188f4a201fd))
+* **guards:** prove the exit-code guard's justfile corpus is non-empty ([535821d](https://github.com/nevenincs/vaultspec-rag/commit/535821d73392bc629a21df06e7194550fea7020b))
+* **qdrant:** let a still-loading store finish opening ([7c4bd6d](https://github.com/nevenincs/vaultspec-rag/commit/7c4bd6df8071a7ae3ac12be8d43399acdc744156))
+* **storage:** carry the names a partial drop destroyed onto its outcome ([5ebe5cf](https://github.com/nevenincs/vaultspec-rag/commit/5ebe5cff95d619f528526f11848dc1b49c708c48))
+* **storage:** count the listing as part of counting the namespace ([7b05c82](https://github.com/nevenincs/vaultspec-rag/commit/7b05c829983f25eb0ac233805e79207ea14eaee8))
+* **storage:** defer one namespace on a slow server, not the whole cycle ([f51cc02](https://github.com/nevenincs/vaultspec-rag/commit/f51cc021371ba84deb3df3a05bec5b8c441e1728))
+* **storage:** keep a failing drop inside the apply path ([14230a5](https://github.com/nevenincs/vaultspec-rag/commit/14230a5d5db7c450775d5845a84a0bd494efa06f))
+* **storage:** keep a retried archive naming what the first attempt saved ([d651308](https://github.com/nevenincs/vaultspec-rag/commit/d651308298af07a3a6731c85c143921fe89d236a))
+* **storage:** keep ephemerality once the sandbox is torn down ([1c3857e](https://github.com/nevenincs/vaultspec-rag/commit/1c3857e945b144ee1354094e335a65d78163234c))
+* **storage:** keep ephemerality once the sandbox is torn down ([b08a148](https://github.com/nevenincs/vaultspec-rag/commit/b08a1488e278059ee4e307396c586b97027a5ea0))
+* **storage:** leave an archive directory holding exactly what its manifest names ([72880fa](https://github.com/nevenincs/vaultspec-rag/commit/72880facf3be8a2045b10dab64f5c08cce95b9d8))
+* **storage:** prune generation grace-ledger stamps for vanished collections ([e8a422c](https://github.com/nevenincs/vaultspec-rag/commit/e8a422c37fdb6c0154e1227ebd597fe4fc7cc408))
+* **storage:** raise the archive cap so an ephemeral drain does not evict its own evidence ([310c137](https://github.com/nevenincs/vaultspec-rag/commit/310c137a9d091910c01e06bd1883ccdb05841518))
+* **storage:** refuse an archive holding artifacts its manifest does not name ([f14b016](https://github.com/nevenincs/vaultspec-rag/commit/f14b016409f40f8f894c3b36b25568039d4b88f4))
+* **storage:** report a partial namespace drop instead of raising it away ([866624f](https://github.com/nevenincs/vaultspec-rag/commit/866624f2ec3a3dee5a525ab6f37e1585dbb0967b))
+* **storage:** state the Windows restore limit up front, and stop defaulting an unverified point count to true ([9d13a90](https://github.com/nevenincs/vaultspec-rag/commit/9d13a90b7ec374eb03a67b17fa990406d3b11837))
+* **storage:** stop a failed count reading as an empty namespace ([4a1eabb](https://github.com/nevenincs/vaultspec-rag/commit/4a1eabb7ac9c4ff0731f041868856f3482e6795c))
+* **storage:** stop a partial drop's entry naming the collections it destroyed ([51158ac](https://github.com/nevenincs/vaultspec-rag/commit/51158acb1f3b025ca7f8f286304957fdfdd396fe))
+* **storage:** stop a slow generation pass from ending the cycle ([69656eb](https://github.com/nevenincs/vaultspec-rag/commit/69656eba3dd20540a07b93dbe805456b6e776951))
+* **storage:** stop an unreadable job registry authorising a drop ([127545a](https://github.com/nevenincs/vaultspec-rag/commit/127545ae19daf302c7184547efaffe0bf7d300ee))
+* **storage:** stop one slow count unwinding the whole survey ([9c6381b](https://github.com/nevenincs/vaultspec-rag/commit/9c6381befd155ccee25476ee7ab37f05af216348))
+* **storage:** stop the post-archive re-count blaming a writer that was not there ([546222f](https://github.com/nevenincs/vaultspec-rag/commit/546222f11b1a2882f2401455553afc624b4e18b2))
+* **storage:** treat a server that answers with an error as one that cannot answer ([c38acb9](https://github.com/nevenincs/vaultspec-rag/commit/c38acb9739478b42c1d2a27ba6fc2ad20552590c))
+* **test:** make `test all` run every lane instead of one ([15552c1](https://github.com/nevenincs/vaultspec-rag/commit/15552c1085909fdd5f2769a15c9678247114cb20))
+* **tests:** annotate the readiness fixtures as generators ([27b55e7](https://github.com/nevenincs/vaultspec-rag/commit/27b55e7f6023dfc731241025d5411497337a8dd3))
+
 ## [0.4.26](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.25...vaultspec-rag-v0.4.26) (2026-09-07)
 
 
