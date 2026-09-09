@@ -31,10 +31,14 @@ name: CI
 # `test_ci_jobs_reach_a_verdict.py` holds the ceilings and the groups above.
 #
 # THE TRUST QUESTION. This repository is PUBLIC, and a `pull_request` from a
-# fork runs code the author of the pull request controls. That code runs on
-# the fleet like everything else, so the protection comes from the
-# repository's own fork-approval setting for workflow runs rather than from
-# where the job lands.
+# fork runs code the author of the pull request controls. Admitting that code
+# to the self-hosted fleet hands a stranger execution on this hardware, so
+# every self-hosted job carries `if: github.event_name != 'pull_request' ||
+# github.event.pull_request.head.repo.full_name == github.repository` -
+# unreachable from a fork, unaffected for every pull request this project
+# actually gets. Job placement is the boundary; the repository's own
+# fork-approval setting for workflow runs is the backstop behind it, not the
+# other way around.
 on:
   push:
     branches:
@@ -88,6 +92,12 @@ jobs:
     # a contributor gets all the findings from one run rather than one per
     # push. Its membership is data in `dev/toolchain.py`, so this job and the
     # gates cannot disagree about what "everything" means.
+    #
+    # A fork's pull request must never reach the self-hosted fleet: the
+    # workflow it would run is the fork's own, so admitting one hands a
+    # stranger execution on this hardware. Same-repo pull requests are
+    # unaffected, which is every pull request this project actually gets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 40
     concurrency:
       group: ci-lint-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
@@ -140,6 +150,11 @@ jobs:
 
   tests:
     name: "Test: Full Suite py${{ matrix.python-version }} (Linux)"
+    # A fork's pull request must never reach the self-hosted fleet: the
+    # workflow it would run is the fork's own, so admitting one hands a
+    # stranger execution on this hardware. Same-repo pull requests are
+    # unaffected, which is every pull request this project actually gets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 45
     concurrency:
       # The matrix leg is part of the group, so the two interpreters queue
@@ -224,6 +239,11 @@ jobs:
   # anyway.
   tests-windows:
     name: "Test: Full Suite (Windows)"
+    # A fork's pull request must never reach the self-hosted fleet: the
+    # workflow it would run is the fork's own, so admitting one hands a
+    # stranger execution on this hardware. Same-repo pull requests are
+    # unaffected, which is every pull request this project actually gets.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     continue-on-error: true
     timeout-minutes: 60
     concurrency:
@@ -443,8 +463,8 @@ jobs:
     #
     # SECURITY (public repo, self-hosted runner on a real workstation): running
     # arbitrary code here is RCE on the host. workflow_dispatch requires write
-    # access, so a fork PR can never start this job; the hosted tiers above run
-    # on every PR with no secrets.
+    # access, so a fork PR can never start this job; the other self-hosted
+    # tiers carry the same-repo guard above and are unreachable from one too.
     # Opt-in per dispatch. Previously ANY manual run started this tier, so a
     # dispatch aimed at something else silently paid ~40 minutes on the one
     # machine carrying the cuda label - and blocked every other GPU run while

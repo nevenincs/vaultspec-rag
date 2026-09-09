@@ -1,27 +1,17 @@
 """What a fork's pull request may and may not reach, and what it must run.
 
-THIS REPLACED A GUARD THAT ASSERTED THE OPPOSITE OF THE DECISION. Its
-predecessor held that no job reachable from a fork pull request may run on the
-self-hosted fleet. That was true once; the workflow header then recorded the
-reversal - the fleet runs pull requests like everything else, and the
-containment comes from the repository's fork-approval setting for workflow
-runs rather than from where the job lands. The guard was never updated, so it
-had been failing continuously against a workflow that was doing exactly what
-it had been changed to do. A red guard nobody can act on is worse than no
-guard: it trains people to read the failure list and skip a line.
+Two properties hold the pull-request lane's shape together and neither is
+visible from reading one job. No self-hosted job may run for a fork's pull
+request, because the workflow it would run is the fork's own, and admitting
+one hands a stranger execution on this hardware. And the provisioning proofs
+must be among what a pull request runs, because the failure they exist to
+catch is a Windows file-locking behaviour that skips silently everywhere else
+- a regression in it would otherwise reach the default branch unseen.
 
-WHAT IS STILL WORTH ASSERTING. The reversal did not extend to the GPU tier.
-That job runs on a workstation carrying a live service and the only card in
-the fleet, and it stays dispatch-only precisely so a pull request can never
-start it - which is a containment a workflow edit could remove in one line and
-nothing else would notice.
-
-AND WHAT A PULL REQUEST MUST NOT SKIP. The provisioning proofs carry
-``skipif(sys.platform != "win32")``: on a Linux runner they report as skipped
-and prove nothing. Without a Windows leg in the pull-request lane, the
-environment-destruction proof cannot fail a pull request at all, and a
-Windows-only regression reaches the default branch unseen. This is the reason
-the Windows job runs on every event rather than on pushes only.
+THE GPU TIER NEEDS NO SAME-REPO CLAUSE OF ITS OWN. That job runs on a
+workstation carrying a live service and the only card in the fleet, and it
+stays dispatch-only, which requires write access, so a fork's pull request can
+never start it regardless of the guard every other self-hosted job carries.
 """
 
 from __future__ import annotations
@@ -40,6 +30,11 @@ GPU_JOB = "gpu-tests"
 #: The lane that can only fail on Windows, and so must run there.
 WINDOWS_ONLY_LANE = "test-provisioning"
 
+#: The clause that excludes a fork's pull request specifically. A self-hosted
+#: job reachable by `pull_request` at all must carry this in its `if:`; one
+#: that does not runs a fork's own workflow on this hardware.
+SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
+
 
 def _job(job_id: str) -> workflows.Job:
     """Return the named merge-box job, failing loudly when it is gone."""
@@ -51,6 +46,24 @@ def _job(job_id: str) -> workflows.Job:
         "guard; if it was deleted, the property it holds went with it and "
         "that is a decision to make deliberately."
     )
+
+
+def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
+    """A fork's pull request never reaches the self-hosted fleet.
+
+    Guard assertion: every self-hosted job either skips `pull_request`
+    entirely (the GPU tier) or carries :data:`SAME_REPO_CLAUSE` in its `if:`.
+    A self-hosted job with neither runs a fork's own workflow on this
+    hardware, which is the exposure the trust boundary exists to close.
+    """
+    offenders = {
+        job.job_id: job.condition
+        for job in workflows.load_jobs(WORKFLOW)
+        if job.self_hosted
+        and job.reaches("pull_request")
+        and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
+    }
+    assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
 
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
