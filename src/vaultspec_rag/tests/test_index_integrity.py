@@ -7,7 +7,9 @@ leaves behind - no hand-rolled stand-ins for the manifest shape.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import sqlite3
 from typing import TYPE_CHECKING
 
 import pytest
@@ -37,6 +39,7 @@ from ..indexer._document_meta import (
 from ..indexer._file_state import FileState
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
@@ -540,3 +543,839 @@ class TestACollapsedResultPageIsReported:
         )
         assert "result_collapse" not in state
         assert shortfall_warnings(state) == []
+
+
+class _AuditStore:
+    """Bounded read-only store double carrying canonical backend payloads."""
+
+    TABLE_NAME = "vault_docs"
+    CODE_TABLE_NAME = "codebase_docs"
+    DOCUMENT_TABLE_NAME = "document_docs"
+
+    def __init__(
+        self,
+        backend_identity: str,
+        rows: list[dict[str, object]],
+        *,
+        collection: str = CODE_TABLE_NAME,
+    ) -> None:
+        self.backend_identity = backend_identity
+        self._rows = rows
+        self._collection = collection
+        self._after_first_page: Callable[[], None] | None = None
+        self._page_seen = False
+        self.requested_limits: list[int] = []
+
+    @staticmethod
+    def index_audit_point_id_matches(
+        physical_id: object,
+        logical_id: str,
+    ) -> bool:
+        return (
+            isinstance(physical_id, int)
+            and not isinstance(physical_id, bool)
+            and physical_id == _physical_audit_id(logical_id)
+        )
+
+    def scroll_index_audit_content(
+        self,
+        collection: str,
+        *,
+        limit: int,
+        offset: object | None,
+    ) -> tuple[list[dict[str, object]], object | None]:
+        assert collection == self._collection
+        self.requested_limits.append(limit)
+        start = int(offset) if isinstance(offset, int) else 0
+        page = self._rows[start : start + limit]
+        next_offset = start + len(page) if start + len(page) < len(self._rows) else None
+        if not self._page_seen:
+            self._page_seen = True
+            callback = self._after_first_page
+            if callback is not None:
+                callback()
+        return page, next_offset
+
+
+def _audit_signature(root: Path, backend_identity: str, collection: str):
+    from ..indexer._content_policy import ContentKind
+    from ..indexer._run_ledger_models import RunOperation, RunSignature
+    from ..store_schema import STORAGE_SCHEMA_VERSION
+
+    return RunSignature(
+        root_identity=str(root.resolve()),
+        collection_identity=collection,
+        source_type=ContentKind.CODE,
+        operation=RunOperation.FULL,
+        clean=True,
+        model_identity="audit-model",
+        dense_dimensions=8,
+        embedding_schema=2,
+        payload_schema=STORAGE_SCHEMA_VERSION,
+        content_epoch="audit-content",
+        membership_epoch="audit-membership",
+        preprocessing_identity="audit-chunking",
+        configuration_fingerprint="audit-config",
+        policy_fingerprint="audit-policy",
+        backend_identity=backend_identity,
+    )
+
+
+def _seed_audit_proof(
+    root: Path,
+    evidence_rows: tuple[tuple[str, str, tuple[str, ...]], ...],
+):
+    from .._source_types import PublicSourceType
+    from .._store_writes import workspace_volume_path
+    from ..indexer._publication_proof import ProofCompatibilityKey, ProofProvenance
+    from ..indexer._run_ledger_models import index_run_ledger_path
+    from ..indexer._run_ledger_runtime import RunLedger
+    from ..store_runtime import configured_backend_identity
+    from ..store_schema import CODE_COLLECTION, STORAGE_SCHEMA_VERSION
+
+    backend_identity = configured_backend_identity(root)
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
+    signature = _audit_signature(root, backend_identity, CODE_COLLECTION)
+    generation = ledger.start_generation(signature)
+    key = ProofCompatibilityKey(
+        source_type=PublicSourceType.CODE,
+        root_identity=signature.root_identity,
+        backend_identity=backend_identity,
+        collection_identity=CODE_COLLECTION,
+        storage_schema=STORAGE_SCHEMA_VERSION,
+        payload_schema=STORAGE_SCHEMA_VERSION,
+        embedding_schema_identity="audit-model:8:2",
+        chunking_schema_identity="audit-chunking",
+        membership_identity="audit-membership",
+        content_identity="audit-content",
+        policy_identity="audit-policy",
+    )
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            INSERT INTO publication_proofs (
+                source_type, root_identity, backend_identity,
+                collection_identity, storage_schema, payload_schema,
+                embedding_schema_identity, chunking_schema_identity,
+                membership_identity, content_identity, policy_identity,
+                generation_id, revision, reservation_sequence,
+                indexed_identities, retained_points, provenance,
+                committed_at, verified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 5, ?, ?, ?, 1.0, 1.0)
+            """,
+            (
+                key.source_type.value,
+                key.root_identity,
+                key.backend_identity,
+                key.collection_identity,
+                key.storage_schema,
+                key.payload_schema,
+                key.embedding_schema_identity,
+                key.chunking_schema_identity,
+                key.membership_identity,
+                key.content_identity,
+                key.policy_identity,
+                generation.generation_id,
+                len(evidence_rows),
+                sum(len(point_ids) for _path, _identity, point_ids in evidence_rows),
+                ProofProvenance.VERIFIED.value,
+            ),
+        )
+        for rel_path, content_identity, point_ids in evidence_rows:
+            connection.execute(
+                """
+                INSERT INTO publication_evidence (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, content_identity,
+                    evidence_generation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key.source_type.value,
+                    key.root_identity,
+                    key.backend_identity,
+                    key.collection_identity,
+                    rel_path,
+                    content_identity,
+                    generation.generation_id,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO publication_points (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, rel_path, point_ordinal, point_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        key.source_type.value,
+                        key.root_identity,
+                        key.backend_identity,
+                        key.collection_identity,
+                        rel_path,
+                        ordinal,
+                        point_id,
+                    )
+                    for ordinal, point_id in enumerate(point_ids)
+                ),
+            )
+    return ledger, key, generation
+
+
+def _physical_audit_id(point_id: str) -> int:
+    digest = hashlib.sha256(point_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF
+
+
+def _code_audit_payload(point_id: str, rel_path: str) -> dict[str, object]:
+    return {
+        "chunk_id": point_id,
+        "path": rel_path,
+        "language": "python",
+        "content": f"content for {point_id}",
+        "line_start": 1,
+        "line_end": 1,
+        "node_type": None,
+        "function_name": None,
+        "class_name": None,
+        "source_path": None,
+        "preprocessor_id": None,
+        "anchor": None,
+        "locator_kind": None,
+        "locator_value_int": None,
+        "locator_value_str": None,
+        "locator_end_int": None,
+        "locator_end_str": None,
+        "domain": "production",
+    }
+
+
+def _vault_audit_payload(point_id: str, rel_path: str) -> dict[str, object]:
+    doc_id, raw_ordinal = point_id.rsplit("#c", 1)
+    return {
+        "doc_id": doc_id,
+        "chunk_ordinal": int(raw_ordinal),
+        "chunk_count": 1,
+        "path": rel_path,
+        "doc_type": "reference",
+        "feature": "audit",
+        "date": "2026-09-09",
+        "tags": ["#reference"],
+        "related": [],
+        "title": "Audit fixture",
+        "status": "accepted",
+        "content": "fixture content",
+        "doc_content": "fixture content",
+    }
+
+
+def _document_audit_payload(
+    point_id: str,
+    rel_path: str,
+    *,
+    fingerprint: str,
+) -> dict[str, object]:
+    return {
+        "document_id": point_id,
+        "source_path": rel_path,
+        "unit_ordinal": 0,
+        "content_fingerprint": fingerprint,
+        "content": "fixture content",
+        "title": None,
+        "section": None,
+        "anchor": None,
+        "locator_kind": None,
+        "locator_value_int": None,
+        "locator_value_str": None,
+        "locator_end_int": None,
+        "locator_end_str": None,
+        "document_metadata": {},
+        "unit_metadata": {},
+        "extractor_id": None,
+        "extractor_version": None,
+    }
+
+
+def _code_audit_row(point_id: str, rel_path: str) -> dict[str, object]:
+    return {
+        "id": _physical_audit_id(point_id),
+        "payload": _code_audit_payload(point_id, rel_path),
+        "vector": None,
+    }
+
+
+class TestCanonicalProofAudit:
+    @pytest.mark.parametrize(
+        ("source", "payload", "field", "bad_value"),
+        [
+            (
+                PublicSourceType.CODE,
+                _code_audit_payload("a:0", "src/a.py"),
+                "language",
+                None,
+            ),
+            (
+                PublicSourceType.VAULT,
+                _vault_audit_payload("adr/a#c0", "adr/a.md"),
+                "tags",
+                "#reference",
+            ),
+            (
+                PublicSourceType.DOCUMENT,
+                _document_audit_payload(
+                    "document-a",
+                    "docs/a.pdf",
+                    fingerprint="fingerprint-a",
+                ),
+                "unit_ordinal",
+                True,
+            ),
+        ],
+        ids=["missing-code-field", "wrong-vault-list", "bool-document-ordinal"],
+    )
+    def test_every_source_requires_the_current_payload_schema(
+        self,
+        source: PublicSourceType,
+        payload: dict[str, object],
+        field: str,
+        bad_value: object,
+    ) -> None:
+        from .._index_integrity import _audit_payload_identity
+
+        invalid = dict(payload)
+        if bad_value is None:
+            del invalid[field]
+        else:
+            invalid[field] = bad_value
+
+        with pytest.raises(ValueError, match="payload"):
+            _audit_payload_identity(source, {"payload": invalid})
+
+    def test_additive_payload_fields_remain_compatible(self) -> None:
+        from .._index_integrity import _audit_payload_identity
+
+        payload = _code_audit_payload("a:0", "src/a.py")
+        payload["future_additive_field"] = {"ignored": True}
+
+        identity = _audit_payload_identity(
+            PublicSourceType.CODE,
+            {"payload": payload},
+        )
+
+        assert identity.point_id == "a:0"
+        assert identity.rel_path == "src/a.py"
+
+    def test_missing_ledger_never_opens_storage_or_creates_state(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._publication_proof import ProofMissingError
+        from ..indexer._run_ledger_models import RunAuthority
+
+        opened = False
+
+        def forbidden_store():
+            nonlocal opened
+            opened = True
+            raise AssertionError("missing proof must be refused before storage opens")
+
+        before = set(tmp_path.rglob("*"))
+        with pytest.raises(ProofMissingError, match="rebuild"):
+            audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                forbidden_store,
+            )
+        assert opened is False
+        assert set(tmp_path.rglob("*")) == before
+
+    def test_existing_ledger_without_proof_is_not_seeded_or_rewritten(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import audit_index_integrity
+        from .._source_types import PublicSourceType
+        from .._store_writes import workspace_volume_path
+        from ..indexer._publication_proof import ProofMissingError
+        from ..indexer._run_ledger_models import RunAuthority, index_run_ledger_path
+        from ..indexer._run_ledger_runtime import RunLedger
+
+        path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
+        RunLedger(path)
+        before = path.read_bytes()
+
+        with pytest.raises(ProofMissingError, match="rebuild"):
+            audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                lambda: contextlib.nullcontext(None),
+            )
+
+        assert path.read_bytes() == before
+        with sqlite3.connect(path) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM publication_proofs"
+            ).fetchone() == (0,)
+
+    def test_exact_backend_matches_one_atomic_canonical_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import AUDIT_VERDICT_CONSISTENT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        evidence = (
+            ("src/a.py", "hash-a", ("a:0", "a:1")),
+            ("src/b.py", "hash-b", ("b:0",)),
+        )
+        _ledger, key, _generation = _seed_audit_proof(tmp_path, evidence)
+        store = _AuditStore(
+            key.backend_identity,
+            [
+                _code_audit_row("a:0", "src/a.py"),
+                _code_audit_row("a:1", "src/a.py"),
+                _code_audit_row("b:0", "src/b.py"),
+            ],
+        )
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+
+        assert result.verdict == AUDIT_VERDICT_CONSISTENT
+        assert result.expected_identities == 2
+        assert result.expected_points == 3
+        assert result.scanned_points == 3
+        assert result.matched_points == 3
+        assert result.missing_points == 0
+        assert result.extra_points == 0
+        assert result.foreign_points == 0
+        assert result.incompatible_points == 0
+        assert result.partial_identities == 0
+
+    def test_real_store_raw_identity_and_payload_compose_with_the_auditor(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import AUDIT_VERDICT_CONSISTENT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from .._store_models import CodeChunk
+        from ..indexer._run_ledger_models import RunAuthority
+        from ..store_runtime import VaultStore
+
+        point_id = "src/a.py:1-1"
+        _ledger, _key, _generation = _seed_audit_proof(
+            tmp_path,
+            (("src/a.py", "hash-a", (point_id,)),),
+        )
+        store = VaultStore(tmp_path, embedding_dim=8)
+        try:
+            store.upsert_code_chunks(
+                [
+                    CodeChunk(
+                        id=point_id,
+                        path="src/a.py",
+                        language="python",
+                        content="value = 1\n",
+                        line_start=1,
+                        line_end=1,
+                        vector=[0.1] * 8,
+                    )
+                ],
+                write_policy=None,
+            )
+
+            result = audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                lambda: contextlib.nullcontext(store),
+            )
+        finally:
+            store.close()
+
+        assert result.verdict == AUDIT_VERDICT_CONSISTENT
+        assert result.matched_points == 1
+        assert result.incompatible_points == 0
+
+    def test_physical_point_identity_must_match_canonical_logical_identity(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import AUDIT_VERDICT_DRIFT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        _ledger, key, _generation = _seed_audit_proof(
+            tmp_path,
+            (("src/a.py", "hash-a", ("a:0",)),),
+        )
+        row = _code_audit_row("a:0", "src/a.py")
+        row["id"] = _physical_audit_id("different-logical-point")
+        store = _AuditStore(key.backend_identity, [row])
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+
+        assert result.verdict == AUDIT_VERDICT_DRIFT
+        assert result.incompatible_points == 1
+        assert result.matched_points == 0
+        assert result.missing_points == 1
+
+    def test_incomplete_canonical_payload_is_incompatible(self, tmp_path: Path) -> None:
+        from .._index_integrity import AUDIT_VERDICT_DRIFT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        _ledger, key, _generation = _seed_audit_proof(
+            tmp_path,
+            (("src/a.py", "hash-a", ("a:0",)),),
+        )
+        row = _code_audit_row("a:0", "src/a.py")
+        payload = row["payload"]
+        assert isinstance(payload, dict)
+        del payload["language"]
+        store = _AuditStore(key.backend_identity, [row])
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+
+        assert result.verdict == AUDIT_VERDICT_DRIFT
+        assert result.incompatible_points == 1
+        assert result.matched_points == 0
+        assert result.missing_points == 1
+
+    def test_backend_and_ledger_reads_are_bounded_per_page(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import AUDIT_VERDICT_CONSISTENT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        evidence = tuple(
+            (f"src/file_{index:03d}.py", f"hash-{index}", (f"point-{index}",))
+            for index in range(257)
+        )
+        _ledger, key, _generation = _seed_audit_proof(tmp_path, evidence)
+        store = _AuditStore(
+            key.backend_identity,
+            [
+                _code_audit_row(point_ids[0], rel_path)
+                for rel_path, _content_identity, point_ids in evidence
+            ],
+        )
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+
+        assert result.verdict == AUDIT_VERDICT_CONSISTENT
+        assert result.scanned_points == 257
+        assert store.requested_limits == [256, 256]
+
+    @pytest.mark.parametrize(
+        ("rows", "field", "expected"),
+        [
+            (
+                [
+                    _code_audit_row("a:0", "src/a.py"),
+                    _code_audit_row("b:0", "src/b.py"),
+                ],
+                "missing_points",
+                1,
+            ),
+            (
+                [
+                    _code_audit_row("a:0", "src/a.py"),
+                    _code_audit_row("extra", "src/a.py"),
+                ],
+                "extra_points",
+                1,
+            ),
+            (
+                [
+                    _code_audit_row("a:0", "src/b.py"),
+                    _code_audit_row("b:0", "src/b.py"),
+                ],
+                "foreign_points",
+                1,
+            ),
+            (
+                [
+                    _code_audit_row("a:0", "src/a.py"),
+                    {"id": "broken", "payload": {"path": "src/a.py"}},
+                ],
+                "incompatible_points",
+                1,
+            ),
+        ],
+        ids=["missing", "extra", "foreign", "incompatible-payload"],
+    )
+    def test_exact_audit_classifies_every_backend_disagreement(
+        self,
+        tmp_path: Path,
+        rows: list[dict[str, object]],
+        field: str,
+        expected: int,
+    ) -> None:
+        from .._index_integrity import AUDIT_VERDICT_DRIFT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        _ledger, key, _generation = _seed_audit_proof(
+            tmp_path,
+            (
+                ("src/a.py", "hash-a", ("a:0", "a:1")),
+                ("src/b.py", "hash-b", ("b:0",)),
+            ),
+        )
+        store = _AuditStore(key.backend_identity, rows)
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.CODE,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+
+        assert result.verdict == AUDIT_VERDICT_DRIFT
+        assert getattr(result, field) == expected
+
+    def test_document_payload_content_identity_must_match_proof(
+        self, tmp_path: Path
+    ) -> None:
+        from dataclasses import replace
+
+        from .._index_integrity import AUDIT_VERDICT_DRIFT, audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._content_policy import ContentKind
+        from ..indexer._run_ledger_models import RunAuthority
+
+        ledger, code_key, generation = _seed_audit_proof(
+            tmp_path,
+            (("docs/a.pdf", "fingerprint-a", ("document-a",)),),
+        )
+        document_key = replace(
+            code_key,
+            source_type=PublicSourceType.DOCUMENT,
+            collection_identity="document_docs",
+        )
+        signature = replace(
+            generation.signature,
+            source_type=ContentKind.DOCUMENT,
+            collection_identity="document_docs",
+        )
+        document_generation = ledger.start_generation(signature)
+        with sqlite3.connect(ledger.path) as connection:
+            connection.execute(
+                "DELETE FROM publication_points WHERE source_type = 'code'"
+            )
+            connection.execute(
+                "DELETE FROM publication_evidence WHERE source_type = 'code'"
+            )
+            connection.execute(
+                "DELETE FROM publication_proofs WHERE source_type = 'code'"
+            )
+        # Seed the document projection against its own generation.
+        with sqlite3.connect(ledger.path) as connection:
+            connection.execute(
+                """
+                INSERT INTO publication_proofs (
+                    source_type, root_identity, backend_identity,
+                    collection_identity, storage_schema, payload_schema,
+                    embedding_schema_identity, chunking_schema_identity,
+                    membership_identity, content_identity, policy_identity,
+                    generation_id, revision, reservation_sequence,
+                    indexed_identities, retained_points, provenance,
+                    committed_at, verified_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    1, 0, 1, 1, 'verified', 1.0, 1.0
+                )
+                """,
+                (
+                    document_key.source_type.value,
+                    document_key.root_identity,
+                    document_key.backend_identity,
+                    document_key.collection_identity,
+                    document_key.storage_schema,
+                    document_key.payload_schema,
+                    document_key.embedding_schema_identity,
+                    document_key.chunking_schema_identity,
+                    document_key.membership_identity,
+                    document_key.content_identity,
+                    document_key.policy_identity,
+                    document_generation.generation_id,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO publication_evidence VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document_key.source_type.value,
+                    document_key.root_identity,
+                    document_key.backend_identity,
+                    document_key.collection_identity,
+                    "docs/a.pdf",
+                    "fingerprint-a",
+                    document_generation.generation_id,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO publication_points VALUES (?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    document_key.source_type.value,
+                    document_key.root_identity,
+                    document_key.backend_identity,
+                    document_key.collection_identity,
+                    "docs/a.pdf",
+                    "document-a",
+                ),
+            )
+        store = _AuditStore(
+            document_key.backend_identity,
+            [
+                {
+                    "id": _physical_audit_id("document-a"),
+                    "payload": _document_audit_payload(
+                        "document-a",
+                        "docs/a.pdf",
+                        fingerprint="wrong-fingerprint",
+                    ),
+                }
+            ],
+            collection="document_docs",
+        )
+
+        result = audit_index_integrity(
+            tmp_path,
+            PublicSourceType.DOCUMENT,
+            RunAuthority.AUDIT_VERIFICATION,
+            lambda: contextlib.nullcontext(store),
+        )
+        assert result.verdict == AUDIT_VERDICT_DRIFT
+        assert result.incompatible_points == 1
+
+    def test_open_receipt_refuses_before_backend_scan(self, tmp_path: Path) -> None:
+        from .._index_integrity import audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._publication_proof import ProofReadConflictError
+        from ..indexer._run_ledger_models import RunAuthority
+
+        ledger, key, generation = _seed_audit_proof(
+            tmp_path, (("src/a.py", "hash-a", ("a:0",)),)
+        )
+        with sqlite3.connect(ledger.path) as connection:
+            connection.execute(
+                """
+                INSERT INTO publication_receipts (
+                    receipt_id, reservation_sequence, source_type, root_identity,
+                    backend_identity, collection_identity, storage_schema,
+                    payload_schema, embedding_schema_identity,
+                    chunking_schema_identity, membership_identity,
+                    content_identity, policy_identity, generation_id,
+                    parent_revision, target_revision, next_mutation_ordinal,
+                    state, reserved_at, sealed_at, rollback_started_at,
+                    committed_at, rolled_back_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,
+                          'reserved', 2.0, NULL, NULL, NULL, NULL)
+                """,
+                (
+                    "audit-open-receipt",
+                    5,
+                    key.source_type.value,
+                    key.root_identity,
+                    key.backend_identity,
+                    key.collection_identity,
+                    key.storage_schema,
+                    key.payload_schema,
+                    key.embedding_schema_identity,
+                    key.chunking_schema_identity,
+                    key.membership_identity,
+                    key.content_identity,
+                    key.policy_identity,
+                    generation.generation_id,
+                    3,
+                    4,
+                ),
+            )
+        opened = False
+
+        def forbidden_store():
+            nonlocal opened
+            opened = True
+            raise AssertionError("open receipt must refuse before backend scan")
+
+        with pytest.raises(ProofReadConflictError, match="open receipt"):
+            audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                forbidden_store,
+            )
+        assert opened is False
+
+    def test_revision_change_during_backend_scan_refuses_mixed_state(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._publication_proof import ProofReadConflictError
+        from ..indexer._run_ledger_models import RunAuthority
+
+        ledger, key, _generation = _seed_audit_proof(
+            tmp_path, (("src/a.py", "hash-a", ("a:0",)),)
+        )
+        store = _AuditStore(
+            key.backend_identity,
+            [_code_audit_row("a:0", "src/a.py")],
+        )
+
+        def advance_revision() -> None:
+            with sqlite3.connect(ledger.path) as connection:
+                connection.execute(
+                    "UPDATE publication_proofs SET revision = revision + 1"
+                )
+
+        store._after_first_page = advance_revision
+        with pytest.raises(ProofReadConflictError, match="changed"):
+            audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                lambda: contextlib.nullcontext(store),
+            )
+
+    def test_publication_authority_cannot_enter_audit_path(
+        self, tmp_path: Path
+    ) -> None:
+        from .._index_integrity import audit_index_integrity
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        with pytest.raises(PermissionError, match="audit-verification authority"):
+            audit_index_integrity(
+                tmp_path,
+                PublicSourceType.CODE,
+                RunAuthority.PUBLICATION,
+                lambda: contextlib.nullcontext(None),
+            )

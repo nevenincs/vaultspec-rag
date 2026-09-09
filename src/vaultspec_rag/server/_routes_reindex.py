@@ -22,10 +22,15 @@ from starlette.responses import JSONResponse
 import vaultspec_rag.server as _m
 
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
+from .._store_locks import VaultStoreLockedError
 from ..indexer._run_ledger_models import RunAuthority
 from ._auth import require_token
 from ._runtime import get_request_runtime
-from ._utils import ProjectRootRequiredError, _resolve_root
+from ._utils import (
+    ProjectRootRequiredError,
+    _local_store_locked_error_dict,
+    _resolve_root,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -44,7 +49,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("vaultspec_rag.server")
 
-__all__ = ["clean_route", "reindex_route"]
+__all__ = ["audit_route", "clean_route", "reindex_route"]
 
 
 def _preprocess_preflight(
@@ -366,6 +371,61 @@ async def reindex_route(request: Request) -> JSONResponse:
     if "admission" in domain:
         response["admission"] = domain["admission"]
     return JSONResponse(response)
+
+
+async def audit_route(request: Request) -> JSONResponse:
+    """Verify canonical proof against the service-owned backend, without writes."""
+    from .._index_integrity import audit_index_sources
+    from ._routes import InvalidJobRequestError, job_payload, job_string
+
+    denied = require_token(request)
+    if denied is not None:
+        return denied
+    try:
+        payload = await job_payload(request, required=True)
+        raw_source = job_string(payload, "type")
+        try:
+            source = parse_source_type(raw_source, allow_aliases=False)
+        except SourceTypeParseError as exc:
+            raise InvalidJobRequestError("invalid_audit_request", str(exc)) from exc
+        raw_authority = job_string(payload, "authority")
+        try:
+            authority = RunAuthority(raw_authority)
+        except ValueError as exc:
+            raise InvalidJobRequestError(
+                "invalid_audit_request",
+                "authority must be 'audit_verification'",
+            ) from exc
+        if authority is not RunAuthority.AUDIT_VERIFICATION:
+            raise InvalidJobRequestError(
+                "invalid_audit_request",
+                "authority must be 'audit_verification'",
+            )
+        root = _resolve_root(job_string(payload, "project_root"))
+    except (InvalidJobRequestError, ProjectRootRequiredError, ValueError) as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "invalid_audit_request",
+                "message": str(exc),
+            },
+            status_code=400,
+        )
+
+    registry = get_request_runtime(request).registry
+    try:
+        result = await _run_in_thread(
+            partial(
+                audit_index_sources,
+                root,
+                source,
+                authority,
+                lambda: registry.lease_store(root),
+            )
+        )
+    except VaultStoreLockedError as exc:
+        return JSONResponse(_local_store_locked_error_dict(exc), status_code=409)
+    return JSONResponse(result, status_code=200 if result["ok"] else 409)
 
 
 async def clean_route(request: Request) -> JSONResponse:

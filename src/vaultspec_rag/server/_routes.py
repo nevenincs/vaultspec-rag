@@ -84,7 +84,7 @@ from ._routes_registry import (
     start_watcher_route,
     stop_watcher_route,
 )
-from ._routes_reindex import clean_route, reindex_route
+from ._routes_reindex import audit_route, clean_route, reindex_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
 from ._runtime import get_request_runtime
@@ -1478,6 +1478,7 @@ ROUTES: list[Route] = [
     Route("/search", search_route, methods=["POST"]),
     Route("/search-activity", search_activity_route, methods=["GET"]),
     Route("/reindex", reindex_route, methods=["POST"]),
+    Route("/index/audit", audit_route, methods=["POST"]),
     Route("/clean", clean_route, methods=["POST"]),
     Route("/projects", list_projects_route, methods=["GET"]),
     Route("/projects/evict", evict_project_route, methods=["POST"]),

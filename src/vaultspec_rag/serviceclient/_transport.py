@@ -92,6 +92,7 @@ __all__ = [
     "_try_http_delete_job",
     "_try_http_get_job",
     "_try_http_health",
+    "_try_http_index_audit",
     "_try_http_reindex",
     "_try_http_retry_job",
     "_try_http_set_job_desired_state",
@@ -900,6 +901,53 @@ def _try_http_reindex(  # noqa: PLR0913 - wire fields stay explicit and default-
             "ok": False,
             "error": "http_call_failed",
             "message": f"HTTP reindex on port {port} failed: {cls}: {exc}",
+        }
+
+
+def _try_http_index_audit(
+    audit_type: ReindexType,
+    port: int,
+    project_root: str,
+    *,
+    authority: RunAuthority,
+) -> dict[str, object] | None:
+    """Run exact non-seeding verification through the store-owning service."""
+    from ..indexer._run_ledger_models import RunAuthority as _RunAuthority
+
+    if authority is not _RunAuthority.AUDIT_VERIFICATION:
+        raise ValueError("index audit requires explicit audit-verification authority")
+    try:
+        source = parse_source_type(audit_type, allow_aliases=False)
+    except SourceTypeParseError as exc:
+        return exc.as_error_envelope()
+    try:
+        result = _do_http_call(
+            port,
+            "/index/audit",
+            {
+                "type": source.value,
+                "authority": authority.value,
+                "project_root": project_root,
+            },
+            timeout=resolve_timeout(
+                None,
+                setting="service_reindex_timeout_seconds",
+                label="index audit",
+                default=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            ),
+        )
+        return result if result is not None else {}
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            logger.debug(
+                "HTTP index audit on port %s: connection refused (%s)", port, exc
+            )
+            return None
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP index audit on port {port} failed: {cls}: {exc}",
         }
 
 

@@ -526,6 +526,273 @@ class TestIndexAuthorityBoundary:
             )
         ]
 
+    def test_full_audit_requires_explicit_type(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--full"],
+        )
+
+        assert result.exit_code == 2
+        assert "--full" in result.output
+        assert "explicit --type" in result.output
+
+    def test_full_audit_rejects_source_aliases_before_transport(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def forbidden_transport(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("audit aliases must be rejected before transport")
+
+        monkeypatch.setattr(
+            index_module,
+            "_try_http_index_audit",
+            forbidden_transport,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "codebase",
+                "--full",
+                "--port",
+                "9123",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "source" in result.output.lower()
+
+    @pytest.mark.parametrize("conflict", ["--rebuild", "--dry-run", "--borrow-gpu"])
+    def test_full_audit_rejects_publication_modes(
+        self,
+        tmp_path: Path,
+        conflict: str,
+    ) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                conflict,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "cannot be combined" in result.output
+
+    def test_full_audit_uses_separate_service_transport_and_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+        from ..indexer._run_ledger_models import RunAuthority
+
+        (tmp_path / ".vaultspec").mkdir()
+        calls: list[tuple[object, int, str, RunAuthority]] = []
+
+        def audit_call(
+            source: object,
+            port: int,
+            project_root: str,
+            *,
+            authority: RunAuthority,
+        ) -> dict[str, object]:
+            calls.append((source, port, project_root, authority))
+            return {
+                "ok": True,
+                "status": "consistent",
+                "domains": {
+                    "code": {
+                        "ok": True,
+                        "status": "consistent",
+                        "source": "code",
+                        "expected_points": 3,
+                        "scanned_points": 3,
+                    }
+                },
+            }
+
+        monkeypatch.setattr(index_module, "_try_http_index_audit", audit_call)
+
+        def forbidden_reindex(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("audit must not use publication reindex transport")
+
+        monkeypatch.setattr(
+            index_module,
+            "_try_http_reindex",
+            forbidden_reindex,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                "--port",
+                "9123",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert calls == [
+            (
+                index_module.PublicSourceType.CODE,
+                9123,
+                str(tmp_path),
+                RunAuthority.AUDIT_VERIFICATION,
+            )
+        ]
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        assert envelope["data"]["mode"] == "audit_verification"
+        assert envelope["data"]["via"] == "service"
+
+    def test_full_audit_mismatch_exits_nonzero_with_one_json_envelope(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def drift_audit(
+            _source: object,
+            _port: int,
+            _project_root: str,
+            *,
+            authority: object,
+        ) -> dict[str, object]:
+            del authority
+            return {
+                "ok": False,
+                "status": "drift",
+                "domains": {
+                    "code": {
+                        "ok": False,
+                        "status": "drift",
+                        "source": "code",
+                        "missing_points": 1,
+                    }
+                },
+            }
+
+        monkeypatch.setattr(
+            index_module,
+            "_try_http_index_audit",
+            drift_audit,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                "--port",
+                "9123",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["error"] == "audit_verification_failed"
+        assert envelope["data"]["domains"]["code"]["missing_points"] == 1
+
+    def test_full_audit_transport_sends_only_verification_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+        from ..serviceclient import _transport as transport
+
+        calls: list[tuple[int, str, dict[str, object]]] = []
+
+        def http_call(
+            port: int,
+            path: str,
+            payload: dict[str, object],
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            assert timeout > 0
+            calls.append((port, path, payload))
+            return {"ok": True}
+
+        monkeypatch.setattr(transport, "_do_http_call", http_call)
+
+        result = transport._try_http_index_audit(
+            PublicSourceType.CODE,
+            9123,
+            str(tmp_path),
+            authority=RunAuthority.AUDIT_VERIFICATION,
+        )
+
+        assert result == {"ok": True}
+        assert calls == [
+            (
+                9123,
+                "/index/audit",
+                {
+                    "type": "code",
+                    "authority": "audit_verification",
+                    "project_root": str(tmp_path),
+                },
+            )
+        ]
+
+    def test_full_audit_transport_rejects_publication_before_http(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+        from ..serviceclient import _transport as transport
+
+        def forbidden_http(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("publication authority must not reach audit HTTP")
+
+        monkeypatch.setattr(transport, "_do_http_call", forbidden_http)
+
+        with pytest.raises(ValueError, match="audit-verification"):
+            transport._try_http_index_audit(
+                PublicSourceType.CODE,
+                9123,
+                str(tmp_path),
+                authority=RunAuthority.PUBLICATION,
+            )
+
 
 class TestIndexSummaryCLI:
     """Human index summaries are covered through the CLI command surface."""
