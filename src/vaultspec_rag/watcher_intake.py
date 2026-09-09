@@ -7,12 +7,14 @@ re-indexing when changes are detected.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TC003
 import logging
 import time
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from anyio.to_thread import run_sync as _run_in_thread
 from watchfiles import (
     Change,
     awatch,  # pyright: ignore[reportUnknownVariableType]  # watchfiles awatch return type is partially stubbed
@@ -26,15 +28,19 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .registry import get_registry
-from .service_quiesce import QuiesceState
-from .watcher_durability import (
-    admit_watcher_attempt,
-    initialize_retry_policies,
-    persist_observed_sources,
-    raise_if_cancellation_requested,
-    run_durable_retry_transaction,
+from .watcher_controller import (
+    ControllerLimits,
+    ControllerReason,
+    ControllerSnapshot,
+    ControllerState,
+    WatcherController,
 )
-from .watcher_execution import submit_watcher_job
+from .watcher_durability import (
+    initialize_retry_policies,
+    persist_watcher_observations,
+    raise_if_cancellation_requested,
+)
+from .watcher_execution import controller_scope_from_retry_state, submit_watcher_job
 from .watcher_policy import (
     CONFIG_FILENAMES,
     is_code_change,
@@ -43,18 +49,16 @@ from .watcher_policy import (
     refresh_watcher_policy,
 )
 from .watcher_retry import (
-    WatcherRetryStateError,
+    WatcherPathEvent,
+    WatcherPathObservation,
+    WatcherRetryPolicy,
     WatcherSource,
 )
 from .watcher_runtime import (
-    ObservedSource,
     WatcherChangeRouting,
     WatcherConfiguration,
     WatcherConvergenceSlot,
-    WatcherReconciliation,
-    observe_managed_job,
-    release_missing_job,
-    sync_legacy_snapshot,
+    reconcile_restarted_slot,
 )
 
 if TYPE_CHECKING:
@@ -64,64 +68,79 @@ if TYPE_CHECKING:
     from .indexer._resolved_policy import ResolvedIndexPolicy
 
 logger = logging.getLogger(__name__)
-# Idle re-entry interval for the watch loop, in milliseconds. The pending sets
-# carry forward any change suppressed by the per-source cooldown, but they are
-# only re-examined when the loop body runs, and the body runs only when awatch
-# yields. Without an idle yield, a change that lands during a cooldown window on
-# an otherwise quiet tree is never reconciled - the deletion-eviction failure
-# mode. Asking awatch to yield an empty change set on this interval re-enters the
-# loop so the cooldown is re-checked and the trailing batch is flushed. The Rust
-# watcher already wakes on this cadence to honour the stop event, so yielding the
-# timeout adds no extra wakeups.
-_WATCH_IDLE_TICK_MS = 1000
+# The native watcher uses this bound only to observe shutdown. Controller
+# deadlines wake the service scheduler and never re-enter intake as empty polls.
+_WATCH_STOP_CHECK_MS = 1000
 
 
-def _record_watcher_changes(
+@dataclass(frozen=True, slots=True)
+class _ClassifiedWatcherChange:
+    source: WatcherSource
+    path: Path
+    event: WatcherPathEvent
+
+
+@dataclass(frozen=True, slots=True)
+class _WatcherEventBatch:
+    changes: tuple[_ClassifiedWatcherChange, ...]
+
+    def for_source(self, source: WatcherSource) -> tuple[_ClassifiedWatcherChange, ...]:
+        return tuple(change for change in self.changes if change.source is source)
+
+
+def _classify_watcher_changes(
     changes: Iterable[tuple[Change, str]],
     *,
     routing: WatcherChangeRouting,
-) -> tuple[bool, bool, bool]:
-    """Classify one intake batch once and record each domain's dirty paths."""
-    observed = [False, False, False]
+) -> _WatcherEventBatch:
+    """Classify one intake batch into immutable source-qualified facts."""
+    classified: list[_ClassifiedWatcherChange] = []
     accepted_changes = {Change.added, Change.modified, Change.deleted}
     for change_type, path_str in changes:
         if change_type not in accepted_changes:
             continue
         path = Path(path_str)
+        event = WatcherPathEvent(change_type.name)
         if is_vault_change(path, routing.vault_dir):
-            routing.vault_slot.add_dirty(path)
-            observed[0] = True
+            classified.append(
+                _ClassifiedWatcherChange(WatcherSource.VAULT, path, event)
+            )
             continue
         if change_type is Change.deleted:
-            prior_code, prior_document = _record_deleted_prior_owners(
+            prior_owners = _deleted_prior_owners(
                 path,
                 root_dir=routing.root_dir,
-                code_slot=routing.code_slot,
-                document_slot=routing.document_slot,
             )
-            observed[1] = observed[1] or prior_code
-            observed[2] = observed[2] or prior_document
-            if prior_code or prior_document:
+            if ContentKind.CODE in prior_owners:
+                classified.append(
+                    _ClassifiedWatcherChange(WatcherSource.CODE, path, event)
+                )
+            if (
+                routing.document_slot is not None
+                and ContentKind.DOCUMENT in prior_owners
+            ):
+                classified.append(
+                    _ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event)
+                )
+            if prior_owners:
                 continue
         if is_code_change(path, routing.root_dir, routing.vault_dir, routing.policy):
-            routing.code_slot.add_dirty(path)
-            observed[1] = True
+            classified.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
         if routing.document_slot is not None and is_document_change(
             path, routing.root_dir, routing.vault_dir, routing.policy
         ):
-            routing.document_slot.add_dirty(path)
-            observed[2] = True
-    return observed[0], observed[1], observed[2]
+            classified.append(
+                _ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event)
+            )
+    return _WatcherEventBatch(tuple(classified))
 
 
-def _record_deleted_prior_owners(
+def _deleted_prior_owners(
     path: Path,
     *,
     root_dir: Path,
-    code_slot: WatcherConvergenceSlot,
-    document_slot: WatcherConvergenceSlot | None,
-) -> tuple[bool, bool]:
-    """Schedule a missing path from its last durable per-kind ownership."""
+) -> frozenset[ContentKind]:
+    """Return a missing path's last durable per-kind ownership."""
     try:
         rel_path = path.relative_to(root_dir).as_posix()
         prior_owners = prior_stored_owners(root_dir, rel_path)
@@ -131,15 +150,8 @@ def _record_deleted_prior_owners(
             path,
             exc_info=True,
         )
-        return False, False
-    code_owned = ContentKind.CODE in prior_owners
-    document_owned = document_slot is not None and ContentKind.DOCUMENT in prior_owners
-    if code_owned:
-        code_slot.add_dirty(path)
-    if document_owned:
-        assert document_slot is not None
-        document_slot.add_dirty(path)
-    return code_owned, document_owned
+        return frozenset()
+    return prior_owners
 
 
 def _refresh_policy_snapshot(
@@ -153,31 +165,182 @@ def _refresh_policy_snapshot(
     return refresh_watcher_policy(discovery.resolve_policy, root_dir, previous)
 
 
-async def _reconcile_watcher_slots(
-    vault_slot: WatcherConvergenceSlot,
-    code_slot: WatcherConvergenceSlot,
-    document_slot: WatcherConvergenceSlot | None,
-    *,
-    reconciliation: WatcherReconciliation,
-) -> None:
-    """Give each domain an independent convergence opportunity."""
-    await _reconcile_watcher_slot(
-        vault_slot,
-        cooldown=reconciliation.cooldown,
-        now=reconciliation.now,
-        secondary_graph_cache=reconciliation.graph_cache,
+@dataclass(frozen=True, slots=True)
+class _ControllerBinding:
+    controller: WatcherController
+    slot: WatcherConvergenceSlot
+    retry_policy: WatcherRetryPolicy
+    secondary_graph_cache: GraphCache | None = None
+
+
+def _controller_limits() -> ControllerLimits:
+    from .config._settings import get_config
+
+    cfg = get_config()
+    return ControllerLimits(
+        coalesce_min_seconds=float(cfg.watch_coalesce_min_seconds),
+        coalesce_max_seconds=float(cfg.watch_coalesce_max_seconds),
+        cooling_max_seconds=float(cfg.watch_cooling_max_seconds),
+        maximum_freshness_seconds=float(cfg.watch_maximum_freshness_seconds),
+        measurement_reevaluation_seconds=float(
+            cfg.watch_measurement_reevaluation_seconds
+        ),
+        batch_path_limit=int(cfg.watch_batch_path_limit),
     )
-    await _reconcile_watcher_slot(
-        code_slot,
-        cooldown=reconciliation.cooldown,
-        now=reconciliation.now,
+
+
+def _new_controller(retry_policy: WatcherRetryPolicy) -> WatcherController:
+    monotonic_now = time.monotonic()
+    wall_now = time.time()
+    scope = controller_scope_from_retry_state(
+        retry_policy.state,
+        monotonic_now=monotonic_now,
+        wall_now=wall_now,
     )
-    if document_slot is not None:
-        await _reconcile_watcher_slot(
-            document_slot,
-            cooldown=reconciliation.cooldown,
-            now=reconciliation.now,
+    state = retry_policy.state
+    controller = WatcherController(
+        ControllerSnapshot(
+            canonical_root=state.canonical_root,
+            source=state.source,
+            state=ControllerState.IDLE,
+            reason=ControllerReason.CONVERGED,
+            scope=scope,
+            observed_at=wall_now,
+            monotonic_at=monotonic_now,
+        ),
+        monotonic=time.monotonic,
+        wall_clock=time.time,
+        limits=_controller_limits(),
+    )
+    if state.scope_refusal is not None:
+        controller.refuse(
+            ControllerReason(state.scope_refusal.value),
+            remediation=(
+                "Run an explicit full reindex before resuming automatic updates."
+            ),
         )
+    elif scope.pending or scope.captured:
+        controller.observe(scope)
+    return controller
+
+
+def _register_controller_binding(binding: _ControllerBinding) -> None:
+    from .server._watcher import _register_watcher_controller
+    from .server._watcher_measurements import capture_watcher_measurement
+
+    measurement_generation = 0
+
+    async def reevaluate() -> None:
+        nonlocal measurement_generation
+        state = binding.retry_policy.state
+        measurement_generation += 1
+        observed_at = time.monotonic()
+        measurement = await _run_in_thread(
+            partial(
+                capture_watcher_measurement,
+                binding.slot.registry,
+                key=(str(binding.slot.root), state.source),
+                retry_state=state,
+                generation=measurement_generation,
+                observed_at=observed_at,
+            )
+        )
+        retry_at = (
+            observed_at + max(0.0, state.next_retry_at - time.time())
+            if state.next_retry_at
+            else None
+        )
+        binding.controller.evaluate(
+            measurement.controller,
+            retry_at=retry_at,
+            circuit_state=state.circuit_state,
+        )
+
+    async def admit(_selection: object) -> None:
+        binding.controller.advance(ControllerReason.FAIR_TURN_SELECTED)
+        await submit_watcher_job(
+            binding.slot,
+            controller=binding.controller,
+            now=time.monotonic(),
+            secondary_graph_cache=binding.secondary_graph_cache,
+        )
+
+    _register_watcher_controller(
+        binding.controller,
+        reevaluate=reevaluate,
+        admit=admit,
+    )
+
+
+def _observation_batch(
+    changes: tuple[_ClassifiedWatcherChange, ...],
+    *,
+    root_dir: Path,
+    generation: int,
+    observed_at: float,
+) -> tuple[WatcherPathObservation, ...]:
+    merged: dict[str, tuple[Path, set[WatcherPathEvent]]] = {}
+    for change in changes:
+        relative = change.path.relative_to(root_dir).as_posix()
+        _path, events = merged.setdefault(relative, (change.path, set()))
+        events.add(change.event)
+    return tuple(
+        WatcherPathObservation(
+            relative_path=relative,
+            source=changes[0].source,
+            first_observed_at=observed_at,
+            latest_observed_at=observed_at,
+            event_kinds=frozenset(events),
+            generation=generation,
+        )
+        for relative, (_path, events) in sorted(merged.items())
+    )
+
+
+async def _persist_and_observe_batch(
+    batch: _WatcherEventBatch,
+    bindings: tuple[_ControllerBinding, ...],
+    *,
+    root_dir: Path,
+) -> bool:
+    """Persist every classified source before exposing the batch to execution."""
+    cancellation_requested = False
+    observed_at = time.time()
+    for binding in bindings:
+        source_changes = batch.for_source(binding.retry_policy.state.source)
+        if not source_changes:
+            continue
+        observations = _observation_batch(
+            source_changes,
+            root_dir=root_dir,
+            generation=binding.retry_policy.state.convergence_generation + 1,
+            observed_at=observed_at,
+        )
+        cancellation_requested |= await persist_watcher_observations(
+            binding.retry_policy,
+            observations,
+            source=binding.retry_policy.state.source,
+            root_dir=root_dir,
+        )
+        for change in source_changes:
+            binding.slot.add_dirty(change.path)
+        state = binding.retry_policy.state
+        if state.scope_refusal is not None:
+            binding.controller.refuse(
+                ControllerReason(state.scope_refusal.value),
+                remediation=(
+                    "Run an explicit full reindex before resuming automatic updates."
+                ),
+            )
+        else:
+            binding.controller.observe(
+                controller_scope_from_retry_state(
+                    binding.retry_policy.state,
+                    monotonic_now=time.monotonic(),
+                    wall_now=time.time(),
+                )
+            )
+    return cancellation_requested
 
 
 class WatcherInitializationError(RuntimeError):
@@ -195,12 +358,9 @@ class WatcherInitializationError(RuntimeError):
 async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     """Watch for file changes and trigger incremental re-indexing.
 
-    Runs until stop_event is set. Each admitted indexing job acquires its
-    runtime only for execution. Applies an
-    application-level cooldown between index runs to prevent
-    thrashing. Cooldown is tracked independently per source: vault
-    and code each have separate 30-second windows so a vault reindex
-    does not suppress a subsequent code reindex (or vice versa).
+    Runs until stop_event is set. Accepted path evidence is durable before it
+    reaches the legacy execution slot. Each source controller owns adaptive
+    collection deadlines, while the service scheduler owns fair admission.
 
     Args:
         root_dir: Project root directory to watch.
@@ -208,8 +368,8 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         stop_event: Set this event to stop the watcher gracefully.
         debounce: Milliseconds to wait for additional changes
             before processing.
-        cooldown: Seconds to suppress re-index triggers after a
-            completed run.
+        cooldown: Compatibility input retained by the watcher configuration;
+            adaptive policy bounds govern scheduling.
         graph_cache: GraphCache to invalidate after a successful vault
             reindex.
         registry: Service registry that owns the watched project's stores.
@@ -295,6 +455,32 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         if document_retry is not None
         else None
     )
+    manager = _jobs.get_job_manager()
+    for slot in (vault_slot, code_slot, document_slot):
+        if slot is not None:
+            await reconcile_restarted_slot(slot, manager)
+    bindings = (
+        _ControllerBinding(
+            _new_controller(vault_retry),
+            vault_slot,
+            vault_retry,
+            configuration.graph_cache,
+        ),
+        _ControllerBinding(_new_controller(code_retry), code_slot, code_retry),
+        *(
+            (
+                _ControllerBinding(
+                    _new_controller(document_retry),
+                    document_slot,
+                    document_retry,
+                ),
+            )
+            if document_retry is not None and document_slot is not None
+            else ()
+        ),
+    )
+    for binding in bindings:
+        _register_controller_binding(binding)
     # One immutable snapshot governs ordinary watcher intake until an
     # index-shaping control event advances the watcher generation. The list is
     # a closure cell shared with ``watch_filter``; invalid policy edits retain
@@ -308,8 +494,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
         async for changes in awatch(
             root_dir,
             debounce=configuration.debounce,
-            rust_timeout=_WATCH_IDLE_TICK_MS,
-            yield_on_timeout=True,
+            rust_timeout=_WATCH_STOP_CHECK_MS,
             stop_event=configuration.stop_event,
             watch_filter=lambda _change, path: (
                 is_vault_change(Path(path), vault_dir)
@@ -317,24 +502,16 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 or is_document_change(Path(path), root_dir, vault_dir, code_policy[0])
             ),
         ):
-            # ``changes`` is empty on an idle tick (yield_on_timeout): the loop
-            # body below still runs, re-checking the cooldown and flushing any
-            # carried-forward pending set, so a change suppressed during a
-            # cooldown window is reconciled even when no further change arrives.
             policy_changed = any(
                 Path(path_str).name in CONFIG_FILENAMES
                 for _change_type, path_str in changes
             )
             if policy_changed:
                 code_policy[0] = _refresh_policy_snapshot(root_dir, code_policy[0])
-            (
-                vault_events_observed,
-                code_events_observed,
-                document_events_observed,
-            ) = _record_watcher_changes(
+            batch = _classify_watcher_changes(
                 changes,
                 routing=WatcherChangeRouting(
-                    root_dir=root_dir,
+                    root_dir=resolved_root,
                     vault_dir=vault_dir,
                     policy=code_policy[0],
                     vault_slot=vault_slot,
@@ -343,44 +520,18 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 ),
             )
 
-            cancellation_requested = await persist_observed_sources(
-                (
-                    ObservedSource(
-                        vault_events_observed, WatcherSource.VAULT, vault_retry
-                    ),
-                    ObservedSource(
-                        code_events_observed, WatcherSource.CODE, code_retry
-                    ),
-                    *(
-                        (
-                            ObservedSource(
-                                document_events_observed,
-                                WatcherSource.DOCUMENT,
-                                document_retry,
-                            ),
-                        )
-                        if document_retry is not None
-                        else ()
-                    ),
-                ),
-                root_dir=root_dir,
+            cancellation_requested = await _persist_and_observe_batch(
+                batch,
+                bindings,
+                root_dir=resolved_root,
             )
             raise_if_cancellation_requested(cancellation_requested)
             if configuration.stop_event.is_set():
                 break
+            if batch.changes:
+                from .server._watcher import _wake_watcher_scheduler
 
-            now = time.monotonic()
-
-            await _reconcile_watcher_slots(
-                vault_slot,
-                code_slot,
-                document_slot,
-                reconciliation=WatcherReconciliation(
-                    cooldown=configuration.cooldown,
-                    now=now,
-                    graph_cache=configuration.graph_cache,
-                ),
-            )
+                _wake_watcher_scheduler()
     except Exception as exc:
         log_event(
             logger,
@@ -392,145 +543,10 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
             error=exc,
         )
     finally:
+        from .server._watcher import _unregister_watcher_controllers
+
+        _unregister_watcher_controllers(resolved_root)
         # The manager, not this intake task, owns any admitted attempt. Watcher
         # shutdown must not publish a false cancellation while a worker can
         # still mutate storage; the service lifecycle joins that owner.
         log_event(logger, "service.watcher", "stopped", root=root_dir)
-
-
-async def _await_slot_settlement(
-    slot: WatcherConvergenceSlot,
-    settlement: asyncio.Task[None] | None,
-) -> bool:
-    """Wait out a pending settlement, reporting whether to continue.
-
-    A manager terminal transition is not yet a watcher convergence
-    outcome: the durable retry authority must settle the exact policy
-    generation before the slot may clear its path set or admit a
-    replacement. Returns ``False`` while a settlement is still running.
-    """
-    if settlement is None:
-        return True
-    if not settlement.done():
-        return False
-    await settlement
-    with slot.lock:
-        if slot.settlement_task is settlement:
-            slot.settlement_task = None
-    return True
-
-
-def _observe_slot_owner(
-    slot: WatcherConvergenceSlot,
-    manager: _jobs.JobManager,
-    job_id: str,
-    *,
-    now: float,
-) -> None:
-    """Fold the canonical job's current state back into the slot."""
-    snapshot = manager.get(job_id)
-    if snapshot is None:
-        release_missing_job(slot, job_id, now=now)
-        return
-    with slot.lock:
-        watcher_owned = slot.watcher_owned
-    if observe_managed_job(slot, snapshot, now=now) and watcher_owned:
-        sync_legacy_snapshot(snapshot, result=None, error=None)
-
-
-async def _reconcile_watcher_slot(
-    slot: WatcherConvergenceSlot,
-    *,
-    cooldown: float,
-    now: float,
-    secondary_graph_cache: GraphCache | None = None,
-) -> None:
-    """Observe the canonical owner, then admit one eligible convergence job."""
-    quiesce_snapshot = slot.registry.quiesce_snapshot()
-    if quiesce_snapshot.state is not QuiesceState.RUNNING:
-        # A closed controller owns the pause boundary.  Do not touch durable
-        # retry state here: its current generation and the slot's dirty paths
-        # are the deferred work that the normal idle tick reconciles after
-        # warming opens the next admission epoch.
-        log_event(
-            logger,
-            "service.watcher",
-            "quiesce_admission_closed",
-            severity=logging.DEBUG,
-            source=slot.source.value,
-            state=quiesce_snapshot.state.value,
-            pending_paths=slot.pending_count(),
-        )
-        return
-
-    manager = _jobs.get_job_manager()
-    with slot.lock:
-        job_id = slot.job_id
-        settlement = slot.settlement_task
-
-    if not await _await_slot_settlement(slot, settlement):
-        return
-    if job_id is not None:
-        _observe_slot_owner(slot, manager, job_id, now=now)
-
-    retry_source = WatcherSource(slot.source.value)
-    retry_state, refresh_cancelled = await run_durable_retry_transaction(
-        slot.retry_policy.refresh,
-        source=retry_source,
-        root_dir=slot.root,
-        action="refresh",
-    )
-    raise_if_cancellation_requested(refresh_cancelled)
-
-    with slot.lock:
-        if slot.job_id is not None or not (
-            slot.held_paths or slot.pending_paths or retry_state.convergence_pending
-        ):
-            return
-        eligible_at = max(
-            slot.last_success + cooldown,
-            slot.replacement_not_before,
-        )
-        pending_count = len(slot.held_paths | slot.pending_paths)
-
-    if now < eligible_at:
-        log_event(
-            logger,
-            "service.watcher",
-            "reindex_suppressed",
-            severity=logging.DEBUG,
-            source=slot.source.value,
-            cooldown_remaining_seconds=f"{eligible_at - now:.0f}",
-            pending_paths=pending_count,
-        )
-        return
-
-    decision = await admit_watcher_attempt(
-        slot.retry_policy,
-        source=retry_source,
-        root_dir=slot.root,
-    )
-    if not decision.admitted:
-        if decision.reason != "retry delay active":
-            log_event(
-                logger,
-                "service.watcher",
-                "reindex_suppressed",
-                severity=logging.DEBUG,
-                source=slot.source.value,
-                reason=decision.reason,
-                circuit_state=decision.circuit_state,
-                retry_at=f"{decision.retry_at:.3f}",
-                retry_in_seconds=f"{decision.retry_in_seconds:.3f}",
-                consecutive_failures=slot.retry_policy.state.consecutive_failures,
-                pending_paths=pending_count,
-            )
-        return
-    if decision.attempt_generation is None:
-        raise WatcherRetryStateError("admitted watcher attempt has no generation")
-    await submit_watcher_job(
-        slot,
-        now=now,
-        retry_decision=decision,
-        secondary_graph_cache=secondary_graph_cache,
-    )

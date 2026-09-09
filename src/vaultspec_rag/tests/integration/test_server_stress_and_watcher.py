@@ -844,6 +844,140 @@ def _code_chunk_ids(
 
 
 @pytest.mark.asyncio
+async def test_watcher_converges_code_create_modify_rename_delete_and_active_edits(
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
+) -> None:
+    """Real intake preserves every path operation across an active generation."""
+    registry, manager = managed_watcher_runtime
+    root = tmp_path.resolve()
+    _slot, _trigger, target = _build_watched_code_project(root, registry)
+    created = root / "pkg" / "created.py"
+    renamed = root / "pkg" / "renamed.py"
+    created_rel = "pkg/created.py"
+    renamed_rel = "pkg/renamed.py"
+    target_rel = "pkg/uniquemod.py"
+
+    await _start_watcher(root, cooldown=0.0)
+    try:
+        created.write_text('def lifecycle():\n    return "created"\n', encoding="utf-8")
+        await _wait_for_code_payload(
+            registry.peek_project(root),
+            path=created_rel,
+            expected_content="created",
+        )
+
+        created.write_text(
+            'def lifecycle():\n    return "modified"\n', encoding="utf-8"
+        )
+        await _wait_for_code_payload(
+            registry.peek_project(root),
+            path=created_rel,
+            expected_content="modified",
+        )
+
+        created.rename(renamed)
+        await _wait_for_code_payload(
+            registry.peek_project(root),
+            path=renamed_rel,
+            expected_content="modified",
+        )
+        assert not _code_chunk_ids(registry, root, {created_rel})
+
+        with registry.compute_lease(root) as lease:
+            writer_lock = lease.runtime.code_indexer._writer_lock
+            assert writer_lock.acquire(blocking=False)
+            try:
+                target.write_text(
+                    'def zebrafish_marker():\n    return "active-first"\n',
+                    encoding="utf-8",
+                )
+                await _wait_for_watcher_job(
+                    manager,
+                    root,
+                    _watcher_attempt_owns_runtime,
+                    "watcher attempt did not reach the real writer boundary",
+                )
+                renamed.write_text(
+                    'def lifecycle():\n    return "active-later"\n',
+                    encoding="utf-8",
+                )
+            finally:
+                writer_lock.release()
+        slot = registry.peek_project(root)
+        await _wait_for_code_payload(
+            slot, path=target_rel, expected_content="active-first"
+        )
+        await _wait_for_code_payload(
+            slot, path=renamed_rel, expected_content="active-later"
+        )
+
+        renamed.unlink()
+        deadline = asyncio.get_running_loop().time() + _WATCHER_WAIT_SECONDS
+        while (
+            _code_chunk_ids(registry, root, {renamed_rel})
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await asyncio.sleep(_WATCHER_POLL_SECONDS)
+        assert not _code_chunk_ids(registry, root, {renamed_rel})
+    finally:
+        await _stop_watcher(root)
+
+
+@pytest.mark.asyncio
+async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_history(
+    tmp_path: Path,
+    managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
+) -> None:
+    """A crashed exact admission never becomes a duplicate or unscoped job."""
+    _registry, manager = managed_watcher_runtime
+    root = tmp_path.resolve()
+    (root / ".vault" / "adr").mkdir(parents=True)
+    state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
+    script = "\n".join(
+        (
+            "import os, sys",
+            "from pathlib import Path",
+            "from vaultspec_rag.watcher_retry import (WatcherPathEvent, "
+            "WatcherPathObservation, WatcherRetryPolicy, WatcherSource, "
+            "_WatcherRetryOptions)",
+            "state, root = Path(sys.argv[1]), Path(sys.argv[2]).resolve()",
+            "policy = WatcherRetryPolicy(state, _WatcherRetryOptions("
+            "canonical_root=os.path.normcase(str(root)), source=WatcherSource.CODE, "
+            "base_seconds=1.0, max_seconds=2.0, jitter_fraction=0.0, "
+            "failure_threshold=2, now=1.0))",
+            "policy.mark_scope_pending((WatcherPathObservation("
+            "relative_path='pkg/lost.py', source=WatcherSource.CODE, "
+            "first_observed_at=1.0, latest_observed_at=1.0, "
+            "event_kinds=frozenset({WatcherPathEvent.MODIFIED}), generation=1),), "
+            "now=1.0)",
+            "decision = policy.admit_reserved(policy.reserve_admission(), now=2.0, "
+            "job_id='missing-job')",
+            "assert decision.admitted",
+        )
+    )
+    subprocess.run(
+        [sys.executable, "-c", script, str(state_path), str(root)], check=True
+    )
+
+    await _start_watcher(root, cooldown=0.0)
+    try:
+        refused = await _wait_for_watcher_state(
+            state_path,
+            lambda state: state.get("scope_refusal") == "full_reindex_required",
+            "restart did not expose terminal rebuild refusal",
+        )
+        assert (
+            refused["pending_paths"],
+            refused["captured_paths"],
+            refused["attempt_job_id"],
+            _watcher_jobs(manager, root),
+        ) == ([], [], None, [])
+    finally:
+        await _stop_watcher(root)
+
+
+@pytest.mark.asyncio
 async def test_watcher_evicts_cooldown_suppressed_delete(
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],

@@ -112,11 +112,22 @@ def _run_storage_op[T](
     from qdrant_client import QdrantClient
 
     from .._qdrant_transport import SERVER_REFUSALS, TRANSPORT_FAILURES
+    from ..storage_restore import ArchiveIntegrityError
 
     url = _resolve_server_url(command, json_mode)
     client = QdrantClient(url=url)
     try:
         return fn(client)
+    except ArchiveIntegrityError as exc:
+        # Ordered first, and the reason is the whole point: this says the
+        # archive is broken, not the server. Falling through to the transport
+        # handler told an operator to start a service that had just answered,
+        # and threw away the sentence naming the archive that failed.
+        message = f"The archive cannot be restored: {exc}"
+        if json_mode:
+            _emit_json_error_and_exit(command, "archive_integrity_failed", message, 1)
+        _plain_line(message)
+        raise typer.Exit(1) from exc
     except SERVER_REFUSALS as exc:
         # Reached the server but it refused the call. Distinct from unreachable
         # so the operator is not sent to start a service that is already up.
