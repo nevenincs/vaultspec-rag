@@ -35,11 +35,20 @@ pytestmark = pytest.mark.unit
 COLLECTION_WIDE_READS: frozenset[str] = frozenset(
     {
         "_scroll_all_ids",
+        "_scroll_content",
         "scroll_code_content",
         "scroll_document_content",
         "scroll_index_audit_content",
     }
 )
+
+#: The backend's own paging call. Naming the three public scrolls and the two
+#: engines beneath them still leaves the client itself reachable - ``client``
+#: is a public property on the store, so any indexer can page the collection
+#: directly and never spell a store method at all. Matched as a CALL rather
+#: than as a bare attribute, because ``scroll`` on its own is a common enough
+#: word to catch things that are not this.
+RAW_BACKEND_SCROLL = "scroll"
 
 #: Reading every evidence row for a source. Correct for a rebuild, which is
 #: republishing all of it anyway, and for an archive, which is preserving it.
@@ -62,6 +71,16 @@ def _scoped_publication_functions() -> Iterator[tuple[str, ast.AST]]:
                 continue
             if node.name == SCOPED_ENTRY_POINT:
                 yield f"{path.name}:{node.name}", node
+
+
+def _calls_the_raw_backend(node: ast.AST) -> bool:
+    """Whether the subtree calls ``.scroll(...)`` on anything."""
+    return any(
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Attribute)
+        and inner.func.attr == RAW_BACKEND_SCROLL
+        for inner in ast.walk(node)
+    )
 
 
 def _names_in(node: ast.AST) -> set[str]:
@@ -92,9 +111,17 @@ class TestScopedPublicationStaysProportional:
 
     Replacing the batched ``publication_evidence_for_paths`` loop in that same
     function with ``read_all_publication_evidence(proof_snapshot)`` - which
-    returns the same mapping, and leaves every other test in the suite green -
-    fails ``test_no_scoped_path_reads_the_complete_evidence_map`` on that
-    name. Restoring the batched loop passes it again.
+    returns the same mapping, and leaves 4,675 other tests green - fails
+    ``test_no_scoped_path_reads_the_complete_evidence_map`` on that name.
+    Restoring the batched loop passes it again.
+
+    Two ways around an earlier version of this guard, both closed and both
+    re-driven. ``self.store._scroll_content(...)`` reaches the engine the
+    three public scrolls delegate to and skips every name they spell; it now
+    fails the collection-wide assertions on ``_scroll_content``.
+    ``self.store.client.scroll(...)`` skips the store altogether - ``client``
+    is a public property - and now fails the two backend assertions. Removing
+    either call passes them again.
     """
 
     #: Modules that legitimately read a whole collection, each because its
@@ -109,6 +136,14 @@ class TestScopedPublicationStaysProportional:
         ),
     }
 
+    #: Modules that may page the backend client directly. The store owns its
+    #: own engine; a migration rewrites every point by definition. Nothing
+    #: else should be holding the client at all.
+    _RAW_BACKEND_OWNERS: ClassVar[dict[str, str]] = {
+        "store_runtime.py": "owns the client and is where paging is implemented",
+        "storage_migration.py": "copies every point from one backend to another",
+    }
+
     def test_no_scoped_path_reaches_a_collection_wide_read(self) -> None:
         """No scoped publication function scrolls the served collection."""
         offenders = {
@@ -119,6 +154,24 @@ class TestScopedPublicationStaysProportional:
 
         assert not offenders, (
             f"scoped publication reaches a collection-wide read: {offenders}. "
+            "Ask canonical proof for the paths that changed instead."
+        )
+
+    def test_no_scoped_path_pages_the_backend_directly(self) -> None:
+        """No scoped publication function reaches past the store to the client.
+
+        Naming the store's scroll methods is not enough on its own: ``client``
+        is a public property, so a caller can page the collection without
+        spelling a single one of them.
+        """
+        offenders = sorted(
+            where
+            for where, node in _scoped_publication_functions()
+            if _calls_the_raw_backend(node)
+        )
+
+        assert not offenders, (
+            f"scoped publication pages the backend directly: {offenders}. "
             "Ask canonical proof for the paths that changed instead."
         )
 
@@ -166,6 +219,25 @@ class TestScopedPublicationStaysProportional:
             f"collection-wide read outside its declared owners: {offenders}. "
             "Either scope the read, or record the module above with the "
             "reason its subject really is the whole collection."
+        )
+
+    def test_only_declared_owners_page_the_backend_directly(self) -> None:
+        """Holding the client and paging it has to be argued for first."""
+        offenders: list[str] = []
+        for path in every_production_file():
+            if path.name in self._RAW_BACKEND_OWNERS:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover - parsed elsewhere
+                continue
+            if _calls_the_raw_backend(tree):
+                offenders.append(path.name)
+
+        assert not offenders, (
+            f"backend paged outside its declared owners: {sorted(offenders)}. "
+            "Go through the store, or record the module above with the reason "
+            "it must hold the client itself."
         )
 
 

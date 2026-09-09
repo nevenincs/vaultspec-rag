@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._source_types import PublicSourceType
-from ..indexer import _run_ledger_publication
+from ..indexer import _run_ledger_models, _run_ledger_publication
 from ..indexer._publication_proof import (
     PathDelta,
     PathOutcome,
@@ -73,6 +73,49 @@ def _seed(root: Path, size: int) -> tuple[RunLedger, ProofCompatibilityKey]:
     return ledger, proof.compatibility_key
 
 
+#: What restricts a read of ``publication_evidence`` to a bounded number of
+#: rows. Matched against whitespace-normalised, parameter-expanded SQL, which
+#: is the form the trace callback reports - the source literals are triple
+#: quoted and start with a newline, so nothing traced ever begins flush-left
+#: and nothing keeps the indentation the source was written with.
+_BOUNDED_BY = ("rel_path IN (", "rel_path =", "rel_path >", "LIMIT")
+
+
+def _unbounded_evidence_reads(statements: list[str]) -> list[str]:
+    """Return every traced read of the evidence table that bounds no rows.
+
+    A commit applies a delta it already holds; it has no reason to read the
+    evidence table at all, and the way that stops being true is a commit that
+    re-derives its aggregate by reading what is already published. Such a read
+    is unbounded by construction, which is what this names.
+    """
+    normalised = [" ".join(statement.split()) for statement in statements]
+    return [
+        statement
+        for statement in normalised
+        if statement.upper().startswith("SELECT")
+        and "publication_evidence" in statement
+        and not any(marker in statement for marker in _BOUNDED_BY)
+    ]
+
+
+def _install_traced_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    traced: object,
+) -> None:
+    """Route every ledger connection through *traced*, on both seams.
+
+    ``ledger_connection`` is defined in the models module and imported by name
+    into the publication module, so the two hold separate bindings to one
+    function. Reads open through the publication module's; writes open through
+    ``ledger_transaction``, which resolves the models module's. Patching only
+    one leaves the other untraced, and a statement counter that observes
+    nothing reports every budget as met.
+    """
+    for module in (_run_ledger_publication, _run_ledger_models):
+        monkeypatch.setattr(module, "ledger_connection", traced)
+
+
 @dataclass(slots=True)
 class _ReadCost:
     """What one exact-path read actually made SQLite do."""
@@ -114,10 +157,10 @@ def _measured(
                 connection.set_progress_handler(None, 0)
                 connection.set_trace_callback(None)
 
-    monkeypatch.setattr(_run_ledger_publication, "ledger_connection", traced)
+    _install_traced_connection(monkeypatch, traced)
     yield cost
     cost.selects.extend(
-        statement
+        " ".join(statement.split())
         for statement in statements
         if statement.lstrip().upper().startswith("SELECT")
     )
@@ -158,7 +201,11 @@ def test_an_exact_path_read_examines_the_same_work_at_any_parent_size(
 
     assert small["src/file-000009.py"].point_ids == ("point-9",)
     assert large["src/file-009999.py"].point_ids == ("point-9999",)
+    # Asserted on both, not just the small one: a change that routed the large
+    # read around the traced connection would record zero and read as the
+    # cheapest possible result.
     assert small_cost.vm_steps > 0, "the progress handler recorded nothing"
+    assert large_cost.vm_steps > 0, "the large read was not measured at all"
     assert large_cost.vm_steps <= small_cost.vm_steps * 2, (
         f"a read over a 10,000-path parent retired {large_cost.vm_steps} "
         f"instructions against {small_cost.vm_steps} over a 10-path parent; "
@@ -179,7 +226,10 @@ def test_the_read_production_issues_seeks_every_table_it_touches(
     query under test was one no caller issues.
 
     Both tables are asserted, because a seek on the evidence side and a scan
-    on the points side is still a read that walks the collection.
+    on the points side is still a read that walks the collection. Every
+    statement the read emitted is planned rather than only the last, so the
+    proof-row lookup is covered too and a reordering cannot silently
+    retarget the assertion at a different query.
 
     Proven able to fail: the whole-table scan described above is captured and
     explained here too, and fails this on the SCAN assertion, naming
@@ -192,11 +242,14 @@ def test_the_read_production_issues_seeks_every_table_it_touches(
         ledger.publication_evidence_for_paths(key, (target,))
 
     assert cost.selects, "production issued no SELECT to plan"
+    details: list[str] = []
     with _run_ledger_publication.ledger_connection(ledger.path) as connection:
-        plan = connection.execute(f"EXPLAIN QUERY PLAN {cost.selects[-1]}").fetchall()
+        for statement in cost.selects:
+            plan = connection.execute(f"EXPLAIN QUERY PLAN {statement}").fetchall()
+            assert plan, f"the captured statement produced no plan: {statement}"
+            details.extend(str(row[3]) for row in plan)
 
-    details = [str(row[3]) for row in plan]
-    assert details, "the captured statement produced no plan"
+    assert details, "no plan rows were produced"
     scans = [detail for detail in details if detail.lstrip().startswith("SCAN")]
     assert not scans, f"the exact-path read scans a table: {scans}"
     assert all(detail.lstrip().startswith("SEARCH") for detail in details), details
@@ -208,6 +261,24 @@ def test_single_identity_commit_has_bounded_statement_count(
     monkeypatch: pytest.MonkeyPatch,
     parent_size: int,
 ) -> None:
+    """Committing one path costs the same whatever the parent already holds.
+
+    Seventeen statements at a ten-path parent and seventeen at a ten-thousand
+    path one, four of them touching the evidence table and every one of those
+    bounded to the rows it names.
+
+    This traced nothing at all until the seam was corrected. The write path
+    opens through ``ledger_transaction``, which resolves ``ledger_connection``
+    in the models module, while the test patched the publication module's own
+    binding of the same function - so the callback attached to a connection
+    the commit never used, zero statements were recorded, and a budget of
+    forty was met by counting nothing. Both bindings are patched now.
+
+    Proven able to fail on each assertion it carries. Adding an unkeyed
+    ``SELECT rel_path FROM publication_evidence`` to the commit body fails the
+    bounded-read assertion, naming that statement; the statement budget fails
+    on any commit that starts reading per parent row rather than per delta.
+    """
     ledger, key = _seed(tmp_path, parent_size)
     parent = ledger.publication_proof(key)
     successor = ledger.start_generation(
@@ -269,13 +340,12 @@ def test_single_identity_commit_has_bounded_statement_count(
             connection.set_trace_callback(statements.append)
             yield connection
 
-    monkeypatch.setattr(_run_ledger_publication, "ledger_connection", traced)
+    _install_traced_connection(monkeypatch, traced)
     committed = ledger.commit_publication_receipt(receipt.receipt_id)
 
     assert committed.aggregate.indexed_identities == parent_size
     assert len(statements) <= 40
-    assert not any(
-        statement.startswith("SELECT rel_path FROM publication_evidence")
-        and "rel_path IN" not in statement
-        for statement in statements
+    assert not _unbounded_evidence_reads(statements), (
+        "committing a single-path delta read publication_evidence without "
+        f"bounding the rows: {_unbounded_evidence_reads(statements)}"
     )

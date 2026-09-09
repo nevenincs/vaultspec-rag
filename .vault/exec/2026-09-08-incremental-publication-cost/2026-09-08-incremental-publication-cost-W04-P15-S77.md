@@ -5,7 +5,7 @@ tags:
 date: '2026-09-09'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:5e0313eb0f086345390d672846feae86f7f1af666338207cb4a1c2a446b85b12'
+body_hash: 'sha256:a52f012f21dbaf3e3d037feff88d0bcaa71f5380e87b7e0588a34d08e8eb05ff'
 step_id: 'S77'
 related:
   - "[[2026-09-08-incremental-publication-cost-plan]]"
@@ -18,8 +18,6 @@ related:
 - `src/vaultspec_rag/tests`
 
 ## Changes
-
-- `D` `.vault/exec/2026-09-08-incremental-publication-cost/2026-09-08-incremental-publication-cost-W04-P15-S77.md`
 
 - `M` `docs/cli.md`
 
