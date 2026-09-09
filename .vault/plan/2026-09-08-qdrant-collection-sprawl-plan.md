@@ -10,7 +10,7 @@ related:
   - '[[2026-07-14-storage-autoprune-safety-adr]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:071cb7bd7326fa584b5730355cde3085bec3c70913c6449cb1366a1c171f21f9'
+body_hash: 'sha256:3a3609268b48f917af62bd14daef2fd0d151eaa60a2f22e8f58f588e28f140ad'
 ---
 
 # `qdrant-collection-sprawl` plan
@@ -65,6 +65,13 @@ Delivers the two prerequisites without which no retention change executes: a rea
 - [x] `P01.S30` - Return an unverifiable result from the active-index-job probe so a registry read failure defers the namespace instead of reporting no job busy; `src/vaultspec_rag/storage_reclamation.py`.
 - [x] `P01.S31` - Add a guard test proving a survey-time transport timeout leaves the maintenance cycle running and the namespace unreclaimed; `src/vaultspec_rag/tests/test_storage_survey.py`.
 - [x] `P01.S32` - Add a guard test proving an unverifiable active-job probe defers the namespace rather than authorising the drop; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [ ] `P01.S33` - Widen the namespace-drop guard and its collection listing to the client transport failures so a timeout cannot leave a namespace partially deleted with no outcome recorded; `src/vaultspec_rag/storage_survey_ops.py`.
+- [ ] `P01.S34` - Guard the drop call in the apply path so a failing drop becomes a failed decision instead of escaping the cycle; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P01.S35` - Widen the superseded-generation drop and its collection listing to the client transport failures, since that pass runs before any orphan is considered; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P01.S36` - Add a guard test proving a transport timeout during the drop is recorded against that namespace and the cycle continues; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [ ] `P01.S37` - Add a guard test proving a transport timeout in the superseded-generation pass still lets the orphan pass run; `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`.
+- [ ] `P01.S38` - Derive the service-start readiness deadline from the resolved qdrant patience window and its ceiling so the command stops abandoning a start that will succeed; `src/vaultspec_rag/cli/_service_start.py`.
+- [ ] `P01.S39` - Add a test pinning that raising the qdrant readiness knob widens the service-start wait; `src/vaultspec_rag/tests/test_cli_server.py`.
 
 ### Phase `P02` - discriminate retention by namespace class
 
@@ -79,6 +86,9 @@ Delivers the core decision: an orphaned temp-rooted namespace draws its own shor
 - [x] `P02.S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate; `src/vaultspec_rag/tests/test_storage_safety.py`.
 - [x] `P02.S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count; `src/vaultspec_rag/tests/test_storage_safety.py`.
 - [x] `P02.S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path; `src/vaultspec_rag/tests/test_storage_safety.py`.
+- [ ] `P02.S40` - Bind the three grace windows to a positive number with a documented floor so no window can authorise a drop on the cycle that first observes a namespace; `src/vaultspec_rag/config/_schema.py`.
+- [ ] `P02.S41` - Defer under an unverifiable reason of its own when the post-archive settle re-count cannot be taken, rather than claiming the points changed; `src/vaultspec_rag/storage_reclamation.py`.
+- [ ] `P02.S42` - Extend the pre-drop guard test to assert the post-archive unverifiable deferral reports its own reason; `src/vaultspec_rag/tests/test_storage_safety.py`.
 
 ### Phase `P03` - size the archive for the drain and report the growth
 
