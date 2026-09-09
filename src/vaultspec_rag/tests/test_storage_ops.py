@@ -886,8 +886,15 @@ class _CycleClient:
         self._uncountable_after_survey = uncountable_after_survey
         self._survey_calls = len(counts)
         self._count_calls = 0
+        self._snapshots_taken = 0
         self.deleted: list[str] = []
         self.snapshotted: list[str] = []
+        #: Collections whose NEXT snapshot raises and whose following one
+        #: succeeds, which is how an attempt that abandons part-way is
+        #: followed by one that completes. Assigned after construction rather
+        #: than passed in: the constructor already carries every knob the
+        #: cycle's own gates need, and this one belongs to the archiver.
+        self.aborting_snapshots: set[str] = set()
 
     def get_collections(self) -> object:
         return SimpleNamespace(
@@ -910,7 +917,16 @@ class _CycleClient:
         del wait
         assert self._snapshots_dir is not None, "snapshots_dir required to archive"
         self.snapshotted.append(collection_name)
-        name = f"{collection_name}.snapshot"
+        if collection_name in self.aborting_snapshots:
+            self.aborting_snapshots.discard(collection_name)
+            raise OSError("snapshot timed out")
+        # Distinct per snapshot, as qdrant's own names are: it stamps each one
+        # with the moment it was taken, so two snapshots of one collection are
+        # two files. A stand-in reusing one name per collection would let every
+        # later attempt overwrite the residue of an earlier one, which is
+        # precisely the residue the archive has to account for.
+        self._snapshots_taken += 1
+        name = f"{collection_name}-{self._snapshots_taken}.snapshot"
         holder = self._snapshots_dir / collection_name
         holder.mkdir(parents=True, exist_ok=True)
         (holder / name).write_bytes(b"snapshot")

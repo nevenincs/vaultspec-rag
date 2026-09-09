@@ -38,6 +38,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: The extension qdrant gives every snapshot it writes, and so the one an
+#: artifact in an archive directory carries.
+_SNAPSHOT_SUFFIX = ".snapshot"
+
 
 @dataclass(frozen=True)
 class ReclaimPolicy:
@@ -589,6 +593,7 @@ def archive_prefix(
             metadata_files=tuple(sorted({*metadata_files, *carried_metadata})),
         ),
     )
+    _drop_unnamed_snapshots(dest_dir, manifest_path)
     _verify_completed_archive(
         client,
         dest_dir,
@@ -621,15 +626,16 @@ def _carry_prior_archive_records(
 
     - A name this attempt archived wins outright. The collection is alive and
       has just been re-snapshotted, so the older artifact describes vectors
-      that are no longer the current ones. Its file is removed here, because
-      leaving a superseded artifact beside a manifest that no longer names it
-      is exactly the unreferenced-artifact state a restore must refuse.
+      that are no longer the current ones.
     - A record whose artifact is no longer on disk is dropped rather than
       carried. Republishing the name of a file that is gone would produce a
       manifest no restore could satisfy.
     - A record whose file this attempt rewrote under the same name is dropped
-      for the same reason as the first rule: the bytes are no longer the ones
-      its point count describes.
+      for the same reason as the first: the bytes are no longer the ones its
+      point count describes.
+
+    Dropping a record leaves its file behind, and the sweep after the
+    manifest is published is what removes it.
     """
     manifest_path = snapshot_manifest_path(dest_dir)
     if not manifest_path.is_file():
@@ -637,16 +643,13 @@ def _carry_prior_archive_records(
     prior = _read_archive_manifest(manifest_path)
     fresh_names = {item.name for item in fresh}
     written_files = {item.snapshot_file for item in fresh} | set(fresh_metadata)
-    carried: list[SnapshotCollection] = []
-    for record in prior.collections:
-        artifact = dest_dir / record.snapshot_file
-        if record.snapshot_file in written_files:
-            continue
-        if record.name in fresh_names:
-            _drop_superseded_artifact(artifact)
-            continue
-        if artifact.is_file():
-            carried.append(record)
+    carried = [
+        record
+        for record in prior.collections
+        if record.snapshot_file not in written_files
+        and record.name not in fresh_names
+        and (dest_dir / record.snapshot_file).is_file()
+    ]
     carried_metadata = tuple(
         name
         for name in prior.metadata_files
@@ -655,19 +658,50 @@ def _carry_prior_archive_records(
     return tuple(carried), carried_metadata
 
 
-def _drop_superseded_artifact(artifact: Path) -> None:
-    """Remove one snapshot this same call has just replaced with a newer one.
+def _drop_unnamed_snapshots(dest_dir: Path, manifest_path: Path) -> None:
+    """Leave the archive directory holding exactly what its manifest names.
 
-    Raises rather than shrugging. A file that cannot be removed stays in the
-    archive unnamed, which is the condition a restore refuses, so failing the
-    archive here defers the namespace instead of destroying more of it into a
-    directory recovery would reject.
+    A restore refuses a directory carrying a snapshot its manifest does not
+    name, because such a file is data recovery would silently omit. Publishing
+    a manifest is therefore only half of completing an archive: the other half
+    is that nothing else is left beside it.
+
+    Two things produce such a file, and one rule removes both. An attempt that
+    raised part-way through has already moved snapshots into the directory
+    under no manifest at all, and the next attempt takes fresh ones under
+    fresh names rather than adopting them. A collection re-archived while
+    still alive leaves the copy it superseded. Neither is data: the first was
+    never published, and the second has just been replaced by a newer snapshot
+    of the same live collection.
+
+    Only snapshot artifacts. A note or a checksum an operator left here is not
+    this function's to remove, and a restore does not refuse over one either.
+
+    Raises rather than shrugging. A file that cannot be removed stays unnamed,
+    which is the condition a restore refuses, so failing the archive here
+    defers the namespace instead of destroying more of it into a directory
+    recovery would go on to reject.
     """
+    named = {
+        record.snapshot_file
+        for record in _read_archive_manifest(manifest_path).collections
+    }
     try:
-        artifact.unlink(missing_ok=True)
+        stale = [
+            path
+            for path in dest_dir.iterdir()
+            if path.is_file()
+            and path.suffix == _SNAPSHOT_SUFFIX
+            and path.name not in named
+        ]
     except OSError as exc:
-        message = f"superseded archive snapshot could not be removed: {artifact}"
-        raise RuntimeError(message) from exc
+        raise RuntimeError(f"archive directory is unreadable: {dest_dir}") from exc
+    for path in stale:
+        try:
+            path.unlink()
+        except OSError as exc:
+            message = f"unnamed archive snapshot could not be removed: {path}"
+            raise RuntimeError(message) from exc
 
 
 def _verify_completed_archive(
