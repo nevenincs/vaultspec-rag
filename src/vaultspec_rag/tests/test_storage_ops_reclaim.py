@@ -659,6 +659,27 @@ def _read_timeout() -> Exception:
     return ResponseHandlingException(httpx.ReadTimeout("timed out"))
 
 
+def _server_refusal(status_code: int = 503) -> Exception:
+    """Build the object a qdrant REST call really raises on a non-2xx status.
+
+    The other half of the class, and the half a guard is likeliest to miss.
+    The client wraps only what ``httpx`` raised; a response that ARRIVED and
+    carried an error status never reaches that wrapper, and is reported as
+    ``UnexpectedResponse`` instead - a plain ``Exception`` again, and not a
+    ``ResponseHandlingException``. Same call, same send path, same
+    consequence for a loop that is already destroying.
+    """
+    from httpx import Headers
+    from qdrant_client.http.exceptions import UnexpectedResponse
+
+    return UnexpectedResponse(
+        status_code=status_code,
+        reason_phrase="Service Unavailable",
+        content=b'{"status":{"error":"service unavailable"}}',
+        headers=Headers(),
+    )
+
+
 @dataclass(frozen=True)
 class _TransportFaults:
     """Which of a cycle client's server calls fail, and with what.
@@ -666,15 +687,17 @@ class _TransportFaults:
     One value rather than a keyword per call, so a test names only the call it
     is faulting and every other call is visibly untouched.
 
-    ``listing_error`` defaults to a transport timeout. Naming something else
-    is how a test asks whether a guard is narrow: a failure outside the
-    transport class has to keep escaping, and a guard that absorbed it would
-    be reporting a programming error as a slow server.
+    ``listing_error`` and ``delete_error`` default to a transport timeout.
+    Naming something else is how a test asks what a guard really covers: a
+    server that answered with an error must be absorbed exactly as a server
+    that never answered is, and a failure outside the class entirely has to
+    keep escaping rather than be reported as a slow server.
     """
 
     snapshots: frozenset[str] = frozenset()
     recounts: frozenset[str] = frozenset()
     deletes: frozenset[str] = frozenset()
+    delete_error: Exception | None = None
     listing_on_call: int | None = None
     listing_error: Exception | None = None
 
@@ -749,8 +772,25 @@ class _TimeoutClient(_CycleClient):
         # collection or it did not, and ``deleted`` is what the partial-drop
         # assertions read as the destruction that really happened.
         if collection_name in self._faults.deletes:
-            raise _read_timeout()
+            raise self._faults.delete_error or _read_timeout()
         super().delete_collection(collection_name=collection_name)
+
+
+def _two_orphans(tmp_path: Path) -> tuple[str, str]:
+    """Return two aged data-tier orphans in the order the cycle applies them.
+
+    Same-tier orphans are ordered by prefix, so sorting here names which
+    namespace the cycle reaches first. Continuation is only a meaningful
+    claim about the one queued behind the failure, never about one already
+    processed before it.
+    """
+    first, second = sorted(
+        (
+            _orphaned_namespace(tmp_path, now=_NOW, name="vanished-a"),
+            _orphaned_namespace(tmp_path, now=_NOW, name="vanished-b"),
+        )
+    )
+    return first, second
 
 
 class TestTransportTimeoutIsolation:
@@ -762,23 +802,6 @@ class TestTransportTimeoutIsolation:
     entirely: the tick died reporting a timeout and reclaimed nothing,
     including from every candidate it had not reached yet.
     """
-
-    @staticmethod
-    def _two_orphans(tmp_path: Path) -> tuple[str, str]:
-        """Return two aged data-tier orphans in the order the cycle applies them.
-
-        Same-tier orphans are ordered by prefix, so sorting here names which
-        namespace the cycle reaches first. Continuation is only a meaningful
-        claim about the one queued behind the failure, never about one already
-        processed before it.
-        """
-        first, second = sorted(
-            (
-                _orphaned_namespace(tmp_path, now=_NOW, name="vanished-a"),
-                _orphaned_namespace(tmp_path, now=_NOW, name="vanished-b"),
-            )
-        )
-        return first, second
 
     def test_a_snapshot_timeout_fails_one_namespace_and_the_cycle_goes_on(
         self, tmp_path: Path
@@ -792,7 +815,7 @@ class TestTransportTimeoutIsolation:
         by prefix because a torn archive reports ``archive_failed:`` too, and a
         prefix match would pass on whichever of the two branches fired.
         """
-        first, second = self._two_orphans(tmp_path)
+        first, second = _two_orphans(tmp_path)
         stalled, healthy = _collection_of(first), _collection_of(second)
         client = _TimeoutClient(
             {stalled: 10, healthy: 10},
@@ -825,7 +848,7 @@ class TestTransportTimeoutIsolation:
         and matching loosely would accept a namespace deferred for having been
         counted successfully at a different number.
         """
-        first, second = self._two_orphans(tmp_path)
+        first, second = _two_orphans(tmp_path)
         stalled, healthy = _collection_of(first), _collection_of(second)
         client = _TimeoutClient(
             {stalled: 10, healthy: 10},
@@ -888,7 +911,7 @@ class TestTransportTimeoutIsolation:
         failure being closed rather than a proof about this test, which is
         why the two mutations above are the ones it is trusted on.
         """
-        first, second = self._two_orphans(tmp_path)
+        first, second = _two_orphans(tmp_path)
         stalled_code = first + CODE_COLLECTION
         stalled_vault = _collection_of(first)
         healthy = _collection_of(second)
@@ -991,3 +1014,118 @@ class TestTransportTimeoutIsolation:
 
         with pytest.raises(TypeError):
             _run_cycle(strict, tmp_path)
+
+
+class TestServerRefusalIsolation:
+    """A server that answers with an error is the same failure as one that does not.
+
+    The transport class was first widened around the wrapper the client uses
+    for what never reached the server: a refused connection, a read timeout, a
+    dropped socket. A response that ARRIVES carrying 500 or 503 does not go
+    through that wrapper at all - it is reported as ``UnexpectedResponse``,
+    which descends from neither the builtins nor that wrapper - so the same
+    hole reopened one type over, on the same calls, with the same
+    consequence.
+
+    The drop loop is where that consequence is severe, and it is the
+    ambiguous side of the boundary: unlike a ``TypeError``, a non-2xx status
+    is a statement by the server rather than a mistake by this code, so
+    nothing about the guard's narrowness argues for letting it escape.
+    """
+
+    def test_a_refused_drop_records_the_partial_destruction_and_the_cycle_goes_on(
+        self, tmp_path: Path
+    ) -> None:
+        """A 503 part-way through a drop is reported, not raised away.
+
+        The stalled namespace is given two collections so the partial state is
+        observable at all: with one, a failed drop removes nothing and the
+        interesting case never arises. ``codebase_docs`` sorts before
+        ``vault_docs``, so the drop loop provably destroys the first before
+        the second is refused.
+
+        The reason is split rather than matched whole. Everything before the
+        separator is this codebase's own claim and is asserted exactly,
+        because the counts are the point: an operator has to learn that one of
+        the two collections is gone. Everything after it is the client's
+        rendering of its own exception, so only the status line it documents
+        is asserted - copying the raw body bytes into an expected value would
+        pin the client's formatting rather than this branch.
+
+        Three mutations, each run alone against this test.
+
+        Narrowing the drop guard in ``delete_prefix`` back to the timeout
+        wrapper alone fails ``assert head == "delete_failed after 1/2"``,
+        observed reporting ``drop_failed``. The apply path's own guard stops
+        the escape, but it stands outside the loop and so knows nothing about
+        what the loop had already destroyed - the namespace is recorded as
+        failed while the fact that half of it is gone is not recorded at all,
+        which is the whole of what makes a partial drop worse than a missed
+        reclaim.
+
+        Narrowing BOTH guards the same way does not land on an assertion: the
+        refusal escapes ``run_maintenance_cycle`` and the test errors with
+        ``UnexpectedResponse: 503``. That is the production failure being
+        closed rather than a proof about this test, which is why the two
+        mutations that do land are the ones it is trusted on.
+
+        Swallowing broadly instead - continuing the loop past the refusal, as
+        any handler that merely stops the exception would - fails
+        ``assert failed.action == "failed"``, observed reporting
+        ``archived_removed``: the namespace is reported reclaimed while half
+        of it still exists and its manifest entry has been forgotten.
+        """
+        first, second = _two_orphans(tmp_path)
+        stalled_code = first + CODE_COLLECTION
+        stalled_vault = _collection_of(first)
+        healthy = _collection_of(second)
+        client = _TimeoutClient(
+            {stalled_code: 5, stalled_vault: 5, healthy: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            faults=_TransportFaults(
+                deletes=frozenset({stalled_vault}),
+                delete_error=_server_refusal(),
+            ),
+        )
+
+        result = _run_cycle(client, tmp_path)
+
+        failed, survivor = _outcome_for(result, first), _outcome_for(result, second)
+        assert failed.action == "failed"
+        assert failed.reason is not None
+        head, separator, detail = failed.reason.partition(": ")
+        assert separator, failed.reason
+        assert head == "delete_failed after 1/2"
+        assert detail.startswith("Unexpected Response: 503 (Service Unavailable)")
+        # The destruction that really happened, and the continuation past it.
+        assert client.deleted == [stalled_code, healthy]
+        assert survivor.action == "archived_removed"
+
+    def test_a_programming_error_on_the_same_drop_still_escapes(
+        self, tmp_path: Path
+    ) -> None:
+        """The boundary is still a boundary at its unambiguous side.
+
+        Same fault site as the test above, a failure the class does not name.
+        This is what stops the widening from being a blanket handler: a guard
+        that absorbed this would be reporting a mistake in this code as a
+        namespace the server refused, and would satisfy every assertion the
+        first test makes.
+
+        Mutation it catches: widening either drop guard to ``Exception``.
+        Observed this fail with DID NOT RAISE, the cycle completing and
+        reporting the namespace as merely failed.
+        """
+        orphan = _orphaned_namespace(tmp_path, now=_NOW, name="vanished-a")
+        collection = _collection_of(orphan)
+        client = _TimeoutClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            faults=_TransportFaults(
+                deletes=frozenset({collection}),
+                delete_error=TypeError("not a transport failure"),
+            ),
+        )
+
+        with pytest.raises(TypeError):
+            _run_cycle(client, tmp_path)
