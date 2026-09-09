@@ -1658,14 +1658,16 @@ def _path_observations(
 ) -> tuple[WatcherPathObservation, ...]:
     if not isinstance(value, list):
         raise ValueError(f"watcher retry field {field_name!r} must be a list")
+    values = cast("list[object]", value)
     observations: list[WatcherPathObservation] = []
-    for item in value:
+    for item in values:
         if not isinstance(item, dict):
             raise ValueError(f"watcher retry field {field_name!r} has a malformed path")
         raw = cast("dict[str, object]", item)
         event_values = raw.get("event_kinds")
         if not isinstance(event_values, list) or not event_values:
             raise ValueError("watcher path event_kinds must be a non-empty list")
+        event_values = cast("list[object]", event_values)
         observations.append(
             WatcherPathObservation(
                 relative_path=_required_text(raw, "relative_path"),

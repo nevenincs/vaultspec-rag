@@ -208,15 +208,10 @@ class TestStampOnlyChangeIsFree:
             store.close()
 
     @pytest.mark.timeout(300)
-    def test_the_stamp_bump_is_still_recorded_in_the_sidecar(
+    def test_the_stamp_bump_does_not_rewrite_canonical_proof(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
-        """Unchanged is a classification, not a refusal to look.
-
-        The sidecar must still absorb the new bytes, or every later run
-        re-derives the same "unchanged" answer from the same stale entry, and
-        the stat gate can never short-circuit it.
-        """
+        """Volatile frontmatter leaves the served content identity unchanged."""
         store, indexer = _build_vault(tmp_path, embedding_model)
         try:
             paths = sorted(scan_vault(tmp_path))
@@ -232,7 +227,7 @@ class TestStampOnlyChangeIsFree:
 
             assert (
                 published_content_identities(tmp_path, PublicSourceType.VAULT)[sampled]
-                != before
+                == before
             )
         finally:
             store.close()

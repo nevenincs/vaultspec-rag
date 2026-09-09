@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from ..job_models import JobMode, JobOperation
 from ..service_quiesce import QuiesceState
@@ -100,8 +100,14 @@ def capture_watcher_measurement(
         source=source.value,
     )
     evidence = pressure.get("evidence")
-    backend = evidence.get("backend") if isinstance(evidence, dict) else None
-    storage_available = backend.get("alive") if isinstance(backend, dict) else None
+    evidence_map = (
+        cast("dict[str, object]", evidence) if isinstance(evidence, dict) else None
+    )
+    backend = evidence_map.get("backend") if evidence_map is not None else None
+    backend_map = (
+        cast("dict[str, object]", backend) if isinstance(backend, dict) else None
+    )
+    storage_available = backend_map.get("alive") if backend_map is not None else None
     if not isinstance(storage_available, bool):
         storage_available = None
     tier = pressure.get("tier")
@@ -148,48 +154,30 @@ def compose_watcher_measurement(
         for job in jobs
         if job.spec.operation is JobOperation.INDEX and not job.state.is_terminal
     )
-    unavailable: set[str] = set()
-
     index_borrowed, index_waiters = _limiter_values(limiter_snapshot, "index")
-    if index_borrowed is None or index_waiters is None:
-        unavailable.add("index_limiter")
     search_borrowed, _ = _limiter_values(limiter_snapshot, "search")
-    if search_borrowed is None:
-        unavailable.add("search_limiter")
-
     search_in_flight, search_latency = _search_values(search_snapshot)
-    if search_in_flight is None:
-        unavailable.add("search_activity")
-    if search_latency is None:
-        unavailable.add("search_latency")
-    if pressure_tier is None:
-        unavailable.add("machine_pressure")
-    if storage_available is None:
-        unavailable.add("storage")
-    if quiesce is None:
-        unavailable.add("quiesce")
-    if retry_state is None:
-        unavailable.add("retry")
-    if effective_cost is None:
-        unavailable.add("effective_cost")
+    unavailable = {
+        name
+        for name, missing in {
+            "index_limiter": index_borrowed is None or index_waiters is None,
+            "search_limiter": search_borrowed is None,
+            "search_activity": search_in_flight is None,
+            "search_latency": search_latency is None,
+            "machine_pressure": pressure_tier is None,
+            "storage": storage_available is None,
+            "quiesce": quiesce is None,
+            "retry": retry_state is None,
+            "effective_cost": effective_cost is None,
+        }.items()
+        if missing
+    }
 
-    controller = ControllerMeasurement(
-        generation=generation,
-        observed_at=observed_at,
-        job_backlog=len(active) + (index_waiters or 0),
-        index_in_flight=index_borrowed,
-        index_waiters=index_waiters,
-        search_in_flight=(
-            search_in_flight if search_in_flight is not None else search_borrowed
-        ),
-        search_latency_seconds=search_latency,
-        gpu_pressure=(
-            None if pressure_tier is None else pressure_tier in _PRESSURED_TIERS
-        ),
-        storage_available=storage_available,
-        service_quiesced=(
-            None if quiesce is None else quiesce.state is not QuiesceState.RUNNING
-        ),
+    controller = _compose_controller_measurement(
+        facts,
+        active_count=len(active),
+        index_values=(index_borrowed, index_waiters),
+        search_values=(search_borrowed, search_in_flight, search_latency),
     )
     return WatcherServiceMeasurement(
         generation=generation,
@@ -211,6 +199,41 @@ def compose_watcher_measurement(
     )
 
 
+def _compose_controller_measurement(
+    facts: WatcherMeasurementFacts,
+    *,
+    active_count: int,
+    index_values: tuple[int | None, int | None],
+    search_values: tuple[int | None, int | None, float | None],
+) -> ControllerMeasurement:
+    """Build the controller-facing projection from narrowed service facts."""
+    generation = facts.generation
+    observed_at = facts.observed_at
+    pressure_tier = facts.pressure_tier
+    storage_available = facts.storage_available
+    quiesce = facts.quiesce
+    index_in_flight, index_waiters = index_values
+    search_borrowed, search_in_flight, search_latency_seconds = search_values
+    return ControllerMeasurement(
+        generation=generation,
+        observed_at=observed_at,
+        job_backlog=active_count + (index_waiters or 0),
+        index_in_flight=index_in_flight,
+        index_waiters=index_waiters,
+        search_in_flight=(
+            search_in_flight if search_in_flight is not None else search_borrowed
+        ),
+        search_latency_seconds=search_latency_seconds,
+        gpu_pressure=(
+            None if pressure_tier is None else pressure_tier in _PRESSURED_TIERS
+        ),
+        storage_available=storage_available,
+        service_quiesced=(
+            None if quiesce is None else quiesce.state is not QuiesceState.RUNNING
+        ),
+    )
+
+
 def _limiter_values(
     snapshot: Mapping[str, Mapping[str, object]] | None, pool: str
 ) -> tuple[int | None, int | None]:
@@ -228,20 +251,23 @@ def _search_values(
     if snapshot is None:
         return None, None
     counts = snapshot.get("counts")
-    active = counts.get("active") if isinstance(counts, dict) else None
+    counts_map = cast("dict[str, object]", counts) if isinstance(counts, dict) else None
+    active = counts_map.get("active") if counts_map is not None else None
     recent = snapshot.get("recent")
-    latencies = (
-        [
-            float(value)
-            for row in recent
-            if isinstance(row, dict)
-            and isinstance((value := row.get("total_seconds")), int | float)
-            and not isinstance(value, bool)
-            and value >= 0
-        ]
-        if isinstance(recent, list)
-        else []
-    )
+    latencies: list[float] = []
+    if isinstance(recent, list):
+        recent_values = cast("list[object]", recent)
+        for raw_row in recent_values:
+            if not isinstance(raw_row, dict):
+                continue
+            row = cast("dict[str, object]", raw_row)
+            value = row.get("total_seconds")
+            if (
+                isinstance(value, int | float)
+                and not isinstance(value, bool)
+                and value >= 0
+            ):
+                latencies.append(float(value))
     return _non_negative_int(active), (max(latencies) if latencies else None)
 
 

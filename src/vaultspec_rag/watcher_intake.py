@@ -99,40 +99,45 @@ def _classify_watcher_changes(
     for change_type, path_str in changes:
         if change_type not in accepted_changes:
             continue
-        path = Path(path_str)
-        event = WatcherPathEvent(change_type.name)
-        if is_vault_change(path, routing.vault_dir):
-            classified.append(
-                _ClassifiedWatcherChange(WatcherSource.VAULT, path, event)
+        classified.extend(
+            _classify_watcher_change(
+                change_type,
+                Path(path_str),
+                routing=routing,
             )
-            continue
-        if change_type is Change.deleted:
-            prior_owners = _deleted_prior_owners(
-                path,
-                root_dir=routing.root_dir,
-            )
-            if ContentKind.CODE in prior_owners:
-                classified.append(
-                    _ClassifiedWatcherChange(WatcherSource.CODE, path, event)
-                )
-            if (
-                routing.document_slot is not None
-                and ContentKind.DOCUMENT in prior_owners
-            ):
-                classified.append(
-                    _ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event)
-                )
-            if prior_owners:
-                continue
-        if is_code_change(path, routing.root_dir, routing.vault_dir, routing.policy):
-            classified.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
-        if routing.document_slot is not None and is_document_change(
-            path, routing.root_dir, routing.vault_dir, routing.policy
-        ):
-            classified.append(
+        )
+    return _WatcherEventBatch(tuple(classified))
+
+
+def _classify_watcher_change(
+    change_type: Change,
+    path: Path,
+    *,
+    routing: WatcherChangeRouting,
+) -> tuple[_ClassifiedWatcherChange, ...]:
+    """Classify one accepted path without mutating controller state."""
+    event = WatcherPathEvent(change_type.name)
+    if is_vault_change(path, routing.vault_dir):
+        return (_ClassifiedWatcherChange(WatcherSource.VAULT, path, event),)
+    if change_type is Change.deleted:
+        prior_owners = _deleted_prior_owners(path, root_dir=routing.root_dir)
+        deleted: list[_ClassifiedWatcherChange] = []
+        if ContentKind.CODE in prior_owners:
+            deleted.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
+        if routing.document_slot is not None and ContentKind.DOCUMENT in prior_owners:
+            deleted.append(
                 _ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event)
             )
-    return _WatcherEventBatch(tuple(classified))
+        if prior_owners:
+            return tuple(deleted)
+    classified: list[_ClassifiedWatcherChange] = []
+    if is_code_change(path, routing.root_dir, routing.vault_dir, routing.policy):
+        classified.append(_ClassifiedWatcherChange(WatcherSource.CODE, path, event))
+    if routing.document_slot is not None and is_document_change(
+        path, routing.root_dir, routing.vault_dir, routing.policy
+    ):
+        classified.append(_ClassifiedWatcherChange(WatcherSource.DOCUMENT, path, event))
+    return tuple(classified)
 
 
 def _deleted_prior_owners(
