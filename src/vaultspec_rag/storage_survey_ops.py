@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from .storage_manifest import load_manifest, remove_prefix
+from .storage_manifest import load_manifest, remove_prefix, retain_collections
 from .storage_survey import (
     NamespaceSurvey,
     classify_namespaces,
@@ -475,6 +475,13 @@ def delete_prefix(
             # and the counts travel in the reason because a caller that
             # reduces this result to its reason string would otherwise report
             # a namespace as merely failed when half of it no longer exists.
+            #
+            # Standing, but narrowed. The entry survives because part of the
+            # namespace does; its claim about which collections that namespace
+            # holds does not survive the collections themselves. Left whole it
+            # keeps offering a destroyed collection to every consumer that
+            # reads the entry as an inventory.
+            retain_collections(prefix, removed)
             return DeleteResult(
                 prefix,
                 "failed",
