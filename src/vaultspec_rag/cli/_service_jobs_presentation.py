@@ -1048,6 +1048,32 @@ def _render_job_resilience_detail(job: dict[str, object]) -> None:
         _cli.console.print(line)
 
 
+def _render_job_controller_detail(job: dict[str, object]) -> None:
+    """Render controller-owned job facts without deriving new verdicts."""
+    raw = job.get("controller")
+    if not isinstance(raw, dict):
+        return
+    controller = cast("dict[str, object]", raw)
+    _cli.console.print(
+        f"Controller: {controller.get('state')} ({controller.get('reason')})"
+    )
+    _cli.console.print(
+        f"Controller pending: {controller.get('pending_count')}; "
+        f"oldest age: {controller.get('oldest_age_seconds')} seconds"
+    )
+    _cli.console.print(
+        f"Controller deadlines: next {controller.get('next_decision_at')}; "
+        f"freshness {controller.get('freshness_deadline')}"
+    )
+    _cli.console.print(f"Controller backpressure: {controller.get('backpressure')}")
+    _cli.console.print(f"Controller measurements: {controller.get('measurement')}")
+    _cli.console.print(
+        f"Controller last transition: {controller.get('last_transition')}"
+    )
+    if remediation := controller.get("remediation"):
+        _cli.console.print(f"Controller remediation: {remediation}")
+
+
 def _render_job_result_detail(job: dict[str, object]) -> None:
     if _job_superseded(job):
         # The stored result predates resolution; printing it would read as
@@ -1083,6 +1109,7 @@ def render_job_detail(job: dict[str, object], *, port: int | None = None) -> Non
     _render_job_runtime_detail(job)
     _render_job_resource_detail(job)
     _render_job_resilience_detail(job)
+    _render_job_controller_detail(job)
     _render_job_result_detail(job)
 
 

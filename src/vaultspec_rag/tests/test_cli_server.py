@@ -238,7 +238,7 @@ class TestServerRoutingFlattened:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert paths == ["/watcher"]
+        assert paths == ["/watcher?limit=256"]
 
         output = _ANSI_RE.sub("", result.output)
         lines = [line.strip() for line in output.splitlines() if line.strip()]
