@@ -103,16 +103,28 @@ def _run_storage_op[T](
     forbids, and unparseable for the broker the flag exists to serve. Every
     API-level failure is caught for the same reason: no exit path from a
     ``--json`` verb may leave stdout empty.
+
+    The two handlers are ordered narrow-then-broad, and that order is the
+    whole of the distinction they draw. A refusal that arrived as a response
+    proves the server is up, so it must never be answered with "start the
+    service"; everything else in the class is an answer that never came.
     """
     from qdrant_client import QdrantClient
-    from qdrant_client.http.exceptions import ApiException
 
-    from .._qdrant_transport import TRANSPORT_FAILURES
+    from .._qdrant_transport import SERVER_REFUSALS, TRANSPORT_FAILURES
 
     url = _resolve_server_url(command, json_mode)
     client = QdrantClient(url=url)
     try:
         return fn(client)
+    except SERVER_REFUSALS as exc:
+        # Reached the server but it refused the call. Distinct from unreachable
+        # so the operator is not sent to start a service that is already up.
+        message = f"The managed Qdrant server at {url} rejected the request: {exc}"
+        if json_mode:
+            _emit_json_error_and_exit(command, "storage_request_failed", message, 1)
+        _plain_line(message)
+        raise typer.Exit(1) from exc
     except TRANSPORT_FAILURES as exc:
         message = (
             f"Could not reach the managed Qdrant server at {url}. Start the "
@@ -122,14 +134,6 @@ def _run_storage_op[T](
             _emit_json_error_and_exit(command, "service_not_running", message, 3)
         _plain_line(message)
         raise typer.Exit(3) from exc
-    except ApiException as exc:
-        # Reached the server but it refused the call. Distinct from unreachable
-        # so the operator is not sent to start a service that is already up.
-        message = f"The managed Qdrant server at {url} rejected the request: {exc}"
-        if json_mode:
-            _emit_json_error_and_exit(command, "storage_request_failed", message, 1)
-        _plain_line(message)
-        raise typer.Exit(1) from exc
     finally:
         client.close()
 
