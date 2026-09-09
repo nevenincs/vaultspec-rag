@@ -101,11 +101,11 @@ class CanonicalSearchEvidence:
             "integrity_verified",
         ):
             value = getattr(self, field)
-            if value is not None and not isinstance(value, bool):
+            if value is not None and not isinstance(cast("object", value), bool):
                 raise ValueError(f"{field} must be a boolean or None")
-        if not isinstance(self.capacity_refused, bool):
+        if not isinstance(cast("object", self.capacity_refused), bool):
             raise ValueError("capacity_refused must be a boolean")
-        if not isinstance(self.rebuild_required, bool):
+        if not isinstance(cast("object", self.rebuild_required), bool):
             raise ValueError("rebuild_required must be a boolean")
         if self.capacity_refused and self.rebuild_required:
             raise ValueError(
@@ -272,9 +272,10 @@ def _target_is_current(evidence: CanonicalSearchEvidence) -> bool:
         not generation_targeted
         or evidence.served_generation == evidence.desired_generation
     )
-    revision_current = not revision_targeted or (
+    desired_revision = evidence.desired_revision
+    revision_current = desired_revision is None or (
         evidence.publication_revision is not None
-        and evidence.publication_revision >= evidence.desired_revision
+        and evidence.publication_revision >= desired_revision
     )
     return (
         evidence.collection_present is True
@@ -283,6 +284,58 @@ def _target_is_current(evidence: CanonicalSearchEvidence) -> bool:
         and generation_current
         and revision_current
     )
+
+
+def _source_states(
+    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
+) -> tuple[SearchAvailability, SearchFreshness]:
+    if canonical.capacity_refused:
+        availability = SearchAvailability.CAPACITY_LIMITED
+    elif canonical.rebuild_required or canonical.collection_present is not True:
+        availability = SearchAvailability.UNAVAILABLE
+    else:
+        availability = SearchAvailability.USABLE
+    if canonical.rebuild_required:
+        freshness = SearchFreshness.REBUILD_REQUIRED
+    elif matches:
+        freshness = SearchFreshness.UPDATING
+    elif _target_is_current(canonical):
+        freshness = SearchFreshness.CURRENT
+    else:
+        freshness = SearchFreshness.UNVERIFIABLE
+    return availability, freshness
+
+
+def _source_reason(
+    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
+) -> str | None:
+    if canonical.capacity_refused:
+        return "capacity_limited"
+    if canonical.rebuild_required:
+        return "rebuild_required"
+    if canonical.collection_present is False:
+        return "index_unavailable"
+    if matches:
+        return "index_updating"
+    return None if _target_is_current(canonical) else "index_unverifiable"
+
+
+def _source_remediation(
+    context: SearchAvailabilityContext,
+    reason_code: str | None,
+    matches: Sequence[_MatchingJob],
+) -> str | None:
+    if reason_code == "rebuild_required":
+        return index_command(
+            context.source, IndexCommandOptions(rebuild=True, port=context.port)
+        )
+    if reason_code == "index_unverifiable":
+        return server_status_command(context.port, verbose=True)
+    if matches or reason_code == "capacity_limited":
+        return server_jobs_command(context.port, index=context.source)
+    if reason_code == "index_unavailable":
+        return index_command(context.source, IndexCommandOptions(port=context.port))
+    return None
 
 
 def _project_source_fact(
@@ -294,57 +347,15 @@ def _project_source_fact(
     # A successful retrieval is direct evidence that this collection can serve,
     # even when an older daemon/index path supplied no publication identity.
     # Identity remains mandatory for CURRENT and authoritative absence below.
-    served_collection = canonical.collection_present is True
-    current = _target_is_current(canonical)
-    if canonical.capacity_refused:
-        availability = SearchAvailability.CAPACITY_LIMITED
-    elif canonical.rebuild_required:
-        availability = SearchAvailability.UNAVAILABLE
-    elif served_collection:
-        availability = SearchAvailability.USABLE
-    else:
-        availability = SearchAvailability.UNAVAILABLE
-    if canonical.rebuild_required:
-        freshness = SearchFreshness.REBUILD_REQUIRED
-    elif matches:
-        freshness = SearchFreshness.UPDATING
-    elif current:
-        freshness = SearchFreshness.CURRENT
-    else:
-        freshness = SearchFreshness.UNVERIFIABLE
+    availability, freshness = _source_states(canonical, matches)
     authority = (
         AbsenceAuthority.AUTHORITATIVE
         if availability is SearchAvailability.USABLE
         and freshness is SearchFreshness.CURRENT
         else AbsenceAuthority.NON_AUTHORITATIVE
     )
-    reason_code = (
-        "capacity_limited"
-        if canonical.capacity_refused
-        else "rebuild_required"
-        if canonical.rebuild_required
-        else "index_unavailable"
-        if canonical.collection_present is False
-        else "index_updating"
-        if matches
-        else "index_unverifiable"
-        if not current
-        else None
-    )
-    remediation = (
-        index_command(
-            context.source,
-            IndexCommandOptions(rebuild=True, port=context.port),
-        )
-        if reason_code == "rebuild_required"
-        else server_status_command(context.port, verbose=True)
-        if reason_code == "index_unverifiable"
-        else server_jobs_command(context.port, index=context.source)
-        if matches or reason_code == "capacity_limited"
-        else index_command(context.source, IndexCommandOptions(port=context.port))
-        if reason_code == "index_unavailable"
-        else None
-    )
+    reason_code = _source_reason(canonical, matches)
+    remediation = _source_remediation(context, reason_code, matches)
     return SearchSourceFact(
         source=context.source,
         availability=availability,

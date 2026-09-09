@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 type SearchSource = Literal["vault", "code"]
+type SourceFactMutation = Callable[[SearchSourceFact], SearchSourceFact]
 
 
 def _current_source_fact() -> SearchSourceFact:
@@ -59,38 +60,43 @@ def _current_source_fact() -> SearchSourceFact:
     )
 
 
+def _with_unknown_availability(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, availability=cast("SearchAvailability", "unknown"))
+
+
+def _with_unknown_freshness(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, freshness=cast("SearchFreshness", "unknown"))
+
+
+def _with_unknown_authority(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, absence_authority=cast("AbsenceAuthority", "unknown"))
+
+
+def _with_unknown_wait_policy(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, wait_policy=cast("FreshnessWaitPolicy", "unknown"))
+
+
+def _with_unavailable(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, availability=SearchAvailability.UNAVAILABLE)
+
+
+def _with_updating(fact: SearchSourceFact) -> SearchSourceFact:
+    return replace(fact, freshness=SearchFreshness.UPDATING)
+
+
+_CLOSED_VOCABULARY_MUTATIONS: list[tuple[SourceFactMutation, str]] = [
+    (_with_unknown_availability, "availability must be a SearchAvailability"),
+    (_with_unknown_freshness, "freshness must be a SearchFreshness"),
+    (_with_unknown_authority, "absence_authority must be a AbsenceAuthority"),
+    (_with_unknown_wait_policy, "wait_policy must be a FreshnessWaitPolicy"),
+]
+
+_AUTHORITY_MUTATIONS: list[SourceFactMutation] = [_with_unavailable, _with_updating]
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
-    [
-        (
-            lambda fact: replace(
-                fact,
-                availability=cast("SearchAvailability", "unknown"),
-            ),
-            "availability must be a SearchAvailability",
-        ),
-        (
-            lambda fact: replace(
-                fact,
-                freshness=cast("SearchFreshness", "unknown"),
-            ),
-            "freshness must be a SearchFreshness",
-        ),
-        (
-            lambda fact: replace(
-                fact,
-                absence_authority=cast("AbsenceAuthority", "unknown"),
-            ),
-            "absence_authority must be a AbsenceAuthority",
-        ),
-        (
-            lambda fact: replace(
-                fact,
-                wait_policy=cast("FreshnessWaitPolicy", "unknown"),
-            ),
-            "wait_policy must be a FreshnessWaitPolicy",
-        ),
-    ],
+    _CLOSED_VOCABULARY_MUTATIONS,
 )
 def test_source_fact_rejects_unknown_closed_vocabulary(
     mutation: Callable[[SearchSourceFact], SearchSourceFact],
@@ -102,16 +108,7 @@ def test_source_fact_rejects_unknown_closed_vocabulary(
 
 @pytest.mark.parametrize(
     "mutation",
-    [
-        lambda fact: replace(
-            fact,
-            availability=SearchAvailability.UNAVAILABLE,
-        ),
-        lambda fact: replace(
-            fact,
-            freshness=SearchFreshness.UPDATING,
-        ),
-    ],
+    _AUTHORITY_MUTATIONS,
 )
 def test_source_fact_rejects_authoritative_contradictions(
     mutation: Callable[[SearchSourceFact], SearchSourceFact],

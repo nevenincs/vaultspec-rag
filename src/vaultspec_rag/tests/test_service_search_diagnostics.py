@@ -14,10 +14,39 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-def test_search_index_state_uses_selected_source_preflight_count() -> None:
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+def _current_code_readiness() -> dict[str, object]:
+    return {
+        "sources": [
+            {
+                "source": "code",
+                "availability": "usable",
+                "freshness": "current",
+                "absence_authority": "authoritative",
+                "generation": {},
+                "wait_policy": "immediate",
+                "waits": [],
+                "evidence": [],
+                "retryable": False,
+            }
+        ],
+        "aggregate": {
+            "availability": "usable",
+            "freshness": "current",
+            "absence_authority": "authoritative",
+            "source_count": 1,
+            "usable_source_count": 1,
+            "degraded_sources": [],
+        },
+    }
 
-    state = _search_index_state(
+
+def test_search_index_state_uses_selected_source_preflight_count() -> None:
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
+
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=37,
             requested_root="C:/work/project",
@@ -36,7 +65,7 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
 
 
 def test_empty_search_diagnostics_use_supported_jobs_filter() -> None:
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -59,7 +88,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
     query found nothing" and sends the reader off tuning the query while a
     pattern that matches no indexed path sits in the command.
     """
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -82,7 +111,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
 
 
 def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() -> None:
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -97,7 +126,7 @@ def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() 
 
 def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
     """With nothing indexed, the path filter is not the actionable cause."""
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -125,9 +154,12 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     green. Its companion pins the opposite direction under a different
     mutation, so neither can pass on a constant.
     """
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -159,9 +191,12 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     production call instead of on the assertion, which proves the branch
     raises, not that the test is watching it.
     """
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -188,10 +223,13 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     literals are what pin the key names a renderer looks up.
     """
     from .._index_breadth import BreadthShortfall
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
     block = BreadthShortfall(published=421, live=4).as_index_state_block()
-    daemon_state = _search_index_state(
+    daemon_state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -225,9 +263,12 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     """
     from .._index_breadth import BreadthShortfall
     from .._search_state import BreadthFindings, search_index_state
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    routed = _search_index_state(
+    routed = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -267,7 +308,10 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
     test on the block lookup below, not on a setup error.
     """
     from .._index_integrity import IndexIntegrity
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
     verdict = IndexIntegrity(
         verdict="shrunken",
@@ -277,7 +321,7 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
         generation_id="generation-route",
         reason=None,
     )
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -417,6 +461,7 @@ def test_the_mcp_output_model_preserves_the_shortfall_summary() -> None:
 
     envelope: dict[str, object] = {
         "results": [],
+        "readiness": _current_code_readiness(),
         "summary": (
             "Found 0 relevant items. Warning: this index holds 4 of the 421 "
             "sections it published, so an absent result is not evidence that "
@@ -705,6 +750,7 @@ def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
 
     envelope: dict[str, object] = {
         "results": [],
+        "readiness": _current_code_readiness(),
         "summary": "Found 0 relevant items.",
         "path_filter": {
             "patterns": ["src/vaultspec_rag/indexr/**"],

@@ -17,11 +17,11 @@ from ..server._main import create_http_app
 from ..server._routes_search import (
     SearchRequest,
     SearchRouteError,
+    _admit_requested_freshness,
     _capture_publication_targets,
     _execute_search_route,
     _execute_search_until_disconnect,
     _normalise_search_request,
-    _wait_for_requested_freshness,
 )
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
@@ -192,9 +192,9 @@ async def test_immediate_policy_never_requires_a_readiness_registry(
 ) -> None:
     registry = ServiceRegistry()
 
-    outcome = await _wait_for_requested_freshness(_normalised(tmp_path), registry)
+    admission = await _admit_requested_freshness(_normalised(tmp_path), registry)
 
-    assert outcome == "immediate"
+    assert admission.outcome == "immediate"
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_in_flight_wait_keeps_its_admitted_publication_target(
         freshness_wait_seconds=1,
     )
 
-    waiting = asyncio.create_task(_wait_for_requested_freshness(request, registry))
+    waiting = asyncio.create_task(_admit_requested_freshness(request, registry))
     for _ in range(10):
         if readiness._observers:
             break
@@ -222,13 +222,13 @@ async def test_in_flight_wait_keeps_its_admitted_publication_target(
     readiness.notify_controller(tmp_path, "code", generation="second")
     readiness.publish_next(tmp_path, "code", generation="first")
 
-    assert await waiting == "satisfied"
+    assert (await waiting).outcome == "satisfied"
     newly_admitted = _capture_publication_targets(request, readiness)
     assert newly_admitted is not None
     assert first.controller_revision == 1
     assert newly_admitted[0].revision == 2
     assert newly_admitted[0].generation == "second"
-    second_wait = asyncio.create_task(_wait_for_requested_freshness(request, registry))
+    second_wait = asyncio.create_task(_admit_requested_freshness(request, registry))
     for _ in range(10):
         if readiness._observers:
             break
@@ -238,7 +238,7 @@ async def test_in_flight_wait_keeps_its_admitted_publication_target(
 
     readiness.publish_next(tmp_path, "code", generation="second")
 
-    assert await second_wait == "satisfied"
+    assert (await second_wait).outcome == "satisfied"
 
 
 @pytest.mark.asyncio

@@ -119,6 +119,21 @@ def _target(
     )
 
 
+def test_publication_target_rejects_an_absent_revision(tmp_path: Path) -> None:
+    """A target with no revision would be satisfied by any publication.
+
+    Deleting the explicit ``is None`` branch in ``PublicationTarget`` admitted
+    the value and failed here with DID NOT RAISE; restoring it passed. The
+    shared ``_revision`` helper cannot carry this check because the snapshot
+    fields it also validates are legitimately optional.
+    """
+    with pytest.raises(ValueError, match="revision must be a non-negative integer"):
+        PublicationTarget(
+            key=ReadinessSourceKey.from_root(tmp_path, "code"),
+            revision=cast("int", None),
+        )
+
+
 async def _wait_until_registered(
     registry: ReadinessRevisionRegistry,
     *,
@@ -468,9 +483,11 @@ async def test_document_publish_failure_propagates_without_notification(
     notifications: list[tuple[Path, str]] = []
     indexer = DocumentIndexer.__new__(DocumentIndexer)
     indexer.root_dir = tmp_path
-    indexer._publish_readiness = lambda root, generation: notifications.append(
-        (root, generation)
-    )
+
+    def notify(root: Path, generation: str) -> None:
+        notifications.append((root, generation))
+
+    indexer._publish_readiness = notify
     checkpoint = _FailingDocumentCheckpointCollaborator()
 
     with pytest.raises(OSError, match="durable checkpoint publication failed"):
