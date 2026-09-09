@@ -11,8 +11,15 @@ permissions:
   actions: write
 
 concurrency:
-  group: release-please
-  cancel-in-progress: false
+  # The commit is in the group, and only on main. `cancel-in-progress: false`
+  # governs runs that have STARTED; GitHub separately cancels a previously
+  # PENDING run in the same group with no switch to stop it, and on a
+  # saturated serial fleet a main run sits pending long enough for the next
+  # push to reach it. Without the commit here, a burst of merges leaves only
+  # the last one with a release proposal - and the ones it cancelled report
+  # `cancelled`, not `failed`, so nothing raises an alarm.
+  group: release-please-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   release-please:

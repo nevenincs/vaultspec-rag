@@ -33,7 +33,13 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
             cwd=str(target),
             check=False,
             capture_output=True,
-            text=True,
+            # STATED, never ambient, and non-raising. This function exists to
+            # surface uv's own stderr in the report rather than a Python
+            # traceback; decoding it under the ambient encoding, strictly, is
+            # a way for the report to become the traceback instead - one
+            # non-ASCII byte in a path uv echoes back is enough.
+            encoding="utf-8",
+            errors="replace",
         )
     except FileNotFoundError:
         report.torch_sync_action = "uv-not-found"

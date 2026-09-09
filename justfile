@@ -227,6 +227,11 @@ check-citations:
 check-absolute-imports:
     {{dev}} lint absolute-imports
 
+# Check the vault's structure, frontmatter and links.
+[group('check')]
+check-vault:
+    {{dev}} lint vault
+
 # AGGREGATES RUN EVERY STEP and exit with the first non-zero status; they do
 # not stop at the first failure. An aggregate is asked for a complete picture,
 # and fail-fast costs a CI round-trip per defect. That is why this dispatches
@@ -311,7 +316,11 @@ audit-duplication:
 audit-complexity:
     {{dev}} audit complexity
 
-# Report every dimension; one red dimension does not hide the rest.
+# `audit-all` is every ADVISORY dimension. `audit-deps` is not among them: it
+# GATES, so a report that cannot fail is the wrong place for it, and running
+# it there took the same published-advisory query twice for one commit.
+
+# Report every advisory dimension; one red never hides the rest.
 [group('audit')]
 audit-all:
     {{dev}} audit all
@@ -415,7 +424,7 @@ docs-cli:
 # Check that the generated CLI reference is current.
 [group('check')]
 check-docs-cli:
-    uv run --no-sync python -m dev.generate_cli_reference --check
+    {{dev}} lint docs-cli
 
 # ===========================================================================
 #  release
