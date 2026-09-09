@@ -134,6 +134,22 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     nothing. Coercing the first into the second reports an offline share or a
     permissions blip as a clean bill of health, which is precisely the evidence
     a later reclamation pass must never be handed.
+
+    ``totals`` also carries ``collections`` - the total Qdrant collection
+    count across every surveyed namespace, distinct from ``namespaces`` (one
+    namespace can hold several collections) - ``ephemeral_backlog_bytes``,
+    the footprint still held by orphaned temp-rooted namespaces (exactly the
+    population that becomes eligible for reclamation on the very next cycle),
+    and ``points_unverified_namespaces``, the count of namespaces whose point
+    count could not be fully read. All three are pure reporting derived from
+    the same unfiltered survey as the rest of ``totals`` and feed no gate or
+    reclaim decision.
+
+    Each namespace also reports its own ``points_verified``: ``False`` means
+    at least one of its collections could not be counted, so ``points`` is a
+    partial floor rather than the namespace total. A consumer must carry this
+    through rather than default it - it is exactly the fact an uncounted
+    collection would otherwise silently report as a verified zero.
     """
     import pathlib
 
@@ -145,7 +161,22 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
 
     # Whole-backend rollup, computed before any filter so consumers see
     # true total size and per-status composition regardless of the view.
-    totals = backend_totals(request.surveys)
+    # ``collections``, ``ephemeral_backlog_bytes``, and
+    # ``points_unverified_namespaces`` are reported here too: pure
+    # observability so unbounded growth (and unread state) is visible before
+    # it is expensive, never a threshold anything downstream compares against.
+    totals: dict[str, object] = {
+        **backend_totals(request.surveys),
+        "collections": sum(len(s.collections) for s in request.surveys),
+        "ephemeral_backlog_bytes": sum(
+            s.footprint_bytes
+            for s in request.surveys
+            if s.status == "orphaned" and is_temp_rooted(s.root)
+        ),
+        "points_unverified_namespaces": sum(
+            1 for s in request.surveys if not s.points_verified
+        ),
+    }
     status_filter = request.status_filter
     limit = request.limit
     root = request.root
@@ -194,6 +225,7 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
                 "code_points": s.code_points,
                 "document_points": s.document_points,
                 "footprint_bytes": s.footprint_bytes,
+                "points_verified": s.points_verified,
                 # What produced each collection. An empty map means the
                 # namespace predates stamping, which is an unknown rather than
                 # a problem - the survey has always reported how much is

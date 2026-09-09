@@ -245,16 +245,27 @@ def test_embedded_python_series_satisfies_requires_python(
 
 
 def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
-    """The script is not orphaned: the binaries workflow is its automated caller."""
+    """The script is not orphaned: the binaries workflow is its automated caller.
+
+    The workflow reaches the builder through the release recipe rather than
+    inlining the command, so the chain is asserted one hop at a time. Asserting
+    only the workflow text would fail the moment the call site moved behind the
+    recipe, and asserting only the recipe would not notice a workflow that had
+    stopped calling it at all.
+    """
     workflow = repo_root / ".github" / "workflows" / "binaries.yml"
     text = workflow.read_text(encoding="utf-8")
+    assert "just release-binaries" in text
+
+    recipe = repo_root / "justfile"
+    recipe_text = recipe.read_text(encoding="utf-8")
     # The dotted form, not the file path: see
     # test_no_call_site_runs_a_packaged_tool_as_a_script for why the path form
     # cannot resolve this package. Pinning the path here is what let the broken
     # invocation pass its own test.
-    assert "-m tools.binaries.build_pyapp" in text
-    assert "--tag" in text
-    assert "--outdir" in text
+    assert "-m tools.binaries.build_pyapp" in recipe_text
+    assert "--tag" in recipe_text
+    assert "--outdir" in recipe_text
 
 
 def test_the_justfile_exposes_a_local_build_recipe(repo_root: Path) -> None:

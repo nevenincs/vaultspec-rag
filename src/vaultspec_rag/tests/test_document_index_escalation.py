@@ -166,6 +166,11 @@ def test_an_unparentable_ledger_requires_an_explicit_full_reconciliation(
             # ledger the indexer opens lives.
             _retire_the_only_document_generation(tmp_path, meta_path.parent)
 
+            # A tripwire, not a stand-in: it only ever fails, so it cannot
+            # make a regressed path pass. A call that must never happen is
+            # not observable from outside the object, and asserting on side
+            # effects would pass when an escalation happened to leave the
+            # store unchanged.
             def _forbidden_full(*_args: object, **_kwargs: object) -> None:
                 pytest.fail("incremental indexing invoked full_index")
 

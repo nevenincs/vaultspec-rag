@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from .storage_manifest import load_manifest, remove_prefix
+from .storage_manifest import load_manifest, remove_prefix, retain_collections
 from .storage_survey import (
     NamespaceSurvey,
     classify_namespaces,
@@ -16,9 +16,11 @@ from .storage_survey import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from qdrant_client import QdrantClient
+
+    from .storage_manifest import ManifestEntry
 
 logger = logging.getLogger(__name__)
 
@@ -292,15 +294,28 @@ def gather_survey(
     Returns:
         Classified namespace records, actionable states first.
     """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     on_progress("Listing collections...")
     names = [c.name for c in client.get_collections().collections]
-    counts: dict[str, int] = {}
+    counts: dict[str, int | None] = {}
     for position, name in enumerate(names, start=1):
         on_progress(f"Counting points ({position}/{len(names)} collections)")
         try:
             counts[name] = int(client.count(collection_name=name).count)
-        except (OSError, RuntimeError):
-            counts[name] = 0
+        except TRANSPORT_FAILURES:
+            # A slow server is one of the ways a collection cannot be
+            # counted, and the client does not signal it with a builtin, which
+            # is why the whole transport class is named here: one slow
+            # collection used to walk past this handler and unwind the survey
+            # - and with it the whole maintenance cycle - before any
+            # per-namespace gate was reached.
+            #
+            # ``None``, never zero. Zero is a claim about the collection, and
+            # a data-bearing namespace claimed empty is routed to the tier
+            # that drops it without an archive. What we have here is the
+            # absence of a reading, and it is carried as one.
+            counts[name] = None
     on_progress(f"Measuring on-disk footprints for {len(names)} collections...")
     footprints = collection_footprints(names, storage_dir)
     surveys = classify_namespaces(
@@ -357,6 +372,55 @@ def forget_root_index_claims(root: str) -> tuple[str, ...]:
     return tuple(cleared)
 
 
+def _plan_prefix_delete(
+    client: QdrantClient,
+    prefix: str,
+    manifest: Mapping[str, ManifestEntry],
+    *,
+    allow_unknown: bool,
+) -> list[str] | DeleteResult:
+    """Return the collections to drop, or the outcome that stops the drop.
+
+    Every refusal lives here so the destroying half of :func:`delete_prefix`
+    is a straight line: the prefix shape, the enumeration that names the
+    targets, and the manifest attribution are all answered before anything is
+    destroyed.
+
+    Args:
+        client: Qdrant client for the managed server.
+        prefix: The collection prefix (``r{hash}_``) to remove.
+        manifest: The loaded namespace manifest, read once by the caller.
+        allow_unknown: Permit deleting a prefix absent from the manifest.
+
+    Returns:
+        The sorted target collection names, or a :class:`DeleteResult`.
+    """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
+    # Hard gate: only a canonical r{12hex}_ prefix may ever be a delete target.
+    # This is enforced before anything else and is NOT relaxed by allow_unknown,
+    # so an empty/short/crafted prefix can never startswith-match foreign roots.
+    if not is_canonical_prefix(prefix):
+        return DeleteResult(prefix, "skipped", reason="invalid_prefix")
+    try:
+        targets = sorted(
+            c.name
+            for c in client.get_collections().collections
+            if c.name.startswith(prefix)
+        )
+    except TRANSPORT_FAILURES as exc:
+        # The set of collections to delete could not be read, so nothing is
+        # deleted and nothing is claimed about the namespace. Reported rather
+        # than raised: this runs inside a maintenance cycle whose contract is
+        # a per-namespace skip, and an unreadable listing is a skip.
+        return DeleteResult(prefix, "failed", reason=f"listing_failed: {exc}")
+    if not targets:
+        return DeleteResult(prefix, "skipped", reason="no_such_namespace")
+    if prefix not in manifest and not allow_unknown:
+        return DeleteResult(prefix, "skipped", targets, reason="unknown_namespace")
+    return targets
+
+
 def delete_prefix(
     client: QdrantClient,
     prefix: str,
@@ -370,6 +434,15 @@ def delete_prefix(
     is explicitly set, so a caller cannot accidentally remove a namespace
     the manifest cannot vouch for.
 
+    Never raises for a server that cannot answer. The drop is per-collection,
+    so a failure part-way through has already destroyed part of the namespace
+    - the one outcome that must never be inferred from an exception nobody
+    recorded. Both server calls therefore report: an unreadable listing
+    returns ``failed`` having touched nothing, and a failed drop returns
+    ``failed`` carrying the collections already removed and how many of the
+    targets they were. The manifest entry survives a partial drop, because
+    part of the namespace does.
+
     Args:
         client: Qdrant client for the managed server.
         prefix: The collection prefix (``r{hash}_``) to remove.
@@ -379,21 +452,13 @@ def delete_prefix(
     Returns:
         A :class:`DeleteResult` describing the outcome.
     """
-    # Hard gate: only a canonical r{12hex}_ prefix may ever be a delete target.
-    # This is enforced before anything else and is NOT relaxed by allow_unknown,
-    # so an empty/short/crafted prefix can never startswith-match foreign roots.
-    if not is_canonical_prefix(prefix):
-        return DeleteResult(prefix, "skipped", reason="invalid_prefix")
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     manifest = load_manifest()
-    targets = sorted(
-        c.name
-        for c in client.get_collections().collections
-        if c.name.startswith(prefix)
-    )
-    if not targets:
-        return DeleteResult(prefix, "skipped", reason="no_such_namespace")
-    if prefix not in manifest and not allow_unknown:
-        return DeleteResult(prefix, "skipped", targets, reason="unknown_namespace")
+    planned = _plan_prefix_delete(client, prefix, manifest, allow_unknown=allow_unknown)
+    if isinstance(planned, DeleteResult):
+        return planned
+    targets = planned
     if dry_run:
         return DeleteResult(prefix, "would_remove", targets)
     entry = manifest.get(prefix)
@@ -403,8 +468,26 @@ def delete_prefix(
         try:
             client.delete_collection(collection_name=name)
             removed.append(name)
-        except (OSError, RuntimeError) as exc:
-            return DeleteResult(prefix, "failed", removed, reason=str(exc))
+        except TRANSPORT_FAILURES as exc:
+            # The one loop in this codebase that is already destroying by the
+            # time it can fail. Everything in ``removed`` is gone; the
+            # manifest entry is deliberately left standing for what survives,
+            # and the counts travel in the reason because a caller that
+            # reduces this result to its reason string would otherwise report
+            # a namespace as merely failed when half of it no longer exists.
+            #
+            # Standing, but narrowed. The entry survives because part of the
+            # namespace does; its claim about which collections that namespace
+            # holds does not survive the collections themselves. Left whole it
+            # keeps offering a destroyed collection to every consumer that
+            # reads the entry as an inventory.
+            retain_collections(prefix, removed)
+            return DeleteResult(
+                prefix,
+                "failed",
+                removed,
+                reason=f"delete_failed after {len(removed)}/{len(targets)}: {exc}",
+            )
     if root is not None:
         forget_root_index_claims(root)
     remove_prefix(prefix)

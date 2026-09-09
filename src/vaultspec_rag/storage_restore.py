@@ -24,6 +24,11 @@ if TYPE_CHECKING:
     from qdrant_client import QdrantClient
 
 
+#: The extension qdrant gives every snapshot it writes, and so the extension
+#: an artifact in an archive directory carries.
+_SNAPSHOT_SUFFIX = ".snapshot"
+
+
 def _no_progress(_line: str) -> None:
     """Drop a progress line when no operator surface is attached."""
 
@@ -99,7 +104,14 @@ def read_archive(archive_dir: Path) -> ArchiveRead:
     )
     if len({item.source for item in collections}) != len(collections):
         raise RuntimeError(f"archive manifest repeats a collection: {manifest_path}")
-    _read_metadata_files(archive_dir, payload.get("metadata_files"), manifest_path)
+    metadata_files = _read_metadata_files(
+        archive_dir, payload.get("metadata_files"), manifest_path
+    )
+    _refuse_unnamed_snapshots(
+        archive_dir,
+        {item.snapshot.name for item in collections} | set(metadata_files),
+        manifest_path,
+    )
     return ArchiveRead(prefix, version, collections)
 
 
@@ -139,7 +151,9 @@ def _read_collection(
     return ArchivedCollection(name, snapshot, points, identity)
 
 
-def _read_metadata_files(archive_dir: Path, value: object, manifest_path: Path) -> None:
+def _read_metadata_files(
+    archive_dir: Path, value: object, manifest_path: Path
+) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise RuntimeError(f"archive manifest is incomplete: {manifest_path}")
     metadata_files = cast("list[object]", value)
@@ -151,6 +165,49 @@ def _read_metadata_files(archive_dir: Path, value: object, manifest_path: Path) 
         artifact = archive_dir / filename
         if not artifact.is_file():
             raise RuntimeError(f"archive metadata is missing: {artifact}")
+    return tuple(cast("list[str]", metadata_files))
+
+
+def _refuse_unnamed_snapshots(
+    archive_dir: Path, referenced: set[str], manifest_path: Path
+) -> None:
+    """Refuse an archive holding snapshot artifacts its manifest does not name.
+
+    Recovery is driven entirely by the manifest: the destination names, the
+    point counts, the provenance and the reported collection list are all
+    built from its records, and nothing is ever compared against what the
+    directory actually holds. An artifact the manifest omits is therefore not
+    restored, not reported, and not distinguishable in the result from an
+    archive that never held it - the operator recovers a subset of the
+    namespace and is told the count of what was named.
+
+    That is the one failure shape a reader cannot be expected to catch, which
+    is why it is refused here rather than warned about. Half a namespace
+    recovered under a success message is worse than a recovery that stopped
+    and said which files it could not account for.
+
+    A second guard on the archiver's merge, and deliberately independent of
+    it: it holds if that merge is regretted or regressed, if a retention
+    sweep half-removed a directory, or if an archive was assembled by hand.
+
+    Scoped to snapshot artifacts because those are the files that carry data.
+    A note or a checksum left beside them is not half a namespace, and
+    stopping a recovery over one would be its own failure.
+    """
+    try:
+        present = sorted(
+            path.name
+            for path in archive_dir.iterdir()
+            if path.is_file() and path.suffix == _SNAPSHOT_SUFFIX
+        )
+    except OSError as exc:
+        raise RuntimeError(f"archive directory is unreadable: {archive_dir}") from exc
+    unnamed = [name for name in present if name not in referenced]
+    if unnamed:
+        raise RuntimeError(
+            "archive holds snapshot artifacts its manifest does not name: "
+            f"{', '.join(unnamed)} beside {manifest_path}"
+        )
 
 
 def restore_archive(

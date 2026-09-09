@@ -555,7 +555,7 @@ assert "vaultspec_rag.storage_restore" not in sys.modules
         ``storage_manifest`` legitimately defines ``record_restored_archive``
         - the provenance write restore itself calls - and
         ``storage_reclamation`` legitimately owns a private
-        ``_read_archive_records``. A substring guard on "restore" or
+        ``_read_archive_manifest``. A substring guard on "restore" or
         "read_archive" would fire on both and be loosened away on its first
         false positive.
 
