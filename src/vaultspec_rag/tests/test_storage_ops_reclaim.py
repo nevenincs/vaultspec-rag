@@ -904,8 +904,8 @@ class TestTransportTimeoutIsolation:
         ``archived_removed``: the namespace is reported reclaimed while half
         of it still exists and its manifest entry has been forgotten.
 
-        Removing both guards, which is the state the audit found, does not
-        land on an assertion at all: the wrapped timeout escapes
+        Removing both guards, the state before either of them existed, does
+        not land on an assertion at all: the wrapped timeout escapes
         ``run_maintenance_cycle`` and the test errors with
         ``ResponseHandlingException: timed out``. That is the production
         failure being closed rather than a proof about this test, which is
@@ -959,8 +959,8 @@ class TestTransportTimeoutIsolation:
 
         Three mutations, each run alone against this test.
 
-        Removing the listing guard entirely, which is the state the audit
-        found, does not land on an assertion: the wrapped timeout escapes
+        Removing the listing guard entirely, the state before it existed,
+        does not land on an assertion: the wrapped timeout escapes
         ``run_maintenance_cycle`` and the test errors with
         ``ResponseHandlingException: timed out``. That is the production
         failure being closed rather than a proof about this test.
