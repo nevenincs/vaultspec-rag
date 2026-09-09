@@ -812,7 +812,19 @@ def _apply_reclaim(
                 _redecide(decision, "deferred", "points_changed_during_archive"),
                 archived,
             )
-    result = delete_prefix(client, decision.prefix, dry_run=False)
+    try:
+        result = delete_prefix(client, decision.prefix, dry_run=False)
+    except TRANSPORT_FAILURES as exc:
+        # The drop reports its own server failures rather than raising them,
+        # so what reaches here today is the local half: forgetting the
+        # manifest entry writes a file, and that write happens AFTER the
+        # collections are gone. The whole transport class is named anyway,
+        # because this is the only call in the cycle that destroys as it
+        # fails - an escape from it would carry an already-destroyed
+        # namespace out with no outcome recorded, which is the one failure
+        # mode a later deferral cannot repair, and that is too much to rest
+        # on a callee's promise not to raise.
+        return _redecide(decision, "failed", f"drop_failed: {exc}"), archived
     if result.status != "removed":
         return _redecide(decision, "failed", result.reason or result.status), archived
     return (
