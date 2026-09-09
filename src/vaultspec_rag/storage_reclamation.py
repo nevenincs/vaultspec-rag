@@ -101,6 +101,12 @@ class ReclaimDecision:
         reason: Detail for pending/deferred/failed outcomes, else ``None``.
         points: Point count across the prefix's collections.
         footprint_bytes: On-disk footprint of the prefix.
+        removed_collections: The collections a ``failed`` outcome destroyed
+            before it failed, and empty for every other outcome. A drop is a
+            per-collection loop, so a failure part-way through has already
+            destroyed part of the namespace; the count of them travels in the
+            reason, but an operator who has to intervene needs to know WHICH
+            half is gone, and a count cannot say.
     """
 
     prefix: str
@@ -109,6 +115,7 @@ class ReclaimDecision:
     reason: str | None = None
     points: int = 0
     footprint_bytes: int = 0
+    removed_collections: tuple[str, ...] = ()
 
 
 def _prefix_points(client: QdrantClient, prefix: str) -> int | None:
@@ -446,12 +453,23 @@ def _decide_orphan(
     )
 
 
-def _redecide(decision: ReclaimDecision, action: str, reason: str) -> ReclaimDecision:
+def _redecide(
+    decision: ReclaimDecision,
+    action: str,
+    reason: str,
+    *,
+    removed_collections: tuple[str, ...] = (),
+) -> ReclaimDecision:
     """Restate one namespace's decision, preserving its measured facts.
 
     Every gate that turns a reclaim into a ``deferred`` or ``failed`` outcome
     reports the same prefix, tier, point count and footprint it was handed;
     only the verdict and its reason change.
+
+    ``removed_collections`` is the one fact a gate can ADD rather than
+    preserve, and only the drop can add it: every other gate refuses before
+    anything is destroyed, so its outcome names nothing because nothing is
+    gone.
     """
     return ReclaimDecision(
         decision.prefix,
@@ -460,6 +478,7 @@ def _redecide(decision: ReclaimDecision, action: str, reason: str) -> ReclaimDec
         reason=reason,
         points=decision.points,
         footprint_bytes=decision.footprint_bytes,
+        removed_collections=removed_collections,
     )
 
 
@@ -1016,7 +1035,26 @@ def _apply_reclaim(
         # on a callee's promise not to raise.
         return _redecide(decision, "failed", f"drop_failed: {exc}"), archived
     if result.status != "removed":
-        return _redecide(decision, "failed", result.reason or result.status), archived
+        destroyed = tuple(result.collections)
+        if destroyed:
+            # The reason carries how many; this carries which. A drop that
+            # destroyed part of a namespace and then stopped is the one
+            # outcome an operator has to act on by hand, and "1/2 gone" does
+            # not say which one to go looking for.
+            logger.warning(
+                "namespace %s partially destroyed before the drop failed: %s",
+                decision.prefix,
+                ", ".join(destroyed),
+            )
+        return (
+            _redecide(
+                decision,
+                "failed",
+                result.reason or result.status,
+                removed_collections=destroyed,
+            ),
+            archived,
+        )
     return (
         ReclaimDecision(
             decision.prefix,
