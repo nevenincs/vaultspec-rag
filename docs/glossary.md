@@ -146,7 +146,7 @@ A reserved seat for one project in the running service. The service keeps a fixe
 
 ## Sparse vector (SPLADE)
 
-A numeric representation that records which specific terms a piece of text emphasizes, produced by a model called SPLADE. The sparse vector captures exact wording and pairs with the dense vector in hybrid search. See [the architecture overview](architecture.md).
+A numeric representation that records which specific terms a piece of text emphasizes, produced by a model called SPLADE. The sparse vector captures exact wording and pairs with the dense vector in hybrid search. See [the architecture overview](architecture.md). The default SPLADE model is gated and non-commercially licensed; see [the model cache and its first download](installation.md#the-model-cache-and-its-first-download) for the access and licence policy.
 
 ## stdio transport
 
