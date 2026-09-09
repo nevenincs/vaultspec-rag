@@ -1147,7 +1147,15 @@ def _drop_generation_collections(
     *,
     dry_run: bool,
 ) -> tuple[list[DeleteResult], set[str]]:
-    """Drop each droppable generation; a failed drop rejoins the held set."""
+    """Drop each droppable generation; a failed drop rejoins the held set.
+
+    The whole transport class is named, not the builtins alone. This is a
+    per-collection loop, so a server that stops answering part-way through it
+    used to abort the pass - and with it the cycle it runs at the head of,
+    before a single orphan had been considered.
+    """
+    from ._qdrant_transport import TRANSPORT_FAILURES
+
     results: list[DeleteResult] = []
     dropped: set[str] = set()
     for collection in droppable:
@@ -1156,7 +1164,7 @@ def _drop_generation_collections(
             continue
         try:
             client.delete_collection(collection_name=collection)
-        except (OSError, RuntimeError) as exc:
+        except TRANSPORT_FAILURES as exc:
             results.append(DeleteResult(collection, "failed", reason=str(exc)))
             held.append(collection)
             continue
@@ -1197,6 +1205,11 @@ def reclaim_superseded_generations(
     so a failure part-way leaves the clocks untouched rather than crediting a
     window that did not run.
 
+    A server that cannot answer ends this pass, never the cycle around it.
+    This pass runs first, so an escape from either of its two server calls
+    aborted the tick before any orphan was considered - a slow generation
+    listing suppressing the reclamation the cycle exists to do.
+
     Args:
         client: Qdrant client for the managed server.
         roots: Root path to that root's derived code collection name.
@@ -1206,9 +1219,23 @@ def reclaim_superseded_generations(
         reader_present: Predicate answering whether a root has a live lease.
         dry_run: When True, plan and mutate nothing.
     """
+    from ._qdrant_transport import TRANSPORT_FAILURES
     from .generation_survey import advance_generation_stamps, survey_generations
 
-    live = [c.name for c in request.client.get_collections().collections]
+    try:
+        live = [c.name for c in request.client.get_collections().collections]
+    except TRANSPORT_FAILURES:
+        # Nothing can be decided without the live set: which generations a
+        # root still serves, which are unreferenced, and which stamps name
+        # collections that no longer exist all read from it. The clocks are
+        # handed back untouched rather than emptied, because the caller
+        # persists this map wholesale and an empty one would restart every
+        # window on a read that failed.
+        logger.warning(
+            "generation pass skipped: collection listing unavailable",
+            exc_info=True,
+        )
+        return [], dict(request.stamps)
     reports = survey_generations(request.roots, live)
     results, droppable, held, unreferenced = _evaluate_generation_reports(
         reports,
