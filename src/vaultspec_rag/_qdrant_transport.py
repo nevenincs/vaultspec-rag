@@ -37,10 +37,19 @@ answered-with-an-error leaves through after the unanswered one was handled.
 into the same client API without a socket in the path, and the store's own
 guards raise ``RuntimeError``.
 
-Deliberately narrow. This is not ``Exception``: a malformed response, a
-programming error in a callback or a bad argument must still escape and be
-seen, rather than being recorded as a namespace the server was too slow to
-reach.
+Deliberately narrow. This is not ``Exception``: a programming error in a
+callback and a bad argument still escape and are seen, rather than being
+recorded as a namespace the server was too slow to reach. ``TypeError`` and
+``ValueError`` are what that narrowness is made of - neither is one of the
+builtins named above, and neither descends from a client root.
+
+A malformed response is NOT in that set, and saying it was overstated the
+boundary. The client parses a 2xx body itself and re-raises the validation
+failure as ``ResponseHandlingException``, so a schema mismatch is absorbed at
+every site naming this tuple and deferred as a namespace that could not be
+read. That outcome is right - a body this client cannot parse is an answer
+this code cannot use - but it is an absorbed failure, not an escaping one,
+and a boundary claimed in the wrong place is worse than one left unclaimed.
 """
 
 from __future__ import annotations
