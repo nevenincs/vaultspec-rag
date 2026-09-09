@@ -665,11 +665,18 @@ class _TransportFaults:
 
     One value rather than a keyword per call, so a test names only the call it
     is faulting and every other call is visibly untouched.
+
+    ``listing_error`` defaults to a transport timeout. Naming something else
+    is how a test asks whether a guard is narrow: a failure outside the
+    transport class has to keep escaping, and a guard that absorbed it would
+    be reporting a programming error as a slow server.
     """
 
     snapshots: frozenset[str] = frozenset()
     recounts: frozenset[str] = frozenset()
     deletes: frozenset[str] = frozenset()
+    listing_on_call: int | None = None
+    listing_error: Exception | None = None
 
 
 #: No fault at all - the stand-in behaves as the plain cycle client.
@@ -697,6 +704,24 @@ class _TimeoutClient(_CycleClient):
         super().__init__(counts, snapshots_dir=snapshots_dir)
         self._faults = faults
         self._counted: dict[str, int] = {}
+        self.listings = 0
+        #: What the cycle had destroyed and archived at the moment the faulted
+        #: listing raised. Read by the generation-pass test to place that
+        #: listing before any orphan work, which is the ordering the whole
+        #: claim rests on.
+        self.state_at_listing_fault: tuple[tuple[str, ...], tuple[str, ...]] | None = (
+            None
+        )
+
+    def get_collections(self) -> object:
+        self.listings += 1
+        if self.listings == self._faults.listing_on_call:
+            self.state_at_listing_fault = (
+                tuple(self.deleted),
+                tuple(self.snapshotted),
+            )
+            raise self._faults.listing_error or _read_timeout()
+        return super().get_collections()
 
     def count(self, *, collection_name: str) -> object:
         seen = self._counted.get(collection_name, 0) + 1
@@ -885,3 +910,84 @@ class TestTransportTimeoutIsolation:
         # The destruction that really happened, and the continuation past it.
         assert client.deleted == [stalled_code, healthy]
         assert survivor.action == "archived_removed"
+
+    def test_a_generation_listing_timeout_still_lets_the_orphan_pass_run(
+        self, tmp_path: Path
+    ) -> None:
+        """The pass that runs first cannot suppress the pass that runs second.
+
+        ``run_maintenance_cycle`` runs the superseded-generation pass before
+        the orphan apply loop, and both reach the same server. An escape from
+        the generation pass therefore aborted the tick before a single orphan
+        had been considered - the reclamation the cycle exists to do,
+        suppressed by a pass that only clears residue.
+
+        The faulted call is the cycle's SECOND collection listing. The first
+        belongs to the survey, nothing between the survey and the apply loop
+        lists collections except the generation pass, and the state captured
+        at fault time pins it: no orphan had been archived or dropped yet.
+
+        The second act is what stops this from being a "nothing raised" test.
+        The guard is deliberately narrow, so a failure outside the transport
+        class must still escape the cycle; asserting that a ``TypeError``
+        does is what distinguishes a guard placed on the listing from a
+        blanket handler wrapped around the pass, which would absorb both and
+        satisfy every assertion in the first act.
+
+        Three mutations, each run alone against this test.
+
+        Removing the listing guard entirely, which is the state the audit
+        found, does not land on an assertion: the wrapped timeout escapes
+        ``run_maintenance_cycle`` and the test errors with
+        ``ResponseHandlingException: timed out``. That is the production
+        failure being closed rather than a proof about this test.
+
+        Moving ``_reclaim_generations_for_cycle`` to after the orphan apply
+        loop fails ``assert outcome.action == "archived_removed"``, observed
+        reporting ``deferred``: the second listing then belongs to the
+        pre-drop re-count, which holds the namespace as unverifiable. The
+        fault-time state assertion survives that move - the re-count also
+        precedes every delete - so it pins the fault ahead of any destruction
+        rather than to the generation pass alone, and the outcome assertion is
+        what carries the ordering claim.
+
+        Swallowing broadly instead - widening that guard to ``Exception`` -
+        fails the second act's ``pytest.raises(TypeError)`` with DID NOT
+        RAISE, which is the only assertion here a blanket handler cannot
+        satisfy.
+        """
+        orphan = _orphaned_namespace(tmp_path, now=_NOW, name="vanished-a")
+        collection = _collection_of(orphan)
+        client = _TimeoutClient(
+            {collection: 10},
+            snapshots_dir=tmp_path / "snapshots",
+            faults=_TransportFaults(listing_on_call=2),
+        )
+
+        result = _run_cycle(client, tmp_path)
+
+        # The fault landed after the survey and before any orphan work, which
+        # is where and only where the generation pass runs.
+        assert client.state_at_listing_fault == ((), ())
+        assert result.surveys, "the survey's own listing must have succeeded"
+        assert result.generations == []
+        # The consequence the finding names: the orphan pass ran anyway.
+        outcome = _outcome_for(result, orphan)
+        assert outcome.action == "archived_removed"
+        assert client.deleted == [collection]
+
+        # Same fault site, a failure the guard does not name. A cycle that
+        # absorbed this would be reporting a programming error as a namespace
+        # the server was too slow to reach.
+        second = _orphaned_namespace(tmp_path, now=_NOW, name="vanished-b")
+        strict = _TimeoutClient(
+            {_collection_of(second): 10},
+            snapshots_dir=tmp_path / "snapshots",
+            faults=_TransportFaults(
+                listing_on_call=2,
+                listing_error=TypeError("not a transport failure"),
+            ),
+        )
+
+        with pytest.raises(TypeError):
+            _run_cycle(strict, tmp_path)
