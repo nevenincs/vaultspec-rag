@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -56,6 +57,24 @@ def _run_script(name: str, args: list[str]) -> subprocess.CompletedProcess[str]:
         errors="replace",
         timeout=30,
     )
+
+
+def check_interpreter_under_test() -> None:
+    """Verify this runs on the interpreter the smoke matrix asked for.
+
+    The workflow installs a matrix interpreter and points ``UV_PYTHON`` at it.
+    If that stopped taking effect, every leg would smoke-test the floor and a
+    green matrix would prove one interpreter twice. This lives here rather
+    than in a workflow step for the reason every other interpreter assertion
+    does: this process IS the interpreter in question, so the check costs
+    nothing, cannot be pasted into one job and forgotten in another, and runs
+    identically against a wheel on a laptop.
+    """
+    want = os.environ.get("UV_PYTHON", "")
+    got = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    if want and not want.startswith(got):
+        _fail(f"UV_PYTHON asks for {want}, running {sys.version.split()[0]}")
+    print(f"PASS: smoke-testing under Python {sys.version.split()[0]}")
 
 
 def check_import() -> None:
@@ -203,6 +222,7 @@ def check_installed_package_enrollment() -> None:
 
 
 if __name__ == "__main__":
+    check_interpreter_under_test()
     check_import()
     check_version_metadata()
     check_entry_points_registered()
