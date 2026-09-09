@@ -260,6 +260,34 @@ class TestModelStep:
         if result.action == ProvisionAction.UNCHANGED:
             assert "cached" in result.detail
 
+    def test_disabled_sparse_is_never_named_by_the_model_step(self) -> None:
+        # A dense-only configuration must never provision the gated SPLADE
+        # repo: its id must not appear anywhere the step names a repo it
+        # would fetch, already holds, or fetched, and the step must be
+        # considering exactly the dense-only inventory (two repos, not
+        # three) - proving it reads the shared, gated inventory rather than
+        # a repo list of its own that could drift from it.
+        from ..config._settings import configured_model_repos, get_config, reset_config
+        from ..config._types import EnvVar
+
+        prev = os.environ.get(EnvVar.SPARSE_ENABLED.value)
+        os.environ[EnvVar.SPARSE_ENABLED.value] = "0"
+        reset_config()
+        try:
+            cfg = get_config()
+            assert cfg.sparse_enabled is False
+            assert len(configured_model_repos()) == 2
+            result = provision_models(dry_run=True)
+            assert str(cfg.sparse_model) not in result.detail
+            if result.action == ProvisionAction.UNCHANGED:
+                assert "all 2 model repos" in result.detail
+        finally:
+            if prev is None:
+                os.environ.pop(EnvVar.SPARSE_ENABLED.value, None)
+            else:
+                os.environ[EnvVar.SPARSE_ENABLED.value] = prev
+            reset_config()
+
 
 class TestTorchStep:
     def test_front_door_configures_torch_with_sync_pending(
