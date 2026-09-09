@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:58cd6e81ebd1b7acebc95bcbbb66b61151e27f6cf9af11286b0defe4e608861e'
+body_hash: 'sha256:f3b1f32f8beccbbd69487227da8a57b8da93d58f0579437c555cd42071db735a'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -22,6 +22,21 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S30]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S31]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S32]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S33]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S34]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S35]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S36]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S37]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S38]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S39]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S43]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S44]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S45]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S46]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S47]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S48]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S49]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P01-S50]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S09]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S10]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S11]]'
@@ -31,15 +46,21 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S15]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S16]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P02-S17]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S40]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S41]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P02-S42]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S18]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S19]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S20]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S21]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S22]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P03-S51]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P04-S23]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P04-S24]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P04-S25]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P04-S26]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S52]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S53]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
@@ -85,15 +106,36 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 - `2026-09-08-qdrant-collection-sprawl-P02-S15` - Add a guard test proving the ephemeral window does not bypass the archive-before-destroy gate
 - `2026-09-08-qdrant-collection-sprawl-P02-S16` - Add a guard test proving the ephemeral window does not bypass the pre-drop point re-count
 - `2026-09-08-qdrant-collection-sprawl-P02-S17` - Add a guard test proving an unknown or unverifiable namespace is still never reached by the ephemeral path
+- `2026-09-08-qdrant-collection-sprawl-P01-S33` - Widen the namespace-drop guard and its collection listing to the client transport failures so a timeout cannot leave a namespace partially deleted with no outcome recorded
+- `2026-09-08-qdrant-collection-sprawl-P01-S34` - Guard the drop call in the apply path so a failing drop becomes a failed decision instead of escaping the cycle
+- `2026-09-08-qdrant-collection-sprawl-P01-S35` - Widen the superseded-generation drop and its collection listing to the client transport failures, since that pass runs before any orphan is considered
+- `2026-09-08-qdrant-collection-sprawl-P01-S36` - Add a guard test proving a transport timeout during the drop is recorded against that namespace and the cycle continues
+- `2026-09-08-qdrant-collection-sprawl-P01-S37` - Add a guard test proving a transport timeout in the superseded-generation pass still lets the orphan pass run
+- `2026-09-08-qdrant-collection-sprawl-P01-S38` - Derive the service-start readiness deadline from the resolved qdrant patience window and its ceiling so the command stops abandoning a start that will succeed
+- `2026-09-08-qdrant-collection-sprawl-P01-S39` - Add a test pinning that raising the qdrant readiness knob widens the service-start wait
+- `2026-09-08-qdrant-collection-sprawl-P01-S43` - Admit the client's non-2xx server-failure type into the shared transport class, so a server that answers with an error is treated the same as one that cannot answer
+- `2026-09-08-qdrant-collection-sprawl-P01-S44` - Correct the shared transport docstring's claim that a malformed response escapes, since the client wraps a schema mismatch in the same type
+- `2026-09-08-qdrant-collection-sprawl-P01-S45` - Add a guard test faulting the drop loop with a non-2xx server response rather than a programming error, so the class boundary is asserted at its ambiguous member
+- `2026-09-08-qdrant-collection-sprawl-P01-S46` - Merge the archive of a retried partial drop into the snapshot manifest already on disk instead of overwriting it, so the first attempt's artifacts stay named
+- `2026-09-08-qdrant-collection-sprawl-P01-S47` - Refuse to restore an archive directory holding snapshot artifacts its manifest does not name, rather than reporting a partial recovery as complete
+- `2026-09-08-qdrant-collection-sprawl-P01-S48` - Add a guard test proving a retried partial drop leaves both attempts' artifacts restorable
+- `2026-09-08-qdrant-collection-sprawl-P01-S49` - Narrow a namespace's recorded collections to what survived when a drop reports partial, so the manifest stops naming what is gone
+- `2026-09-08-qdrant-collection-sprawl-P01-S50` - Carry the removed collection names onto the recorded outcome of a partial drop, not only their count
+- `2026-09-08-qdrant-collection-sprawl-P02-S40` - Bind the three grace windows to a positive number with a documented floor so no window can authorise a drop on the cycle that first observes a namespace
+- `2026-09-08-qdrant-collection-sprawl-P02-S41` - Defer under an unverifiable reason of its own when the post-archive settle re-count cannot be taken, rather than claiming the points changed
+- `2026-09-08-qdrant-collection-sprawl-P02-S42` - Extend the pre-drop guard test to assert the post-archive unverifiable deferral reports its own reason
 - `2026-09-08-qdrant-collection-sprawl-P03-S18` - Raise the archive size cap default so a full ephemeral drain does not evict the evidence it writes
 - `2026-09-08-qdrant-collection-sprawl-P03-S19` - State the unavailable in-place restore and name the portable recovery path on the operator-facing archive surface
 - `2026-09-08-qdrant-collection-sprawl-P03-S20` - Report total collection count and the ephemeral backlog size on the storage status route
 - `2026-09-08-qdrant-collection-sprawl-P03-S21` - Render the reported collection count and ephemeral backlog in the status output
 - `2026-09-08-qdrant-collection-sprawl-P03-S22` - Add a test covering the reported collection count and ephemeral backlog fields
+- `2026-09-08-qdrant-collection-sprawl-P03-S51` - Collapse the duplicated status summary renderers behind one implementation taking the values that differ
 - `2026-09-08-qdrant-collection-sprawl-P04-S23` - Drop grace-ledger entries naming collections that no longer exist when the ledger is next written
 - `2026-09-08-qdrant-collection-sprawl-P04-S24` - Add a test proving ledger entries for absent collections are pruned and live entries are preserved
 - `2026-09-08-qdrant-collection-sprawl-P04-S25` - Point the qdrant storage-dir at a temp path in the storage-ops tests that reach the managed backend
 - `2026-09-08-qdrant-collection-sprawl-P04-S26` - Point the qdrant storage-dir at a temp path in the storage-survey tests that reach the managed backend
+- `2026-09-08-qdrant-collection-sprawl-P04-S52` - State the constraint directly in the two reclaim guard-test docstrings that cite a development record instead
+- `2026-09-08-qdrant-collection-sprawl-P04-S53` - Repair the two comment sentences left broken across lines in the environment example
 
 ### plan
 
