@@ -117,6 +117,7 @@ async def _reindex_vault(port: int, root: Path, token: str) -> str:
             json={
                 "type": "vault",
                 "clean": True,
+                "authority": "rebuild",
                 "project_root": str(root),
                 "initiator_kind": "cli",
             },

@@ -110,7 +110,11 @@ def _index_isolation_projects(
                         _mcp_session_call(
                             port,
                             "reindex_vault",
-                            {"clean": True, "project_root": str(manifest.root)},
+                            {
+                                "clean": True,
+                                "authority": "rebuild",
+                                "project_root": str(manifest.root),
+                            },
                         )
                     )
                 ),
@@ -354,6 +358,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             json={
                 "type": "code",
                 "clean": False,
+                "authority": "publication",
                 "project_root": str(root),
             },
             timeout=30.0,

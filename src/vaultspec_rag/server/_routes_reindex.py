@@ -146,6 +146,7 @@ async def _validate_reindex_domains(
     source_type: PublicSourceType,
     *,
     clean: bool,
+    authority: RunAuthority,
 ) -> tuple[
     list[tuple[PublicSourceType, _ValidatedIndexRequest]],
     dict[str, _DomainResponse],
@@ -161,9 +162,7 @@ async def _validate_reindex_domains(
             "operation": "index",
             "source": source.value,
             "mode": "rebuild" if clean else "incremental",
-            "authority": (
-                RunAuthority.REBUILD.value if clean else RunAuthority.PUBLICATION.value
-            ),
+            "authority": authority.value,
             "start_paused": False,
         }
         try:
@@ -184,6 +183,37 @@ async def _validate_reindex_domains(
         else:
             validated.append((source, request_parts))
     return validated, failures
+
+
+def _validated_reindex_authority(
+    payload: dict[str, object],
+    *,
+    clean: bool,
+) -> RunAuthority:
+    """Return the exact publication authority named by a reindex request.
+
+    ``clean`` selects an execution mode; it is not consent.  Requiring both
+    values, and requiring them to agree, prevents this adapter from restoring
+    the implicit full-work authority that the canonical jobs contract removed.
+    Audit verification is deliberately not a publication mode and is activated
+    only by its own non-mutating CLI path.
+    """
+    raw_authority = payload.get("authority")
+    try:
+        authority = RunAuthority(raw_authority)
+    except (TypeError, ValueError) as exc:
+        allowed = ", ".join(
+            repr(member.value)
+            for member in (RunAuthority.PUBLICATION, RunAuthority.REBUILD)
+        )
+        raise ValueError(f"authority must be one of {allowed}") from exc
+    expected = RunAuthority.REBUILD if clean else RunAuthority.PUBLICATION
+    if authority is not expected:
+        raise ValueError(
+            f"authority {authority.value!r} does not authorize "
+            f"{'rebuild' if clean else 'incremental publication'} mode"
+        )
+    return authority
 
 
 async def _create_reindex_domains(
@@ -278,11 +308,16 @@ async def reindex_route(request: Request) -> JSONResponse:
                 "invalid_job_spec",
                 "clean must be a boolean when provided.",
             )
+        try:
+            authority = _validated_reindex_authority(payload, clean=clean)
+        except ValueError as exc:
+            raise InvalidJobRequestError("invalid_job_spec", str(exc)) from exc
         validated, domain_responses = await _validate_reindex_domains(
             request,
             payload,
             source_type,
             clean=clean,
+            authority=authority,
         )
     except InvalidJobRequestError as exc:
         return job_error("create", exc.code, str(exc))

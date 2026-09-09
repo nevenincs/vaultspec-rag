@@ -181,7 +181,12 @@ def test_storage_survey_root_lookup_indexed_root(
     reindex = _do_http_call(
         port,
         "/reindex",
-        {"type": "vault", "clean": True, "project_root": str(root)},
+        {
+            "type": "vault",
+            "clean": True,
+            "authority": "rebuild",
+            "project_root": str(root),
+        },
     )
     assert reindex is not None and reindex.get("ok") is True, reindex
     job_id = reindex.get("job_id")

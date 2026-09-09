@@ -371,7 +371,7 @@ finally:
             )
             resp: httpx.Response = client.post(
                 "/reindex",
-                json={"type": "vault"},
+                json={"type": "vault", "authority": "publication"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
@@ -599,7 +599,11 @@ try:
     ) as client:
         response = client.post(
             "/reindex",
-            json={"type": "code", "project_root": sys.argv[1]},
+            json={
+                "type": "code",
+                "authority": "publication",
+                "project_root": sys.argv[1],
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
     print(

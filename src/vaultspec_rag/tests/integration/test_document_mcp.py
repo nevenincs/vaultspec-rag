@@ -14,6 +14,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import (
     _do_http_call,
@@ -264,6 +265,7 @@ def test_document_tools_through_real_mcp_session(
         False,
         port,
         str(root),
+        authority=RunAuthority.PUBLICATION,
         initiator_kind="mcp",
     )
     assert partial is not None
@@ -275,6 +277,7 @@ def test_document_tools_through_real_mcp_session(
         False,
         port,
         str(root),
+        authority=RunAuthority.PUBLICATION,
         initiator_kind="mcp",
     )
     assert created is not None

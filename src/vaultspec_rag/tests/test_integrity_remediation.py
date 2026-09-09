@@ -15,6 +15,9 @@ the envelope through the one canonical builder.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -27,6 +30,7 @@ from .._index_integrity import (
 from .._integrity_remediation import (
     REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
     _record_verdict,
+    _spawn_repair,
     reset_observations,
     shrunken_observations,
 )
@@ -131,6 +135,32 @@ class TestOperatorSwitch:
         assert bool(get_config().integrity_auto_repair) is False
         with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="1"):
             assert bool(get_config().integrity_auto_repair) is True
+
+
+class TestRepairAdmissionAuthority:
+    def test_incremental_repair_passes_explicit_publication_authority(self) -> None:
+        """The background repair caller cannot infer or default its authority."""
+        tree = ast.parse(textwrap.dedent(inspect.getsource(_spawn_repair)))
+        dispatch_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Subscript)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "starters"
+        ]
+        assert len(dispatch_calls) == 1
+        authority_keywords = [
+            keyword
+            for keyword in dispatch_calls[0].keywords
+            if keyword.arg == "authority"
+        ]
+        assert len(authority_keywords) == 1
+        value = authority_keywords[0].value
+        assert isinstance(value, ast.Attribute)
+        assert isinstance(value.value, ast.Name)
+        assert value.value.id == "RunAuthority"
+        assert value.attr == "PUBLICATION"
 
 
 class TestStatusSurface:
