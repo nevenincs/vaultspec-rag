@@ -250,7 +250,7 @@ These variables control the daemon's scheduled storage-maintenance cycle. See th
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds | -    |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `20`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `64`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
 | `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables)         | -        |
 | `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                  | -        |
