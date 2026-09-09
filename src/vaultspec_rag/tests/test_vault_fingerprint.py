@@ -73,8 +73,13 @@ def _fingerprint(root: Path, text: str) -> str:
     return fingerprint_bytes(_sample_path(root), root, text.encode("utf-8"))
 
 
-def _legacy_digest(data: bytes) -> str:
-    """Digest bytes the way the pre-split scheme did, for migration tests."""
+def _bare_digest(data: bytes) -> str:
+    """The digest a value with no readable split carries.
+
+    Not a bridge to an older scheme - there is none. This is what the current
+    one records for a file it cannot decode, which is the one case that still
+    has no front matter to separate from a body.
+    """
     return hashlib.blake2b(data).hexdigest()
 
 
@@ -222,7 +227,7 @@ class TestUndecodableBytes:
 
         rendered = fingerprint_bytes(_sample_path(vault_root), vault_root, data)
 
-        assert rendered == _legacy_digest(data)
+        assert rendered == _bare_digest(data)
         assert parse(rendered) is None
 
     def test_an_undecodable_file_is_a_body_delta_not_a_silent_unchanged(
@@ -252,4 +257,4 @@ class TestUndecodableBytes:
 
         rendered = fingerprint_path(path, vault_root)
 
-        assert rendered == _legacy_digest(path.read_bytes())
+        assert rendered == _bare_digest(path.read_bytes())
