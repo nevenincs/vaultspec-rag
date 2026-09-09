@@ -13,7 +13,7 @@ import pytest
 
 from ..config._settings import rag_default
 from ..config._types import EnvVar
-from ..qdrant_runtime._supervise import _ready_timeout_seconds
+from ..qdrant_runtime._supervise import ready_timeout_seconds
 
 #: Read from the settings object, which is where this timeout's name and
 #: default live. Restating either here would let the test keep passing after
@@ -43,7 +43,7 @@ def _restore(prev: str | None) -> None:
 def test_default_when_unset() -> None:
     prev = _set(None)
     try:
-        assert _ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
+        assert ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
     finally:
         _restore(prev)
 
@@ -51,7 +51,7 @@ def test_default_when_unset() -> None:
 def test_env_override_is_honoured() -> None:
     prev = _set("600")
     try:
-        assert _ready_timeout_seconds() == 600.0
+        assert ready_timeout_seconds() == 600.0
     finally:
         _restore(prev)
 
@@ -63,7 +63,7 @@ def test_malformed_falls_back_to_default(raw: str) -> None:
     # the catch and these fail with ValueError, not an assertion.
     prev = _set(raw)
     try:
-        assert _ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
+        assert ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
     finally:
         _restore(prev)
 
@@ -71,7 +71,7 @@ def test_malformed_falls_back_to_default(raw: str) -> None:
 def test_non_positive_falls_back_to_default() -> None:
     prev = _set("0")
     try:
-        assert _ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
+        assert ready_timeout_seconds() == _READY_TIMEOUT_DEFAULT_SECONDS
     finally:
         _restore(prev)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
@@ -128,6 +128,39 @@ class _PreparedServiceRequest:
     json_mode: bool
 
 
+#: Everything the start wait must cover BEYOND the qdrant readiness budget:
+#: the daemon interpreter's own import, resolving and re-verifying the server
+#: binary, and the embedding and reranker model load. The model load is the
+#: large term - on a cold host it fetches weights, where the hub's own
+#: per-file download budget is itself 300 seconds - and the accelerator
+#: preflight that precedes the timer is already allowed 60 on its own.
+_START_OVERHEAD_ALLOWANCE_SECONDS = 300.0
+
+
+def _service_ready_deadline_seconds() -> float:
+    """Return how long ``server start`` waits for the spawned daemon to serve.
+
+    Derived, not fixed. The daemon may legitimately spend the supervisor's
+    whole readiness ceiling inside the qdrant wait alone, and that ceiling is
+    a multiple of an operator-tunable patience window. A command holding a
+    constant that once happened to equal the window abandoned a start that
+    then succeeded behind the operator, and reported a non-zero timeout for
+    it - on exactly the slow large-store recovery the ceiling was raised for.
+
+    Both terms come from the supervisor that applies them, so the multiple
+    between them is stated in one place and cannot drift out of step here.
+    """
+    from ..qdrant_runtime._supervise import (
+        ready_ceiling_seconds,
+        ready_timeout_seconds,
+    )
+
+    return (
+        ready_ceiling_seconds(ready_timeout_seconds())
+        + _START_OVERHEAD_ALLOWANCE_SECONDS
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _ServiceReadinessRequest:
     """The spawned daemon and context needed to await its readiness."""
@@ -139,7 +172,11 @@ class _ServiceReadinessRequest:
     started_at: float
     env_warnings: tuple[str, ...] = ()
     progress: StartupStatusReporter | None = None
-    deadline: float = 300.0
+    #: Resolved per request rather than per import, so the environment an
+    #: operator sets for this start is the environment the wait is drawn
+    #: from. A default_factory rather than a literal because there is no
+    #: value a construction site could omit and still be right.
+    deadline: float = field(default_factory=_service_ready_deadline_seconds)
 
 
 @dataclass(frozen=True, slots=True)
