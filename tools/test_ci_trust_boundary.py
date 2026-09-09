@@ -24,13 +24,39 @@ def _jobs() -> dict[str, dict[str, object]]:
     return dict(yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))["jobs"])
 
 
-def _runs_on_a_fork_pull_request(condition: str) -> bool:
-    """Whether a job with this condition can run for a pull request."""
+#: The condition that admits a pull request only when it comes from a branch of
+#: this repository. A job carrying it is unreachable from a fork.
+_SAME_REPO = "head.repo.full_name == github.repository"
+
+
+def _runs_on_any_pull_request(condition: str) -> bool:
+    """Whether a job with this condition runs for pull requests at all.
+
+    A bare ``!= 'pull_request'`` excludes them outright. The same negation
+    paired with the same-repo guard does not: that shape admits pushes and
+    releases AND this repository's own pull requests, so it must read as
+    running on them.
+    """
     if not condition:
         return True
-    if "!= 'pull_request'" in condition:
+    if "!= 'pull_request'" in condition and _SAME_REPO not in condition:
         return False
     return "pull_request" in condition
+
+
+def _runs_on_a_fork_pull_request(condition: str) -> bool:
+    """Whether a job with this condition can run for a FORK's pull request.
+
+    The narrower question, and the one the trust boundary turns on. A job may
+    legitimately run on every pull request this repository raises and still be
+    unreachable from a fork, so a same-repo guard answers no here while
+    :func:`_runs_on_any_pull_request` still answers yes. Conflating the two is
+    what previously made the boundary unfixable: any guard that satisfied this
+    check emptied the Windows lane the sibling test requires.
+    """
+    if not _runs_on_any_pull_request(condition):
+        return False
+    return _SAME_REPO not in condition
 
 
 def test_every_pull_request_job_runs_on_hosted_infrastructure() -> None:
@@ -61,7 +87,7 @@ def test_the_pull_request_lane_runs_the_provisioning_proofs_on_windows() -> None
     windows_pr_jobs = {
         name: job
         for name, job in _jobs().items()
-        if _runs_on_a_fork_pull_request(str(job.get("if", "")))
+        if _runs_on_any_pull_request(str(job.get("if", "")))
         and "windows" in str(job.get("runs-on", "")).lower()
     }
 
