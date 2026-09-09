@@ -121,17 +121,18 @@ def _parse_index_source(
     *,
     command: str,
     json_mode: bool,
-    allow_aliases: bool = True,
 ) -> PublicSourceType:
-    """Parse a CLI source selection, honouring legacy spellings by default.
+    """Parse a CLI source selection, honouring the legacy spellings.
 
-    Aliases are an operator convenience on the publication verbs. Exact
-    verification is not a convenience: it reports on one named scope, so it
-    takes the canonical vocabulary and refuses anything it would have to
-    guess at, before it reaches the service.
+    One vocabulary for the flag, whatever the verb does with it. Accepting
+    ``docs`` to index and refusing it to verify would be a split an operator
+    has no way to predict from the help, and it refused ``all`` - the flag's
+    own default - along with it, leaving no spelling that verified every
+    source. What exact verification actually requires is that the scope be
+    named rather than defaulted, and that is enforced on its own.
     """
     try:
-        return parse_source_type(value, allow_aliases=allow_aliases)
+        return parse_source_type(value, allow_aliases=True)
     except SourceTypeParseError as exc:
         if json_mode:
             _emit_json_error_and_exit(
@@ -894,7 +895,6 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             index_type,
             command="index",
             json_mode=json_mode,
-            allow_aliases=False,
         )
         _handle_full_audit(source, target, port, json_mode=json_mode)
         return

@@ -443,23 +443,45 @@ class TestIndexAuthorityBoundary:
         assert "--full" in result.output
         assert "explicit --type" in result.output
 
-    def test_full_audit_rejects_source_aliases_before_transport(
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("codebase", "code"),
+            ("docs", "vault"),
+            ("all", "combined"),
+        ],
+    )
+    def test_full_audit_takes_the_same_spellings_the_verb_does(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        spelling: str,
+        expected: str,
     ) -> None:
+        """One vocabulary for --type, whatever the verb goes on to do.
+
+        `index --type docs` and `index --full --type docs` used to disagree,
+        and the refusal took `all` with it - the flag's own default spelling,
+        and so the only way to name every source at once. An operator had no
+        way to read that split off the help.
+
+        The resolved source is captured at the transport rather than inferred
+        from an exit code, because accepting the alias and then auditing the
+        wrong corpus would satisfy a status-only assertion.
+        """
+        from .._source_types import PublicSourceType
         from ..cli import _index as index_module
 
         (tmp_path / ".vaultspec").mkdir()
+        seen: list[str] = []
 
-        def forbidden_transport(*_args: object, **_kwargs: object) -> typing.NoReturn:
-            raise AssertionError("audit aliases must be rejected before transport")
+        def capture(
+            audit_type: object, *_args: object, **_kwargs: object
+        ) -> dict[str, object]:
+            seen.append(PublicSourceType(audit_type).value)
+            return {"ok": True, "status": "consistent", "domains": {}}
 
-        monkeypatch.setattr(
-            index_module,
-            "_try_http_index_audit",
-            forbidden_transport,
-        )
+        monkeypatch.setattr(index_module, "_try_http_index_audit", capture)
 
         result = runner.invoke(
             app,
@@ -468,15 +490,15 @@ class TestIndexAuthorityBoundary:
                 str(tmp_path),
                 "index",
                 "--type",
-                "codebase",
+                spelling,
                 "--full",
                 "--port",
                 "9123",
             ],
         )
 
-        assert result.exit_code == 2
-        assert "source" in result.output.lower()
+        assert result.exit_code == 0, result.output
+        assert seen == [expected]
 
     @pytest.mark.parametrize("conflict", ["--rebuild", "--dry-run", "--borrow-gpu"])
     def test_full_audit_rejects_publication_modes(

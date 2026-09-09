@@ -344,7 +344,7 @@ class RunCheckpointBase:
             prepare=prepare,
             mark_applied=mark_applied,
             confirm=confirm,
-            confirm_after_acknowledgement=True,
+            confirm_when_stored=True,
         )
 
     @property

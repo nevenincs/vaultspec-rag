@@ -139,18 +139,6 @@ def shortfall_warnings(index_state: Mapping[str, object]) -> list[ShortfallWarni
                 why="These results are drawn from an incomplete index",
             )
         )
-    files = _shortfall_figures(index_state, "file_shortfall")
-    if files is not None:
-        warnings.append(
-            ShortfallWarning(
-                deficit=(
-                    f"this index names {files.get('named_count')} files but "
-                    f"holds content for only {files.get('covered_count')}"
-                ),
-                missing=f"{files.get('missing_count')} are missing",
-                why="A file absent from the index cannot be found by any query",
-            )
-        )
     # Third kind, and the only one derived from the answer rather than from a
     # claim. It fires exactly where the other two cannot: a fragment that
     # republished its own figures is self-consistent, so every count agrees

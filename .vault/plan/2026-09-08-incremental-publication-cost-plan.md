@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:c61796661fb2f7345709e63ad9c8706b51f258d2ef886a192950c8f879ee61a0'
+body_hash: 'sha256:a35eb2299500a909d360387fb111d5f43d5446021ef6727c7b662044a91d95d1'
 ---
 
 <!-- RETIRED: P04, P05, P06, P07, P09, P10, P11, P12, S09, S11, S12, S13, S14, S15, S16, S17, S18, S19, S20, S21, S22, S23, S24, S25, S26, S27, S28, S29, S30, S31, S32, S33, S34, S35, S36, S41, S42, S43, S44, S45, S46, S47, S48, S49, S50, S51, S55, S56, S57, S58, S59, S61, S63, S64, S65, S66, S67, S69 -->
@@ -111,7 +111,7 @@ Verify the completed implementation against the issue's observable cost, correct
 
 After implementation is complete, measure operation growth, exercise recovery and source behavior, run the repository gates once, and review the finished change against issue 469.
 
-- [ ] `W04.P15.S77` - Prove the finished implementation meets issue 469 with source integration and crash-recovery coverage, deterministic operation-count scaling, a large-parent single-change benchmark, one full repository gate run, and one final code review; `src/vaultspec_rag/tests, src/vaultspec_rag/tests/benchmarks/bench_incremental_publication_cost.py`.
+- [ ] `W04.P15.S77` - Prove the finished implementation meets issue 469 with source integration and crash-recovery coverage, deterministic operation-count scaling, a large-parent single-change benchmark, one full repository gate run, and one final code review; `src/vaultspec_rag/tests`.
 
 ## Parallelization
 
