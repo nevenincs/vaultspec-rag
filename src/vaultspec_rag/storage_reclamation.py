@@ -28,7 +28,7 @@ from .storage_survey_ops import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
 
     from qdrant_client import QdrantClient
@@ -551,6 +551,9 @@ def archive_prefix(
             metadata_dest = dest_dir / document_meta.name
             copy2(document_meta, metadata_dest)
             metadata_files.append(metadata_dest.name)
+    carried, carried_metadata = _carry_prior_archive_records(
+        dest_dir, fresh=collection_artifacts, fresh_metadata=metadata_files
+    )
     manifest_path = write_snapshot_manifest(
         dest_dir,
         StorageSnapshotManifest(
@@ -561,24 +564,111 @@ def archive_prefix(
                 if entry is not None
                 else store_schema.STORAGE_SCHEMA_VERSION
             ),
-            collections=tuple(sorted(collection_artifacts, key=lambda item: item.name)),
-            metadata_files=tuple(sorted(metadata_files)),
+            collections=tuple(
+                sorted([*collection_artifacts, *carried], key=lambda item: item.name)
+            ),
+            metadata_files=tuple(sorted({*metadata_files, *carried_metadata})),
         ),
     )
-    _verify_completed_archive(client, dest_dir, manifest_path)
+    _verify_completed_archive(
+        client,
+        dest_dir,
+        manifest_path,
+        live_names=frozenset(item.name for item in collection_artifacts),
+    )
     archived.append(manifest_path)
     return archived
+
+
+def _carry_prior_archive_records(
+    dest_dir: Path,
+    *,
+    fresh: Sequence[SnapshotCollection],
+    fresh_metadata: Sequence[str],
+) -> tuple[tuple[SnapshotCollection, ...], tuple[str, ...]]:
+    """Return the records an earlier attempt left that this one must keep naming.
+
+    The archive destination is fixed per namespace and the manifest is
+    published in place, so a second attempt that wrote only its own records
+    would unname the first attempt's. That matters because the retry after a
+    partial drop is the designed path: the survey behind it sees only what
+    survived, so the collections the first attempt destroyed would be left
+    sitting in the archive under no manifest at all - present on disk, named
+    by nothing, and invisible to a restore that is driven entirely by the
+    manifest. The operator recovers half the namespace and is told it is
+    whole.
+
+    Three rules, each a different way a carried record could lie:
+
+    - A name this attempt archived wins outright. The collection is alive and
+      has just been re-snapshotted, so the older artifact describes vectors
+      that are no longer the current ones. Its file is removed here, because
+      leaving a superseded artifact beside a manifest that no longer names it
+      is exactly the unreferenced-artifact state a restore must refuse.
+    - A record whose artifact is no longer on disk is dropped rather than
+      carried. Republishing the name of a file that is gone would produce a
+      manifest no restore could satisfy.
+    - A record whose file this attempt rewrote under the same name is dropped
+      for the same reason as the first rule: the bytes are no longer the ones
+      its point count describes.
+    """
+    manifest_path = snapshot_manifest_path(dest_dir)
+    if not manifest_path.is_file():
+        return (), ()
+    prior = _read_archive_manifest(manifest_path)
+    fresh_names = {item.name for item in fresh}
+    written_files = {item.snapshot_file for item in fresh} | set(fresh_metadata)
+    carried: list[SnapshotCollection] = []
+    for record in prior.collections:
+        artifact = dest_dir / record.snapshot_file
+        if record.snapshot_file in written_files:
+            continue
+        if record.name in fresh_names:
+            _drop_superseded_artifact(artifact)
+            continue
+        if artifact.is_file():
+            carried.append(record)
+    carried_metadata = tuple(
+        name
+        for name in prior.metadata_files
+        if name not in written_files and (dest_dir / name).is_file()
+    )
+    return tuple(carried), carried_metadata
+
+
+def _drop_superseded_artifact(artifact: Path) -> None:
+    """Remove one snapshot this same call has just replaced with a newer one.
+
+    Raises rather than shrugging. A file that cannot be removed stays in the
+    archive unnamed, which is the condition a restore refuses, so failing the
+    archive here defers the namespace instead of destroying more of it into a
+    directory recovery would reject.
+    """
+    try:
+        artifact.unlink(missing_ok=True)
+    except OSError as exc:
+        message = f"superseded archive snapshot could not be removed: {artifact}"
+        raise RuntimeError(message) from exc
 
 
 def _verify_completed_archive(
     client: QdrantClient,
     archive_dir: Path,
     manifest_path: Path,
+    *,
+    live_names: frozenset[str],
 ) -> None:
-    """Re-read a completed archive and prove it still describes live data."""
-    records = _read_archive_records(manifest_path)
-    for name, snapshot_file, points in records:
-        artifact = archive_dir / snapshot_file
+    """Re-read a completed archive and prove it still describes live data.
+
+    Every record is checked for its artifact, because a manifest naming a file
+    that is not there is not a completed archive. The point re-count is asked
+    only of the collections this call archived: a record carried over from an
+    earlier attempt describes a collection the drop that followed it already
+    destroyed, and counting one that no longer exists would fail the archive
+    for having preserved it.
+    """
+    for record in _read_archive_manifest(manifest_path).collections:
+        artifact = archive_dir / record.snapshot_file
         if artifact.parent != archive_dir or not artifact.is_file():
             raise RuntimeError(f"archived snapshot file not found: {artifact}")
         try:
@@ -587,16 +677,25 @@ def _verify_completed_archive(
         except OSError as exc:
             message = f"archived snapshot file is unreadable: {artifact}"
             raise RuntimeError(message) from exc
-        current_points = int(client.count(collection_name=name).count)
-        if current_points != points:
+        if record.name not in live_names:
+            continue
+        current_points = int(client.count(collection_name=record.name).count)
+        if current_points != record.points:
             raise RuntimeError(
-                f"archived snapshot point count changed for {name}: "
-                f"expected {points}, found {current_points}"
+                f"archived snapshot point count changed for {record.name}: "
+                f"expected {record.points}, found {current_points}"
             )
 
 
-def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ...]:
-    """Load the snapshot records from a non-empty completed archive manifest."""
+def _read_archive_manifest(manifest_path: Path) -> StorageSnapshotManifest:
+    """Load a non-empty completed archive manifest, whole.
+
+    One reader for the persisted form, because the two callers ask the same
+    question of it. Verification needs the records to prove they still stand
+    up; a re-archive needs them, their provenance and the metadata list to
+    decide what it must keep naming, and a merge that read the records through
+    a narrower view would silently drop the provenance it was preserving.
+    """
     try:
         if manifest_path.stat().st_size <= 0:
             raise RuntimeError(f"archive manifest is empty: {manifest_path}")
@@ -605,15 +704,34 @@ def _read_archive_records(manifest_path: Path) -> tuple[tuple[str, str, int], ..
         raise RuntimeError(f"archive manifest is unreadable: {manifest_path}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
-    raw_records = cast("dict[str, object]", payload).get("collections")
+    fields = cast("dict[str, object]", payload)
+    raw_records = fields.get("collections")
     if not isinstance(raw_records, list):
         message = f"archive manifest has no collection records: {manifest_path}"
         raise RuntimeError(message)
     records = cast("list[object]", raw_records)
-    return tuple(_archive_record(record, manifest_path) for record in records)
+    prefix = fields.get("prefix")
+    root = fields.get("root")
+    version = fields.get("storage_schema_version")
+    if (
+        not isinstance(prefix, str)
+        or (root is not None and not isinstance(root, str))
+        or isinstance(version, bool)
+        or not isinstance(version, int)
+    ):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    return StorageSnapshotManifest(
+        prefix=prefix,
+        root=root,
+        storage_schema_version=version,
+        collections=tuple(_archive_record(record, manifest_path) for record in records),
+        metadata_files=_archive_metadata_files(
+            fields.get("metadata_files"), manifest_path
+        ),
+    )
 
 
-def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]:
+def _archive_record(record: object, manifest_path: Path) -> SnapshotCollection:
     """Validate one persisted snapshot record before using its file name."""
     if not isinstance(record, dict):
         raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
@@ -630,7 +748,32 @@ def _archive_record(record: object, manifest_path: Path) -> tuple[str, str, int]
         or points < 0
     ):
         raise RuntimeError(f"archive manifest has an invalid record: {manifest_path}")
-    return name, snapshot_file, points
+    identity_payload = fields.get("identity")
+    identity = (
+        None
+        if identity_payload is None
+        else store_schema.CollectionIdentity.from_payload(identity_payload)
+    )
+    if identity_payload is not None and identity is None:
+        # Carried verbatim or not at all. Re-publishing this record with the
+        # provenance stripped would turn a corrupt archive into one that reads
+        # as merely unstamped, which is a claim about the vectors nobody made.
+        raise RuntimeError(f"archive identity is invalid: {manifest_path}")
+    return SnapshotCollection(
+        name=name, snapshot_file=snapshot_file, points=points, identity=identity
+    )
+
+
+def _archive_metadata_files(value: object, manifest_path: Path) -> tuple[str, ...]:
+    """Validate the persisted metadata list before any name in it is used."""
+    if not isinstance(value, list):
+        raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
+    names = cast("list[object]", value)
+    for name in names:
+        if not isinstance(name, str) or Path(name).name != name:
+            message = f"archive manifest has invalid metadata: {manifest_path}"
+            raise RuntimeError(message)
+    return tuple(cast("list[str]", names))
 
 
 def sweep_archive(
