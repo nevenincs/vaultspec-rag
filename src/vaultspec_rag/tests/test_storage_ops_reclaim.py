@@ -1129,3 +1129,69 @@ class TestServerRefusalIsolation:
 
         with pytest.raises(TypeError):
             _run_cycle(client, tmp_path)
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestPartialDropNarrowsTheRecord:
+    """The entry a partial drop leaves standing stops naming what is gone.
+
+    The entry itself has to survive: part of the namespace does, and forgetting
+    it would leave the survivors unattributable and so unreclaimable. Its
+    inventory is a separate claim. ``collections`` is read as the record of
+    which kinds a namespace holds, and the donor search asks exactly that
+    question of it, so an entry left whole keeps offering a destroyed
+    collection as a source of vectors nobody can read. The identity map is the
+    same claim about provenance.
+    """
+
+    def test_a_partial_drop_stops_the_entry_naming_what_it_destroyed(
+        self, tmp_path: Path
+    ) -> None:
+        """The destroyed name leaves the inventory; the survivor stays.
+
+        Both halves are asserted, and the second is what makes the first mean
+        anything: an entry narrowed to nothing, or forgotten outright, would
+        satisfy a test that only checked the destroyed name was gone while
+        making the surviving collections unattributable.
+
+        Two mutations, each run alone against this test.
+
+        Removing the narrowing - the state where the entry outlives what it
+        claims - fails ``assert code not in after.collections``, observed with
+        the entry still naming a collection the drop had destroyed.
+
+        Narrowing to the empty tuple instead, as a caller that passed the
+        targets rather than what it actually removed would, fails
+        ``assert vault in after.collections``: the surviving half of the
+        namespace loses the record that attributes it.
+        """
+        from ..storage_manifest import (
+            load_manifest,
+            record_collection_identity,
+            record_root,
+        )
+        from ..storage_survey_ops import delete_prefix
+        from ..store_schema import VAULT_COLLECTION
+
+        root = tmp_path / "namespace"
+        root.mkdir()
+        prefix = record_root(root, backend="server").prefix
+        code, vault = prefix + CODE_COLLECTION, prefix + VAULT_COLLECTION
+        for collection in (code, vault):
+            record_collection_identity(
+                root, backend="server", collection=collection, identity=_identity()
+            )
+        client = _TimeoutClient(
+            {code: 5, vault: 7},
+            faults=_TransportFaults(deletes=frozenset({vault})),
+        )
+
+        result = delete_prefix(cast("QdrantClient", client), prefix, dry_run=False)
+
+        assert result.status == "failed"
+        assert result.collections == [code]
+        after = load_manifest()[prefix]
+        assert code not in after.collections
+        assert vault in after.collections
+        assert code not in after.collection_identity
+        assert vault in after.collection_identity
