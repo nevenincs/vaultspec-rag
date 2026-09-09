@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:64f9656474f367932d09ebf199da8d07c75ac0b8df781104cbc7130148745728'
+body_hash: 'sha256:6335a72192d8a653b245ea89706411ffefc17c9f89df9907d1cdba740088c8f7'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -36,6 +36,10 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S20]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S21]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P03-S22]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S23]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S24]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S25]]'
+  - '[[2026-09-08-qdrant-collection-sprawl-P04-S26]]'
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
@@ -81,6 +85,10 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 - `2026-09-08-qdrant-collection-sprawl-P03-S20` - Report total collection count and the ephemeral backlog size on the storage status route
 - `2026-09-08-qdrant-collection-sprawl-P03-S21` - Render the reported collection count and ephemeral backlog in the status output
 - `2026-09-08-qdrant-collection-sprawl-P03-S22` - Add a test covering the reported collection count and ephemeral backlog fields
+- `2026-09-08-qdrant-collection-sprawl-P04-S23` - Drop grace-ledger entries naming collections that no longer exist when the ledger is next written
+- `2026-09-08-qdrant-collection-sprawl-P04-S24` - Add a test proving ledger entries for absent collections are pruned and live entries are preserved
+- `2026-09-08-qdrant-collection-sprawl-P04-S25` - Point the qdrant storage-dir at a temp path in the storage-ops tests that reach the managed backend
+- `2026-09-08-qdrant-collection-sprawl-P04-S26` - Point the qdrant storage-dir at a temp path in the storage-survey tests that reach the managed backend
 
 ### plan
 
