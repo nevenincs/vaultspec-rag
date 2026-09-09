@@ -1074,6 +1074,11 @@ class TestServerRefusalIsolation:
         ``assert failed.action == "failed"``, observed reporting
         ``archived_removed``: the namespace is reported reclaimed while half
         of it still exists and its manifest entry has been forgotten.
+
+        Dropping the destroyed names on the way to the outcome, which is what
+        an outcome carrying only a reason string does, fails
+        ``assert failed.removed_collections == (stalled_code,)`` with an empty
+        tuple.
         """
         first, second = _two_orphans(tmp_path)
         stalled_code = first + CODE_COLLECTION
@@ -1097,6 +1102,9 @@ class TestServerRefusalIsolation:
         assert separator, failed.reason
         assert head == "delete_failed after 1/2"
         assert detail.startswith("Unexpected Response: 503 (Service Unavailable)")
+        # Which half is gone, not only how many. An operator who has to go and
+        # finish this by hand cannot act on a count.
+        assert failed.removed_collections == (stalled_code,)
         # The destruction that really happened, and the continuation past it.
         assert client.deleted == [stalled_code, healthy]
         assert survivor.action == "archived_removed"
