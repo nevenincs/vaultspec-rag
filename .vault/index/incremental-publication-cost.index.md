@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:1128fdcad23813befe046df5c68cd304271410be218abbe8fd301fb311da3b75'
+body_hash: 'sha256:f8d1a6f063cce8a181014dbe02d63a861dc382a53b7aba393c136b83018f1912'
 related:
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S01]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P01-S02]]'
@@ -22,12 +22,14 @@ related:
   - '[[2026-09-08-incremental-publication-cost-W01-P02-S70]]'
   - '[[2026-09-08-incremental-publication-cost-W01-P03-S10]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S37]]'
+  - '[[2026-09-08-incremental-publication-cost-W03-P08-S38]]'
   - '[[2026-09-08-incremental-publication-cost-W03-P08-S52]]'
   - '[[2026-09-08-incremental-publication-cost-adr]]'
   - '[[2026-09-08-incremental-publication-cost-plan]]'
   - '[[2026-09-08-incremental-publication-cost-reference]]'
   - '[[2026-09-08-incremental-publication-cost-research]]'
   - '[[2026-09-08-incremental-publication-cost-s37-authority-audit]]'
+  - '[[2026-09-09-incremental-publication-cost-s38-execution-admission-audit]]'
 ---
 
 # `incremental-publication-cost` feature index
@@ -43,6 +45,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 ### audit
 
 - `2026-09-08-incremental-publication-cost-s37-authority-audit` - `incremental-publication-cost` audit: `S37 authority contract review`
+- `2026-09-09-incremental-publication-cost-s38-execution-admission-audit` - `incremental-publication-cost` audit: `S38 execution admission review`
 
 ### exec
 
@@ -60,6 +63,7 @@ Auto-generated index of all documents tagged with `#incremental-publication-cost
 - `2026-09-08-incremental-publication-cost-W01-P02-S70` - Require backend identity in run signatures and checkpoint requests, delete legacy defaults and decoder fallbacks, and update every constructor
 - `2026-09-08-incremental-publication-cost-W01-P03-S10` - Provide a strict proof-before-generation finalization gate, bound eligible closed receipt history, and preserve current proof, evidence, and open-receipt owners through compaction
 - `2026-09-08-incremental-publication-cost-W03-P08-S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority
+- `2026-09-08-incremental-publication-cost-W03-P08-S38` - Enforce authority-specific execution admission for generic service jobs without widening scoped publication
 - `2026-09-08-incremental-publication-cost-W03-P08-S52` - Carry required publication and verification authority through the exact job codec, every production constructor, immutable transition, and attempt context
 
 ### plan

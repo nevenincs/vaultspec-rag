@@ -363,7 +363,8 @@ async def test_document_attempt_honors_cancellation_before_admission(
                     manager,
                     created.job.id,
                     tmp_path,
-                    False,
+                    JobMode.INCREMENTAL,
+                    RunAuthority.PUBLICATION,
                     registry,
                 ),
             )
