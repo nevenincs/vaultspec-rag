@@ -67,7 +67,6 @@ __all__ = [
     "_run_cycle",
     "_survey",
     "_temp_survey",
-    "isolate_manifest_dir",
 ]
 
 
@@ -81,12 +80,6 @@ _POLICY = ReclaimPolicy(
     archive_retention_days=30.0,
     archive_max_bytes=10_000,
 )
-
-
-@pytest.fixture(autouse=True)
-def isolate_manifest_dir(isolated_status_dir: Path) -> None:
-    """Resolve the manifest under a temp managed dir for every test here."""
-    del isolated_status_dir
 
 
 def _survey(
@@ -134,8 +127,13 @@ def _identity(**overrides: Unpack[_IdentityOverrides]) -> CollectionIdentity:
     return CollectionIdentity(**base)
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestOrphanStamps:
-    """The persisted grace clock: stamp, preserve, reset."""
+    """The persisted grace clock: stamp, preserve, reset.
+
+    The manifest these stamps live in is machine-global state, so the class
+    relocates it per test.
+    """
 
     def test_new_orphan_is_stamped(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
@@ -532,8 +530,13 @@ class TestEphemeralIdleTier:
         assert by_prefix[ephemeral_prefix].reason == "over_cycle_cap"
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestLastIndexedStamping:
-    """record_root's last_indexed stamp is the ephemeral activity clock."""
+    """record_root's last_indexed stamp is the ephemeral activity clock.
+
+    The manifest this stamp lives in is machine-global state, so the class
+    relocates it per test.
+    """
 
     def test_fresh_stamp_overwrites_and_persists(self, tmp_path: Path) -> None:
         root = tmp_path / "proj"
@@ -999,12 +1002,16 @@ def _run_cycle(
     )
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestPreDropRecount:
     """Both tiers re-count immediately before destroying anything.
 
     An archive makes loss recoverable, never prevented, so the data tier
     needs this check at least as much as the empty tier - and a snapshot torn
     by a concurrent write cannot even offer recovery of the delta it missed.
+
+    The orphan stamp these namespaces carry is machine-global state, so the
+    class relocates it per test.
     """
 
     def test_data_tier_defers_when_points_moved_since_the_survey(
@@ -1080,8 +1087,13 @@ class TestPreDropRecount:
         assert client.deleted == [collection]
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestLivenessGate:
-    """An active index job's namespace is never destroyed under it."""
+    """An active index job's namespace is never destroyed under it.
+
+    The orphan stamp these namespaces carry is machine-global state, so the
+    class relocates it per test.
+    """
 
     def test_active_index_job_defers_before_the_archive(self, tmp_path: Path) -> None:
         prefix = _orphaned_namespace(tmp_path, now=_NOW)
@@ -1146,8 +1158,13 @@ class TestActiveIndexPrefixes:
             jobs.reset()
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestActivityClock:
-    """The ephemeral idle clock advances on observation, not only on stamps."""
+    """The ephemeral idle clock advances on observation, not only on stamps.
+
+    The activity stamp lives in the machine-global manifest, so the class
+    relocates it per test.
+    """
 
     def _record(self, tmp_path: Path, *, stale_hours: float) -> str:
         root = tmp_path / "harness-root"
@@ -1212,8 +1229,13 @@ class TestActivityClock:
         )
 
 
+@pytest.mark.usefixtures("isolated_status_dir")
 class TestEphemeralTierNeedsObservedStability:
-    """A temp-rooted namespace survives until observations agree for a TTL."""
+    """A temp-rooted namespace survives until observations agree for a TTL.
+
+    The activity stamp these namespaces carry is machine-global state, so
+    the class relocates it per test.
+    """
 
     def _live_temp_namespace(self, tmp_path: Path) -> str:
         root = tmp_path / "temp-harness-root"
