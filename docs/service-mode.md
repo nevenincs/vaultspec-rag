@@ -6,6 +6,10 @@ This guide assumes the workspace is already installed and provisioned. "Provisio
 
 For the choice between the managed server and the local-only store, see the [backends guide](backends.md). For the vocabulary used here, see the [glossary](glossary.md).
 
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+
 ## Start the service
 
 Run:
@@ -100,7 +104,7 @@ does not, the client refuses the request rather than answering it:
 
 ```text
 Refusing to search against the running service.
-This vaultspec-rag client is 0.4.21 but the running service is 0.4.22.
+This vaultspec-rag client is 0.4.22 but the running service is 0.4.21.
 A daemon from another release drops request fields it does not know rather than
 rejecting them, so the answer would be computed over a different candidate set
 with nothing to show it.
