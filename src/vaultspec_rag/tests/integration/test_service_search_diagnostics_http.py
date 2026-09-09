@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.mark.subprocess_gpu
 def test_direct_http_code_search_reports_code_index_state(
     live_service: tuple[int, Path],
     tmp_path: Path,

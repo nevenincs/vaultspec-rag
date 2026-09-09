@@ -1058,7 +1058,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             metavar="vault|code|document|combined",
             help=(
                 "Search area: vault documentation, source code, extracted documents, "
-                "or all three with combined. Aliases: docs, codebase, all."
+                "or all three with combined."
             ),
             show_default=True,
         ),

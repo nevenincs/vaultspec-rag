@@ -811,7 +811,7 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
             "--dry-run",
             help=(
                 "Show the resolved code/document admission summary without indexing. "
-                "Use with --type code, document, combined, or the default all alias."
+                "Use with --type code, document, or the default combined."
             ),
         ),
     ] = False,

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
 from .._source_types import PublicSourceType
-from ._checkpoint_common import RunCheckpointBase, configuration_fingerprint
+from ._checkpoint_common import RunCheckpointBase
 from ._content_policy import AdmissionDisposition, AdmissionReason, ContentKind
 from ._file_state import FileState
 from ._index_schema import CODE_EMBED_SCHEMA
@@ -16,10 +16,7 @@ from ._run_ledger_models import (
     CommitUnitKind,
     RunAuthority,
     RunOperation,
-    RunSignature,
-    index_run_ledger_path,
 )
-from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind, RunPolicy
 
 if TYPE_CHECKING:
@@ -98,39 +95,9 @@ class CodeRunCheckpoint(RunCheckpointBase):
 
     _content_kind: ClassVar[ContentKind | None] = ContentKind.CODE
     _kind_label: ClassVar[str] = "code"
-
-    @classmethod
-    def open(cls, request: CodeRunOpenRequest, /) -> CodeRunCheckpoint:
-        """Open or resume the compatible code generation for one attempt."""
-        kind_fingerprints = request.policy.fingerprints_for(ContentKind.CODE)
-        signature = RunSignature(
-            root_identity=str(request.root_dir.resolve()),
-            collection_identity=store_schema.CODE_COLLECTION,
-            source_type=PublicSourceType.CODE,
-            operation=request.operation,
-            clean=request.clean,
-            model_identity=request.model_identity,
-            dense_dimensions=request.dense_dimensions,
-            embedding_schema=CODE_EMBED_SCHEMA,
-            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
-            content_epoch=kind_fingerprints.content,
-            membership_epoch=kind_fingerprints.membership,
-            preprocessing_identity=request.policy.fingerprints.execution,
-            configuration_fingerprint=configuration_fingerprint(request.configuration),
-            policy_fingerprint=request.policy.fingerprints.snapshot,
-            backend_identity=request.backend_identity,
-        )
-        ledger = RunLedger(index_run_ledger_path(request.data_root))
-        generation = cls.start_compatible_generation(ledger, signature)
-        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
-        return cls(
-            ledger=ledger,
-            generation=generation,
-            policy=request.policy,
-            run_policy=request.run_policy,
-            authority=request.authority,
-            receipt=receipt,
-        )
+    _collection_identity: ClassVar[str] = store_schema.CODE_COLLECTION
+    _source_type: ClassVar[PublicSourceType] = PublicSourceType.CODE
+    _embedding_schema: ClassVar[int] = CODE_EMBED_SCHEMA
 
     def unit_for(self, segment: CodeFileSegment, source_digest: str) -> CommitUnit:
         """Project one deterministic streaming segment into ledger evidence."""

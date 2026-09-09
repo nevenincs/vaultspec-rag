@@ -16,10 +16,10 @@ module's business.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._source_types import PublicSourceType
+    from ._source_types import PublicSourceType, SelectableSource
 
 __all__ = [
     "SERVICE_NOT_RUNNING_MESSAGE",
@@ -148,7 +148,7 @@ SERVICE_NOT_RUNNING_MESSAGE = (
 
 def index_source_option(
     source: PublicSourceType,
-) -> Literal["vault", "code", "document", "combined"]:
+) -> SelectableSource:
     """Return the canonical ``--type`` value for *source*."""
     return source.value
 
