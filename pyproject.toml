@@ -122,6 +122,10 @@ dev = [
   "pytest-reportlog>=0.4.0",
   "pytest-timeout>=2.4.0",
   "pytest-xdist>=3.8.0",
+  # The workflow guards parse YAML as YAML. It arrived transitively before
+  # they did, which is a dependency that can vanish under an unrelated
+  # upgrade; declared here it is the direct dependency it has become.
+  "pyyaml>=6.0",
   # Module length and the class-shape design limits ruff has no rule for
   # (C0302, R0902, R0904, R0916). Everything else pylint would report is
   # already covered by ruff and stays disabled.
@@ -233,12 +237,26 @@ markers = [
   "quality: precision/recall and document coverage tests",
   "robustness: edge case and error handling tests",
   "timeout: timeout in seconds for individual tests",
+  # Checks that read only committed files. They need no runner, no accelerator
+  # and no network, so they hold on every platform and on a laptop before the
+  # push - which is why each one replaced a CI job that could only ever run
+  # where somebody remembered to paste it.
+  "repo: asserts a property of this repository's own committed files",
+  # Tests that can OBSERVE the fsync suppression `conftest.py` installs, and
+  # so run with the real call restored. Evidence-backed only: an entry needs a
+  # measured difference between suppressed and restored runs, not a hunch that
+  # a test looks timing-sensitive. Applied for flakiness instead, the marker
+  # hollows out the rule it is an exception to.
+  "durable: needs the real fsync, with the evidence recorded at the mark",
 ]
 # `tools` joins the library tests so the release-path guards (the binary
 # builder and the Scoop/Homebrew generators) actually run. They are pure
 # stdlib and fast; leaving them uncollected is how a channel manifest ships
 # broken out of a green suite.
-testpaths = ["src/vaultspec_rag/tests", "tools"]
+# `dev` joins them because the harness guards live there - the CI/justfile
+# contract, the exit-code contract, the workflow guards - and they were
+# collected by nothing at all: three guard files that had never once run.
+testpaths = ["src/vaultspec_rag/tests", "tools", "dev"]
 timeout = 300
 timeout_func_only = true
 tmp_path_retention_count = 1
