@@ -23,7 +23,7 @@ from ._publication_proof import (
     ProofMutationState,
     ProofProvenance,
     ProofReceiptState,
-    _require_non_empty,
+    require_non_empty,
 )
 
 if TYPE_CHECKING:
@@ -1086,7 +1086,7 @@ class PublicationProof:
                 raise ValueError(f"{name} must be non-negative")
         if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("compatibility_key must be a ProofCompatibilityKey")
-        _require_non_empty(self.generation_id, name="generation_id")
+        require_non_empty(self.generation_id, name="generation_id")
         if not isinstance(self.aggregate, ProofAggregate):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("aggregate must be a ProofAggregate")
         if not isinstance(self.provenance, ProofProvenance):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
@@ -1123,10 +1123,10 @@ class PublicationReceipt:
     rolled_back_at: float | None = None
 
     def __post_init__(self) -> None:
-        _require_non_empty(self.receipt_id, name="receipt_id")
+        require_non_empty(self.receipt_id, name="receipt_id")
         if not isinstance(self.compatibility_key, ProofCompatibilityKey):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
             raise TypeError("compatibility_key must be a ProofCompatibilityKey")
-        _require_non_empty(self.generation_id, name="generation_id")
+        require_non_empty(self.generation_id, name="generation_id")
         for name in ("reservation_sequence", "parent_revision", "target_revision"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime
@@ -1271,7 +1271,7 @@ class PublicationPointCandidate:
 
     def __post_init__(self) -> None:
         validate_rel_path(self.rel_path)
-        _require_non_empty(self.point_id, name="point_id")
+        require_non_empty(self.point_id, name="point_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1286,8 +1286,8 @@ class EffectivePublicationRead:
     retained_candidates: frozenset[PublicationPointCandidate]
 
     def __post_init__(self) -> None:
-        _require_non_empty(self.receipt_id, name="receipt_id")
-        _require_non_empty(self.generation_id, name="generation_id")
+        require_non_empty(self.receipt_id, name="receipt_id")
+        require_non_empty(self.generation_id, name="generation_id")
         for name in ("parent_revision", "reservation_sequence"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):  # pyright: ignore[reportUnnecessaryIsInstance] - validate persisted input at runtime

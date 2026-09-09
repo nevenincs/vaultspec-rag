@@ -28,10 +28,12 @@ __all__ = [
     "ProofReceiptState",
     "ProofUnverifiableError",
     "ProofUnverifiableReason",
+    "require_non_empty",
 ]
 
 
-def _require_non_empty(value: str, *, name: str) -> None:
+def require_non_empty(value: str, *, name: str) -> None:
+    """Reject a blank identity field, wherever the proof shapes use one."""
     if not isinstance(value, str) or not value.strip():  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
         raise ValueError(f"{name} must be non-empty")
 
@@ -193,7 +195,7 @@ class ProofCompatibilityKey:
             "content_identity",
             "policy_identity",
         ):
-            _require_non_empty(getattr(self, name), name=name)
+            require_non_empty(getattr(self, name), name=name)
         for name in ("storage_schema", "payload_schema"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -269,7 +271,7 @@ class ProofEvidence:
 
     def __post_init__(self) -> None:
         validate_rel_path(self.rel_path)
-        _require_non_empty(self.content_identity, name="content_identity")
+        require_non_empty(self.content_identity, name="content_identity")
         if not isinstance(self.point_ids, tuple):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
             raise TypeError("point_ids must be a tuple")
         if not self.point_ids:
