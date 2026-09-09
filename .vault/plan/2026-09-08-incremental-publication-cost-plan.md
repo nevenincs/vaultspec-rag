@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-incremental-publication-cost-reference]]'
 modified: '2026-09-09'
 body_schema: body-v2
-body_hash: 'sha256:0308d27914eb46e868e98e04e1d1b7302bfbb1da15580f2992884bf645a9b65c'
+body_hash: 'sha256:2c105b1112abe2a4470a63e95dfb7213ce94989dd7a5f0c8d565b18cb68cecc8'
 ---
 
 <!-- RETIRED: S13, S14, S15, S18, S19, S23, S24 -->
@@ -78,7 +78,7 @@ Ensure old or missing proof can only be replaced by an explicit rebuild while au
 
 - [x] `W03.P08.S37` - Encode persisted publication, rebuild, and audit-verification authority independently of run mode without migration authority; `src/vaultspec_rag/indexer/_run_ledger_models.py, src/vaultspec_rag/tests/test_index_run_ledger.py`.
 - [x] `W03.P08.S52` - Carry required publication and verification authority through the exact job codec, every production constructor, immutable transition, and attempt context; `src/vaultspec_rag/job_models.py, src/vaultspec_rag/job_manager/models.py, src/vaultspec_rag/job_manager/_control.py, src/vaultspec_rag/job_manager/_execution.py, src/vaultspec_rag/job_manager/_persistence.py, src/vaultspec_rag/job_persistence.py, src/vaultspec_rag/_job_admission.py, src/vaultspec_rag/jobs.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/serviceclient/_transport.py, src/vaultspec_rag/watcher_execution.py, src/vaultspec_rag/tests`.
-- [ ] `W03.P08.S38` - Enforce authority-specific execution admission for generic service jobs without widening scoped publication; `src/vaultspec_rag/job_dispatch.py, src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`.
+- [x] `W03.P08.S38` - Enforce authority-specific execution admission for generic service jobs without widening scoped publication; `src/vaultspec_rag/job_dispatch.py, src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py, src/vaultspec_rag/tests/integration/test_document_execution.py, src/vaultspec_rag/tests/integration/test_document_resource_bounds.py`.
 - [ ] `W03.P08.S39` - Route CLI rebuild and verification requests through explicit authority without granting scoped scan permission; `src/vaultspec_rag/cli/_index.py`.
 - [ ] `W03.P08.S60` - Audit backend contents against existing canonical proof without creating or repairing proof, and permit only rebuild publication to establish missing proof; `src/vaultspec_rag/_index_integrity.py, src/vaultspec_rag/tests/test_index_integrity.py`.
 - [ ] `W03.P08.S40` - Prove missing or old-format proof, schema drift, and corrupt receipts require typed rebuild refusal and that audit verification cannot seed proof; `src/vaultspec_rag/tests/test_document_index_escalation.py`.

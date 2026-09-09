@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
 
 from ._units import bytes_to_mib
+from .indexer._run_ledger_models import RunAuthority
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
 from .job_models import (
     IndexResilienceSnapshot,
@@ -58,14 +59,34 @@ class IndexJobBinding:
 
 @dataclass(frozen=True, slots=True)
 class _AttemptDispatch:
-    """Stable execution authority for one source-specific index attempt."""
+    """Stable persisted execution contract for one source-specific attempt."""
 
     source: JobSource
     manager: JobManager
     job_id: str
     root: Path
-    clean: bool
+    mode: JobMode
+    authority: RunAuthority
     registry: ServiceRegistry
+
+
+def _admit_attempt_mode(
+    context: JobAttemptContext,
+    dispatch: _AttemptDispatch,
+) -> bool:
+    """Return whether this exact persisted contract admits full execution."""
+    if context.authority is not dispatch.authority:
+        raise RuntimeError(
+            "attempt authority does not match its persisted dispatch authority"
+        )
+    if dispatch.authority is RunAuthority.AUDIT_VERIFICATION:
+        raise RuntimeError(
+            "audit-verification authority cannot run a publication index attempt"
+        )
+    clean = dispatch.mode is JobMode.REBUILD
+    if clean and dispatch.authority is not RunAuthority.REBUILD:
+        raise RuntimeError("publication authority cannot run a full index attempt")
+    return clean
 
 
 def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
@@ -85,29 +106,30 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
     ):
         raise RuntimeError(f"Cannot bind unsupported durable job: {binding.job_id}")
     root = Path(spec.project_root).resolve()
-    clean = spec.mode is JobMode.REBUILD
     if spec.source is JobSource.VAULT:
         runner = partial(
             _run_vault_attempt,
             dispatch=_AttemptDispatch(
-                JobSource.VAULT,
-                binding.manager,
-                binding.job_id,
-                root,
-                clean,
-                binding.registry,
+                source=JobSource.VAULT,
+                manager=binding.manager,
+                job_id=binding.job_id,
+                root=root,
+                mode=spec.mode,
+                authority=spec.authority,
+                registry=binding.registry,
             ),
         )
     else:
         runner = partial(
             _run_indexing_attempt,
             dispatch=_AttemptDispatch(
-                spec.source,
-                binding.manager,
-                binding.job_id,
-                root,
-                clean,
-                binding.registry,
+                source=spec.source,
+                manager=binding.manager,
+                job_id=binding.job_id,
+                root=root,
+                mode=spec.mode,
+                authority=spec.authority,
+                registry=binding.registry,
             ),
         )
     return binding.manager.bind_dispatch(
@@ -126,6 +148,7 @@ def _run_vault_attempt(
     """Run one vault attempt through the exact service registry."""
     from .jobs import JobProgressReporter
 
+    clean = _admit_attempt_mode(context, dispatch)
     result: IndexResult | None = None
     try:
         with dispatch.registry.compute_lease(dispatch.root) as lease:
@@ -140,7 +163,7 @@ def _run_vault_attempt(
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
                 try:
-                    if dispatch.clean:
+                    if clean:
                         result = runtime.vault_indexer.full_index(
                             clean=not resumed,
                             reporter=reporter,
@@ -209,6 +232,7 @@ def _run_indexing_attempt(
     )
     from .jobs import JobProgressReporter
 
+    clean = _admit_attempt_mode(context, dispatch)
     # Held as two narrowed locals rather than one union: each indexer accepts
     # only its own preflight type, and the type checker cannot see that the
     # source picks both together. Narrowing keeps the pairing checkable.
@@ -256,7 +280,7 @@ def _run_indexing_attempt(
                                 preflight=code_preflight,
                                 run_control=context.control,
                             )
-                            if dispatch.clean
+                            if clean
                             else code_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=code_preflight,
@@ -272,7 +296,7 @@ def _run_indexing_attempt(
                                 preflight=document_preflight,
                                 run_control=context.control,
                             )
-                            if dispatch.clean
+                            if clean
                             else document_indexer.incremental_index(
                                 reporter=reporter,
                                 preflight=document_preflight,
