@@ -820,6 +820,33 @@ _CATALOG_READS: list[tuple[Callable[[VaultStore], object], object, str]] = [
     (lambda s: s.code_content_ids_exist(["absent"]), False, "CODE_TABLE_NAME"),
     (lambda s: s.document_content_ids_exist(["absent"]), False, "DOCUMENT_TABLE_NAME"),
     (lambda s: s.get_all_document_content_ids(), set(), "DOCUMENT_TABLE_NAME"),
+    (
+        lambda s: s.scroll_index_audit_content(
+            s.TABLE_NAME,
+            limit=256,
+            offset=None,
+        ),
+        ([], None),
+        "TABLE_NAME",
+    ),
+    (
+        lambda s: s.scroll_index_audit_content(
+            s.CODE_TABLE_NAME,
+            limit=256,
+            offset=None,
+        ),
+        ([], None),
+        "CODE_TABLE_NAME",
+    ),
+    (
+        lambda s: s.scroll_index_audit_content(
+            s.DOCUMENT_TABLE_NAME,
+            limit=256,
+            offset=None,
+        ),
+        ([], None),
+        "DOCUMENT_TABLE_NAME",
+    ),
 ]
 
 #: The subset that pushes a filter down through a declared payload index, so
@@ -843,6 +870,57 @@ class TestReadsCreateNothing:
     """
 
     _DIM = 8
+
+    def test_index_audit_never_reconciles_an_existing_collection(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            store._ensure_collection(store.CODE_TABLE_NAME)
+
+            def forbidden_reconcile(
+                _collection: str,
+                _ensure: Callable[[], None],
+            ) -> bool:
+                raise AssertionError("audit must observe, not reconcile, the backend")
+
+            monkeypatch.setattr(
+                store,
+                "_reconcile_for_read",
+                forbidden_reconcile,
+            )
+
+            assert store.scroll_index_audit_content(
+                store.CODE_TABLE_NAME,
+                limit=256,
+                offset=None,
+            ) == ([], None)
+        finally:
+            store.close()
+
+    def test_index_audit_validates_the_raw_physical_point_identity(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from ..store_runtime import VaultStore
+
+        store = VaultStore(tmp_path, embedding_dim=self._DIM)
+        try:
+            logical_id = "src/a.py:1-1"
+            physical_id = store._stable_id(logical_id)
+
+            assert store.index_audit_point_id_matches(physical_id, logical_id)
+            assert not store.index_audit_point_id_matches(
+                store._stable_id("src/other.py:1-1"),
+                logical_id,
+            )
+            assert not store.index_audit_point_id_matches(str(physical_id), logical_id)
+        finally:
+            store.close()
 
     def test_reading_an_unindexed_root_creates_no_collection(
         self, tmp_path: Path
@@ -877,6 +955,9 @@ class TestReadsCreateNothing:
             "code_content_ids_exist",
             "document_content_ids_exist",
             "get_all_document_content_ids",
+            "scroll_vault_audit_content",
+            "scroll_code_audit_content",
+            "scroll_document_audit_content",
         ],
     )
     def test_every_catalog_read_of_an_unindexed_root_creates_no_collection(

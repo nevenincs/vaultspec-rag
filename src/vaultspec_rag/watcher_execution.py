@@ -20,6 +20,7 @@ from anyio.to_thread import run_sync as _run_in_thread
 
 from . import _job_admission, _job_progress
 from . import jobs as _jobs
+from .indexer._run_ledger_models import RunAuthority
 from .job_control import QuiesceRequested
 from .job_manager.models import JobAttemptContext, JobExecutionResult, ResourceUpdate
 from .job_models import (
@@ -263,6 +264,7 @@ async def submit_watcher_job(
                     source=slot.source,
                     project_root=str(slot.root),
                     mode=JobMode.INCREMENTAL,
+                    authority=RunAuthority.PUBLICATION,
                 ),
                 JobInitiator(
                     kind="watcher",
@@ -833,6 +835,7 @@ def _execute_project_incremental(
         result = runtime.vault_indexer.incremental_index(
             reporter=reporter,
             changed_paths=scope.paths,
+            authority=context.authority,
             run_control=context.control,
         )
         primary_graph_cache = slot.registry.peek_project(slot.root).graph_cache
@@ -850,6 +853,7 @@ def _execute_project_incremental(
             reporter=reporter,
             changed_paths=scope.paths,
             preflight=scope.code_preflight,
+            authority=context.authority,
             run_control=context.control,
         )
     if scope.document_preflight is None:
@@ -858,6 +862,7 @@ def _execute_project_incremental(
         reporter=reporter,
         changed_paths=scope.paths,
         preflight=scope.document_preflight,
+        authority=context.authority,
         run_control=context.control,
     )
 

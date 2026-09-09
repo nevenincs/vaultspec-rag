@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service_quiesce import ServiceQuiesceController
@@ -647,6 +648,7 @@ def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
             JobSource.VAULT,
             str(root),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("integration", "paused nonempty search probe", str(root)),
         start_paused=True,
@@ -672,6 +674,9 @@ def _assert_paused_rebuild_snapshot(
         "source": "vault",
         "project_root": str(root),
         "mode": "rebuild",
+        "authority": "rebuild",
+        "requested_mode": "rebuild",
+        "effective_mode": "rebuild",
     }, job
     runtime = cast("dict[str, object]", job["runtime"])
     assert runtime["task_active"] is False, job

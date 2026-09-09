@@ -12,9 +12,9 @@ This module answers two read-only questions for the encode seam:
 * **Eligibility** - may a specific candidate actually serve as a donor? Every
   gate must pass: same collection kind, identical dense dimensionality and
   named-vector layout, identical recorded embedding-model identity, and
-  content-epoch sentinel equality between the donor root's sidecar and the
+  content identity equality between the donor's canonical proof and the
   indexing root's effective epoch. Any gate that cannot be evaluated (missing
-  or unreadable donor sidecar, unreachable donor schema) fails closed: the
+  or unreadable proof, unreachable donor schema) fails closed: the
   candidate is ineligible.
 
 Ranking is a hit-rate heuristic only - it decides which donors are consulted
@@ -37,18 +37,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 from .. import store_schema
-from .._index_breadth import index_meta_path
 from .._source_types import PublicSourceType
-from ._code_meta import CODE_EMBED_SCHEMA
-from ._code_meta import CONTENT_EPOCH_KEY as _CODE_CONTENT_EPOCH_KEY
-from ._code_meta import EMBED_SCHEMA_KEY as _CODE_EMBED_SCHEMA_KEY
-from ._document_meta import (
-    DOCUMENT_META_SCHEMA_VERSION,
-    DocumentMetadataError,
-    document_metadata_path,
-    read_document_meta,
+from ._index_schema import (
+    CODE_EMBED_SCHEMA,
+    DOCUMENT_EMBED_SCHEMA,
+    VAULT_POINT_SCHEMA,
 )
-from ._vault_meta import VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -125,14 +119,8 @@ def index_meta_source(
     Two vocabularies describe the same corpora: a collection kind names what a
     namespace stores, a public source type names what a caller asked for. Any
     holder of a kind that needs a reader keyed by source has to cross between
-    them, and a site crossing inline reads as a place to resolve the sidecar
-    inline too - which is how the same path resolution ends up written twice
-    and one copy misses the next change.
-
-    The domain is the two kinds publishing an index-metadata sidecar.
-    Documents publish a differently shaped record reached through its own
-    path, so admitting that kind would buy a runtime rejection where the type
-    already says the call cannot be written.
+    them. The type excludes documents because this helper is retained only by
+    the code and vault call sites.
     """
     return (
         PublicSourceType.CODE if kind is CollectionKind.CODE else PublicSourceType.VAULT
@@ -152,7 +140,7 @@ class IneligibilityReason(enum.Enum):
     SCHEMA_UNAVAILABLE = "schema_unavailable"
     MODEL_IDENTITY_MISMATCH = "model_identity_mismatch"
     CONTENT_EPOCH_MISMATCH = "content_epoch_mismatch"
-    SIDECAR_UNAVAILABLE = "sidecar_unavailable"
+    PROOF_UNAVAILABLE = "proof_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,13 +156,8 @@ class VectorSchema:
 class ModelIdentity:
     """The embedding-model identity the system records today.
 
-    ``dense_model`` and ``sparse_model`` are the configured model names
-    (process-global; no per-root record of them exists). ``embed_schema`` is
-    the per-root embed-input format marker stamped into the kind's sidecar -
-    the only model-adjacent identity persisted per root. Model *revision* is
-    not recorded anywhere today, so it cannot be gated on; the dims gate
-    catches a revision swap that changes dimensionality, and the per-point
-    content verification at the seam bounds the residual risk.
+    ``dense_model`` and ``sparse_model`` are the configured model names and
+    ``embed_schema`` is the canonical proof's embedding identity.
     """
 
     dense_model: str
@@ -184,10 +167,10 @@ class ModelIdentity:
 
 @dataclass(frozen=True, slots=True)
 class DonorRecordedState:
-    """What a donor root's sidecar records for one collection kind."""
+    """Compatibility identities from a donor's committed proof."""
 
-    content_epoch: str
-    embed_schema: str
+    content_identity: str
+    embedding_schema_identity: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,13 +232,13 @@ def expected_vector_schema() -> VectorSchema:
 def _embed_schema_marker(kind: CollectionKind) -> str:
     """Return the current embed-input format marker for one kind."""
     if kind is CollectionKind.CODE:
-        return CODE_EMBED_SCHEMA
+        return str(CODE_EMBED_SCHEMA)
     if kind is CollectionKind.VAULT:
         # Mirrors the vault indexer's point-layout version. A skew between
         # this literal and the writer's makes every vault donor ineligible
         # (fail closed) until the two are reconciled.
-        return "2"
-    return str(DOCUMENT_META_SCHEMA_VERSION)
+        return str(VAULT_POINT_SCHEMA)
+    return str(DOCUMENT_EMBED_SCHEMA)
 
 
 def current_model_identity(kind: CollectionKind) -> ModelIdentity:
@@ -270,54 +253,30 @@ def current_model_identity(kind: CollectionKind) -> ModelIdentity:
     )
 
 
-def _read_json_object(path: Path) -> dict[str, object]:
-    """Read one sidecar JSON object; any failure returns an empty mapping."""
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-    try:
-        parsed: object = json.loads(raw)
-    except ValueError:
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    return {key: value for key, value in parsed.items() if isinstance(key, str)}  # pyright: ignore[reportUnknownVariableType]
-
-
 def read_donor_recorded_state(
     donor_root: Path | str, kind: CollectionKind
 ) -> DonorRecordedState | None:
-    """Read the donor root's sidecar-recorded state for one collection kind.
+    """Read compatibility identities from the donor's committed proof.
 
-    Fail closed: a missing root, a missing or unreadable sidecar, a sidecar
-    predating the epoch keys, or an incomplete document publication all
-    return ``None`` - the caller must treat that candidate as ineligible.
+    Missing, incompatible, corrupt, or concurrently changing proof makes the
+    candidate ineligible.
     """
+    from .._publication_state import acquire_publication_snapshot
+    from ._publication_proof import ProofReadConflictError, ProofUnverifiableError
+    from ._run_ledger_models import RunLedgerError
+
     root = Path(donor_root)
-    if kind is CollectionKind.DOCUMENT:
-        try:
-            meta = read_document_meta(document_metadata_path(root))
-        except (DocumentMetadataError, OSError):
-            return None
-        if meta is None or not meta.complete:
-            return None
-        return DonorRecordedState(
-            content_epoch=meta.content_fingerprint,
-            embed_schema=str(meta.meta_schema_version),
-        )
-    if kind is CollectionKind.CODE:
-        epoch_key, marker_key = _CODE_CONTENT_EPOCH_KEY, _CODE_EMBED_SCHEMA_KEY
-    else:
-        epoch_key, marker_key = VAULT_CONTENT_EPOCH_KEY, VAULT_POINT_SCHEMA_KEY
-    raw = _read_json_object(index_meta_path(root, index_meta_source(kind)))
-    epoch = raw.get(epoch_key)
-    marker = raw.get(marker_key)
-    if not isinstance(epoch, str) or not epoch:
+    source = PublicSourceType(kind.value)
+    try:
+        snapshot = acquire_publication_snapshot(root, source)
+        snapshot.validate()
+    except (OSError, ProofReadConflictError, ProofUnverifiableError, RunLedgerError):
         return None
-    if not isinstance(marker, str) or not marker:
-        return None
-    return DonorRecordedState(content_epoch=epoch, embed_schema=marker)
+    key = snapshot.proof.compatibility_key
+    return DonorRecordedState(
+        content_identity=key.content_identity,
+        embedding_schema_identity=key.embedding_schema_identity,
+    )
 
 
 def _git_common_dir(root: Path) -> Path | None:
@@ -383,20 +342,19 @@ def _served_donor_collection(
     root: str | None,
     kind: CollectionKind,
     derived: str,
-) -> str:
+) -> str | None:
     """Return the collection a donor root serves for *kind*.
 
-    Falls back to *derived* when the donor's root is unrecorded or its pointer
-    cannot be read. That is the safe direction: the derived name is the one the
-    donor's namespace declares, so an unreadable pointer consults either real
-    data or a collection the store reports as absent - a miss the seam encodes
-    normally. Neither outcome invents a collection.
+    Code donors without a readable publication pointer are ineligible. Their
+    derived namespace is not evidence that any collection is published.
     """
-    if kind is not CollectionKind.CODE or not root:
+    if kind is not CollectionKind.CODE:
         return derived
-    from .._store_models import resolve_served_code_collection
+    if not root:
+        return None
+    from .._store_models import read_served_code_collection
 
-    return resolve_served_code_collection(root, derived)
+    return read_served_code_collection(root)
 
 
 def discover_donor_candidates(
@@ -461,6 +419,8 @@ def discover_donor_candidates(
         if derived not in entry.collections:
             continue
         collection = _served_donor_collection(entry.root, kind, derived)
+        if collection is None:
+            continue
         candidates.append(
             DonorCandidate(
                 prefix=prefix,
@@ -506,11 +466,11 @@ def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibilit
       collection fails closed), otherwise both sides resolve from the same
       live config and are identical by construction;
     * the donor's recorded embedding-model identity equals the expected one;
-    * the donor sidecar's content-epoch sentinel for the kind equals
+    * the donor proof's content identity for the kind equals
       ``expected_content_epoch`` (the indexing root's effective epoch,
       computed by the caller).
 
-    A missing or unreadable donor sidecar fails closed as ineligible.
+    A missing or unreadable donor proof fails closed as ineligible.
 
     Args:
         candidate: The discovered candidate under evaluation.
@@ -561,17 +521,15 @@ def _evaluate_donor_eligibility(request: _EligibilityRequest) -> DonorEligibilit
     )
     state = read_donor_recorded_state(candidate.root, kind)
     if state is None:
-        reasons.append(IneligibilityReason.SIDECAR_UNAVAILABLE)
+        reasons.append(IneligibilityReason.PROOF_UNAVAILABLE)
     else:
-        # The embed-input format marker is the only model-adjacent identity
-        # persisted per root, so it is what the recorded-identity comparison
-        # can honestly gate on. The configured model names in ``model`` are
-        # process-global (both sides resolve them from the same live config),
-        # and no model revision is recorded anywhere - a same-dimensionality
-        # model swap is bounded by the per-point content verification at the
-        # seam, not by this gate.
-        if state.embed_schema != model.embed_schema:
+        model_payload = {"dense": model.dense_model, "sparse": model.sparse_model}
+        expected_embedding = (
+            f"{json.dumps(model_payload, sort_keys=True, separators=(',', ':'))}:"
+            f"{schema.dense_dim}:{model.embed_schema}"
+        )
+        if state.embedding_schema_identity != expected_embedding:
             reasons.append(IneligibilityReason.MODEL_IDENTITY_MISMATCH)
-        if state.content_epoch != expected_content_epoch:
+        if state.content_identity != expected_content_epoch:
             reasons.append(IneligibilityReason.CONTENT_EPOCH_MISMATCH)
     return DonorEligibility(eligible=not reasons, reasons=tuple(reasons))

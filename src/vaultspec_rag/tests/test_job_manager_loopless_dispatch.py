@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .. import jobs
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -53,6 +54,7 @@ def _queued_code_job(manager: JobManager) -> str:
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integrity", "loopless dispatch", _TEST_PROJECT_ROOT),
     )

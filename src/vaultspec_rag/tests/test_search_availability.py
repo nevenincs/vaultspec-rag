@@ -10,6 +10,7 @@ import pytest
 from httpx import Headers
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -40,7 +41,7 @@ def _canonical_snapshot(
     root: Path,
     *,
     job_id: str,
-    source: JobSource = JobSource.VAULT,
+    authority: RunAuthority,
     mode: JobMode = JobMode.INCREMENTAL,
     state: JobState = JobState.RUNNING,
 ) -> JobSnapshot:
@@ -50,7 +51,13 @@ def _canonical_snapshot(
         state_path=None,
     )
     outcome = manager.create(
-        JobSpec(JobOperation.INDEX, source, str(root), mode),
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(root),
+            mode,
+            authority,
+        ),
         JobInitiator("test", "search availability", str(root)),
         job_id=job_id,
     )
@@ -112,7 +119,12 @@ def test_only_canonical_nonterminal_states_make_empty_results_unavailable(
     matches: bool,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    snapshot = _canonical_snapshot(root, job_id=f"job-{state.value}", state=state)
+    snapshot = _canonical_snapshot(
+        root,
+        job_id=f"job-{state.value}",
+        authority=RunAuthority.PUBLICATION,
+        state=state,
+    )
 
     response = _availability_response(root, after=[snapshot.to_dict()])
 
@@ -122,7 +134,11 @@ def test_only_canonical_nonterminal_states_make_empty_results_unavailable(
 def test_legacy_and_invalid_canonical_identity_are_rejected(tmp_path: Path) -> None:
     root = (tmp_path / "project").resolve()
     other_root = (tmp_path / "other-project").resolve()
-    snapshot = _canonical_snapshot(root, job_id="canonical")
+    snapshot = _canonical_snapshot(
+        root,
+        job_id="canonical",
+        authority=RunAuthority.PUBLICATION,
+    )
     legacy_record: dict[str, object] = {
         "id": "legacy",
         "source": "vault",
@@ -159,7 +175,11 @@ def test_legacy_and_invalid_canonical_identity_are_rejected(tmp_path: Path) -> N
 def test_canonical_root_alias_matches_the_resolved_request_root(tmp_path: Path) -> None:
     root = (tmp_path / "project").resolve()
     alias = root / "uncreated" / ".."
-    snapshot = _canonical_snapshot(alias, job_id="root-alias")
+    snapshot = _canonical_snapshot(
+        alias,
+        job_id="root-alias",
+        authority=RunAuthority.PUBLICATION,
+    )
 
     response = _availability_response(root, after=[snapshot.to_dict()])
 
@@ -175,12 +195,14 @@ def test_second_observation_wins_when_job_ids_overlap(tmp_path: Path) -> None:
     before = _canonical_snapshot(
         root,
         job_id="same-job",
+        authority=RunAuthority.REBUILD,
         mode=JobMode.REBUILD,
         state=JobState.RUNNING,
     )
     after = _canonical_snapshot(
         root,
         job_id="same-job",
+        authority=RunAuthority.PUBLICATION,
         mode=JobMode.INCREMENTAL,
         state=JobState.PAUSING,
     )
@@ -215,6 +237,7 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
             JobSource.VAULT,
             str(root),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "search availability", str(root)),
         job_id="paused-rebuild",
@@ -270,7 +293,12 @@ def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
     tmp_path: Path,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    base = _canonical_snapshot(root, job_id="base", state=JobState.QUEUED)
+    base = _canonical_snapshot(
+        root,
+        job_id="base",
+        authority=RunAuthority.PUBLICATION,
+        state=JobState.QUEUED,
+    )
     snapshots = [
         replace(
             base,
@@ -278,6 +306,9 @@ def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
             spec=replace(
                 base.spec,
                 mode=JobMode.REBUILD if index == 8 else JobMode.INCREMENTAL,
+                authority=(
+                    RunAuthority.REBUILD if index == 8 else RunAuthority.PUBLICATION
+                ),
             ),
         ).to_dict()
         for index in range(9)
@@ -300,13 +331,20 @@ def test_classification_evidence_is_after_first_bounded_and_shared_with_response
 ) -> None:
     root = (tmp_path / "project").resolve()
     after = [
-        _canonical_snapshot(root, job_id=f"after-{index}").to_dict()
+        _canonical_snapshot(
+            root,
+            job_id=f"after-{index}",
+            authority=RunAuthority.PUBLICATION,
+        ).to_dict()
         for index in range(2)
     ]
     before = [
         _canonical_snapshot(
             root,
             job_id=f"before-{index}",
+            authority=(
+                RunAuthority.REBUILD if index == 7 else RunAuthority.PUBLICATION
+            ),
             mode=JobMode.REBUILD if index == 7 else JobMode.INCREMENTAL,
         ).to_dict()
         for index in range(8)
@@ -377,6 +415,7 @@ def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
             JobSource.VAULT,
             str(root),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "collection disappearance", str(root)),
         job_id="collection-rebuild",
@@ -423,6 +462,7 @@ def test_qdrant_collection_disappearance_declines_unrelated_failures(
     matching = _canonical_snapshot(
         root,
         job_id="matching-rebuild",
+        authority=RunAuthority.REBUILD,
         mode=JobMode.REBUILD,
     ).to_dict()
     index_state: dict[str, object] = {

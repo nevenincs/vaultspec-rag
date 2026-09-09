@@ -29,37 +29,93 @@ import hashlib
 import json
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
+from .. import store_schema
 from ._file_state import FileState, FileStateKind
+from ._publication_proof import (
+    PathDelta,
+    PathOutcome,
+    ProofEvidence,
+    ProofReceiptState,
+)
 from ._run_ledger_models import (
+    FETCH_BATCH,
     CommitUnit,
     CommitUnitKind,
     FinalizationPhase,
+    RunAuthority,
     RunLedgerCompatibilityError,
     RunLedgerStateError,
     RunOperation,
+    RunSignature,
     RunTerminalState,
+    index_run_ledger_path,
 )
+from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Generator
+    from pathlib import Path
 
     from _typeshed import DataclassInstance
 
-    from . import _config_epoch
+    from .._source_types import PublicSourceType
+    from ..job_control import RunControl
     from ._content_policy import ContentKind
     from ._resolved_policy import ResolvedIndexPolicy
-    from ._run_ledger_models import RunGeneration, RunSignature
-    from ._run_ledger_runtime import RunLedger
+    from ._run_ledger_models import PublicationReceipt, RunGeneration
     from ._run_policy import RunPolicy
+    from ._streaming_types import StoreMutationLifecycle
 
 __all__ = [
+    "PublicationExecution",
     "RunCheckpointBase",
+    "RunOpenRequest",
     "classify_interrupted_generation",
     "configuration_fingerprint",
 ]
+
+
+class RunOpenRequest(Protocol):
+    """The compatibility inputs every source type opens a generation from.
+
+    Structural rather than a base class: each source declares its own frozen
+    request with its own configuration shape, and this names only the fields
+    the shared open path actually reads.
+    """
+
+    @property
+    def data_root(self) -> Path: ...
+    @property
+    def root_dir(self) -> Path: ...
+    @property
+    def policy(self) -> ResolvedIndexPolicy: ...
+    @property
+    def run_policy(self) -> RunPolicy: ...
+    @property
+    def operation(self) -> RunOperation: ...
+    @property
+    def clean(self) -> bool: ...
+    @property
+    def model_identity(self) -> str: ...
+    @property
+    def dense_dimensions(self) -> int: ...
+    @property
+    def configuration(self) -> DataclassInstance: ...
+    @property
+    def backend_identity(self) -> str: ...
+    @property
+    def authority(self) -> RunAuthority: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationExecution:
+    """Explicit permission and cooperative control for one publication."""
+
+    authority: RunAuthority
+    run_control: RunControl
 
 
 def configuration_fingerprint(configuration: DataclassInstance) -> str:
@@ -121,12 +177,56 @@ class RunCheckpointBase:
 
     ledger: RunLedger
     generation: RunGeneration
-    policy: ResolvedIndexPolicy
+    policy: ResolvedIndexPolicy | None
     run_policy: RunPolicy
+    authority: RunAuthority
+    receipt: PublicationReceipt | None
     resumed_units: int = 0
 
-    _content_kind: ClassVar[ContentKind]
+    _content_kind: ClassVar[ContentKind | None]
     _kind_label: ClassVar[str]
+    _collection_identity: ClassVar[str]
+    _source_type: ClassVar[PublicSourceType]
+    _embedding_schema: ClassVar[int]
+
+    @classmethod
+    def open_generation(cls, request: RunOpenRequest, /) -> Self:
+        """Open or resume the compatible generation for one attempt.
+
+        One body for every source type: the four facts that differ are
+        the class constants above, so a change to how a generation is
+        opened cannot reach one source and miss the other.
+        """
+        assert cls._content_kind is not None
+        fingerprints = request.policy.fingerprints_for(cls._content_kind)
+        signature = RunSignature(
+            root_identity=str(request.root_dir.resolve()),
+            collection_identity=cls._collection_identity,
+            source_type=cls._source_type,
+            operation=request.operation,
+            clean=request.clean,
+            model_identity=request.model_identity,
+            dense_dimensions=request.dense_dimensions,
+            embedding_schema=cls._embedding_schema,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch=fingerprints.content,
+            membership_epoch=fingerprints.membership,
+            preprocessing_identity=request.policy.fingerprints.execution,
+            configuration_fingerprint=configuration_fingerprint(request.configuration),
+            policy_fingerprint=request.policy.fingerprints.snapshot,
+            backend_identity=request.backend_identity,
+        )
+        ledger = RunLedger(index_run_ledger_path(request.data_root))
+        generation = cls.start_compatible_generation(ledger, signature)
+        receipt = cls.open_publication_receipt(ledger, generation, request.authority)
+        return cls(
+            ledger=ledger,
+            generation=generation,
+            policy=request.policy,
+            run_policy=request.run_policy,
+            authority=request.authority,
+            receipt=receipt,
+        )
 
     @classmethod
     def start_compatible_generation(
@@ -136,8 +236,8 @@ class RunCheckpointBase:
     ) -> RunGeneration:
         """Start one attempt's generation, refusing a parentless incremental.
 
-        An incremental reconciles a difference against a published manifest.
-        Without a compatible parent there is no manifest to differ from, so
+        An incremental reconciles a difference against a committed proof.
+        Without a compatible parent there is no proof to differ from, so
         every file the run believed unchanged would be skipped and an index
         nobody wrote would be certified. Refusing is what lets the caller
         escalate to a full failure-safe reconciliation instead.
@@ -162,11 +262,90 @@ class RunCheckpointBase:
         ):
             raise RunLedgerCompatibilityError(
                 f"incremental {cls._kind_label} indexing requires a compatible "
-                "published manifest; run a full reconciliation"
+                "committed proof; run a full reconciliation"
             )
         if ledger.committed_unit_count(generation.generation_id) > 0:
             ledger.verify_integrity()
         return generation
+
+    @classmethod
+    def open_publication_receipt(
+        cls,
+        ledger: RunLedger,
+        generation: RunGeneration,
+        authority: RunAuthority,
+    ) -> PublicationReceipt | None:
+        """Bind an incremental generation to its canonical parent revision."""
+        from ._run_ledger_publication import compatibility_for_signature
+
+        signature = generation.signature
+        if authority is RunAuthority.REBUILD:
+            if signature.operation is not RunOperation.FULL:
+                raise PermissionError("rebuild authority requires a full run")
+            return None
+        if authority is not RunAuthority.PUBLICATION:
+            raise PermissionError("audit authority cannot open publication work")
+        key = compatibility_for_signature(signature)
+        proof = ledger.publication_proof(key)
+        if proof.generation_id == generation.generation_id:
+            return None
+        if generation.parent_generation_id != proof.generation_id:
+            raise RunLedgerCompatibilityError(
+                "incremental generation does not descend from canonical proof"
+            )
+        active = ledger.active_publication_receipt(key)
+        if active is not None:
+            if active.generation_id != generation.generation_id:
+                raise RunLedgerStateError(
+                    "canonical proof has a receipt owned by another generation"
+                )
+            return active
+        return ledger.reserve_publication_receipt(
+            key,
+            generation.generation_id,
+            expected_parent_revision=proof.revision,
+        )
+
+    def mutation_lifecycle(self, unit: CommitUnit) -> StoreMutationLifecycle | None:
+        """Return durable receipt callbacks for one external mutation."""
+        return self.mutation_lifecycle_for_units((unit,))
+
+    def mutation_lifecycle_for_units(
+        self,
+        units: tuple[CommitUnit, ...],
+    ) -> StoreMutationLifecycle | None:
+        """Bracket one atomic store call containing exact bounded units."""
+        if self.receipt is None:
+            return None
+        from ._publication_proof import ProofMutationState
+        from ._streaming_types import StoreMutationLifecycle
+
+        receipt_id = self.receipt.receipt_id
+
+        def prepare() -> bool:
+            pending = False
+            for unit in units:
+                mutation = self.ledger.prepare_publication_mutation(receipt_id, unit)
+                if mutation.state is ProofMutationState.APPLIED:
+                    self.ledger.confirm_publication_mutation(receipt_id, unit)
+                elif mutation.state is ProofMutationState.PREPARED:
+                    pending = True
+            return pending
+
+        def mark_applied() -> None:
+            for unit in units:
+                self.ledger.mark_publication_mutation_applied(receipt_id, unit)
+
+        def confirm() -> None:
+            for unit in units:
+                self.ledger.confirm_publication_mutation(receipt_id, unit)
+
+        return StoreMutationLifecycle(
+            prepare=prepare,
+            mark_applied=mark_applied,
+            confirm=confirm,
+            confirm_when_stored=True,
+        )
 
     @property
     def generation_id(self) -> str:
@@ -191,44 +370,140 @@ class RunCheckpointBase:
             )
             raise
 
-    def publish_metadata_transition(
-        self,
-        publish: Callable[[_config_epoch.ContentKindFingerprints], int],
-    ) -> int:
-        """Advance the durable finalization phase around one metadata publish.
-
-        The phase walk is identical for every source type and both subclasses
-        carried a copy of it. Only *publish* differs - the code sidecar records
-        published point and file counts, the document sidecar records retained
-        point ids and a policy snapshot - so that is the one thing passed in.
-
-        The transition is DURABLE: it moves the generation from
-        ``STALE_RECONCILED`` to ``METADATA_PUBLISHED`` and that survives a
-        restart. Two copies of it could disagree about when metadata is
-        publishable and the disagreement would persist across runs.
-
-        Returns the row count *publish* reported, or ``0`` when this generation
-        is not in a publishable phase.
-        """
+    def publish_proof_transition(self) -> int:
+        """Commit canonical proof before advancing the publication phase."""
         phase = self.generation.finalization_phase
+        if phase not in {
+            FinalizationPhase.INGESTING,
+            FinalizationPhase.STALE_RECONCILED,
+        }:
+            return 0
+        changed = 0
         if phase is FinalizationPhase.INGESTING:
+            changed = self._seal_publication_proof()
             self.generation = self.ledger.advance_finalization(
                 self.generation_id,
                 FinalizationPhase.STALE_RECONCILED,
             )
-            phase = self.generation.finalization_phase
-        if phase is not FinalizationPhase.STALE_RECONCILED:
-            return 0
-        count = publish(self.policy.fingerprints_for(self._content_kind))
+        if self.receipt is not None:
+            receipt = self.ledger.active_publication_receipt(
+                self.receipt.compatibility_key
+            )
+            if receipt is not None and receipt.state is ProofReceiptState.SEALED:
+                self.ledger.commit_publication_receipt(receipt.receipt_id)
         self.generation = self.ledger.advance_finalization(
             self.generation_id,
             FinalizationPhase.METADATA_PUBLISHED,
         )
-        self.run_policy.record_durable_progress(
-            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
-            label=f"{self._kind_label} metadata publication",
+        return changed
+
+    def _seal_publication_proof(self) -> int:
+        if self.authority is RunAuthority.REBUILD:
+            evidence = self._verified_evidence()
+            self.ledger.establish_verified_publication(
+                self.generation_id,
+                self.authority,
+                tuple(evidence),
+            )
+            return len(evidence)
+        if self.receipt is not None:
+            return self._seal_incremental_proof()
+        from ._run_ledger_publication import compatibility_for_signature
+
+        proof = self.ledger.publication_proof(
+            compatibility_for_signature(self.generation.signature)
         )
-        return count
+        if proof.generation_id != self.generation_id:
+            raise RunLedgerStateError(
+                "incremental publication has neither receipt nor committed proof"
+            )
+        return 0
+
+    def _verified_evidence(self) -> list[ProofEvidence]:
+        evidence: list[ProofEvidence] = []
+        for state in self.ledger.iter_file_states(self.generation_id):
+            if state.state is not FileStateKind.INDEXED:
+                continue
+            assert state.content_hash is not None
+            point_ids = tuple(
+                sorted(
+                    self.ledger.iter_retained_point_ids(
+                        self.generation_id,
+                        rel_path=state.rel_path,
+                    )
+                )
+            )
+            if point_ids:
+                evidence.append(
+                    ProofEvidence(state.rel_path, state.content_hash, point_ids)
+                )
+        return evidence
+
+    def _seal_incremental_proof(self) -> int:
+        if self.receipt is None:
+            raise RunLedgerStateError("incremental publication has no receipt")
+        receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)
+        if receipt is None or receipt.receipt_id != self.receipt.receipt_id:
+            raise RunLedgerStateError("incremental publication receipt disappeared")
+        paths = tuple(sorted({item.unit.rel_path for item in receipt.mutations}))
+        old_by_path: dict[str, ProofEvidence] = {}
+        for start in range(0, len(paths), FETCH_BATCH):
+            old_by_path.update(
+                self.ledger.publication_evidence_for_paths(
+                    receipt.compatibility_key,
+                    paths[start : start + FETCH_BATCH],
+                )
+            )
+        deltas: list[PathDelta] = []
+        for rel_path in paths:
+            upserts = tuple(
+                mutation.unit
+                for mutation in receipt.mutations
+                if mutation.unit.rel_path == rel_path
+                and mutation.unit.kind is CommitUnitKind.UPSERT
+            )
+            old = old_by_path.get(rel_path)
+            new = self._new_evidence(rel_path, upserts)
+            if old == new:
+                continue
+            outcome = (
+                PathOutcome.ADD
+                if old is None
+                else PathOutcome.DELETE
+                if new is None
+                else PathOutcome.MODIFY
+            )
+            deltas.append(
+                PathDelta(outcome, receipt.parent_revision, rel_path, old=old, new=new)
+            )
+        if not deltas:
+            if receipt.mutations:
+                raise RunLedgerStateError(
+                    "storage mutations produced no canonical proof change"
+                )
+            self.ledger.begin_publication_rollback(receipt.receipt_id)
+            self.ledger.roll_back_publication_receipt(
+                receipt.receipt_id,
+                compensated_units=(),
+            )
+            return 0
+        self.ledger.seal_publication_receipt(receipt.receipt_id, tuple(deltas))
+        return len(deltas)
+
+    @staticmethod
+    def _new_evidence(
+        rel_path: str,
+        upserts: tuple[CommitUnit, ...],
+    ) -> ProofEvidence | None:
+        if not upserts:
+            return None
+        digests = {unit.source_digest for unit in upserts}
+        if len(digests) != 1 or None in digests:
+            raise RunLedgerStateError(f"publication units disagree for {rel_path!r}")
+        digest = digests.pop()
+        assert digest is not None
+        points = tuple(sorted({point for unit in upserts for point in unit.point_ids}))
+        return ProofEvidence(rel_path, digest, points)
 
     def record_confirmed_deletion(
         self,
@@ -267,6 +542,15 @@ class RunCheckpointBase:
             )
         return inserted
 
+    def deletion_lifecycle(
+        self,
+        rel_path: str,
+        kind: CommitUnitKind,
+        point_ids: tuple[str, ...],
+    ) -> StoreMutationLifecycle | None:
+        """Return receipt transitions for one exact deletion store call."""
+        return self.mutation_lifecycle(self._deletion_unit(rel_path, kind, point_ids))
+
     @staticmethod
     def _deletion_unit(
         rel_path: str,
@@ -292,6 +576,8 @@ class RunCheckpointBase:
         content_hash: str | None = None,
     ) -> None:
         """Replace carried convergence with one explicit unresolved outcome."""
+        if self._content_kind is None:
+            raise RunLedgerStateError("processing failures require content kind")
         self.ledger.record_file_state(
             self.generation_id,
             FileState.failed(
@@ -334,6 +620,8 @@ class RunCheckpointBase:
         return self.generation
 
     def _record_indexed_file(self, rel_path: str, source_digest: str) -> None:
+        if self._content_kind is None:
+            raise RunLedgerStateError("indexed files require content kind")
         self.ledger.record_file_state(
             self.generation_id,
             FileState.indexed(rel_path, self._content_kind, source_digest),

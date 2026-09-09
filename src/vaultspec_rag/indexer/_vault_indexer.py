@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import json
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -18,14 +17,8 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
-from .._atomic_write import JsonWriteOptions, write_json_atomically
-from .._index_breadth import (
-    VAULT_PUBLISHED_DOCUMENTS_KEY,
-    VAULT_PUBLISHED_POINTS_KEY,
-    index_meta_path,
-)
-from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
+from .._store_writes import workspace_volume_path
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _config_epoch, _stat_gate, _vault_fingerprint
@@ -34,19 +27,15 @@ from ._index_lifecycle import (
     incremental_mode,
     run_index_lifecycle,
 )
+from ._run_ledger_models import CommitUnitKind, RunAuthority, RunOperation
 from ._streaming import _stream_encode_and_upsert_vault
 from ._streaming_types import VaultStreamRequest
+from ._vault_checkpoint import VaultRunCheckpoint
 from ._vault_incremental import (
     VaultIncrementalMixin,
     VaultReconcileInputs,
     classify_documents,
     controlled_phase,
-)
-from ._vault_meta import (
-    VAULT_CONTENT_EPOCH_KEY,
-    VAULT_FINGERPRINT_SCHEME_KEY,
-    VAULT_POINT_SCHEMA,
-    VAULT_POINT_SCHEMA_KEY,
 )
 from ._vault_prep import IndexResult
 
@@ -55,7 +44,6 @@ if TYPE_CHECKING:
     import threading
     from collections.abc import Generator, Iterable
 
-    from .._store_models import VaultDocument
     from ..embeddings import EmbeddingModel
     from ..job_control import RunControl
     from ..memory_probe import MemoryBudget, MemoryBudgetSnapshot
@@ -109,14 +97,15 @@ class VaultIndexer(VaultIncrementalMixin):
         import threading as _threading
 
         self._writer_lock: _threading.Lock = _threading.Lock()
-        self._meta_path = index_meta_path(root_dir, PublicSourceType.VAULT)
-        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        self._stat_gate_path = (
+            workspace_volume_path(root_dir.resolve()) / "vault_index.statgate.sqlite3"
+        )
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on. The gate digests through the
-        # split fingerprint, so its evidence and the sidecar it gates always
+        # split fingerprint, so its evidence and the proof it gates always
         # describe the same thing.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(
             self._stat_gate_path,
             digest=functools.partial(
                 _vault_fingerprint.fingerprint_path,
@@ -195,6 +184,7 @@ class VaultIndexer(VaultIncrementalMixin):
         clean: bool = False,
         *,
         reporter: ProgressReporter,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Full re-index serialized through the indexer writer lock.
@@ -205,8 +195,7 @@ class VaultIndexer(VaultIncrementalMixin):
         the same indexer instance run sequentially, eliminating the
         ``existing_ids_before`` snapshot race documented in #68.
 
-        ``run_control`` defaults to the inert implementation so direct and
-        legacy callers retain their existing behavior.
+        ``run_control`` defaults to the inert implementation for direct calls.
         """
         run_control.checkpoint()
         with self._writer_lock, self._memory_telemetry():
@@ -214,6 +203,7 @@ class VaultIndexer(VaultIncrementalMixin):
                 lambda: self._full_index_locked(
                     clean=clean,
                     reporter=reporter,
+                    authority=authority,
                     run_control=run_control,
                 ),
                 IndexLifecycleRequest(
@@ -232,6 +222,7 @@ class VaultIndexer(VaultIncrementalMixin):
         clean: bool = False,
         *,
         reporter: ProgressReporter,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`full_index`.
@@ -293,6 +284,20 @@ class VaultIndexer(VaultIncrementalMixin):
                 skip_errors=True,
             )
 
+        docs_dir = self.root_dir / get_config().docs_dir
+        content_identities = self._hash_documents(
+            {doc.id: docs_dir / doc.path for doc in docs},
+            reporter,
+            run_control=run_control,
+            full_membership=True,
+        )
+        checkpoint = VaultRunCheckpoint.open(
+            self.root_dir,
+            backend_identity=self.store.backend_identity,
+            authority=authority,
+            operation=RunOperation.FULL,
+            run_control=run_control,
+        )
         # Note: we intentionally do NOT short-circuit when docs is
         # empty. The streaming helper handles a zero-length list
         # correctly, and falling through the main path means
@@ -338,6 +343,8 @@ class VaultIndexer(VaultIncrementalMixin):
                     ingest_wait=False,
                     run_control=run_control,
                     reuse=donor_reuse,
+                    checkpoint=checkpoint,
+                    content_identities=content_identities,
                 )
             )
             self._purge_shrunk_chunk_tails(
@@ -408,7 +415,8 @@ class VaultIndexer(VaultIncrementalMixin):
                     reporter.advance(len(stale_ids))
 
             with controlled_phase(reporter, run_control, "write metadata", 1):
-                self._save_meta(docs, run_control=run_control)
+                checkpoint.publish_proof_transition()
+                checkpoint.publish_generation()
                 reporter.advance(1)
         run_control.checkpoint()
 
@@ -431,6 +439,7 @@ class VaultIndexer(VaultIncrementalMixin):
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Incremental re-index serialized through the writer lock.
@@ -457,6 +466,7 @@ class VaultIndexer(VaultIncrementalMixin):
                 lambda: self._incremental_index_locked(
                     reporter=reporter,
                     changed_paths=changed_paths,
+                    authority=authority,
                     run_control=run_control,
                 ),
                 IndexLifecycleRequest(
@@ -475,6 +485,7 @@ class VaultIndexer(VaultIncrementalMixin):
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`.
@@ -498,24 +509,11 @@ class VaultIndexer(VaultIncrementalMixin):
             OSError: If vault files cannot be read or hashed.
         """
         run_control.checkpoint()
-        if self._needs_layout_rebuild():
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                "vault point layout changed; request an explicit full vault reindex",
-            )
-
-        run_control.checkpoint()
-        if self._needs_content_rebuild():
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                "vault chunk boundary changed; request an explicit full vault reindex",
-            )
-
-        run_control.checkpoint()
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,
                 reporter=reporter,
+                authority=authority,
                 run_control=run_control,
             )
 
@@ -524,9 +522,16 @@ class VaultIndexer(VaultIncrementalMixin):
         start = time.time()
         slice_size = max(1, get_config().embedding_batch_size)
 
-        run_control.checkpoint()
-        prev_meta = self._load_meta()
-        run_control.checkpoint()
+        from .._publication_state import (
+            acquire_publication_snapshot,
+            read_all_publication_evidence,
+        )
+
+        snapshot = acquire_publication_snapshot(self.root_dir, PublicSourceType.VAULT)
+        prev_meta = {
+            path: evidence.content_identity
+            for path, evidence in read_all_publication_evidence(snapshot).items()
+        }
 
         with controlled_phase(reporter, run_control, "scan vault", None):
             docs_dir = self.root_dir / get_config().docs_dir
@@ -538,13 +543,11 @@ class VaultIndexer(VaultIncrementalMixin):
         run_control.checkpoint()
         stored_counts = self.store.get_chunk_counts()
         run_control.checkpoint()
-        stored_ids = set(stored_counts)
         current_ids = set(current_docs.keys())
-        new_ids = current_ids - stored_ids
-        deleted_ids = stored_ids - current_ids
-        potentially_modified = current_ids & stored_ids
-
-        self._announce_fingerprint_migration()
+        published_ids = set(prev_meta)
+        new_ids = current_ids - published_ids
+        deleted_ids = published_ids - current_ids
+        potentially_modified = current_ids & published_ids
 
         with controlled_phase(
             reporter,
@@ -558,12 +561,23 @@ class VaultIndexer(VaultIncrementalMixin):
                 run_control=run_control,
                 full_membership=True,
             )
+        snapshot.validate()
 
         classification = classify_documents(
             potentially_modified,
             current_hashes,
             prev_meta,
         )
+        checkpoint = VaultRunCheckpoint.open(
+            self.root_dir,
+            backend_identity=self.store.backend_identity,
+            authority=authority,
+            operation=RunOperation.INCREMENTAL,
+            run_control=run_control,
+        )
+        receipt = checkpoint.receipt
+        if receipt is None:
+            raise RuntimeError("vault incremental opened without a publication receipt")
         outcome = self._reconcile_classified(
             classification,
             new_ids,
@@ -573,6 +587,8 @@ class VaultIndexer(VaultIncrementalMixin):
                 slice_size=slice_size,
                 reporter=reporter,
                 run_control=run_control,
+                checkpoint=checkpoint,
+                content_identities=current_hashes,
             ),
         )
 
@@ -583,15 +599,34 @@ class VaultIndexer(VaultIncrementalMixin):
             len(deleted_ids),
         ):
             if deleted_ids:
-                run_control.checkpoint()
-                self.store.delete_documents(list(deleted_ids))
-                run_control.checkpoint()
-                reporter.advance(len(deleted_ids))
+                from ._streaming import execute_store_mutation
+
+                evidence = self._publication_evidence_for_paths(
+                    checkpoint.ledger,
+                    receipt.compatibility_key,
+                    deleted_ids,
+                )
+                for doc_id in sorted(deleted_ids):
+                    old = evidence[doc_id]
+                    execute_store_mutation(
+                        lambda current=doc_id: self.store.delete_documents([current]),
+                        checkpoint.deletion_lifecycle(
+                            doc_id,
+                            CommitUnitKind.DELETE_PATH,
+                            old.point_ids,
+                        ),
+                    )
+                    checkpoint.record_confirmed_deletion(doc_id, old.point_ids)
+                    reporter.advance(1)
 
         with controlled_phase(reporter, run_control, "write metadata", 1):
             # The publication's own count, so the reported total and the
             # breadth claim beside it describe one instant of the collection.
-            total = self._write_meta(current_hashes, run_control=run_control)
+            checkpoint.publish_proof_transition()
+            checkpoint.publish_generation()
+            total = checkpoint.ledger.publication_proof(
+                receipt.compatibility_key
+            ).aggregate.indexed_identities
             reporter.advance(1)
 
         run_control.checkpoint()
@@ -608,50 +643,6 @@ class VaultIndexer(VaultIncrementalMixin):
             reuse=outcome.reuse.snapshot() if outcome.reuse is not None else None,
         )
 
-    def _save_meta(
-        self,
-        docs: list[VaultDocument],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> int:
-        """Save index metadata (content hashes) from VaultDocument list.
-
-        Resolves each document's blake2b hash through the stat-evidence gate
-        and delegates to ``_write_meta`` for atomic persistence. Routing
-        through the gate both answers unchanged documents from a stat instead
-        of rereading every file the run just parsed, and records evidence so
-        the first incremental after a full rebuild reuses instead of
-        rehashing the whole corpus. Individual file read errors drop the
-        document from the metadata, as the ungated read did.
-
-        Args:
-            docs: List of indexed documents whose paths are used to
-                compute hashes.
-
-        Returns:
-            The point count the publication claims, as ``_write_meta``
-            observed it.
-
-        Raises:
-            OSError: If the collection cannot be counted or the metadata file
-                cannot be written (propagated from ``_write_meta``).
-        """
-        from ..config._settings import get_config
-
-        docs_dir = self.root_dir / get_config().docs_dir
-        gate = self._stat_gate_cache.acquire()
-        outcome = _stat_gate.hash_paths(
-            gate,
-            [(doc.id, docs_dir / doc.path) for doc in docs],
-            run_control=run_control,
-        )
-        # ``docs`` is the complete corpus this full save publishes, so
-        # evidence for departed documents is pruned with it.
-        gate.prune({doc.id for doc in docs})
-        gate.persist()
-        self._stat_gate_cache.retain(gate)
-        return self._write_meta(outcome.hashes, run_control=run_control)
-
     def _prepare_collection(
         self,
         *,
@@ -662,8 +653,8 @@ class VaultIndexer(VaultIncrementalMixin):
         """Ensure the collection and snapshot stored chunk counts.
 
         The snapshot drives both the stale-document purge and the
-        shrunk-tail purge after streaming. A failed snapshot degrades
-        to skipping those purges rather than failing the rebuild.
+        shrunk-tail purge after streaming. Failure aborts the rebuild before
+        it can certify stale storage.
 
         The collection is never dropped here for an ordinary clean rebuild -
         the served points must outlive the build that replaces them. The one
@@ -701,20 +692,7 @@ class VaultIndexer(VaultIncrementalMixin):
                 reporter.advance(1)
                 return {}
             run_control.checkpoint()
-            try:
-                existing_counts: dict[str, int] = self.store.get_chunk_counts()
-            except (OSError, RuntimeError):
-                # OSError covers I/O failures; RuntimeError covers
-                # Qdrant client errors and lock contention
-                # (VaultStoreLockedError). Either way the safest
-                # response is to skip the stale-document purge so
-                # the rebuild can still complete (#68).
-                logger.warning(
-                    "Could not snapshot existing vault IDs before "
-                    "rebuild; stale-document purge will be skipped",
-                    exc_info=True,
-                )
-                existing_counts = {}
+            existing_counts: dict[str, int] = self.store.get_chunk_counts()
             run_control.checkpoint()
             reporter.advance(1)
         return existing_counts
@@ -725,6 +703,7 @@ class VaultIndexer(VaultIncrementalMixin):
         new_counts: dict[str, int],
         *,
         run_control: RunControl = NO_RUN_CONTROL,
+        checkpoint: VaultRunCheckpoint | None = None,
     ) -> None:
         """Delete orphaned tail chunks of documents that shrank.
 
@@ -735,40 +714,31 @@ class VaultIndexer(VaultIncrementalMixin):
         for doc_id, new_count in new_counts.items():
             run_control.checkpoint()
             if existing_counts.get(doc_id, 0) > new_count:
-                try:
-                    self.store.delete_document_chunk_tail(doc_id, new_count)
-                except (OSError, RuntimeError):
-                    logger.warning(
-                        "Could not purge stale tail chunks of %s; the "
-                        "document's fresh chunks are intact but ordinals "
-                        ">= %d are stale until the next successful run",
-                        doc_id,
-                        new_count,
-                        exc_info=True,
-                    )
+                point_ids = tuple(
+                    f"{doc_id}#c{ordinal}"
+                    for ordinal in range(new_count, existing_counts[doc_id])
+                )
+                from ._streaming import execute_store_mutation
+
+                execute_store_mutation(
+                    lambda current_doc_id=doc_id, current_count=new_count: (
+                        self.store.delete_document_chunk_tail(
+                            current_doc_id, current_count
+                        )
+                    ),
+                    (
+                        checkpoint.deletion_lifecycle(
+                            doc_id,
+                            CommitUnitKind.DELETE_STALE,
+                            point_ids,
+                        )
+                        if checkpoint is not None
+                        else None
+                    ),
+                )
+                if checkpoint is not None:
+                    checkpoint.record_confirmed_stale_deletion(doc_id, point_ids)
             run_control.checkpoint()
-
-    def _needs_layout_rebuild(self) -> bool:
-        """Return True when the stored point layout predates chunking.
-
-        Detection is two-pronged: a metadata sidecar whose layout marker
-        differs from the current version, or a non-empty collection with
-        no sidecar at all (an install whose metadata was deleted). Either
-        way the stored points may use the one-point-per-document layout
-        and must be rebuilt rather than incrementally patched.
-        """
-        raw = self._read_meta_raw()
-        if raw:
-            return raw.get(VAULT_POINT_SCHEMA_KEY) != VAULT_POINT_SCHEMA
-        try:
-            return self.store.count() > 0
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not probe the vault collection for a layout "
-                "rebuild decision; assuming no rebuild is needed",
-                exc_info=True,
-            )
-            return False
 
     def _current_vault_content_epoch(self) -> str:
         """Compute the content epoch over the current ``vault_chunk_chars``."""
@@ -777,126 +747,3 @@ class VaultIndexer(VaultIncrementalMixin):
         return _config_epoch.vault_content_epoch(
             vault_chunk_chars=int(get_config().vault_chunk_chars),
         )
-
-    def _needs_content_rebuild(self) -> bool:
-        """Return True when the stored chunk boundary differs from the current.
-
-        Detection compares the stored content epoch against the current
-        ``vault_chunk_chars``; a mismatch means the chunk boundary changed, so
-        every document must re-chunk (a clean rebuild) even though its bytes are
-        unchanged. A sidecar predating this key (or no sidecar) is not forced to
-        rebuild - the epoch is simply stamped on the next successful write, so an
-        existing install is not clean-rebuilt merely for upgrading.
-        """
-        raw = self._read_meta_raw()
-        stored = raw.get(VAULT_CONTENT_EPOCH_KEY)
-        if stored is None:
-            return False
-        return stored != self._current_vault_content_epoch()
-
-    def _observe_published_breadth(self) -> tuple[int, int]:
-        """Return the collection's point count and distinct-document count.
-
-        Taken at the publication instant, after every upsert and delete this
-        run makes has landed, so the pair describes exactly the corpus the
-        sidecar published beside it names. Both are recorded because they fail
-        independently: a collection can hold a plausible number of points
-        spread across a fraction of the documents the same sidecar names, and
-        no comparison of point counts alone can see that.
-
-        The writer lock is held across both reads, so nothing this indexer
-        does can move the collection between them.
-
-        Raises:
-            OSError: The collection could not be counted.
-            RuntimeError: The store rejected the count (client error or lock
-                contention).
-        """
-        return self.store.count(), len(self.store.get_all_ids())
-
-    def _write_meta(
-        self,
-        meta: dict[str, str],
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
-    ) -> int:
-        """Publish content-hash metadata and this index's breadth claim.
-
-        Uses an atomic write (write-to-temp + durable replace) so a crash
-        mid-write never leaves the metadata file in a corrupt state, and so a
-        publication that reports success has reached the disk. The current
-        point-layout version, the content epoch over ``vault_chunk_chars``,
-        and the observed breadth are stamped under reserved keys so later runs
-        can detect layout changes, chunk-boundary changes, and a collection
-        that has lost points since it was published.
-
-        The breadth figures and the hash entries land in one atomic
-        replacement, which is what makes the ordering safe: there is no
-        instant at which the new document set is the published one while the
-        breadth describing it is not. A caller that cannot obtain the figures
-        gets the exception rather than a sidecar, leaving the previous
-        publication in place - an index nobody can reconcile is worse than a
-        stale one that verifies.
-
-        Args:
-            meta: Mapping of document stem to blake2b hex digest.
-            run_control: Cooperative attempt control checked at both edges.
-
-        Returns:
-            The point count this publication claims, so a caller reporting a
-            collection total describes the same instant the claim does rather
-            than paying for a second count of its own.
-
-        Raises:
-            OSError: The collection could not be counted, or the metadata
-                directory could not be created or written.
-            RuntimeError: The store rejected the count.
-        """
-        run_control.checkpoint()
-        points, documents = self._observe_published_breadth()
-        stamped = {
-            **meta,
-            VAULT_POINT_SCHEMA_KEY: VAULT_POINT_SCHEMA,
-            VAULT_FINGERPRINT_SCHEME_KEY: _vault_fingerprint.SCHEME,
-            VAULT_CONTENT_EPOCH_KEY: self._current_vault_content_epoch(),
-            VAULT_PUBLISHED_POINTS_KEY: str(points),
-            VAULT_PUBLISHED_DOCUMENTS_KEY: str(documents),
-        }
-        write_json_atomically(
-            self._meta_path,
-            stamped,
-            JsonWriteOptions(indent=2, durable=True),
-        )
-        run_control.checkpoint()
-        return points
-
-    def _read_meta_raw(self) -> dict[str, str]:
-        """Load the sidecar JSON verbatim, reserved keys included."""
-        if not self._meta_path.exists():
-            return {}
-        try:
-            return json.loads(self._meta_path.read_text(encoding="utf-8"))
-        except (KeyError, ValueError, OSError) as exc:
-            logger.debug(
-                "vault meta %s unreadable; treating as empty: %s",
-                self._meta_path,
-                exc,
-                exc_info=True,
-            )
-            return {}
-
-    def _load_meta(self) -> dict[str, str]:
-        """Load index metadata from the sidecar JSON file.
-
-        Reserved dunder keys (the layout marker) are stripped so they
-        can never participate in document-id set arithmetic.
-
-        Returns:
-            Mapping of document stem to blake2b hex digest, or an empty
-            dict if the file does not exist or cannot be parsed.
-        """
-        return {
-            key: value
-            for key, value in self._read_meta_raw().items()
-            if not key.startswith("__")
-        }

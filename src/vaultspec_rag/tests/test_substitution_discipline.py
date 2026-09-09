@@ -32,10 +32,19 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
     "test_cli_index.py": (
-        1,
+        9,
         "the disk floor is a per-profile compile-time constant with no config "
         "override, so a real run cannot be driven under it; production's own "
-        "ensure_disk_headroom raises, classifies and words the refusal",
+        "ensure_disk_headroom raises, classifies and words the refusal. The "
+        "rest belong to the audit verb, and are one of three kinds. Most are "
+        "tripwires that only ever raise - the audit must not reach the "
+        "publication transport, and must reject a bad scope before reaching "
+        "any transport at all - so none of them can make a regressed verb "
+        "pass. Two stand in for the audit response so the verb's rendering of "
+        "a clean and a drifted verdict is asserted without a populated "
+        "backend to produce each one. One captures the outgoing call to prove "
+        "the audit builds the request the route expects, which is a fact "
+        "about the wire and is not observable from the verb's output",
     ),
     "test_cli_server.py": (
         1,
@@ -53,14 +62,33 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "every run, which the suite's mirror-the-installed-binary design "
         "exists to avoid",
     ),
-    "test_document_index_escalation.py": (
+    "test_publication_scaling.py": (
         1,
-        "not a substitute for production behaviour but a tripwire: the "
-        "replacement only ever fails the test, so it cannot make a "
-        "regressed path pass, which is the risk this guard exists for. A "
-        "call that must never happen is not observable from outside the "
-        "object, and asserting on side effects instead would pass when an "
-        "escalation left the store coincidentally unchanged",
+        "observation, not substitution: the replacement opens the real ledger "
+        "connection and only attaches a trace callback and a progress handler "
+        "to it, so every statement counted is one production actually issued "
+        "and every instruction counted is one it actually retired. Those "
+        "counts are the assertions - they are what prove a scoped publication "
+        "examines the same number of rows whatever the parent's size - and "
+        "SQLite reports both to connection-level callbacks or not at all. One "
+        "site, not two: both seams are patched from a single helper, because "
+        "patching either alone leaves the other untraced",
+    ),
+    "test_server_routes.py": (
+        2,
+        "one is a tripwire that only ever raises, so it cannot make a "
+        "regressed route pass; the other stands in for the audit owner so the "
+        "route is proven to delegate to it and return its verdict verbatim, "
+        "which is the whole behaviour under test. Driving a real audit here "
+        "would need a populated backend and would assert the auditor's "
+        "correctness a second time rather than the route's delegation",
+    ),
+    "test_store.py": (
+        1,
+        "a tripwire: the replacement only ever fails the test, proving the "
+        "audit read never reconciles the backend. A call that must not happen "
+        "is not observable from outside the store, and asserting on state "
+        "instead would pass whenever a reconcile happened to change nothing",
     ),
     "test_embeddings_dependencies.py": (
         3,

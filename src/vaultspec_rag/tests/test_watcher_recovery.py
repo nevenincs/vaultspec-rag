@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
     DesiredJobState,
     JobAttempt,
@@ -116,6 +117,7 @@ def _snapshot(root: Path, state: JobState) -> JobSnapshot:
             source=JobSource.CODE,
             project_root=str(root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         state=state,
         desired_state=DesiredJobState.RUNNING,

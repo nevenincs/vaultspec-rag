@@ -8,7 +8,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Never, cast
 
 import pytest
 
@@ -371,7 +371,7 @@ finally:
             )
             resp: httpx.Response = client.post(
                 "/reindex",
-                json={"type": "vault"},
+                json={"type": "vault", "authority": "publication"},
                 headers=self._auth_headers(),
             )
             assert resp.status_code == 400
@@ -379,6 +379,132 @@ finally:
             assert data["ok"] is False
             assert data["error"] == "invalid_job_spec"
             assert "project_root" in cast("str", data["message"])
+        finally:
+            mod._http_mode = orig_mode
+
+    def test_audit_route_returns_400_without_project_root(self):
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        mod._http_mode = True
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            response: httpx.Response = client.post(
+                "/index/audit",
+                json={"type": "code", "authority": "audit_verification"},
+                headers=self._auth_headers(),
+            )
+            assert response.status_code == 400
+            data = cast("dict[str, object]", response.json())
+            assert data["error"] == "invalid_audit_request"
+            assert "project_root" in str(data["message"])
+        finally:
+            mod._http_mode = orig_mode
+
+    def test_audit_route_requires_exact_authority_before_domain_call(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        (tmp_path / ".vault").mkdir()
+
+        def forbidden_audit(*_args: object, **_kwargs: object) -> Never:
+            raise AssertionError("invalid authority must not enter audit")
+
+        monkeypatch.setattr(
+            "vaultspec_rag._index_integrity.audit_index_sources",
+            forbidden_audit,
+        )
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        mod._http_mode = True
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            response: httpx.Response = client.post(
+                "/index/audit",
+                json={
+                    "type": "code",
+                    "authority": "rebuild",
+                    "project_root": str(tmp_path),
+                },
+                headers=self._auth_headers(),
+            )
+            assert response.status_code == 400
+            data = cast("dict[str, object]", response.json())
+            assert data["error"] == "invalid_audit_request"
+            assert "audit_verification" in str(data["message"])
+        finally:
+            mod._http_mode = orig_mode
+
+    def test_audit_route_passes_explicit_authority_to_canonical_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from starlette.testclient import TestClient
+
+        import vaultspec_rag.server as mod
+
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+
+        (tmp_path / ".vault").mkdir()
+        calls: list[tuple[Path, PublicSourceType, RunAuthority]] = []
+
+        def audit_owner(
+            root: Path,
+            source: PublicSourceType,
+            authority: RunAuthority,
+            _store_factory: object,
+        ) -> dict[str, object]:
+            calls.append((root, source, authority))
+            return {
+                "ok": True,
+                "partial": False,
+                "status": "consistent",
+                "domains": {},
+            }
+
+        monkeypatch.setattr(
+            "vaultspec_rag._index_integrity.audit_index_sources",
+            audit_owner,
+        )
+        app = self._make_app()
+        orig_mode = mod._http_mode
+        mod._http_mode = True
+        try:
+            client: httpx.Client = cast(
+                "httpx.Client", TestClient(app, raise_server_exceptions=False)
+            )
+            response: httpx.Response = client.post(
+                "/index/audit",
+                json={
+                    "type": "code",
+                    "authority": "audit_verification",
+                    "project_root": str(tmp_path),
+                },
+                headers=self._auth_headers(),
+            )
+            assert response.status_code == 200
+            assert response.json()["ok"] is True
+            assert calls == [
+                (
+                    tmp_path.resolve(),
+                    PublicSourceType.CODE,
+                    RunAuthority.AUDIT_VERIFICATION,
+                )
+            ]
         finally:
             mod._http_mode = orig_mode
 
@@ -599,7 +725,11 @@ try:
     ) as client:
         response = client.post(
             "/reindex",
-            json={"type": "code", "project_root": sys.argv[1]},
+            json={
+                "type": "code",
+                "authority": "publication",
+                "project_root": sys.argv[1],
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
     print(

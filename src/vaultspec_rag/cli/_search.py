@@ -277,7 +277,7 @@ def _render_empty_service_results(
 
 
 def _search_type_result_label(search_type: str) -> str:
-    if search_type in ("code", "codebase"):
+    if search_type == "code":
         return "source code"
     if search_type == "vault":
         return "vault document"
@@ -289,7 +289,7 @@ def _search_type_result_label(search_type: str) -> str:
 
 
 def _search_type_count_label(search_type: str) -> str:
-    if search_type in ("code", "codebase"):
+    if search_type == "code":
         return "source code sections"
     if search_type == "vault":
         return "vault documents"
@@ -507,6 +507,24 @@ def _try_in_process_search(
     # reason: outside it the error escaped uncaught and the command exited
     # non-zero with no output at all, so the routing-mode message this path
     # exists to print never reached an operator whose store was actually busy.
+    breadth_snapshot = None
+    if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED):
+        from .._index_breadth import acquire_code_breadth_snapshot_if_proven
+
+        breadth_snapshot = acquire_code_breadth_snapshot_if_proven(target)
+    integrity_source = (
+        PublicSourceType.CODE
+        if search_type is PublicSourceType.COMBINED
+        else search_type
+    )
+    from .._index_integrity import (
+        acquire_index_integrity_snapshot_if_proven,
+        unverifiable_integrity,
+    )
+
+    integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
+        target, integrity_source
+    )
     try:
         counts = {
             PublicSourceType.VAULT: get_registry().vault_doc_count(target),
@@ -522,38 +540,21 @@ def _try_in_process_search(
         else counts[search_type] > 0
     )
     if envelope is not None:
-        from .._index_breadth import (
-            code_breadth_shortfall,
-            code_file_breadth_shortfall,
-        )
-        from .._index_integrity import evaluate_index_integrity
         from .._search_state import BreadthFindings, search_index_state
-        from ..store_runtime import configured_backend_identity
 
         # Breadth is published for the code index alone, so a vault- or
         # document-only search has no claim to fall short of.
         shortfall = (
-            code_breadth_shortfall(target, counts[PublicSourceType.CODE])
-            if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
-            else None
-        )
-        file_shortfall = (
-            code_file_breadth_shortfall(target)
-            if search_type in (PublicSourceType.CODE, PublicSourceType.COMBINED)
+            breadth_snapshot.finish(counts[PublicSourceType.CODE])
+            if breadth_snapshot is not None
             else None
         )
         # A combined search reconciles the code domain, mirroring the combined
         # shortfall above; single-domain searches reconcile their own.
-        integrity_source = (
-            PublicSourceType.CODE
-            if search_type is PublicSourceType.COMBINED
-            else search_type
-        )
-        integrity = evaluate_index_integrity(
-            target,
-            integrity_source,
-            counts[integrity_source],
-            backend_identity=configured_backend_identity(target),
+        integrity = (
+            unverifiable_integrity(integrity_source)
+            if integrity_snapshot is None
+            else integrity_snapshot.finish(counts[integrity_source])
         )
         envelope["index_state"] = search_index_state(
             indexed_count=(
@@ -565,7 +566,6 @@ def _try_in_process_search(
             search_type=search_type,
             findings=BreadthFindings(
                 shortfall=shortfall,
-                file_shortfall=file_shortfall,
                 integrity=integrity,
             ),
         )
@@ -648,6 +648,8 @@ def _try_in_process_search(
                         ),
                     )
                 )
+        if integrity_snapshot is not None:
+            integrity_snapshot.publication.validate()
         # The block above is built before the search runs, because its counts
         # come from the store rather than from the answer. The collapse signal
         # is the one finding that cannot be known until there IS an answer, so

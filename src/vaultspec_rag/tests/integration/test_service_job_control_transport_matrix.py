@@ -24,6 +24,7 @@ from ... import jobs
 from ...cli import app
 from ...config._settings import reset_config
 from ...config._types import EnvVar
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import DesiredJobState, JobSource
 from ...registry import get_registry
 from ...server import ServerRouteRuntime, create_http_app
@@ -129,6 +130,7 @@ def _create_operator_matrix_job(port: int, project_root: Path) -> tuple[str, int
         JobSource.VAULT,
         str(project_root),
         port,
+        authority=RunAuthority.PUBLICATION,
         start_paused=True,
         idempotency_key="e2e-operator-matrix",
         timeout=5.0,

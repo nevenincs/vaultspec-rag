@@ -28,9 +28,11 @@ from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import pytest
 
+from ..._source_types import PublicSourceType
 from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
+from .._publication_assertions import published_content_identities
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -166,10 +168,10 @@ def _prepare_off_hook_setup(
 ) -> _OffHookSetup:
     """Index one extracted binary and snapshot the state the kill switch retains."""
     from ... import CodebaseIndexer
-    from ..._index_breadth import index_meta_path
-    from ..._source_types import PublicSourceType
+    from ..._store_writes import workspace_volume_path
     from ...config._settings import get_config
     from ...indexer._preprocess_cache import preprocess_cache_dir
+    from ...indexer._run_ledger_models import index_run_ledger_path
     from ...store_runtime import VaultStore
 
     model = rag_components["model"]
@@ -206,7 +208,7 @@ def _prepare_off_hook_setup(
     sentinel.unlink()
 
     data_root = tmp_path / get_config().data_dir
-    metadata_path = index_meta_path(tmp_path, PublicSourceType.CODE)
+    metadata_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
     cache_root = preprocess_cache_dir(data_root)
     cache_root.mkdir(parents=True, exist_ok=True)
     (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
@@ -706,7 +708,9 @@ class TestPreprocessEndToEnd:
                         preflight=indexer.preflight_content(),
                     )
                 assert raised.value.error_kind is JobErrorKind.EXTRACTION_RETRYABLE
-                assert "broken.pdf" not in indexer._load_meta()
+                assert "broken.pdf" not in published_content_identities(
+                    tmp_path, PublicSourceType.CODE
+                )
                 assert store.get_code_ids_by_paths({"broken.pdf"}) == []
 
                 ledger = RunLedger(

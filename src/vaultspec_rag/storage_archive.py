@@ -19,10 +19,19 @@ from typing import TYPE_CHECKING, cast
 
 from . import store_schema
 from ._atomic_write import replace_atomically
+from ._publication_state import (
+    PublicationSnapshot,
+    acquire_publication_snapshot,
+    read_all_publication_evidence,
+)
 from ._rmtree import remove_tree
+from ._source_types import PublicSourceType
+from ._store_models import read_served_pointer
 from ._timestamps import parse_iso_timestamp
+from .indexer._publication_proof import ProofUnverifiableError
 from .storage_manifest import (
     SnapshotCollection,
+    SnapshotPublicationProof,
     StorageSnapshotManifest,
     load_manifest,
     snapshot_manifest_path,
@@ -41,6 +50,65 @@ logger = logging.getLogger(__name__)
 #: The extension qdrant gives every snapshot it writes, and so the one an
 #: artifact in an archive directory carries.
 _SNAPSHOT_SUFFIX = ".snapshot"
+
+
+def _active_publication_collections(
+    root: Path,
+    prefix: str,
+    collections: list[str],
+) -> dict[PublicSourceType, str]:
+    available = set(collections)
+    active = {
+        PublicSourceType.VAULT: prefix + store_schema.VAULT_COLLECTION,
+        PublicSourceType.DOCUMENT: prefix + store_schema.DOCUMENT_COLLECTION,
+    }
+    pointer = read_served_pointer(root)
+    if not pointer.verifiable:
+        raise RuntimeError("cannot archive code without a verifiable served pointer")
+    active[PublicSourceType.CODE] = (
+        pointer.collection or prefix + store_schema.CODE_COLLECTION
+    )
+    return {source: name for source, name in active.items() if name in available}
+
+
+def _export_publication_proofs(
+    root: Path,
+    prefix: str,
+    collections: list[str],
+) -> tuple[tuple[SnapshotPublicationProof, ...], tuple[PublicationSnapshot, ...]]:
+    """Read and fence every proof required to make an archive restorable."""
+    exports: list[SnapshotPublicationProof] = []
+    snapshots: list[PublicationSnapshot] = []
+    active = _active_publication_collections(root, prefix, collections)
+    for source, collection in active.items():
+        try:
+            snapshot = acquire_publication_snapshot(root, source)
+        except ProofUnverifiableError:
+            # The source root and its per-root ledger may already be gone.
+            # Archive the physical collection without inventing authority;
+            # restore leaves it unreadable until an explicit rebuild.
+            continue
+        evidence = read_all_publication_evidence(snapshot)
+        generation = snapshot.ledger.generation(snapshot.proof.generation_id)
+        exports.append(
+            SnapshotPublicationProof(
+                source=source.value,
+                collection=collection,
+                signature=cast(
+                    "dict[str, object]", json.loads(generation.signature.canonical_json)
+                ),
+                evidence=tuple(
+                    {
+                        "rel_path": item.rel_path,
+                        "content_identity": item.content_identity,
+                        "point_ids": list(item.point_ids),
+                    }
+                    for item in evidence.values()
+                ),
+            )
+        )
+        snapshots.append(snapshot)
+    return tuple(exports), tuple(snapshots)
 
 
 def archive_prefix(
@@ -81,7 +149,12 @@ def archive_prefix(
     # absent: an archive of an unstamped collection records no provenance
     # rather than the current process's, which never touched those vectors.
     entry = load_manifest().get(prefix)
-    identities = {} if entry is None else entry.collection_identity
+    if entry is None:
+        raise RuntimeError(f"cannot archive unattributed namespace: {prefix}")
+    publication_proofs, proof_snapshots = _export_publication_proofs(
+        Path(entry.root), prefix, targets
+    )
+    identities = entry.collection_identity
     for name in targets:
         points = int(client.count(collection_name=name).count)
         description = client.create_snapshot(collection_name=name, wait=True)
@@ -101,34 +174,30 @@ def archive_prefix(
                 identity=identities.get(name),
             )
         )
-    metadata_files: list[str] = []
-    if entry is not None:
-        from shutil import copy2
-
-        from .indexer._document_meta import document_metadata_path
-
-        document_meta = document_metadata_path(Path(entry.root))
-        if document_meta.is_file():
-            metadata_dest = dest_dir / document_meta.name
-            copy2(document_meta, metadata_dest)
-            metadata_files.append(metadata_dest.name)
-    carried, carried_metadata = _carry_prior_archive_records(
-        dest_dir, fresh=collection_artifacts, fresh_metadata=metadata_files
-    )
+    point_count_by_collection = {
+        item.name: item.points for item in collection_artifacts
+    }
+    for export, snapshot in zip(publication_proofs, proof_snapshots, strict=True):
+        proof = snapshot.proof
+        if (
+            point_count_by_collection[export.collection]
+            != proof.aggregate.retained_points
+        ):
+            raise RuntimeError(
+                "cannot archive a collection whose live count disagrees with its proof"
+            )
+        snapshot.validate()
+    carried = _carry_prior_archive_records(dest_dir, fresh=collection_artifacts)
     manifest_path = write_snapshot_manifest(
         dest_dir,
         StorageSnapshotManifest(
             prefix=prefix,
-            root=entry.root if entry is not None else None,
-            storage_schema_version=(
-                entry.storage_schema_version
-                if entry is not None
-                else store_schema.STORAGE_SCHEMA_VERSION
-            ),
+            root=entry.root,
+            storage_schema_version=entry.storage_schema_version,
             collections=tuple(
                 sorted([*collection_artifacts, *carried], key=lambda item: item.name)
             ),
-            metadata_files=tuple(sorted({*metadata_files, *carried_metadata})),
+            publication_proofs=publication_proofs,
         ),
     )
     _drop_unnamed_snapshots(dest_dir, manifest_path)
@@ -146,8 +215,7 @@ def _carry_prior_archive_records(
     dest_dir: Path,
     *,
     fresh: Sequence[SnapshotCollection],
-    fresh_metadata: Sequence[str],
-) -> tuple[tuple[SnapshotCollection, ...], tuple[str, ...]]:
+) -> tuple[SnapshotCollection, ...]:
     """Return the records an earlier attempt left that this one must keep naming.
 
     The archive destination is fixed per namespace and the manifest is
@@ -177,23 +245,17 @@ def _carry_prior_archive_records(
     """
     manifest_path = snapshot_manifest_path(dest_dir)
     if not manifest_path.is_file():
-        return (), ()
+        return ()
     prior = _read_archive_manifest(manifest_path)
     fresh_names = {item.name for item in fresh}
-    written_files = {item.snapshot_file for item in fresh} | set(fresh_metadata)
-    carried = [
+    written_files = {item.snapshot_file for item in fresh}
+    return tuple(
         record
         for record in prior.collections
         if record.snapshot_file not in written_files
         and record.name not in fresh_names
         and (dest_dir / record.snapshot_file).is_file()
-    ]
-    carried_metadata = tuple(
-        name
-        for name in prior.metadata_files
-        if name not in written_files and (dest_dir / name).is_file()
     )
-    return tuple(carried), carried_metadata
 
 
 def _drop_unnamed_snapshots(dest_dir: Path, manifest_path: Path) -> None:
@@ -283,9 +345,9 @@ def _read_archive_manifest(manifest_path: Path) -> StorageSnapshotManifest:
 
     One reader for the persisted form, because the two callers ask the same
     question of it. Verification needs the records to prove they still stand
-    up; a re-archive needs them, their provenance and the metadata list to
-    decide what it must keep naming, and a merge that read the records through
-    a narrower view would silently drop the provenance it was preserving.
+    up; a re-archive needs them and their provenance to decide what it must
+    keep naming, and a merge that read the records through a narrower view
+    would silently drop the provenance it was preserving.
     """
     try:
         if manifest_path.stat().st_size <= 0:
@@ -316,8 +378,8 @@ def _read_archive_manifest(manifest_path: Path) -> StorageSnapshotManifest:
         root=root,
         storage_schema_version=version,
         collections=tuple(_archive_record(record, manifest_path) for record in records),
-        metadata_files=_archive_metadata_files(
-            fields.get("metadata_files"), manifest_path
+        publication_proofs=_archive_publication_proofs(
+            fields.get("publication_proofs"), manifest_path
         ),
     )
 
@@ -355,16 +417,46 @@ def _archive_record(record: object, manifest_path: Path) -> SnapshotCollection:
     )
 
 
-def _archive_metadata_files(value: object, manifest_path: Path) -> tuple[str, ...]:
-    """Validate the persisted metadata list before any name in it is used."""
+def _archive_publication_proofs(
+    value: object, manifest_path: Path
+) -> tuple[SnapshotPublicationProof, ...]:
+    """Carry the persisted proof exports verbatim, or refuse the manifest.
+
+    Read whole rather than narrowly for the same reason the collection records
+    are: a re-archive republishes what it reads, so a proof this reader
+    flattened would be a certificate the next manifest no longer carries.
+    """
     if not isinstance(value, list):
         raise RuntimeError(f"archive manifest is invalid: {manifest_path}")
-    names = cast("list[object]", value)
-    for name in names:
-        if not isinstance(name, str) or Path(name).name != name:
-            message = f"archive manifest has invalid metadata: {manifest_path}"
-            raise RuntimeError(message)
-    return tuple(cast("list[str]", names))
+    records = cast("list[object]", value)
+    proofs: list[SnapshotPublicationProof] = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise RuntimeError(f"archive proof is invalid: {manifest_path}")
+        fields = cast("dict[str, object]", record)
+        source = fields.get("source")
+        collection = fields.get("collection")
+        signature = fields.get("signature")
+        evidence = fields.get("evidence")
+        if (
+            not isinstance(source, str)
+            or not isinstance(collection, str)
+            or not isinstance(signature, dict)
+            or not isinstance(evidence, list)
+        ):
+            raise RuntimeError(f"archive proof is invalid: {manifest_path}")
+        rows = cast("list[object]", evidence)
+        if any(not isinstance(row, dict) for row in rows):
+            raise RuntimeError(f"archive proof is invalid: {manifest_path}")
+        proofs.append(
+            SnapshotPublicationProof(
+                source=source,
+                collection=collection,
+                signature=cast("dict[str, object]", signature),
+                evidence=tuple(cast("list[dict[str, object]]", rows)),
+            )
+        )
+    return tuple(proofs)
 
 
 def sweep_archive(

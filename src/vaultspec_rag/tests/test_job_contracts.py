@@ -20,6 +20,7 @@ import pytest
 
 from .. import job_models
 from .. import jobs as jobs_module
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager import state as state_module
 from ..job_manager._execution import logger as execution_logger
 from ..job_manager.manager import JobManager
@@ -40,6 +41,7 @@ from ..job_models import (
     JobTimestamps,
     ProcessResourceSnapshot,
     ResumeStrategy,
+    active_work_identity,
     capabilities_for_state,
 )
 from ..job_persistence import (
@@ -324,6 +326,64 @@ class TestLoadModelIdempotency:
 # ---------------------------------------------------------------------------
 
 
+def test_job_spec_requires_explicit_authority() -> None:
+    with pytest.raises(TypeError, match="authority"):
+        cast("Callable[..., JobSpec]", JobSpec)(
+            operation=JobOperation.INDEX,
+            source=JobSource.CODE,
+            project_root=str(Path(__file__).resolve().parent),
+            mode=JobMode.INCREMENTAL,
+        )
+
+
+def test_job_spec_requires_the_canonical_authority_value() -> None:
+    with pytest.raises(TypeError, match="authority must be a RunAuthority"):
+        JobSpec(
+            operation=JobOperation.INDEX,
+            source=JobSource.CODE,
+            project_root=str(Path(__file__).resolve().parent),
+            mode=JobMode.INCREMENTAL,
+            authority=cast("RunAuthority", "publication"),
+        )
+
+
+def test_job_spec_serializes_one_explicit_authority_shape() -> None:
+    spec = JobSpec(
+        operation=JobOperation.INDEX,
+        source=JobSource.CODE,
+        project_root=str(Path(__file__).resolve().parent),
+        mode=JobMode.INCREMENTAL,
+        authority=RunAuthority.PUBLICATION,
+    )
+    expected = {
+        "operation": "index",
+        "source": "code",
+        "project_root": str(Path(__file__).resolve().parent),
+        "mode": "incremental",
+        "authority": "publication",
+    }
+
+    assert spec.to_dict() == expected
+    rendered = _snapshot_in_state(JobState.QUEUED, spec=spec).to_dict()
+    assert cast("dict[str, object]", rendered["spec"])["authority"] == "publication"
+
+
+def test_active_work_identity_distinguishes_explicit_authority() -> None:
+    publication = JobSpec(
+        operation=JobOperation.INDEX,
+        source=JobSource.CODE,
+        project_root=str(Path(__file__).resolve().parent),
+        mode=JobMode.INCREMENTAL,
+        authority=RunAuthority.PUBLICATION,
+    )
+    verification = replace(
+        publication,
+        authority=RunAuthority.AUDIT_VERIFICATION,
+    )
+
+    assert active_work_identity(publication) != active_work_identity(verification)
+
+
 def _valid_snapshot() -> JobSnapshot:
     """Return one queued job that the real loader accepts unchanged."""
     spec = JobSpec(
@@ -331,6 +391,7 @@ def _valid_snapshot() -> JobSnapshot:
         source=JobSource.CODE,
         project_root=str(Path(__file__).resolve().parent),
         mode=JobMode.INCREMENTAL,
+        authority=RunAuthority.PUBLICATION,
     )
     return JobSnapshot(
         id="job-1",
@@ -653,6 +714,7 @@ def _spec(
         source=source,
         project_root=project_root or str(Path(__file__).resolve().parent),
         mode=mode,
+        authority=RunAuthority.PUBLICATION,
     )
 
 

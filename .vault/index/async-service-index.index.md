@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#async-service-index'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:f16f34c5c96a49d3456507d50362b09f4fa79c12d94bafd3f3231078fb0d1ec9'
 related:
   - '[[2026-06-04-async-service-index-W01-P01-S01]]'

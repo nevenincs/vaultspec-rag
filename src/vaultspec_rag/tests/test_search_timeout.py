@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..serviceclient._search_transport import get_search_timeout
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
@@ -160,6 +161,7 @@ def test_live_reindex_timeout_override_bounds_http_request(tmp_path: Path) -> No
             False,
             port,
             str(tmp_path),
+            authority=RunAuthority.PUBLICATION,
             initiator_kind="cli",
         )
 

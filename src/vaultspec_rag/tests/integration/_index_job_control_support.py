@@ -21,12 +21,13 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from ... import jobs
-from ..._index_breadth import index_meta_path
 from ..._source_types import PublicSourceType
+from ..._store_writes import workspace_volume_path
 from ...concurrency import limiter_stats, reset_limiters
 from ...config._settings import get_config, reset_config
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer, VaultIndexer  # noqa: TC001
+from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ...indexer._vault_prep import prepare_document
 from ...job_control import (
     CancelRequested,
@@ -44,6 +45,7 @@ from ...job_models import (
 from ...progress import NullProgressReporter
 from ...registry import get_registry, reset_registry
 from ...store_runtime import VaultStore
+from .._publication_assertions import published_content_identities
 from ._helpers import cpu_backed_embedding_model
 
 if TYPE_CHECKING:
@@ -425,7 +427,7 @@ async def assert_cancelled_vault_stops_writes(
     # assertion below tolerates the sidecar being absent, so a path that did
     # not name the file the indexer writes would compare None against None and
     # report a pass without ever observing the writes it exists to forbid.
-    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
+    metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     metadata = metadata_path.read_bytes() if metadata_path.exists() else None
     metadata_mtime = (
         metadata_path.stat().st_mtime_ns if metadata_path.exists() else None
@@ -481,7 +483,11 @@ async def request_cancel_at_the_write_gate(
     gpu_lock = registry.gpu_lock
     gpu_lock.acquire()
     try:
-        cancelled_id = jobs.start_reindex_codebase(root, clean=False)
+        cancelled_id = jobs.start_reindex_codebase(
+            root,
+            clean=False,
+            authority=RunAuthority.PUBLICATION,
+        )
         embedding = await _wait_for_managed_job(
             manager,
             cancelled_id,
@@ -643,7 +649,10 @@ def assert_current_code_state(
     expected_paths = {
         str(path.relative_to(indexer.root_dir)).replace("\\", "/") for path in paths
     }
-    assert set(indexer._load_meta()) == expected_paths
+    assert (
+        set(published_content_identities(indexer.root_dir, PublicSourceType.CODE))
+        == expected_paths
+    )
     stored = _stored_code_content(store)
     assert set(stored) == expected_paths
     for ordinal, path in enumerate(paths):
@@ -712,7 +721,9 @@ def assert_revised_vault_publication(
     token: RunControlToken,
 ) -> None:
     assert store.get_all_ids() == publication.expected_ids
-    metadata_after = indexer._load_meta()
+    metadata_after = published_content_identities(
+        indexer.root_dir, PublicSourceType.VAULT
+    )
     assert set(metadata_after) == publication.expected_ids
     assert (
         metadata_after[publication.document_id]
