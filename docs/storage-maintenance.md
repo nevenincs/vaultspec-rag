@@ -6,6 +6,10 @@ Everything here needs the background service running. Start it with `uv run vaul
 
 Maintenance operates on the shared managed store. [Migration](#migrate-a-root-between-backends) also accesses a project's local-only store.
 
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+
 ## Vocabulary
 
 | Term              | Meaning                                                                                                                                             |

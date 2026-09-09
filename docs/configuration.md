@@ -4,6 +4,11 @@ This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag decla
 
 A test in the suite checks every variable name, type, and default on this page against the shipped settings object. Adding, renaming, or re-defaulting a knob fails that test until this page is updated.
 
+Examples use the installed-tool form and call `vaultspec-rag` directly. If
+vaultspec-rag is a project dependency, prefix each command with `uv run`; see
+the [installation guide](installation.md) for lane selection, including the
+standalone tool and no-install routes.
+
 ## On this page
 
 - [Resolution order](#resolution-order) - which source wins when more than one sets a value
@@ -128,8 +133,9 @@ access, licensing, error-recovery, and dense-only policy. This page records the 
 authenticate downloads with `HF_TOKEN` or `hf auth login`, or set
 `VAULTSPEC_RAG_SPARSE_ENABLED=0` consistently in the service environment and reindex.
 Disabling sparse does not disable the dense encoder or reranker, so the service still
-requires `[gpu]` and a supported accelerator. The installation guide also describes
-the current all-model prefetch and readiness caveat for this toggle.
+requires `[gpu]` and a supported accelerator. Provisioning, warmup, and readiness all
+honour the toggle, so a dense-only install never provisions or probes the gated sparse
+repository.
 
 | Variable                            | Type    | Default                     | Controls                                       | CLI flag |
 | ----------------------------------- | ------- | --------------------------- | ---------------------------------------------- | -------- |

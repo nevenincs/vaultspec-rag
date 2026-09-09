@@ -12,7 +12,12 @@ import pytest
 
 from .._job_errors import JobError, JobErrorKind
 from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
-from ..config._settings import VaultSpecConfigWrapper, get_config, reset_config
+from ..config._settings import (
+    VaultSpecConfigWrapper,
+    configured_model_repos,
+    get_config,
+    reset_config,
+)
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import MemoryBudget
 from ._scaffold import restore_env, set_env
@@ -1441,3 +1446,52 @@ def test_the_ephemeral_idle_switch_still_accepts_its_disable_value() -> None:
     finally:
         restore_env(EnvVar.STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS, prev)
         reset_config()
+
+
+class TestConfiguredModelRepos:
+    """``configured_model_repos`` is the single source every provisioning,
+
+    warmup, and readiness consumer reads its required-model inventory from,
+    so gating it here is what keeps a dense-only install from ever being
+    asked to provision the gated SPLADE repo.
+    """
+
+    def test_sparse_enabled_includes_all_three_repos(self) -> None:
+        prev = set_env(EnvVar.SPARSE_ENABLED, "1")
+        try:
+            reset_config()
+            cfg = get_config()
+            assert cfg.sparse_enabled is True
+            repos = configured_model_repos()
+            labels = [label for label, _repo in repos]
+            values = [repo for _label, repo in repos]
+            assert labels == [
+                "Dense (Qwen3)",
+                "Sparse (SPLADE)",
+                "Reranker (CrossEncoder)",
+            ]
+            assert str(cfg.sparse_model) in values
+            assert str(cfg.embedding_model) in values
+            assert str(cfg.reranker_model) in values
+        finally:
+            restore_env(EnvVar.SPARSE_ENABLED, prev)
+            reset_config()
+
+    def test_sparse_disabled_excludes_only_the_sparse_repo(self) -> None:
+        prev = set_env(EnvVar.SPARSE_ENABLED, "0")
+        try:
+            reset_config()
+            cfg = get_config()
+            assert cfg.sparse_enabled is False
+            repos = configured_model_repos()
+            labels = [label for label, _repo in repos]
+            values = [repo for _label, repo in repos]
+            # The sparse label and repo are gone entirely, not merely blanked -
+            # a dense-only inventory must never mention the gated repo at all.
+            assert labels == ["Dense (Qwen3)", "Reranker (CrossEncoder)"]
+            assert str(cfg.sparse_model) not in values
+            assert str(cfg.embedding_model) in values
+            assert str(cfg.reranker_model) in values
+        finally:
+            restore_env(EnvVar.SPARSE_ENABLED, prev)
+            reset_config()
