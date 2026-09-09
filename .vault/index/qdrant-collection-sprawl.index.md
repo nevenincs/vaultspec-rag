@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-09'
 body_schema: 'body-v2'
-body_hash: 'sha256:6335a72192d8a653b245ea89706411ffefc17c9f89df9907d1cdba740088c8f7'
+body_hash: 'sha256:58cd6e81ebd1b7acebc95bcbbb66b61151e27f6cf9af11286b0defe4e608861e'
 related:
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S01]]'
   - '[[2026-09-08-qdrant-collection-sprawl-P01-S02]]'
@@ -43,6 +43,7 @@ related:
   - '[[2026-09-08-qdrant-collection-sprawl-adr]]'
   - '[[2026-09-08-qdrant-collection-sprawl-plan]]'
   - '[[2026-09-08-qdrant-collection-sprawl-research]]'
+  - '[[2026-09-09-qdrant-collection-sprawl-audit]]'
 ---
 
 # `qdrant-collection-sprawl` feature index
@@ -54,6 +55,10 @@ Auto-generated index of all documents tagged with `#qdrant-collection-sprawl`.
 ### adr
 
 - `2026-09-08-qdrant-collection-sprawl-adr` - `qdrant-collection-sprawl` adr: `retention discrimination for the ephemeral namespace class, and the prerequisites that let it execute` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-09-qdrant-collection-sprawl-audit` - `qdrant-collection-sprawl` audit: `retention discrimination and its prerequisites`
 
 ### exec
 
