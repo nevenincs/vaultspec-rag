@@ -63,13 +63,16 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "exists to avoid",
     ),
     "test_publication_scaling.py": (
-        2,
+        1,
         "observation, not substitution: the replacement opens the real ledger "
-        "connection and only attaches a trace callback to it, so every "
-        "statement counted is one production actually issued. The count is "
-        "the assertion - it is what proves a scoped publication reads a "
-        "constant number of rows whatever the parent's size - and SQLite "
-        "reports its statements to a connection-level callback or not at all",
+        "connection and only attaches a trace callback and a progress handler "
+        "to it, so every statement counted is one production actually issued "
+        "and every instruction counted is one it actually retired. Those "
+        "counts are the assertions - they are what prove a scoped publication "
+        "examines the same number of rows whatever the parent's size - and "
+        "SQLite reports both to connection-level callbacks or not at all. One "
+        "site, not two: both seams are patched from a single helper, because "
+        "patching either alone leaves the other untraced",
     ),
     "test_server_routes.py": (
         2,
