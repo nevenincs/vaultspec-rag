@@ -67,24 +67,31 @@ class StoreMutationLifecycle:
     """Ordered durable callbacks for one bounded external-store mutation.
 
     ``prepare`` must persist the deterministic unit before the store is
-    touched and returns whether the exact unit still requires application.
-    ``False`` means an already-confirmed replay and skips the complete store
-    path. ``mark_applied`` runs only after the store acknowledges the request.
-    Synchronous writes also run ``confirm`` immediately; asynchronous writes
-    leave that final transition to their owning ingest barrier.
+    touched, and returns whether the exact unit still requires application.
+    ``False`` means the store already holds it - either an earlier attempt
+    confirmed it, or one applied it and died before confirming - and skips
+    the store call alone. The caller's own post-write bookkeeping still runs,
+    because the second of those two states is exactly where it has not.
+
+    ``mark_applied`` runs only after the store acknowledges the request.
+    ``confirm_when_stored`` says whether ``confirm`` follows it there and
+    then: a synchronous write knows its bytes are durable at that point, while
+    an asynchronous one leaves the final transition to the ingest barrier that
+    owns it. It is answered relative to the store acknowledging, not to any
+    later callback.
     """
 
     prepare: Callable[[], bool]
     mark_applied: Callable[[], None]
     confirm: Callable[[], None]
-    confirm_after_acknowledgement: bool
+    confirm_when_stored: bool
 
     def __post_init__(self) -> None:
         for name in ("prepare", "mark_applied", "confirm"):
             if not callable(getattr(self, name)):
                 raise TypeError(f"{name} must be callable")
-        if not isinstance(self.confirm_after_acknowledgement, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime request validation
-            raise TypeError("confirm_after_acknowledgement must be a bool")
+        if not isinstance(self.confirm_when_stored, bool):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime request validation
+            raise TypeError("confirm_when_stored must be a bool")
 
 
 @dataclass(frozen=True, slots=True)

@@ -356,7 +356,7 @@ def execute_store_mutation(
     write()
     if lifecycle is not None:
         lifecycle.mark_applied()
-        if lifecycle.confirm_after_acknowledgement:
+        if lifecycle.confirm_when_stored:
             lifecycle.confirm()
     if after_acknowledgement is not None:
         after_acknowledgement()
@@ -898,7 +898,7 @@ def encode_and_upsert_document_slice(request: DocumentSliceRequest) -> None:
         return
     if (
         request.mutation_lifecycle is not None
-        and not request.mutation_lifecycle.confirm_after_acknowledgement
+        and not request.mutation_lifecycle.confirm_when_stored
     ):
         raise ValueError(
             "document slice mutations are synchronous and must confirm after "
@@ -1004,8 +1004,7 @@ def encode_and_upsert_code_slice(request: CodeSliceRequest) -> None:
         return
     if (
         request.mutation_lifecycle is not None
-        and request.mutation_lifecycle.confirm_after_acknowledgement
-        is not request.ingest_wait
+        and request.mutation_lifecycle.confirm_when_stored is not request.ingest_wait
     ):
         raise ValueError(
             "code slice mutation confirmation must match its ingest_wait barrier"

@@ -299,7 +299,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(events),
             mark_applied=lambda: events.append("applied"),
             confirm=lambda: events.append("confirmed"),
-            confirm_after_acknowledgement=True,
+            confirm_when_stored=True,
         )
         writer = _SliceWriter(name="receipt-order-writer")
         writer.submit(
@@ -327,7 +327,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(events),
             mark_applied=lambda: events.append("applied"),
             confirm=lambda: events.append("confirmed"),
-            confirm_after_acknowledgement=True,
+            confirm_when_stored=True,
         )
 
         def _fail() -> None:
@@ -345,7 +345,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(events),
             mark_applied=lambda: events.append("applied"),
             confirm=lambda: events.append("confirmed"),
-            confirm_after_acknowledgement=False,
+            confirm_when_stored=False,
         )
 
         execute_store_mutation(lambda: events.append("store"), lifecycle)
@@ -377,7 +377,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(events, should_apply=False),
             mark_applied=lambda: events.append("applied"),
             confirm=lambda: events.append("confirmed"),
-            confirm_after_acknowledgement=False,
+            confirm_when_stored=False,
         )
 
         execute_store_mutation(
@@ -401,7 +401,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(code_events),
             mark_applied=lambda: code_events.append("applied"),
             confirm=lambda: code_events.append("confirmed"),
-            confirm_after_acknowledgement=False,
+            confirm_when_stored=False,
         )
         encode_and_upsert_code_slice(
             CodeSliceRequest(
@@ -432,7 +432,7 @@ class TestSliceWriterContract:
             prepare=lambda: _record_prepare(document_events),
             mark_applied=lambda: document_events.append("applied"),
             confirm=lambda: document_events.append("confirmed"),
-            confirm_after_acknowledgement=True,
+            confirm_when_stored=True,
         )
         encode_and_upsert_document_slice(
             DocumentSliceRequest(
@@ -470,7 +470,7 @@ class TestSliceWriterContract:
             prepare=cancel_prepare,
             mark_applied=lambda: None,
             confirm=lambda: None,
-            confirm_after_acknowledgement=True,
+            confirm_when_stored=True,
         )
         with pytest.raises(CancelRequested):
             execute_store_mutation(write, lifecycle)
