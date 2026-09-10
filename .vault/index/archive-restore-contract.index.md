@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#archive-restore-contract'
 date: '2026-08-25'
-modified: '2026-09-09'
+modified: '2026-09-10'
 body_schema: 'body-v2'
-body_hash: 'sha256:467b8eae3e493751e01b57a6beeed71ed331b7b98c92cde2b020fbb276b51fca'
+body_hash: 'sha256:fd7ed7d236ba99b325e57dd51175164a4a0e3f5965d2d294d62edee35b689ba3'
 related:
   - '[[2026-07-25-archive-restore-contract-P01-S01]]'
   - '[[2026-07-25-archive-restore-contract-P01-S02]]'
@@ -21,10 +21,15 @@ related:
   - '[[2026-07-25-archive-restore-contract-P02-S10]]'
   - '[[2026-07-25-archive-restore-contract-P02-S11]]'
   - '[[2026-07-25-archive-restore-contract-P03-S12]]'
+  - '[[2026-07-25-archive-restore-contract-P03-S13]]'
   - '[[2026-07-25-archive-restore-contract-P03-S14]]'
+  - '[[2026-07-25-archive-restore-contract-P03-summary]]'
   - '[[2026-07-25-archive-restore-contract-P04-S15]]'
   - '[[2026-07-25-archive-restore-contract-P04-S16]]'
   - '[[2026-07-25-archive-restore-contract-P04-S17]]'
+  - '[[2026-07-25-archive-restore-contract-P05-S18]]'
+  - '[[2026-07-25-archive-restore-contract-P05-S19]]'
+  - '[[2026-07-25-archive-restore-contract-P05-summary]]'
   - '[[2026-07-25-archive-restore-contract-adr]]'
   - '[[2026-07-25-archive-restore-contract-archive-path-reference]]'
   - '[[2026-07-25-archive-restore-contract-plan]]'
@@ -32,6 +37,7 @@ related:
   - '[[2026-07-27-archive-restore-contract-p01-s02-timestamp-review-audit]]'
   - '[[2026-07-27-archive-restore-contract-research]]'
   - '[[2026-07-27-archive-restore-contract-windows-qdrant-recovery-audit]]'
+  - '[[2026-09-10-archive-restore-contract-audit]]'
 ---
 
 # `archive-restore-contract` feature index
@@ -49,6 +55,7 @@ Auto-generated index of all documents tagged with `#archive-restore-contract`.
 - `2026-07-27-archive-restore-contract-p01-s01-baseline-review-audit` - `archive-restore-contract` audit: `p01 s01 baseline review`
 - `2026-07-27-archive-restore-contract-p01-s02-timestamp-review-audit` - `archive-restore-contract` audit: `p01 s02 timestamp review`
 - `2026-07-27-archive-restore-contract-windows-qdrant-recovery-audit` - `archive-restore-contract` audit: `windows qdrant recovery`
+- `2026-09-10-archive-restore-contract-audit` - `archive-restore-contract` audit: `final implementation review`
 
 ### exec
 
@@ -69,6 +76,11 @@ Auto-generated index of all documents tagged with `#archive-restore-contract`.
 - `2026-07-25-archive-restore-contract-P01-S05` - `P01.S05` archive guard coverage
 - `2026-07-25-archive-restore-contract-P01-summary` - `archive-restore-contract` `P01` summary
 - `2026-07-25-archive-restore-contract-P03-S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path
+- `2026-07-25-archive-restore-contract-P03-S13` - Prove that round trip can fail by corrupting the archived snapshot body and observing the restore refuse rather than pass quietly, and record both directions
+- `2026-07-25-archive-restore-contract-P03-summary` - `archive-restore-contract` `P03` summary
+- `2026-07-25-archive-restore-contract-P05-S18` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline
+- `2026-07-25-archive-restore-contract-P05-S19` - Review the delivered feature against the authorizing decision and record the audit
+- `2026-07-25-archive-restore-contract-P05-summary` - `archive-restore-contract` `P05` summary
 
 ### plan
 
