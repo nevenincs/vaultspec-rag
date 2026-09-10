@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_manager.models import (
     JobAttemptContext,
@@ -72,6 +73,7 @@ class TestGpuLockWaitTelemetry:
                 JobSource.VAULT,
                 _TEST_PROJECT_ROOT,
                 JobMode.REBUILD,
+                RunAuthority.REBUILD,
             ),
             JobInitiator("test", "gpu-wait-telemetry", None),
         )
@@ -153,6 +155,7 @@ def _create_quiesced_job(
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "quiesced-recovery", _TEST_PROJECT_ROOT),
     )
@@ -279,6 +282,7 @@ async def test_quiesce_releases_ticket_and_resources_before_same_id_resume() -> 
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "controller-quiesce", _TEST_PROJECT_ROOT),
     )
@@ -493,6 +497,7 @@ async def test_concurrent_recovery_dispatches_claim_one_same_id_attempt() -> Non
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "recovery-dispatch-coalescing", _TEST_PROJECT_ROOT),
     )
@@ -602,6 +607,7 @@ async def test_blocked_loop_control_invalidates_recovery_claim(
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "recovery-claim-control", _TEST_PROJECT_ROOT),
     )
@@ -694,6 +700,7 @@ def test_stopped_owner_loop_recovery_claim_moves_to_later_owner_loop() -> None:
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "stopped-owner-loop-recovery", _TEST_PROJECT_ROOT),
     )

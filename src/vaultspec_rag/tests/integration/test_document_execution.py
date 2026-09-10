@@ -44,6 +44,7 @@ from ...indexer._preprocess_config import (
     load_preprocess_rules,
 )
 from ...indexer._preprocess_runner import run_preprocessor
+from ...indexer._run_ledger_models import RunAuthority
 from ...indexer._run_policy import RunPolicy
 from ...indexer._slicing import iter_weighted_document_slices
 from ...indexer._streaming_types import DocumentSliceStreamRequest
@@ -61,7 +62,13 @@ from ...job_models import (
 )
 from ...service import ServiceRegistry
 from ...service_quiesce import ServiceQuiesceController
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
+from ...watcher_retry import (
+    WatcherSource,
+)
+from ...watcher_retry_policy import (
+    WatcherRetryPolicy,
+    _WatcherRetryOptions,
+)
 from ._helpers import _document_policy
 
 if TYPE_CHECKING:
@@ -335,6 +342,7 @@ async def test_document_attempt_honors_cancellation_before_admission(
             JobSource.DOCUMENT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "cancel before admission", str(tmp_path)),
     )
@@ -343,7 +351,14 @@ async def test_document_attempt_honors_cancellation_before_admission(
     assert task is not None
     control = RunControlToken()
     control.request_cancel()
-    context = JobAttemptContext(manager, created.job.id, 1, task, control)
+    context = JobAttemptContext(
+        manager,
+        created.job.id,
+        1,
+        task,
+        control,
+        created.job.spec.authority,
+    )
     registry = ServiceRegistry()
     try:
         with pytest.raises(CancelRequested):
@@ -354,7 +369,8 @@ async def test_document_attempt_honors_cancellation_before_admission(
                     manager,
                     created.job.id,
                     tmp_path,
-                    False,
+                    JobMode.INCREMENTAL,
+                    RunAuthority.PUBLICATION,
                     registry,
                 ),
             )
@@ -462,6 +478,7 @@ def test_document_retry_state_and_resource_profile_are_independent(
                 source=JobSource.DOCUMENT,
                 mode=JobMode.INCREMENTAL,
                 project_root=str(tmp_path),
+                authority=RunAuthority.PUBLICATION,
             )
         )
         is None
@@ -534,8 +551,10 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
     embedding_model: EmbeddingModel,
     tmp_path: Path,
 ) -> None:
+    from ..._publication_state import acquire_publication_snapshot
+    from ..._source_types import PublicSourceType
     from ...indexer import DocumentIndexer
-    from ...indexer._document_meta import document_metadata_path, read_document_meta
+    from ...indexer._publication_proof import ProofMissingError
     from ...progress import NullProgressReporter
     from ...store_runtime import VaultStore
 
@@ -566,28 +585,18 @@ def test_failed_document_extraction_never_publishes_complete_hash_metadata(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
-        metadata = read_document_meta(document_metadata_path(tmp_path))
         assert first.preprocess_skipped == 1
-        # A failed extraction must never publish complete/certified hash
-        # metadata. A failed generation stays resumable without certifying a
-        # sidecar at all - no sidecar is written (previously an empty,
-        # incomplete sidecar was), which is the stronger guarantee: any
-        # published metadata here, complete or not, fails this assertion.
-        assert metadata is None
+        with pytest.raises(ProofMissingError):
+            acquire_publication_snapshot(tmp_path, PublicSourceType.DOCUMENT)
         assert store.count_document() == 0
 
-        with pytest.raises(JobError) as raised:
+        with pytest.raises(ProofMissingError):
             indexer.incremental_index(
                 reporter=NullProgressReporter(),
                 preflight=indexer.preflight_content(),
             )
-        assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-        assert attempts.read_text() == "1"
-        assert read_document_meta(document_metadata_path(tmp_path)) is None
-
         second = indexer.full_index(
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
+            reporter=NullProgressReporter(), preflight=indexer.preflight_content()
         )
         assert second.preprocess_skipped == 1
         assert attempts.read_text() == "2"

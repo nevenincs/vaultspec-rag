@@ -7,17 +7,18 @@ computed and answers "may that hash be reused" from a stat call alone, so the
 pass costs stat calls plus the bytes that actually changed.
 
 What "hash" means is the owning domain's choice, carried by the gate itself:
-each indexer holds its own gate over its own sidecar, and a gate digests every
+each indexer holds its own point-addressable evidence database and digests every
 file through the one function it was built with. The vault's fingerprint
 splits a document into body and metadata halves rather than digesting raw
 bytes, and binding that function to the gate is what keeps the recorded
 evidence and the fingerprint it is evidence *for* from ever meaning different
 things.
 
-The content hash stays the sole indexing authority. The gate is advisory in
-both directions: a missing, stale, corrupt, or unwritable sidecar only ever
-causes extra hashing, never a skipped one, and a reused hash is still diffed
-against the published manifest exactly like a freshly computed one. The one
+The content hash stays the sole indexing authority. Evidence is held in an
+indexed SQLite table and read or updated only for the paths in the current
+operation. Missing evidence causes extra hashing, never a skipped one, and a
+reused hash is still diffed
+against canonical publication proof exactly like a freshly computed one. The one
 deliberate acceptance is the standard stat-cache limitation: content replaced
 while ``(size, mtime_ns)`` is byte-identically restored is indistinguishable
 from no change until any stat-visible difference appears.
@@ -32,15 +33,14 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import json
 import logging
 import os
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Self, cast
+from typing import TYPE_CHECKING, Final, Self
 
-from .._atomic_write import JsonWriteOptions, write_json_atomically
 from ..job_control import NO_RUN_CONTROL
 
 if TYPE_CHECKING:
@@ -52,12 +52,11 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BatchHashOutcome",
-    "ResidentGateCache",
     "StatEvidenceGate",
+    "StatEvidenceStore",
     "file_digest",
     "hash_paths",
     "record_computed_hashes",
-    "sidecar_for",
 ]
 
 logger = logging.getLogger(__name__)
@@ -69,12 +68,7 @@ logger = logging.getLogger(__name__)
 #: can never satisfy the gate.
 _RACY_WINDOW_NS: Final = 2_000_000_000
 
-#: Reserved sidecar key carrying the schema version. Dot-free relative paths
-#: never start with ``__``, so it cannot collide with an entry key.
-_SCHEMA_KEY: Final = "__stat_gate_schema__"
-_SCHEMA_VERSION: Final = "1"
-
-_WRITE_OPTIONS: Final = JsonWriteOptions(sort_keys=True, compact=True)
+_SCHEMA_VERSION: Final = 1
 
 #: Worker count for the read-and-digest pool. File reads release the GIL for
 #: the duration of the syscall and blake2b releases it for updates beyond 2047
@@ -111,11 +105,6 @@ class _StatEvidence:
     hashed_at_ns: int
 
 
-def sidecar_for(meta_path: pathlib.Path) -> pathlib.Path:
-    """Return the gate sidecar path derived from a domain's meta sidecar."""
-    return meta_path.with_name(f"{meta_path.name}.statgate.json")
-
-
 def file_digest(path: pathlib.Path) -> str:
     """Digest a file's raw bytes - the default a domain gets without asking.
 
@@ -133,18 +122,30 @@ class StatEvidenceGate:
     domain's writer lock, uses it for one hashing loop, and persists it.
     """
 
-    __slots__ = ("_dirty", "_entries", "_path", "digest", "rehashed", "reused")
+    __slots__ = (
+        "_connection",
+        "_dirty",
+        "_entries",
+        "_path",
+        "_prune_keep",
+        "digest",
+        "rehashed",
+        "reused",
+    )
 
     def __init__(
         self,
         path: pathlib.Path,
-        entries: dict[str, _StatEvidence],
+        entries: dict[str, _StatEvidence] | None = None,
         *,
         digest: Callable[[pathlib.Path], str] = file_digest,
     ) -> None:
         self._path = path
-        self._entries = entries
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(self._path)
+        self._entries = entries or {}
         self._dirty = False
+        self._prune_keep: frozenset[str] | None = None
         self.digest = digest
         self.reused = 0
         self.rehashed = 0
@@ -156,22 +157,27 @@ class StatEvidenceGate:
         *,
         digest: Callable[[pathlib.Path], str] = file_digest,
     ) -> Self:
-        """Load the sidecar, treating every defect as an empty gate.
+        """Open the current point-addressable evidence store."""
+        gate = cls(path, digest=digest)
+        gate._ensure_schema()
+        return gate
 
-        A corrupt or partially valid sidecar is discarded whole rather than
-        salvaged entry by entry: the only cost of discarding is rehashing,
-        while trusting a file that failed validation once invites trusting
-        whatever corrupted it.
-        """
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return cls(path, {}, digest=digest)
-        entries = _validated_entries(raw)
-        if entries is None:
-            logger.debug("stat gate sidecar %s invalid; rehashing instead", path)
-            return cls(path, {}, digest=digest)
-        return cls(path, entries, digest=digest)
+    def _ensure_schema(self) -> None:
+        with self._connection as connection:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if version not in {0, _SCHEMA_VERSION}:
+                raise RuntimeError("stat evidence schema requires a rebuild")
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS stat_evidence (
+                    path TEXT PRIMARY KEY,
+                    size INTEGER NOT NULL,
+                    mtime_ns INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    hashed_at_ns INTEGER NOT NULL
+                ) WITHOUT ROWID"""
+            )
+            if version == 0:
+                connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def hash_file(self, key: str, path: pathlib.Path) -> str:
         """Return *path*'s content hash, reading it only when evidence demands.
@@ -197,6 +203,17 @@ class StatEvidenceGate:
         caller can make it from a stat it already holds without any file I/O.
         """
         entry = self._entries.get(key)
+        if entry is None:
+            row = self._connection.execute(
+                "SELECT size, mtime_ns, content_hash, hashed_at_ns "
+                "FROM stat_evidence WHERE path = ?",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                entry = _StatEvidence(
+                    int(row[0]), int(row[1]), str(row[2]), int(row[3])
+                )
+                self._entries[key] = entry
         if (
             entry is not None
             and entry.size == stat.st_size
@@ -259,74 +276,58 @@ class StatEvidenceGate:
         self.record(key, stat, content_hash, computed_not_before_ns)
         return True
 
-    def share_entries(self) -> dict[str, _StatEvidence]:
-        """Expose the live entry mapping for :class:`ResidentGateCache`.
-
-        The returned mapping is the gate's own state, not a copy; only the
-        cache may hold it, under the same writer-lock serialization that
-        makes the cache safe at all.
-        """
-        return self._entries
-
     def prune(self, keep: Collection[str]) -> None:
         """Drop evidence for every key outside *keep*.
 
         Only a caller that hashed the full current membership may prune; a
         scoped pass sees a subset and must leave the rest alone.
         """
-        stale = [key for key in self._entries if key not in keep]
-        for key in stale:
-            del self._entries[key]
-        if stale:
-            self._dirty = True
+        self._prune_keep = frozenset(keep)
+        self._dirty = True
 
     def persist(self) -> None:
-        """Publish accumulated evidence atomically; advisory, so never raise.
-
-        Written even after a run that later fails to publish its index: an
-        entry binds a hash to the stat identity it was computed against, which
-        holds regardless of what the run did with the hash afterwards.
-        """
+        """Commit changed rows without serializing untouched evidence."""
         if not self._dirty:
             return
-        payload: dict[str, object] = {_SCHEMA_KEY: _SCHEMA_VERSION}
-        for key, entry in self._entries.items():
-            payload[key] = [
-                entry.size,
-                entry.mtime_ns,
-                entry.content_hash,
-                entry.hashed_at_ns,
-            ]
-        try:
-            write_json_atomically(self._path, payload, _WRITE_OPTIONS)
-        except OSError:
-            logger.warning(
-                "stat gate sidecar %s could not be written; the next pass "
-                "rehashes what this one proved",
-                self._path,
-                exc_info=True,
+        with self._connection as connection:
+            connection.executemany(
+                """INSERT INTO stat_evidence
+                   (path, size, mtime_ns, content_hash, hashed_at_ns)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(path) DO UPDATE SET
+                     size=excluded.size, mtime_ns=excluded.mtime_ns,
+                     content_hash=excluded.content_hash,
+                     hashed_at_ns=excluded.hashed_at_ns""",
+                (
+                    (
+                        key,
+                        item.size,
+                        item.mtime_ns,
+                        item.content_hash,
+                        item.hashed_at_ns,
+                    )
+                    for key, item in self._entries.items()
+                ),
             )
+            if self._prune_keep is not None:
+                connection.execute(
+                    "CREATE TEMP TABLE retained_paths (path TEXT PRIMARY KEY)"
+                )
+                connection.executemany(
+                    "INSERT INTO retained_paths(path) VALUES (?)",
+                    ((key,) for key in self._prune_keep),
+                )
+                connection.execute(
+                    "DELETE FROM stat_evidence WHERE path NOT IN "
+                    "(SELECT path FROM retained_paths)"
+                )
+        self._dirty = False
 
 
-class ResidentGateCache:
-    """Keeps one sidecar's parsed entries resident between runs.
+class StatEvidenceStore:
+    """Factory for point-addressable stat evidence gates."""
 
-    A long-lived indexer reloads and re-parses its gate sidecar on every run,
-    which prices a no-change pass at a JSON parse of the whole corpus's
-    evidence. This cache hands the in-memory entries back when the sidecar's
-    stat identity still matches what the cache itself last observed after
-    persisting, and reloads from disk otherwise, so an external rewrite or a
-    manual delete is always honoured on the next acquire.
-
-    Single-threaded by contract: every user runs under its indexer's writer
-    lock, which serializes acquire/retain pairs, so the cache adds no locking
-    of its own. A run that mutates the shared entries and then fails before
-    persisting leaves honest, freshly computed evidence resident; the sidecar
-    merely lags it, which only means another process rehashes what this one
-    already proved.
-    """
-
-    __slots__ = ("_digest", "_entries", "_path", "_signature")
+    __slots__ = ("_digest", "_path")
 
     def __init__(
         self,
@@ -336,32 +337,10 @@ class ResidentGateCache:
     ) -> None:
         self._path = path
         self._digest = digest
-        self._entries: dict[str, _StatEvidence] | None = None
-        self._signature: tuple[int, int] | None = None
 
     def acquire(self) -> StatEvidenceGate:
-        """Return a gate over resident entries when the sidecar is unchanged."""
-        signature = self._sidecar_signature()
-        if (
-            self._entries is not None
-            and signature is not None
-            and signature == self._signature
-        ):
-            return StatEvidenceGate(self._path, self._entries, digest=self._digest)
+        """Return a point-addressable gate for one indexing pass."""
         return StatEvidenceGate.load(self._path, digest=self._digest)
-
-    def retain(self, gate: StatEvidenceGate) -> None:
-        """Adopt *gate*'s entries after :meth:`StatEvidenceGate.persist`."""
-        self._entries = gate.share_entries()
-        self._signature = self._sidecar_signature()
-
-    def _sidecar_signature(self) -> tuple[int, int] | None:
-        """Stat identity of the sidecar file, or ``None`` when unreadable."""
-        try:
-            stat = os.stat(self._path)
-        except OSError:
-            return None
-        return (stat.st_size, stat.st_mtime_ns)
 
 
 @dataclass(slots=True)
@@ -536,7 +515,7 @@ def _drain_pending_digests(
 
 
 def record_computed_hashes(
-    cache: ResidentGateCache,
+    cache: StatEvidenceStore,
     items: Iterable[tuple[str, pathlib.Path, str]],
     *,
     computed_not_before_ns: int,
@@ -562,53 +541,3 @@ def record_computed_hashes(
     if keep is not None:
         gate.prune(keep)
     gate.persist()
-    cache.retain(gate)
-
-
-def _validated_entries(raw: object) -> dict[str, _StatEvidence] | None:
-    """Parse a raw sidecar payload, refusing the whole file on any defect."""
-    if not isinstance(raw, dict):
-        return None
-    mapping = cast("dict[object, object]", raw)
-    if mapping.get(_SCHEMA_KEY) != _SCHEMA_VERSION:
-        return None
-    entries: dict[str, _StatEvidence] = {}
-    for key, value in mapping.items():
-        if key == _SCHEMA_KEY:
-            continue
-        if not isinstance(key, str) or not key:
-            return None
-        entry = _validated_entry(value)
-        if entry is None:
-            return None
-        entries[key] = entry
-    return entries
-
-
-def _validated_entry(value: object) -> _StatEvidence | None:
-    """Parse one raw sidecar row, rejecting anything but its exact shape.
-
-    ``bool`` is checked explicitly because it satisfies ``isinstance(_, int)``
-    while being a shape defect a hand-edited or corrupted row could carry.
-    """
-    if not isinstance(value, list):
-        return None
-    row = cast("list[object]", value)
-    if len(row) != 4:
-        return None
-    size, mtime_ns, content_hash, hashed_at_ns = row
-    if (
-        type(size) is not int
-        or type(mtime_ns) is not int
-        or type(hashed_at_ns) is not int
-        or not isinstance(content_hash, str)
-    ):
-        return None
-    if size < 0 or not content_hash:
-        return None
-    return _StatEvidence(
-        size=size,
-        mtime_ns=mtime_ns,
-        content_hash=content_hash,
-        hashed_at_ns=hashed_at_ns,
-    )

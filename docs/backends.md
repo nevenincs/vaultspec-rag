@@ -1,5 +1,10 @@
 # Storage backends
 
+Examples use the installed-tool form and call `vaultspec-rag` directly. If
+vaultspec-rag is a project dependency, prefix each command with `uv run`; see
+the [installation guide](installation.md) for lane selection, including the
+standalone tool and no-install routes.
+
 ## Choose a backend
 
 vaultspec-rag uses a managed local Qdrant server by default. Choose local-only storage if you cannot run a separate Qdrant process.

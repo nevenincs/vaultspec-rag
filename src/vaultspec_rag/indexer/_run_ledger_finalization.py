@@ -42,6 +42,14 @@ class RunLedgerFinalizationMethods:
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
 
+        @staticmethod
+        def _prune_closed_publication_receipts(
+            connection: sqlite3.Connection,
+            *,
+            source_type: str,
+            collection_identity: str,
+        ) -> None: ...
+
     def advance_finalization(
         self,
         generation_id: str,
@@ -116,6 +124,9 @@ class RunLedgerFinalizationMethods:
             """
             SELECT units.rel_path
             FROM commit_units AS units
+            JOIN generations AS generation
+              ON generation.generation_id = units.generation_id
+             AND generation.source_type != 'vault'
             LEFT JOIN file_states AS states
               ON states.generation_id = units.generation_id
              AND states.rel_path = units.rel_path
@@ -143,10 +154,14 @@ class RunLedgerFinalizationMethods:
             """
             SELECT units.rel_path
             FROM commit_units AS units
-            JOIN file_states AS states
+            LEFT JOIN file_states AS states
               ON states.generation_id = units.generation_id
              AND states.rel_path = units.rel_path
+            LEFT JOIN file_state_tombstones AS tombstones
+              ON tombstones.generation_id = units.generation_id
+             AND tombstones.rel_path = units.rel_path
             WHERE units.generation_id = ? AND units.unit_kind = ?
+              AND (states.rel_path IS NOT NULL OR tombstones.rel_path IS NULL)
             LIMIT 1
             """,
             (generation_id, CommitUnitKind.DELETE_PATH.value),
@@ -155,6 +170,44 @@ class RunLedgerFinalizationMethods:
             raise RunLedgerStateError(
                 "cannot finalize a deleted path retained in the manifest: "
                 f"{undeleted_manifest['rel_path']}"
+            )
+        orphaned_tombstone: _RelPathRow | None = fetch_one(
+            connection,
+            """
+            SELECT tombstones.rel_path
+            FROM file_state_tombstones AS tombstones
+            LEFT JOIN commit_units AS units
+              ON units.generation_id = tombstones.generation_id
+             AND units.rel_path = tombstones.rel_path
+             AND units.unit_kind = ?
+            WHERE tombstones.generation_id = ?
+              AND units.rel_path IS NULL
+            LIMIT 1
+            """,
+            (CommitUnitKind.DELETE_PATH.value, generation_id),
+        )
+        if orphaned_tombstone is not None:
+            raise RunLedgerStateError(
+                "cannot finalize a tombstone without confirmed path deletion for "
+                f"{orphaned_tombstone['rel_path']}"
+            )
+        ambiguous_state: _RelPathRow | None = fetch_one(
+            connection,
+            """
+            SELECT states.rel_path
+            FROM file_states AS states
+            JOIN file_state_tombstones AS tombstones
+              ON tombstones.generation_id = states.generation_id
+             AND tombstones.rel_path = states.rel_path
+            WHERE states.generation_id = ?
+            LIMIT 1
+            """,
+            (generation_id,),
+        )
+        if ambiguous_state is not None:
+            raise RunLedgerStateError(
+                "cannot finalize a path with both local state and tombstone: "
+                f"{ambiguous_state['rel_path']}"
             )
         # One question, asked here in SQL and in FileState.stable_policy_rejection
         # in Python: has this rejection enough stable evidence to converge? The
@@ -318,6 +371,11 @@ class RunLedgerFinalizationMethods:
                 raise RunLedgerStateError(
                     "only the newest published generation compacts its collection"
                 )
+            self._prune_closed_publication_receipts(
+                connection,
+                source_type=keep["source_type"],
+                collection_identity=keep["collection_identity"],
+            )
             result = connection.execute(
                 """
                 DELETE FROM generations
@@ -325,6 +383,15 @@ class RunLedgerFinalizationMethods:
                   AND source_type = ?
                   AND collection_identity = ?
                   AND terminal_state IN (?, ?)
+                  AND generation_id NOT IN (
+                      SELECT generation_id FROM publication_proofs
+                  )
+                  AND generation_id NOT IN (
+                      SELECT evidence_generation_id FROM publication_evidence
+                  )
+                  AND generation_id NOT IN (
+                      SELECT generation_id FROM publication_receipts
+                  )
                   AND generation_id NOT IN (
                       SELECT states.evidence_generation_id
                       FROM file_states AS states

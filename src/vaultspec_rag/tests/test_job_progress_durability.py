@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager._persistence import PROGRESS_FLUSH_BUDGET_SECONDS
@@ -56,7 +57,13 @@ def _started_manager(
         state_path=state_path,
     )
     created = manager.create(
-        JobSpec(JobOperation.INDEX, JobSource.CODE, root, JobMode.INCREMENTAL),
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            root,
+            JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
+        ),
         JobInitiator("service", "reindex_codebase", root),
     )
     assert created.job is not None

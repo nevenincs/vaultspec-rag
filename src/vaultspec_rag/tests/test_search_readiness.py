@@ -20,7 +20,7 @@ from ..indexer._resolved_policy import (
     resolve_index_policy,
 )
 from ..indexer._run_checkpoint import CodeRunConfiguration
-from ..indexer._run_ledger_models import RunOperation
+from ..indexer._run_ledger_models import RunAuthority, RunOperation
 from ..job_control import NO_RUN_CONTROL
 from ..job_manager.manager import JobManager
 from ..job_models import (
@@ -412,6 +412,7 @@ async def test_terminal_job_transition_cannot_satisfy_publication(
             JobSource.CODE,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("test", "terminal-does-not-publish", str(tmp_path)),
     )
@@ -523,6 +524,7 @@ def _code_open_request(tmp_path: Path) -> CodeGenerationOpenRequest:
         dense_dimensions=8,
         sparse_enabled=False,
         run_control=NO_RUN_CONTROL,
+        authority=RunAuthority.REBUILD,
     )
 
 
@@ -534,7 +536,6 @@ async def test_code_ordinary_and_resumed_publication_notify_once_after_durable(
     events: list[tuple[str, Path, str]] = []
     readiness = _registry(VirtualReadinessDeadlineScheduler())
     store = VaultStore(tmp_path / "store", embedding_dim=8)
-    meta_path = tmp_path / "code_meta.json"
     checkpoint = None
 
     def notify(root: Path, generation: str) -> None:
@@ -547,10 +548,7 @@ async def test_code_ordinary_and_resumed_publication_notify_once_after_durable(
         CodeGenerationBindings(
             root_dir=tmp_path,
             data_root=tmp_path / ".state",
-            meta_path=meta_path,
             store=store,
-            load_meta=dict,
-            read_meta_raw=dict,
             publish_readiness=notify,
         )
     )
@@ -566,7 +564,7 @@ async def test_code_ordinary_and_resumed_publication_notify_once_after_durable(
         ordinary_generation = checkpoint.generation_id
 
         checkpoint = lifecycle.open_checkpoint(_code_open_request(tmp_path))
-        checkpoint.publish_metadata(meta_path, published_points=0, published_files=0)
+        checkpoint.publish_proof_transition()
         assert lifecycle.publish_pending_finalization(checkpoint, reporter=reporter)
         resumed_generation = checkpoint.generation_id
     finally:

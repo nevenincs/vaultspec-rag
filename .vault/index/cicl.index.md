@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#cicl'
 date: '2026-08-14'
-modified: '2026-08-14'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:d44930e270a430465938697c01396aaaeb1b5a3fe743a803cc52610746dcc0d2'
 related:
   - '[[2026-04-01-cicl-pipeline-adr]]'

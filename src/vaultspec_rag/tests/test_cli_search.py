@@ -940,11 +940,17 @@ class TestMcpFastPath:
 
     def test_live_but_broken_reindex_returns_structured_error(self) -> None:
         """Same discrimination for _try_http_reindex."""
+        from ..indexer._run_ledger_models import RunAuthority
         from ..serviceclient._transport import _try_http_reindex
 
         with _misbehaving_service() as port:
             result = _try_http_reindex(
-                "vault", False, port, "/tmp/proj", initiator_kind="cli"
+                "vault",
+                False,
+                port,
+                "/tmp/proj",
+                authority=RunAuthority.PUBLICATION,
+                initiator_kind="cli",
             )
 
         assert isinstance(result, dict)

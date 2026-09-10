@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager.manager import JobManager
 from ..job_models import (
@@ -61,6 +62,7 @@ class TestInterruptedJobDegradationSplit:
                 JobSource.CODE,
                 str(tmp_path),
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("service", "degradation split coverage", str(tmp_path)),
         )

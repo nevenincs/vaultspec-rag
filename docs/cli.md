@@ -137,6 +137,7 @@ None.
 | `--type` | str | no | all | What to index: vault, code, document, or combined. Aliases: docs, codebase, all. |
 | `--model` | str | no | - | Override the embedding model name. |
 | `--rebuild` | boolean | no | off | Delete the selected index data before rebuilding it. |
+| `--full` | boolean | no | off | Verify every stored payload against existing canonical proof through the running service; never creates or repairs proof. |
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--dry-run` | boolean | no | off | Show the resolved code/document admission summary without indexing. Use with --type code, document, combined, or the default all alias. |
 | `--dry-run-limit` | int | no | 50 | Maximum source-code file paths to show in human dry-run output. JSON output still includes every path. |
@@ -657,6 +658,10 @@ None.
 | --- | --- | --- | --- | --- |
 | `--port` | int | no | - | Service port (defaults to running service). |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+| `--root` | str | no | - | Only report controllers for this project root. |
+| `--source` | str | no | - | Only report this index source. |
+| `--state` | str | no | - | Only report controllers in this state. |
+| `--limit` | int range | no | 256 | Most controllers to report. |
 
 ## server updates start
 

@@ -9,6 +9,7 @@ import pytest
 from watchfiles import Change
 
 from ... import store_schema
+from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...indexer._content_policy import (
     AdmissionDisposition,
@@ -34,7 +35,12 @@ from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
 from ...watcher_intake import _classify_watcher_changes
-from ...watcher_retry import WatcherRetryPolicy, WatcherSource
+from ...watcher_retry import (
+    WatcherSource,
+)
+from ...watcher_retry_policy import (
+    WatcherRetryPolicy,
+)
 from ...watcher_runtime import WatcherChangeRouting, WatcherConvergenceSlot
 
 if TYPE_CHECKING:
@@ -82,10 +88,11 @@ def _record_prior_code_owner(root: Path, rel_path: str) -> None:
     signature = RunSignature(
         root_identity=str(root.resolve()),
         collection_identity=store_schema.CODE_COLLECTION,
-        source_type=ContentKind.CODE,
+        source_type=PublicSourceType.CODE,
         operation=RunOperation.FULL,
         clean=False,
         model_identity="watcher-prior-owner-test",
+        backend_identity="test-backend:document-watcher",
         dense_dimensions=4,
         embedding_schema=1,
         payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
@@ -120,10 +127,11 @@ def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
         RunSignature(
             root_identity=str(root.resolve()),
             collection_identity=store_schema.CODE_COLLECTION,
-            source_type=ContentKind.CODE,
+            source_type=PublicSourceType.CODE,
             operation=RunOperation.FULL,
             clean=True,
             model_identity="watcher-incomplete-clean-test",
+            backend_identity="test-backend:document-watcher",
             dense_dimensions=4,
             embedding_schema=1,
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,

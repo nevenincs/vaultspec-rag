@@ -184,11 +184,7 @@ def index_command(
     if source is not None:
         from ._source_types import PublicSourceType as _Source
 
-        resolved = (
-            source
-            if isinstance(source, _Source)
-            else _Source(_Source.COMBINED if source == "all" else source)
-        )
+        resolved = source if isinstance(source, _Source) else _Source(source)
         command += f" --type {index_source_option(resolved)}"
     if options.dry_run:
         command += " --dry-run"

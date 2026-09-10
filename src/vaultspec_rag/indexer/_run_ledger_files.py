@@ -7,13 +7,22 @@ from typing import TYPE_CHECKING, TypedDict
 
 from ._content_policy import AdmissionReason, ContentKind
 from ._file_state import FileState, FileStateKind, validate_rel_path
+from ._publication_proof import PathOutcome, ProofMutationState
+from ._run_ledger_commits import (
+    _EffectiveCandidateQuery,  # pyright: ignore[reportPrivateUsage] - sibling query bundle
+    effective_retained_candidates,
+)
 from ._run_ledger_models import (
     FETCH_BATCH,
     CommitUnit,
     CommitUnitKind,
+    EffectivePublicationRead,
     FinalizationPhase,
+    PublicationPointCandidate,
     RunLedgerCorruptionError,
     RunLedgerStateError,
+    column_int,
+    column_text,
     fetch_all,
     fetch_one,
     in_ledger_transaction,
@@ -25,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from ._publication_proof import ProofCompatibilityKey, ProofEvidence
     from ._run_ledger_models import GenerationRow, RunGeneration
 
 
@@ -60,6 +70,12 @@ class _UpsertEvidenceRow(TypedDict):
     point_id: str | None
 
 
+class _TombstoneRow(TypedDict):
+    """One bounded local tombstone projection."""
+
+    rel_path: str
+
+
 class RunLedgerFileMethods:
     if TYPE_CHECKING:
         path: Path
@@ -76,6 +92,20 @@ class RunLedgerFileMethods:
 
         @staticmethod
         def _generation_from_row(row: GenerationRow) -> RunGeneration: ...
+
+        def _require_effective_read_authority(
+            self,
+            connection: sqlite3.Connection,
+            receipt_id: str,
+            generation_id: str,
+        ) -> tuple[ProofCompatibilityKey, int, int]: ...
+
+        @staticmethod
+        def _publication_evidence_in_snapshot(
+            connection: sqlite3.Connection,
+            key: ProofCompatibilityKey,
+            rel_paths: tuple[str, ...],
+        ) -> dict[str, ProofEvidence]: ...
 
         def _record_storage_confirmed_unit(
             self,
@@ -142,6 +172,13 @@ class RunLedgerFileMethods:
                     generation_id,
                 ),
             )
+            connection.execute(
+                """
+                DELETE FROM file_state_tombstones
+                WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, state.rel_path),
+            )
 
         in_ledger_transaction(self.path, body)
 
@@ -173,6 +210,14 @@ class RunLedgerFileMethods:
                 """
                 DELETE FROM file_states
                 WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
+            )
+            connection.execute(
+                """
+                INSERT INTO file_state_tombstones (generation_id, rel_path)
+                VALUES (?, ?)
+                ON CONFLICT(generation_id, rel_path) DO NOTHING
                 """,
                 (generation_id, rel_path),
             )
@@ -382,6 +427,14 @@ class RunLedgerFileMethods:
                 """,
                 (generation_id, unit.rel_path),
             )
+            connection.execute(
+                """
+                INSERT INTO file_state_tombstones (generation_id, rel_path)
+                VALUES (?, ?)
+                ON CONFLICT(generation_id, rel_path) DO NOTHING
+                """,
+                (generation_id, unit.rel_path),
+            )
             return True
 
         return in_ledger_transaction(self.path, body)
@@ -442,10 +495,20 @@ class RunLedgerFileMethods:
                     superseded_digest,
                 ),
             ).rowcount
+            if removed == 0:
+                return 0
             connection.execute(
                 """
                 DELETE FROM file_states
                 WHERE generation_id = ? AND rel_path = ?
+                """,
+                (generation_id, rel_path),
+            )
+            connection.execute(
+                """
+                INSERT INTO file_state_tombstones (generation_id, rel_path)
+                VALUES (?, ?)
+                ON CONFLICT(generation_id, rel_path) DO NOTHING
                 """,
                 (generation_id, rel_path),
             )
@@ -596,6 +659,406 @@ class RunLedgerFileMethods:
                 ),
             )
         return frozenset(str(row["point_id"]) for row in rows)
+
+    def effective_file_state_page(
+        self,
+        receipt_id: str,
+        generation_id: str,
+        *,
+        rel_paths: tuple[str, ...],
+        candidates: tuple[PublicationPointCandidate, ...],
+    ) -> EffectivePublicationRead:
+        """Resolve sparse path state and ownership from one sealed receipt snapshot."""
+        if len(rel_paths) > FETCH_BATCH:
+            raise ValueError(
+                f"effective file-state lookup accepts at most {FETCH_BATCH} paths"
+            )
+        if len(candidates) > FETCH_BATCH:
+            raise ValueError(
+                f"effective candidate lookup accepts at most {FETCH_BATCH} candidates"
+            )
+        for rel_path in rel_paths:
+            validate_rel_path(rel_path)
+        if any(
+            not isinstance(  # pyright: ignore[reportUnnecessaryIsInstance] - runtime boundary
+                candidate,
+                PublicationPointCandidate,
+            )
+            for candidate in candidates
+        ):
+            raise TypeError(
+                "candidates must contain only PublicationPointCandidate values"
+            )
+        unique_paths = tuple(dict.fromkeys(rel_paths))
+        unique_candidates = tuple(dict.fromkeys(candidates))
+        lookup_paths = tuple(
+            dict.fromkeys(
+                (
+                    *unique_paths,
+                    *(candidate.rel_path for candidate in unique_candidates),
+                )
+            )
+        )
+        if len(lookup_paths) > FETCH_BATCH:
+            raise ValueError(
+                "effective lookup accepts at most "
+                f"{FETCH_BATCH} distinct paths across state and candidates"
+            )
+        with ledger_connection(self.path) as connection:
+            connection.execute("BEGIN")
+            try:
+                key, parent_revision, reservation_sequence = (
+                    self._require_effective_read_authority(
+                        connection,
+                        receipt_id,
+                        generation_id,
+                    )
+                )
+                local_states = _local_states_for_paths(
+                    connection,
+                    generation_id,
+                    lookup_paths,
+                )
+                tombstoned = _tombstones_for_paths(
+                    connection,
+                    generation_id,
+                    lookup_paths,
+                )
+                overlap = local_states.keys() & tombstoned
+                if overlap:
+                    raise RunLedgerCorruptionError(
+                        f"a local override and tombstone coexist for {min(overlap)!r}"
+                    )
+                _validate_effective_changes(
+                    connection,
+                    receipt_id=receipt_id,
+                    rel_paths=lookup_paths,
+                    local_states=local_states,
+                    tombstoned=tombstoned,
+                )
+                canonical_paths = tuple(
+                    rel_path
+                    for rel_path in lookup_paths
+                    if rel_path not in local_states and rel_path not in tombstoned
+                )
+                canonical = self._publication_evidence_in_snapshot(
+                    connection,
+                    key,
+                    canonical_paths,
+                )
+                try:
+                    content_kind = ContentKind(key.source_type.value)
+                except ValueError as exc:
+                    raise RunLedgerStateError(
+                        "effective file-state reads require code or document proof"
+                    ) from exc
+                states = tuple(
+                    sorted(
+                        (
+                            (
+                                local_states[rel_path]
+                                if rel_path in local_states
+                                else FileState.indexed(
+                                    rel_path,
+                                    content_kind,
+                                    canonical[rel_path].content_identity,
+                                )
+                            )
+                            for rel_path in unique_paths
+                            if rel_path not in tombstoned
+                            and (rel_path in local_states or rel_path in canonical)
+                        ),
+                        key=lambda state: state.rel_path,
+                    )
+                )
+                retained = effective_retained_candidates(
+                    connection,
+                    _EffectiveCandidateQuery(
+                        receipt_id=receipt_id,
+                        generation_id=generation_id,
+                        compatibility_key=key,
+                        candidates=unique_candidates,
+                        local_paths=frozenset(local_states),
+                        tombstoned_paths=tombstoned,
+                    ),
+                )
+                return EffectivePublicationRead(
+                    receipt_id=receipt_id,
+                    generation_id=generation_id,
+                    parent_revision=parent_revision,
+                    reservation_sequence=reservation_sequence,
+                    file_states=states,
+                    retained_candidates=retained,
+                )
+            finally:
+                connection.rollback()
+
+
+def _local_states_for_paths(
+    connection: sqlite3.Connection,
+    generation_id: str,
+    rel_paths: tuple[str, ...],
+) -> dict[str, FileState]:
+    if not rel_paths:
+        return {}
+    placeholders = ", ".join("?" for _path in rel_paths)
+    rows: list[FileStateRow] = fetch_all(
+        connection,
+        f"""
+        SELECT rel_path, state, content_kind, content_hash,
+               admission_reason, error_kind, detail
+        FROM file_states
+        WHERE generation_id = ? AND evidence_generation_id = ?
+          AND rel_path IN ({placeholders})
+        """,
+        (generation_id, generation_id, *rel_paths),
+    )
+    return {
+        state.rel_path: state for state in (file_state_from_row(row) for row in rows)
+    }
+
+
+def _tombstones_for_paths(
+    connection: sqlite3.Connection,
+    generation_id: str,
+    rel_paths: tuple[str, ...],
+) -> frozenset[str]:
+    if not rel_paths:
+        return frozenset()
+    placeholders = ", ".join("?" for _path in rel_paths)
+    rows: list[_TombstoneRow] = fetch_all(
+        connection,
+        f"""
+        SELECT rel_path FROM file_state_tombstones
+        WHERE generation_id = ? AND rel_path IN ({placeholders})
+        """,
+        (generation_id, *rel_paths),
+    )
+    return frozenset(str(row["rel_path"]) for row in rows)
+
+
+def _validate_effective_changes(
+    connection: sqlite3.Connection,
+    *,
+    receipt_id: str,
+    rel_paths: tuple[str, ...],
+    local_states: dict[str, FileState],
+    tombstoned: frozenset[str],
+) -> None:
+    """Fail closed unless sparse rows exactly implement sealed receipt deltas."""
+    if not rel_paths:
+        return
+    expected_local, expected_tombstones = _expected_effective_changes(
+        connection,
+        receipt_id,
+        rel_paths,
+    )
+    _validate_sparse_outcomes(
+        rel_paths,
+        local_states,
+        tombstoned,
+        expected_local,
+        expected_tombstones,
+    )
+    _validate_indexed_override_units(connection, receipt_id, local_states)
+    _validate_tombstone_units(connection, receipt_id, tombstoned)
+
+
+def _expected_effective_changes(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    rel_paths: tuple[str, ...],
+) -> tuple[dict[str, tuple[PathOutcome, str | None]], frozenset[str]]:
+    placeholders = ", ".join("?" for _path in rel_paths)
+    rows: list[sqlite3.Row] = fetch_all(
+        connection,
+        f"""
+        SELECT outcome, rel_path, target_rel_path, new_content_identity
+        FROM publication_receipt_deltas
+             INDEXED BY publication_receipt_deltas_path
+        WHERE receipt_id = ? AND rel_path IN ({placeholders})
+        UNION ALL
+        SELECT outcome, rel_path, target_rel_path, new_content_identity
+        FROM publication_receipt_deltas
+             INDEXED BY publication_receipt_deltas_target
+        WHERE receipt_id = ? AND target_rel_path IN ({placeholders})
+          AND rel_path NOT IN ({placeholders})
+        """,
+        (
+            receipt_id,
+            *rel_paths,
+            receipt_id,
+            *rel_paths,
+            *rel_paths,
+        ),
+    )
+    expected_local: dict[str, tuple[PathOutcome, str | None]] = {}
+    expected_tombstones: set[str] = set()
+    try:
+        for row in rows:
+            outcome = PathOutcome(column_text(row, "outcome"))
+            rel_path = column_text(row, "rel_path")
+            raw_target = row["target_rel_path"]
+            if raw_target is not None and not isinstance(raw_target, str):
+                raise TypeError("target path is not text")
+            target = raw_target if raw_target is not None else rel_path
+            raw_content = row["new_content_identity"]
+            if raw_content is not None and not isinstance(raw_content, str):
+                raise TypeError("content identity is not text")
+            if outcome in {
+                PathOutcome.ADD,
+                PathOutcome.MODIFY,
+                PathOutcome.RENAME,
+                PathOutcome.EMPTY,
+                PathOutcome.IGNORED,
+                PathOutcome.REJECTED,
+            }:
+                expected_local[target] = (outcome, raw_content)
+            if outcome in {PathOutcome.DELETE, PathOutcome.RENAME}:
+                expected_tombstones.add(rel_path)
+    except (TypeError, ValueError) as exc:
+        raise RunLedgerCorruptionError(
+            "stored publication receipt deltas are malformed"
+        ) from exc
+    return expected_local, frozenset(expected_tombstones)
+
+
+def _validate_sparse_outcomes(
+    rel_paths: tuple[str, ...],
+    local_states: dict[str, FileState],
+    tombstoned: frozenset[str],
+    expected_local: dict[str, tuple[PathOutcome, str | None]],
+    expected_tombstones: frozenset[str],
+) -> None:
+    for rel_path, state in local_states.items():
+        expectation = expected_local.get(rel_path)
+        if expectation is None:
+            raise RunLedgerCorruptionError(
+                f"local override {rel_path!r} is not owned by the sealed receipt"
+            )
+        outcome, content = expectation
+        if state.state is FileStateKind.INDEXED:
+            if (
+                outcome
+                not in {
+                    PathOutcome.ADD,
+                    PathOutcome.MODIFY,
+                    PathOutcome.RENAME,
+                }
+                or state.content_hash != content
+            ):
+                raise RunLedgerCorruptionError(
+                    f"indexed local override {rel_path!r} mismatches its receipt delta"
+                )
+        elif state.state is not FileStateKind.POLICY_REJECTED or outcome not in {
+            PathOutcome.EMPTY,
+            PathOutcome.IGNORED,
+            PathOutcome.REJECTED,
+        }:
+            raise RunLedgerStateError(
+                f"sealed receipt has unresolved local state for {rel_path!r}"
+            )
+    for rel_path in tombstoned:
+        if rel_path not in expected_tombstones:
+            raise RunLedgerCorruptionError(
+                f"local tombstone {rel_path!r} is not owned by the sealed receipt"
+            )
+    missing_local = set(expected_local).intersection(rel_paths).difference(local_states)
+    missing_tombstones = expected_tombstones.intersection(rel_paths).difference(
+        tombstoned
+    )
+    if missing_local or missing_tombstones:
+        missing = min((*missing_local, *missing_tombstones))
+        raise RunLedgerCorruptionError(
+            f"sealed receipt has no sparse outcome for {missing!r}"
+        )
+
+
+def _validate_indexed_override_units(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    local_states: dict[str, FileState],
+) -> None:
+    indexed_paths = tuple(
+        path
+        for path, state in local_states.items()
+        if state.state is FileStateKind.INDEXED
+    )
+    if indexed_paths:
+        marks = ", ".join("?" for _path in indexed_paths)
+        aggregates: list[sqlite3.Row] = fetch_all(
+            connection,
+            f"""
+            SELECT rel_path, COUNT(*) AS unit_count,
+                   MIN(segment_ordinal) AS first_ordinal,
+                   MAX(segment_ordinal) AS last_ordinal,
+                   SUM(segment_ordinal) AS ordinal_sum,
+                   SUM(is_file_end) AS end_count,
+                   SUM(state != ?) AS unconfirmed_count,
+                   MIN(source_digest) AS min_digest,
+                   MAX(source_digest) AS max_digest
+            FROM publication_mutation_units
+            WHERE receipt_id = ? AND unit_kind = ?
+              AND rel_path IN ({marks})
+            GROUP BY rel_path
+            """,
+            (
+                ProofMutationState.CONFIRMED.value,
+                receipt_id,
+                CommitUnitKind.UPSERT.value,
+                *indexed_paths,
+            ),
+        )
+        by_path = {str(row["rel_path"]): row for row in aggregates}
+        for rel_path in indexed_paths:
+            aggregate = by_path.get(rel_path)
+            state = local_states[rel_path]
+            if aggregate is None:
+                raise RunLedgerCorruptionError(
+                    f"indexed local override {rel_path!r} has no receipt mutations"
+                )
+            count = column_int(aggregate, "unit_count")
+            complete = (
+                column_int(aggregate, "first_ordinal") == 0
+                and column_int(aggregate, "last_ordinal") == count - 1
+                and column_int(aggregate, "ordinal_sum") == count * (count - 1) // 2
+                and column_int(aggregate, "end_count") == 1
+                and column_int(aggregate, "unconfirmed_count") == 0
+                and aggregate["min_digest"] == state.content_hash
+                and aggregate["max_digest"] == state.content_hash
+            )
+            if not complete:
+                raise RunLedgerCorruptionError(
+                    f"indexed local override {rel_path!r} lacks exact confirmed units"
+                )
+
+
+def _validate_tombstone_units(
+    connection: sqlite3.Connection,
+    receipt_id: str,
+    tombstoned: frozenset[str],
+) -> None:
+    if tombstoned:
+        marks = ", ".join("?" for _path in tombstoned)
+        confirmed_rows: list[_TombstoneRow] = fetch_all(
+            connection,
+            f"""
+            SELECT rel_path FROM publication_mutation_units
+            WHERE receipt_id = ? AND unit_kind = ? AND state = ?
+              AND rel_path IN ({marks})
+            """,
+            (
+                receipt_id,
+                CommitUnitKind.DELETE_PATH.value,
+                ProofMutationState.CONFIRMED.value,
+                *tombstoned,
+            ),
+        )
+        confirmed = {row["rel_path"] for row in confirmed_rows}
+        if confirmed != set(tombstoned):
+            raise RunLedgerCorruptionError(
+                "local tombstones lack exact confirmed deletion units"
+            )
 
 
 def file_state_from_row(row: FileStateRow) -> FileState:

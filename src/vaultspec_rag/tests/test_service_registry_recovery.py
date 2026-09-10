@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     DesiredJobState,
@@ -53,6 +54,7 @@ def _registry_with_quiesced_job(
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "registry-durable-recovery", _TEST_PROJECT_ROOT),
     )

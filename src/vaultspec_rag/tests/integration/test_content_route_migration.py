@@ -43,7 +43,7 @@ from ...indexer._route_migration import (
     reconcile_origin_after_destination,
     resume_pending_migrations,
 )
-from ...indexer._run_ledger_models import RunOperation
+from ...indexer._run_ledger_models import RunAuthority, RunOperation
 from ...indexer._run_policy import RunPolicy
 from ...job_control import CancelRequested, RunControlToken
 from ...store_runtime import VaultStore
@@ -113,15 +113,17 @@ def _document_checkpoint(
     run_policy: RunPolicy | None = None,
 ):
     policy = _resolved_policy(root)
-    checkpoint = DocumentRunCheckpoint.open(
+    checkpoint = DocumentRunCheckpoint.open_generation(
         DocumentRunOpenRequest(
             data_root=root / get_config().data_dir,
             root_dir=root,
             policy=policy,
             run_policy=run_policy or RunPolicy(no_progress_timeout_seconds=60.0),
             operation=RunOperation.FULL,
+            authority=RunAuthority.REBUILD,
             clean=False,
             model_identity="route-migration-test",
+            backend_identity="test-backend:content-route-migration",
             dense_dimensions=4,
             configuration=DocumentRunConfiguration(
                 slice_max_chunks=1,
@@ -466,15 +468,17 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
             ),
         ),
     )
-    checkpoint = DocumentRunCheckpoint.open(
+    checkpoint = DocumentRunCheckpoint.open_generation(
         DocumentRunOpenRequest(
             data_root=tmp_path / get_config().data_dir,
             root_dir=tmp_path,
             policy=policy,
             run_policy=RunPolicy(no_progress_timeout_seconds=60.0),
             operation=RunOperation.FULL,
+            authority=RunAuthority.REBUILD,
             clean=False,
             model_identity="route-migration-page-test",
+            backend_identity="test-backend:content-route-migration",
             dense_dimensions=4,
             configuration=DocumentRunConfiguration(
                 slice_max_chunks=1,

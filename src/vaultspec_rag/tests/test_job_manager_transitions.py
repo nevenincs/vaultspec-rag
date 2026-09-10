@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager._control import AttemptTerminal
 from ..job_manager.manager import JobManager
@@ -51,6 +52,7 @@ class TestManagedJobTransitions:
                 JobSource.CODE,
                 _TEST_PROJECT_ROOT,
                 JobMode.INCREMENTAL,
+                RunAuthority.PUBLICATION,
             ),
             JobInitiator("service", "shutdown-race", _TEST_PROJECT_ROOT),
         )
@@ -82,6 +84,9 @@ class TestManagedJobTransitions:
         )
         job_id = create_paused_vault_job(manager)
         resume_paused_job(manager, job_id)
+        resumed = manager.get(job_id)
+        assert resumed is not None
+        assert resumed.spec.authority is RunAuthority.PUBLICATION
 
         task = asyncio.create_task(pending_attempt())
         control = RunControlToken()
@@ -104,6 +109,7 @@ class TestManagedJobTransitions:
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         created = manager.create(
             spec,
@@ -184,6 +190,7 @@ class TestManagedJobTransitions:
             JobSource.VAULT,
             _TEST_PROJECT_ROOT,
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         )
         initiator = JobInitiator("cli", "server job stop", _TEST_PROJECT_ROOT)
 
@@ -298,6 +305,7 @@ class TestManagedJobTransitions:
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         )
         initiator = JobInitiator("http", "POST /jobs", _TEST_PROJECT_ROOT)
         created = manager.create(spec, initiator)
@@ -350,6 +358,7 @@ class TestManagedJobTransitions:
             assert retried.job is not None
             assert retried.job.id != job_id
             assert retried.job.attempt.parent_job_id == job_id
+            assert retried.job.spec.authority is RunAuthority.REBUILD
             assert manager.delete(retried.job.id).code == "job_not_terminal"
             assert manager.delete(job_id).code == "job_deleted"
             assert manager.get(job_id) is None

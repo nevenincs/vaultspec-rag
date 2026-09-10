@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from .._index_integrity import IndexIntegrity
+    from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
     from ..service import ServiceRegistry
     from ._routes_search import SearchRequest
     from ._search_readiness import PublicationTarget, ReadinessRevisionSnapshot
@@ -48,8 +48,6 @@ class SearchIndexStateInput:
     requested_root: object
     search_type: PublicSourceType | str
     published_points: float | None = None
-    named_files: float | None = None
-    covered_files: float | None = None
     integrity: IndexIntegrity | None = None
     integrity_repair_job_id: str | None = None
     #: Path of every result on the page, in rank order. Empty on the routes
@@ -163,7 +161,7 @@ def search_index_state_for_route(input: SearchIndexStateInput) -> dict[str, obje
     figure it carries on the timing channel back into the shortfall the
     domain builder expects, and renders whatever that returns.
     """
-    from .._index_breadth import BreadthShortfall, FileBreadthShortfall
+    from .._index_breadth import BreadthShortfall
     from .._search_state import BreadthFindings, result_collapse, search_index_state
 
     count = int(input.indexed_count)
@@ -172,20 +170,12 @@ def search_index_state_for_route(input: SearchIndexStateInput) -> dict[str, obje
         if input.published_points is None
         else BreadthShortfall(published=int(input.published_points), live=count)
     )
-    file_shortfall = (
-        None
-        if input.named_files is None or input.covered_files is None
-        else FileBreadthShortfall(
-            named=int(input.named_files), covered=int(input.covered_files)
-        )
-    )
     return search_index_state(
         indexed_count=count,
         requested_root=input.requested_root,
         search_type=input.search_type,
         findings=BreadthFindings(
             shortfall=shortfall,
-            file_shortfall=file_shortfall,
             integrity=input.integrity,
             integrity_repair_job_id=input.integrity_repair_job_id,
             collapse=result_collapse(input.result_paths),
@@ -193,47 +183,57 @@ def search_index_state_for_route(input: SearchIndexStateInput) -> dict[str, obje
     )
 
 
+def _integrity_source(request: SearchRequest) -> PublicSourceType:
+    """Name the one domain whose breadth a search's integrity verdict covers.
+
+    A combined search reconciles the code domain: it carries the richest
+    published claim, and its per-domain count travels on the timing channel.
+    """
+    if request.search_type is PublicSourceType.COMBINED:
+        return PublicSourceType.CODE
+    return request.search_type
+
+
+def acquire_search_integrity_snapshot(
+    request: SearchRequest,
+) -> IndexIntegritySnapshot | None:
+    """Capture integrity evidence before retrieval runs, when it is provable."""
+    from .._index_integrity import acquire_index_integrity_snapshot_if_proven
+
+    return acquire_index_integrity_snapshot_if_proven(
+        request.root, _integrity_source(request)
+    )
+
+
 def search_integrity_for_route(
     request: SearchRequest,
     phase_timing: dict[str, float],
+    snapshot: IndexIntegritySnapshot | None,
 ) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
     Single-domain searches reconcile their own domain against the count the
     dispatch already took. A combined search reconciles the code domain,
-    mirroring how the combined envelope already carries the code shortfall: it
-    is the domain with the richest published claim, and its per-domain count
-    travels on the timing channel. A domain whose count never landed there -
-    a failed combined leg - yields ``unverifiable``, never a claim of zero.
+    mirroring how the combined envelope already carries the code shortfall. A
+    domain whose count never landed on the timing channel - a failed combined
+    leg - yields ``unverifiable``, never a claim of zero.
 
     The verdict is also handed to the remediation registry here - the one
     service-side seam every daemon search passes through - so a demonstrated
     shrink turns into at most one supervised repair, whose job id (when known)
     rides back on the envelope beside the verdict that motivated it.
     """
-    from .._index_integrity import evaluate_index_integrity
+    from .._index_integrity import unverifiable_integrity
     from .._integrity_remediation import note_integrity_verdict
-    from ..store_runtime import configured_backend_identity
 
-    backend_identity = configured_backend_identity(request.root)
-
+    source = _integrity_source(request)
+    if snapshot is None:
+        return unverifiable_integrity(source), None
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
-        source = PublicSourceType.CODE
-        integrity = evaluate_index_integrity(
-            request.root,
-            source,
-            None if code_count is None else int(code_count),
-            backend_identity=backend_identity,
-        )
+        integrity = snapshot.finish(None if code_count is None else int(code_count))
     else:
-        source = request.search_type
-        integrity = evaluate_index_integrity(
-            request.root,
-            source,
-            int(phase_timing["indexed_count"]),
-            backend_identity=backend_identity,
-        )
+        integrity = snapshot.finish(int(phase_timing["indexed_count"]))
     repair_job_id = note_integrity_verdict(request.root, source, integrity.verdict)
     return integrity, repair_job_id
 
@@ -393,9 +393,16 @@ def _classify_collection_disappearance(
     facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import evaluate_index_integrity
-    from ..store_runtime import configured_backend_identity
+    from .._index_integrity import (
+        acquire_index_integrity_snapshot_if_proven,
+        unverifiable_integrity,
+    )
     from ._routes import canonical_job_snapshot
+
+    disappeared_source = PublicSourceType(facts.source)
+    disappeared = acquire_index_integrity_snapshot_if_proven(
+        facts.root, disappeared_source
+    )
 
     return classify_qdrant_collection_disappearance(
         exc,
@@ -410,11 +417,10 @@ def _classify_collection_disappearance(
                     # and carrying it keeps the daemon envelope uniform - every
                     # route response has the block, so absence still means only
                     # "old daemon".
-                    integrity=evaluate_index_integrity(
-                        facts.root,
-                        PublicSourceType(facts.source),
-                        None,
-                        backend_identity=configured_backend_identity(facts.root),
+                    integrity=(
+                        unverifiable_integrity(disappeared_source)
+                        if disappeared is None
+                        else disappeared.finish(None)
                     ),
                     search_type=facts.source,
                 )

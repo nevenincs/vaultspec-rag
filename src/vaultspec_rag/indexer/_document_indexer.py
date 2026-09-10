@@ -13,23 +13,19 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack, cast
 
 from .._job_errors import JobError, JobErrorKind
+from .._source_types import PublicSourceType
 from ..index_profiles import get_index_support_profile
 from ..job_control import NO_RUN_CONTROL
 from ..store_runtime import StorageGeometryError
 from . import _chunk_worker, _preprocess_glue, _stat_gate
+from ._checkpoint_common import PublicationExecution
 from ._content_policy import ContentKind, RootContentPolicy, SourceProfileVersion
 from ._document_checkpoint import (
     DocumentRunCheckpoint,
     DocumentRunConfiguration,
     DocumentRunOpenRequest,
 )
-from ._document_meta import (
-    DocumentFileMetadata,
-    DocumentIndexMetadata,
-    document_meta_compatible,
-    document_metadata_path,
-    read_document_meta,
-)
+from ._document_file import DocumentFileMetadata
 from ._file_state import FileStateKind
 from ._index_lifecycle import (
     IndexLifecycleRequest,
@@ -38,16 +34,23 @@ from ._index_lifecycle import (
     run_index_lifecycle,
 )
 from ._resolved_policy import preprocess_stale_note
-from ._route_migration import reconcile_generation_storage
+from ._route_migration import reconcile_generation_storage, reconcile_scoped_routes
 from ._run_ledger_models import (
+    FETCH_BATCH,
+    CommitUnitKind,
     FinalizationPhase,
+    RunAuthority,
     RunLedgerCompatibilityError,
     RunOperation,
 )
 from ._run_policy import RunPolicy
 from ._scan_cache import MembershipScanCache
 from ._slicing import iter_weighted_document_slices
-from ._streaming import _SliceWriter, encode_and_upsert_document_slice
+from ._streaming import (
+    _SliceWriter,
+    encode_and_upsert_document_slice,
+    execute_store_mutation,
+)
 from ._streaming_types import DocumentSliceRequest, DocumentSliceStreamRequest
 from ._vault_prep import IndexResult
 
@@ -322,12 +325,11 @@ class DocumentIndexer:
         from .._store_writes import workspace_volume_path
 
         self._data_root = workspace_volume_path(self.root_dir)
-        self._meta_path = document_metadata_path(self.root_dir)
-        self._stat_gate_path = _stat_gate.sidecar_for(self._meta_path)
+        self._stat_gate_path = self._data_root / "document_index.statgate.sqlite3"
         # Resident between runs; every acquire/retain pair runs under
         # ``self._writer_lock``, which is the serialization the cache's
         # single-threaded contract relies on.
-        self._stat_gate_cache = _stat_gate.ResidentGateCache(self._stat_gate_path)
+        self._stat_gate_cache = _stat_gate.StatEvidenceStore(self._stat_gate_path)
         # Bounded-staleness cache of the document discovery walk, keyed by
         # policy fingerprint. Scoped runs bypass discovery and invalidate it,
         # because the events they carry are membership truth a cached walk
@@ -775,6 +777,9 @@ class DocumentIndexer:
                     run_control=request.run_control,
                     reuse=request.reuse,
                     writer=request.writer,
+                    mutation_lifecycle=request.checkpoint.mutation_lifecycle(
+                        request.unit
+                    ),
                 )
             )
 
@@ -785,7 +790,7 @@ class DocumentIndexer:
         operation: RunOperation,
         clean: bool,
         limits: SupportProfileLimits,
-        run_control: RunControl,
+        execution: PublicationExecution,
     ) -> DocumentRunCheckpoint:
         """Open one compatible storage-confirmed document generation."""
         from ..config._settings import get_config
@@ -802,12 +807,12 @@ class DocumentIndexer:
             sort_keys=True,
             separators=(",", ":"),
         )
-        checkpoint = DocumentRunCheckpoint.open(
+        checkpoint = DocumentRunCheckpoint.open_generation(
             DocumentRunOpenRequest(
                 data_root=self._data_root,
                 root_dir=self.root_dir,
                 policy=policy,
-                run_policy=RunPolicy.from_config(run_control=run_control),
+                run_policy=RunPolicy.from_config(run_control=execution.run_control),
                 operation=operation,
                 clean=clean,
                 model_identity=model_identity,
@@ -822,20 +827,11 @@ class DocumentIndexer:
                     encode_batch_size=int(config.embedding_document_encode_batch_size),
                 ),
                 backend_identity=self.store.backend_identity,
+                authority=execution.authority,
             )
         )
         self._last_checkpoint = checkpoint
         return checkpoint
-
-    @staticmethod
-    def _checkpoint_files(
-        checkpoint: DocumentRunCheckpoint,
-    ) -> dict[str, DocumentFileMetadata]:
-        """Project the carried ledger manifest into document metadata rows."""
-        return {
-            rel: DocumentFileMetadata(rel, content_hash, point_ids)
-            for rel, (content_hash, point_ids) in checkpoint.current_files().items()
-        }
 
     def _resume_pending_finalization(
         self,
@@ -847,15 +843,18 @@ class DocumentIndexer:
         """Finish a storage-complete document generation without re-ingestion."""
         if checkpoint.generation.finalization_phase is FinalizationPhase.INGESTING:
             return None
+        policy = checkpoint.policy
+        if policy is None:
+            raise RuntimeError("document checkpoint has no resolved policy")
         reporter.phase_start("resume document publication", 1)
         try:
             reconcile_generation_storage(
                 self.store,
                 checkpoint,
-                checkpoint.policy,
+                policy,
                 ContentKind.DOCUMENT,
             )
-            checkpoint.publish_metadata(self._meta_path)
+            checkpoint.publish_proof_transition()
             self._publish_generation(checkpoint)
             reporter.advance(1)
         finally:
@@ -952,7 +951,17 @@ class DocumentIndexer:
                 stale_ids = tuple(sorted(set(old.point_ids) - set(current.point_ids)))
             if not stale_ids:
                 continue
-            self.store.delete_document_content_chunks(list(stale_ids))
+            kind = (
+                CommitUnitKind.DELETE_PATH
+                if current is None
+                else CommitUnitKind.DELETE_STALE
+            )
+            execute_store_mutation(
+                lambda ids=stale_ids: self.store.delete_document_content_chunks(
+                    list(ids)
+                ),
+                checkpoint.deletion_lifecycle(rel, kind, stale_ids),
+            )
             if current is None:
                 checkpoint.record_confirmed_deletion(rel, stale_ids)
             else:
@@ -994,7 +1003,6 @@ class DocumentIndexer:
         }
         gate.prune(discovered.keys())
         gate.persist()
-        self._stat_gate_cache.retain(gate)
         if gate.reused:
             logger.debug(
                 "stat gate reused %d document hashes, rehashed %d",
@@ -1021,7 +1029,16 @@ class DocumentIndexer:
             if not path.is_file() or not admitted:
                 old = current.pop(rel, None)
                 if old is not None:
-                    self.store.delete_document_content_chunks(list(old.point_ids))
+                    execute_store_mutation(
+                        lambda ids=old.point_ids: (
+                            self.store.delete_document_content_chunks(list(ids))
+                        ),
+                        request.checkpoint.deletion_lifecycle(
+                            rel,
+                            CommitUnitKind.DELETE_PATH,
+                            old.point_ids,
+                        ),
+                    )
                     request.checkpoint.record_confirmed_deletion(rel, old.point_ids)
                     counts.removed += len(old.point_ids)
                 continue
@@ -1064,7 +1081,16 @@ class DocumentIndexer:
         )
         if obsolete:
             obsolete_ids = tuple(sorted(obsolete))
-            self.store.delete_document_content_chunks(list(obsolete_ids))
+            execute_store_mutation(
+                lambda ids=obsolete_ids: self.store.delete_document_content_chunks(
+                    list(ids)
+                ),
+                replacement.checkpoint.deletion_lifecycle(
+                    replacement.rel,
+                    CommitUnitKind.DELETE_STALE,
+                    obsolete_ids,
+                ),
+            )
             replacement.checkpoint.record_confirmed_stale_deletion(
                 replacement.rel, obsolete_ids
             )
@@ -1080,6 +1106,7 @@ class DocumentIndexer:
         clean: bool = False,
         reporter: ProgressReporter,
         preflight: DocumentIndexPreflight | None = None,
+        authority: RunAuthority = RunAuthority.REBUILD,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
@@ -1100,9 +1127,9 @@ class DocumentIndexer:
         checkpoint = self._open_checkpoint(
             policy=policy,
             operation=RunOperation.FULL,
-            clean=effective_clean,
+            clean=authority is RunAuthority.REBUILD,
             limits=limits,
-            run_control=run_control,
+            execution=PublicationExecution(authority, run_control),
         )
         with checkpoint.preserve_incomplete_generation():
             budget = self._begin_resource_budget(limits)
@@ -1152,10 +1179,31 @@ class DocumentIndexer:
         )
         if resumed is not None:
             return resumed
-        previous = read_document_meta(self._meta_path)
-        previous_files = self._checkpoint_files(checkpoint)
-        if not previous_files and previous is not None:
-            previous_files = {item.source_path: item for item in previous.files}
+        from .._publication_state import (
+            acquire_publication_snapshot,
+            read_all_publication_evidence,
+        )
+        from ._publication_proof import ProofMissingError
+
+        try:
+            previous_snapshot = acquire_publication_snapshot(
+                self.root_dir,
+                PublicSourceType.DOCUMENT,
+            )
+        except ProofMissingError:
+            previous_files = {}
+        else:
+            previous_files = {
+                rel: DocumentFileMetadata(
+                    rel,
+                    evidence.content_identity,
+                    evidence.point_ids,
+                )
+                for rel, evidence in read_all_publication_evidence(
+                    previous_snapshot
+                ).items()
+            }
+            previous_snapshot.validate()
         clean_has_confirmed_units = (
             effective_clean
             and next(
@@ -1224,7 +1272,7 @@ class DocumentIndexer:
                     policy,
                     ContentKind.DOCUMENT,
                 )
-                checkpoint.publish_metadata(self._meta_path)
+                checkpoint.publish_proof_transition()
                 self._publish_generation(checkpoint)
         return self._finish_result(
             _DocumentResultDetails(
@@ -1238,52 +1286,13 @@ class DocumentIndexer:
             ),
         )
 
-    def _published_evidence_lost(self, previous: DocumentIndexMetadata) -> bool:
-        """Return whether the store fails to back the carried manifest.
-
-        The manifest outlives the points it describes: destruction drops the
-        collection or part of it and leaves the sidecar behind, and an
-        incremental diff against that manifest then classifies every
-        surviving file as unchanged, skips all encoding, and reports success
-        over points that are no longer there. A complete manifest whose
-        claimed breadth exceeds the live count is therefore escalated to a
-        full failure-safe reconciliation - the same non-destructive rebuild
-        the compatibility check chooses - instead of being trusted.
-
-        An incomplete manifest claims nothing to hold the store to, and a
-        store that cannot be counted proves nothing about the collection
-        either way; both keep the ordinary incremental behaviour rather than
-        rebuilding on ignorance.
-        """
-        if not previous.complete:
-            return False
-        claimed = previous.claimed_points
-        try:
-            live = self.store.count_document()
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not count the document collection to verify published "
-                "breadth; trusting the carried manifest for this run",
-                exc_info=True,
-            )
-            return False
-        if live >= claimed:
-            return False
-        logger.warning(
-            "Document collection holds %d of the %d points its published "
-            "manifest describes; escalating to a full failure-safe "
-            "reconciliation instead of trusting the carried evidence",
-            live,
-            claimed,
-        )
-        return True
-
     def incremental_index(
         self,
         *,
         reporter: ProgressReporter,
         changed_paths: Iterable[pathlib.Path] | None = None,
         preflight: DocumentExecutionPreflight | None = None,
+        authority: RunAuthority = RunAuthority.PUBLICATION,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile changed documents, or discover changes when scope is omitted."""
@@ -1302,45 +1311,77 @@ class DocumentIndexer:
         self._resolve_reuse(policy)
         limits = self._support_limits()
         prep = self._preprocess_context(policy, limits)
-        fingerprints = policy.fingerprints_for(ContentKind.DOCUMENT)
+        previous_files: dict[str, DocumentFileMetadata]
         with self._writer_lock:
-            previous = read_document_meta(self._meta_path)
-            if not document_meta_compatible(
-                previous,
-                membership_fingerprint=fingerprints.membership,
-                content_fingerprint=fingerprints.content,
-            ):
-                previous = None
-            if previous is not None and self._published_evidence_lost(previous):
-                previous = None
-        checkpoint: DocumentRunCheckpoint | None = None
-        if previous is not None:
-            operation = (
-                RunOperation.SCOPED_INCREMENTAL
-                if changed_paths is not None
-                else RunOperation.INCREMENTAL
+            from .._publication_state import (
+                acquire_publication_snapshot,
+                read_all_publication_evidence,
             )
-            try:
-                checkpoint = self._open_checkpoint(
-                    policy=policy,
-                    operation=operation,
-                    clean=False,
-                    limits=limits,
-                    run_control=run_control,
+
+            snapshot = acquire_publication_snapshot(
+                self.root_dir,
+                PublicSourceType.DOCUMENT,
+            )
+            if changed_paths is not None:
+                rel_paths = tuple(
+                    sorted(
+                        path.relative_to(self.root_dir).as_posix()
+                        for path in authorized_paths
+                    )
                 )
-            except RunLedgerCompatibilityError as exc:
-                logger.warning("document incremental ledger is incompatible: %s", exc)
+                previous_files = {}
+                for start_at in range(0, len(rel_paths), FETCH_BATCH):
+                    evidence = snapshot.ledger.publication_evidence_for_paths(
+                        snapshot.proof.compatibility_key,
+                        rel_paths[start_at : start_at + FETCH_BATCH],
+                    )
+                    previous_files.update(
+                        {
+                            rel: DocumentFileMetadata(
+                                rel,
+                                item.content_identity,
+                                item.point_ids,
+                            )
+                            for rel, item in evidence.items()
+                        }
+                    )
+            else:
+                previous_files = {
+                    rel: DocumentFileMetadata(
+                        rel,
+                        item.content_identity,
+                        item.point_ids,
+                    )
+                    for rel, item in read_all_publication_evidence(snapshot).items()
+                }
+            live = self.store.count_document()
+            snapshot.validate()
+            if live < snapshot.proof.aggregate.retained_points:
                 raise JobError(
                     JobErrorKind.FULL_REINDEX_REQUIRED,
-                    f"no compatible published document manifest ({exc}); request "
+                    "document storage is shorter than its canonical proof; request "
                     "an explicit full document reindex",
-                ) from exc
-        if previous is None or checkpoint is None:
+                )
+        operation = (
+            RunOperation.SCOPED_INCREMENTAL
+            if changed_paths is not None
+            else RunOperation.INCREMENTAL
+        )
+        try:
+            checkpoint = self._open_checkpoint(
+                policy=policy,
+                operation=operation,
+                clean=False,
+                limits=limits,
+                execution=PublicationExecution(authority, run_control),
+            )
+        except RunLedgerCompatibilityError as exc:
+            logger.warning("document incremental ledger is incompatible: %s", exc)
             raise JobError(
                 JobErrorKind.FULL_REINDEX_REQUIRED,
-                "no compatible storage-backed document manifest; request an "
-                "explicit full document reindex",
-            )
+                f"no compatible committed document proof ({exc}); request "
+                "an explicit full document reindex",
+            ) from exc
 
         with checkpoint.preserve_incomplete_generation():
             budget = self._begin_resource_budget(limits)
@@ -1358,7 +1399,7 @@ class DocumentIndexer:
                         reporter=reporter,
                         run_control=run_control,
                     ),
-                    previous=previous,
+                    previous_files=previous_files,
                 ),
                 IndexLifecycleRequest(
                     event_logger=logger,
@@ -1379,7 +1420,7 @@ class DocumentIndexer:
         started: float,
         scoped: bool,
         request: _DocumentPublishRequest,
-        previous: DocumentIndexMetadata,
+        previous_files: dict[str, DocumentFileMetadata],
     ) -> IndexResult:
         """Locked implementation of :meth:`incremental_index`."""
         policy = request.policy
@@ -1392,9 +1433,6 @@ class DocumentIndexer:
         )
         if resumed is not None:
             return resumed
-        previous_files = self._checkpoint_files(checkpoint)
-        if not previous_files:
-            previous_files = {item.source_path: item for item in previous.files}
         selected = self._select_incremental_paths(
             authorized_paths,
             previous_files,
@@ -1410,13 +1448,21 @@ class DocumentIndexer:
             if failures:
                 checkpoint.mark_failed("; ".join(failures))
             else:
-                reconcile_generation_storage(
-                    self.store,
-                    checkpoint,
-                    policy,
-                    ContentKind.DOCUMENT,
-                )
-                checkpoint.publish_metadata(self._meta_path)
+                if scoped:
+                    reconcile_scoped_routes(
+                        self.store,
+                        checkpoint,
+                        ContentKind.DOCUMENT,
+                        selected,
+                    )
+                else:
+                    reconcile_generation_storage(
+                        self.store,
+                        checkpoint,
+                        policy,
+                        ContentKind.DOCUMENT,
+                    )
+                checkpoint.publish_proof_transition()
                 self._publish_generation(checkpoint)
             return self._finish_result(
                 _DocumentResultDetails(

@@ -26,12 +26,11 @@ from vaultspec_core.vaultcore import (
 
 from ..job_control import NO_RUN_CONTROL
 from . import _stat_gate, _vault_fingerprint
-from ._streaming import _stream_encode_and_upsert_vault
+from ._run_ledger_models import FETCH_BATCH, CommitUnitKind, RunAuthority, RunOperation
+from ._streaming import _stream_encode_and_upsert_vault, execute_store_mutation
 from ._streaming_types import VaultStreamRequest
+from ._vault_checkpoint import VaultRunCheckpoint
 from ._vault_fingerprint import VaultDelta
-from ._vault_meta import (
-    VAULT_FINGERPRINT_SCHEME_KEY,
-)
 from ._vault_prep import IndexResult, prepare_document, split_document
 
 if TYPE_CHECKING:
@@ -44,7 +43,9 @@ if TYPE_CHECKING:
     from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store_runtime import VaultStore
+    from ._publication_proof import ProofCompatibilityKey, ProofEvidence
     from ._reuse import DonorReuseContext, ReuseStats
+    from ._run_ledger_runtime import RunLedger
 
 logger = logging.getLogger(__name__)
 
@@ -71,18 +72,16 @@ class _VaultEncodeWork:
     slice_size: int
     reporter: ProgressReporter
     run_control: RunControl
+    checkpoint: VaultRunCheckpoint
+    content_identities: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
 class _PayloadRefreshPlan:
-    """The payload-only work one classification turned out to justify."""
+    """Point-addressed payload writes justified for changed documents."""
 
-    #: Chunks whose payloads are to be rewritten, vectors untouched.
     chunks: list[VaultChunk]
-    #: How many documents those chunks belong to. Counted separately because a
-    #: document is not one chunk, and the reported figure names documents.
     documents: int
-    #: Documents the plan could not honour, for the re-embed branch instead.
     deferred: set[str]
 
 
@@ -95,6 +94,8 @@ class VaultReconcileInputs:
     slice_size: int
     reporter: ProgressReporter
     run_control: RunControl
+    checkpoint: VaultRunCheckpoint
+    content_identities: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,14 +127,8 @@ class _VaultClassification:
         )
 
 
-def _group_chunks_by_document(
-    chunks: list[VaultChunk],
-) -> list[list[VaultChunk]]:
-    """Group contiguous chunks by their parent document, preserving order.
-
-    The planner appends each document's chunks together, so grouping is a scan
-    rather than a sort, and the output order matches the input's.
-    """
+def _group_chunks_by_document(chunks: list[VaultChunk]) -> list[list[VaultChunk]]:
+    """Group contiguous chunks by their parent document."""
     groups: list[list[VaultChunk]] = []
     for chunk in chunks:
         if groups and groups[-1][0].doc_id == chunk.doc_id:
@@ -220,20 +215,12 @@ class VaultIncrementalMixin:
         root_dir: pathlib.Path
         store: VaultStore
         _gpu_lock: threading.Lock | None
-        _stat_gate_cache: _stat_gate.ResidentGateCache
+        _stat_gate_cache: _stat_gate.StatEvidenceStore
 
         # Provided by the indexer this mixes into.
         def _resolve_reuse(
             self,
         ) -> tuple[ReuseStats | None, DonorReuseContext | None]: ...
-
-        def _read_meta_raw(self) -> dict[str, str]: ...
-
-        def _load_meta(self) -> dict[str, str]: ...
-
-        def _write_meta(
-            self, meta: dict[str, str], *, run_control: RunControl = ...
-        ) -> int: ...
 
         def _purge_shrunk_chunk_tails(
             self,
@@ -241,6 +228,7 @@ class VaultIncrementalMixin:
             new_counts: dict[str, int],
             *,
             run_control: RunControl = ...,
+            checkpoint: VaultRunCheckpoint | None = ...,
         ) -> None: ...
 
     def _scan_vault_for_docs(
@@ -269,6 +257,24 @@ class VaultIncrementalMixin:
             run_control.checkpoint()
         return current_docs
 
+    @staticmethod
+    def _publication_evidence_for_paths(
+        ledger: RunLedger,
+        compatibility_key: ProofCompatibilityKey,
+        paths: Iterable[str],
+    ) -> dict[str, ProofEvidence]:
+        """Read only named proof rows, respecting SQLite's bounded batch size."""
+        ordered = tuple(sorted(paths))
+        evidence: dict[str, ProofEvidence] = {}
+        for start_at in range(0, len(ordered), FETCH_BATCH):
+            evidence.update(
+                ledger.publication_evidence_for_paths(
+                    compatibility_key,
+                    ordered[start_at : start_at + FETCH_BATCH],
+                )
+            )
+        return evidence
+
     def _hash_documents(
         self,
         current_docs: dict[str, pathlib.Path],
@@ -295,7 +301,6 @@ class VaultIncrementalMixin:
         if full_membership:
             gate.prune(current_docs.keys())
         gate.persist()
-        self._stat_gate_cache.retain(gate)
         return outcome.hashes
 
     def _parse_documents(
@@ -352,12 +357,15 @@ class VaultIncrementalMixin:
                 reporter=work.reporter,
                 run_control=work.run_control,
                 reuse=donor_reuse,
+                checkpoint=work.checkpoint,
+                content_identities=work.content_identities,
             )
         )
         self._purge_shrunk_chunk_tails(
             work.existing_counts,
             new_counts,
             run_control=work.run_control,
+            checkpoint=work.checkpoint,
         )
         return reuse_stats
 
@@ -397,13 +405,11 @@ class VaultIncrementalMixin:
                 slice_size=work.slice_size,
                 reporter=work.reporter,
                 run_control=work.run_control,
+                checkpoint=work.checkpoint,
+                content_identities=work.content_identities,
             )
         )
-        self._apply_payload_refresh(
-            plan.chunks,
-            work.reporter,
-            run_control=work.run_control,
-        )
+        self._apply_payload_refresh(plan.chunks, work)
         return _VaultReconcileOutcome(
             re_embedded=len(classification.body),
             payload_updated=plan.documents,
@@ -416,131 +422,70 @@ class VaultIncrementalMixin:
         id_to_path: dict[str, pathlib.Path],
         reporter: ProgressReporter,
         *,
-        run_control: RunControl = NO_RUN_CONTROL,
+        run_control: RunControl,
     ) -> _PayloadRefreshPlan:
-        """Build the chunks a payload-only refresh would write, and its fallout.
-
-        A payload-only write assumes the store already holds exactly the points
-        this document produces - the body did not move, so its chunk partition
-        did not either. That assumption is checked against the ordinals the
-        store actually has points under, not against how far they reach: the
-        two differ exactly when a document's ordinal range has a hole, and a
-        hole is the case where writing by assumed ordinal reaches nothing and
-        raises nothing. A document whose stored ordinals are not precisely the
-        set it now splits into is returned as deferred, for the caller to route
-        into the re-embed branch, which rebuilds its points outright.
-
-        Returns:
-            The chunks to write, how many documents they cover, and the ids
-            that must be re-embedded instead.
-        """
+        """Build exact payload writes, deferring uncertain point shapes."""
         if not doc_ids:
-            return _PayloadRefreshPlan(chunks=[], documents=0, deferred=set())
-
+            return _PayloadRefreshPlan([], 0, set())
         from ..config._settings import get_config
 
-        chunk_chars = int(get_config().vault_chunk_chars)
-        deferred: set[str] = set()
-        chunks: list[VaultChunk] = []
-        refreshed = 0
-        with controlled_phase(
+        stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
+        docs = self._prepare_documents_bounded(
+            [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
             reporter,
-            run_control,
-            "rebuild payloads",
-            len(doc_ids),
-        ):
-            try:
-                stored_ordinals = self.store.get_stored_chunk_ordinals(doc_ids)
-            except (OSError, RuntimeError):
-                # Without knowing what is stored, nothing can be written
-                # safely by ordinal; re-embedding rebuilds these outright.
-                logger.warning(
-                    "Could not read stored chunk ordinals for the payload "
-                    "refresh; re-embedding those documents instead",
-                    exc_info=True,
-                )
-                return _PayloadRefreshPlan(
-                    chunks=[],
-                    documents=0,
-                    deferred=set(doc_ids),
-                )
-            docs = self._prepare_documents_bounded(
-                [id_to_path[doc_id] for doc_id in sorted(doc_ids)],
-                reporter,
-                run_control=run_control,
-                skip_errors=False,
-            )
-            prepared = {doc.id for doc in docs}
-            # A document that would not parse cannot have its payloads rebuilt
-            # from what it says, so it goes the way of any other unreconciled
-            # document rather than being silently dropped.
-            deferred |= doc_ids - prepared
-            for doc in docs:
-                run_control.checkpoint()
-                doc_chunks = split_document(doc, chunk_chars)
-                if stored_ordinals.get(doc.id, set()) != set(range(len(doc_chunks))):
-                    deferred.add(doc.id)
-                    continue
-                chunks.extend(doc_chunks)
-                refreshed += 1
-        return _PayloadRefreshPlan(
-            chunks=chunks,
-            documents=refreshed,
-            deferred=deferred,
+            run_control=run_control,
+            skip_errors=False,
         )
+        prepared = {doc.id for doc in docs}
+        deferred = doc_ids - prepared
+        chunks: list[VaultChunk] = []
+        documents = 0
+        chunk_chars = int(get_config().vault_chunk_chars)
+        for doc in docs:
+            run_control.checkpoint()
+            doc_chunks = split_document(doc, chunk_chars)
+            if stored_ordinals.get(doc.id, set()) != set(range(len(doc_chunks))):
+                deferred.add(doc.id)
+                continue
+            chunks.extend(doc_chunks)
+            documents += 1
+        return _PayloadRefreshPlan(chunks, documents, deferred)
 
     def _apply_payload_refresh(
         self,
         chunks: list[VaultChunk],
-        reporter: ProgressReporter,
-        *,
-        run_control: RunControl = NO_RUN_CONTROL,
+        work: VaultReconcileInputs,
     ) -> None:
-        """Write the planned payload-only refresh, leaving vectors untouched.
-
-        Written one document at a time rather than as a single call over every
-        chunk. The store writes a payload per point, so a whole-corpus metadata
-        refresh is thousands of sequential round trips; handing them over in one
-        call would make the whole write uncancellable and report no progress
-        until it finished. A document is the right granularity to break on -
-        each one's payloads land together, so a cancellation between documents
-        never leaves one half-refreshed.
-        """
+        """Overwrite exact payloads under the canonical mutation receipt."""
         with controlled_phase(
-            reporter,
-            run_control,
+            work.reporter,
+            work.run_control,
             "upsert payloads",
             len(chunks),
         ):
-            if not chunks:
-                return
             for doc_chunks in _group_chunks_by_document(chunks):
-                run_control.checkpoint()
-                self.store.overwrite_vault_chunk_payloads(
-                    doc_chunks,
-                    write_policy=None,
+                work.run_control.checkpoint()
+
+                def write_payloads(current: list[VaultChunk] = doc_chunks) -> None:
+                    self.store.overwrite_vault_chunk_payloads(
+                        current,
+                        write_policy=None,
+                    )
+
+                execute_store_mutation(
+                    write_payloads,
+                    work.checkpoint.chunk_lifecycle(
+                        doc_chunks,
+                        work.content_identities,
+                    ),
+                    after_acknowledgement=lambda current=doc_chunks: (
+                        work.checkpoint.record_confirmed_chunks(
+                            current,
+                            work.content_identities,
+                        )
+                    ),
                 )
-                reporter.advance(len(doc_chunks))
-                run_control.checkpoint()
-
-    def _announce_fingerprint_migration(self) -> None:
-        """Say once, at the top of a run, that the sidecar predates the split.
-
-        The migration is cheap by design - documents whose bytes have not moved
-        re-label rather than re-embed - but it is not nothing, and a run that
-        does more work than its successors will for a reason nobody can see is
-        the kind of thing that gets diagnosed twice.
-        """
-        raw = self._read_meta_raw()
-        if not raw:
-            return
-        if raw.get(VAULT_FINGERPRINT_SCHEME_KEY) == _vault_fingerprint.SCHEME:
-            return
-        logger.info(
-            "Vault fingerprints predate the body/metadata split; this run "
-            "re-classifies the corpus and re-embeds only documents whose "
-            "bytes actually moved",
-        )
+                work.reporter.advance(len(doc_chunks))
 
     def _prepare_documents_bounded(
         self,
@@ -617,11 +562,34 @@ class VaultIncrementalMixin:
             return None
         return rel.rsplit(".", 1)[0] if "." in rel else rel
 
+    def _classify_scoped_paths(
+        self,
+        changed_paths: Iterable[pathlib.Path],
+        docs_dir: pathlib.Path,
+        reporter: ProgressReporter,
+        run_control: RunControl,
+    ) -> tuple[dict[str, pathlib.Path], set[str]]:
+        """Resolve watcher paths into vault upsert and deletion identities."""
+        to_hash: dict[str, pathlib.Path] = {}
+        deletion_candidates: set[str] = set()
+        with controlled_phase(reporter, run_control, "scan changed", None):
+            for path in changed_paths:
+                run_control.checkpoint()
+                doc_id = self._vault_doc_id(path, docs_dir)
+                if doc_id is not None:
+                    if path.is_file() and get_doc_type(path, self.root_dir) is not None:
+                        to_hash[doc_id] = path
+                    else:
+                        deletion_candidates.add(doc_id)
+                run_control.checkpoint()
+        return to_hash, deletion_candidates
+
     def _scoped_incremental_locked(
         self,
         *,
         changed_paths: Iterable[pathlib.Path],
         reporter: ProgressReporter,
+        authority: RunAuthority,
         run_control: RunControl = NO_RUN_CONTROL,
     ) -> IndexResult:
         """Reconcile only ``changed_paths`` against the index (#151).
@@ -647,22 +615,31 @@ class VaultIncrementalMixin:
         slice_size = max(1, get_config().embedding_batch_size)
         docs_dir = self.root_dir / get_config().docs_dir
         run_control.checkpoint()
-        prev_meta = self._load_meta()
-        run_control.checkpoint()
+        from .._publication_state import acquire_publication_snapshot
+        from .._source_types import PublicSourceType
 
-        to_hash: dict[str, pathlib.Path] = {}
-        delete_ids: set[str] = set()
-        with controlled_phase(reporter, run_control, "scan changed", None):
-            for path in changed_paths:
-                run_control.checkpoint()
-                self._process_changed_vault_path(
-                    path,
-                    docs_dir,
-                    prev_meta,
-                    to_hash,
-                    delete_ids,
-                )
-                run_control.checkpoint()
+        snapshot = acquire_publication_snapshot(
+            self.root_dir,
+            PublicSourceType.VAULT,
+        )
+
+        to_hash, deletion_candidates = self._classify_scoped_paths(
+            changed_paths,
+            docs_dir,
+            reporter,
+            run_control,
+        )
+
+        affected = tuple(sorted(set(to_hash) | deletion_candidates))
+        prior_evidence = self._publication_evidence_for_paths(
+            snapshot.ledger,
+            snapshot.proof.compatibility_key,
+            affected,
+        )
+        prev_meta = {
+            doc_id: item.content_identity for doc_id, item in prior_evidence.items()
+        }
+        delete_ids = deletion_candidates.intersection(prior_evidence)
 
         with controlled_phase(
             reporter,
@@ -675,6 +652,17 @@ class VaultIncrementalMixin:
                 reporter,
                 run_control=run_control,
             )
+        snapshot.validate()
+
+        checkpoint = VaultRunCheckpoint.open(
+            self.root_dir,
+            backend_identity=self.store.backend_identity,
+            authority=authority,
+            operation=RunOperation.SCOPED_INCREMENTAL,
+            run_control=run_control,
+        )
+        if checkpoint.receipt is None:
+            raise RuntimeError("vault incremental opened without a publication receipt")
 
         new_ids = {d for d in changed_hashes if d not in prev_meta}
         classification = classify_documents(
@@ -690,17 +678,7 @@ class VaultIncrementalMixin:
         existing_counts: dict[str, int] = {}
         if candidate_ids:
             run_control.checkpoint()
-            try:
-                existing_counts = self.store.get_chunk_counts(
-                    doc_ids=candidate_ids,
-                )
-            except (OSError, RuntimeError):
-                logger.warning(
-                    "Could not snapshot chunk counts for the scoped "
-                    "reindex; shrunk-tail purge will be skipped",
-                    exc_info=True,
-                )
-                existing_counts = {}
+            existing_counts = self.store.get_chunk_counts(doc_ids=candidate_ids)
             run_control.checkpoint()
 
         outcome = self._reconcile_classified(
@@ -712,6 +690,8 @@ class VaultIncrementalMixin:
                 slice_size=slice_size,
                 reporter=reporter,
                 run_control=run_control,
+                checkpoint=checkpoint,
+                content_identities=changed_hashes,
             ),
         )
 
@@ -722,23 +702,30 @@ class VaultIncrementalMixin:
             len(delete_ids),
         ):
             if delete_ids:
-                run_control.checkpoint()
-                self.store.delete_documents(list(delete_ids))
-                run_control.checkpoint()
-                reporter.advance(len(delete_ids))
+                from ._streaming import execute_store_mutation
+
+                for doc_id in sorted(delete_ids):
+                    old = prior_evidence[doc_id]
+                    execute_store_mutation(
+                        lambda current=doc_id: self.store.delete_documents([current]),
+                        checkpoint.deletion_lifecycle(
+                            doc_id,
+                            CommitUnitKind.DELETE_PATH,
+                            old.point_ids,
+                        ),
+                    )
+                    checkpoint.record_confirmed_deletion(doc_id, old.point_ids)
+                    reporter.advance(1)
 
         # Partial read-modify-write: preserve every unchanged entry, refresh
         # the changed hashes, and drop the deleted ids. Never recompute the
         # whole map (that is what the full scan is for).
-        new_meta = dict(prev_meta)
-        new_meta.update(changed_hashes)
-        for doc_id in delete_ids:
-            run_control.checkpoint()
-            new_meta.pop(doc_id, None)
         with controlled_phase(reporter, run_control, "write metadata", 1):
-            # The publication's own count, so the reported total and the
-            # breadth claim beside it describe one instant of the collection.
-            total = self._write_meta(new_meta, run_control=run_control)
+            checkpoint.publish_proof_transition()
+            checkpoint.publish_generation()
+            total = checkpoint.ledger.publication_proof(
+                checkpoint.receipt.compatibility_key
+            ).aggregate.indexed_identities
             reporter.advance(1)
 
         run_control.checkpoint()

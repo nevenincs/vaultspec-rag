@@ -20,6 +20,9 @@ import pytest
 
 from .._store_models import root_collection_prefix
 from ..job_models import JobOutcomeStatus
+from ..storage_archive import (
+    sweep_archive,
+)
 from ..storage_manifest import (
     load_manifest,
     record_root,
@@ -31,7 +34,6 @@ from ..storage_reclamation import (
     ReclaimPolicy,
     evaluate_reclaim,
     run_maintenance_cycle,
-    sweep_archive,
 )
 from ..storage_reconciliation import ReconcileResult, plan_reconcile
 from ..storage_survey import NamespaceSurvey, is_temp_rooted
@@ -1098,7 +1100,7 @@ class TestPreDropRecount:
         )
         result = _run_cycle(client, tmp_path)
         decision = next(d for d in result.decisions if d.prefix == prefix)
-        assert decision.action == "archived_removed"
+        assert decision.action == "archived_removed", decision
         assert client.snapshotted == [collection]
         assert client.deleted == [collection]
 
@@ -1147,6 +1149,7 @@ class TestActiveIndexPrefixes:
         self, tmp_path: Path
     ) -> None:
         from .. import jobs
+        from ..indexer._run_ledger_models import RunAuthority
         from ..job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
         from ..storage_reclamation import _active_index_prefixes
 
@@ -1161,6 +1164,7 @@ class TestActiveIndexPrefixes:
                     source=JobSource.DOCUMENT,
                     project_root=str(root),
                     mode=JobMode.INCREMENTAL,
+                    authority=RunAuthority.PUBLICATION,
                 ),
                 JobInitiator(
                     kind="cli",

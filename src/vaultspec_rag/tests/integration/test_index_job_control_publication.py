@@ -15,7 +15,6 @@ from pathlib import Path  # noqa: TC003
 
 import pytest
 
-from ..._job_errors import JobError, JobErrorKind
 from ..._store_models import read_served_code_collection
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
@@ -48,16 +47,18 @@ from ._index_job_control_support import (
 )
 
 
-def test_clean_rebuild_resumes_durable_generation_when_served_collection_vanished(
+def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
     tmp_path: Path,
     cpu_embedding_model: EmbeddingModel,
 ) -> None:
-    """A rebuild may trust generation evidence that survives served deletion.
+    """A rebuild must not trust ledger evidence for a destroyed collection.
 
     External storage destruction (the storage delete verb) drops the code
-    collection but leaves both the per-root run ledger and the generation-scoped
-    staging collection behind. Its storage-confirmed units remain durable, so
-    the rebuild should resume them and publish the completed generation.
+    collection but leaves the per-root run ledger behind. Resuming the
+    interrupted generation would skip its storage-confirmed units with zero
+    encoding, publishing a "successful" index whose committed portion no
+    longer exists anywhere. The rebuild must retire that generation and
+    re-encode from scratch.
     """
     paths = _write_code_files(tmp_path, 128, "ledger-stale")
 
@@ -89,30 +90,31 @@ def test_clean_rebuild_resumes_durable_generation_when_served_collection_vanishe
             preflight=indexer.preflight_content(),
         )
 
-        # The completed generation contains every expected point, including the
-        # durable units resumed from staging after the served collection was
-        # removed.
+        # Binds the staleness guard: without it the resumed generation skips
+        # its committed units (resumed_units > 0, zero re-encode) and the
+        # store is missing exactly those files' chunks while the run still
+        # reports success.
         assert_current_code_state(indexer, store, paths, "ledger-stale")
         fresh = indexer.last_checkpoint
         assert fresh is not None
-        assert fresh.resumed_units == committed
+        assert fresh.resumed_units == 0
         assert store.count_code() == result.added
     _assert_code_resources_released()
 
 
-def test_incremental_requires_explicit_rebuild_when_collection_vanished(
+def test_incremental_reencodes_when_collection_vanished_under_published_metadata(
     tmp_path: Path,
     cpu_embedding_model: EmbeddingModel,
 ) -> None:
     """An incremental run must not trust carried evidence for a destroyed collection.
 
     External storage destruction (the storage delete verb) drops the code
-    collection but leaves the per-root metadata sidecar and run ledger
+    collection but leaves the canonical per-root run ledger
     behind. An incremental diff against that carried metadata classifies
     every surviving file as unchanged, skips all encoding, and reports
     success over a collection whose points no longer exist anywhere. The
-    incremental path must detect the vanished collection and require an
-    explicit full reconciliation.
+    incremental path must detect the vanished collection and escalate to a
+    full failure-safe reconciliation.
     """
     paths = _write_code_files(tmp_path, 32, "meta-stale")
 
@@ -131,83 +133,19 @@ def test_incremental_requires_explicit_rebuild_when_collection_vanished(
         assert published.added > 0
 
         # The storage-delete equivalent: the collection vanishes out-of-band
-        # while the metadata sidecar and per-root run ledger stay behind.
+        # while the canonical per-root run ledger stays behind.
         store.drop_code_table()
 
-        with pytest.raises(JobError) as raised:
-            indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-            )
-        assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-        assert store.count_code() == 0
-
-        indexer.full_index(
-            clean=True,
+        indexer.incremental_index(
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
 
-        # After explicit operator authority, the full rebuild restores every
-        # point described by the source tree.
+        # Binds the incremental staleness guard: without it the unchanged
+        # scan trusts the carried metadata, skips every file, and reports a
+        # mutation-free success while the store holds zero points.
         assert_current_code_state(indexer, store, paths, "meta-stale")
         assert store.count_code() == published.added
-    _assert_code_resources_released()
-
-
-def test_embed_format_gate_requires_explicit_rebuild_without_emptying_served_index(
-    tmp_path: Path,
-    cpu_embedding_model: EmbeddingModel,
-) -> None:
-    """An embed-format gate refuses incrementals without destroying served data."""
-    import json as _json
-
-    from ..._index_breadth import index_meta_path
-    from ..._source_types import PublicSourceType
-    from ...indexer._code_meta import EMBED_SCHEMA_KEY
-
-    paths = _write_code_files(tmp_path, 24, "unattended-gate")
-
-    with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
-        indexer = CodebaseIndexer(
-            tmp_path,
-            cpu_embedding_model,
-            store,
-            options=CodebaseIndexer.Options(gpu_lock=threading.Lock()),
-        )
-        published = indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert published.added > 0
-
-        # Age the embed-format marker so the unattended gate fires on the next
-        # incremental, exactly as it would after a format change shipped.
-        meta_path = index_meta_path(tmp_path, PublicSourceType.CODE)
-        raw = _json.loads(meta_path.read_text(encoding="utf-8"))
-        raw[EMBED_SCHEMA_KEY] = "superseded-regime"
-        meta_path.write_text(_json.dumps(raw), encoding="utf-8")
-
-        with pytest.raises(JobError) as raised:
-            indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                preflight=indexer.preflight_content(),
-            )
-        assert raised.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
-
-        assert store.count_code() == published.added
-
-        paths = _write_code_files(tmp_path, 24, "explicit-gate-rebuild")
-        rebuilt = indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        assert rebuilt.added > 0
-        assert_current_code_state(indexer, store, paths, "explicit-gate-rebuild")
-        assert "__code_superseded_regime__" not in indexer._read_meta_raw()
-        assert store.count_code() == rebuilt.added
     _assert_code_resources_released()
 
 

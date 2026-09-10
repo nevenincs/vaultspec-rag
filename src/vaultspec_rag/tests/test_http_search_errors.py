@@ -215,6 +215,77 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         reset_config()
 
 
+@pytest.mark.parametrize("search_type", ["code", "combined"])
+def test_a_never_indexed_root_answers_rather_than_failing(
+    tmp_path: Path,
+    search_type: str,
+) -> None:
+    """The first search on a new project answers with a typed outcome, not a fault.
+
+    A root nobody has indexed has no publication proof, and every read that
+    reaches for one has to treat that as an absence rather than a refusal. An
+    empty page from that root cannot prove absence, so the answer is the typed
+    non-authoritative failure - never a server fault, and never results.
+    The code domain is the one that publishes a breadth claim, so it is the
+    domain where a strict proof read leaks: `code` reaches it directly and
+    `combined` reaches it through the code leg. Both are asserted because a
+    tolerant read on one and a strict read on the other still 500s the
+    operator, just less often.
+
+    The verdict is asserted, not only the status. A typed answer that reports
+    nothing about breadth would hide a strict read behind a swallowed
+    exception; `unverifiable` is the typed outcome that says the proof could
+    not be read and no claim was invented in its place.
+
+    Proven able to fail: restoring the strict `acquire_code_breadth_snapshot`
+    in `search_codebase_timed` fails the `code` parameter on the status
+    assertion with a 500. The `combined` parameter stays green under that same
+    mutation, because its code leg does not reach that call - which is the
+    reason both are pinned rather than only the one that fails today. A later
+    change that routes the combined leg through the same read would otherwise
+    reintroduce the failure with nothing watching.
+    """
+    root = tmp_path / "fresh-project"
+    (root / ".vault").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / "src" / "example.py").write_text(
+        "def f():\n    return 1\n", encoding="utf-8"
+    )
+    get_config({"watch_enabled": False})
+    reset_registry()
+    runtime_registry = ServiceRegistry()
+    token = "never-indexed-search-token"
+    app = create_http_app(
+        ServerRouteRuntime(token=token, registry=runtime_registry, port=8765),
+        lifespan=None,
+    )
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/search",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "query": "anything at all",
+                    "type": search_type,
+                    "project_root": str(root),
+                },
+            )
+
+        assert response.status_code == 503, response.text
+        payload = cast("dict[str, object]", response.json())
+        assert payload["error"] == "index_unverifiable", payload
+        assert payload["retryable"] is False, payload
+        assert "results" not in payload
+        index_state = cast("dict[str, object]", payload["index_state"])
+        integrity = cast("dict[str, object]", index_state["index_integrity"])
+        assert integrity["verdict"] == "unverifiable", integrity
+        assert integrity["reason"] == "proof_unreadable", integrity
+    finally:
+        runtime_registry.close_all()
+        reset_registry()
+        reset_config()
+
+
 def test_mutating_routes_reject_a_closed_runtime_before_global_or_gpu_work(
     tmp_path: Path,
 ) -> None:

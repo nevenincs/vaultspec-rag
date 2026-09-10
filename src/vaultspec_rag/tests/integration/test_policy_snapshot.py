@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
+from ..._publication_state import acquire_publication_snapshot
+from ..._source_types import PublicSourceType
 from ...config._settings import reset_config
 from ...config._types import EnvVar
-from ...indexer._code_meta import CONTENT_EPOCH_KEY, MEMBERSHIP_EPOCH_KEY
 from ...indexer._content_policy import (
     ContentKind,
     ContentRoute,
@@ -51,9 +52,7 @@ class _SnapshotPaths(NamedTuple):
     proceed: Path
 
 
-def _write_snapshot_project(
-    root: Path, *, include_inputs: bool = True
-) -> _SnapshotPaths:
+def _write_snapshot_project(root: Path) -> _SnapshotPaths:
     paths = _SnapshotPaths(
         root / PREPROCESS_CONFIG_FILENAME,
         root / "replacement-policy.toml",
@@ -145,13 +144,12 @@ def _write_snapshot_project(
         ),
         encoding="utf-8",
     )
-    if include_inputs:
-        paths.source.write_bytes(b"\x00\x01 snapshot-owned binary input")
-        paths.html.write_text(
-            "<html><body><section>worker shaping marker "
-            "<strong>preserved</strong></section></body></html>",
-            encoding="utf-8",
-        )
+    paths.source.write_bytes(b"\x00\x01 snapshot-owned binary input")
+    paths.html.write_text(
+        "<html><body><section>worker shaping marker "
+        "<strong>preserved</strong></section></body></html>",
+        encoding="utf-8",
+    )
     return paths
 
 
@@ -217,9 +215,10 @@ def _assert_published_snapshot(
 ) -> None:
     """Assert publication uses entry epochs while fresh resolution observes drift."""
     entry_code = entry_policy.fingerprints_for(ContentKind.CODE)
-    published = indexer._read_meta_raw()
-    assert published[MEMBERSHIP_EPOCH_KEY] == entry_code.membership
-    assert published[CONTENT_EPOCH_KEY] == entry_code.content
+    published = acquire_publication_snapshot(indexer.root_dir, PublicSourceType.CODE)
+    key = published.proof.compatibility_key
+    assert key.membership_identity == entry_code.membership
+    assert key.content_identity == entry_code.content
     fresh_policy = indexer.resolve_policy_snapshot()
     fresh_code = fresh_policy.fingerprints_for(ContentKind.CODE)
     assert fresh_policy.fingerprints.snapshot != entry_policy.fingerprints.snapshot
@@ -228,8 +227,8 @@ def _assert_published_snapshot(
         fresh_policy.classify("a_payload.blob").disposition.kind is ContentKind.DOCUMENT
     )
     assert (
-        published[MEMBERSHIP_EPOCH_KEY],
-        published[CONTENT_EPOCH_KEY],
+        key.membership_identity,
+        key.content_identity,
     ) != (fresh_code.membership, fresh_code.content)
 
 
@@ -263,8 +262,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
     from ... import CodebaseIndexer
     from ...store_runtime import VaultStore
 
+    paths = _write_snapshot_project(tmp_path)
     with _snapshot_environment() as html_key:
-        paths = _write_snapshot_project(tmp_path, include_inputs=False)
         store = VaultStore(tmp_path)
         indexer = CodebaseIndexer(
             tmp_path,
@@ -277,12 +276,6 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
                 )
             ),
         )
-        indexer.full_index(
-            clean=True,
-            reporter=NullProgressReporter(),
-            preflight=indexer.preflight_content(),
-        )
-        paths = _write_snapshot_project(tmp_path)
         changed_paths = [paths.source, paths.html]
         preflight = indexer.preflight_changed_paths(changed_paths)
         entry_policy = preflight.policy

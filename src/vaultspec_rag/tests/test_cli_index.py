@@ -1,7 +1,10 @@
 """CLI coverage for index, clean, and auto-delegation commands."""
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
+import inspect
 import json
 import typing
 
@@ -62,12 +65,12 @@ class TestCleanCommand:
         root = make_workspace(tmp_path)
         result = runner.invoke(
             app,
-            ["--target", str(root), "clean", "all"],
+            ["--target", str(root), "clean", "combined"],
             input="n\n",
         )
 
         assert result.exit_code == 1
-        assert "Delete all search index data for" in result.output
+        assert "Delete combined search index data for" in result.output
         assert "Clean cancelled." in result.output
         assert "RAG index data" not in result.output
 
@@ -82,123 +85,13 @@ class TestCleanCommand:
         assert "Clean cancelled." in result.output
         assert "Aborted!" not in result.output
 
-    def test_clean_all_clears_collections_and_metadata(self, tmp_path: Path):
-        from ..config._settings import get_config
-        from ..store_runtime import VaultStore
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        index_metadata_file = data_dir / str(cfg.index_metadata_file)
-        index_metadata_file.write_text('{"x": "y"}', encoding="utf-8")
-        code_index_metadata_file = data_dir / str(cfg.code_index_metadata_file)
-        code_index_metadata_file.write_text(
-            '{"src/app.py": "hash"}',
-            encoding="utf-8",
-        )
-
-        store = VaultStore(root)
-        try:
-            store.ensure_table()
-            store.ensure_code_table()
-        finally:
-            store.close()
-
-        result = runner.invoke(app, ["--target", str(root), "clean", "all", "--yes"])
-        assert result.exit_code == 0, result.output
-        assert "Clean summary" in result.output
-        assert "Vault index: empty." in result.output
-        assert "Source code index: empty." in result.output
-        assert "Vault: empty" not in result.output
-        assert "Code: empty" not in result.output
-        for forbidden in ("─", "│", "┌", "┐", "└", "┘"):
-            assert forbidden not in result.output
-
-        store = VaultStore(root)
-        try:
-            assert store.count() == 0
-            assert store.count_code() == 0
-        finally:
-            store.close()
-        assert not index_metadata_file.exists()
-        assert not code_index_metadata_file.exists()
-
-    @pytest.mark.parametrize(
-        ("selection", "removed_attr", "kept_attr"),
-        [
-            ("vault", "index_metadata_file", "code_index_metadata_file"),
-            ("codebase", "code_index_metadata_file", "index_metadata_file"),
-        ],
-    )
-    def test_clean_one_source_removes_only_its_own_sidecar(
-        self,
-        tmp_path: Path,
-        selection: str,
-        removed_attr: str,
-        kept_attr: str,
-    ) -> None:
-        """A selective clean must not resolve the other source's sidecar.
-
-        Cleaning everything cannot tell a correct resolution from one with the
-        two filenames transposed, because both files go either way. Only a
-        single-source clean observes which name each branch resolved.
-        """
-        from ..config._settings import get_config
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        removed = data_dir / str(getattr(cfg, removed_attr))
-        kept = data_dir / str(getattr(cfg, kept_attr))
-        removed.write_text('{"x": "y"}', encoding="utf-8")
-        kept.write_text('{"kept": "kept"}', encoding="utf-8")
-
-        result = runner.invoke(
-            app, ["--target", str(root), "clean", selection, "--yes"]
-        )
-
-        assert result.exit_code == 0, result.output
-        assert not removed.exists()
-        assert kept.read_text(encoding="utf-8") == '{"kept": "kept"}'
-
-    def test_clean_document_removes_only_the_document_record(
-        self, tmp_path: Path
-    ) -> None:
-        """The document record is named independently of the two index sidecars."""
-        from ..config._settings import get_config
-        from ..indexer._document_meta import document_metadata_path
-
-        root = make_workspace(tmp_path)
-        cfg = get_config()
-        data_dir = root / str(cfg.data_dir)
-        data_dir.mkdir(parents=True)
-        survivors = [
-            data_dir / str(cfg.index_metadata_file),
-            data_dir / str(cfg.code_index_metadata_file),
-        ]
-        for survivor in survivors:
-            survivor.write_text('{"kept": "kept"}', encoding="utf-8")
-        record = document_metadata_path(root)
-        record.write_text('{"x": "y"}', encoding="utf-8")
-
-        result = runner.invoke(
-            app, ["--target", str(root), "clean", "document", "--yes"]
-        )
-
-        assert result.exit_code == 0, result.output
-        assert not record.exists()
-        for survivor in survivors:
-            assert survivor.read_text(encoding="utf-8") == '{"kept": "kept"}'
-
     def test_clean_lock_error_uses_operator_language(self, tmp_path: Path) -> None:
         root = make_workspace(tmp_path)
         lock = _hold_local_index_lock(root)
         try:
             result = runner.invoke(
                 app,
-                ["--target", str(root), "clean", "all", "--yes"],
+                ["--target", str(root), "clean", "combined", "--yes"],
             )
         finally:
             lock.release()
@@ -459,6 +352,384 @@ class TestCleanRequiredTarget:
         assert result.exit_code != 0
 
 
+class TestIndexAuthorityBoundary:
+    def test_cli_publication_authority_is_required_and_closed(self) -> None:
+        """A default or a third publication authority fails this guard."""
+        from ..cli._index import _publication_authority
+        from ..indexer._run_ledger_models import RunAuthority
+
+        parameter = inspect.signature(_publication_authority).parameters["rebuild"]
+        assert parameter.default is inspect.Parameter.empty
+        assert {
+            _publication_authority(rebuild=False),
+            _publication_authority(rebuild=True),
+        } == {RunAuthority.PUBLICATION, RunAuthority.REBUILD}
+
+    @pytest.mark.parametrize("request_kind", ["local", "service"])
+    def test_audit_authority_cannot_enter_publication_paths(
+        self,
+        tmp_path: Path,
+        request_kind: str,
+    ) -> None:
+        """Audit uses its own non-mutating path; publication paths fail closed."""
+        from .._source_types import PublicSourceType
+        from ..cli._index import _IndexRunRequest, _ServiceDelegationRequest
+        from ..indexer._run_ledger_models import RunAuthority
+
+        if request_kind == "local":
+            request = _IndexRunRequest(
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                None,
+                None,
+                tmp_path,
+                False,
+            )
+        else:
+            request = _ServiceDelegationRequest(
+                8765,
+                None,
+                False,
+                PublicSourceType.CODE,
+                RunAuthority.AUDIT_VERIFICATION,
+                tmp_path,
+            )
+
+        with pytest.raises(ValueError, match="audit verification"):
+            _ = request.rebuild
+
+    def test_benchmark_reindex_uses_canonical_publication_wire_contract(self) -> None:
+        """Operational callers must use the same exact route vocabulary as the CLI."""
+        from .benchmarks.bench_concurrency import ServiceTarget, _start_reindex
+
+        requests: list[tuple[str, dict[str, object], float]] = []
+
+        class _CaptureTarget(ServiceTarget):
+            def post(
+                self,
+                path: str,
+                payload: dict[str, object],
+                timeout: float,
+            ) -> tuple[int, dict[str, object]]:
+                requests.append((path, payload, timeout))
+                return 202, {"job_id": "benchmark-job"}
+
+        job_id = _start_reindex(_CaptureTarget(port=0, token=""), "project", 4.0)
+
+        assert job_id == "benchmark-job"
+        assert requests == [
+            (
+                "/reindex",
+                {
+                    "type": "code",
+                    "clean": False,
+                    "authority": "publication",
+                    "project_root": "project",
+                    "initiator_kind": "benchmark",
+                },
+                4.0,
+            )
+        ]
+
+    def test_full_audit_requires_explicit_type(self, tmp_path: Path) -> None:
+        (tmp_path / ".vaultspec").mkdir()
+
+        result = runner.invoke(
+            app,
+            ["--target", str(tmp_path), "index", "--full"],
+        )
+
+        assert result.exit_code == 2
+        assert "--full" in result.output
+        assert "explicit --type" in result.output
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("codebase", "code"),
+            ("docs", "vault"),
+            ("all", "combined"),
+        ],
+    )
+    def test_full_audit_takes_the_same_spellings_the_verb_does(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        spelling: str,
+        expected: str,
+    ) -> None:
+        """One vocabulary for --type, whatever the verb goes on to do.
+
+        `index --type docs` and `index --full --type docs` used to disagree,
+        and the refusal took `all` with it - the flag's own default spelling,
+        and so the only way to name every source at once. An operator had no
+        way to read that split off the help.
+
+        The resolved source is captured at the transport rather than inferred
+        from an exit code, because accepting the alias and then auditing the
+        wrong corpus would satisfy a status-only assertion.
+        """
+        from .._source_types import PublicSourceType
+        from ..cli import _index as index_module
+
+        (tmp_path / ".vaultspec").mkdir()
+        seen: list[str] = []
+
+        def capture(
+            audit_type: object, *_args: object, **_kwargs: object
+        ) -> dict[str, object]:
+            seen.append(PublicSourceType(audit_type).value)
+            return {"ok": True, "status": "consistent", "domains": {}}
+
+        monkeypatch.setattr(index_module, "_try_http_index_audit", capture)
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                spelling,
+                "--full",
+                "--port",
+                "9123",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert seen == [expected]
+
+    @pytest.mark.parametrize("conflict", ["--rebuild", "--dry-run", "--borrow-gpu"])
+    def test_full_audit_rejects_publication_modes(
+        self,
+        tmp_path: Path,
+        conflict: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def forbidden_transport(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("an invalid audit request reached transport")
+
+        monkeypatch.setattr(index_module, "_try_http_index_audit", forbidden_transport)
+        monkeypatch.setattr(index_module, "_try_http_reindex", forbidden_transport)
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                conflict,
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "cannot be combined" in result.output
+
+    def test_full_audit_uses_separate_service_transport_and_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+        from ..indexer._run_ledger_models import RunAuthority
+
+        (tmp_path / ".vaultspec").mkdir()
+        calls: list[tuple[object, int, str, RunAuthority]] = []
+
+        def audit_call(
+            source: object,
+            port: int,
+            project_root: str,
+            *,
+            authority: RunAuthority,
+        ) -> dict[str, object]:
+            calls.append((source, port, project_root, authority))
+            return {
+                "ok": True,
+                "status": "consistent",
+                "domains": {
+                    "code": {
+                        "ok": True,
+                        "status": "consistent",
+                        "source": "code",
+                        "expected_points": 3,
+                        "scanned_points": 3,
+                    }
+                },
+            }
+
+        monkeypatch.setattr(index_module, "_try_http_index_audit", audit_call)
+
+        def forbidden_reindex(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("audit must not use publication reindex transport")
+
+        monkeypatch.setattr(
+            index_module,
+            "_try_http_reindex",
+            forbidden_reindex,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                "--port",
+                "9123",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert calls == [
+            (
+                index_module.PublicSourceType.CODE,
+                9123,
+                str(tmp_path),
+                RunAuthority.AUDIT_VERIFICATION,
+            )
+        ]
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is True
+        assert envelope["data"]["mode"] == "audit_verification"
+        assert envelope["data"]["via"] == "service"
+
+    def test_full_audit_mismatch_exits_nonzero_with_one_json_envelope(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ..cli import _index as index_module
+
+        (tmp_path / ".vaultspec").mkdir()
+
+        def drift_audit(
+            _source: object,
+            _port: int,
+            _project_root: str,
+            *,
+            authority: object,
+        ) -> dict[str, object]:
+            del authority
+            return {
+                "ok": False,
+                "status": "drift",
+                "domains": {
+                    "code": {
+                        "ok": False,
+                        "status": "drift",
+                        "source": "code",
+                        "missing_points": 1,
+                    }
+                },
+            }
+
+        monkeypatch.setattr(
+            index_module,
+            "_try_http_index_audit",
+            drift_audit,
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "--target",
+                str(tmp_path),
+                "index",
+                "--type",
+                "code",
+                "--full",
+                "--port",
+                "9123",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["error"] == "audit_verification_failed"
+        assert envelope["data"]["domains"]["code"]["missing_points"] == 1
+
+    def test_full_audit_transport_sends_only_verification_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+        from ..serviceclient import _transport as transport
+
+        calls: list[tuple[int, str, dict[str, object]]] = []
+
+        def http_call(
+            port: int,
+            path: str,
+            payload: dict[str, object],
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            assert timeout > 0
+            calls.append((port, path, payload))
+            return {"ok": True}
+
+        monkeypatch.setattr(transport, "_do_http_call", http_call)
+
+        result = transport._try_http_index_audit(
+            PublicSourceType.CODE,
+            9123,
+            str(tmp_path),
+            authority=RunAuthority.AUDIT_VERIFICATION,
+        )
+
+        assert result == {"ok": True}
+        assert calls == [
+            (
+                9123,
+                "/index/audit",
+                {
+                    "type": "code",
+                    "authority": "audit_verification",
+                    "project_root": str(tmp_path),
+                },
+            )
+        ]
+
+    def test_full_audit_transport_rejects_publication_before_http(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from .._source_types import PublicSourceType
+        from ..indexer._run_ledger_models import RunAuthority
+        from ..serviceclient import _transport as transport
+
+        def forbidden_http(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise AssertionError("publication authority must not reach audit HTTP")
+
+        monkeypatch.setattr(transport, "_do_http_call", forbidden_http)
+
+        with pytest.raises(ValueError, match="audit-verification"):
+            transport._try_http_index_audit(
+                PublicSourceType.CODE,
+                9123,
+                str(tmp_path),
+                authority=RunAuthority.PUBLICATION,
+            )
+
+
 class TestIndexSummaryCLI:
     """Human index summaries are covered through the CLI command surface."""
 
@@ -510,7 +781,7 @@ class TestIndexSummaryCLI:
                     str(tmp_path),
                     "index",
                     "--type",
-                    "all",
+                    "combined",
                     "--port",
                     str(server.server_port),
                 ],
@@ -525,6 +796,7 @@ class TestIndexSummaryCLI:
         assert {req["project_root"] for req in requests} == {str(tmp_path)}
         assert {req["initiator_kind"] for req in requests} == {"cli"}
         assert {req["clean"] for req in requests} == {False}
+        assert {req["authority"] for req in requests} == {"publication"}
 
         lines = [line.strip() for line in result.output.splitlines() if line.strip()]
         assert lines == [
@@ -532,6 +804,65 @@ class TestIndexSummaryCLI:
             "Source code re-index job queued on service: code-job",
             "Documents re-index job queued on service: document-job",
             "Check progress with: vaultspec-rag server jobs",
+        ]
+
+    def test_index_rebuild_delegates_with_explicit_rebuild_authority(
+        self, tmp_path: Path
+    ) -> None:
+        """The CLI must not rely on the reindex route to infer full-work consent."""
+        import http.server
+        import threading
+
+        (tmp_path / ".vaultspec").mkdir()
+        requests: list[dict[str, object]] = []
+
+        class _RebuildServiceHandler(QuietHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                requests.append(_parsed_json_object(self.rfile.read(length)))
+                response = {
+                    "ok": True,
+                    "job_id": "code-rebuild-job",
+                    "status": "queued",
+                }
+                encoded = json.dumps(response).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _RebuildServiceHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "--target",
+                    str(tmp_path),
+                    "index",
+                    "--type",
+                    "code",
+                    "--rebuild",
+                    "--port",
+                    str(server.server_port),
+                ],
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert result.exit_code == 0, result.output
+        assert requests == [
+            {
+                "type": "code",
+                "clean": True,
+                "authority": "rebuild",
+                "project_root": str(tmp_path),
+                "initiator_kind": "cli",
+            }
         ]
 
     def test_index_all_handles_sparse_service_summary_without_unknown_text(
@@ -593,7 +924,7 @@ class TestIndexSummaryCLI:
                     str(tmp_path),
                     "index",
                     "--type",
-                    "all",
+                    "combined",
                     "--port",
                     str(server.server_port),
                 ],
@@ -875,6 +1206,7 @@ try:
             "body": {
                 "type": "vault",
                 "clean": False,
+                "authority": "publication",
                 "project_root": str(target),
                 "initiator_kind": "cli",
             },
@@ -951,6 +1283,7 @@ finally:
         assert reindex == {
             "type": "vault",
             "clean": False,
+            "authority": "publication",
             "project_root": str(tmp_path / "project"),
             "initiator_kind": "cli",
         }

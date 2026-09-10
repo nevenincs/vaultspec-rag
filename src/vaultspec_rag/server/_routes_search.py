@@ -78,6 +78,7 @@ from ._search_activity import (
 from ._search_route_availability import (
     SearchAvailabilityRequestFacts,
     SearchIndexStateInput,
+    acquire_search_integrity_snapshot,
 )
 from ._search_route_availability import (
     classify_search_result as _classify_search_result,
@@ -320,7 +321,7 @@ def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
 
 def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
     try:
-        return parse_source_type(value, allow_aliases=False)
+        return parse_source_type(value)
     except SourceTypeParseError as exc:
         return JSONResponse(exc.as_error_envelope(), status_code=400)
 
@@ -622,6 +623,7 @@ def _execute_search_request(
     ticket = registry.acquire_compute_ticket()
     compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
     try:
+        integrity_snapshot = acquire_search_integrity_snapshot(request)
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
         results, phase_timing, combined = _dispatch_public_search(
@@ -639,15 +641,15 @@ def _execute_search_request(
             if request.search_type is PublicSourceType.COMBINED
             else int(phase_timing["indexed_count"])
         )
-        integrity, integrity_repair_job_id = _search_integrity(request, phase_timing)
+        integrity, integrity_repair_job_id = _search_integrity(
+            request, phase_timing, integrity_snapshot
+        )
         index_state = _search_index_state(
             SearchIndexStateInput(
                 indexed_count=indexed_count,
                 requested_root=request.root,
                 search_type=request.search_type,
                 published_points=phase_timing.get("published_points"),
-                named_files=phase_timing.get("named_files"),
-                covered_files=phase_timing.get("covered_files"),
                 integrity=integrity,
                 integrity_repair_job_id=integrity_repair_job_id,
                 result_paths=tuple(result.path for result in results),
@@ -675,6 +677,11 @@ def _execute_search_request(
                 "search_seconds": search_seconds,
                 "embedding_seconds": phase_timing.get(PHASE_EMBEDDING),
                 "qdrant_seconds": phase_timing.get(PHASE_QDRANT),
+                **(
+                    {"storage_backend_seconds": phase_timing[PHASE_QDRANT]}
+                    if PHASE_QDRANT in phase_timing
+                    else {}
+                ),
                 "rerank_seconds": phase_timing.get(PHASE_RERANK),
                 "postprocess_seconds": phase_timing.get(PHASE_POSTPROCESS),
                 # Promoted alongside the phases above, not nested only. A
@@ -1153,11 +1160,6 @@ def _record_worker_timing(result: dict[str, object], started_at: float) -> None:
         timing_block["worker_service_seconds"] = max(
             0.0, time.perf_counter() - started_at - float(compute_wait)
         )
-    storage_seconds = timing_block.get("qdrant_seconds")
-    if isinstance(storage_seconds, (int, float)) and not isinstance(
-        storage_seconds, bool
-    ):
-        timing_block["storage_backend_seconds"] = float(storage_seconds)
 
 
 async def _execute_search_route(

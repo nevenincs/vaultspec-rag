@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_control import RunControlToken
 from ..job_manager import state as job_manager_state
 from ..job_manager._control import AttemptTerminal
@@ -46,6 +47,7 @@ def _admitted_job(controller: ServiceQuiesceController) -> tuple[JobManager, str
             JobSource.CODE,
             _TEST_PROJECT_ROOT,
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "runtime-owner-tickets", _TEST_PROJECT_ROOT),
     )

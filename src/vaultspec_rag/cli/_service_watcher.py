@@ -250,10 +250,22 @@ _UPDATES_TIMING_COMMAND = "service.updates.timing"
 def service_watcher_status(  # noqa: PLR0913 - each value is a public CLI option
     port: PortOption = None,
     json_mode: JsonMode = False,
-    root: Annotated[str | None, typer.Option("--root")] = None,
-    source: Annotated[str | None, typer.Option("--source")] = None,
-    state: Annotated[str | None, typer.Option("--state")] = None,
-    limit: Annotated[int, typer.Option("--limit", min=0, max=256)] = 256,
+    root: Annotated[
+        str | None,
+        typer.Option("--root", help="Only report controllers for this project root."),
+    ] = None,
+    source: Annotated[
+        str | None,
+        typer.Option("--source", help="Only report this index source."),
+    ] = None,
+    state: Annotated[
+        str | None,
+        typer.Option("--state", help="Only report controllers in this state."),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", min=0, max=256, help="Most controllers to report."),
+    ] = 256,
 ) -> None:
     """Show automatic index update settings and projects."""
     resolved_port = port if port is not None else _default_service_port()

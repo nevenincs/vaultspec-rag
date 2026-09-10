@@ -15,9 +15,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
-from ..job_control import NO_RUN_CONTROL, RunControlSignal
+from ..job_control import NO_RUN_CONTROL
 from ._consumer_pipeline import UnsettledCodeConsumerError
-from ._run_ledger_models import CommitUnitKind
+from ._run_ledger_models import CommitUnitKind, RunOperation
 
 if TYPE_CHECKING:
     import pathlib
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
     from ._consumer_pipeline import CodePipelineRun
     from ._generation_lifecycle import CodeGenerationLifecycle
-    from ._resolved_policy import ResolvedIndexPolicy
     from ._run_checkpoint import CodeRunCheckpoint
 
 logger = logging.getLogger(__name__)
@@ -63,16 +62,14 @@ class IncrementalPublicationRequest:
 class IncrementalReplacementRequest:
     """Inputs for the delete-and-metadata edge of an incremental publication."""
 
-    policy: ResolvedIndexPolicy
     existing_ids: set[str]
     published_ids: set[str]
-    metadata: dict[str, str]
     files_count: int
     protect_replacement: bool
     reporter: ProgressReporter
+    checkpoint: CodeRunCheckpoint
     prior_ids_by_path: dict[str, set[str]] | None = None
     deleted_paths: set[str] | None = None
-    checkpoint: CodeRunCheckpoint | None = None
     run_control: RunControl = NO_RUN_CONTROL
 
 
@@ -96,25 +93,21 @@ class CodeIncrementalCommit:
         chunk_and_embed: Callable[
             [list[pathlib.Path], CodePipelineRun], tuple[set[str], int, dict[str, str]]
         ],
-        write_meta: Callable[..., None],
     ) -> None:
-        """Bind the commit sequence to the storage and metadata it publishes.
+        """Bind the commit sequence to storage and canonical proof publication.
 
         Args:
             store: Vector store the confirmed delta is deleted from and
                 counted against.
             lifecycle: The root's generation lifecycle, which owns drift,
-                checkpointed point-id evidence, and the one publication a
-                checkpointed run stamps its sidecar through.
+                checkpointed point-id evidence, and canonical proof publication.
             chunk_and_embed: Streams changed paths through the chunk+embed
                 pipeline, returning the published ids, a count, and the
                 published content hashes.
-            write_meta: Publishes the un-checkpointed sidecar metadata.
         """
         self._store = store
         self._lifecycle = lifecycle
         self._chunk_and_embed = chunk_and_embed
-        self._write_meta = write_meta
 
     def supersede_and_publish(
         self,
@@ -257,7 +250,12 @@ class CodeIncrementalCommit:
             )
             if not obsolete_ids:
                 continue
-            self._store.delete_code_chunks(list(obsolete_ids))
+            from ._streaming import execute_store_mutation
+
+            execute_store_mutation(
+                lambda ids=obsolete_ids: self._store.delete_code_chunks(list(ids)),
+                checkpoint.deletion_lifecycle(rel, deletion_kind, obsolete_ids),
+            )
             if deletion_kind is CommitUnitKind.DELETE_PATH:
                 checkpoint.record_confirmed_deletion(rel, obsolete_ids)
             else:
@@ -268,67 +266,35 @@ class CodeIncrementalCommit:
         request: IncrementalReplacementRequest,
     ) -> None:
         """Delete obsolete IDs and publish metadata at one safe control edge."""
-        commit_started = False
-        try:
-            request.run_control.checkpoint()
-            publication_span = (
-                (
-                    request.checkpoint.run_policy.protected(
-                        "incremental code replacement"
-                    )
-                    if request.checkpoint is not None
-                    else request.run_control.protected()
+        request.run_control.checkpoint()
+        publication_span = (
+            request.checkpoint.run_policy.protected("incremental code replacement")
+            if request.protect_replacement
+            else contextlib.nullcontext()
+        )
+        with publication_span:
+            request.reporter.phase_start("delete removed", request.files_count)
+            try:
+                self._delete_obsolete(
+                    existing_ids=request.existing_ids,
+                    published_ids=request.published_ids,
+                    prior_ids_by_path=request.prior_ids_by_path,
+                    deleted_paths=request.deleted_paths,
+                    checkpoint=request.checkpoint,
                 )
-                if request.protect_replacement
-                else contextlib.nullcontext()
+                request.reporter.advance(request.files_count)
+            finally:
+                request.reporter.phase_end()
+            self._lifecycle.publish(
+                request.checkpoint,
+                build_target=None,
+                reporter=request.reporter,
+                phase_label="write metadata",
+                affected_paths=(
+                    set(request.prior_ids_by_path or {})
+                    if request.checkpoint.generation.signature.operation
+                    is RunOperation.SCOPED_INCREMENTAL
+                    else None
+                ),
             )
-            with publication_span:
-                commit_started = True
-                request.reporter.phase_start("delete removed", request.files_count)
-                try:
-                    self._delete_obsolete(
-                        existing_ids=request.existing_ids,
-                        published_ids=request.published_ids,
-                        prior_ids_by_path=request.prior_ids_by_path,
-                        deleted_paths=request.deleted_paths,
-                        checkpoint=request.checkpoint,
-                    )
-                    request.reporter.advance(request.files_count)
-                finally:
-                    request.reporter.phase_end()
-                if request.checkpoint is None:
-                    request.reporter.phase_start("write metadata", 1)
-                    try:
-                        self._write_meta(
-                            request.metadata,
-                            policy=request.policy,
-                            published_points=self._store.count_code(),
-                            published_files=self._store.count_code_files(),
-                        )
-                        request.reporter.advance(1)
-                    finally:
-                        request.reporter.phase_end()
-                else:
-                    # An incremental writes into the served collection, so it
-                    # has no build target and moves no pointer - but it goes
-                    # through the one publication that owns the reconcile,
-                    # both counted figures, and the generation certification.
-                    self._lifecycle.publish(
-                        request.checkpoint,
-                        build_target=None,
-                        reporter=request.reporter,
-                        phase_label="write metadata",
-                    )
-        except RunControlSignal:
-            if not commit_started and request.checkpoint is None:
-                introduced_ids = sorted(request.published_ids - request.existing_ids)
-                try:
-                    if introduced_ids:
-                        self._store.delete_code_chunks(introduced_ids)
-                except Exception:
-                    logger.error(
-                        "Failed to roll back code publication before commit",
-                        exc_info=True,
-                    )
-            raise
         request.run_control.checkpoint()

@@ -189,7 +189,7 @@ class TestRAGAPI:
         # 4. Call clean()
         cleared = vaultspec_rag.clean(
             tmp_path,
-            clean_type="all",
+            clean_type="combined",
             registry=get_registry(),
         )
         assert "vault" in cleared

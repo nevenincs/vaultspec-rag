@@ -552,8 +552,9 @@ def _start_reindex(target: ServiceTarget, root: str, timeout: float) -> str | No
         _status, body = target.post(
             "/reindex",
             {
-                "type": "codebase",
+                "type": "code",
                 "clean": False,
+                "authority": "publication",
                 "project_root": root,
                 "initiator_kind": "benchmark",
             },
