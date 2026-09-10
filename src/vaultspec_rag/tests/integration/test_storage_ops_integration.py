@@ -797,8 +797,10 @@ def test_archive_manifest_carries_identity_from_the_real_manifest(
 
     from qdrant_client import QdrantClient
 
+    from ...storage_archive import (
+        archive_prefix,
+    )
     from ...storage_manifest import record_collection_identity, snapshot_manifest_path
-    from ...storage_reclamation import archive_prefix
     from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 
     client = QdrantClient(url=ops_qdrant.url, timeout=600)
@@ -861,7 +863,9 @@ def test_archive_rejects_a_real_write_after_its_first_snapshot(
     """
     from qdrant_client import QdrantClient, models
 
-    from ...storage_reclamation import archive_prefix
+    from ...storage_archive import (
+        archive_prefix,
+    )
 
     client = QdrantClient(url=ops_qdrant.url, timeout=30)
     writer = QdrantClient(url=ops_qdrant.url, timeout=30)
@@ -937,8 +941,11 @@ def test_completed_archive_rejects_a_missing_real_snapshot(
     """
     from qdrant_client import QdrantClient
 
+    from ...storage_archive import (
+        _verify_completed_archive,
+        archive_prefix,
+    )
     from ...storage_manifest import snapshot_manifest_path
-    from ...storage_reclamation import _verify_completed_archive, archive_prefix
 
     client = QdrantClient(url=ops_qdrant.url, timeout=30)
     try:

@@ -12,15 +12,31 @@ from pathlib import Path
 import pytest
 
 from .._job_errors import JobErrorKind, classify_error_text
+from .._source_types import PublicSourceType
 from ..indexer._content_policy import ContentKind
+from ..indexer._publication_proof import (
+    PathDelta,
+    PathOutcome,
+    ProofCompatibilityKey,
+    ProofEvidence,
+    ProofReadConflictError,
+    ProofReceiptState,
+)
 from ..indexer._run_ledger_models import (
     INDEX_RUN_LEDGER_FILENAME,
     LEDGER_CONTENTION_ATTEMPTS,
+    CommitUnit,
+    FinalizationPhase,
+    PublicationProof,
+    PublicationReceipt,
     RunLedgerContentionError,
     with_contention_retry,
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from .test_index_run_ledger import (
+    _digest,
+    _seal_publication_receipt,
+    _seeded_publication_lineage,
     _signature,
     _unit,
 )
@@ -73,6 +89,204 @@ def _blocking_reader(
     thread = threading.Thread(target=hold, name="ledger-blocking-reader")
     thread.start()
     return thread
+
+
+def _commit_replacement(
+    writer: RunLedger,
+    key: ProofCompatibilityKey,
+    successor_id: str,
+    old: ProofEvidence,
+    mutation: CommitUnit,
+) -> PublicationProof:
+    source_digest = mutation.source_digest
+    assert source_digest is not None
+    parent = writer.publication_proof(key)
+    receipt = writer.reserve_publication_receipt(
+        key,
+        successor_id,
+        expected_parent_revision=parent.revision,
+    )
+    new = ProofEvidence(
+        rel_path=old.rel_path,
+        content_identity=source_digest,
+        point_ids=mutation.point_ids,
+    )
+    _seal_publication_receipt(
+        writer,
+        receipt,
+        mutation=mutation,
+        delta=PathDelta(
+            outcome=PathOutcome.MODIFY,
+            expected_parent_revision=receipt.parent_revision,
+            rel_path=old.rel_path,
+            old=old,
+            new=new,
+        ),
+    )
+    writer.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
+    return writer.commit_publication_receipt(receipt.receipt_id)
+
+
+def test_independent_connection_observes_an_active_publication_receipt(
+    tmp_path: Path,
+) -> None:
+    """Mutation: hiding open receipts from proof snapshots makes this guard red."""
+    rel_path = "src/a.py"
+    evidence = ProofEvidence(
+        rel_path=rel_path,
+        content_identity=_digest("a-v1"),
+        point_ids=_unit(rel_path, 0, 1).point_ids,
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (evidence,),
+    )
+    reader = RunLedger(ledger.path)
+    writer = RunLedger(ledger.path)
+    token = reader.acquire_publication_read_token(key)
+    ready = threading.Event()
+    release = threading.Event()
+    receipts: list[PublicationReceipt] = []
+    errors: list[BaseException] = []
+
+    def reserve_and_hold() -> None:
+        try:
+            receipts.append(
+                writer.reserve_publication_receipt(
+                    key,
+                    successor_id,
+                    expected_parent_revision=token.revision,
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            ready.set()
+        if receipts and not release.wait(timeout=30.0):
+            errors.append(AssertionError("reader did not release receipt holder"))
+
+    holder = threading.Thread(
+        target=reserve_and_hold,
+        name="publication-receipt-holder",
+    )
+    holder.start()
+    try:
+        assert ready.wait(timeout=30.0), "writer never reserved its receipt"
+        assert errors == []
+        assert len(receipts) == 1
+        receipt = receipts[0]
+
+        with sqlite3.connect(ledger.path) as independent:
+            stored = independent.execute(
+                """
+                SELECT receipt_id, state FROM publication_receipts
+                WHERE receipt_id = ?
+                """,
+                (receipt.receipt_id,),
+            ).fetchone()
+        assert stored == (receipt.receipt_id, ProofReceiptState.RESERVED.value)
+        assert reader.active_publication_receipt(key) == receipt
+        with pytest.raises(
+            ProofReadConflictError,
+            match="an open receipt prevents proof certification",
+        ):
+            reader.acquire_publication_read_token(key)
+        with pytest.raises(
+            ProofReadConflictError,
+            match="proof state changed during the backend read",
+        ):
+            reader.validate_publication_read_token(token)
+    finally:
+        release.set()
+        holder.join(timeout=30.0)
+
+    assert not holder.is_alive()
+    assert errors == []
+
+
+def test_read_token_rejects_a_revision_committed_by_an_independent_writer(
+    tmp_path: Path,
+) -> None:
+    """Mutation: accepting a changed revision after the backend read makes this red."""
+    rel_path = "src/a.py"
+    mutation = _unit(rel_path, 0, 1, digest=_digest("a-v2"))
+    old = ProofEvidence(
+        rel_path=rel_path,
+        content_identity=_digest("a-v1"),
+        point_ids=mutation.point_ids,
+    )
+    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+        tmp_path,
+        (old,),
+    )
+    reader = RunLedger(ledger.path)
+    writer = RunLedger(ledger.path)
+    ready = threading.Event()
+    release = threading.Event()
+    done = threading.Event()
+    committed: list[PublicationProof] = []
+    errors: list[BaseException] = []
+
+    def publish_revision() -> None:
+        ready.set()
+        if not release.wait(timeout=30.0):
+            errors.append(AssertionError("reader did not release proof writer"))
+            done.set()
+            return
+        try:
+            committed.append(
+                _commit_replacement(
+                    writer,
+                    key,
+                    successor_id,
+                    old,
+                    mutation,
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            done.set()
+
+    publisher = threading.Thread(
+        target=publish_revision,
+        name="publication-proof-writer",
+    )
+    publisher.start()
+    try:
+        assert ready.wait(timeout=30.0), "writer never reached the race barrier"
+        token = reader.acquire_publication_read_token(key)
+        release.set()
+        assert done.wait(timeout=30.0), "writer never committed its revision"
+    finally:
+        release.set()
+        publisher.join(timeout=30.0)
+
+    assert not publisher.is_alive()
+    assert errors == []
+    replacement = committed[0]
+    assert replacement.revision == token.revision + 1
+    assert replacement.reservation_sequence == token.reservation_sequence + 1
+    assert reader.active_publication_receipt(key) is None
+    with pytest.raises(
+        ProofReadConflictError,
+        match="proof state changed during the backend read",
+    ):
+        reader.validate_publication_read_token(token)
+    revision_stale = replace(
+        token,
+        reservation_sequence=replacement.reservation_sequence,
+    )
+    with pytest.raises(
+        ProofReadConflictError,
+        match="proof state changed during the backend read",
+    ):
+        reader.validate_publication_read_token(revision_stale)
+
+    current = reader.acquire_publication_read_token(key)
+    assert current.revision == replacement.revision
+    assert current.reservation_sequence == replacement.reservation_sequence
+    reader.validate_publication_read_token(current)
 
 
 def test_a_long_reader_cannot_fail_a_concurrent_ledger_commit(tmp_path: Path) -> None:
@@ -181,7 +395,7 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
         document = ledger.start_generation(
             replace(
                 _signature(tmp_path),
-                source_type=ContentKind.DOCUMENT,
+                source_type=PublicSourceType.DOCUMENT,
                 collection_identity="document-v1",
             )
         )

@@ -384,12 +384,10 @@ consistently to every service process and rebuild existing indexes so stored vec
 schemas match. Dense embedding and reranking still run locally, so disabling sparse
 does not remove the `[gpu]` or accelerator requirement.
 
-The current `install` model-prefetch step and `server doctor` cache check still inspect
-all three configured model repositories, including SPLADE when sparse is disabled. To
-avoid requesting the gated model, run setup with `--skip-models`, then start the service
-with sparse disabled; startup downloads the enabled dense and reranker models. Until
-the cache check follows the toggle, `server doctor` can report the intentionally absent
-sparse repository as missing. See
+The `install` model-prefetch step, `server warmup`, and the `server doctor` cache check
+all honour the toggle: with `VAULTSPEC_RAG_SPARSE_ENABLED=0` they never provision, warm,
+or probe the gated SPLADE repository, so a dense-only install never needs Hugging Face
+access or authentication for it. See
 [model selection and toggles](configuration.md#model-selection) for the canonical
 settings reference.
 

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import RunControlToken
 from ...job_manager.manager import JobManager
 from ...job_manager.models import ProgressUpdate
@@ -51,7 +52,13 @@ async def test_progress_publish_amortized_cost(tmp_path: Path) -> None:
         state_path=state_path,
     )
     created = manager.create(
-        JobSpec(JobOperation.INDEX, JobSource.CODE, str(tmp_path), JobMode.INCREMENTAL),
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.CODE,
+            str(tmp_path),
+            JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
+        ),
         JobInitiator("service", "reindex_codebase", str(tmp_path)),
     )
     assert created.job is not None

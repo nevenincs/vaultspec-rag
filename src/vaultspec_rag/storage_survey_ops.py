@@ -342,21 +342,23 @@ def forget_root_index_claims(root: str) -> tuple[str, ...]:
     Returns:
         The claim paths actually removed, for the caller to report.
     """
-    from ._index_breadth import index_meta_path
-    from ._source_types import PublicSourceType
+    from ._publication_state import clear_publication_state
+    from ._source_types import INDEX_SOURCES, PublicSourceType
     from ._store_models import served_code_pointer_path
-    from .indexer._document_meta import document_metadata_path
+    from .store_runtime import configured_backend_identity
 
     root_path = Path(root)
     if not root_path.is_dir():
         return ()
+    backend_identity = configured_backend_identity(root_path)
+    for source in INDEX_SOURCES:
+        clear_publication_state(
+            root_path,
+            PublicSourceType(source),
+            backend_identity,
+        )
     cleared: list[str] = []
-    claims = (
-        served_code_pointer_path(root_path),
-        index_meta_path(root_path, PublicSourceType.VAULT),
-        index_meta_path(root_path, PublicSourceType.CODE),
-        document_metadata_path(root_path),
-    )
+    claims = (served_code_pointer_path(root_path),)
     for claim in claims:
         try:
             if claim.is_file():

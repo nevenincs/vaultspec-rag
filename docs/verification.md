@@ -3,6 +3,11 @@
 Search reads the stored index. Start with an [installed and provisioned
 workspace](installation.md).
 
+Examples use the installed-tool form and call `vaultspec-rag` directly. If
+vaultspec-rag is a project dependency, prefix each command with `uv run`; see
+the [installation guide](installation.md) for lane selection, including the
+standalone tool and no-install routes.
+
 ## Is the service healthy?
 
 ```bash

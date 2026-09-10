@@ -20,14 +20,10 @@ from ..._store_models import (
 from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...indexer._document_identity import document_point_id
-from ...indexer._document_meta import (
-    DocumentFileMetadata,
-    DocumentIndexMetadata,
-    document_metadata_path,
-    write_document_meta,
-)
 from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadRequest
-from ...storage_reclamation import archive_prefix
+from ...storage_archive import (
+    archive_prefix,
+)
 from ...storage_survey_ops import gather_survey
 from ...store_runtime import VaultStore
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
@@ -294,29 +290,15 @@ def test_document_count_appears_in_real_storage_survey(
         store.close()
 
 
-def test_document_collection_and_metadata_appear_in_real_snapshot_manifest(
+def test_document_collection_appears_in_real_snapshot_manifest(
     document_server_mode: QdrantSupervisor,
     tmp_path: Path,
 ) -> None:
-    """Archive real document points with their independent metadata evidence."""
+    """Archive real document points without a displaced metadata sidecar."""
     store = VaultStore(tmp_path, embedding_dim=4)
     chunk = _chunk()
     try:
         store.upsert_document_content_chunks([chunk], write_policy=None)
-        metadata = DocumentIndexMetadata(
-            membership_fingerprint="membership-v1",
-            content_fingerprint="content-v1",
-            policy_snapshot="policy-v1",
-            generation_id="generation-v1",
-            files=(
-                DocumentFileMetadata(
-                    source_path=chunk.payload.source_path,
-                    content_fingerprint=chunk.payload.content_fingerprint,
-                    point_ids=(chunk.id,),
-                ),
-            ),
-        )
-        write_document_meta(document_metadata_path(tmp_path), metadata)
         archive_dir = tmp_path / "archive"
         artifacts = archive_prefix(
             store.client,
@@ -331,7 +313,6 @@ def test_document_collection_and_metadata_appear_in_real_snapshot_manifest(
         collections = {item["name"]: item for item in manifest["collections"]}
         assert store.DOCUMENT_TABLE_NAME in collections
         assert collections[store.DOCUMENT_TABLE_NAME]["points"] == 1
-        assert manifest["metadata_files"] == ["document_index_meta.json"]
-        assert (manifest_path.parent / "document_index_meta.json").is_file()
+        assert "metadata_files" not in manifest
     finally:
         store.close()

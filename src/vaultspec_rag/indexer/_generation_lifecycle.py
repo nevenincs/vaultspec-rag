@@ -19,7 +19,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._index_breadth import PUBLISHED_POINTS_KEY, parse_reserved_count
 from .._store_models import generation_code_collection, publish_generation_as_served
 from ._content_policy import ContentKind
 from ._drift_owner import CodeDriftOwner
@@ -27,9 +26,11 @@ from ._route_migration import (
     RouteScanOptions,
     purge_unpublished_rows,
     reconcile_generation_storage,
+    reconcile_scoped_routes,
 )
 from ._run_checkpoint import CodeRunCheckpoint, CodeRunOpenRequest
 from ._run_ledger_models import (
+    FETCH_BATCH,
     CommitUnitKind,
     FinalizationPhase,
     RunTerminalState,
@@ -38,14 +39,14 @@ from ._run_policy import RunPolicy
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable
 
     from ..job_control import RunControl
     from ..progress import ProgressReporter
     from ..store_runtime import VaultStore
     from ._resolved_policy import ResolvedIndexPolicy
     from ._run_checkpoint import CodeRunConfiguration
-    from ._run_ledger_models import RunOperation
+    from ._run_ledger_models import RunAuthority, RunOperation
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +55,7 @@ logger = logging.getLogger(__name__)
 class CodeGenerationBindings:
     root_dir: pathlib.Path
     data_root: pathlib.Path
-    meta_path: pathlib.Path
     store: VaultStore
-    load_meta: Callable[[], Mapping[str, str]]
-    read_meta_raw: Callable[[], Mapping[str, str]]
     publish_readiness: Callable[[pathlib.Path, str], object] | None = None
 
 
@@ -77,6 +75,7 @@ class CodeGenerationOpenRequest:
     dense_dimensions: int
     sparse_enabled: bool
     run_control: RunControl
+    authority: RunAuthority
 
 
 class CodeGenerationLifecycle:
@@ -87,10 +86,7 @@ class CodeGenerationLifecycle:
         "_data_root",
         "_drift_owner",
         "_last_checkpoint",
-        "_load_meta",
-        "_meta_path",
         "_publish_readiness",
-        "_read_meta_raw",
         "_root_dir",
         "_store",
     )
@@ -99,22 +95,16 @@ class CodeGenerationLifecycle:
         self,
         bindings: CodeGenerationBindings,
     ) -> None:
-        """Bind the lifecycle to one root's ledger, storage, and metadata.
+        """Bind the lifecycle to one root's ledger and storage.
 
         Args:
             root_dir: Project root the generation indexes.
             data_root: Directory holding this root's durable run ledger.
-            meta_path: Carried code-index metadata sidecar.
             store: Vector store the generation's evidence must describe.
-            load_meta: Reader for the parsed sidecar, called at each use.
-            read_meta_raw: Reader for the unparsed sidecar, called at each use.
         """
         self._root_dir = bindings.root_dir
         self._data_root = bindings.data_root
-        self._meta_path = bindings.meta_path
         self._store = bindings.store
-        self._load_meta = bindings.load_meta
-        self._read_meta_raw = bindings.read_meta_raw
         self._publish_readiness = bindings.publish_readiness
         self._last_checkpoint: CodeRunCheckpoint | None = None
         self._active_build_target: str | None = None
@@ -177,7 +167,7 @@ class CodeGenerationLifecycle:
         )
 
         def _open(spec: CodeGenerationOpenRequest) -> CodeRunCheckpoint:
-            return CodeRunCheckpoint.open(
+            return CodeRunCheckpoint.open_generation(
                 CodeRunOpenRequest(
                     data_root=self._data_root,
                     root_dir=self._root_dir,
@@ -189,6 +179,7 @@ class CodeGenerationLifecycle:
                     dense_dimensions=spec.dense_dimensions,
                     configuration=spec.configuration,
                     backend_identity=self._store.backend_identity,
+                    authority=spec.authority,
                 )
             )
 
@@ -236,82 +227,29 @@ class CodeGenerationLifecycle:
             self.build_collection(checkpoint)
         )
 
-    def _live_code_points(self) -> int | None:
-        """Return the served code collection's point count, or ``None`` if unknown.
-
-        A count that could not be taken is ignorance, never loss: reporting it
-        as zero would drive a rebuild of every root whose storage was briefly
-        unreachable.
-        """
-        try:
-            return self._store.count_code()
-        except (OSError, RuntimeError):
-            logger.warning(
-                "Could not count the code collection to verify published "
-                "breadth; trusting the carried evidence for this run",
-                exc_info=True,
-            )
-            return None
-
     def published_evidence_lost(self) -> bool:
-        """Return whether the store fails to back the carried incremental evidence.
+        """Return whether canonical code proof is absent or storage is short."""
+        from .._publication_state import acquire_publication_snapshot
+        from .._source_types import PublicSourceType
+        from ._publication_proof import ProofMissingError
 
-        Carried metadata and the run ledger outlive the points they describe.
-        Destruction drops the collection or part of it and leaves the sidecar
-        behind; an incremental diff against that metadata then classifies every
-        surviving file as unchanged, skips all encoding, and publishes a
-        "successful" result over points that are no longer there. Such evidence
-        must escalate to full failure-safe reconciliation instead of being
-        trusted.
-
-        Destruction is rarely total. A clean rebuild drops the collection and
-        then repopulates it incrementally, so an interrupted one leaves a
-        fragment - present, non-empty, and describing itself as whole. Asking
-        only whether the collection exists therefore misses the common case,
-        which is why the point count published alongside the sidecar is compared
-        as well: it is the only record of how much breadth the metadata claims.
-
-        A shortfall is any deficit. Publication happens after storage
-        reconciliation at every call site, so a complete index reads back
-        exactly what it published, and a legitimate shrink travels the
-        incremental path and republishes. Escalation is failure-safe and
-        republishes the count, so even a spurious one self-corrects on the next
-        run rather than latching.
-
-        A sidecar with no published count, or a store that cannot be counted,
-        yields "cannot tell" and keeps the existence-only behaviour: neither is
-        evidence of loss, and escalating on ignorance would rebuild every root
-        written by an older build.
-        """
-        named = self._load_meta()
-        if not named:
-            return False
+        try:
+            snapshot = acquire_publication_snapshot(
+                self._root_dir,
+                PublicSourceType.CODE,
+            )
+        except ProofMissingError:
+            return True
         if not self._store.code_collection_exists():
             return True
-        live = self._live_code_points()
-        if live is None:
-            return False
-        if live == 0:
-            # An empty served collection cannot back a single named file, so
-            # this is loss whatever the published count says - including a
-            # published count of zero, which compares equal to an empty
-            # collection and would otherwise latch the outage forever:
-            # incrementals diff clean against the named files, republish zero,
-            # and no comparison of counts ever escalates again.
-            logger.warning(
-                "Code collection holds no points at all while the published "
-                "metadata names %d file(s); escalating to a full failure-safe "
-                "reconciliation instead of trusting the carried evidence",
-                len(named),
-            )
-            return True
-        claimed = parse_reserved_count(self._read_meta_raw(), PUBLISHED_POINTS_KEY)
-        if claimed is None or live >= claimed:
+        live = self._store.count_code()
+        snapshot.validate()
+        claimed = snapshot.proof.aggregate.retained_points
+        if live >= claimed:
             return False
         logger.warning(
-            "Code collection holds %d of the %d points its published metadata "
-            "describes; escalating to a full failure-safe reconciliation "
-            "instead of trusting the carried evidence",
+            "Code collection holds %d of the %d points its canonical proof "
+            "describes; an explicit rebuild is required",
             live,
             claimed,
         )
@@ -351,6 +289,7 @@ class CodeGenerationLifecycle:
         build_target: str | None,
         reporter: ProgressReporter,
         phase_label: str,
+        affected_paths: set[str] | None = None,
     ) -> None:
         """Publish one finished code generation, breadth first and pointer second.
 
@@ -374,21 +313,28 @@ class CodeGenerationLifecycle:
         """
         reporter.phase_start(phase_label, 1)
         try:
+            policy = checkpoint.policy
+            if policy is None:
+                raise RuntimeError("code checkpoint has no resolved policy")
 
             def _record_breadth() -> None:
-                checkpoint.publish_metadata(
-                    self._meta_path,
-                    published_points=self._store.count_code(build_target),
-                    published_files=self._store.count_code_files(build_target),
-                )
+                checkpoint.publish_proof_transition()
 
             if build_target is None:
-                reconcile_generation_storage(
-                    self._store,
-                    checkpoint,
-                    checkpoint.policy,
-                    ContentKind.CODE,
-                )
+                if affected_paths is None:
+                    reconcile_generation_storage(
+                        self._store,
+                        checkpoint,
+                        policy,
+                        ContentKind.CODE,
+                    )
+                else:
+                    reconcile_scoped_routes(
+                        self._store,
+                        checkpoint,
+                        ContentKind.CODE,
+                        affected_paths,
+                    )
                 _record_breadth()
             else:
                 # The complete replacement remains private until its own
@@ -398,7 +344,7 @@ class CodeGenerationLifecycle:
                 purge_unpublished_rows(
                     self._store,
                     checkpoint,
-                    checkpoint.policy,
+                    policy,
                     ContentKind.CODE,
                     options=RouteScanOptions(code_collection=build_target),
                 )
@@ -424,7 +370,7 @@ class CodeGenerationLifecycle:
                 reconcile_generation_storage(
                     self._store,
                     checkpoint,
-                    checkpoint.policy,
+                    policy,
                     ContentKind.CODE,
                     include_same_kind=False,
                 )
@@ -504,13 +450,21 @@ class CodeGenerationLifecycle:
         """Return bounded deterministic point evidence grouped by path."""
         result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
         if retained:
-            for rel in rel_paths:
-                result[rel].update(
-                    checkpoint.ledger.iter_retained_point_ids(
-                        checkpoint.generation_id,
-                        rel_path=rel,
-                    )
+            from ._run_ledger_publication import compatibility_for_signature
+
+            key = (
+                checkpoint.receipt.compatibility_key
+                if checkpoint.receipt is not None
+                else compatibility_for_signature(checkpoint.generation.signature)
+            )
+            ordered = tuple(sorted(rel_paths))
+            for start in range(0, len(ordered), FETCH_BATCH):
+                evidence = checkpoint.ledger.publication_evidence_for_paths(
+                    key,
+                    ordered[start : start + FETCH_BATCH],
                 )
+                for rel, item in evidence.items():
+                    result[rel].update(item.point_ids)
             return result
         for unit in checkpoint.ledger.iter_units(checkpoint.generation_id):
             if unit.kind is CommitUnitKind.UPSERT and unit.rel_path in result:

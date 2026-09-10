@@ -1,8 +1,8 @@
 """Per-root config-epoch hashing for index-drift detection.
 
-The indexers stamp a small set of reserved epoch keys into their meta sidecars
-so that index-shaping configuration drift - ignore-file edits, preprocess-rule
-edits, chunking-knob flips - becomes a dependable, self-healing reindex signal
+The indexers include epoch identities in canonical run signatures so
+index-shaping configuration drift - ignore-file edits, preprocess-rule edits,
+chunking-knob flips - becomes a dependable reindex signal
 even when the underlying file bytes never change. Two epoch classes exist,
 because the two drift classes need different escalations:
 

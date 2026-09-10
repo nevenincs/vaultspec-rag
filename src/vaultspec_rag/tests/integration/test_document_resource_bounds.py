@@ -11,6 +11,7 @@ import pytest
 from ..._job_errors import JobError, JobErrorKind
 from ...config._settings import get_config
 from ...index_profiles import get_index_support_profile
+from ...indexer._run_ledger_models import RunAuthority
 from ...job_control import RunControlToken
 from ...job_dispatch import _AttemptDispatch, _run_indexing_attempt
 from ...job_manager.manager import JobManager
@@ -73,6 +74,7 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
             JobSource.DOCUMENT,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "document resource admission", str(tmp_path)),
     )
@@ -85,6 +87,7 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
         1,
         task,
         RunControlToken(),
+        created.job.spec.authority,
     )
     registry = ServiceRegistry()
     try:
@@ -96,7 +99,8 @@ async def test_over_budget_document_is_refused_before_gpu_or_extractor(
                     manager,
                     created.job.id,
                     tmp_path,
-                    False,
+                    JobMode.INCREMENTAL,
+                    RunAuthority.PUBLICATION,
                     registry,
                 ),
             )

@@ -327,7 +327,7 @@ def iter_publishable_states(
 ) -> Iterator[tuple[str, str]]:
     """Validate ledger evidence and yield only the states a manifest records.
 
-    Both publishers - the code sidecar and the document manifest - opened their
+    Both publishers opened their
     write loop with the same five-statement gate: refuse an unconverged state,
     refuse one that breaks strict ascending path order, remember the path, skip
     anything not ``INDEXED``, and assert the survivor carries a hash. What each

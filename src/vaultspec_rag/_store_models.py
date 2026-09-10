@@ -591,8 +591,9 @@ def resolve_served_code_collection(
     Every read path goes through this rather than deriving the name, so a
     published replacement takes effect for readers at the moment the pointer
     moves and not before. Absent a pointer the derived name is returned
-    unchanged, which is what keeps a root written by an older build working
-    without migration.
+    unchanged. This is the bootstrap collection for a root that has not yet
+    published its first generation; publication proof, not this resolver,
+    decides whether its contents are readable.
     """
     return read_served_code_collection(root_dir) or derived_name
 

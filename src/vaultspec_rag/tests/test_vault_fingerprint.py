@@ -73,8 +73,13 @@ def _fingerprint(root: Path, text: str) -> str:
     return fingerprint_bytes(_sample_path(root), root, text.encode("utf-8"))
 
 
-def _legacy_digest(data: bytes) -> str:
-    """Digest bytes the way the pre-split scheme did, for migration tests."""
+def _bare_digest(data: bytes) -> str:
+    """The digest a value with no readable split carries.
+
+    Not a bridge to an older scheme - there is none. This is what the current
+    one records for a file it cannot decode, which is the one case that still
+    has no front matter to separate from a body.
+    """
     return hashlib.blake2b(data).hexdigest()
 
 
@@ -136,74 +141,6 @@ class TestClassification:
         assert classify(before, after) is VaultDelta.BODY
 
 
-class TestLegacySidecarMigration:
-    """A sidecar written under the raw-digest scheme migrates, not re-embeds."""
-
-    def test_unmoved_bytes_migrate_without_re_embedding(self, vault_root: Path) -> None:
-        """The one-time cost must not be a full corpus of GPU time."""
-        text = _document()
-        current = _fingerprint(vault_root, text)
-        legacy = parse(current)
-        assert legacy is not None
-
-        assert classify(legacy.raw, current) is VaultDelta.UNCHANGED
-
-    def test_moved_bytes_re_embed_because_the_old_scheme_recorded_no_more(
-        self, vault_root: Path
-    ) -> None:
-        legacy_raw = parse(_fingerprint(vault_root, _document()))
-        assert legacy_raw is not None
-        edited = _fingerprint(vault_root, _document(body="a different body\n"))
-
-        assert classify(legacy_raw.raw, edited) is VaultDelta.BODY
-
-    def test_the_raw_digest_matches_the_previous_scheme_byte_for_byte(
-        self, vault_root: Path
-    ) -> None:
-        """The bridge is only a bridge if both sides digest the same thing.
-
-        Mutation that drives this red: in ``fingerprint_bytes``, digest
-        ``data.decode("utf-8").encode("utf-8")`` instead of ``data``. It stays
-        green for LF files and fails here, on the CRLF case, because
-        ``read_text`` would have folded the line endings away.
-        """
-        raw_bytes = _document().replace("\n", "\r\n").encode("utf-8")
-        current = fingerprint_bytes(_sample_path(vault_root), vault_root, raw_bytes)
-        parsed = parse(current)
-
-        assert parsed is not None
-        assert parsed.raw == _legacy_digest(raw_bytes)
-
-    def test_a_crlf_document_migrates_without_re_embedding(
-        self, vault_root: Path
-    ) -> None:
-        """A CRLF checkout must migrate as cheaply as an LF one.
-
-        The repository pins the vault to LF, but a consumer with
-        ``core.autocrlf=true`` checks out CRLF. If the raw digest disagreed with
-        the previous scheme's there, the advertised cheap migration would become
-        a full-corpus re-embed for exactly those users.
-        """
-        raw_bytes = _document().replace("\n", "\r\n").encode("utf-8")
-        current = fingerprint_bytes(_sample_path(vault_root), vault_root, raw_bytes)
-
-        assert classify(_legacy_digest(raw_bytes), current) is VaultDelta.UNCHANGED
-
-    def test_a_stamp_bump_under_a_legacy_entry_still_re_embeds_once(
-        self, vault_root: Path
-    ) -> None:
-        """Honest about the bound: the old scheme cannot tell what moved.
-
-        This is the migration cost the ADR accepts, and pinning it keeps a
-        later reader from mistaking it for a classification defect.
-        """
-        legacy = parse(_fingerprint(vault_root, _document(modified="2026-07-25")))
-        assert legacy is not None
-        bumped = _fingerprint(vault_root, _document(modified="2026-07-29"))
-
-        assert classify(legacy.raw, bumped) is VaultDelta.BODY
-
-
 class TestEncoding:
     """The sidecar value round-trips and announces its own scheme."""
 
@@ -214,6 +151,36 @@ class TestEncoding:
         assert parsed is not None
         assert rendered.startswith(f"{SCHEME}|")
         assert parsed.raw and parsed.body and parsed.metadata
+
+    def test_line_endings_reach_the_digest_unfolded(self, vault_root: Path) -> None:
+        """The identity is taken over the file as stored, never a decoded copy.
+
+        A consumer with ``core.autocrlf=true`` checks the vault out with CRLF
+        while the repository stores LF. Those are different bytes on disk, and
+        the recorded identity has to say so - a read that folds line endings
+        makes two different files answer with one identity, which is a stale
+        vector that never re-embeds.
+
+        Driven through the production entry point, over real files, because
+        the folding this guards against lives in how the file is READ, not in
+        how the bytes are digested: decoding and re-encoding round-trips
+        ``\r\n`` unchanged, so a test handing in its own bytes cannot see it.
+
+        Mutation: ``fingerprint_path`` reading ``path.read_text()`` and
+        encoding that, instead of ``path.read_bytes()``. Observed to make both
+        identities equal and fail this on the inequality.
+        """
+        adr_dir = vault_root / ".vault" / "adr"
+        lf_path = adr_dir / "2026-07-25-lf-adr.md"
+        crlf_path = adr_dir / "2026-07-25-crlf-adr.md"
+        lf_path.write_bytes(_document().encode("utf-8"))
+        crlf_path.write_bytes(_document().replace("\n", "\r\n").encode("utf-8"))
+
+        lf = parse(fingerprint_path(lf_path, vault_root))
+        crlf = parse(fingerprint_path(crlf_path, vault_root))
+
+        assert lf is not None and crlf is not None
+        assert lf.raw != crlf.raw
 
     def test_a_legacy_digest_is_recognised_as_not_ours(self) -> None:
         assert parse("a" * 128) is None
@@ -260,7 +227,7 @@ class TestUndecodableBytes:
 
         rendered = fingerprint_bytes(_sample_path(vault_root), vault_root, data)
 
-        assert rendered == _legacy_digest(data)
+        assert rendered == _bare_digest(data)
         assert parse(rendered) is None
 
     def test_an_undecodable_file_is_a_body_delta_not_a_silent_unchanged(
@@ -268,9 +235,12 @@ class TestUndecodableBytes:
     ) -> None:
         """It must never read as unchanged against a real split fingerprint.
 
-        Falling back to a bare digest is safe only because a bare value forces
-        raw-to-raw comparison. If it could compare equal to a split fingerprint,
-        a file that became unreadable would look like nothing had happened.
+        An undecodable file is the one case that still records a bare digest,
+        and it is safe because the two values cannot be equal: only an
+        identical recorded string is unchanged, and anything this scheme
+        cannot read is a body rebuild. If a bare value could compare equal to
+        a split fingerprint, a file that became unreadable would look like
+        nothing had happened to it.
         """
         readable = _fingerprint(vault_root, _document())
         data = _document().encode("utf-8").replace(b"decision", b"deci\xe9sion")
@@ -287,4 +257,4 @@ class TestUndecodableBytes:
 
         rendered = fingerprint_path(path, vault_root)
 
-        assert rendered == _legacy_digest(path.read_bytes())
+        assert rendered == _bare_digest(path.read_bytes())

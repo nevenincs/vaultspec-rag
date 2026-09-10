@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     DesiredJobState,
@@ -24,7 +25,12 @@ from ..watcher_execution import (
     _dispatch_created_watcher_job,
 )
 from ..watcher_intake import _new_controller
-from ..watcher_retry import WatcherRetryPolicy, WatcherSource
+from ..watcher_retry import (
+    WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
+)
 from ..watcher_runtime import WatcherConvergenceSlot
 
 pytestmark = [pytest.mark.unit]
@@ -71,6 +77,7 @@ async def test_pause_between_watcher_observation_and_start_defers_exact_work(
             JobSource.CODE,
             str(tmp_path),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("watcher", slot.command, str(tmp_path)),
     )

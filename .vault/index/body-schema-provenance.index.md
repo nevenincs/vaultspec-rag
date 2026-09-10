@@ -4,8 +4,8 @@ tags:
   - '#index'
   - '#body-schema-provenance'
 date: '2026-08-25'
-modified: '2026-08-25'
-body_schema: 'body-v1'
+modified: '2026-09-09'
+body_schema: 'body-v2'
 body_hash: 'sha256:c1e156baf5bfe94cc7c087a9a194c624f629746a6de73b8a58edec99894f40ac'
 related:
   - '[[2026-07-27-body-schema-provenance-P02-S03]]'

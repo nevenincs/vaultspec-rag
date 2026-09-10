@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from ... import _job_admission, jobs
-from ..._index_breadth import index_meta_path
-from ..._source_types import PublicSourceType
+from ..._store_writes import workspace_volume_path
+from ...indexer._run_ledger_models import RunAuthority, index_run_ledger_path
 from ...job_manager.manager import JobManager
 from ...job_models import (
     DesiredJobState,
@@ -70,6 +70,7 @@ def _vault_job_spec(root: Path) -> JobSpec:
         source=JobSource.VAULT,
         project_root=str(root.resolve()),
         mode=JobMode.INCREMENTAL,
+        authority=RunAuthority.PUBLICATION,
     )
 
 
@@ -134,7 +135,11 @@ async def _pause_and_resume_large_job(
     root: Path,
 ) -> None:
     """Pause and resume one publishing job through a released attempt."""
-    job_id = jobs.start_reindex_vault(root, clean=True)
+    job_id = jobs.start_reindex_vault(
+        root,
+        clean=False,
+        authority=RunAuthority.PUBLICATION,
+    )
     live = await _wait_for_job(
         manager,
         job_id,
@@ -193,14 +198,18 @@ async def _cancel_large_job(
     """Cancel a writer-blocked job and assert its published state is absorbing."""
     _write_vault_corpus(root, start=384, count=192)
     before_ids = slot.store.get_all_ids()
-    metadata_path = index_meta_path(root, PublicSourceType.VAULT)
+    metadata_path = index_run_ledger_path(workspace_volume_path(root.resolve()))
     before_metadata = metadata_path.read_bytes()
     cancelled_id: str | None = None
     with registry.compute_lease(root) as lease:
         writer_lock = lease.runtime.vault_indexer._writer_lock
         writer_lock.acquire()
         try:
-            cancelled_id = jobs.start_reindex_vault(root, clean=False)
+            cancelled_id = jobs.start_reindex_vault(
+                root,
+                clean=False,
+                authority=RunAuthority.PUBLICATION,
+            )
             blocked = await _wait_for_job(
                 manager,
                 cancelled_id,
@@ -550,7 +559,8 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
             operation=JobOperation.INDEX,
             source=JobSource.CODE,
             project_root=str(root.resolve()),
-            mode=JobMode.REBUILD,
+            mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         _integration_initiator(root, "paused code discovery refresh"),
         start_paused=True,
@@ -592,6 +602,6 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
     added_rel = str(added.relative_to(root)).replace("\\", "/")
     removed_rel = str(removed.relative_to(root)).replace("\\", "/")
     with registry.compute_lease(root) as lease:
-        assert lease.runtime.code_indexer._get_chunk_ids_for_files({added_rel})
-        assert not lease.runtime.code_indexer._get_chunk_ids_for_files({removed_rel})
+        assert lease.runtime.code_indexer.store.get_code_ids_by_paths({added_rel})
+        assert not lease.runtime.code_indexer.store.get_code_ids_by_paths({removed_rel})
     assert_released(completed, slot)

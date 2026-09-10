@@ -359,6 +359,15 @@ class TestNoStructurallyIdenticalFunctions:
         "apart."
     )
 
+    _PER_SOURCE_NAME = (
+        "A three-way dispatch from a concrete source to the name that source "
+        "is stored under, refusing the combined fan-out. The shape is the "
+        "dispatch; the content is WHICH family of names - audit-store table "
+        "attributes in one, schema collection constants in the other - and "
+        "the refusal each raises names its own caller. Parameterising it "
+        "means passing the three names in, which is the body."
+    )
+
     _CONSTRUCTOR_BINDING = (
         "Two unrelated constructors binding their own parameters to their own "
         "attributes. What matches is the run of `self._x = x` lines and the "
@@ -368,6 +377,7 @@ class TestNoStructurallyIdenticalFunctions:
 
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
         (
+            "indexer/_publication_proof.py:is_open",
             "job_models.py:is_live_attempt",
             "job_models.py:is_retryable",
         ): _NAMED_SUBSET,
@@ -375,6 +385,18 @@ class TestNoStructurallyIdenticalFunctions:
             "indexer/_incremental_commit.py:__init__",
             "server/_stdio_lifetime.py:__init__",
         ): _CONSTRUCTOR_BINDING,
+        (
+            "indexer/_chunk_producer.py:__init__",
+            "indexer/_incremental_commit.py:__init__",
+        ): _CONSTRUCTOR_BINDING,
+        (
+            "_index_integrity.py:_store_collection",
+            "_publication_state.py:_collection",
+        ): _PER_SOURCE_NAME,
+        (
+            "cli/_service_jobs_query.py:job_revision",
+            "storage_manifest.py:_decode_schema_version",
+        ): _SMALL_GUARD,
         (
             "cli/_search.py:_render_breadth_shortfall",
             "cli/_search.py:_render_file_breadth_shortfall",

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, NoReturn, cast
 
 import typer
 
@@ -129,6 +129,21 @@ def _emit_json_error_and_exit(
         message=message,
         **extra,
     )
+    raise typer.Exit(code=code)
+
+
+def exit_with_error(
+    command: str,
+    error: str,
+    message: str,
+    code: int,
+    *,
+    json_mode: bool,
+) -> NoReturn:
+    """Report one refusal as the JSON envelope or a plain ``Error:`` line, then exit."""
+    if json_mode:
+        _emit_json_error_and_exit(command, error, message, code)
+    _plain(f"Error: {message}")
     raise typer.Exit(code=code)
 
 

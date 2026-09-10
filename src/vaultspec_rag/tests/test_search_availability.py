@@ -22,6 +22,7 @@ from .._search_state import (
     SearchWaitCause,
     WaitObservation,
 )
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
     JobInitiator,
@@ -387,7 +388,7 @@ def _canonical_snapshot(
     root: Path,
     *,
     job_id: str,
-    source: JobSource = JobSource.VAULT,
+    authority: RunAuthority,
     mode: JobMode = JobMode.INCREMENTAL,
     state: JobState = JobState.RUNNING,
 ) -> JobSnapshot:
@@ -397,7 +398,13 @@ def _canonical_snapshot(
         state_path=None,
     )
     outcome = manager.create(
-        JobSpec(JobOperation.INDEX, source, str(root), mode),
+        JobSpec(
+            JobOperation.INDEX,
+            JobSource.VAULT,
+            str(root),
+            mode,
+            authority,
+        ),
         JobInitiator("test", "search availability", str(root)),
         job_id=job_id,
     )
@@ -575,7 +582,9 @@ def test_projection_rejects_mismatched_generation_current_proof(
 def test_projection_keeps_a_prior_complete_generation_usable_while_updating(
     tmp_path: Path,
 ) -> None:
-    snapshot = _canonical_snapshot(tmp_path, job_id="updating")
+    snapshot = _canonical_snapshot(
+        tmp_path, job_id="updating", authority=RunAuthority.PUBLICATION
+    )
     classification = _readiness_classification(
         tmp_path,
         evidence=CanonicalSearchEvidence(
@@ -599,7 +608,9 @@ def test_projection_keeps_a_prior_complete_generation_usable_while_updating(
 def test_projection_marks_observed_collection_usable_without_a_served_generation(
     tmp_path: Path,
 ) -> None:
-    snapshot = _canonical_snapshot(tmp_path, job_id="first-publication")
+    snapshot = _canonical_snapshot(
+        tmp_path, job_id="first-publication", authority=RunAuthority.PUBLICATION
+    )
     classification = _readiness_classification(
         tmp_path,
         evidence=CanonicalSearchEvidence(collection_present=True),
@@ -644,6 +655,7 @@ def test_projection_never_infers_rebuild_required_from_job_mode(tmp_path: Path) 
         tmp_path,
         job_id="rebuild-job",
         mode=JobMode.REBUILD,
+        authority=RunAuthority.REBUILD,
     )
     classification = _readiness_classification(
         tmp_path,
@@ -708,7 +720,9 @@ def test_empty_authority_follows_the_canonical_source_fact(tmp_path: Path) -> No
             integrity_verified=True,
         ),
     )
-    snapshot = _canonical_snapshot(tmp_path, job_id="empty-updating")
+    snapshot = _canonical_snapshot(
+        tmp_path, job_id="empty-updating", authority=RunAuthority.PUBLICATION
+    )
     non_authoritative = _readiness_classification(
         tmp_path,
         evidence=CanonicalSearchEvidence(
@@ -732,7 +746,9 @@ def test_projection_and_legacy_job_evidence_share_one_bound(tmp_path: Path) -> N
     # Proven red by slicing matching jobs at MAX_SEARCH_EVIDENCE_ITEMS - 1:
     # the exact shared-bound assertion below fails as 7 == 8 before restoration.
     snapshots = tuple(
-        _canonical_snapshot(tmp_path, job_id=f"bounded-{index}").to_dict()
+        _canonical_snapshot(
+            tmp_path, job_id=f"bounded-{index}", authority=RunAuthority.PUBLICATION
+        ).to_dict()
         for index in range(MAX_SEARCH_EVIDENCE_ITEMS + 1)
     )
     classification = _readiness_classification(tmp_path, snapshots=snapshots)
@@ -796,7 +812,12 @@ def test_only_canonical_nonterminal_states_make_empty_results_unavailable(
     matches: bool,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    snapshot = _canonical_snapshot(root, job_id=f"job-{state.value}", state=state)
+    snapshot = _canonical_snapshot(
+        root,
+        job_id=f"job-{state.value}",
+        authority=RunAuthority.PUBLICATION,
+        state=state,
+    )
 
     response = _availability_response(root, after=[snapshot.to_dict()])
 
@@ -809,7 +830,11 @@ def test_legacy_and_invalid_canonical_identity_are_rejected(tmp_path: Path) -> N
     # each fail the exact `is None` rejection assertion before restoration.
     root = (tmp_path / "project").resolve()
     other_root = (tmp_path / "other-project").resolve()
-    snapshot = _canonical_snapshot(root, job_id="canonical")
+    snapshot = _canonical_snapshot(
+        root,
+        job_id="canonical",
+        authority=RunAuthority.PUBLICATION,
+    )
     legacy_record: dict[str, object] = {
         "id": "legacy",
         "source": "vault",
@@ -846,7 +871,11 @@ def test_legacy_and_invalid_canonical_identity_are_rejected(tmp_path: Path) -> N
 def test_canonical_root_alias_matches_the_resolved_request_root(tmp_path: Path) -> None:
     root = (tmp_path / "project").resolve()
     alias = root / "uncreated" / ".."
-    snapshot = _canonical_snapshot(alias, job_id="root-alias")
+    snapshot = _canonical_snapshot(
+        alias,
+        job_id="root-alias",
+        authority=RunAuthority.PUBLICATION,
+    )
 
     response = _availability_response(root, after=[snapshot.to_dict()])
 
@@ -862,12 +891,14 @@ def test_second_observation_wins_when_job_ids_overlap(tmp_path: Path) -> None:
     before = _canonical_snapshot(
         root,
         job_id="same-job",
+        authority=RunAuthority.REBUILD,
         mode=JobMode.REBUILD,
         state=JobState.RUNNING,
     )
     after = _canonical_snapshot(
         root,
         job_id="same-job",
+        authority=RunAuthority.PUBLICATION,
         mode=JobMode.INCREMENTAL,
         state=JobState.PAUSING,
     )
@@ -902,6 +933,7 @@ def test_nonempty_result_remains_available_during_matching_rebuild(
             JobSource.VAULT,
             str(root),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "search availability", str(root)),
         job_id="paused-rebuild",
@@ -957,7 +989,12 @@ def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
     tmp_path: Path,
 ) -> None:
     root = (tmp_path / "project").resolve()
-    base = _canonical_snapshot(root, job_id="base", state=JobState.QUEUED)
+    base = _canonical_snapshot(
+        root,
+        job_id="base",
+        authority=RunAuthority.PUBLICATION,
+        state=JobState.QUEUED,
+    )
     snapshots = [
         replace(
             base,
@@ -965,6 +1002,9 @@ def test_matching_jobs_are_bounded_but_hidden_rebuild_still_sets_status(
             spec=replace(
                 base.spec,
                 mode=JobMode.REBUILD if index == 8 else JobMode.INCREMENTAL,
+                authority=(
+                    RunAuthority.REBUILD if index == 8 else RunAuthority.PUBLICATION
+                ),
             ),
         ).to_dict()
         for index in range(9)
@@ -987,13 +1027,20 @@ def test_classification_evidence_is_after_first_bounded_and_shared_with_response
 ) -> None:
     root = (tmp_path / "project").resolve()
     after = [
-        _canonical_snapshot(root, job_id=f"after-{index}").to_dict()
+        _canonical_snapshot(
+            root,
+            job_id=f"after-{index}",
+            authority=RunAuthority.PUBLICATION,
+        ).to_dict()
         for index in range(2)
     ]
     before = [
         _canonical_snapshot(
             root,
             job_id=f"before-{index}",
+            authority=(
+                RunAuthority.REBUILD if index == 7 else RunAuthority.PUBLICATION
+            ),
             mode=JobMode.REBUILD if index == 7 else JobMode.INCREMENTAL,
         ).to_dict()
         for index in range(8)
@@ -1064,6 +1111,7 @@ def test_qdrant_collection_disappearance_uses_matching_canonical_job_evidence(
             JobSource.VAULT,
             str(root),
             JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("test", "collection disappearance", str(root)),
         job_id="collection-rebuild",
@@ -1110,6 +1158,7 @@ def test_qdrant_collection_disappearance_declines_unrelated_failures(
     matching = _canonical_snapshot(
         root,
         job_id="matching-rebuild",
+        authority=RunAuthority.REBUILD,
         mode=JobMode.REBUILD,
     ).to_dict()
     index_state: dict[str, object] = {

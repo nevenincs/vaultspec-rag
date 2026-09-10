@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 
     # The job-source vocabulary has one declaration, the canonical enum.
     # Annotation-only, so the client does not import the domain at runtime.
+    from ..indexer._run_ledger_models import RunAuthority
     from ..job_models import DesiredJobState, JobMode, JobSource
     from ._discovery import MachineResolution
 
@@ -91,6 +92,7 @@ __all__ = [
     "_try_http_delete_job",
     "_try_http_get_job",
     "_try_http_health",
+    "_try_http_index_audit",
     "_try_http_reindex",
     "_try_http_retry_job",
     "_try_http_set_job_desired_state",
@@ -208,6 +210,7 @@ class _CreateJobRequest:
     source: JobSource
     project_root: str
     port: int | None
+    authority: RunAuthority
     mode: JobMode | None = None
     start_paused: bool = False
     initiator_kind: str = "cli"
@@ -854,12 +857,13 @@ def _do_http_call(
     return result
 
 
-def _try_http_reindex(
+def _try_http_reindex(  # noqa: PLR0913 - wire fields stay explicit and default-free.
     reindex_type: ReindexType,
     clean: bool,
     port: int,
     project_root: str,
     *,
+    authority: RunAuthority,
     initiator_kind: ReindexInitiator,
 ) -> dict[str, object] | None:
     try:
@@ -870,6 +874,7 @@ def _try_http_reindex(
         payload: dict[str, object] = {
             "type": source.value,
             "clean": clean,
+            "authority": authority.value,
             "project_root": project_root,
             "initiator_kind": initiator_kind,
         }
@@ -896,6 +901,53 @@ def _try_http_reindex(
             "ok": False,
             "error": "http_call_failed",
             "message": f"HTTP reindex on port {port} failed: {cls}: {exc}",
+        }
+
+
+def _try_http_index_audit(
+    audit_type: ReindexType,
+    port: int,
+    project_root: str,
+    *,
+    authority: RunAuthority,
+) -> dict[str, object] | None:
+    """Run exact non-seeding verification through the store-owning service."""
+    from ..indexer._run_ledger_models import RunAuthority as _RunAuthority
+
+    if authority is not _RunAuthority.AUDIT_VERIFICATION:
+        raise ValueError("index audit requires explicit audit-verification authority")
+    try:
+        source = parse_source_type(audit_type)
+    except SourceTypeParseError as exc:
+        return exc.as_error_envelope()
+    try:
+        result = _do_http_call(
+            port,
+            "/index/audit",
+            {
+                "type": source.value,
+                "authority": authority.value,
+                "project_root": project_root,
+            },
+            timeout=resolve_timeout(
+                None,
+                setting="service_reindex_timeout_seconds",
+                label="index audit",
+                default=DEFAULT_REINDEX_TIMEOUT_SECONDS,
+            ),
+        )
+        return result if result is not None else {}
+    except Exception as exc:
+        if _is_connection_refused(exc):
+            logger.debug(
+                "HTTP index audit on port %s: connection refused (%s)", port, exc
+            )
+            return None
+        cls = exc.__class__.__name__
+        return {
+            "ok": False,
+            "error": "http_call_failed",
+            "message": f"HTTP index audit on port {port} failed: {cls}: {exc}",
         }
 
 
@@ -988,13 +1040,16 @@ def _try_http_create_job(
     source: JobSource,
     project_root: str,
     port: int | None,
+    *,
+    authority: RunAuthority,
     **options: Unpack[CreateJobOptions],
 ) -> dict[str, object] | None:
-    request = _CreateJobRequest(source, project_root, port, **options)
+    request = _CreateJobRequest(source, project_root, port, authority, **options)
     payload: dict[str, object] = {
         "operation": "index",
         "source": request.source,
         "project_root": request.project_root,
+        "authority": request.authority.value,
         # Resolved here, not in the signature: the enum is annotation-only in
         # this module so the client keeps the domain out of its import graph.
         "mode": request.mode if request.mode is not None else _default_job_mode(),
@@ -1173,20 +1228,27 @@ def _storage_survey_route_path(args: dict[str, object]) -> str:
     return _bounded_route_path("/storage/survey", args, _STORAGE_SURVEY_PARAMS)
 
 
+def _watcher_route_path(args: dict[str, object]) -> str:
+    """Build the ``/watcher`` route path with its bounded filters."""
+    return _bounded_route_path("/watcher", args, _WATCHER_PARAMS)
+
+
+#: Admin tools whose route carries a bounded, filterable query string. Each
+#: builder takes the call's arguments and returns the path to GET.
+_FILTERED_ROUTES: dict[str, Callable[[dict[str, object]], str]] = {
+    "get_watcher_state": _watcher_route_path,
+    "get_logs": _logs_route_path,
+    "get_jobs": _jobs_route_path,
+    "get_search_activity": _search_activity_route_path,
+    "get_storage_survey": _storage_survey_route_path,
+}
+
+
 def _resolve_admin_call(
     tool_name: str, args: dict[str, object]
 ) -> tuple[str, dict[str, object] | None] | None:
     """Resolve an admin tool to its ``(path, body)`` pair, or ``None`` if unknown."""
-    filtered_routes = {
-        "get_watcher_state": lambda args: _bounded_route_path(
-            "/watcher", args, _WATCHER_PARAMS
-        ),
-        "get_logs": _logs_route_path,
-        "get_jobs": _jobs_route_path,
-        "get_search_activity": _search_activity_route_path,
-        "get_storage_survey": _storage_survey_route_path,
-    }
-    filter_route = filtered_routes.get(tool_name)
+    filter_route = _FILTERED_ROUTES.get(tool_name)
     if filter_route is not None:
         return filter_route(args), None
     if tool_name in _GET_ROOT_ROUTES:

@@ -17,8 +17,10 @@ from ..watcher_durability import (
 from ..watcher_retry import (
     WatcherPathEvent,
     WatcherPathObservation,
-    WatcherRetryPolicy,
     WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
     _WatcherRetryOptions,
 )
 

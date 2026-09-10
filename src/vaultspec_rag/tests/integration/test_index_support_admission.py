@@ -194,6 +194,7 @@ async def _post_index_job(token: str, root: Path, source: str) -> httpx.Response
                 "source": source,
                 "project_root": str(root),
                 "mode": "incremental",
+                "authority": "publication",
             },
         )
 

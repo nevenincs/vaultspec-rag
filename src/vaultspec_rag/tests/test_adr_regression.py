@@ -7,7 +7,6 @@ that would violate the documented architectural contract.
 from __future__ import annotations
 
 import ast
-import hashlib
 import typing
 from typing import TYPE_CHECKING
 
@@ -19,58 +18,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
-
-
-class TestBlake2bFileHashing:
-    """ADR: blake2b-file-hashing - file hashes must use blake2b, not sha256."""
-
-    def test_vault_indexer_meta_uses_blake2b_hashes(self, tmp_path: Path) -> None:
-        """VaultIndexer._save_meta produces blake2b hex digests (128 chars)."""
-        from ..indexer import VaultIndexer
-
-        indexer = object.__new__(VaultIndexer)
-        indexer._meta_path = tmp_path / ".rag" / "vault_meta.json"
-
-        # Write a test file and hash it the same way the indexer does
-        test_file = tmp_path / "test.md"
-        test_file.write_text("hello world", encoding="utf-8")
-
-        with open(test_file, "rb") as f:
-            digest = hashlib.file_digest(f, "blake2b").hexdigest()
-
-        # blake2b default digest is 64 bytes = 128 hex chars
-        # sha256 is 32 bytes = 64 hex chars
-        assert len(digest) == 128, (
-            f"Expected blake2b (128 hex chars), got {len(digest)} chars"
-        )
-
-    def test_codebase_indexer_meta_uses_blake2b_hashes(self, tmp_path: Path) -> None:
-        """CodebaseIndexer._write_meta produces blake2b hex digests."""
-        from ..indexer import CodebaseIndexer
-
-        indexer = CodebaseIndexer(
-            tmp_path,
-            typing.cast("typing.Any", None),
-            typing.cast("typing.Any", None),
-        )
-        indexer._meta_path = tmp_path / ".rag" / "code_meta.json"
-
-        test_file = tmp_path / "test.py"
-        test_file.write_text("x = 1", encoding="utf-8")
-
-        with open(test_file, "rb") as f:
-            digest = hashlib.file_digest(f, "blake2b").hexdigest()
-
-        assert len(digest) == 128
-
-        # Round-trip: write and load back
-        indexer._write_meta(
-            {"test.py": digest},
-            policy=indexer.resolve_policy_snapshot(),
-        )
-        loaded = indexer._load_meta()
-        assert loaded["test.py"] == digest
-        assert len(loaded["test.py"]) == 128
 
 
 class TestMCPAsyncTools:
@@ -422,43 +369,6 @@ class TestWatcherGraphInvalidation:
         )
 
 
-class TestAtomicMetaWrite:
-    """``_write_meta`` must publish atomically, never truncate in place.
-
-    A direct ``write_text`` leaves a half-written sidecar if the process dies
-    mid-write, and the next run reads that as the index's metadata. Publishing
-    means writing a temp file and replacing the target in one step.
-    """
-
-    pytestmark: typing.ClassVar = [pytest.mark.unit]
-
-    def test_vault_indexer_write_meta_publishes_atomically(self):
-        import inspect
-
-        from ..indexer import VaultIndexer
-
-        src = inspect.getsource(VaultIndexer._write_meta)
-        assert "write_json_atomically(" in src, (
-            "VaultIndexer._write_meta must publish through "
-            "_atomic_write.write_json_atomically; a direct write_text() risks "
-            "corrupt metadata on crash, and a hand-rolled temp-and-replace "
-            "leaves the temp behind when the publish fails"
-        )
-
-    def test_codebase_indexer_write_meta_publishes_atomically(self):
-        import inspect
-
-        from ..indexer import CodebaseIndexer
-
-        src = inspect.getsource(CodebaseIndexer._write_meta)
-        assert "write_json_atomically(" in src, (
-            "CodebaseIndexer._write_meta must publish through "
-            "_atomic_write.write_json_atomically; a direct write_text() risks "
-            "corrupt metadata on crash, and a hand-rolled temp-and-replace "
-            "leaves the temp behind when the publish fails"
-        )
-
-
 class TestStorageMaintenanceIsLifecycleInert:
     """Storage maintenance must never reach a stop/terminate/reclaim flow.
 
@@ -736,7 +646,9 @@ class TestLedgerConcurrencyContract:
         the affected index needs a clean rebuild.
         """
         from .._job_errors import JobErrorKind, classify_error_text, remediation
-        from ..watcher_retry import _classify_failure
+        from ..watcher_retry_policy import (
+            _classify_failure,
+        )
 
         observed = (
             "ingest verification failed for r01fa8eefb788_codebase_docs: "
@@ -769,7 +681,9 @@ class TestLedgerConcurrencyContract:
 
         from .._job_errors import JobErrorKind
         from ..indexer._run_ledger_models import RunLedgerContentionError
-        from ..watcher_retry import _classify_failure
+        from ..watcher_retry_policy import (
+            _classify_failure,
+        )
 
         kind, retryable = _classify_failure(
             RunLedgerContentionError(
@@ -1142,7 +1056,9 @@ class TestAdaptiveWatcherArchitecture:
         """Retry cannot turn lost exact scope into automatic work."""
         import inspect
 
-        from ..watcher_retry import WatcherRetryPolicy
+        from ..watcher_retry_policy import (
+            WatcherRetryPolicy,
+        )
 
         admission = inspect.getsource(WatcherRetryPolicy.admit_reserved)
         normalized = " ".join(admission.split())

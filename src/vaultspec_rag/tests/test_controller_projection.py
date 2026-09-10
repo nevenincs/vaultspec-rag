@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import cast
 
 import pytest
 
@@ -148,6 +149,47 @@ def test_refused_controller_has_actionable_default_remediation() -> None:
         "service_quiesced",
         "storage_available",
     ]
+
+
+def _measurement_of(projected: dict[str, object]) -> dict[str, object]:
+    """Return a projection's measurement section, insisting it is one."""
+    section = projected["measurement"]
+    assert isinstance(section, dict)
+    return cast("dict[str, object]", section)
+
+
+def test_an_absent_measurement_projects_the_same_fields_as_a_present_one() -> None:
+    """Unmeasured and measured-with-nothing-available must look alike.
+
+    The projection builds those two shapes on separate branches, so nothing
+    else stops one of them gaining or losing a field the other still reports,
+    and a consumer would then have to tell the two cases apart to read it.
+
+    Proven able to fail: dropping ``generation`` from the absent shape's field
+    list fails on the key-set comparison; restoring it passes.
+    """
+
+    def project(measurement: ControllerMeasurement | None) -> dict[str, object]:
+        return controller_snapshot_envelope(
+            ControllerSnapshot(
+                canonical_root="C:/work/project",
+                source=WatcherSource.VAULT,
+                state=ControllerState.COLLECTING,
+                reason=ControllerReason.COALESCE_WINDOW_ACTIVE,
+                scope=ControllerScope(generation=1),
+                observed_at=1.0,
+                measurement=measurement,
+            ),
+            observed_at=2.0,
+            monotonic_at=2.0,
+        )
+
+    absent = project(None)
+    present = project(ControllerMeasurement(generation=4, observed_at=1.0))
+
+    assert _measurement_of(absent).keys() == _measurement_of(present).keys()
+    assert absent.keys() == present.keys()
+    assert all(value is None for value in _measurement_of(absent).values())
 
 
 def test_real_clock_projection_converts_scheduler_times_to_wall_time() -> None:

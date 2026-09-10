@@ -6,6 +6,10 @@ index current.
 
 This guide assumes the workspace is installed and provisioned. If it isn't, see the [installation guide](installation.md) first. For how search and indexing fit together, see the [architecture overview](architecture.md). To run searches against a background daemon instead of in-process, see [service mode](service-mode.md).
 
+Examples use the `uv run` prefix, which runs the command inside a project environment.
+If you installed vaultspec-rag as a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+
 ## Run a search
 
 Nothing is searchable until the index exists. If this is a new project, run

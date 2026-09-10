@@ -94,6 +94,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
                     "source": "vault",
                     "project_root": str(roots[0]),
                     "mode": "incremental",
+                    "authority": "publication",
                     "start_paused": True,
                 },
             ),
@@ -109,6 +110,7 @@ def test_jobs_route_enforces_nonterminal_capacity(
                     "source": "vault",
                     "project_root": str(roots[1]),
                     "mode": "incremental",
+                    "authority": "publication",
                     "start_paused": True,
                 },
             ),
@@ -143,3 +145,48 @@ def test_reindex_route_rejects_unknown_type(
         )
         assert response.status_code == 400
         assert response.json()["code"] == "invalid_job_spec"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("clean", "authority"),
+    [
+        (False, None),
+        (True, None),
+        (False, "rebuild"),
+        (True, "publication"),
+        (False, "audit_verification"),
+        (True, "audit_verification"),
+    ],
+)
+def test_reindex_route_requires_exact_explicit_authority(
+    clean: bool,
+    authority: str | None,
+) -> None:
+    """The adapter may validate consent but must never derive it from ``clean``."""
+    from ...server._routes_reindex import _validated_reindex_authority
+
+    payload: dict[str, object] = {"clean": clean}
+    if authority is not None:
+        payload["authority"] = authority
+
+    with pytest.raises(ValueError, match="authority"):
+        _validated_reindex_authority(payload, clean=clean)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("clean", "authority"),
+    [(False, "publication"), (True, "rebuild")],
+)
+def test_reindex_route_accepts_only_matching_explicit_authority(
+    clean: bool,
+    authority: str,
+) -> None:
+    from ...indexer._run_ledger_models import RunAuthority
+    from ...server._routes_reindex import _validated_reindex_authority
+
+    assert _validated_reindex_authority(
+        {"clean": clean, "authority": authority},
+        clean=clean,
+    ) is RunAuthority(authority)

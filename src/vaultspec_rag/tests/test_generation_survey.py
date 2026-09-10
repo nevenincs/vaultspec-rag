@@ -19,6 +19,45 @@ pytestmark = [pytest.mark.unit]
 _DERIVED = "r0123456789ab_codebase_docs"
 
 
+def _publish_code_proof(root: Path) -> str:
+    from .. import store_schema
+    from .._source_types import PublicSourceType
+    from .._store_writes import workspace_volume_path
+    from ..indexer._run_ledger_models import (
+        RunAuthority,
+        RunOperation,
+        RunSignature,
+        index_run_ledger_path,
+    )
+    from ..indexer._run_ledger_runtime import RunLedger
+    from ..store_runtime import configured_backend_identity
+
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
+    generation = ledger.start_generation(
+        RunSignature(
+            root_identity=str(root.resolve()),
+            collection_identity=store_schema.CODE_COLLECTION,
+            source_type=PublicSourceType.CODE,
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="model",
+            dense_dimensions=8,
+            embedding_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch="content",
+            membership_epoch="membership",
+            preprocessing_identity="preprocessing",
+            configuration_fingerprint="configuration",
+            policy_fingerprint="policy",
+            backend_identity=configured_backend_identity(root.resolve()),
+        )
+    )
+    ledger.establish_verified_publication(
+        generation.generation_id, RunAuthority.REBUILD, ()
+    )
+    return generation.generation_id
+
+
 class TestGenerationSurvey:
     """Report what a root serves and what it has left behind - and nothing else."""
 
@@ -33,6 +72,7 @@ class TestGenerationSurvey:
         from .._store_models import publish_served_code_collection
         from ..generation_survey import survey_generations
 
+        _publish_code_proof(tmp_path)
         publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
         reports = survey_generations(
             {str(tmp_path): _DERIVED},
@@ -44,10 +84,10 @@ class TestGenerationSurvey:
         assert reports[0].unreferenced == (f"{_DERIVED}_gold",)
         assert reports[0].has_debt is True
 
-    def test_the_generation_the_sidecar_names_is_never_unreferenced(
+    def test_the_generation_the_proof_names_is_never_unreferenced(
         self, tmp_path: Path
     ) -> None:
-        """A published manifest is a reference, exactly as the pointer is.
+        """Committed publication proof is a reference, exactly as the pointer is.
 
         Publication records the generation in the sidecar before it moves the
         pointer, so a run that dies between those two writes leaves a
@@ -55,26 +95,14 @@ class TestGenerationSurvey:
         there destroys the collection the published breadth describes and
         leaves the claim standing over nothing.
         """
-        from .._index_breadth import index_meta_path
-        from .._source_types import PublicSourceType
         from .._store_models import (
             generation_code_collection,
             publish_served_code_collection,
         )
         from ..generation_survey import survey_generations
-        from ..indexer._code_meta import publish_meta_from_file_states
 
-        sidecar_generation = "a" * 32
-        publish_meta_from_file_states(
-            index_meta_path(tmp_path, PublicSourceType.CODE),
-            [],
-            generation_id=sidecar_generation,
-            membership_epoch="membership-epoch",
-            content_epoch="content-epoch",
-            published_points_count=11,
-            published_files_count=3,
-        )
-        published = generation_code_collection(_DERIVED, sidecar_generation)
+        proof_generation = _publish_code_proof(tmp_path)
+        published = generation_code_collection(_DERIVED, proof_generation)
         publish_served_code_collection(tmp_path, f"{_DERIVED}_gold")
 
         reports = survey_generations(
@@ -87,15 +115,12 @@ class TestGenerationSurvey:
         assert published not in reports[0].unreferenced
         assert reports[0].unreferenced == (f"{_DERIVED}_gstray",)
 
-    def test_a_root_that_never_published_carries_no_debt(self, tmp_path: Path) -> None:
-        """No pointer means the derived name serves, and nothing is stranded."""
+    def test_a_root_without_proof_is_omitted(self, tmp_path: Path) -> None:
         from ..generation_survey import survey_generations
 
         reports = survey_generations({str(tmp_path): _DERIVED}, [_DERIVED])
 
-        assert reports[0].served == _DERIVED
-        assert reports[0].unreferenced == ()
-        assert reports[0].has_debt is False
+        assert reports == ()
 
     def test_the_derived_collection_is_never_called_unreferenced(
         self, tmp_path: Path
@@ -111,6 +136,7 @@ class TestGenerationSurvey:
         from .._store_models import publish_served_code_collection
         from ..generation_survey import survey_generations
 
+        _publish_code_proof(tmp_path)
         publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
         reports = survey_generations(
             {str(tmp_path): _DERIVED}, [_DERIVED, f"{_DERIVED}_gnew"]
@@ -122,6 +148,7 @@ class TestGenerationSurvey:
         """Debt is per root; a foreign prefix must never be attributed here."""
         from ..generation_survey import survey_generations
 
+        _publish_code_proof(tmp_path)
         foreign = "rffffffffffff_codebase_docs_gother"
         reports = survey_generations({str(tmp_path): _DERIVED}, [_DERIVED, foreign])
 
@@ -222,15 +249,10 @@ class TestNamesResolveThroughThePointer:
             == "rabc_codebase_docs_gserved"
         )
 
-    def test_a_donor_with_no_recorded_root_falls_back_to_the_derived_name(
+    def test_a_code_donor_without_publication_authority_is_ineligible(
         self,
     ) -> None:
-        """An unresolvable donor must not invent a collection.
-
-        The derived name either appears in that donor's recorded collections,
-        so reuse proceeds against real data, or it does not and the donor is
-        skipped. Neither outcome fabricates a target.
-        """
+        """An unresolvable donor must not invent publication authority."""
         from ..indexer._donor_candidates import (
             CollectionKind,
             _served_donor_collection,
@@ -238,7 +260,7 @@ class TestNamesResolveThroughThePointer:
 
         assert (
             _served_donor_collection(None, CollectionKind.CODE, "rabc_codebase_docs")
-            == "rabc_codebase_docs"
+            is None
         )
 
 
@@ -275,6 +297,7 @@ class TestGenerationDebtInTheSurveyPayload:
         from ..storage_survey import NamespaceSurvey
 
         root = str(tmp_path)
+        _publish_code_proof(tmp_path)
         publish_served_code_collection(tmp_path, f"{_DERIVED}_gnew")
         survey = NamespaceSurvey(
             prefix="r0123456789ab_",

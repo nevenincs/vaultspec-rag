@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
     DesiredJobState,
     JobAttempt,
@@ -35,7 +36,13 @@ from ..job_models import (
     JobTimestamps,
 )
 from ..service import ServiceRegistry
-from ..watcher_retry import WatcherRetryPolicy, WatcherSource, _WatcherRetryOptions
+from ..watcher_retry import (
+    WatcherSource,
+)
+from ..watcher_retry_policy import (
+    WatcherRetryPolicy,
+    _WatcherRetryOptions,
+)
 from ..watcher_runtime import (
     WatcherConvergenceSlot,
     _log_managed_transition,
@@ -67,6 +74,7 @@ def _snapshot(state: JobState) -> JobSnapshot:
             source=JobSource.CODE,
             project_root=str(root),
             mode=JobMode.INCREMENTAL,
+            authority=RunAuthority.PUBLICATION,
         ),
         state=state,
         desired_state=DesiredJobState.RUNNING,

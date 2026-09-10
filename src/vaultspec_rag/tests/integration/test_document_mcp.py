@@ -14,6 +14,7 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from ...indexer._run_ledger_models import RunAuthority
 from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import (
     _do_http_call,
@@ -23,7 +24,6 @@ from ...serviceclient._transport import (
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from typing import TextIO
 
     from mcp.types import CallToolResult, Tool
 
@@ -100,10 +100,7 @@ async def _exercise_document_tools(
         env=env,
     )
     async with (
-        stdio_client(server, errlog=cast("TextIO", sys.__stderr__)) as (
-            read_stream,
-            write_stream,
-        ),
+        stdio_client(server) as (read_stream, write_stream),
         ClientSession(read_stream, write_stream) as session,
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)
@@ -268,6 +265,7 @@ def test_document_tools_through_real_mcp_session(
         False,
         port,
         str(root),
+        authority=RunAuthority.PUBLICATION,
         initiator_kind="mcp",
     )
     assert partial is not None
@@ -276,9 +274,10 @@ def test_document_tools_through_real_mcp_session(
     source_path, phrase = _write_indexed_document_fixture(root)
     created = _try_http_reindex(
         "document",
-        True,
+        False,
         port,
         str(root),
+        authority=RunAuthority.PUBLICATION,
         initiator_kind="mcp",
     )
     assert created is not None

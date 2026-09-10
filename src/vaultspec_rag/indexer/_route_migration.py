@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .. import store_schema
+from .._source_types import PublicSourceType
 from ._content_policy import ContentKind
 from ._run_ledger_models import (
     index_run_ledger_path,
@@ -46,6 +47,7 @@ __all__ = [
     "reconcile_checkpoint_routes",
     "reconcile_generation_storage",
     "reconcile_origin_after_destination",
+    "reconcile_scoped_routes",
     "resume_pending_migrations",
 ]
 
@@ -466,6 +468,26 @@ def reconcile_origin_after_destination(
     return removed
 
 
+def reconcile_scoped_routes(
+    store: VaultStore,
+    checkpoint: DestinationCheckpoint,
+    destination_kind: ContentKind,
+    rel_paths: set[str],
+) -> int:
+    """Reconcile cross-kind ownership for exactly the changed paths."""
+    removed = 0
+    for rel_path in sorted(rel_paths):
+        checkpoint.run_policy.checkpoint("scoped route reconciliation")
+        if checkpoint.ledger.file_complete(checkpoint.generation_id, rel_path):
+            removed += reconcile_origin_after_destination(
+                store,
+                checkpoint,
+                destination_kind,
+                rel_path,
+            )
+    return removed
+
+
 def reconcile_checkpoint_routes(
     store: VaultStore,
     checkpoint: DestinationCheckpoint,
@@ -538,24 +560,25 @@ def reconcile_checkpoint_routes(
 
 
 def prior_stored_owners(root_dir: Path, rel_path: str) -> frozenset[ContentKind]:
-    """Return prior per-kind ownership for a path that may no longer exist."""
-    from .._store_writes import workspace_volume_path
+    """Return canonical prior ownership for a path that may no longer exist."""
+    from .._publication_state import acquire_publication_snapshot
+    from ._publication_proof import ProofIncompatibleError, ProofMissingError
 
-    ledger_path = index_run_ledger_path(workspace_volume_path(root_dir.resolve()))
-    if not ledger_path.is_file():
-        return frozenset()
-    ledger = RunLedger(ledger_path)
     owners: set[ContentKind] = set()
-    for kind, collection in (
-        (ContentKind.CODE, store_schema.CODE_COLLECTION),
-        (ContentKind.DOCUMENT, store_schema.DOCUMENT_COLLECTION),
+    for kind, source in (
+        (ContentKind.CODE, PublicSourceType.CODE),
+        (ContentKind.DOCUMENT, PublicSourceType.DOCUMENT),
     ):
-        state = ledger.latest_file_state(
-            kind,
-            collection_identity=collection,
-            rel_path=rel_path,
+        try:
+            snapshot = acquire_publication_snapshot(root_dir, source)
+        except (ProofMissingError, ProofIncompatibleError):
+            continue
+        evidence = snapshot.ledger.publication_evidence_for_paths(
+            snapshot.proof.compatibility_key,
+            (rel_path,),
         )
-        if state is not None and state.kind is kind:
+        snapshot.validate()
+        if rel_path in evidence:
             owners.add(kind)
     return frozenset(owners)
 
@@ -847,7 +870,8 @@ def _destination_evidence_is_current(
         else store_schema.DOCUMENT_COLLECTION
     )
     if (
-        generation.signature.source_type is not request.destination_kind
+        generation.signature.source_type
+        is not PublicSourceType(request.destination_kind.value)
         or generation.signature.collection_identity != expected_collection
         or not ledger.file_complete(
             request.destination_generation_id,

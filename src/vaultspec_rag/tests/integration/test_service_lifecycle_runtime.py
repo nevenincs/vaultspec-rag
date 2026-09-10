@@ -110,7 +110,11 @@ def _index_isolation_projects(
                         _mcp_session_call(
                             port,
                             "reindex_vault",
-                            {"clean": True, "project_root": str(manifest.root)},
+                            {
+                                "clean": True,
+                                "authority": "rebuild",
+                                "project_root": str(manifest.root),
+                            },
                         )
                     )
                 ),
@@ -208,6 +212,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
     """Two real daemon lives retain exact durable queued and paused intent."""
+    from ...indexer._run_ledger_models import RunAuthority
     from ...job_manager.manager import JobManager
     from ...job_models import (
         DesiredJobState,
@@ -236,6 +241,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
             JobSource.VAULT,
             str(queued_root.resolve()),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "restart queued probe", str(queued_root)),
     )
@@ -245,6 +251,7 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
             JobSource.VAULT,
             str(paused_root.resolve()),
             JobMode.INCREMENTAL,
+            RunAuthority.PUBLICATION,
         ),
         JobInitiator("integration", "restart paused probe", str(paused_root)),
         start_paused=True,
@@ -350,7 +357,8 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             headers={"Authorization": f"Bearer {health['service_token']}"},
             json={
                 "type": "code",
-                "clean": True,
+                "clean": False,
+                "authority": "publication",
                 "project_root": str(root),
             },
             timeout=30.0,

@@ -1332,13 +1332,19 @@ if _undeclared_settings:
 
 
 def configured_model_repos() -> tuple[tuple[str, str], ...]:
-    """Return every model repo this build needs, label first."""
+    """Return every model repo this build needs, label first.
+
+    Sparse (SPLADE) is omitted when ``sparse_enabled`` is false: a dense-only
+    configuration never loads the sparse encoder, so provisioning, warmup, and
+    readiness must not require it either - including its gated Hugging Face
+    access and licence terms.
+    """
     cfg = get_config()
-    return (
-        ("Dense (Qwen3)", str(cfg.embedding_model)),
-        ("Sparse (SPLADE)", str(cfg.sparse_model)),
-        ("Reranker (CrossEncoder)", str(cfg.reranker_model)),
-    )
+    repos: list[tuple[str, str]] = [("Dense (Qwen3)", str(cfg.embedding_model))]
+    if bool(cfg.sparse_enabled):
+        repos.append(("Sparse (SPLADE)", str(cfg.sparse_model)))
+    repos.append(("Reranker (CrossEncoder)", str(cfg.reranker_model)))
+    return tuple(repos)
 
 
 def managed_status_dir() -> Path:

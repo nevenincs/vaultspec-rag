@@ -16,7 +16,13 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from .._store_models import VaultChunk, VaultDocument
+from .._store_models import (
+    CodeChunk,
+    DocumentChunk,
+    DocumentPayload,
+    VaultChunk,
+    VaultDocument,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,8 +36,16 @@ from ..indexer._streaming import (
     _release_cuda_cache,
     _SliceWriter,
     _stream_encode_and_upsert_vault,
+    encode_and_upsert_code_slice,
+    encode_and_upsert_document_slice,
+    execute_store_mutation,
 )
-from ..indexer._streaming_types import VaultStreamRequest
+from ..indexer._streaming_types import (
+    CodeSliceRequest,
+    DocumentSliceRequest,
+    StoreMutationLifecycle,
+    VaultStreamRequest,
+)
 from ..job_control import CancelRequested
 from ..progress import NullProgressReporter
 from ..store_runtime import VaultStore
@@ -39,6 +53,11 @@ from ..store_runtime import VaultStore
 pytestmark = [pytest.mark.unit]
 
 _DIM = 8
+
+
+def _record_prepare(events: list[str], *, should_apply: bool = True) -> bool:
+    events.append("prepare")
+    return should_apply
 
 
 @dataclass(slots=True)
@@ -270,6 +289,192 @@ class TestSliceWriterContract:
         writer.close()
         assert executed == list(range(6))
         assert len(set(threads)) == 1
+
+    def test_mutation_intent_precedes_store_and_confirmation_precedes_release(
+        self,
+    ) -> None:
+        """Mutation: moving prepare after the store call makes this guard red."""
+        events: list[str] = []
+        lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(events),
+            mark_applied=lambda: events.append("applied"),
+            confirm=lambda: events.append("confirmed"),
+            confirm_when_stored=True,
+        )
+        writer = _SliceWriter(name="receipt-order-writer")
+        writer.submit(
+            StoreWriteTask(
+                write=lambda: events.extend(("store-enter", "store-return")),
+                release=lambda: events.append("release"),
+                mutation_lifecycle=lifecycle,
+            )
+        )
+        writer.close()
+
+        assert events == [
+            "prepare",
+            "store-enter",
+            "store-return",
+            "applied",
+            "confirmed",
+            "release",
+        ]
+
+    def test_store_failure_leaves_only_prepared_mutation_intent(self) -> None:
+        """Mutation: marking APPLIED in a finally block makes this guard red."""
+        events: list[str] = []
+        lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(events),
+            mark_applied=lambda: events.append("applied"),
+            confirm=lambda: events.append("confirmed"),
+            confirm_when_stored=True,
+        )
+
+        def _fail() -> None:
+            events.append("store")
+            raise RuntimeError("injected mutation failure")
+
+        with pytest.raises(RuntimeError, match="injected mutation failure"):
+            execute_store_mutation(_fail, lifecycle)
+        assert events == ["prepare", "store"]
+
+    def test_async_acknowledgement_stays_applied_until_owning_barrier(self) -> None:
+        """Mutation: confirming every acknowledged write makes this guard red."""
+        events: list[str] = []
+        lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(events),
+            mark_applied=lambda: events.append("applied"),
+            confirm=lambda: events.append("confirmed"),
+            confirm_when_stored=False,
+        )
+
+        execute_store_mutation(lambda: events.append("store"), lifecycle)
+        assert events == ["prepare", "store", "applied"]
+
+        lifecycle.confirm()
+        assert events == ["prepare", "store", "applied", "confirmed"]
+
+    def test_confirmed_exact_replay_skips_the_store_but_not_the_record(self) -> None:
+        """The store call is skipped; the checkpoint record still happens.
+
+        Both halves are the assertion. No ``store`` event proves the bytes are
+        not written twice, which is the cost this path exists to avoid. The
+        ``acknowledged`` event proves the unit is still recorded, because the
+        state that reaches here is the one where it may not be: a mutation an
+        earlier attempt applied and died before confirming. The file state the
+        published proof is built from is written by that callback alone, so a
+        guard that demanded silence here would be pinning a breadth shortfall
+        in place.
+
+        Mutation: returning before the acknowledgement fails this on the
+        record assertion. This test is the only runnable coverage of that
+        branch - the whole unit lane stays green under the same mutation - so
+        loosening it removes the last thing watching the applied-but-
+        unconfirmed window.
+        """
+        events: list[str] = []
+        lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(events, should_apply=False),
+            mark_applied=lambda: events.append("applied"),
+            confirm=lambda: events.append("confirmed"),
+            confirm_when_stored=False,
+        )
+
+        execute_store_mutation(
+            lambda: events.append("store"),
+            lifecycle,
+            after_acknowledgement=lambda: events.append("acknowledged"),
+        )
+
+        assert "store" not in events
+        assert events == ["prepare", "acknowledged"]
+
+    def test_code_and_document_slices_drive_lifecycle_and_code_barrier(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Mutation: bypassing either real slice lifecycle makes this red."""
+        store = VaultStore(tmp_path / "store", embedding_dim=_DIM)
+        encoder = cast("EmbeddingModel", _RecordingEncoder())
+        code_events: list[str] = []
+        code_lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(code_events),
+            mark_applied=lambda: code_events.append("applied"),
+            confirm=lambda: code_events.append("confirmed"),
+            confirm_when_stored=False,
+        )
+        encode_and_upsert_code_slice(
+            CodeSliceRequest(
+                chunks=[
+                    CodeChunk(
+                        id="src/a.py:1-1",
+                        path="src/a.py",
+                        language="python",
+                        content="value = 1",
+                        line_start=1,
+                        line_end=1,
+                    )
+                ],
+                model=encoder,
+                store=store,
+                gpu_lock=None,
+                ingest_wait=False,
+                mutation_lifecycle=code_lifecycle,
+            )
+        )
+        assert code_events == ["prepare", "applied"]
+        store.apply_ingest_barrier(store.CODE_TABLE_NAME, expected_points=1)
+        code_lifecycle.confirm()
+        assert code_events == ["prepare", "applied", "confirmed"]
+
+        document_events: list[str] = []
+        document_lifecycle = StoreMutationLifecycle(
+            prepare=lambda: _record_prepare(document_events),
+            mark_applied=lambda: document_events.append("applied"),
+            confirm=lambda: document_events.append("confirmed"),
+            confirm_when_stored=True,
+        )
+        encode_and_upsert_document_slice(
+            DocumentSliceRequest(
+                chunks=[
+                    DocumentChunk(
+                        id="docs/a.txt#0",
+                        payload=DocumentPayload(
+                            source_path="docs/a.txt",
+                            unit_ordinal=0,
+                            content_fingerprint="content-v1",
+                            content="document body",
+                        ),
+                    )
+                ],
+                model=encoder,
+                store=store,
+                gpu_lock=None,
+                mutation_lifecycle=document_lifecycle,
+            )
+        )
+        assert document_events == ["prepare", "applied", "confirmed"]
+
+    def test_cancellation_during_prepare_never_touches_storage(self) -> None:
+        """Mutation: moving preparation after storage makes this guard red."""
+        store_calls = 0
+
+        def cancel_prepare() -> bool:
+            raise CancelRequested
+
+        def write() -> None:
+            nonlocal store_calls
+            store_calls += 1
+
+        lifecycle = StoreMutationLifecycle(
+            prepare=cancel_prepare,
+            mark_applied=lambda: None,
+            confirm=lambda: None,
+            confirm_when_stored=True,
+        )
+        with pytest.raises(CancelRequested):
+            execute_store_mutation(write, lifecycle)
+        assert store_calls == 0
 
     def test_a_cancel_during_close_leaves_no_live_writer_thread(self) -> None:
         """A shutdown interrupted by its own checkpoint must still stop.

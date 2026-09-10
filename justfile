@@ -222,6 +222,11 @@ check-docs-version:
 check-citations:
     {{dev}} lint citations
 
+# Check manual invocation lanes, version examples, and PATH checks.
+[group('check')]
+check-docs-conventions:
+    {{dev}} lint docs-conventions
+
 # Check the package uses absolute imports throughout.
 [group('check')]
 check-absolute-imports:

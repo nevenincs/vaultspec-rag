@@ -6,9 +6,12 @@ import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from . import _typed_fields
+
+if TYPE_CHECKING:
+    from .indexer._run_ledger_models import RunAuthority
 
 __all__ = [
     "DesiredJobState",
@@ -351,9 +354,24 @@ class JobSpec:
     source: JobSource
     project_root: str | None
     mode: JobMode | None
+    authority: RunAuthority
 
     def __post_init__(self) -> None:
+        from .indexer._run_ledger_models import RunAuthority
+
         _require_str("project_root", self.project_root, allow_empty=True, optional=True)
+        if not isinstance(self.authority, RunAuthority):  # pyright: ignore[reportUnnecessaryIsInstance] - runtime API validation
+            raise TypeError("authority must be a RunAuthority")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the one persisted and served specification shape."""
+        return {
+            "operation": self.operation.value,
+            "source": self.source.value,
+            "project_root": self.project_root,
+            "mode": self.mode.value if self.mode is not None else None,
+            "authority": self.authority.value,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -654,10 +672,7 @@ class JobSnapshot:
             "id": self.id,
             "revision": self.revision,
             "spec": {
-                "operation": self.spec.operation.value,
-                "source": self.spec.source.value,
-                "project_root": self.spec.project_root,
-                "mode": self.spec.mode.value if self.spec.mode is not None else None,
+                **self.spec.to_dict(),
                 "requested_mode": (
                     self.spec.mode.value if self.spec.mode is not None else None
                 ),
@@ -833,7 +848,7 @@ def job_spec_error(spec: JobSpec) -> str | None:
 
 def active_work_identity(
     spec: JobSpec,
-) -> tuple[JobOperation, JobSource, JobMode | None, str | None]:
+) -> tuple[JobOperation, JobSource, JobMode | None, RunAuthority, str | None]:
     """Return the normalized identity used to deduplicate active work."""
     root = spec.project_root
     normalized_root = (
@@ -843,7 +858,7 @@ def active_work_identity(
             os.path.realpath(os.path.abspath(os.path.expanduser(root)))
         )
     )
-    return spec.operation, spec.source, spec.mode, normalized_root
+    return spec.operation, spec.source, spec.mode, spec.authority, normalized_root
 
 
 def capabilities_for_state(spec: JobSpec, state: JobState) -> JobCapabilities:

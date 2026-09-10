@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from .indexer._document_indexer import (
         DocumentIndexPreflight,
     )
+    from .indexer._run_ledger_models import RunAuthority
     from .job_manager.manager import JobManager
     from .job_manager.models import (
         JobAttemptContext,
@@ -1109,13 +1110,18 @@ def _bind_and_dispatch_admitted(
 
 
 def start_reindex_vault(
-    root: Path, clean: bool, *, initiator_kind: str = "service"
+    root: Path,
+    clean: bool,
+    *,
+    authority: RunAuthority,
+    initiator_kind: str = "service",
 ) -> str:
     """Start a background vault reindexing task and return the job_id."""
     manager, job_id, created = admit_index_job(
         root,
         source=JobSource.VAULT,
         clean=clean,
+        authority=authority,
         initiator_kind=initiator_kind,
     )
     if not created:
@@ -1127,6 +1133,7 @@ def start_reindex_codebase(
     root: Path,
     clean: bool,
     *,
+    authority: RunAuthority,
     initiator_kind: str = "service",
 ) -> str:
     """Start a background codebase reindexing task and return the job_id."""
@@ -1135,6 +1142,7 @@ def start_reindex_codebase(
         root,
         source=JobSource.CODE,
         clean=clean,
+        authority=authority,
         initiator_kind=initiator_kind,
     )
     if not created:
@@ -1146,6 +1154,7 @@ def start_reindex_documents(
     root: Path,
     clean: bool,
     *,
+    authority: RunAuthority,
     initiator_kind: str = "service",
 ) -> str:
     """Start a background document reindexing task and return the job_id."""
@@ -1154,6 +1163,7 @@ def start_reindex_documents(
         root,
         source=JobSource.DOCUMENT,
         clean=clean,
+        authority=authority,
         initiator_kind=initiator_kind,
     )
     if not created:

@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from ..._publication_state import acquire_publication_snapshot
+from ..._source_types import PublicSourceType
 from ...config._settings import get_config, reset_config
 from ...config._types import EnvVar
+from ...indexer._publication_proof import ProofMissingError
 from ...progress import NullProgressReporter
 from ...store_runtime import IngestVerificationError, VaultStore
 from ..corpus import build_synthetic_vault
@@ -339,9 +342,8 @@ class TestBarrierComposesWithSliceWriter:
         try:
             with pytest.raises(IngestVerificationError):
                 indexer.full_index(reporter=NullProgressReporter())
-            assert not indexer._meta_path.exists(), (
-                "terminal metadata was published over a writer-carried silent drop"
-            )
+            with pytest.raises(ProofMissingError):
+                acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
             assert store.upsert_threads, "the rebuild never reached storage"
             assert all(ident != caller for ident in store.upsert_threads), (
                 "upserts ran inline on the encoding thread; the injection "
@@ -388,9 +390,8 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
         try:
             with pytest.raises(IngestVerificationError):
                 indexer.full_index(reporter=NullProgressReporter())
-            assert not indexer._meta_path.exists(), (
-                "terminal metadata was published over unapplied points"
-            )
+            with pytest.raises(ProofMissingError):
+                acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
         finally:
             raw.close()
             store.close()
@@ -413,7 +414,7 @@ class TestTerminalStateNeverPrecedesAppliedPoints:
         try:
             result = indexer.full_index(reporter=NullProgressReporter())
             assert result.added > 0
-            assert indexer._meta_path.exists()
+            acquire_publication_snapshot(tmp_path, PublicSourceType.VAULT)
             assert store.count() > 0
         finally:
             store.close()

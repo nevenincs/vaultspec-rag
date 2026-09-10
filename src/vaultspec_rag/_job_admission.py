@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .indexer._run_ledger_models import RunAuthority
     from .job_control import RunControl
     from .job_manager.manager import JobManager
 
@@ -46,6 +47,7 @@ def admit_index_job(
     *,
     source: JobSource,
     clean: bool,
+    authority: RunAuthority,
     initiator_kind: str,
 ) -> tuple[JobManager, str, bool]:
     # Imported inside the call rather than at module scope: the registry
@@ -68,6 +70,7 @@ def admit_index_job(
             source=source,
             project_root=str(resolved_root),
             mode=JobMode.REBUILD if clean else JobMode.INCREMENTAL,
+            authority=authority,
         ),
         JobInitiator(
             kind=initiator_kind,
