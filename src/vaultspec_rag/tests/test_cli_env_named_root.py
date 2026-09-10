@@ -107,6 +107,10 @@ def _run(
         ),
         "NO_COLOR": "1",
         "FORCE_COLOR": "0",
+        # The console folds a word longer than its width mid-token, which no
+        # whitespace collapsing can undo; a long temporary path would then
+        # never match the message that names it.
+        "COLUMNS": "4096",
         # Never let a run reach the operator's own service directory or
         # storage, even on the paths that exit before contacting either.
         EnvVar.STATUS_DIR.value: str(workspaces.base / "st"),
