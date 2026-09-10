@@ -3,14 +3,14 @@ tags:
   - '#plan'
   - '#code-document-index-boundary'
 date: '2026-07-22'
-modified: '2026-08-13'
-body_hash: 'sha256:f0ee782f48d9b6530b3a8fb932e8f19f225e142c2fe451f4f212da4a64fad3c5'
 tier: L3
 related:
   - '[[2026-07-21-code-document-index-boundary-adr]]'
   - '[[2026-07-21-code-document-index-boundary-research]]'
   - '[[2026-07-21-code-document-index-boundary-reference]]'
   - '[[2026-07-21-large-index-resilience-plan]]'
+modified: '2026-09-10'
+body_hash: 'sha256:f82a20ba95ed267a70d92ee78aa228d51e6d11c9156338c10de601a5809211eb'
 ---
 
 # `code-document-index-boundary` plan
@@ -260,7 +260,7 @@ Run focused and complete verification without test shortcuts, then close only af
 - [x] `W06.P13.S136` - Remove the first-failure and narrowed-marker shortcuts from the test recipe so the harness gate reports the complete result; `justfile`.
 - [x] `W06.P13.S84` - Run focused policy, preprocessing, indexer, migration, store, search, watcher, jobs, service, CLI, MCP, restart, and resource suites; `src/vaultspec_rag/tests`.
 - [x] `W06.P13.S137` - Reconcile the command reference with the shipped source-type vocabulary so the document kind and the combined alias appear wherever a type is accepted; `docs/cli.md`.
-- [ ] `W06.P13.S85` - Run the complete project test suite without fakes, mocks, stubs, patches, monkeypatches, skips, or expected failures; `pyproject.toml`.
+- [x] `W06.P13.S85` - Run the complete project test suite without fakes, mocks, stubs, patches, monkeypatches, skips, or expected failures; `pyproject.toml`.
 - [x] `W06.P13.S86` - Run formatting, lint, type, import-boundary, GPU, storage, and policy checks over the completed change; `.pre-commit-config.yaml`.
 - [x] `W06.P13.S87` - Perform the mandatory review for generic routing, fail-closed mutation, document isolation, migration replay, bounded resources, GPU discipline, public exhaustiveness, and test integrity; `.vault/audit/2026-07-22-code-document-index-boundary-audit.md`.
 

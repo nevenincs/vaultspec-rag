@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.28](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.27...vaultspec-rag-v0.4.28) (2026-09-10)
+
+
+### Bug Fixes
+
+* **config:** gate the sparse repo out of the required-model inventory ([6d1641b](https://github.com/nevenincs/vaultspec-rag/commit/6d1641b1753857ddc67cd85e5388dedc7e7349d7)), closes [#474](https://github.com/nevenincs/vaultspec-rag/issues/474) [#480](https://github.com/nevenincs/vaultspec-rag/issues/480)
+* delete the branches nothing reaches and unsplit the type vocabulary ([3f52f94](https://github.com/nevenincs/vaultspec-rag/commit/3f52f94709b6f7340aadec44884a1cdc9ce70612))
+* gate the read on work done, answer an unindexed root, and guard the scroll ([46ff0d6](https://github.com/nevenincs/vaultspec-rag/commit/46ff0d6771f0b9c76f9ac5e374ed5003a9337c0a))
+* **indexer:** keep recording the unit a replay finds already applied ([edc556e](https://github.com/nevenincs/vaultspec-rag/commit/edc556ed7b3511ab212e4edd712f7e54b0431a69))
+* let a read answer without a proof, and stop re-embedding what has not moved ([bc70a69](https://github.com/nevenincs/vaultspec-rag/commit/bc70a69731520d415df76dd36ee4c1b1d45d0884))
+* make scoped incremental publication proportional while preserving exact completeness ([ae18662](https://github.com/nevenincs/vaultspec-rag/commit/ae186621a0d855f09e4f029ed2f16cb82dd3e1a7))
+* make the commit gate observe anything, and close two ways past the guard ([71b9872](https://github.com/nevenincs/vaultspec-rag/commit/71b987231877a7725c3da6f107388cc97dd88a32))
+* put the source-type aliases back and declare the new substitutions ([7d4ee87](https://github.com/nevenincs/vaultspec-rag/commit/7d4ee87d4a2bfdfb64c4d4767995ac86373403a1))
+* restore the tier marker and give the converged helpers one home ([ab786f0](https://github.com/nevenincs/vaultspec-rag/commit/ab786f0d66eb5cde76f9f7ac09e26d25f4078895))
+* return main's CI to green (console wrap in env-root test, httpx2 advisories) ([5970d12](https://github.com/nevenincs/vaultspec-rag/commit/5970d12c89a88e525d066845cb241fd08953176a))
+* return main's CI to green on long runner paths and httpx2 advisories ([15b90b8](https://github.com/nevenincs/vaultspec-rag/commit/15b90b863f32adef4dd5420b22339175738286e1))
+* return main's gates to green ([e4ffc0d](https://github.com/nevenincs/vaultspec-rag/commit/e4ffc0de652f0b9ddedff7c30457264207b7953c))
+* return the gates to green after the watcher control merge ([828619c](https://github.com/nevenincs/vaultspec-rag/commit/828619c6c2cdbae4d2ce8dd43ccf0daca48d3540))
+* **tests:** pin the package scan and correct the substitution count ([59e65a8](https://github.com/nevenincs/vaultspec-rag/commit/59e65a8ed271c26f055fe3b20326be28d8dccf0e))
+
 ## [0.4.27](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.26...vaultspec-rag-v0.4.27) (2026-09-09)
 
 
