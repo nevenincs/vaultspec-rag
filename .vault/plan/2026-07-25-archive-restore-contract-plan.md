@@ -3,13 +3,13 @@ tags:
   - '#plan'
   - '#archive-restore-contract'
 date: '2026-07-25'
-modified: '2026-08-25'
-body_hash: 'sha256:706a2db72ba03f2bcf3b219c591432ca48ba0646d70f6582b4640511aff09cfd'
 tier: L2
 related:
   - '[[2026-07-25-archive-restore-contract-adr]]'
   - '[[2026-07-25-archive-restore-contract-archive-path-reference]]'
   - '[[2026-07-27-archive-restore-contract-research]]'
+modified: '2026-09-10'
+body_hash: 'sha256:dd567b8d720dde329013a700212343d0eaaac26d1c2d50ae6aa2dae56ff2e1ad'
 ---
 
 # `archive-restore-contract` plan
@@ -76,7 +76,7 @@ Reads an archive back into a named destination namespace, carrying the archived 
 Establishes end to end against a real supervised server that an archive reconstitutes a searchable namespace, and regression-guards restore out of scheduled maintenance.
 
 - [x] `P03.S12` - Add the end-to-end round trip against a real supervised server: index a root, archive it, drop the namespace, restore under a fresh root, and assert the restored namespace answers a search with the results the original gave, with the Qdrant storage-dir environment variable pointed at a temp path; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
-- [ ] `P03.S13` - Prove that round trip can fail by corrupting the archived snapshot body and observing the restore refuse rather than pass quietly, and record both directions; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
+- [x] `P03.S13` - Prove that round trip can fail by corrupting the archived snapshot body and observing the restore refuse rather than pass quietly, and record both directions; `src/vaultspec_rag/tests/integration/test_storage_archive_restore.py`.
 - [x] `P03.S14` - Extend the maintenance inertness regression so no module reachable from the scheduled tick can reach the restore operation; `src/vaultspec_rag/tests/test_adr_regression.py`.
 
 ### Phase `P04` - adapt the operator surface
@@ -91,8 +91,8 @@ Exposes the primitive as a storage verb carrying the group's existing preview, v
 
 Runs the gates, records the guard failure proofs, and reviews the delivered feature against the authorizing decision.
 
-- [ ] `P05.S18` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline; `src/vaultspec_rag/`.
-- [ ] `P05.S19` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
+- [x] `P05.S18` - Run the full suite, lint, type, and citation gates and reconcile the result against the recorded baseline; `src/vaultspec_rag/`.
+- [x] `P05.S19` - Review the delivered feature against the authorizing decision and record the audit; `src/vaultspec_rag/`.
 
 ## Parallelization
 

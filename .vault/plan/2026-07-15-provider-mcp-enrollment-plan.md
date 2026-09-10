@@ -3,12 +3,12 @@ tags:
   - '#plan'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-27'
-body_hash: 'sha256:e1d9efa755e0db6ec29f8031473f92e9db89d4c78f659793b725d2ff7d1331dc'
 tier: L2
 related:
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-research]]'
+modified: '2026-09-10'
+body_hash: 'sha256:1e415436e38f8fc00aae4147d6165d69e75ca4a2bfd589a3c281efdb59249b34'
 ---
 
 # `provider-mcp-enrollment` plan
@@ -105,7 +105,7 @@ Verify provider-native behavior, package metadata, installed artifacts, and the 
 - [x] `P03.S66` - Make real service fixtures prepare every eager model under one bounded startup deadline and launch cache-only, then repair the adjacent real-job terminal wait; `src/vaultspec_rag/config.py, src/vaultspec_rag/service.py, src/vaultspec_rag/tests/_model_setup.py, src/vaultspec_rag/tests/integration/conftest.py, src/vaultspec_rag/tests/integration/test_service_jobs.py, real slow/504/cache-incomplete regressions, repeated failed selector, full jobs and service groups, S56 intent ranking, static gates, and formal review`.
 - [x] `P03.S67` - Repeat every platform-aware release gate from zero after the model-aware service-startup correction and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; S54 job deadlines; S56 bounded full-corpus model contract; S66 all-model preflight, cold online repair, offline daemon readiness, metadata-request exclusion, stage diagnostics, and cleanup; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, and uninstall gates`.
 - [x] `P03.S68` - Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof; `service environment, HTTP transport, service discovery, startup fixture, managed Qdrant identity and teardown, real Windows and POSIX regressions, focused gates, documentation, and formal review`.
-- [ ] `P03.S69` - Repeat every platform-aware release gate from zero after the S68 corrections and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; every S54, S56, S66, and S68 contract; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, uninstall, and release gates`.
+- [x] `P03.S69` - Repeat every platform-aware release gate from zero after the S68 corrections and stop on the first failure; `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; exact clean-candidate corpus and platform ledgers; every S54, S56, S66, and S68 contract; all runtime, static, package, public Core, installed Claude and Codex, idempotence, selective unenrollment, uninstall, and release gates`.
 
 ## Parallelization
 

@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#provider-mcp-enrollment'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-10'
 body_schema: 'body-v2'
-body_hash: 'sha256:806a3522f8ff1e24638f4ab6b9ab04df6915374cec1357bab37e8767171f3e59'
+body_hash: 'sha256:a5ddcbfc7a5e6dbae460de9c003d129e7f608f389a35e6bed3bc569ea30b2cbd'
 related:
   - '[[2026-07-15-provider-mcp-enrollment-P01-S01]]'
   - '[[2026-07-15-provider-mcp-enrollment-P01-S02]]'
@@ -76,6 +76,8 @@ related:
   - '[[2026-07-15-provider-mcp-enrollment-P03-S66]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S67]]'
   - '[[2026-07-15-provider-mcp-enrollment-P03-S68]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-S69]]'
+  - '[[2026-07-15-provider-mcp-enrollment-P03-summary]]'
   - '[[2026-07-15-provider-mcp-enrollment-adr]]'
   - '[[2026-07-15-provider-mcp-enrollment-audit]]'
   - '[[2026-07-15-provider-mcp-enrollment-plan]]'
@@ -168,6 +170,8 @@ Auto-generated index of all documents tagged with `#provider-mcp-enrollment`.
 - `2026-07-15-provider-mcp-enrollment-P03-S66` - Bound real service startup around complete cache preparation and offline readiness
 - `2026-07-15-provider-mcp-enrollment-P03-S67` - Repeat every platform-aware release gate after the model-aware service-startup correction
 - `2026-07-15-provider-mcp-enrollment-P03-S68` - Close every S67 review finding with strict shared deadlines, race-safe startup publication, and child-incarnation proof
+- `2026-07-15-provider-mcp-enrollment-P03-S69` - Repeat every platform-aware release gate from zero after the S68 corrections and stop on the first failure
+- `2026-07-15-provider-mcp-enrollment-P03-summary` - `provider-mcp-enrollment` `P03` summary
 
 ### plan
 
