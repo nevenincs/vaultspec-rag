@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:81c4f3b72f5bfbe23b2f1de6142186752aaece1ec6c860dd0c1b50c96c0b4333'
+body_hash: 'sha256:db96a5b35f269ddecb9dd5ca061949d81c58187d640500aa1c469bd892d54bca'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -19,6 +19,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P02-S08]]'
   - '[[2026-09-11-binary-release-bundles-P02-S09]]'
   - '[[2026-09-11-binary-release-bundles-P02-S10]]'
+  - '[[2026-09-11-binary-release-bundles-P02-S11]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -38,7 +39,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S10 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S11 implementation review`
 
 ### exec
 
@@ -53,6 +54,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P02-S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation
 - `2026-09-11-binary-release-bundles-P02-S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars
 - `2026-09-11-binary-release-bundles-P02-S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication
+- `2026-09-11-binary-release-bundles-P02-S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums
 
 ### plan
 

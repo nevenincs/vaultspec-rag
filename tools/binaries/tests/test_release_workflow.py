@@ -51,3 +51,32 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     assert "vaultspec-rag-*|vaultspec-search-mcp-*)" in verify_gate
     assert verify < promote
     assert 'if: ${{ success() }}' in text[promote:]
+
+
+def test_python_and_binary_release_workflows_share_the_checksum_lock(
+    repo_root: Path,
+) -> None:
+    """The two asset publishers serialize their shared checksum update.
+
+    Mutation proof: changing the publish workflow back to its private
+    ``publish-*`` concurrency group made the shared-lock assertion fail; the
+    common per-tag group was restored before the passing run.
+    """
+    binaries = _workflow(repo_root)
+    publish = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
+        encoding="utf-8"
+    )
+    lock = "group: release-artifacts-${{ inputs.tag || github.ref_name }}"
+
+    assert lock in binaries
+    assert lock in publish
+    assert "cancel-in-progress: false" in binaries
+    assert "cancel-in-progress: false" in publish
+
+    assert "sha256sum ./* > SHA256SUMS" in publish
+    assert 'gh release download "${TAG}" --repo "$GITHUB_REPOSITORY"' in publish
+    assert "--pattern SHA256SUMS --output inherited.txt" in publish
+    assert "cat inherited.txt >> SHA256SUMS" in publish
+    assert "LC_ALL=C sort -k2 -o SHA256SUMS SHA256SUMS" in publish
+    assert 'gh release upload "${TAG}" dist/*' in publish
+    assert '--repo "$GITHUB_REPOSITORY"' in publish
