@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tools.binaries.build_pyapp import BINARIES, asset_name
 from tools.packaging import products
 from tools.packaging.generate import formula_path, generate, scoop_path
 from tools.packaging.products import VAULTSPEC_RAG
@@ -41,10 +40,9 @@ def channel_root(tmp_path: Path) -> Path:
     """
     built = set(buildable_targets(REPO_ROOT))
     lines = [
-        f"{_DIGEST}  {asset_name(binary, target)}"
+        f"{_DIGEST}  {VAULTSPEC_RAG.bundle_name('9.9.9', target)}"
         for target in (*products.HOMEBREW_TARGETS, products.WINDOWS_X86_64)
         if VAULTSPEC_RAG.serves(target) and target in built
-        for binary in BINARIES
     ]
     assert lines, "the matrix builds nothing this product serves"
     checksums = tmp_path / "SHA256SUMS"
@@ -189,7 +187,7 @@ def test_an_asset_for_a_target_the_matrix_never_builds_is_refused(
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest["url"][0] = (
         f"https://github.com/nevenincs/vaultspec-rag/releases/download/{TAG}/"
-        f"{asset_name(BINARIES[0], products.MACOS_ARM64)}"
+        f"{VAULTSPEC_RAG.bundle_name('9.9.9', products.MACOS_ARM64)}"
     )
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 

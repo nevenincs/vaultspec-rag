@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tools.binaries.build_pyapp import BINARIES, GLIBC_FLOOR, asset_name
+from tools.binaries.build_pyapp import GLIBC_FLOOR
 from tools.packaging import homebrew, products, scoop
 from tools.packaging.checksums import ChecksumError
 from tools.packaging.generate import _parser, available_targets, generate
@@ -40,12 +40,8 @@ ALL_TARGETS = (
 def digests_for(targets: tuple[str, ...] = ALL_TARGETS) -> dict[str, str]:
     """Return a synthetic but well-formed digest map for the given triples."""
     return {
-        VAULTSPEC_RAG.asset_name(executable, target): f"{index:064x}"
-        for index, (target, executable) in enumerate(
-            (target, executable)
-            for target in targets
-            for executable in VAULTSPEC_RAG.executables
-        )
+        VAULTSPEC_RAG.bundle_name(VERSION, target): f"{index:064x}"
+        for index, target in enumerate(targets, start=1)
     }
 
 
@@ -56,19 +52,14 @@ def write_aggregate(path: Path, digests: dict[str, str]) -> Path:
     return path
 
 
-def test_generator_asset_names_match_the_builder_exactly() -> None:
-    """The channel and the build must agree on the published filenames.
-
-    Two independent spellings of the same asset name is how a manifest ends
-    up pointing at a 404 that no build failure ever announced.
-    """
+def test_generator_asset_names_match_the_bundle_contract() -> None:
+    """The channel names the exact archive emitted for each target."""
     for target in ALL_TARGETS:
-        generated = {
-            VAULTSPEC_RAG.asset_name(executable, target)
-            for executable in VAULTSPEC_RAG.executables
-        }
-        built = {asset_name(binary, target) for binary in BINARIES}
-        assert generated == built
+        asset = VAULTSPEC_RAG.bundle_name(VERSION, target)
+        assert asset.startswith(f"vaultspec-rag-v{VERSION}-{target}")
+        assert asset.endswith(
+            ".zip" if target == products.WINDOWS_X86_64 else ".tar.gz"
+        )
 
 
 def test_scoop_manifest_pins_the_release_digests() -> None:
@@ -81,9 +72,14 @@ def test_scoop_manifest_pins_the_release_digests() -> None:
     hashes = manifest["hash"]
     assert isinstance(urls, list)
     assert isinstance(hashes, list)
-    assert len(urls) == len(hashes) == len(VAULTSPEC_RAG.executables)
-    for url, digest in zip(urls, hashes, strict=True):
-        assert digest == digests[str(url).rsplit("/", 1)[-1]]
+    assert len(urls) == len(hashes) == 1
+    asset = VAULTSPEC_RAG.bundle_name(VERSION, products.WINDOWS_X86_64)
+    assert urls == [f"{VAULTSPEC_RAG.release_base_url(VERSION)}/{asset}"]
+    assert hashes == [digests[asset]]
+    assert manifest["bin"] == [
+        ["vaultspec-rag.exe", "vaultspec-rag"],
+        ["vaultspec-search-mcp.exe", "vaultspec-search-mcp"],
+    ]
 
 
 def test_scoop_manifest_never_emits_an_empty_hash() -> None:
@@ -93,12 +89,7 @@ def test_scoop_manifest_never_emits_an_empty_hash() -> None:
     committed manifest that Scoop will refuse on the user's machine.
     """
     incomplete = digests_for()
-    del incomplete[
-        VAULTSPEC_RAG.asset_name(
-            VAULTSPEC_RAG.executables[0],
-            products.WINDOWS_X86_64,
-        )
-    ]
+    del incomplete[VAULTSPEC_RAG.bundle_name(VERSION, products.WINDOWS_X86_64)]
 
     with pytest.raises(ChecksumError, match="no entry for"):
         scoop.render_manifest(VAULTSPEC_RAG, VERSION, incomplete)
@@ -113,16 +104,18 @@ def test_scoop_manifest_is_valid_json_scoop_can_read() -> None:
 
 
 def test_homebrew_formula_pins_every_covered_platform() -> None:
-    """Each built platform gets a url and a sha256 for each executable."""
+    """Each built platform gets one bundle URL and digest."""
     digests = digests_for()
 
     formula = homebrew.render(VAULTSPEC_RAG, VERSION, digests, (products.LINUX_X86_64,))
 
     for target in (products.LINUX_X86_64,):
-        for executable in VAULTSPEC_RAG.executables:
-            asset = VAULTSPEC_RAG.asset_name(executable, target)
-            assert f"/{asset}" in formula
-            assert f'sha256 "{digests[asset]}"' in formula
+        asset = VAULTSPEC_RAG.bundle_name(VERSION, target)
+        assert f"/{asset}" in formula
+        assert f'sha256 "{digests[asset]}"' in formula
+    assert formula.count('url "') == 1
+    assert 'bin.install "vaultspec-rag"' in formula
+    assert 'bin.install "vaultspec-search-mcp"' in formula
 
 
 def test_homebrew_formula_omits_an_unbuilt_platform() -> None:
@@ -145,28 +138,26 @@ def test_homebrew_formula_declares_the_expected_ruby_surface() -> None:
         VAULTSPEC_RAG,
         VERSION,
         digests_for(),
-        (products.MACOS_ARM64, products.MACOS_X86_64, products.LINUX_X86_64),
+        (products.LINUX_X86_64,),
     )
 
     assert formula.startswith("class VaultspecRag < Formula\n")
     assert f'version "{VERSION}"' in formula
     assert 'license "MIT"' in formula
-    assert 'bin.install "vaultspec-rag-#{triple}" => "vaultspec-rag"' in formula
-    assert 'resource("vaultspec-search-mcp").stage do' in formula
+    assert 'bin.install "vaultspec-rag"' in formula
+    assert 'bin.install "vaultspec-search-mcp"' in formula
+    assert "resource(" not in formula
     assert formula.endswith("end\n")
 
 
-def test_available_targets_requires_every_executable_on_a_platform() -> None:
-    """A half-published platform is not coverage; the resource would 404."""
+def test_available_targets_requires_the_complete_bundle_on_a_platform() -> None:
+    """A missing target bundle is not Homebrew coverage."""
     digests = digests_for()
-    del digests[
-        VAULTSPEC_RAG.asset_name(
-            VAULTSPEC_RAG.executables[1],
-            products.LINUX_X86_64,
-        )
-    ]
+    del digests[VAULTSPEC_RAG.bundle_name(VERSION, products.LINUX_X86_64)]
 
-    assert products.LINUX_X86_64 not in available_targets(VAULTSPEC_RAG, digests)
+    assert products.LINUX_X86_64 not in available_targets(
+        VAULTSPEC_RAG, VERSION, digests
+    )
 
 
 def test_an_unsupported_platform_is_never_offered() -> None:
@@ -178,7 +169,7 @@ def test_an_unsupported_platform_is_never_offered() -> None:
     """
     digests = digests_for((products.MACOS_ARM64, products.LINUX_X86_64))
 
-    resolved = available_targets(VAULTSPEC_RAG, digests)
+    resolved = available_targets(VAULTSPEC_RAG, VERSION, digests)
 
     assert products.MACOS_ARM64 not in resolved
     assert products.LINUX_X86_64 in resolved

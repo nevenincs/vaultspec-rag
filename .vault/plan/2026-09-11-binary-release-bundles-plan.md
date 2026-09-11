@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:e0285ac33635cca1e774be16fed68b25ecb1dcc88c44b967457e7cf6ea1cf62c'
+body_hash: 'sha256:d75179bd6d1569a534d09224e1afb8b51b8a2157fa50e6e4cbbdc75bbe7c8720'
 ---
 
 # `binary-release-bundles` plan
@@ -49,7 +49,7 @@ Build bundles from the exact release inputs, publish them alongside Python artif
 
 Make Scoop and Homebrew consume the archive contract and document installation, verification, runtime prerequisites, and release recovery.
 
-- [ ] `P03.S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats; `tools/packaging`.
+- [x] `P03.S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats; `tools/packaging`.
 - [ ] `P03.S14` - Update channel, checksum, pointer, target-coverage, and archive-contract tests for bundle assets and failure cases; `tools/packaging/tests`.
 - [ ] `P03.S15` - Document direct-download archive layout, supported targets, manifest and checksum verification, and GPU/network/CUDA first-launch requirements; `docs/installation.md`.
 - [ ] `P03.S16` - Document maintainer bundle publication, complete-target gating, checksum reconciliation, and release recovery; `RELEASING.md`.

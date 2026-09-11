@@ -458,7 +458,7 @@ release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles':
 # the GitHub Release; keeping the archive-only form here makes local validation
 # independent of a remote release.
 [group('release')]
-release-checksums bundle_dir='dist-bundles' checksums='dist-bin/SHA256SUMS':
+release-checksums bundle_dir='dist-bundles' checksums='dist-bundles/SHA256SUMS':
     uv run --no-project --python 3.13 -- python -c "from pathlib import Path; paths = sorted(Path('{{bundle_dir}}').glob('*.sha256')); raise SystemExit('no bundle checksums found') if not paths else None; output = Path('{{checksums}}'); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(''.join(path.read_text(encoding='utf-8', newline='') for path in paths), encoding='utf-8', newline='')"
 
 # `root` is REQUIRED and is a checkout of nevenincs/homebrew-tap - the account
@@ -469,7 +469,7 @@ release-checksums bundle_dir='dist-bundles' checksums='dist-bin/SHA256SUMS':
 
 # Regenerate and validate a release's channel pointers, as the release job does.
 [group('release')]
-release-channels tag root checksums='dist-bin/SHA256SUMS':
+release-channels tag root checksums='dist-bundles/SHA256SUMS':
     uv run --no-project --python 3.13 -- python -m tools.packaging.generate --tag {{tag}} --checksums {{checksums}} --root {{root}}
     uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root {{root}}
 
