@@ -555,6 +555,68 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The release mutation is last. Every declared target must have exactly
+      # one correctly named public archive before this job can attach anything;
+      # a successful matrix is not enough when an artifact upload is stale,
+      # renamed, or accidentally points at the private raw directory.
+      - name: Assert every declared target archive ready
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/binaries.yml
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not found; cannot derive targets"; exit 1; }
+          mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
+          if [ ${#expected[@]} -eq 0 ]; then
+            echo "::error::could not derive any target from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+
+          missing=()
+          duplicates=()
+          expected_names=()
+          for triple in "${expected[@]}"; do
+            suffix=.tar.gz
+            [[ "${triple}" == *-windows-msvc ]] && suffix=.zip
+            expected_name="${TAG}-${triple}${suffix}"
+            expected_names+=("${expected_name}")
+            [ -f "dist-bundles/${expected_name}" ] || missing+=("${expected_name}")
+            matches=()
+            for asset in "dist-bundles/${TAG}-${triple}.zip" "dist-bundles/${TAG}-${triple}.tar.gz"; do
+              [ -f "${asset}" ] && matches+=("${asset}")
+            done
+            [ ${#matches[@]} -le 1 ] || duplicates+=("${triple} (${#matches[@]})")
+          done
+
+          raw=()
+          unexpected=()
+          for asset in dist-bundles/*; do
+            [ -f "${asset}" ] || continue
+            asset_name="${asset#dist-bundles/}"
+            case "${asset_name}" in
+              SHA256SUMS) ;;
+              *.zip|*.tar.gz)
+                allowed=0
+                for expected_name in "${expected_names[@]}"; do
+                  [ "${asset_name}" = "${expected_name}" ] && allowed=1 && break
+                done
+                [ "${allowed}" -eq 1 ] || unexpected+=("${asset_name}")
+                ;;
+              *) raw+=("${asset_name}") ;;
+            esac
+          done
+
+          if [ ${#missing[@]} -ne 0 ] || [ ${#duplicates[@]} -ne 0 ] || [ ${#raw[@]} -ne 0 ] || [ ${#unexpected[@]} -ne 0 ]; then
+            [ ${#missing[@]} -eq 0 ] || echo "::error::${TAG} is missing target archives: ${missing[*]}"
+            [ ${#duplicates[@]} -eq 0 ] || echo "::error::${TAG} has duplicate target archives: ${duplicates[*]}"
+            [ ${#raw[@]} -eq 0 ] || echo "::error::raw or unexpected files cannot be published: ${raw[*]}"
+            [ ${#unexpected[@]} -eq 0 ] || echo "::error::unexpected public archives cannot be published: ${unexpected[*]}"
+            echo "### Incomplete binary archive set" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "all ${#expected[@]} declared target archives are ready for ${TAG}"
+
       - name: Upload bundles to release
         shell: bash
         env:
@@ -729,16 +791,57 @@ jobs:
           fi
 
           missing=()
+          duplicates=()
+          expected_names=()
           for triple in "${expected[@]}"; do
-            printf '%s' "${names}" | grep -q -- "${triple}" || missing+=("${triple}")
+            suffix=.tar.gz
+            [[ "${triple}" == *-windows-msvc ]] && suffix=.zip
+            expected_name="${TAG}-${triple}${suffix}"
+            expected_names+=("${expected_name}")
+            matches=()
+            while IFS= read -r asset; do
+              [ -n "${asset}" ] || continue
+              case "${asset}" in
+                "${TAG}-${triple}".zip|"${TAG}-${triple}".tar.gz)
+                  matches+=("${asset}")
+                  ;;
+              esac
+            done <<< "${names}"
+            [ ${#matches[@]} -le 1 ] || duplicates+=("${triple} (${#matches[@]})")
+            found=0
+            for asset in "${matches[@]}"; do
+              [ "${asset}" = "${expected_name}" ] && found=1
+            done
+            [ "${found}" -eq 1 ] || missing+=("${expected_name}")
           done
 
-          if [ ${#missing[@]} -eq 0 ]; then
-            echo "all ${#expected[@]} declared target(s) present on ${TAG}"
+          bundle_archives=()
+          raw=()
+          while IFS= read -r asset; do
+            [ -n "${asset}" ] || continue
+            case "${asset}" in
+              vaultspec-rag-v*.zip|vaultspec-rag-v*.tar.gz)
+                bundle_archives+=("${asset}")
+                ;;
+              vaultspec-rag-*|vaultspec-search-mcp-*)
+                raw+=("${asset}")
+                ;;
+            esac
+          done <<< "${names}"
+          [ ${#bundle_archives[@]} -eq ${#expected[@]} ] || missing+=("expected ${#expected[@]} bundle archives, found ${#bundle_archives[@]}")
+
+          problems=()
+          [ "${RELEASE_RESULT}" = "success" ] || problems+=("release job=${RELEASE_RESULT}")
+          [ ${#missing[@]} -eq 0 ] || problems+=("missing or unexpected target archives: ${missing[*]}")
+          [ ${#duplicates[@]} -eq 0 ] || problems+=("duplicate target archives: ${duplicates[*]}")
+          [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")
+
+          if [ ${#problems[@]} -eq 0 ]; then
+            echo "all ${#expected[@]} declared target archives present on ${TAG}"
             exit 0
           fi
 
-          echo "::warning::${TAG} is missing: ${missing[*]}"
+          echo "::warning::${TAG} failed the complete archive gate: ${problems[*]}"
 
           if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                   --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
@@ -746,7 +849,7 @@ jobs:
             echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
           fi
 
-          echo "::error::${TAG} is INCOMPLETE - missing ${missing[*]} (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once every declared target attaches."
+          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back only after every declared target archive is attached and the release job succeeds."
           exit 1
 
       # Undo an earlier demotion once a re-dispatch actually attaches something,
