@@ -34,6 +34,7 @@ TAG = f"vaultspec-rag-v{VERSION}"
 ALL_TARGETS = (
     products.WINDOWS_X86_64,
     products.LINUX_X86_64,
+    products.LINUX_ARM64,
 )
 
 
@@ -80,6 +81,11 @@ def test_scoop_manifest_pins_the_release_digests() -> None:
         ["vaultspec-rag.exe", "vaultspec-rag"],
         ["vaultspec-search-mcp.exe", "vaultspec-search-mcp"],
     ]
+    assert manifest["autoupdate"]["url"] == [
+        f"{VAULTSPEC_RAG.homepage}/releases/download/"
+        f"{VAULTSPEC_RAG.tag_prefix}$version/"
+        f"{VAULTSPEC_RAG.bundle_name('$version', products.WINDOWS_X86_64)}"
+    ]
 
 
 def test_scoop_manifest_never_emits_an_empty_hash() -> None:
@@ -118,6 +124,23 @@ def test_homebrew_formula_pins_every_covered_platform() -> None:
     assert 'bin.install "vaultspec-search-mcp"' in formula
 
 
+def test_homebrew_formula_uses_one_archive_for_both_commands() -> None:
+    """The second command comes from the same archive, never a resource URL.
+
+    Mutation proof: adding a second ``url`` line to the platform block made
+    the exact URL-count assertion fail; the duplicate line was restored before
+    the passing run.
+    """
+    formula = homebrew.render(
+        VAULTSPEC_RAG, VERSION, digests_for(), (products.LINUX_X86_64,)
+    )
+
+    assert formula.count('url "') == 1
+    assert formula.count('sha256 "') == 1
+    assert formula.count("bin.install ") == len(VAULTSPEC_RAG.executables)
+    assert "resource" not in formula
+
+
 def test_homebrew_formula_omits_an_unbuilt_platform() -> None:
     """A gap in the build matrix is absent from the formula, not faked.
 
@@ -151,13 +174,18 @@ def test_homebrew_formula_declares_the_expected_ruby_surface() -> None:
 
 
 def test_available_targets_requires_the_complete_bundle_on_a_platform() -> None:
-    """A missing target bundle is not Homebrew coverage."""
+    """A missing target bundle is not Homebrew coverage.
+
+    Mutation proof: inverting the bundle-membership check made the exact
+    target assertion fail; the check was restored before the passing run.
+    """
     digests = digests_for()
     del digests[VAULTSPEC_RAG.bundle_name(VERSION, products.LINUX_X86_64)]
 
     assert products.LINUX_X86_64 not in available_targets(
         VAULTSPEC_RAG, VERSION, digests
     )
+    assert products.LINUX_ARM64 in available_targets(VAULTSPEC_RAG, VERSION, digests)
 
 
 def test_an_unsupported_platform_is_never_offered() -> None:

@@ -19,7 +19,12 @@ import pytest
 from tools.packaging import products
 from tools.packaging.generate import formula_path, generate, scoop_path
 from tools.packaging.products import VAULTSPEC_RAG
-from tools.packaging.validate import REPO_ROOT, buildable_targets, validate
+from tools.packaging.validate import (
+    REPO_ROOT,
+    _read_manifest,
+    buildable_targets,
+    validate,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,6 +96,22 @@ def test_a_truncated_digest_is_refused(channel_root: Path) -> None:
     )
 
 
+def test_a_scoop_url_hash_count_mismatch_is_refused(channel_root: Path) -> None:
+    """One archive URL cannot be paired with a different number of hashes.
+
+    Mutation proof: disabling the validator's length check made the exact
+    problem assertion fail; the check was restored before the passing run.
+    """
+    path = scoop_path(channel_root, VAULTSPEC_RAG)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["url"].append(manifest["url"][0])
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    assert any(
+        "hash(es) for" in problem for problem in validate(channel_root, VAULTSPEC_RAG)
+    )
+
+
 def test_a_blank_formula_digest_is_refused(channel_root: Path) -> None:
     """The Homebrew side of the same failure."""
     path = formula_path(channel_root, VAULTSPEC_RAG)
@@ -124,12 +145,12 @@ def test_channels_disagreeing_about_the_version_are_refused(
 
 
 def test_an_asset_no_build_produces_is_refused(channel_root: Path) -> None:
-    """A pointer at a nonexistent asset is a 404 at install time and nowhere else."""
+    """A pointer at a raw staging executable is not a public bundle."""
     path = scoop_path(channel_root, VAULTSPEC_RAG)
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest["url"][0] = (
         "https://github.com/nevenincs/vaultspec-rag/releases/download/"
-        f"{TAG}/vaultspec-rag-0.1.2-x86_64-pc-windows-msvc.msi"
+        f"{TAG}/vaultspec-rag-x86_64-pc-windows-msvc.exe"
     )
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -137,6 +158,31 @@ def test_an_asset_no_build_produces_is_refused(channel_root: Path) -> None:
         "names an asset no build produces" in problem
         for problem in validate(channel_root, VAULTSPEC_RAG)
     )
+
+
+def test_a_non_object_scoop_manifest_is_refused(channel_root: Path) -> None:
+    """A JSON array cannot satisfy the channel manifest contract."""
+    path = scoop_path(channel_root, VAULTSPEC_RAG)
+    path.write_text("[]", encoding="utf-8")
+
+    problems = validate(channel_root, VAULTSPEC_RAG)
+
+    assert problems == [f"{path}: is not a JSON object"]
+
+
+def test_read_manifest_turns_a_non_object_into_an_empty_mapping(
+    tmp_path: Path,
+) -> None:
+    """The parser's shape guard gives validation a safe sentinel.
+
+    Mutation proof: returning a non-empty mapping for the array made this
+    exact helper assertion fail; the guard was restored before the passing
+    run.
+    """
+    path = tmp_path / "manifest.json"
+    path.write_text("[]", encoding="utf-8")
+
+    assert _read_manifest(path) == {}
 
 
 def test_a_missing_pointer_is_refused_rather_than_passing_vacuously(

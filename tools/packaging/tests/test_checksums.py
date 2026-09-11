@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tools.packaging import products
 from tools.packaging.checksums import (
     ChecksumError,
     parse_checksums,
     read_checksums,
     require,
 )
+from tools.packaging.products import VAULTSPEC_RAG
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,18 +28,20 @@ pytestmark = pytest.mark.unit
 
 DIGEST_A = "7452312e47a9eb7a7674174d359b78dd9689b60b1c6c955ac39387a71c42a365"
 DIGEST_B = "a3794b80af72b16e030825590c6664113c20e7e10e4ae18d983636916e9f1f2a"
+BUNDLE_A = VAULTSPEC_RAG.bundle_name("0.4.6", products.LINUX_X86_64)
+BUNDLE_B = VAULTSPEC_RAG.bundle_name("0.4.6", products.LINUX_ARM64)
 
 
 def test_parses_a_well_formed_aggregate() -> None:
     """The two-space sha256sum format maps asset names to digests."""
     text = (
-        f"{DIGEST_A}  core-x86_64-unknown-linux-gnu\n"
-        f"{DIGEST_B}  mcp-x86_64-unknown-linux-gnu\n"
+        f"{DIGEST_A}  {BUNDLE_A}\n"
+        f"{DIGEST_B}  {BUNDLE_B}\n"
     )
 
     assert parse_checksums(text) == {
-        "core-x86_64-unknown-linux-gnu": DIGEST_A,
-        "mcp-x86_64-unknown-linux-gnu": DIGEST_B,
+        BUNDLE_A: DIGEST_A,
+        BUNDLE_B: DIGEST_B,
     }
 
 
@@ -48,7 +52,8 @@ def test_rejects_a_carriage_return_rather_than_stripping_it() -> None:
     ``sha256sum -c`` for the affected rows, which this reader cannot fix on
     that tool's behalf. So it refuses.
     """
-    text = f"{DIGEST_A}  core-x86_64-pc-windows-msvc.exe\r\n"
+    bundle = VAULTSPEC_RAG.bundle_name("0.4.6", products.WINDOWS_X86_64)
+    text = f"{DIGEST_A}  {bundle}\r\n"
 
     with pytest.raises(ChecksumError, match="carriage return"):
         parse_checksums(text)
@@ -57,10 +62,10 @@ def test_rejects_a_carriage_return_rather_than_stripping_it() -> None:
 @pytest.mark.parametrize(
     "line",
     [
-        "not-a-digest  core-x86_64-unknown-linux-gnu",
-        f"{DIGEST_A} core-x86_64-unknown-linux-gnu",
+        f"not-a-digest  {BUNDLE_A}",
+        f"{DIGEST_A} {BUNDLE_A}",
         f"{DIGEST_A}  ",
-        f"{DIGEST_A[:63]}  core-x86_64-unknown-linux-gnu",
+        f"{DIGEST_A[:63]}  {BUNDLE_A}",
     ],
     ids=["bad-digest", "single-space", "no-name", "short-digest"],
 )
@@ -73,8 +78,8 @@ def test_rejects_a_malformed_line(line: str) -> None:
 def test_rejects_an_asset_listed_twice_with_conflicting_digests() -> None:
     """Two digests for one name means the aggregate cannot pin that asset."""
     text = (
-        f"{DIGEST_A}  core-x86_64-unknown-linux-gnu\n"
-        f"{DIGEST_B}  core-x86_64-unknown-linux-gnu\n"
+        f"{DIGEST_A}  {BUNDLE_A}\n"
+        f"{DIGEST_B}  {BUNDLE_A}\n"
     )
 
     with pytest.raises(ChecksumError, match="twice"):
@@ -90,7 +95,7 @@ def test_rejects_an_empty_aggregate() -> None:
 def test_require_refuses_to_invent_a_missing_digest() -> None:
     """The no-fallback rule: an unattached asset cannot be pinned."""
     with pytest.raises(ChecksumError, match="no entry for"):
-        require({"core-x86_64-unknown-linux-gnu": DIGEST_A}, "mcp-aarch64-apple-darwin")
+        require({BUNDLE_A: DIGEST_A}, BUNDLE_B)
 
 
 def test_read_checksums_sees_real_bytes_not_translated_ones(tmp_path: Path) -> None:
@@ -100,7 +105,8 @@ def test_read_checksums_sees_real_bytes_not_translated_ones(tmp_path: Path) -> N
     and report a clean aggregate on the one platform that produces the defect.
     """
     path = tmp_path / "SHA256SUMS"
-    path.write_bytes(f"{DIGEST_A}  core-x86_64-pc-windows-msvc.exe\r\n".encode())
+    bundle = VAULTSPEC_RAG.bundle_name("0.4.6", products.WINDOWS_X86_64)
+    path.write_bytes(f"{DIGEST_A}  {bundle}\r\n".encode())
 
     with pytest.raises(ChecksumError, match="carriage return"):
         read_checksums(path)
