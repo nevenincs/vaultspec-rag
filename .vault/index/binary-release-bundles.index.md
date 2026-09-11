@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:cb4849c144e3d60440135696a785775c3d3fb858dbdca6925b946410b1d0480e'
+body_hash: 'sha256:bb6ec4aeec64349ebacc41df44767524dea7a7de7bb8e325ba805da80be6de64'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -14,6 +14,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P01-S04]]'
   - '[[2026-09-11-binary-release-bundles-P01-S05]]'
   - '[[2026-09-11-binary-release-bundles-P01-S06]]'
+  - '[[2026-09-11-binary-release-bundles-P01-summary]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -43,6 +44,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P01-S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted
 - `2026-09-11-binary-release-bundles-P01-S05` - Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs
 - `2026-09-11-binary-release-bundles-P01-S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage
+- `2026-09-11-binary-release-bundles-P01-summary` - `binary-release-bundles` `P01` summary
 
 ### plan
 
