@@ -353,7 +353,12 @@ def test_embedded_python_series_satisfies_requires_python(
 
 
 def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
-    """The script is not orphaned: the binaries workflow is its automated caller."""
+    """The script is not orphaned: the binaries workflow is its automated caller.
+
+    Mutation proof: removing ``--wheel-dir`` from the recipe failed this
+    release-input assertion; the exact-wheel handoff was restored before the
+    passing run.
+    """
     from dev.guards._workflows import final_commands, named
 
     workflow = repo_root / ".github" / "workflows" / "binaries.yml"
@@ -377,12 +382,25 @@ def test_the_release_workflow_invokes_this_builder(repo_root: Path) -> None:
         f"`just release-binaries` no longer reaches the builder: {commands}"
     )
     assert any("--tag" in command and "--outdir" in command for command in commands)
+    assert any("--wheel-dir" in command for command in commands)
 
 
 def test_the_justfile_exposes_a_local_build_recipe(repo_root: Path) -> None:
     """A maintainer can reproduce a release build without copying CI's command."""
     text = (repo_root / "justfile").read_text(encoding="utf-8")
     assert "-m tools.binaries.build_pyapp" in text
+
+
+def test_the_justfile_exposes_local_bundle_and_checksum_recipes(
+    repo_root: Path,
+) -> None:
+    """Local release commands cover bundle creation and archive checksums."""
+    text = (repo_root / "justfile").read_text(encoding="utf-8")
+
+    assert "release-bundle tag rust_target" in text
+    assert "-m tools.packaging.bundles" in text
+    assert "--raw-dir {{raw_dir}}" in text
+    assert "release-checksums bundle_dir='dist-bundles'" in text
 
 
 def test_no_call_site_runs_a_packaged_tool_as_a_script(repo_root: Path) -> None:

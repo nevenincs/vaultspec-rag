@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:f7ccd24fdce71b20e30f065dd3dbd0bca04540ab139e2dc12f727cd4a514b53c'
+body_hash: 'sha256:f4b8e2b2f1ce39e011e890a207d1acf3f794177b77b9f0f9cf64c460105686ca'
 ---
 
 # `binary-release-bundles` plan
@@ -39,7 +39,7 @@ Centralize the RAG product contract, finalize executable metadata, and prove det
 Build bundles from the exact release inputs, publish them alongside Python artifacts, and gate stable/latest pointers on complete validated target coverage.
 
 - [x] `P02.S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel; `tools/binaries/build_pyapp.py`.
-- [ ] `P02.S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation; `justfile`.
+- [x] `P02.S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation; `justfile`.
 - [ ] `P02.S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars; `.github/workflows/binaries.yml`.
 - [ ] `P02.S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication; `.github/workflows/binaries.yml`.
 - [ ] `P02.S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums; `.github/workflows/publish.yml`.
