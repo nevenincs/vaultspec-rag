@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:4f5859e36b0c41c4b734d254dbfa1cc74ef56b6426df7ebea18a2db6caf2b22a'
+body_hash: 'sha256:e1c3b11aabbfe1ffa605abb4e49838000d5a68eecbf7444265a81b9f91a84723'
 ---
 
 # `binary-release-bundles` plan
@@ -28,7 +28,7 @@ This plan executes the accepted RAG port in `2026-09-11-binary-release-bundles-a
 Centralize the RAG product contract, finalize executable metadata, and prove deterministic target archives before workflow publication depends on them.
 
 - [x] `P01.S01` - Centralize RAG's supported targets, stable executable names, private staging names, archive suffixes, and release metadata; `tools/packaging/products.py`.
-- [ ] `P01.S02` - Implement deterministic per-target ZIP and TAR.GZ bundle creation with stable executables, manifest, license, usage material, and checksum sidecars; `tools/packaging/bundles.py`.
+- [x] `P01.S02` - Implement deterministic per-target ZIP and TAR.GZ bundle creation with stable executables, manifest, license, usage material, and checksum sidecars; `tools/packaging/bundles.py`.
 - [ ] `P01.S03` - Add Windows PE version-resource stamping and read-back verification while retaining icon resource verification; `tools/binaries/windows_icon.py`.
 - [ ] `P01.S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted; `tools/binaries/build_pyapp.py`.
 - [ ] `P01.S05` - Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs; `tools/packaging/tests`.
