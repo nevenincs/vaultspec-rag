@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:afbd2235e72f4d810f8ee4189638a18c6e98dfece8fcbfad510a3c09c5d6e32a'
+body_hash: 'sha256:2993d83d8b3007f5bfcd6bf8fdbc2c9803a43485fbc09e886a4d6121ec5557bb'
 ---
 
 # `binary-release-bundles` plan
@@ -52,7 +52,7 @@ Make Scoop and Homebrew consume the archive contract and document installation, 
 - [x] `P03.S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats; `tools/packaging`.
 - [x] `P03.S14` - Update channel, checksum, pointer, target-coverage, and archive-contract tests for bundle assets and failure cases; `tools/packaging/tests`.
 - [x] `P03.S15` - Document direct-download archive layout, supported targets, manifest and checksum verification, and GPU/network/CUDA first-launch requirements; `docs/installation.md`.
-- [ ] `P03.S16` - Document maintainer bundle publication, complete-target gating, checksum reconciliation, and release recovery; `RELEASING.md`.
+- [x] `P03.S16` - Document maintainer bundle publication, complete-target gating, checksum reconciliation, and release recovery; `RELEASING.md`.
 
 ## Parallelization
 
