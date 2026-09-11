@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tools.packaging import products
 from tools.packaging.bundles import (
     BundleError,
     BundleSpec,
@@ -23,7 +24,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-TARGETS = ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu")
+TARGETS = (
+    products.WINDOWS_X86_64,
+    products.LINUX_X86_64,
+    products.LINUX_ARM64,
+)
 VERSION = "0.4.6"
 REVISION = "revision-1"
 
@@ -161,6 +166,23 @@ def test_build_bundle_rejects_a_missing_executable(tmp_path: Path) -> None:
 
     with pytest.raises(BundleError, match="missing finalized executable"):
         build_bundle(spec, tmp_path / "raw", tmp_path / "bundles", repo, REVISION)
+
+
+def test_build_bundle_rejects_an_unsupported_target(tmp_path: Path) -> None:
+    """A macOS archive cannot be introduced outside RAG's support contract.
+
+    Mutation proof: removing the product-support guard let a complete fixture
+    build, so this assertion failed with ``DID NOT RAISE``; the guard was
+    restored before the passing run.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("license\n", encoding="utf-8")
+    raw = _raw_outputs(tmp_path, products.MACOS_ARM64)
+    spec = BundleSpec(VAULTSPEC_RAG, VERSION, products.MACOS_ARM64)
+
+    with pytest.raises(BundleError, match="does not support target"):
+        build_bundle(spec, raw, tmp_path / "bundles", repo, REVISION)
 
 
 @pytest.mark.parametrize(
