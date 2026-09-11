@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:7a116def5292beef40a9974c76668b552678759a5ee3e0ef4894dce1ee8a246e'
+body_hash: 'sha256:e0285ac33635cca1e774be16fed68b25ecb1dcc88c44b967457e7cf6ea1cf62c'
 ---
 
 # `binary-release-bundles` plan
@@ -43,7 +43,7 @@ Build bundles from the exact release inputs, publish them alongside Python artif
 - [x] `P02.S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars; `.github/workflows/binaries.yml`.
 - [x] `P02.S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication; `.github/workflows/binaries.yml`.
 - [x] `P02.S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums; `.github/workflows/publish.yml`.
-- [ ] `P02.S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest; `.github/workflows/release-please.yml`.
+- [x] `P02.S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest; `.github/workflows/release-please.yml`.
 
 ### Phase `P03` - converge package channels and user guidance
 

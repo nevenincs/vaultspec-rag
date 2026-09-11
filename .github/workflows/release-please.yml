@@ -67,15 +67,39 @@ jobs:
             git push
           fi
 
+      # Release Please creates the GitHub Release before either artifact
+      # workflow finishes. Hold that release out of `latest` until the binary
+      # workflow's complete-target gate has a chance to verify the public set;
+      # if either dispatch fails, the tag remains reachable as a prerelease
+      # instead of becoming a partial stable release.
+      - name: Hold the release out of latest until artifacts are complete
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "::error::release_created is true but tag_name output is empty; refusing to release an untagged build"
+            exit 1
+          fi
+          gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
+
       - name: Trigger Publish workflow
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag_name }}
         run: |
+          set -euo pipefail
+          if [ -z "${TAG}" ]; then
+            echo "::error::release_created is true but tag_name output is empty; refusing to dispatch publication with no tag"
+            exit 1
+          fi
           gh workflow run Publish \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
-            --field tag="${{ steps.release.outputs.tag_name }}"
+            --field tag="${TAG}"
 
       # AND the binaries. This step did not exist, and its absence is what cost
       # this repo its release matrix: vaultspec-rag-v0.4.12 was cut, Publish was

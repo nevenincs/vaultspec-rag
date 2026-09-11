@@ -80,3 +80,34 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     assert "LC_ALL=C sort -k2 -o SHA256SUMS SHA256SUMS" in publish
     assert 'gh release upload "${TAG}" dist/*' in publish
     assert '--repo "$GITHUB_REPOSITORY"' in publish
+
+
+def test_release_please_holds_and_dispatches_the_same_tag_to_both_publishers(
+    repo_root: Path,
+) -> None:
+    """Release Please keeps stable/latest closed until both lanes are dispatched.
+
+    Mutation proof: removing the prerelease hold made this assertion fail on
+    the named release-state guard; the hold was restored before the passing
+    run.
+    """
+    text = (repo_root / ".github" / "workflows" / "release-please.yml").read_text(
+        encoding="utf-8"
+    )
+    hold = text.index(
+        "- name: Hold the release out of latest until artifacts are complete"
+    )
+    publish = text.index("- name: Trigger Publish workflow")
+    binaries = text.index("- name: Trigger Binaries workflow")
+
+    hold_section = text[hold:publish]
+    publish_section = text[publish:binaries]
+    binaries_section = text[binaries:]
+
+    assert "--prerelease" in hold_section
+    assert "steps.release.outputs.tag_name" in hold_section
+    for section in (publish_section, binaries_section):
+        assert "steps.release.outputs.release_created == 'true'" in section
+        assert "TAG: ${{ steps.release.outputs.tag_name }}" in section
+        assert "--ref main" in section
+        assert '--field tag="${TAG}"' in section
