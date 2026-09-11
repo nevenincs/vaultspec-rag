@@ -130,11 +130,18 @@ also runs the MCP stdio adapter.
 
 ## Install without Python
 
-**Windows and Linux only.** The lane publishes `x86_64` Windows, and `x86_64` and `aarch64` Linux. It publishes no macOS artifact and no macOS formula, so on Apple silicon use one of the Python routes. The GPU requirement is unchanged.
+**Windows and Linux only.** The release publishes x86_64 Windows, and x86_64 and
+aarch64 Linux archives. It publishes no macOS binary or formula. Use a Python route on
+macOS. The GPU requirement remains the same.
 
-On Linux, first check [which binary your distribution can run](#which-linux-binary-your-distribution-can-run). The binaries carry a C library floor that installing from the package index does not.
+`vaultspec-rag` and `vaultspec-search-mcp` ship in one archive per target. The archive
+embeds CPython 3.13, so the host needs no Python installation. On first launch, the
+embedded application installs the RAG wheel and resolves its runtime dependencies.
 
-`vaultspec-rag` and `vaultspec-search-mcp` ship as standalone binaries that need no Python toolchain. They're published through the account channel root, `nevenincs/homebrew-tap`, which carries every vaultspec product, so you add it once.
+### Install with Scoop or Homebrew
+
+The channels live in the account tap, `nevenincs/homebrew-tap`. Add that tap once, then
+install the product for your platform.
 
 On Windows:
 
@@ -150,11 +157,100 @@ brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
 brew install vaultspec-rag
 ```
 
-The binaries bootstrap the same GPU PyTorch build this project resolves, pinned from the lockfile, so a binary cannot drift onto a different build than a Python install would get.
+Each channel pins one archive URL and SHA-256 digest for the selected target.
+Extraction places the stable `vaultspec-rag` and `vaultspec-search-mcp` commands on
+`PATH`; the channel does not download one archive per command.
 
-First launch downloads that build. On Windows that's about 1.9 GB and self-contained. On Linux the wheel itself is about 500 MB, but it pulls the CUDA runtime packages as dependencies, so budget several gigabytes there too.
+### Download an archive directly
 
-Nothing in [Install with Python](#install-with-python) applies to this route. Go to [Verify the install](#verify-the-install).
+Use the release asset for your operating system and architecture. Replace `<version>`
+with the release version, such as `0.4.28`.
+
+| Platform       | Release asset                                               |
+| -------------- | ----------------------------------------------------------- |
+| Windows x86-64 | `vaultspec-rag-v<version>-x86_64-pc-windows-msvc.zip`       |
+| Linux x86-64   | `vaultspec-rag-v<version>-x86_64-unknown-linux-gnu.tar.gz`  |
+| Linux arm64    | `vaultspec-rag-v<version>-aarch64-unknown-linux-gnu.tar.gz` |
+
+Open the [release page](https://github.com/nevenincs/vaultspec-rag/releases) and download
+the archive and `SHA256SUMS` from the same `vaultspec-rag-v<version>` release. The
+checksum file contains one line for each release asset. Match the line whose filename
+exactly matches your archive.
+
+Verify the archive before extracting it:
+
+| Platform           | Compute the archive digest                                | Find the matching release entry                           |
+| ------------------ | --------------------------------------------------------- | --------------------------------------------------------- |
+| Windows PowerShell | `Get-FileHash -Algorithm SHA256 -LiteralPath .\<archive>` | `Select-String -Path .\SHA256SUMS -SimpleMatch <archive>` |
+| Linux              | `sha256sum <archive>`                                     | `grep -F -- "  <archive>" SHA256SUMS`                     |
+
+Compare the computed digest with the digest on the matching `SHA256SUMS` line. Do not
+extract or run the archive when they differ. Download both files again from the same
+release and repeat the check.
+
+Extract the verified archive and run the stable command name:
+
+Windows PowerShell:
+
+```powershell
+Expand-Archive -LiteralPath .\vaultspec-rag-v<version>-x86_64-pc-windows-msvc.zip `
+  -DestinationPath .\vaultspec-rag
+.\vaultspec-rag\vaultspec-rag.exe --version
+```
+
+Linux:
+
+```sh
+mkdir -p vaultspec-rag
+tar -xzf vaultspec-rag-v<version>-x86_64-unknown-linux-gnu.tar.gz -C vaultspec-rag
+chmod +x vaultspec-rag/vaultspec-rag vaultspec-rag/vaultspec-search-mcp
+./vaultspec-rag/vaultspec-rag --version
+```
+
+For an arm64 Linux host, use the arm64 asset from the table instead.
+
+### Inspect the archive layout
+
+Every verified archive contains these members at its top level:
+
+| Member                                               | Purpose                                            |
+| ---------------------------------------------------- | -------------------------------------------------- |
+| `vaultspec-rag` or `vaultspec-rag.exe`               | Command-line client and service control            |
+| `vaultspec-search-mcp` or `vaultspec-search-mcp.exe` | MCP stdio adapter                                  |
+| `LICENSE`                                            | Project licence                                    |
+| `README.txt`                                         | Target and runtime notes                           |
+| `manifest.json`                                      | Machine-readable bundle metadata and member hashes |
+
+Open `manifest.json` after extraction to check `schema`, product and version, release
+tag, target, archive format, runtime, requirements, and platform metadata. Its `files`
+array records the role, size, and SHA-256 of each executable and release document.
+Confirm that `archive.name` matches the downloaded filename, `target` matches your
+host, and every `files[].name` exists with its listed size and digest.
+The manifest intentionally does not hash the enclosing archive. `SHA256SUMS` is the
+source of truth for that outer archive digest.
+
+The manifest's `platform.glibc_floor` records the Linux loader floor. Check
+[which Linux binary your distribution can run](#which-linux-binary-your-distribution-can-run)
+before using a Linux archive.
+
+### First launch requirements for binaries
+
+The binary bootstraps the same accelerated PyTorch build this project resolves. It
+uses a target-specific CUDA wheel pinned from the project lockfile, then resolves the
+remaining packages from their configured indexes.
+
+First launch needs network access to the package indexes and enough disk space for the
+GPU wheel and CUDA runtime dependencies. It also needs an NVIDIA GPU with a working
+CUDA driver. The binary has no CPU mode.
+
+The archive contains no model files or Qdrant server binary. Run `vaultspec-rag install`
+to prepare the normal local topology; that step downloads models and provisions Qdrant.
+Those downloads also require network access and additional disk space. A successful
+`vaultspec-rag --version` check confirms the bootstrap completed, not that model
+provisioning is complete.
+
+Nothing in [Install with Python](#install-with-python) applies to the archive route.
+Go to [Verify the install](#verify-the-install).
 
 ## Install with Python
 

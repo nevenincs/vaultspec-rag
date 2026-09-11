@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:4aa7fcf690e9b35e36122eb73a69858c6081c63c2e65c1490f3730bb04e97e5a'
+body_hash: 'sha256:ef2f1011f19e6c0ec3dcb2e1777462d1c6fc43229e97af8d15d4c56150b3be0e'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -23,6 +23,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P02-S12]]'
   - '[[2026-09-11-binary-release-bundles-P03-S13]]'
   - '[[2026-09-11-binary-release-bundles-P03-S14]]'
+  - '[[2026-09-11-binary-release-bundles-P03-S15]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -42,7 +43,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P03.S14 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P03.S15 implementation review`
 
 ### exec
 
@@ -61,6 +62,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P02-S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest
 - `2026-09-11-binary-release-bundles-P03-S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats
 - `2026-09-11-binary-release-bundles-P03-S14` - Update channel, checksum, pointer, target-coverage, and archive-contract tests for bundle assets and failure cases
+- `2026-09-11-binary-release-bundles-P03-S15` - Document direct-download archive layout, supported targets, manifest and checksum verification, and GPU/network/CUDA first-launch requirements
 
 ### plan
 
