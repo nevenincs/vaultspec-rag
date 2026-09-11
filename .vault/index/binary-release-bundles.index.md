@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:a109238ea383e025df6652b20447f531e51a6f4b1a27514bcc4266814496974b'
+body_hash: 'sha256:e69972101c24c1ac57bf04242bd5c21847a6d7c9272655b9175280e8676b100b'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -16,6 +16,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P01-S06]]'
   - '[[2026-09-11-binary-release-bundles-P01-summary]]'
   - '[[2026-09-11-binary-release-bundles-P02-S07]]'
+  - '[[2026-09-11-binary-release-bundles-P02-S08]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -35,7 +36,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S07 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S08 implementation review`
 
 ### exec
 
@@ -47,6 +48,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P01-S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage
 - `2026-09-11-binary-release-bundles-P01-summary` - `binary-release-bundles` `P01` summary
 - `2026-09-11-binary-release-bundles-P02-S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel
+- `2026-09-11-binary-release-bundles-P02-S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation
 
 ### plan
 
