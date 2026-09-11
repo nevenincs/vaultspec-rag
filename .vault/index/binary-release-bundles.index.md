@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:db96a5b35f269ddecb9dd5ca061949d81c58187d640500aa1c469bd892d54bca'
+body_hash: 'sha256:bb92a2116fd96ff10a9452f02fc36e612f7e80e3e0bc0b9e72a34718de5ce9fd'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P02-S09]]'
   - '[[2026-09-11-binary-release-bundles-P02-S10]]'
   - '[[2026-09-11-binary-release-bundles-P02-S11]]'
+  - '[[2026-09-11-binary-release-bundles-P02-S12]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -39,7 +40,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S11 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S12 implementation review`
 
 ### exec
 
@@ -55,6 +56,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P02-S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars
 - `2026-09-11-binary-release-bundles-P02-S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication
 - `2026-09-11-binary-release-bundles-P02-S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums
+- `2026-09-11-binary-release-bundles-P02-S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest
 
 ### plan
 
