@@ -5,7 +5,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:3adb39d706532c49b6cc4dd39542ca411a04ee458e25f71a8a42429261ac6ba9'
+body_hash: 'sha256:72224d0f06331dffea7646f0a7eecd815be6bdae2142abc6f255c34c3a397fde'
 related:
   - "[[2026-09-11-binary-release-bundles-plan]]"
   - "[[2026-09-11-binary-release-bundles-adr]]"
@@ -15,7 +15,7 @@ related:
 
 ## Scope
 
-Audited the P01.S01 product identity change and P01.S02 deterministic archive implementation against the accepted bundle ADR, the RAG current-pipeline reference, Core's bundle analogue, and the packaging test suite.
+Audited the P01.S01 product identity change, P01.S02 deterministic archive implementation, and P01.S03 Windows metadata seam against the accepted bundle ADR, the RAG current-pipeline reference, Core's bundle analogue, and the packaging and resource test suites.
 
 ## Findings
 
