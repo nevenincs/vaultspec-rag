@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:e69972101c24c1ac57bf04242bd5c21847a6d7c9272655b9175280e8676b100b'
+body_hash: 'sha256:39fce1a3dda330d30c89cda69023aaf4c0c973bd0a2ed5a77e99773d68a13702'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -17,6 +17,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-P01-summary]]'
   - '[[2026-09-11-binary-release-bundles-P02-S07]]'
   - '[[2026-09-11-binary-release-bundles-P02-S08]]'
+  - '[[2026-09-11-binary-release-bundles-P02-S09]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
@@ -36,7 +37,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S08 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P02.S09 implementation review`
 
 ### exec
 
@@ -49,6 +50,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P01-summary` - `binary-release-bundles` `P01` summary
 - `2026-09-11-binary-release-bundles-P02-S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel
 - `2026-09-11-binary-release-bundles-P02-S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation
+- `2026-09-11-binary-release-bundles-P02-S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars
 
 ### plan
 
