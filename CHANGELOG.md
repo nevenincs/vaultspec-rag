@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.29](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.28...vaultspec-rag-v0.4.29) (2026-09-11)
+
+
+### Bug Fixes
+
+* **ci:** pin the singleton race to spawn and format two closure records ([189b0c3](https://github.com/nevenincs/vaultspec-rag/commit/189b0c3efe6fc5fcd34a454f5df623640b5c4922))
+
 ## [0.4.28](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.27...vaultspec-rag-v0.4.28) (2026-09-10)
 
 
