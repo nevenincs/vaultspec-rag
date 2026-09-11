@@ -10,12 +10,22 @@ from pathlib import Path
 
 import pytest
 
-from tools.binaries.build_pyapp import APPLICATION_ICON, write_checksum
+from tools.binaries.build_pyapp import (
+    APPLICATION_ICON,
+    BINARIES,
+    binary_version_info,
+    write_checksum,
+)
 from tools.binaries.windows_icon import (
     IconResourceError,
+    VersionInfo,
+    VersionResourceError,
     parse_ico,
     stamp_icon,
+    stamp_version_info,
     verify_icon,
+    verify_version_info,
+    version_resource,
 )
 
 pytestmark = pytest.mark.unit
@@ -64,6 +74,53 @@ def test_parse_ico_rejects_overlapping_frame_payloads(tmp_path: Path) -> None:
         parse_ico(icon)
 
 
+def test_version_resource_contains_the_release_metadata() -> None:
+    """The pure encoder emits aligned VERSIONINFO strings and fixed versions."""
+    info = VersionInfo(
+        file_version="0.4.6",
+        product_version="0.4.6",
+        product_name="Vaultspec RAG",
+        file_description="the vaultspec-rag CLI",
+        original_filename="vaultspec-rag.exe",
+        company_name="Gergely Wootsch",
+        legal_copyright="Copyright (c) Gergely Wootsch",
+    )
+
+    payload = version_resource(info)
+
+    assert len(payload) % 4 == 0
+    assert struct.pack("<I", 0xFEEF04BD) in payload
+    for value in (
+        "CompanyName",
+        "FileDescription",
+        "FileVersion",
+        "OriginalFilename",
+        "ProductName",
+        "ProductVersion",
+        "LegalCopyright",
+        "Vaultspec RAG",
+        "0.4.6",
+    ):
+        assert value.encode("utf-16le") + b"\x00\x00" in payload
+
+
+@pytest.mark.parametrize("version", ["", "0.4.6.7.8", "0.4.x", "65536.0"])
+def test_version_resource_rejects_invalid_versions(version: str) -> None:
+    """Windows version words are bounded and must contain decimal components."""
+    info = VersionInfo(
+        file_version=version,
+        product_version="0.4.6",
+        product_name="Vaultspec RAG",
+        file_description="the vaultspec-rag CLI",
+        original_filename="vaultspec-rag.exe",
+        company_name="Gergely Wootsch",
+        legal_copyright="Copyright (c) Gergely Wootsch",
+    )
+
+    with pytest.raises(VersionResourceError, match="version"):
+        version_resource(info)
+
+
 def test_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
     """A non-Windows release host cannot silently claim it stamped a PE."""
     if sys.platform == "win32":
@@ -75,6 +132,18 @@ def test_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
         stamp_icon(executable, APPLICATION_ICON)
 
 
+def test_version_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
+    """A non-Windows release host cannot silently claim it stamped PE metadata."""
+    if sys.platform == "win32":
+        pytest.skip("non-Windows contract")
+    executable = tmp_path / "sample.exe"
+    executable.write_bytes(b"MZ")
+    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+
+    with pytest.raises(VersionResourceError, match="only be updated on Windows"):
+        stamp_version_info(executable, info)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="requires the Win32 resource API")
 def test_real_pe_stamp_is_exact_and_precedes_checksum(tmp_path: Path) -> None:
     """A real PE keeps loading after stamping and its checksum binds icon bytes."""
@@ -82,10 +151,13 @@ def test_real_pe_stamp_is_exact_and_precedes_checksum(tmp_path: Path) -> None:
     shutil.copy2(sys.executable, executable)
 
     stamp_icon(executable, APPLICATION_ICON)
+    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+    stamp_version_info(executable, info)
     stamped = executable.read_bytes()
     checksum = write_checksum(executable)
 
     verify_icon(executable, APPLICATION_ICON)
+    verify_version_info(executable, info)
     assert stamped != Path(sys.executable).read_bytes()
     assert (
         checksum.read_text(encoding="utf-8").split()[0]

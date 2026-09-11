@@ -29,11 +29,13 @@ from tools.binaries.build_pyapp import (
     PYTHON_VERSION,
     Binary,
     asset_name,
+    binary_version_info,
     build_one,
     version_from_tag,
     write_checksum,
 )
 from tools.binaries.windows_icon import parse_ico
+from tools.packaging.products import VAULTSPEC_RAG
 
 pytestmark = pytest.mark.unit
 
@@ -140,7 +142,11 @@ def test_binary_names_are_unique() -> None:
 
 
 def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
-    """The published digest must bind the icon-bearing executable bytes."""
+    """The published digest must bind every finalized executable byte.
+
+    Mutation proof: swapping the icon and version calls failed this ordering
+    assertion; the original order was restored before the passing run.
+    """
     tree = ast.parse(
         textwrap.dedent(
             inspect.getsource(
@@ -162,7 +168,8 @@ def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
 
-    assert calls.index("stamp_icon") < calls.index("write_checksum")
+    assert calls.index("stamp_icon") < calls.index("stamp_version_info")
+    assert calls.index("stamp_version_info") < calls.index("write_checksum")
     assert tuple(image.width for image in parse_ico(APPLICATION_ICON)) == (
         256,
         128,
@@ -171,6 +178,18 @@ def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
         32,
         16,
     )
+
+
+def test_binary_version_info_uses_product_identity() -> None:
+    """Windows metadata names the stable command and the RAG product."""
+    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+
+    assert info.file_version == "0.4.6"
+    assert info.product_version == "0.4.6"
+    assert info.product_name == VAULTSPEC_RAG.display_name
+    assert info.original_filename == "vaultspec-rag.exe"
+    assert info.company_name == VAULTSPEC_RAG.publisher
+    assert info.legal_copyright == VAULTSPEC_RAG.legal_copyright
 
 
 def test_project_name_matches_the_distribution_pyapp_installs(
