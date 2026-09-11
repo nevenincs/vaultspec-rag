@@ -84,6 +84,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          path: .sparse-derive-selectors
           sparse-checkout: .github/workflows
           sparse-checkout-cone-mode: false
 
@@ -92,7 +93,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workflow=".github/workflows/binaries.yml"
+          workflow=".sparse-derive-selectors/.github/workflows/binaries.yml"
           [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out" >&2; exit 1; }
 
           # Only bracketed `runner:` values are label sets, and every leg of
@@ -629,6 +630,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
+          path: .sparse-verify-release-assets
           sparse-checkout: .github/workflows
           sparse-checkout-cone-mode: false
 
@@ -654,7 +656,7 @@ jobs:
           #
           # Targets are DERIVED from the matrix in this same file rather than
           # listed again - a second list drifts, and this repo has paid for that.
-          workflow=".github/workflows/binaries.yml"
+          workflow=".sparse-verify-release-assets/.github/workflows/binaries.yml"
           [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive targets"; exit 1; }
           mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
           if [ ${#expected[@]} -eq 0 ]; then

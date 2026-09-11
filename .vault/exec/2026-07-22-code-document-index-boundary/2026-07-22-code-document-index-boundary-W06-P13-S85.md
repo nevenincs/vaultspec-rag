@@ -38,11 +38,9 @@ suite green on Windows (`Test: Full Suite (Windows)`) and macOS
 (`Test: Full Suite and Accelerator Backend (macOS)`); both Linux legs
 (`Test: Full Suite py3.13/py3.14 (Linux)`) fail on exactly one unrelated
 item each: `test_cli_env_named_root.py::test_env_naming_a_non_workspace_is_refused_not_ignored`,
-a console line-wrap artifact, plus a separate `Audit: Dependency Advisories
-(Linux)` failure on three `httpx2` advisories. Both are already tracked and
+a console line-wrap artifact, plus a separate `Audit: Dependency Advisories (Linux)` failure on three `httpx2` advisories. Both are already tracked and
 being fixed on open PR #494 ("fix: return main's CI to green"), unrelated to
-this plan's boundary work. The GPU/integration tier (`Test: GPU Correctness
-(CUDA)`) is dispatch-only by design and was not re-run for this closure.
+this plan's boundary work. The GPU/integration tier (`Test: GPU Correctness (CUDA)`) is dispatch-only by design and was not re-run for this closure.
 
 This plan's own remediation audit (`2026-07-22-code-document-index-boundary-audit.md`)
 already recorded lint, format, and type gates clean and zero unresolved

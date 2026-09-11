@@ -10,10 +10,9 @@ would create.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, NoReturn, cast
 
 import typer
 
@@ -133,6 +132,21 @@ def _emit_json_error_and_exit(
     raise typer.Exit(code=code)
 
 
+def exit_with_error(
+    command: str,
+    error: str,
+    message: str,
+    code: int,
+    *,
+    json_mode: bool,
+) -> NoReturn:
+    """Report one refusal as the JSON envelope or a plain ``Error:`` line, then exit."""
+    if json_mode:
+        _emit_json_error_and_exit(command, error, message, code)
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=code)
+
+
 def _print_next_action(command: object) -> None:
     """Print the operator's "Next action:" hint, or nothing for a falsy command."""
     if command:
@@ -210,9 +224,8 @@ def _display_service_error(
             **extra,
         )
         return
-    _plain(f"Error: {_human_service_error_message(message)}")
-    if error != "http_search_timeout":
-        _plain(f"Code: {error}")
+    _plain(f"Error: {message}")
+    _plain(f"Code: {error}")
     db_path = payload.get("db_path")
     if db_path:
         _plain(f"Index data: {db_path}")
@@ -221,79 +234,11 @@ def _display_service_error(
     # escalating with the one fact that answers it removed.
     if payload.get("retryable") is True:
         _plain("This is temporary; the same request should succeed on retry.")
-    _display_service_diagnostic_summary(payload.get("diagnostics"))
     remediation = payload.get("remediation")
     if isinstance(remediation, list) and remediation:
         _cli.console.print("Next actions:")
         for item in cast("list[object]", remediation):
             _cli.console.print(f"  - {item}")
-
-
-def _human_service_error_message(message: str) -> str:
-    """Remove raw backend diagnostics from default human error prose."""
-    return re.sub(
-        r"\s+Service status=.*?same_project_search_strategy=[^.\s]+\.?",
-        "",
-        message,
-    ).strip()
-
-
-def _display_service_diagnostic_summary(diagnostics: object) -> None:
-    """Render timeout/error diagnostics without backend contract internals."""
-    if not isinstance(diagnostics, dict):
-        return
-    diagnostics_map = cast("dict[str, object]", diagnostics)
-    health = diagnostics_map.get("health")
-    jobs = diagnostics_map.get("jobs")
-    if isinstance(health, dict):
-        _cli.console.print(
-            f"Service: {_health_diagnostic_text(cast('dict[str, object]', health))}"
-        )
-    if isinstance(jobs, dict):
-        _cli.console.print(
-            f"Work: {_jobs_diagnostic_text(cast('dict[str, object]', jobs))}"
-        )
-
-
-def _health_diagnostic_text(health: dict[str, object]) -> str:
-    if health.get("available") is False:
-        return _unavailable_diagnostic_text(health, "request check")
-    raw_status = health.get("status")
-    if not isinstance(raw_status, str) or not raw_status or raw_status == "unknown":
-        ready_text = "request status not reported by service"
-    else:
-        ready_text = (
-            "requests ready" if raw_status == "ready" else raw_status.replace("_", " ")
-        )
-    project_count = health.get("project_count")
-    if project_count is None:
-        return f"reachable; {ready_text}"
-    if isinstance(project_count, int):
-        project_word = "project" if project_count == 1 else "projects"
-        return f"reachable; {ready_text}; {project_count} {project_word} loaded"
-    return f"reachable; {ready_text}; projects loaded: {project_count}"
-
-
-def _jobs_diagnostic_text(jobs: dict[str, object]) -> str:
-    if jobs.get("available") is False:
-        return _unavailable_diagnostic_text(jobs, "jobs check")
-    running = jobs.get("running_count")
-    if isinstance(running, int):
-        if running == 0:
-            return "no active index jobs"
-        word = "job" if running == 1 else "jobs"
-        return f"{running} active index {word}"
-    return "active job count not reported by service"
-
-
-def _unavailable_diagnostic_text(data: dict[str, object], label: str) -> str:
-    error = str(data.get("error", "")).strip()
-    message = str(data.get("message", "")).strip()
-    if error == "TimeoutError" or "timed out" in message.lower():
-        return f"{label} timed out"
-    if message:
-        return f"{label} not reported by service ({message})"
-    return f"{label} not reported by service"
 
 
 def _display_search_results(

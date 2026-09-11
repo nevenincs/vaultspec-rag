@@ -420,6 +420,7 @@ async def _start_components(
     # only after its prior close_all() completed and proved that no model, slot,
     # or root lock remains.
     registry.prepare_startup()
+    registry.start_readiness(asyncio.get_running_loop())
 
     # Qdrant server mode is the default backend: spawn the supervised
     # child BEFORE model load so a missing/broken binary fails startup

@@ -12,6 +12,7 @@ from starlette.requests import Request
 
 from ..server._search_activity import (
     DEFAULT_MAX_ACTIVE_SEARCHES,
+    SearchActivityAdmissionError,
     SearchActivityCompletion,
     SearchActivityFilters,
     SearchActivityLedger,
@@ -190,6 +191,205 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
     assert records["waiting-success"]["outcome"] == "success"
 
 
+def test_queued_admission_is_visible_before_blocking_then_retains_wait() -> None:
+    """Queued state exists for review before the condition wait begins.
+
+    Mutation evidence: moving the queued insertion after the wait loop made the
+    exact queued-id assertion fail with an empty list (exit 1); restoration
+    passed (exit 0).
+    """
+    ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=3)
+    active = _start(ledger, "visible-active")
+    admitted: list[SearchActivityTicket] = []
+
+    thread = threading.Thread(
+        target=lambda: admitted.append(_start(ledger, "visible-queued")), daemon=True
+    )
+    thread.start()
+    deadline = time.monotonic() + 1.0
+    while True:
+        snapshot = ledger.snapshot(include_query=True)
+        if snapshot["queued"]:
+            break
+        assert time.monotonic() < deadline, "queued admission never became visible"
+        time.sleep(0.001)
+
+    assert [row["request_id"] for row in snapshot["queued"]] == ["visible-queued"]
+    assert snapshot["all_counts"] == {
+        "queued": 1,
+        "active": 1,
+        "recent": 0,
+        "total": 2,
+    }
+    queued_wait = cast("list[dict[str, object]]", snapshot["queued"][0]["waits"])[0]
+    assert queued_wait["cause"] == "search_admission"
+    assert queued_wait["configured_bound_seconds"] == 30.0
+
+    assert ledger.finish(
+        active, completion=SearchActivityCompletion(outcome="success", status_code=200)
+    )
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert len(admitted) == 1
+    assert ledger.finish(
+        admitted[0],
+        completion=SearchActivityCompletion(outcome="success", status_code=200),
+    )
+    recent = ledger.snapshot(include_query=True)["recent"]
+    retained = next(row for row in recent if row["request_id"] == "visible-queued")
+    retained_wait = cast("list[dict[str, object]]", retained["waits"])[0]
+    assert retained_wait["cause"] == "search_admission"
+    assert cast("float", retained_wait["waited_seconds"]) > 0.0
+
+
+def test_admission_deadline_timeout_retains_typed_evidence_once() -> None:
+    """The monotonic wait bound produces one terminal refusal record.
+
+    Mutation evidence: removing the deadline refusal history write made the
+    exact recent-id assertion fail with an empty list (exit 1); restoration
+    passed (exit 0).
+    """
+    ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=2)
+    active = _start(ledger, "deadline-active")
+    started = time.perf_counter()
+    with pytest.raises(SearchActivityAdmissionError) as raised:
+        ledger.start(
+            SearchActivityStart(
+                request_id="deadline-refused",
+                query="bounded admission",
+                search_type="code",
+                root="Y:/deadline",
+                top_k=3,
+                admission_wait_seconds=0.02,
+            )
+        )
+    elapsed = time.perf_counter() - started
+
+    assert raised.value.reason == "deadline_exceeded"
+    assert raised.value.deadline is not None
+    assert elapsed >= 0.015
+    assert raised.value.wait.as_dict() == {
+        "cause": "search_admission",
+        "waited_seconds": 0.02,
+        "configured_bound_seconds": 0.02,
+        "remaining_bound_seconds": 0.0,
+    }
+    snapshot = ledger.snapshot(include_query=True)
+    assert snapshot["queued"] == []
+    assert [row["request_id"] for row in snapshot["recent"]] == ["deadline-refused"]
+    refused = snapshot["recent"][0]
+    assert refused["outcome"] == "capacity_limited"
+    assert refused["error_code"] == "search_admission_deadline_exceeded"
+    assert refused["waits"] == [raised.value.wait.as_dict()]
+    assert not ledger.finish(
+        SearchActivityTicket("deadline-refused"),
+        completion=SearchActivityCompletion(outcome="failed", status_code=500),
+    )
+    assert ledger.finish(
+        active, completion=SearchActivityCompletion(outcome="success", status_code=200)
+    )
+
+
+def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded() -> None:
+    """Immediate queue refusal has no deadline and obeys the history cap.
+
+    Mutation evidence: assigning the ordinary admission deadline to both
+    queue-full projections failed the exact ``deadline is None`` assertion
+    (exit 1); restoration passed (exit 0).
+    """
+    ledger = SearchActivityLedger(max_active=1, max_queued=1, max_recent=2)
+    active = _start(ledger, "queue-active")
+    queued_ticket: list[SearchActivityTicket] = []
+    worker_errors: list[BaseException] = []
+
+    def wait_for_queue() -> None:
+        try:
+            queued_ticket.append(_start(ledger, "queue-waiting"))
+        except BaseException as exc:
+            worker_errors.append(exc)
+
+    thread = threading.Thread(target=wait_for_queue, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 1.0
+    while not ledger.snapshot(include_query=True)["queued"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    with pytest.raises(SearchActivityAdmissionError) as raised:
+        _start(ledger, "queue-refused")
+    assert raised.value.reason == "queue_full"
+    assert raised.value.deadline is None
+    assert raised.value.wait.configured_bound_seconds == 0.0
+    refused = ledger.snapshot(include_query=True)
+    assert refused["all_counts"] == {
+        "queued": 1,
+        "active": 1,
+        "recent": 1,
+        "total": 3,
+    }
+    assert refused["recent"][0]["admission_deadline"] is None
+
+    assert ledger.finish(
+        active, completion=SearchActivityCompletion(outcome="success", status_code=200)
+    )
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert worker_errors == []
+    assert len(queued_ticket) == 1
+    assert ledger.finish(
+        queued_ticket[0],
+        completion=SearchActivityCompletion(outcome="success", status_code=200),
+    )
+    final = ledger.snapshot(include_query=True)
+    assert final["all_counts"] == {
+        "queued": 0,
+        "active": 0,
+        "recent": 2,
+        "total": 2,
+    }
+    assert [row["request_id"] for row in final["recent"]] == [
+        "queue-waiting",
+        "queue-active",
+    ]
+
+
+def test_duplicate_request_id_is_rejected_while_queued_active_or_recent() -> None:
+    ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=3)
+    active = _start(ledger, "duplicate")
+    with pytest.raises(
+        ValueError, match=r"^request_id 'duplicate' is already recorded$"
+    ):
+        _start(ledger, "duplicate")
+
+    queued: list[SearchActivityTicket] = []
+    thread = threading.Thread(
+        target=lambda: queued.append(_start(ledger, "queued-duplicate")), daemon=True
+    )
+    thread.start()
+    deadline = time.monotonic() + 1.0
+    while not ledger.snapshot(include_query=True)["queued"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+    with pytest.raises(
+        ValueError, match=r"^request_id 'queued-duplicate' is already recorded$"
+    ):
+        _start(ledger, "queued-duplicate")
+
+    assert ledger.finish(
+        active, completion=SearchActivityCompletion(outcome="success", status_code=200)
+    )
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+    assert ledger.finish(
+        queued[0],
+        completion=SearchActivityCompletion(outcome="success", status_code=200),
+    )
+    with pytest.raises(
+        ValueError, match=r"^request_id 'duplicate' is already recorded$"
+    ):
+        _start(ledger, "duplicate")
+
+
 def test_search_activity_filters_active_and_recent_records() -> None:
     ledger = SearchActivityLedger(max_active=4, max_recent=4)
     vault_recent = _start(ledger, "vault-recent", search_type="vault", root="Y:/alpha")
@@ -355,6 +555,10 @@ async def test_cancelled_route_admission_cannot_create_a_phantom_activity_slot()
     stays active forever and the assertion below names that leaked slot.
     Restored, the pre-owned ticket wakes the worker and prevents the late
     admission without starting a service, model, or Qdrant client.
+
+    Removing the ledger's queued-pop cleanup left the cancelled request in the
+    queued projection and failed the exact ``queued_count == 0`` assertion
+    (exit 1); restoration passed (exit 0).
     """
     from ..server._routes_search import _search_route_response
     from ..server._state import search_activity_ledger
@@ -419,7 +623,16 @@ async def test_cancelled_route_admission_cannot_create_a_phantom_activity_slot()
                 completion=SearchActivityCompletion(outcome="success", status_code=200),
             )
         held.clear()
+        cleanup_deadline = time.monotonic() + 1.0
         after = ledger.snapshot(include_query=True)
+        while after["queued_count"] and time.monotonic() < cleanup_deadline:
+            await asyncio.sleep(0.001)
+            after = ledger.snapshot(include_query=True)
+        assert after["queued_count"] == 0
+        assert after["all_counts"]["queued"] == 0
+        assert after["all_counts"]["total"] == (
+            after["all_counts"]["queued"] + after["counts"]["total"]
+        )
         leaked = [
             record
             for record in after["active"]

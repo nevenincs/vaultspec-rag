@@ -9,12 +9,18 @@ from typing import Final, Literal, get_args
 
 __all__ = [
     "INDEX_SOURCES",
+    "UNSUPPORTED_FEEDBACK_ERROR",
     "IndexSource",
     "PublicSourceType",
     "SourceTypeParseError",
     "parse_source_type",
     "unsupported_feedback_envelope",
 ]
+
+
+#: Stable error token of the point-id feedback refusal. Adapters that branch on
+#: the refusal read it from here so the token has exactly one spelling.
+UNSUPPORTED_FEEDBACK_ERROR: Final = "unsupported_feedback_for_search_type"
 
 
 class PublicSourceType(StrEnum):
@@ -179,7 +185,7 @@ def unsupported_feedback_envelope(
         return None
     return {
         "ok": False,
-        "error": "unsupported_feedback_for_search_type",
+        "error": UNSUPPORTED_FEEDBACK_ERROR,
         "message": (
             f"feedback point ids are not supported for {source.value} "
             "search; omit like_ids and unlike_ids"

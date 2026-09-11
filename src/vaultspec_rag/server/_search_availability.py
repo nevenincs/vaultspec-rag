@@ -11,7 +11,21 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from .._operator_commands import server_jobs_command
+from .._operator_commands import (
+    IndexCommandOptions,
+    index_command,
+    server_jobs_command,
+    server_status_command,
+)
+from .._search_state import (
+    MAX_SEARCH_EVIDENCE_ITEMS,
+    AbsenceAuthority,
+    GenerationEvidence,
+    SearchAvailability,
+    SearchFreshness,
+    SearchSourceFact,
+    search_readiness_block,
+)
 
 if TYPE_CHECKING:
     from .._source_types import IndexSource
@@ -21,6 +35,7 @@ if TYPE_CHECKING:
     from ..job_models import JobMode
 
 __all__ = [
+    "CanonicalSearchEvidence",
     "SearchResponseClassification",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
@@ -31,7 +46,6 @@ __all__ = [
 _CANONICAL_NONTERMINAL_STATES = frozenset(
     {"queued", "running", "pausing", "paused", "cancelling"}
 )
-_MAX_EXPOSED_JOBS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +71,46 @@ class SearchResponseClassification:
     matching_jobs_truncated: bool
     rebuilding: bool
     availability_cause: Literal["matching_index_job", "collection_missing"] | None
+    source_fact: SearchSourceFact
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalSearchEvidence:
+    """Explicit collection and publication evidence available at classification."""
+
+    served_generation: str | None = None
+    desired_generation: str | None = None
+    publication_revision: int | None = None
+    desired_revision: int | None = None
+    collection_present: bool | None = None
+    target_matches: bool | None = None
+    integrity_verified: bool | None = None
+    capacity_refused: bool = False
+    rebuild_required: bool = False
+
+    def __post_init__(self) -> None:
+        GenerationEvidence(
+            served_generation=self.served_generation,
+            desired_generation=self.desired_generation,
+            served_revision=self.publication_revision,
+            desired_revision=self.desired_revision,
+        )
+        for field in (
+            "collection_present",
+            "target_matches",
+            "integrity_verified",
+        ):
+            value = getattr(self, field)
+            if value is not None and not isinstance(cast("object", value), bool):
+                raise ValueError(f"{field} must be a boolean or None")
+        if not isinstance(cast("object", self.capacity_refused), bool):
+            raise ValueError("capacity_refused must be a boolean")
+        if not isinstance(cast("object", self.rebuild_required), bool):
+            raise ValueError("rebuild_required must be a boolean")
+        if self.capacity_refused and self.rebuild_required:
+            raise ValueError(
+                "capacity_refused and rebuild_required are mutually exclusive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +133,7 @@ class SearchAvailabilityContext:
     request_id: str
     index_state: Mapping[str, object]
     port: int | None
+    canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,21 +262,147 @@ def _combined_matches(
     return _deduplicated_matches(ordered_matches)
 
 
+def _target_is_current(evidence: CanonicalSearchEvidence) -> bool:
+    """Return whether explicit publication evidence satisfies a verified target."""
+    generation_targeted = evidence.desired_generation is not None
+    revision_targeted = evidence.desired_revision is not None
+    if not generation_targeted and not revision_targeted:
+        return False
+    generation_current = (
+        not generation_targeted
+        or evidence.served_generation == evidence.desired_generation
+    )
+    desired_revision = evidence.desired_revision
+    revision_current = desired_revision is None or (
+        evidence.publication_revision is not None
+        and evidence.publication_revision >= desired_revision
+    )
+    return (
+        evidence.collection_present is True
+        and evidence.target_matches is True
+        and evidence.integrity_verified is True
+        and generation_current
+        and revision_current
+    )
+
+
+def _source_states(
+    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
+) -> tuple[SearchAvailability, SearchFreshness]:
+    if canonical.capacity_refused:
+        availability = SearchAvailability.CAPACITY_LIMITED
+    elif canonical.rebuild_required or canonical.collection_present is not True:
+        availability = SearchAvailability.UNAVAILABLE
+    else:
+        availability = SearchAvailability.USABLE
+    if canonical.rebuild_required:
+        freshness = SearchFreshness.REBUILD_REQUIRED
+    elif matches:
+        freshness = SearchFreshness.UPDATING
+    elif _target_is_current(canonical):
+        freshness = SearchFreshness.CURRENT
+    else:
+        freshness = SearchFreshness.UNVERIFIABLE
+    return availability, freshness
+
+
+def _source_reason(
+    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
+) -> str | None:
+    if canonical.capacity_refused:
+        return "capacity_limited"
+    if canonical.rebuild_required:
+        return "rebuild_required"
+    if canonical.collection_present is False:
+        return "index_unavailable"
+    if matches:
+        return "index_updating"
+    return None if _target_is_current(canonical) else "index_unverifiable"
+
+
+def _source_remediation(
+    context: SearchAvailabilityContext,
+    reason_code: str | None,
+    matches: Sequence[_MatchingJob],
+) -> str | None:
+    if reason_code == "rebuild_required":
+        return index_command(
+            context.source, IndexCommandOptions(rebuild=True, port=context.port)
+        )
+    if reason_code == "index_unverifiable":
+        return server_status_command(context.port, verbose=True)
+    if matches or reason_code == "capacity_limited":
+        return server_jobs_command(context.port, index=context.source)
+    if reason_code == "index_unavailable":
+        return index_command(context.source, IndexCommandOptions(port=context.port))
+    return None
+
+
+def _project_source_fact(
+    context: SearchAvailabilityContext,
+    matches: Sequence[_MatchingJob],
+) -> SearchSourceFact:
+    """Project explicit canonical evidence without treating terminality as publish."""
+    canonical = context.canonical_evidence
+    # A successful retrieval is direct evidence that this collection can serve,
+    # even when an older daemon/index path supplied no publication identity.
+    # Identity remains mandatory for CURRENT and authoritative absence below.
+    availability, freshness = _source_states(canonical, matches)
+    authority = (
+        AbsenceAuthority.AUTHORITATIVE
+        if availability is SearchAvailability.USABLE
+        and freshness is SearchFreshness.CURRENT
+        else AbsenceAuthority.NON_AUTHORITATIVE
+    )
+    reason_code = _source_reason(canonical, matches)
+    remediation = _source_remediation(context, reason_code, matches)
+    return SearchSourceFact(
+        source=context.source,
+        availability=availability,
+        freshness=freshness,
+        absence_authority=authority,
+        generation=GenerationEvidence(
+            served_generation=canonical.served_generation,
+            desired_generation=canonical.desired_generation,
+            served_revision=canonical.publication_revision,
+            desired_revision=canonical.desired_revision,
+        ),
+        evidence=tuple(match.id for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]),
+        reason_code=reason_code,
+        retryable=(
+            not canonical.rebuild_required
+            and (
+                canonical.capacity_refused
+                or canonical.collection_present is False
+                or bool(matches)
+            )
+        ),
+        remediation=remediation,
+    )
+
+
 def _build_index_unavailable_response(
     context: SearchAvailabilityContext,
     *,
     matching_jobs: Sequence[MatchingIndexJobReference],
     matching_jobs_truncated: bool,
     rebuilding: bool,
+    source_fact: SearchSourceFact,
 ) -> dict[str, object]:
-    """Build the exact failure body from the classification's own evidence."""
+    """Build a canonical failure body from the classification's source fact."""
     response_index_state: dict[str, object] = {
         "source": context.index_state["source"],
         "indexed_count": context.index_state["indexed_count"],
         "indexed_target_root": context.index_state["indexed_target_root"],
         "requested_target_root": context.index_state["requested_target_root"],
         "target_matches": context.index_state["target_matches"],
-        "status": "rebuilding" if rebuilding else "updating",
+        "status": (
+            "unavailable"
+            if context.canonical_evidence.collection_present is False
+            else "rebuilding"
+            if rebuilding
+            else "updating"
+        ),
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
     }
@@ -231,19 +412,28 @@ def _build_index_unavailable_response(
     integrity = context.index_state.get("index_integrity")
     if integrity is not None:
         response_index_state["index_integrity"] = integrity
+    error = (
+        source_fact.reason_code
+        if source_fact.reason_code in {"capacity_limited", "rebuild_required"}
+        else "index_unavailable"
+    )
+    state = (
+        "unavailable"
+        if context.canonical_evidence.collection_present is False
+        else "changing"
+    )
     return {
         "ok": False,
-        "error": "index_unavailable",
+        "error": error,
         "message": (
-            f"The {context.source} index for {context.requested_root} is changing; "
+            f"The {context.source} index for {context.requested_root} is {state}; "
             "this empty search cannot establish that no matches exist."
         ),
         "request_id": context.request_id,
         "index_state": response_index_state,
-        "remediation": [
-            server_jobs_command(context.port, index=context.source),
-            "Retry the search after the matching index job reaches a terminal state.",
-        ],
+        "retryable": source_fact.retryable,
+        "readiness": search_readiness_block((source_fact,)),
+        "remediation": source_fact.remediation,
     }
 
 
@@ -280,13 +470,31 @@ def classify_qdrant_collection_disappearance(
     """Convert a matching collection-disappearance race, or decline it."""
     if not _is_qdrant_collection_disappearance(exc):
         return None
+    disappearance_context = replace(
+        context,
+        canonical_evidence=replace(
+            context.canonical_evidence,
+            collection_present=False,
+            integrity_verified=False,
+        ),
+    )
     classification = classify_search_response(
         {"results": []},
-        context,
+        disappearance_context,
     )
-    if classification.status_code != 503:
-        return None
-    return replace(classification, availability_cause="collection_missing")
+    response = _build_index_unavailable_response(
+        disappearance_context,
+        matching_jobs=classification.matching_jobs,
+        matching_jobs_truncated=classification.matching_jobs_truncated,
+        rebuilding=classification.rebuilding,
+        source_fact=classification.source_fact,
+    )
+    return replace(
+        classification,
+        response=response,
+        status_code=503,
+        availability_cause="collection_missing",
+    )
 
 
 def classify_search_response(
@@ -305,9 +513,12 @@ def classify_search_response(
         if normalized_root is not None
         else []
     )
-    matching_jobs = tuple(match.to_reference() for match in matches[:_MAX_EXPOSED_JOBS])
-    matching_jobs_truncated = len(matches) > _MAX_EXPOSED_JOBS
+    matching_jobs = tuple(
+        match.to_reference() for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]
+    )
+    matching_jobs_truncated = len(matches) > MAX_SEARCH_EVIDENCE_ITEMS
     rebuilding = any(match.mode == "rebuild" for match in matches)
+    source_fact = _project_source_fact(context, matches)
 
     results = result.get("results")
     if isinstance(results, list) and not results and matches:
@@ -316,6 +527,7 @@ def classify_search_response(
             matching_jobs=matching_jobs,
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
+            source_fact=source_fact,
         )
         return SearchResponseClassification(
             response=response,
@@ -324,6 +536,7 @@ def classify_search_response(
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
             availability_cause="matching_index_job",
+            source_fact=source_fact,
         )
     return SearchResponseClassification(
         response=result,
@@ -332,4 +545,5 @@ def classify_search_response(
         matching_jobs_truncated=matching_jobs_truncated,
         rebuilding=rebuilding,
         availability_cause=None,
+        source_fact=source_fact,
     )

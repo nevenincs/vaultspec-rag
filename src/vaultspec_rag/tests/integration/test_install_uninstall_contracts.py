@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path  # noqa: TC003
 
@@ -265,7 +266,8 @@ class TestProviderLifecycleAcceptance:
         assert "vaultspec-rag" in claude.stdout
         assert "Scope: Project config" in claude.stdout
 
-        codex_executable = "codex.cmd" if os.name == "nt" else "codex"
+        codex_executable = shutil.which("codex")
+        assert codex_executable is not None, "Codex CLI is required for this test"
         codex_home = fresh_workspace.parent / "codex-home"
         codex_home.mkdir()
         project_key = str(fresh_workspace.resolve())

@@ -56,6 +56,9 @@ class TestSearchSafetyContract:
                 "1",
             ],
         )
+        # Mutation evidence: forcing `_local_search_mandated` to return True
+        # made this default request run locally and failed the nonzero-exit
+        # assertion below (exit 1); restoration passed (exit 0).
         assert result.exit_code != 0
         normalized = " ".join(result.output.split())
         assert "unreachable" in normalized.lower()
@@ -123,7 +126,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         records = search_records(result.output)
         assert [record["number"] for record in records] == [1, 2]
         _assert_record(
@@ -164,6 +169,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
         expected["node_type"] = "function"
         assert requests == [expected]
         assert "--node-type" not in result.output
@@ -187,6 +193,7 @@ class TestSearchSafetyContract:
 
         assert result.exit_code == 0, result.output
         expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
         expected["prefer"] = "prod"
         assert requests == [expected]
 
@@ -203,7 +210,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "service status")]
+        expected = _expected_code_search_request(tmp_path, "service status")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         records = search_records(result.output)
         _assert_record(
             records[0],
@@ -265,7 +274,9 @@ class TestSearchSafetyContract:
             thread.join(timeout=1)
 
         assert result.exit_code == 0, result.output
-        assert requests == [_expected_code_search_request(tmp_path, "missing symbol")]
+        expected = _expected_code_search_request(tmp_path, "missing symbol")
+        expected["freshness_policy"] = "immediate"
+        assert requests == [expected]
         lines = _plain_lines(result.output)
         assert lines[0].endswith("missing symbol")
         assert lines[1].startswith("Why:")
@@ -430,18 +441,8 @@ class TestSearchSafetyContract:
         assert "RAG service" not in message
         assert "file watcher" not in message
 
-    def test_search_mcp_timeout_diagnostics(self, tmp_path: Path):
-        """A search that outlasts its bound reports http_search_timeout.
-
-        The stall is real: a bound server accepts the request and sleeps past
-        the deadline, so the timeout is raised by the transport under test
-        rather than by a substitute programmed to raise it. Substituting the
-        call proved the caller maps an exception someone constructed, which is
-        a different claim from the transport producing one.
-
-        Proven able to fail: raising the timeout above the server's sleep lets
-        the request complete and the error is no longer http_search_timeout.
-        """
+    def test_search_timeout_is_transport_only(self, tmp_path: Path):
+        """A real stalled response reports only the transport failure."""
         from ..serviceclient._search_transport import try_http_search
 
         server, thread = _slow_search_contract_server()
@@ -460,39 +461,34 @@ class TestSearchSafetyContract:
             thread.join(timeout=5)
         assert isinstance(res, dict)
         assert res["ok"] is False
-        assert res["error"] == "http_search_timeout"
+        assert res["error"] == "http_call_failed"
         msg = res["message"]
         assert isinstance(msg, str)
-        assert "timed out after" in msg
-        assert "same_project_search_strategy" not in msg
+        assert "failed: TimeoutError:" in msg
+        for client_diagnosis in (
+            "diagnostics",
+            "readiness",
+            "retryable",
+            "remediation",
+        ):
+            assert client_diagnosis not in res
 
     def test_search_timeout_human_output_is_plain_diagnostic(
         self, tmp_path: Path
     ) -> None:
-        """Default search timeout output is natural text, not a backend table."""
+        """Human output identifies a transport error without readiness guesses."""
         result, port = invoke_timed_out_search(tmp_path)
 
         assert result.exit_code == 1, result.output
-        labels = _label_values(result.output)
         folded = " ".join(_plain_lines(result.output))
-        assert re.match(
-            rf"Error: The search request to the service on port {port} "
-            r"timed out after 0\.001 seconds",
-            folded,
-        )
-        assert "active index jobs before retrying." in folded
-        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
-        assert labels["Work"] == "no active index jobs"
-        lines = _plain_lines(result.output)
-        next_actions = lines[lines.index("Next actions:") + 1 :]
-        assert next_actions == [
-            f"- vaultspec-rag server status --port {port}",
-            f"- vaultspec-rag server jobs --state active --port {port}",
-            "- Rerun the same search with --timeout 300",
-        ]
-        assert "running jobs before retrying" not in result.output
-        assert "running index jobs" not in result.output
-        assert "health check" not in result.output
+        assert f"Error: HTTP search on port {port} failed: TimeoutError:" in folded
+        assert "Code: http_call_failed" in folded
+        # Mutation evidence: restoring timeout health/jobs diagnosis added a
+        # Service line and failed this exact assertion (exit 1); restoration
+        # passed (exit 0), preserving server ownership of readiness facts.
+        assert "Service:" not in result.output
+        assert "Work:" not in result.output
+        assert "Next actions:" not in result.output
         for forbidden in (
             "same_project_search_strategy",
             "Backend Contract",
@@ -506,84 +502,18 @@ class TestSearchSafetyContract:
         ):
             assert forbidden not in result.output
 
-    def test_search_timeout_missing_health_status_is_reported_absence(
-        self, tmp_path: Path
-    ) -> None:
-        result, _port = invoke_timed_out_search(
-            tmp_path,
-            health_payload={
-                "project_count": 1,
-                "backend_capabilities": {
-                    "same_project_search_strategy": "serialized",
-                },
-            },
-        )
-
-        assert result.exit_code == 1, result.output
-        labels = _label_values(result.output)
-        assert (
-            labels["Service"]
-            == "reachable; request status not reported by service; 1 project loaded"
-        )
-        assert labels["Work"] == "no active index jobs"
-        assert "unknown" not in result.output.lower()
-        _assert_no_table_borders(result.output)
-
-    def test_search_timeout_jobs_error_is_reported_absence(
-        self, tmp_path: Path
-    ) -> None:
-        result, _port = invoke_timed_out_search(
-            tmp_path,
-            jobs_payload={
-                "ok": False,
-                "error": "jobs_unavailable",
-                "message": "Job summary is not available.",
-            },
-            jobs_status_code=503,
-        )
-
-        assert result.exit_code == 1, result.output
-        labels = _label_values(result.output)
-        assert labels["Service"] == "reachable; requests ready; 3 projects loaded"
-        assert (
-            labels["Work"]
-            == "jobs check not reported by service (Job summary is not available.)"
-        )
-        assert "unknown" not in result.output.lower()
-        _assert_no_table_borders(result.output)
-
-    def test_search_timeout_json_preserves_backend_diagnostics(
-        self, tmp_path: Path
-    ) -> None:
-        """JSON timeout output keeps full diagnostic fields for agents."""
+    def test_search_timeout_json_is_transport_only(self, tmp_path: Path) -> None:
+        """JSON exposes the transport error without synthesized service facts."""
         result, _port = invoke_timed_out_search(tmp_path, "--json")
 
         assert result.exit_code == 1, result.output
         envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "search"
-        assert envelope["error"] == "http_search_timeout"
-        backend_capabilities_raw = envelope["backend_capabilities"]
-        assert isinstance(backend_capabilities_raw, dict)
-        backend_capabilities = typing.cast(
-            "dict[str, object]", backend_capabilities_raw
-        )
-        assert backend_capabilities["same_project_search_strategy"] == "serialized"
-        diagnostics_raw = envelope["diagnostics"]
-        assert isinstance(diagnostics_raw, dict)
-        diagnostics = typing.cast("dict[str, object]", diagnostics_raw)
-        backpressure_raw = diagnostics["backpressure"]
-        assert isinstance(backpressure_raw, dict)
-        backpressure = typing.cast("dict[str, object]", backpressure_raw)
-        assert backpressure["same_project_search_strategy"] == "serialized"
-        health_raw = diagnostics["health"]
-        assert isinstance(health_raw, dict)
-        health = typing.cast("dict[str, object]", health_raw)
-        assert health["status"] == "ready"
-        jobs_raw = diagnostics["jobs"]
-        assert isinstance(jobs_raw, dict)
-        jobs = typing.cast("dict[str, object]", jobs_raw)
-        assert jobs["running_count"] == 0
+        assert envelope["error"] == "http_call_failed"
+        assert isinstance(envelope["message"], str)
+        assert "failed: TimeoutError:" in envelope["message"]
+        assert set(envelope) == {"ok", "command", "error", "message"}
 
 
 def _shortfall_contract_server(

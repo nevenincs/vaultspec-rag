@@ -14,6 +14,7 @@ from real content and leaves the paused job untouched.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
@@ -23,19 +24,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from mcp.types import TextContent
 
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
 from ...service_quiesce import ServiceQuiesceController
 from ...serviceclient._search_transport import try_http_search
-from ..corpus import build_synthetic_vault
-from ._service_search_diagnostics_mcp import (
-    McpConcurrentRequest,
-    assert_mcp_unavailable_response,
-    mcp_search_after_concurrent_admission,
-    wait_for_mcp_initialization,
+from .._search_readiness_scenarios import (
+    SEARCH_READINESS_SCENARIOS,
+    canonical_service_envelope,
 )
+from ..corpus import build_synthetic_vault
+from ..test_cli_search import _invoke_readiness_search, _search_envelope_service
 from ._service_search_diagnostics_support import (
     RawSearchPayloads,
     RawSearchResponse,
@@ -51,6 +52,15 @@ from ._service_search_diagnostics_support import (
     wait_for_succeeded_job,
 )
 from .conftest import _live_service_context
+from .test_service_search_diagnostics_http import _production_route_response
+from .test_service_search_diagnostics_mcp import (
+    McpConcurrentRequest,
+    _canonical_search_service,
+    _official_search_call,
+    assert_mcp_unavailable_response,
+    mcp_search_after_concurrent_admission,
+    wait_for_mcp_initialization,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -65,6 +75,76 @@ type ConcurrentProbeResponses = tuple[
     CallToolResult,
 ]
 type RebuildProbeRun = tuple[str, dict[str, object], ConcurrentProbeResponses]
+
+
+@pytest.mark.unit
+def test_rebuild_required_is_identical_across_public_surfaces(
+    tmp_path: Path,
+) -> None:
+    scenario = SEARCH_READINESS_SCENARIOS["rebuild_required"]
+    expected = canonical_service_envelope(scenario)
+    failure = scenario.failure
+    assert failure is not None
+
+    http_status, http_body, http_headers = _production_route_response(
+        tmp_path, scenario
+    )
+    # The route's 409 guard is mutation-proved at its shared matrix assertion in
+    # test_service_search_diagnostics_http; this cross-surface test reuses it.
+    assert http_status == 409
+    assert "retry-after" not in http_headers
+    assert http_body["error"] == failure.code
+    assert http_body["retryable"] is False
+    assert http_body["request_id"] == scenario.request_id
+    assert http_body["remediation"] == failure.remediation
+    assert "results" not in http_body
+    http_readiness = cast("dict[str, object]", http_body["readiness"])
+    assert http_readiness["aggregate"] == scenario.aggregate.as_dict()
+    http_sources = cast("list[dict[str, object]]", http_readiness["sources"])
+    assert len(http_sources) == 1
+    assert {key: value for key, value in http_sources[0].items() if key != "waits"} == {
+        key: value
+        for key, value in scenario.source_facts[0].as_dict().items()
+        if key != "waits"
+    }
+
+    with _search_envelope_service(expected, status=409) as (port, _requests):
+        cli_json = _invoke_readiness_search(tmp_path, port, "--json")
+    emitted = json.loads(cli_json.output)
+    assert cli_json.exit_code == 1
+    assert emitted == {**expected, "command": "search"}
+    assert "results" not in emitted
+
+    with _search_envelope_service(expected, status=409) as (port, _requests):
+        cli_human = _invoke_readiness_search(tmp_path, port)
+    assert cli_human.exit_code == 1
+    assert f"Code: {failure.code}" in cli_human.output
+    assert cli_human.output.count(failure.remediation) == 1
+    assert "document: unavailable, rebuild_required" in cli_human.output
+
+    root = tmp_path / "mcp-rebuild"
+    (root / ".vaultspec").mkdir(parents=True)
+    with _canonical_search_service(tmp_path, scenario=scenario) as (
+        port,
+        status_dir,
+        _requests,
+    ):
+        mcp_response = asyncio.run(
+            _official_search_call(
+                port=port,
+                status_dir=status_dir,
+                root=root,
+                tool_name="search_documents",
+            )
+        )
+    assert mcp_response.is_error is False
+    assert mcp_response.structured_content == expected
+    assert "results" not in cast("dict[str, object]", mcp_response.structured_content)
+    mcp_text = " ".join(
+        block.text for block in mcp_response.content if isinstance(block, TextContent)
+    )
+    assert failure.code in mcp_text
+    assert failure.remediation in mcp_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +375,8 @@ def _assert_unavailable_response_envelope(
         "message",
         "request_id",
         "index_state",
+        "retryable",
+        "readiness",
         "remediation",
     }, evidence
     assert body["ok"] is False, evidence
@@ -394,10 +476,9 @@ def _assert_unavailable_search_response(
         evidence=evidence,
     )
     assert index_state["status"] == "rebuilding", evidence
-    assert body["remediation"] == [
-        f"vaultspec-rag server jobs --state active --index vault --port {port}",
-        "Retry the search after the matching index job reaches a terminal state.",
-    ], evidence
+    assert body["remediation"] == (
+        f"vaultspec-rag server jobs --state active --index vault --port {port}"
+    ), evidence
 
 
 def _assert_stable_missing_index_response(
@@ -408,10 +489,10 @@ def _assert_stable_missing_index_response(
     evidence: str,
 ) -> None:
     status, _headers, body = response
-    assert status == 200, evidence
-    assert body.get("ok") is not False, evidence
-    assert "error" not in body, evidence
-    assert body["results"] == [], evidence
+    assert status == 503, evidence
+    assert body["ok"] is False, evidence
+    assert body["error"] == "index_unverifiable", evidence
+    assert "results" not in body, evidence
 
     raw_index_state = body["index_state"]
     assert isinstance(raw_index_state, dict), evidence
@@ -437,11 +518,6 @@ def _assert_stable_missing_index_response(
     assert index_state["requested_target_root"] == str(root), evidence
     assert index_state["target_matches"] is True, evidence
     assert index_state["status"] == "missing", evidence
-
-    raw_empty = body["empty"]
-    assert isinstance(raw_empty, dict), evidence
-    empty = cast("dict[str, object]", raw_empty)
-    assert empty["reason"] == "index_missing", evidence
 
 
 def _assert_matching_nonempty_response(
@@ -626,12 +702,19 @@ def _run_clean_rebuild_availability_phase(
         last_job=terminal_job,
         last_response=post_response,
     )
-    assert post_status == 200, post_evidence
-    assert post_body["results"] == [], post_evidence
-    raw_post_empty = post_body["empty"]
-    assert isinstance(raw_post_empty, dict), post_evidence
-    post_empty = cast("dict[str, object]", raw_post_empty)
-    assert post_empty["reason"] == "no_match", post_evidence
+    assert post_status == 503, post_evidence
+    assert post_body["ok"] is False, post_evidence
+    assert post_body["error"] == "index_unverifiable", post_evidence
+    assert "results" not in post_body, post_evidence
+    raw_post_state = post_body["index_state"]
+    assert isinstance(raw_post_state, dict), post_evidence
+    post_state = cast("dict[str, object]", raw_post_state)
+    assert post_state["status"] == "available", post_evidence
+    assert post_state["target_matches"] is True, post_evidence
+    raw_post_integrity = post_state["index_integrity"]
+    assert isinstance(raw_post_integrity, dict), post_evidence
+    post_integrity = cast("dict[str, object]", raw_post_integrity)
+    assert post_integrity["verdict"] == "unverifiable", post_evidence
 
 
 def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:

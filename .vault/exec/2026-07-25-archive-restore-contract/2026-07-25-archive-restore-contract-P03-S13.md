@@ -37,7 +37,6 @@ alongside `storage_ops.py` splitting into `storage_archive.py`,
 `WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON` (Windows) rather than
 completing, and that neither destination collection is created either way.
 Its counterpart, `test_restored_namespace_answers_the_search_the_original_answered`
-in the same file, proves the positive direction this Step's `both
-directions` requirement names alongside it. `git log --follow` on the
+in the same file, proves the positive direction this Step's `both directions` requirement names alongside it. `git log --follow` on the
 renamed file shows this corruption test predates the plan's own `P03.S13`
 row, introduced together with the restore primitive itself.

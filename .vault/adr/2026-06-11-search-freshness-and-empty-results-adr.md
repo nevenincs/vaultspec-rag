@@ -1,21 +1,22 @@
 ---
 tags:
-  - '#adr'
-  - '#search-freshness-and-empty-results'
+  - "#adr"
+  - "#search-freshness-and-empty-results"
 date: '2026-06-11'
-modified: '2026-07-27'
-body_hash: 'sha256:7616d7c247f48b6e656e4d2007e068b3bcae4caaaa326959b3cec6e59f881cf6'
 related:
-  - '[[2026-06-11-search-freshness-and-empty-results-research]]'
-  - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
-  - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
-  - '[[2026-05-28-cli-backend-parity-adr]]'
-  - '[[2026-05-28-cli-search-filters-adr]]'
-  - '[[2026-04-04-test-and-paths-adr]]'
-  - '[[2026-05-30-cli-index-default-adr]]'
+  - "[[2026-06-11-search-freshness-and-empty-results-research]]"
+  - "[[2026-06-11-cli-service-operability-hardening-epic-plan]]"
+  - "[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]"
+  - "[[2026-05-28-cli-backend-parity-adr]]"
+  - "[[2026-05-28-cli-search-filters-adr]]"
+  - "[[2026-04-04-test-and-paths-adr]]"
+  - "[[2026-05-30-cli-index-default-adr]]"
+superseded_by: '2026-09-08-search-readiness-contract-adr'
+modified: '2026-09-08'
+body_hash: 'sha256:1d7ae1a06a96c3253191b0b5d46aada3ef174a82e75e1d4c34a3d6ab3f7a1b23'
 ---
 
-# `search-freshness-and-empty-results` adr: `actionable empty search responses` | (**status:** `accepted`)
+# `search-freshness-and-empty-results` adr: `actionable empty search responses` | (**status:** `superseded`)
 
 ## Problem Statement
 

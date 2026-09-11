@@ -39,6 +39,7 @@ from ._run_policy import RunPolicy
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from ..job_control import RunControl
     from ..progress import ProgressReporter
@@ -55,6 +56,7 @@ class CodeGenerationBindings:
     root_dir: pathlib.Path
     data_root: pathlib.Path
     store: VaultStore
+    publish_readiness: Callable[[pathlib.Path, str], object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +86,7 @@ class CodeGenerationLifecycle:
         "_data_root",
         "_drift_owner",
         "_last_checkpoint",
+        "_publish_readiness",
         "_root_dir",
         "_store",
     )
@@ -102,6 +105,7 @@ class CodeGenerationLifecycle:
         self._root_dir = bindings.root_dir
         self._data_root = bindings.data_root
         self._store = bindings.store
+        self._publish_readiness = bindings.publish_readiness
         self._last_checkpoint: CodeRunCheckpoint | None = None
         self._active_build_target: str | None = None
         # Bound to the generation once a run opens its checkpoint, because
@@ -370,7 +374,9 @@ class CodeGenerationLifecycle:
                     ContentKind.CODE,
                     include_same_kind=False,
                 )
-            checkpoint.publish_generation()
+            published = checkpoint.publish_generation()
+            if self._publish_readiness is not None:
+                self._publish_readiness(self._root_dir, published.generation_id)
             reporter.advance(1)
         finally:
             reporter.phase_end()

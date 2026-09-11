@@ -100,6 +100,12 @@ _POSITIVE_NUMBER = _NumericBound(
 _NON_NEGATIVE_NUMBER = _NumericBound(
     "a finite non-negative number", integral=False, minimum=0.0
 )
+_SEARCH_FRESHNESS_WAIT_MAX = _NumericBound(
+    "a finite number between 0 and 300",
+    integral=False,
+    minimum=0.0,
+    maximum=300.0,
+)
 # Grace windows are the interval an observation has to survive before
 # destruction is allowed, so their floor is what makes them observations at
 # all. At zero the first cycle to see a namespace stamps its clock and then
@@ -154,6 +160,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_search_timeout_seconds": EnvVar.SERVICE_SEARCH_TIMEOUT,
+    "search_freshness_wait_max_seconds": EnvVar.SEARCH_FRESHNESS_WAIT_MAX_SECONDS,
     "service_admin_timeout_seconds": EnvVar.SERVICE_ADMIN_TIMEOUT,
     "service_reindex_timeout_seconds": EnvVar.SERVICE_REINDEX_TIMEOUT,
     "qdrant_ready_timeout_seconds": EnvVar.QDRANT_READY_TIMEOUT,
@@ -297,6 +304,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "service_idle_ttl_seconds": _NON_NEGATIVE_INT,
     "service_max_projects": _POSITIVE_INT,
     "service_search_timeout_seconds": _POSITIVE_NUMBER,
+    "search_freshness_wait_max_seconds": _SEARCH_FRESHNESS_WAIT_MAX,
     "service_admin_timeout_seconds": _POSITIVE_NUMBER,
     "service_reindex_timeout_seconds": _POSITIVE_NUMBER,
     "qdrant_ready_timeout_seconds": _POSITIVE_NUMBER,

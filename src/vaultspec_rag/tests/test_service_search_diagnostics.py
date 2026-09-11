@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+import math
+import threading
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -12,10 +14,39 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
-def test_search_index_state_uses_selected_source_preflight_count() -> None:
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+def _current_code_readiness() -> dict[str, object]:
+    return {
+        "sources": [
+            {
+                "source": "code",
+                "availability": "usable",
+                "freshness": "current",
+                "absence_authority": "authoritative",
+                "generation": {},
+                "wait_policy": "immediate",
+                "waits": [],
+                "evidence": [],
+                "retryable": False,
+            }
+        ],
+        "aggregate": {
+            "availability": "usable",
+            "freshness": "current",
+            "absence_authority": "authoritative",
+            "source_count": 1,
+            "usable_source_count": 1,
+            "degraded_sources": [],
+        },
+    }
 
-    state = _search_index_state(
+
+def test_search_index_state_uses_selected_source_preflight_count() -> None:
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
+
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=37,
             requested_root="C:/work/project",
@@ -34,7 +65,7 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
 
 
 def test_empty_search_diagnostics_use_supported_jobs_filter() -> None:
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -57,7 +88,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
     query found nothing" and sends the reader off tuning the query while a
     pattern that matches no indexed path sits in the command.
     """
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -80,7 +111,7 @@ def test_empty_search_diagnostics_name_the_path_filter_that_emptied_the_page() -
 
 
 def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() -> None:
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -95,7 +126,7 @@ def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() 
 
 def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
     """With nothing indexed, the path filter is not the actionable cause."""
-    from ..server._routes_search import _empty_search_diagnostics
+    from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
@@ -123,9 +154,12 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     green. Its companion pins the opposite direction under a different
     mutation, so neither can pass on a constant.
     """
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -157,9 +191,12 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     production call instead of on the assertion, which proves the branch
     raises, not that the test is watching it.
     """
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -186,10 +223,13 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     literals are what pin the key names a renderer looks up.
     """
     from .._index_breadth import BreadthShortfall
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
     block = BreadthShortfall(published=421, live=4).as_index_state_block()
-    daemon_state = _search_index_state(
+    daemon_state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -223,9 +263,12 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     """
     from .._index_breadth import BreadthShortfall
     from .._search_state import BreadthFindings, search_index_state
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
-    routed = _search_index_state(
+    routed = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -265,7 +308,10 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
     test on the block lookup below, not on a setup error.
     """
     from .._index_integrity import IndexIntegrity
-    from ..server._routes_search import SearchIndexStateInput, _search_index_state
+    from ..server._search_route_availability import (
+        SearchIndexStateInput,
+        search_index_state_for_route,
+    )
 
     verdict = IndexIntegrity(
         verdict="shrunken",
@@ -275,7 +321,7 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
         generation_id="generation-route",
         reason=None,
     )
-    state = _search_index_state(
+    state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
             requested_root="C:/work/project",
@@ -388,6 +434,7 @@ def test_the_mcp_output_model_preserves_the_shortfall_summary() -> None:
 
     envelope: dict[str, object] = {
         "results": [],
+        "readiness": _current_code_readiness(),
         "summary": (
             "Found 0 relevant items. Warning: this index holds 4 of the 421 "
             "sections it published, so an absent result is not evidence that "
@@ -426,6 +473,12 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
         SearchAvailabilityRequestFacts,
         _classify_search_result,
     )
+    from ..server._search_readiness import (
+        ReadinessRevisionSnapshot,
+        ReadinessSourceKey,
+    )
+
+    readiness_key = ReadinessSourceKey.from_root(tmp_path, "code")
 
     searched: dict[str, object] = {
         "results": [],
@@ -436,6 +489,7 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
             "requested_target_root": str(tmp_path),
             "target_matches": True,
             "status": "available",
+            "index_integrity": {"verdict": "consistent"},
         },
         "path_filter": {
             "patterns": ["src/vaultspec_rag/indexr/**"],
@@ -451,6 +505,13 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
             source="code",
             request_id="0" * 32,
             port=8766,
+            readiness_snapshot=ReadinessRevisionSnapshot(
+                key=readiness_key,
+                published_generation="current",
+                publication_revision=1,
+                desired_generation="current",
+                controller_revision=1,
+            ),
         ),
     )
 
@@ -460,6 +521,194 @@ def test_a_path_filter_note_survives_classification_into_the_empty_block(
     # and a substring match would pass on whichever branch happened to fire.
     assert empty["reason"] == "no_match_path_filter"
     assert "src/vaultspec_rag/indexr/**" in str(empty["message"])
+
+
+def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
+    """Each bounded producer retains the cause it owns.
+
+    Mutation evidence: rewriting route-attached ``search_admission`` to
+    ``index_transition`` failed the exact ordered cause assertion below
+    (exit 1); restoration passed (exit 0).
+    """
+    from .._search_state import (
+        AbsenceAuthority,
+        SearchAvailability,
+        SearchFreshness,
+        SearchSourceFact,
+        SearchWaitCause,
+        WaitObservation,
+        search_readiness_block,
+    )
+    from ..server._routes_search import _attach_route_waits
+
+    def observed(cause: SearchWaitCause, waited: float) -> WaitObservation:
+        return WaitObservation(
+            cause=cause,
+            waited_seconds=waited,
+            configured_bound_seconds=1.0,
+            remaining_bound_seconds=1.0 - waited,
+        )
+
+    fact = SearchSourceFact(
+        source="code",
+        availability=SearchAvailability.USABLE,
+        freshness=SearchFreshness.UPDATING,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        waits=(
+            observed(SearchWaitCause.INDEX_TRANSITION, 0.1),
+            observed(SearchWaitCause.CONTROLLER_DEFERRAL, 0.2),
+            observed(SearchWaitCause.OTHER_SERVICE_CAPACITY, 0.3),
+        ),
+        reason_code="index_updating",
+        retryable=True,
+    )
+    readiness: dict[str, object] = search_readiness_block((fact,))
+    response: dict[str, object] = {"readiness": readiness}
+    _attach_route_waits(
+        response,
+        (observed(SearchWaitCause.SEARCH_ADMISSION, 0.4),),
+    )
+
+    source = cast("list[dict[str, object]]", readiness["sources"])[0]
+    waits = cast("list[dict[str, object]]", source["waits"])
+    assert [wait["cause"] for wait in waits] == [
+        "index_transition",
+        "controller_deferral",
+        "other_service_capacity",
+        "search_admission",
+    ]
+
+
+def test_unbounded_service_waits_remain_distinct_named_timing_scalars() -> None:
+    """Unbounded elapsed measurements are not fabricated observations.
+
+    Mutation evidence: collapsing timing keys onto ``queue_wait_seconds`` in
+    the route extractor failed the exact key-set assertion (exit 1);
+    restoration passed (exit 0).
+    """
+    from ..search._searcher import GPU_COMPUTE_WAIT_SECONDS
+    from ..server._routes_search import _activity_timings
+
+    result: dict[str, object] = {
+        "timing": {
+            "search_limiter_wait_seconds": 0.11,
+            "compute_ticket_wait_seconds": 0.12,
+            GPU_COMPUTE_WAIT_SECONDS: 0.13,
+            "project_lease_seconds": 0.14,
+            "storage_backend_seconds": 0.15,
+            "phases": {"qdrant_seconds": 0.15},
+        }
+    }
+
+    timings = _activity_timings(result, 0.9)
+
+    assert set(timings) == {
+        "server_total_seconds",
+        "search_limiter_wait_seconds",
+        "compute_ticket_wait_seconds",
+        "gpu_compute_wait_seconds",
+        "project_lease_seconds",
+        "storage_backend_seconds",
+        "qdrant_seconds",
+    }
+    assert timings["search_limiter_wait_seconds"] == 0.11
+    assert timings["compute_ticket_wait_seconds"] == 0.12
+    assert timings["gpu_compute_wait_seconds"] == 0.13
+    assert timings["project_lease_seconds"] == 0.14
+    assert timings["storage_backend_seconds"] == 0.15
+
+
+def test_gpu_lock_contention_records_only_the_gpu_compute_cause() -> None:
+    """The real lock seam records GPU ownership without needing GPU hardware.
+
+    Mutation evidence: removing the canonical GPU timing write from
+    ``_gpu_section`` failed the exact key-presence lookup with ``KeyError``
+    (exit 1); restoration passed (exit 0).
+    """
+    from ..search._searcher import GPU_COMPUTE_WAIT_SECONDS, VaultSearcher
+
+    class AttemptObservedLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.attempted = threading.Event()
+
+        def acquire(self) -> bool:
+            self.attempted.set()
+            return self._lock.acquire()
+
+        def release(self) -> None:
+            self._lock.release()
+
+    lock = AttemptObservedLock()
+    lock.acquire()
+    lock.attempted.clear()
+    searcher = object.__new__(VaultSearcher)
+    searcher._gpu_lock = cast("Any", lock)
+    timings: dict[str, float] = {}
+    entered = threading.Event()
+
+    def contend() -> None:
+        with searcher._gpu_section(timings):
+            entered.set()
+
+    thread = threading.Thread(target=contend, daemon=True)
+    thread.start()
+    assert lock.attempted.wait(timeout=1.0), "contender never attempted GPU lock"
+    assert not entered.is_set()
+    lock.release()
+    thread.join(timeout=1.0)
+
+    assert not thread.is_alive()
+    assert math.isfinite(timings[GPU_COMPUTE_WAIT_SECONDS])
+    assert timings[GPU_COMPUTE_WAIT_SECONDS] >= 0.0
+    assert "project_lease_seconds" not in timings
+    assert "storage_backend_seconds" not in timings
+
+
+def test_independent_searchers_do_not_gain_a_global_gpu_serial_boundary() -> None:
+    """Distinct runtime locks permit both search paths to enter concurrently.
+
+    Mutation evidence: after the first search had confirmed section ownership,
+    temporarily routing ``_gpu_section`` acquire/release through one
+    module-global lock kept the second contender outside and failed
+    ``second search was globally serialized`` (exit 1); restoration passed
+    (exit 0). No GPU hardware is touched.
+    """
+    from ..search._searcher import VaultSearcher
+
+    first = object.__new__(VaultSearcher)
+    second = object.__new__(VaultSearcher)
+    first._gpu_lock = threading.Lock()
+    second._gpu_lock = threading.Lock()
+    entered = (threading.Event(), threading.Event())
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def search(searcher: VaultSearcher, signal: threading.Event) -> None:
+        try:
+            with searcher._gpu_section({}):
+                signal.set()
+                assert release.wait(timeout=1.0)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = (
+        threading.Thread(target=search, args=(first, entered[0]), daemon=True),
+        threading.Thread(target=search, args=(second, entered[1]), daemon=True),
+    )
+    threads[0].start()
+    try:
+        assert entered[0].wait(timeout=1.0), "first search never entered its section"
+        threads[1].start()
+        assert entered[1].wait(timeout=1.0), "second search was globally serialized"
+    finally:
+        release.set()
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(timeout=1.0)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
 
 
 def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
@@ -474,6 +723,7 @@ def test_the_mcp_output_model_preserves_the_path_filter_diagnostic() -> None:
 
     envelope: dict[str, object] = {
         "results": [],
+        "readiness": _current_code_readiness(),
         "summary": "Found 0 relevant items.",
         "path_filter": {
             "patterns": ["src/vaultspec_rag/indexr/**"],

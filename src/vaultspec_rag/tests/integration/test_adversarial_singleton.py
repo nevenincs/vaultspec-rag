@@ -11,6 +11,7 @@ these need the GPU.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
@@ -40,6 +41,11 @@ _STORAGE_ENV = EnvVar.QDRANT_STORAGE_DIR.value
 _VERSION = "1.18.2"
 _STORAGE = "/srv/storage"
 
+# Pinned rather than inherited: forkserver, the Linux default from Python 3.14,
+# binds an AF_UNIX listener under TMPDIR, and a deep runner temp directory
+# overflows the socket path limit before a single worker starts.
+_SPAWN = multiprocessing.get_context("spawn")
+
 
 def _race_worker(storage_dir: str) -> int:
     """Acquire the machine lock; return this process's pid on win, else 0.
@@ -68,7 +74,7 @@ class TestConcurrentStartRace:
     ) -> None:
         storage = str(isolated_lock.parent / "storage")
         workers = 8
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=_SPAWN) as pool:
             results = list(pool.map(_race_worker, [storage] * workers))
         winners = {pid for pid in results if pid}
         assert len(winners) == 1, f"expected exactly one winning process, got {results}"
@@ -84,7 +90,7 @@ class TestConcurrentStartRace:
         isolated_lock.write_text(json.dumps({"pid": 2_000_000_000}), encoding="utf-8")
         storage = str(isolated_lock.parent / "storage")
         workers = 8
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=_SPAWN) as pool:
             results = list(pool.map(_race_worker, [storage] * workers))
         winners = {pid for pid in results if pid}
         assert len(winners) == 1, f"expected exactly one winning process, got {results}"

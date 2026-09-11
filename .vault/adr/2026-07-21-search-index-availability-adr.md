@@ -1,10 +1,8 @@
 ---
 tags:
-  - '#adr'
-  - '#search-index-availability'
+  - "#adr"
+  - "#search-index-availability"
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:9c1f9c9fd912bc3921a36580894837ba34650822330d1133b2495a2b5eda8db4'
 related:
   - "[[2026-07-21-search-index-availability-research]]"
   - "[[2026-07-21-search-index-availability-reference]]"
@@ -12,9 +10,12 @@ related:
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-large-index-resilience-adr]]"
+superseded_by: '2026-09-08-search-readiness-contract-adr'
+modified: '2026-09-08'
+body_hash: 'sha256:574815dd26e94ab96cdb2d675a6984424f9b4f2da7779fa2ed54ac565bb07926'
 ---
 
-# `search-index-availability` adr: `authoritative empty search responses during index work` | (**status:** `accepted`)
+# `search-index-availability` adr: `authoritative empty search responses during index work` | (**status:** `superseded`)
 
 ## Problem Statement
 

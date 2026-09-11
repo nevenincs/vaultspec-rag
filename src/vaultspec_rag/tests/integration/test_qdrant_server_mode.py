@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -441,7 +442,8 @@ class TestServerModeWatcherEviction:
         try:
             await asyncio.sleep(0.2)
             doomed.unlink()
-            for _ in range(50):  # up to ~5s
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
                 await asyncio.sleep(0.1)
                 if not _hits():
                     break
