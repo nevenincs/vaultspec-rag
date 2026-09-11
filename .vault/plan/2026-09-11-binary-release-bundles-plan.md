@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:3f6160bdb12ab0c3499231bee65d00d3a9997e6588fd0585b16172cdebd1f8e8'
+body_hash: 'sha256:b4f456b232a5b7751d9828b909c0e5529c09378d20a2685f5dd5cb5cabde828e'
 ---
 
 # `binary-release-bundles` plan
@@ -32,7 +32,7 @@ Centralize the RAG product contract, finalize executable metadata, and prove det
 - [x] `P01.S03` - Add Windows PE version-resource stamping and read-back verification while retaining icon resource verification; `tools/binaries/windows_icon.py`.
 - [x] `P01.S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted; `tools/binaries/build_pyapp.py`.
 - [x] `P01.S05` - Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs; `tools/packaging/tests`.
-- [ ] `P01.S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage; `tools/binaries/tests`.
+- [x] `P01.S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage; `tools/binaries/tests`.
 
 ### Phase `P02` - publish complete validated release artifacts
 
