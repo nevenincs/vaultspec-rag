@@ -15,19 +15,32 @@ import time
 import uuid
 from dataclasses import dataclass
 from functools import partial
+from math import ceil, isfinite
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from anyio.to_thread import run_sync as _run_in_thread
-from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.http.exceptions import (
+    ApiException,
+    ResponseHandlingException,
+)
 from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
 from .._operator_commands import (
-    IndexCommandOptions,
-    index_command,
-    server_jobs_command,
     server_status_command,
+)
+from .._search_state import (
+    MAX_SEARCH_EVIDENCE_ITEMS,
+    AbsenceAuthority,
+    FreshnessWaitPolicy,
+    GenerationEvidence,
+    SearchAvailability,
+    SearchFreshness,
+    SearchSourceFact,
+    SearchWaitCause,
+    WaitObservation,
+    search_readiness_block,
 )
 from .._source_types import (
     INDEX_SOURCES,
@@ -57,15 +70,30 @@ from ..service_quiesce import QuiesceAdmissionClosedError
 from ._auth import require_token
 from ._runtime import get_request_runtime
 from ._search_activity import (
+    SearchActivityAdmissionError,
     SearchActivityCompletion,
     SearchActivityStart,
     SearchActivityTicket,
 )
-from ._search_availability import (
-    SearchAvailabilityContext,
-    SearchResponseClassification,
-    classify_qdrant_collection_disappearance,
-    classify_search_response,
+from ._search_route_availability import (
+    SearchAvailabilityRequestFacts,
+    SearchIndexStateInput,
+    acquire_search_integrity_snapshot,
+)
+from ._search_route_availability import (
+    classify_search_result as _classify_search_result,
+)
+from ._search_route_availability import (
+    readiness_snapshot as _readiness_snapshot,
+)
+from ._search_route_availability import (
+    run_search_with_availability as _run_search_with_availability,
+)
+from ._search_route_availability import (
+    search_index_state_for_route as _search_index_state,
+)
+from ._search_route_availability import (
+    search_integrity_for_route as _search_integrity,
 )
 from ._state import search_activity_ledger
 from ._utils import (
@@ -77,14 +105,19 @@ from ._utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from starlette.requests import Request
 
-    from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
     from ..service import ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
+    from ._search_availability import SearchResponseClassification
+    from ._search_readiness import (
+        PublicationTarget,
+        ReadinessRevisionRegistry,
+        ReadinessRevisionSnapshot,
+    )
+
 logger = logging.getLogger("vaultspec_rag.server")
 
 __all__ = ["search_route"]
@@ -103,80 +136,6 @@ _BAD_REQUEST_EMPTY_QUERY = JSONResponse(
 
 
 @dataclass(frozen=True, slots=True)
-class SearchIndexStateInput:
-    """Measurements required to render the canonical index-state block."""
-
-    indexed_count: int | float
-    requested_root: object
-    search_type: PublicSourceType | str
-    published_points: float | None = None
-    integrity: IndexIntegrity | None = None
-    integrity_repair_job_id: str | None = None
-    #: Path of every result on the page, in rank order. Empty on the routes
-    #: that build a block without having searched, where there is nothing to
-    #: judge and the collapse signal correctly stays silent.
-    result_paths: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class SearchAvailabilityRequestFacts:
-    """Stable pre-retrieval request facts used while classifying availability.
-
-    Deliberately a different type from
-    :class:`~._search_availability.SearchAvailabilityContext`, not a second
-    spelling of it: these are the facts fixed before retrieval runs, while the
-    context additionally carries the after-retrieval job snapshot and the
-    index-state block. Both of those exist only once retrieval has finished,
-    and the index-state block differs between the completed-search and
-    vanished-collection call sites, so the two cannot share one lifetime.
-
-    ``source`` names one concrete corpus. The ``combined`` fan-out has no
-    single index to classify against and never builds these facts at all.
-    """
-
-    job_snapshot_before: list[dict[str, object]]
-    root: Path
-    source: IndexSource
-    request_id: str
-    port: int | None
-
-    def __post_init__(self) -> None:
-        """Refuse a source no index job can ever be recorded against.
-
-        The declared type already excludes the fan-out and the checker enforces
-        it at the one construction site. This costs one set membership test per
-        classified search and closes the gap that type alone leaves: a value
-        arriving through ``object``, ``Any``, or an untyped test helper reaches
-        the field unchecked, and the failure it causes is a silent misroute -
-        the classifier compares this against a job spec's own source, matches
-        nothing, and reports a healthy index for one that is mid-rebuild.
-        """
-        if self.source not in INDEX_SOURCES:
-            raise ValueError(
-                f"search availability facts require one concrete index source, "
-                f"got {self.source!r}; the combined fan-out has no single index "
-                f"to classify against"
-            )
-
-    def to_context(
-        self,
-        *,
-        after_snapshot: list[dict[str, object]],
-        index_state: dict[str, object],
-    ) -> SearchAvailabilityContext:
-        """Complete these facts with the evidence retrieval has since produced."""
-        return SearchAvailabilityContext(
-            before_snapshot=self.job_snapshot_before,
-            after_snapshot=after_snapshot,
-            requested_root=self.root,
-            source=self.source,
-            request_id=self.request_id,
-            index_state=index_state,
-            port=self.port,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class SearchRequest:
     """Normalized user input for one search execution."""
 
@@ -186,6 +145,8 @@ class SearchRequest:
     payload: dict[str, Any]
     search_type: PublicSourceType
     request_id: str
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
+    freshness_wait_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +166,133 @@ class SearchRouteResult:
     status_code: int
     total_seconds: float
     availability_cause: str | None
+
+
+def _attach_route_waits(
+    result: dict[str, object], waits: tuple[WaitObservation, ...]
+) -> None:
+    """Append route-owned waits to every carried concrete source fact."""
+    readiness = result.get("readiness")
+    if not isinstance(readiness, dict):
+        return
+    readiness_block = cast("dict[str, object]", readiness)
+    sources = readiness_block.get("sources")
+    if not isinstance(sources, list):
+        return
+    additions = [wait.as_dict() for wait in waits]
+
+    def attach(source: dict[object, object]) -> None:
+        source["waits"] = _merged_route_waits(source.get("waits"), additions)
+
+    for source in cast("list[object]", sources):
+        if isinstance(source, dict):
+            attach(cast("dict[object, object]", source))
+    domains = result.get("domains")
+    if isinstance(domains, dict):
+        for domain in cast("dict[object, object]", domains).values():
+            if not isinstance(domain, dict):
+                continue
+            domain_block = cast("dict[str, object]", domain)
+            source = domain_block.get("readiness")
+            if isinstance(source, dict):
+                attach(cast("dict[object, object]", source))
+
+
+def _merged_route_waits(
+    existing: object, additions: list[dict[str, object]]
+) -> list[object]:
+    carried = list(cast("list[object]", existing)) if isinstance(existing, list) else []
+    route_owned: list[dict[str, object]] = []
+    for addition in additions:
+        if addition not in route_owned:
+            route_owned.append(addition)
+    route_owned = route_owned[-MAX_SEARCH_EVIDENCE_ITEMS:]
+    prior = [item for item in carried if item not in route_owned]
+    prior_capacity = MAX_SEARCH_EVIDENCE_ITEMS - len(route_owned)
+    return [*prior[:prior_capacity], *route_owned]
+
+
+def _backend_unavailable_result(
+    request: SearchRequest, port: int | None
+) -> dict[str, object]:
+    """Render a proven backend refusal without inferring index state."""
+    sources: tuple[IndexSource, ...] = (
+        cast("tuple[IndexSource, ...]", tuple(INDEX_SOURCES))
+        if request.search_type is PublicSourceType.COMBINED
+        else (request.search_type.value,)
+    )
+    remediation = server_status_command(port, verbose=True)
+    facts = tuple(
+        SearchSourceFact(
+            source=source,
+            availability=SearchAvailability.UNAVAILABLE,
+            freshness=SearchFreshness.UNVERIFIABLE,
+            absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+            reason_code="backend_unavailable",
+            retryable=True,
+            remediation=remediation,
+        )
+        for source in sources
+    )
+    return {
+        "ok": False,
+        "error": "backend_unavailable",
+        "message": "The search storage backend is temporarily unavailable.",
+        "request_id": request.request_id,
+        "retryable": True,
+        "readiness": search_readiness_block(facts),
+        "remediation": remediation,
+    }
+
+
+def _complete_backend_unavailable(
+    request: SearchRequest,
+    port: int | None,
+    exc: BaseException,
+    *,
+    total_seconds: float,
+    activity_waits: tuple[WaitObservation, ...],
+) -> SearchRouteResult:
+    """Finish one proven storage refusal as a stable route outcome."""
+    result = _backend_unavailable_result(request, port)
+    _attach_route_waits(result, activity_waits)
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    log_event(
+        logger,
+        "service.search",
+        "unavailable",
+        fields={
+            "status_code": 503,
+            "error": "backend_unavailable",
+            "request_id": request.request_id,
+            "source": request.search_type.value,
+            "search_type": request.search_type.value,
+            "root": request.root,
+            "results": 0,
+            "exception_type": type(exc).__name__,
+            "total_seconds": f"{total_seconds:.3f}",
+        },
+    )
+    return SearchRouteResult(
+        result=result,
+        status_code=503,
+        total_seconds=total_seconds,
+        availability_cause="storage_backend",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FreshnessAdmission:
+    """One request's result from one exact readiness-registry lifetime."""
+
+    outcome: Literal["immediate", "satisfied", "timeout", "unverifiable", "unavailable"]
+    readiness: ReadinessRevisionRegistry | None = None
+    target: PublicationTarget | None = None
+    snapshot: ReadinessRevisionSnapshot | None = None
+    targets: tuple[PublicationTarget, ...] = ()
+    snapshots: tuple[ReadinessRevisionSnapshot, ...] = ()
+    waited_seconds: float = 0.0
 
 
 @dataclass(slots=True)
@@ -252,220 +340,20 @@ def _unsupported_search_feedback(
     return JSONResponse(envelope, status_code=400)
 
 
-def _search_index_state(input: SearchIndexStateInput) -> dict[str, object]:
-    """Adapt this route's carried figures onto the service-domain block.
-
-    The route owns no part of the shape. It converts the published-point
-    figure it carries on the timing channel back into the shortfall the
-    domain builder expects, and renders whatever that returns.
-    """
-    from .._index_breadth import BreadthShortfall
-    from .._search_state import BreadthFindings, result_collapse, search_index_state
-
-    count = int(input.indexed_count)
-    shortfall = (
-        None
-        if input.published_points is None
-        else BreadthShortfall(published=int(input.published_points), live=count)
-    )
-    return search_index_state(
-        indexed_count=count,
-        requested_root=input.requested_root,
-        search_type=input.search_type,
-        findings=BreadthFindings(
-            shortfall=shortfall,
-            integrity=input.integrity,
-            integrity_repair_job_id=input.integrity_repair_job_id,
-            collapse=result_collapse(input.result_paths),
-        ),
-    )
-
-
-def _search_integrity(
-    request: SearchRequest,
-    phase_timing: dict[str, float],
-    snapshot: IndexIntegritySnapshot | None,
-) -> tuple[IndexIntegrity, str | None]:
-    """Settle the serve-time breadth verdict for one dispatched search.
-
-    Single-domain searches reconcile their own domain against the count the
-    dispatch already took. A combined search reconciles the code domain,
-    mirroring how the combined envelope already carries the code shortfall: it
-    is the domain with the richest published claim, and its per-domain count
-    travels on the timing channel. A domain whose count never landed there -
-    a failed combined leg - yields ``unverifiable``, never a claim of zero.
-
-    The verdict is also handed to the remediation registry here - the one
-    service-side seam every daemon search passes through - so a demonstrated
-    shrink turns into at most one supervised repair, whose job id (when known)
-    rides back on the envelope beside the verdict that motivated it.
-    """
-    from .._index_integrity import unverifiable_integrity
-    from .._integrity_remediation import note_integrity_verdict
-
-    if snapshot is None:
-        source = (
-            PublicSourceType.CODE
-            if request.search_type is PublicSourceType.COMBINED
-            else request.search_type
-        )
-        return unverifiable_integrity(source), None
-    if request.search_type is PublicSourceType.COMBINED:
-        code_count = phase_timing.get("code_indexed_count")
-        source = PublicSourceType.CODE
-        integrity = snapshot.finish(None if code_count is None else int(code_count))
-    else:
-        source = request.search_type
-        integrity = snapshot.finish(int(phase_timing["indexed_count"]))
-    repair_job_id = note_integrity_verdict(request.root, source, integrity.verdict)
-    return integrity, repair_job_id
-
-
-def _empty_search_diagnostics(
-    index_state: dict[str, object],
-    *,
-    port: int | None,
-    path_filter: dict[str, object] | None = None,
-) -> dict[str, object]:
-    source = index_state["source"]
-    remediation = [
-        index_command(source, IndexCommandOptions(port=port)),
-        server_status_command(),
-        server_jobs_command(port),
-    ]
-    if index_state["indexed_count"] == 0:
-        reason = "index_missing"
-        message = f"No indexed {source} items are available."
-    elif path_filter is not None:
-        # The search proved this: candidates matched the query and the path
-        # patterns removed every one. Saying so, with the patterns, is the
-        # difference between a fixable typo and an operator concluding the
-        # filter is unsupported. "patterns" is always a list: the search
-        # response builds it from the normalized include-glob patterns.
-        patterns = ", ".join(
-            str(p) for p in cast("list[object]", path_filter["patterns"])
-        )
-        reason = "no_match_path_filter"
-        message = (
-            f"{path_filter['candidates_before_filter']} indexed items matched "
-            f"the query, and the path filter ({patterns}) excluded every one. "
-            "Patterns match project-relative paths; a plain pattern matches "
-            "that path and everything under it."
-        )
-        remediation = [
-            "rerun without the path filter to see what the query matches",
-            "widen the pattern, or check it against a path from an unfiltered result",
-        ]
-    else:
-        reason = "no_match"
-        message = "The index is available, but no indexed item matched the query."
-
-    return {
-        "reason": reason,
-        "message": message,
-        "remediation": remediation,
-    }
-
-
-def _classify_search_result(
-    result: dict[str, object],
-    facts: SearchAvailabilityRequestFacts,
-) -> SearchResponseClassification:
-    """Apply availability classification and stable-empty diagnostics."""
-    from ._routes import canonical_job_snapshot
-
-    # A completed search always builds "index_state" from search_index_state(),
-    # which returns a dict; absent means the envelope never carried a search
-    # outcome (the quiesce/collection-disappearance synthetic results), which
-    # the default covers.
-    index_state = cast("dict[str, object]", result.get("index_state", {}))
-    classification = classify_search_response(
-        result,
-        facts.to_context(
-            after_snapshot=canonical_job_snapshot(),
-            index_state=index_state,
-        ),
-    )
-    if classification.status_code == 200 and not classification.response["results"]:
-        raw_path_filter = classification.response.get("path_filter")
-        classification.response["empty"] = _empty_search_diagnostics(
-            index_state,
-            port=facts.port,
-            path_filter=cast("dict[str, object]", raw_path_filter)
-            if isinstance(raw_path_filter, dict)
-            else None,
-        )
-    return classification
-
-
-def _classify_collection_disappearance(
-    exc: UnexpectedResponse,
-    facts: SearchAvailabilityRequestFacts,
-) -> SearchResponseClassification | None:
-    """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import (
-        acquire_index_integrity_snapshot_if_proven,
-        unverifiable_integrity,
-    )
-    from ._routes import canonical_job_snapshot
-
-    disappeared_source = PublicSourceType(facts.source)
-    disappeared = acquire_index_integrity_snapshot_if_proven(
-        facts.root, disappeared_source
-    )
-
-    return classify_qdrant_collection_disappearance(
-        exc,
-        facts.to_context(
-            after_snapshot=canonical_job_snapshot(),
-            index_state=_search_index_state(
-                SearchIndexStateInput(
-                    indexed_count=0,
-                    requested_root=facts.root,
-                    # The collection vanished mid-flight, so there is no live
-                    # count to reconcile: the verdict is honestly unverifiable,
-                    # and carrying it keeps the daemon envelope uniform - every
-                    # route response has the block, so absence still means only
-                    # "old daemon".
-                    integrity=(
-                        unverifiable_integrity(disappeared_source)
-                        if disappeared is None
-                        else disappeared.finish(None)
-                    ),
-                    search_type=facts.source,
-                )
-            ),
-        ),
-    )
-
-
-async def _run_search_with_availability(
-    run: Callable[[], dict[str, object]],
-    facts: SearchAvailabilityRequestFacts,
-) -> tuple[dict[str, object], SearchResponseClassification | None]:
-    """Run retrieval and recover only an evidenced collection disappearance."""
-    try:
-        return await _run_in_thread(run, limiter=get_search_limiter()), None
-    except UnexpectedResponse as exc:
-        classification = _classify_collection_disappearance(
-            exc,
-            facts,
-        )
-        if classification is None:
-            raise
-        return classification.response, classification
-
-
 def _complete_classified_search(
     classification: SearchResponseClassification,
     *,
     facts: SearchAvailabilityRequestFacts,
     registry: ServiceRegistry,
     total_seconds: float,
-) -> tuple[dict[str, object], Literal[200, 503]]:
+) -> tuple[dict[str, object], Literal[200, 409, 503]]:
     """Complete watcher and log effects from one classification decision."""
     result = classification.response
-    response_status = classification.status_code
+    # The classifier owns the canonical failure code and evidence. HTTP owns
+    # only the protocol mapping of that code; it must not inherit the legacy
+    # classifier's blanket 503 when the canonical state is a rebuild conflict.
+    # Capacity remains 503 while no canonical reset deadline can justify 429.
+    response_status = _search_response_status(result)
     root = facts.root
     source = facts.source
     _m._ensure_watcher_soon(root, registry)
@@ -687,22 +575,55 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
+def _dominant_combined_failure(
+    source_facts: tuple[SearchSourceFact, ...],
+) -> tuple[str, bool, str | None]:
+    """Select the strongest carried failure without erasing its retry policy."""
+    priority = (
+        "rebuild_required",
+        "rebuild_refused",
+        "capacity_limited",
+        "backend_unavailable",
+        "freshness_wait_timeout",
+        "index_unavailable",
+        "index_updating",
+        "index_unverifiable",
+    )
+    selected_reason = next(
+        (
+            reason
+            for reason in priority
+            if any(fact.reason_code == reason for fact in source_facts)
+        ),
+        "index_unverifiable",
+    )
+    selected = next(
+        (fact for fact in source_facts if fact.reason_code == selected_reason),
+        source_facts[0],
+    )
+    remediation = next(
+        (
+            fact.remediation
+            for fact in source_facts
+            if fact.reason_code == selected_reason and fact.remediation is not None
+        ),
+        selected.remediation,
+    )
+    stable_error = (
+        "index_unavailable" if selected_reason == "index_updating" else selected_reason
+    )
+    return stable_error, selected.retryable, remediation
+
+
 def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
     """Execute and serialize one search off the event loop."""
+    compute_wait_started = time.perf_counter()
     ticket = registry.acquire_compute_ticket()
+    compute_ticket_wait_seconds = time.perf_counter() - compute_wait_started
     try:
-        from .._index_integrity import acquire_index_integrity_snapshot_if_proven
-
-        integrity_source = (
-            PublicSourceType.CODE
-            if request.search_type is PublicSourceType.COMBINED
-            else request.search_type
-        )
-        integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
-            request.root, integrity_source
-        )
+        integrity_snapshot = acquire_search_integrity_snapshot(request)
         notes: dict[str, object] = {}
         phase_started = time.perf_counter()
         results, phase_timing, combined = _dispatch_public_search(
@@ -756,6 +677,11 @@ def _execute_search_request(
                 "search_seconds": search_seconds,
                 "embedding_seconds": phase_timing.get(PHASE_EMBEDDING),
                 "qdrant_seconds": phase_timing.get(PHASE_QDRANT),
+                **(
+                    {"storage_backend_seconds": phase_timing[PHASE_QDRANT]}
+                    if PHASE_QDRANT in phase_timing
+                    else {}
+                ),
                 "rerank_seconds": phase_timing.get(PHASE_RERANK),
                 "postprocess_seconds": phase_timing.get(PHASE_POSTPROCESS),
                 # Promoted alongside the phases above, not nested only. A
@@ -767,21 +693,48 @@ def _execute_search_request(
                 "project_lease_seconds": phase_timing.get(PHASE_PROJECT_LEASE),
                 "serialization_seconds": time.perf_counter() - phase_started,
                 "queue_wait_seconds": phase_timing.get("queue_wait_seconds", 0.0),
+                "compute_ticket_wait_seconds": compute_ticket_wait_seconds,
                 "timing_scope": "server_route",
                 "phases": phase_timing,
             },
             "index_state": index_state,
         }
         if combined is not None:
+            dominant_error, dominant_retryable, dominant_remediation = (
+                _dominant_combined_failure(combined.source_facts)
+            )
             response["ok"] = combined.ok
             response["partial"] = combined.partial
             response["domains"] = combined.domain_status_payload()
+            response["readiness"] = search_readiness_block(combined.source_facts)
             if not combined.ok:
+                response.pop("results", None)
                 response.update(
                     {
                         "error": COMBINED_SEARCH_FAILED,
                         "message": COMBINED_SEARCH_FAILED_MESSAGE,
                         "summary": "Combined search failed in every domain.",
+                        "retryable": dominant_retryable,
+                        "remediation": dominant_remediation,
+                    }
+                )
+            elif not items and (
+                combined.partial
+                or combined.readiness.absence_authority
+                is not AbsenceAuthority.AUTHORITATIVE
+            ):
+                response.pop("results", None)
+                response.pop("summary", None)
+                response.update(
+                    {
+                        "ok": False,
+                        "error": dominant_error,
+                        "message": (
+                            "The empty combined search is not authoritative for "
+                            "every requested source."
+                        ),
+                        "retryable": dominant_retryable,
+                        "remediation": dominant_remediation,
                     }
                 )
         return response
@@ -865,8 +818,17 @@ def _normalise_search_request(
     if isinstance(search_type, JSONResponse):
         return SearchRouteError(search_type, error_code="bad_request")
     unsupported_feedback = _unsupported_search_feedback(search_type, payload)
-    if unsupported_feedback is not None:
-        return SearchRouteError(unsupported_feedback, error_code="unsupported_feedback")
+    wait_policy = _freshness_wait_policy(payload)
+    policy_error = (
+        SearchRouteError(unsupported_feedback, error_code="unsupported_feedback")
+        if unsupported_feedback is not None
+        else wait_policy
+        if isinstance(wait_policy, SearchRouteError)
+        else None
+    )
+    if policy_error is not None:
+        return policy_error
+    assert not isinstance(wait_policy, SearchRouteError)
     query = payload.get("query", "")
     top_k = payload.get("top_k", 5)
     project_root = payload.get("project_root")
@@ -893,7 +855,52 @@ def _normalise_search_request(
         payload=payload,
         search_type=search_type,
         request_id=request_id,
+        freshness_policy=wait_policy[0],
+        freshness_wait_seconds=wait_policy[1],
     )
+
+
+def _freshness_wait_policy(
+    payload: dict[str, object],
+) -> tuple[FreshnessWaitPolicy, float] | SearchRouteError:
+    """Validate the opt-in publication wait without changing immediate defaults."""
+    from ..config._settings import get_config
+
+    configured_maximum = float(get_config().search_freshness_wait_max_seconds)
+    raw_policy = payload.get("freshness_policy", FreshnessWaitPolicy.IMMEDIATE.value)
+    if not isinstance(raw_policy, str):
+        return _bad_search_field(
+            "invalid_freshness_policy",
+            "freshness_policy must be 'immediate' or 'bounded'",
+        )
+    try:
+        policy = FreshnessWaitPolicy(raw_policy)
+    except ValueError:
+        return _bad_search_field(
+            "invalid_freshness_policy",
+            "freshness_policy must be 'immediate' or 'bounded'",
+        )
+    raw_seconds = payload.get("freshness_wait_seconds")
+    if policy is FreshnessWaitPolicy.IMMEDIATE:
+        if raw_seconds is not None:
+            return _bad_search_field(
+                "invalid_freshness_wait_seconds",
+                "freshness_wait_seconds requires freshness_policy 'bounded'",
+            )
+        return policy, 0.0
+    if (
+        isinstance(raw_seconds, bool)
+        or not isinstance(raw_seconds, (int, float))
+        or not isfinite(raw_seconds)
+        or raw_seconds < 0
+        or raw_seconds > configured_maximum
+    ):
+        return _bad_search_field(
+            "invalid_freshness_wait_seconds",
+            "freshness_wait_seconds must be a finite number between 0 and "
+            f"{configured_maximum:g}",
+        )
+    return policy, float(raw_seconds)
 
 
 def _search_field_error(
@@ -969,13 +976,210 @@ def _record_validation_rejection(
     finalization.error_message = error.error_message
 
 
+def _capture_publication_targets(
+    search_request: SearchRequest,
+    readiness: ReadinessRevisionRegistry,
+) -> tuple[PublicationTarget, ...] | None:
+    """Capture immutable per-source convergence targets at request admission."""
+    from ._search_readiness import PublicationTarget, ReadinessSourceKey
+
+    sources: tuple[IndexSource, ...] = (
+        cast("tuple[IndexSource, ...]", tuple(INDEX_SOURCES))
+        if search_request.search_type is PublicSourceType.COMBINED
+        else (search_request.search_type.value,)
+    )
+    targets: list[PublicationTarget] = []
+    for source in sources:
+        snapshot = readiness.snapshot(search_request.root, source)
+        if snapshot.controller_revision is not None:
+            revision = snapshot.controller_revision
+            generation = snapshot.desired_generation
+        elif snapshot.publication_revision is not None:
+            revision = snapshot.publication_revision
+            generation = snapshot.published_generation
+        else:
+            return None
+        targets.append(
+            PublicationTarget(
+                key=ReadinessSourceKey.from_root(search_request.root, source),
+                revision=revision,
+                generation=generation,
+            )
+        )
+    return tuple(targets)
+
+
+async def _admit_requested_freshness(
+    search_request: SearchRequest,
+    registry: ServiceRegistry,
+) -> FreshnessAdmission:
+    """Apply the caller policy while preserving native task cancellation."""
+    if search_request.freshness_policy is FreshnessWaitPolicy.IMMEDIATE:
+        return FreshnessAdmission("immediate")
+    from ._search_readiness import ReadinessRegistryClosedError
+
+    try:
+        readiness = registry.readiness_registry
+    except RuntimeError as exc:
+        if str(exc) != "readiness registry is not started":
+            raise
+        return FreshnessAdmission("unavailable")
+    try:
+        targets = _capture_publication_targets(search_request, readiness)
+        if targets is None:
+            return FreshnessAdmission("unverifiable", readiness=readiness)
+        wait_started = time.perf_counter()
+        satisfied = await readiness.published_at_least(
+            targets,
+            timeout_seconds=search_request.freshness_wait_seconds,
+        )
+        waited_seconds = time.perf_counter() - wait_started
+        if not satisfied:
+            snapshots = tuple(
+                readiness.snapshot(target.key.canonical_root, target.key.source)
+                for target in targets
+            )
+            return FreshnessAdmission(
+                "timeout",
+                readiness=readiness,
+                targets=targets,
+                snapshots=snapshots,
+                waited_seconds=waited_seconds,
+            )
+        target = targets[0] if len(targets) == 1 else None
+        snapshot = (
+            readiness.snapshot(search_request.root, target.key.source)
+            if target is not None
+            else None
+        )
+    except ReadinessRegistryClosedError:
+        return FreshnessAdmission("unavailable", readiness=readiness)
+    return FreshnessAdmission(
+        "satisfied",
+        readiness=readiness,
+        target=target,
+        snapshot=snapshot,
+    )
+
+
+def _freshness_wait_failure(
+    admission: FreshnessAdmission,
+    search_request: SearchRequest,
+    *,
+    port: int | None,
+    total_seconds: float,
+) -> SearchRouteResult:
+    """Return a stable typed pre-retrieval freshness failure."""
+    if admission.outcome == "timeout":
+        error = "freshness_wait_timeout"
+        message = "The index did not reach the requested publication before the bound."
+    elif admission.outcome == "unavailable":
+        error = "index_unavailable"
+        message = "The admitted readiness lifetime closed before search could run."
+    else:
+        error = "index_unverifiable"
+        message = (
+            "No canonical publication or controller target is available to wait for."
+        )
+    _m.incr("search_total")
+    _m.observe("search_last_duration_seconds", total_seconds)
+    result: dict[str, object] = {
+        "ok": False,
+        "error": error,
+        "message": message,
+        "retryable": True,
+        "request_id": search_request.request_id,
+    }
+    if admission.outcome == "timeout":
+        bound = search_request.freshness_wait_seconds
+        waited = min(admission.waited_seconds, bound)
+        facts = tuple(
+            SearchSourceFact(
+                source=target.key.source,
+                availability=(
+                    SearchAvailability.USABLE
+                    if snapshot.publication_revision is not None
+                    else SearchAvailability.UNAVAILABLE
+                ),
+                freshness=(
+                    SearchFreshness.UPDATING
+                    if snapshot.publication_revision is not None
+                    else SearchFreshness.UNVERIFIABLE
+                ),
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                generation=GenerationEvidence(
+                    served_generation=snapshot.published_generation,
+                    desired_generation=target.generation,
+                    served_revision=snapshot.publication_revision,
+                    desired_revision=target.revision,
+                ),
+                wait_policy=FreshnessWaitPolicy.BOUNDED,
+                waits=(
+                    WaitObservation(
+                        cause=(
+                            SearchWaitCause.CONTROLLER_DEFERRAL
+                            if snapshot.controller_revision is not None
+                            and (
+                                snapshot.publication_revision is None
+                                or snapshot.controller_revision
+                                > snapshot.publication_revision
+                            )
+                            else SearchWaitCause.INDEX_TRANSITION
+                        ),
+                        waited_seconds=waited,
+                        configured_bound_seconds=bound,
+                        remaining_bound_seconds=max(0.0, bound - waited),
+                    ),
+                ),
+                evidence=(f"target_revision:{target.revision}",),
+                reason_code=error,
+                retryable=True,
+                remediation=server_status_command(port, verbose=True),
+            )
+            for target, snapshot in zip(
+                admission.targets, admission.snapshots, strict=True
+            )
+        )
+        result["readiness"] = search_readiness_block(facts)
+        result["remediation"] = server_status_command(port, verbose=True)
+    return SearchRouteResult(
+        result=result,
+        status_code=503,
+        total_seconds=total_seconds,
+        availability_cause=None,
+    )
+
+
+def _record_worker_timing(result: dict[str, object], started_at: float) -> None:
+    timing = result.get("timing")
+    if not isinstance(timing, dict):
+        return
+    timing_block = cast("dict[str, object]", timing)
+    compute_wait = timing_block.get("compute_ticket_wait_seconds")
+    if isinstance(compute_wait, (int, float)) and not isinstance(compute_wait, bool):
+        timing_block["worker_service_seconds"] = max(
+            0.0, time.perf_counter() - started_at - float(compute_wait)
+        )
+
+
 async def _execute_search_route(
     search_request: SearchRequest,
     port: int | None,
     registry: ServiceRegistry,
+    activity_waits: tuple[WaitObservation, ...] = (),
 ) -> SearchRouteResult:
     """Run, classify, and record the public response for one valid search."""
     from ._routes import canonical_job_snapshot
+
+    started = time.perf_counter()
+    admission = await _admit_requested_freshness(search_request, registry)
+    if admission.outcome in ("timeout", "unverifiable", "unavailable"):
+        return _freshness_wait_failure(
+            admission,
+            search_request,
+            port=port,
+            total_seconds=time.perf_counter() - started,
+        )
 
     # The fan-out has no single index to classify against, so it builds no
     # availability facts at all. Deriving ``source`` only on this branch is
@@ -991,17 +1195,37 @@ async def _execute_search_route(
             source=search_request.search_type.value,
             request_id=search_request.request_id,
             port=port,
+            readiness_snapshot=(
+                admission.snapshot
+                if admission.readiness is not None
+                else _readiness_snapshot(
+                    registry,
+                    search_request.root,
+                    search_request.search_type.value,
+                )
+            ),
+            readiness_target=admission.target,
+            wait_policy=search_request.freshness_policy,
         )
     )
     run = partial(_execute_search_request, search_request, registry)
-    started = time.perf_counter()
+    limiter_submitted = time.perf_counter()
+    worker_started: list[float] = []
+
+    def witnessed_run() -> dict[str, object]:
+        started_at = time.perf_counter()
+        worker_started.append(started_at)
+        result = run()
+        _record_worker_timing(result, started_at)
+        return result
+
     try:
         if availability_facts is None:
-            result = await _run_in_thread(run, limiter=get_search_limiter())
+            result = await _run_in_thread(witnessed_run, limiter=get_search_limiter())
             classification = None
         else:
             result, classification = await _run_search_with_availability(
-                run,
+                witnessed_run,
                 availability_facts,
             )
     except QuiesceAdmissionClosedError as exc:
@@ -1033,7 +1257,20 @@ async def _execute_search_route(
             total_seconds=total_seconds,
             availability_cause=None,
         )
+    except (ApiException, ResponseHandlingException) as exc:
+        total_seconds = time.perf_counter() - started
+        return _complete_backend_unavailable(
+            search_request,
+            port,
+            exc,
+            total_seconds=total_seconds,
+            activity_waits=activity_waits,
+        )
     total_seconds = time.perf_counter() - started
+    limiter_wait = worker_started[0] - limiter_submitted if worker_started else 0.0
+    timing = result.get("timing")
+    if isinstance(timing, dict):
+        timing["search_limiter_wait_seconds"] = limiter_wait
     _m.incr("search_total")
     _m.observe("search_last_duration_seconds", total_seconds)
     response_status = _search_response_status(result)
@@ -1052,6 +1289,7 @@ async def _execute_search_route(
                 registry=registry,
                 total_seconds=total_seconds,
             )
+    _attach_route_waits(result, activity_waits)
     return SearchRouteResult(
         result=result,
         status_code=response_status,
@@ -1062,15 +1300,24 @@ async def _execute_search_route(
     )
 
 
-def _search_response_status(result: dict[str, object]) -> int:
-    """Fail the response status for any envelope that declares itself failed.
+def _search_response_status(
+    result: dict[str, object],
+) -> Literal[200, 409, 503]:
+    """Map canonical search outcomes onto their stable HTTP status.
 
     Retrieval envelopes carry no ``ok`` key, so only a failure declares one.
-    Keying the status on that declaration rather than on which failures the
-    route happens to enumerate means a newly added error envelope reports a
-    failure status the day it is written.
+    Rebuild-required/refused states conflict with the requested target. Every
+    transient availability, capacity, backend, or wait failure remains 503.
+    Capacity can become 429 only when a canonical enforced future reset
+    deadline exists; no current response fact carries one, so neither 429 nor
+    Retry-After can be truthfully emitted here.
     """
-    return 503 if result.get("ok") is False else 200
+    if result.get("ok") is not False:
+        return 200
+    error = result.get("error")
+    if error in {"rebuild_required", "rebuild_refused"}:
+        return 409
+    return 503
 
 
 def _quiesce_admission_closed_result(
@@ -1094,6 +1341,30 @@ def _quiesce_admission_closed_result(
             "safe_to_borrow_gpu": snapshot.safe_to_borrow_gpu,
         },
     }
+
+
+def _activity_admission_response(exc: SearchActivityAdmissionError) -> JSONResponse:
+    """Render bounded ledger capacity refusal from its canonical deadline."""
+    result: dict[str, object] = {
+        "ok": False,
+        "error": "capacity_limited",
+        "message": "Search activity capacity is temporarily unavailable.",
+        "retryable": True,
+        "request_id": exc.request_id,
+        "waits": [exc.wait.as_dict()],
+        "remediation": "Retry after active searches complete.",
+    }
+    headers: dict[str, str] | None = None
+    status = 503
+    now = time.time()
+    if (
+        exc.reason == "deadline_exceeded"
+        and exc.deadline is not None
+        and exc.deadline > now
+    ):
+        status = 429
+        headers = {"Retry-After": str(max(1, ceil(exc.deadline - now)))}
+    return JSONResponse(result, status_code=status, headers=headers)
 
 
 def _classify_completed_search(
@@ -1135,19 +1406,27 @@ async def _search_route_response(request: Request) -> JSONResponse:
     activity_ticket = SearchActivityTicket(request_id=request_id)
     finalization = SearchActivityFinalization()
     try:
-        await _run_in_thread(
-            partial(
-                search_activity_ledger().start,
-                SearchActivityStart(
-                    request_id=request_id,
-                    query="",
-                    search_type="unknown",
-                    root=None,
-                    top_k=None,
-                    ticket=activity_ticket,
-                ),
+        try:
+            await _run_in_thread(
+                partial(
+                    search_activity_ledger().start,
+                    SearchActivityStart(
+                        request_id=request_id,
+                        query="",
+                        search_type="unknown",
+                        root=None,
+                        top_k=None,
+                        ticket=activity_ticket,
+                    ),
+                )
             )
-        )
+        except SearchActivityAdmissionError as exc:
+            response = _activity_admission_response(exc)
+            finalization.status_code = response.status_code
+            finalization.outcome = "admission_failed"
+            finalization.error_code = "capacity_limited"
+            finalization.error_message = str(exc)
+            return response
         payload = await _search_payload(request)
         if isinstance(payload, SearchRouteError):
             _record_validation_rejection(finalization, payload)
@@ -1158,10 +1437,12 @@ async def _search_route_response(request: Request) -> JSONResponse:
             _record_validation_rejection(finalization, search_request)
             return search_request.response
         _record_normalized_activity(activity_ticket, search_request)
-        completed = await _execute_search_route(
+        completed = await _execute_search_until_disconnect(
+            request,
             search_request,
             request.url.port,
             get_request_runtime(request).registry,
+            activity_ticket.admission_waits,
         )
         finalization.result = completed.result
         finalization.status_code = completed.status_code
@@ -1178,3 +1459,42 @@ async def _search_route_response(request: Request) -> JSONResponse:
         raise
     finally:
         _finish_search_activity(activity_ticket, finalization)
+
+
+async def _execute_search_until_disconnect(
+    request: Request,
+    search_request: SearchRequest,
+    port: int | None,
+    registry: ServiceRegistry,
+    activity_waits: tuple[WaitObservation, ...] = (),
+) -> SearchRouteResult:
+    """Cancel route work when the already-read ASGI request disconnects."""
+    executing = asyncio.create_task(
+        _execute_search_route(search_request, port, registry, activity_waits)
+    )
+    disconnected = asyncio.create_task(_wait_for_http_disconnect(request))
+    try:
+        done, _ = await asyncio.wait(
+            (executing, disconnected),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if disconnected in done:
+            # A transport failure is not a client disconnect. Observe the listener
+            # first so its exception escapes unchanged; only its normal completion
+            # represents ``http.disconnect``.
+            await disconnected
+            raise asyncio.CancelledError
+        return await executing
+    finally:
+        for task in (executing, disconnected):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(executing, disconnected, return_exceptions=True)
+
+
+async def _wait_for_http_disconnect(request: Request) -> None:
+    """Wait for the transport's terminal message after request-body consumption."""
+    while True:
+        message = await request.receive()
+        if message["type"] == "http.disconnect":
+            return

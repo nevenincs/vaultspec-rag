@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import http.server
+import json
 import os
 import threading
 import time
@@ -14,6 +15,9 @@ import pytest
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Mapping
+
+    from typer.testing import Result
 
 from ._cli_helpers import (
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
@@ -31,7 +35,13 @@ pytestmark = [pytest.mark.unit]
 
 
 @contextlib.contextmanager
-def _misbehaving_service(*, stall_seconds: float = 0.0):
+def _misbehaving_service(
+    *,
+    stall_seconds: float = 0.0,
+    observed_paths: list[str] | None = None,
+    stall_entered: threading.Event | None = None,
+    stall_release: threading.Event | None = None,
+):
     """Serve a live-but-broken response, optionally after stalling.
 
     A live service that answers with something unusable is a different
@@ -42,9 +52,21 @@ def _misbehaving_service(*, stall_seconds: float = 0.0):
     body = b"<html>not the service you are looking for</html>"
 
     class _Handler(QuietHandler):
+        def do_GET(self) -> None:
+            if observed_paths is not None:
+                observed_paths.append(self.path)
+            self.send_response(503)
+            self.end_headers()
+
         def do_POST(self) -> None:
+            if observed_paths is not None:
+                observed_paths.append(self.path)
             length = int(self.headers.get("Content-Length", "0"))
             self.rfile.read(length)
+            if stall_entered is not None:
+                stall_entered.set()
+            if stall_release is not None:
+                stall_release.wait(timeout=5)
             if stall_seconds:
                 time.sleep(stall_seconds)
             self.send_response(200)
@@ -62,6 +84,101 @@ def _misbehaving_service(*, stall_seconds: float = 0.0):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@contextlib.contextmanager
+def _search_envelope_service(envelope: Mapping[str, object], *, status: int = 200):
+    """Serve one canonical JSON envelope and retain the exact request payload."""
+    requests: list[dict[str, object]] = []
+    body = json.dumps(envelope).encode()
+
+    class _Handler(QuietHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw_request: object = json.loads(self.rfile.read(length))
+            assert isinstance(raw_request, dict)
+            requests.append(typing.cast("dict[str, object]", raw_request))
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield int(server.server_address[1]), requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _readiness_source(
+    source: str,
+    *,
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    fact: dict[str, object] = {
+        "source": source,
+        "availability": "usable",
+        "freshness": "current",
+        "absence_authority": "non_authoritative",
+        "generation": {
+            "served_generation": f"{source}-served",
+            "served_revision": 1,
+            "desired_generation": f"{source}-desired",
+            "desired_revision": 2,
+        },
+        "wait_policy": "bounded",
+        "waits": [
+            {
+                "cause": "index_transition",
+                "waited_seconds": 0.25,
+                "configured_bound_seconds": 1.0,
+                "remaining_bound_seconds": 0.75,
+            }
+        ],
+        "evidence": ["publication_pending"],
+        "reason_code": "published_generation_current",
+        "retryable": True,
+    }
+    if overrides is not None:
+        fact.update(overrides)
+    return fact
+
+
+def _readiness_block(sources: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "sources": sources,
+        "aggregate": {
+            "availability": "usable",
+            "freshness": "updating",
+            "absence_authority": "non_authoritative",
+            "source_count": len(sources),
+            "usable_source_count": len(sources),
+            "degraded_sources": [source["source"] for source in sources],
+        },
+    }
+
+
+def _invoke_readiness_search(tmp_path: pathlib.Path, port: int, *extra: str) -> Result:
+    (tmp_path / ".vaultspec").mkdir(exist_ok=True)
+    return runner.invoke(
+        app,
+        [
+            "--target",
+            str(tmp_path),
+            "search",
+            "readiness",
+            "--type",
+            "code",
+            "--port",
+            str(port),
+            *extra,
+        ],
+    )
 
 
 class TestSearchTimeoutDefaults:
@@ -90,10 +207,315 @@ class TestSearchTimeoutDefaults:
         assert get_search_timeout(0.25) == 0.25
 
 
+class TestCLIReadinessContract:
+    def test_cli_json_preserves_the_exact_canonical_service_payload(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        source = _readiness_source("code")
+        payload: dict[str, object] = {
+            "ok": True,
+            "results": [{"path": "src/a.py", "snippet": "answer"}],
+            "readiness": _readiness_block([source]),
+            "request_id": "request-json",
+        }
+        with _search_envelope_service(payload) as (port, _requests):
+            result = _invoke_readiness_search(tmp_path, port, "--json")
+
+        assert result.exit_code == 0
+        emitted = json.loads(result.output)
+        expected = dict(payload)
+        expected.update({"query": "readiness", "search_type": "code", "via": "service"})
+        # Mutation evidence: dropping readiness before JSON emission failed this
+        # exact data equality (exit 1); restoration passed (exit 0).
+        assert emitted == {"ok": True, "command": "search", "data": expected}
+
+    def test_cli_defaults_and_bounded_options_reach_the_service(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        payload: dict[str, object] = {"ok": True, "results": []}
+        with _search_envelope_service(payload) as (port, requests):
+            immediate = _invoke_readiness_search(tmp_path, port)
+            bounded = _invoke_readiness_search(
+                tmp_path,
+                port,
+                "--freshness-policy",
+                "bounded",
+                "--freshness-wait-seconds",
+                "2.5",
+            )
+
+        assert immediate.exit_code == 0
+        assert bounded.exit_code == 0
+        assert requests[0]["freshness_policy"] == "immediate"
+        assert "freshness_wait_seconds" not in requests[0]
+        assert requests[1]["freshness_policy"] == "bounded"
+        assert requests[1]["freshness_wait_seconds"] == 2.5
+
+    @pytest.mark.parametrize(
+        ("arguments", "error"),
+        [
+            (["--freshness-policy", "later"], "invalid_freshness_policy"),
+            (["--freshness-wait-seconds", "1"], "invalid_freshness_wait_seconds"),
+            (["--freshness-policy", "bounded"], "invalid_freshness_wait_seconds"),
+            (
+                [
+                    "--freshness-policy",
+                    "bounded",
+                    "--freshness-wait-seconds",
+                    "301",
+                ],
+                "invalid_freshness_wait_seconds",
+            ),
+        ],
+    )
+    def test_cli_rejects_invalid_freshness_options_exactly(
+        self, tmp_path: pathlib.Path, arguments: list[str], error: str
+    ) -> None:
+        result = _invoke_readiness_search(tmp_path, 1, *arguments, "--json")
+
+        assert result.exit_code == 2
+        envelope = json.loads(result.output)
+        assert envelope["ok"] is False
+        assert envelope["command"] == "search"
+        # Mutation evidence: bypassing the unknown-policy predicate returned
+        # the wrong error code here (exit 1); restoration passed (exit 0).
+        assert envelope["error"] == error
+
+    def test_bounded_freshness_cannot_fall_back_to_local_authority(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        result = _invoke_readiness_search(
+            tmp_path,
+            1,
+            "--allow-fallback",
+            "--freshness-policy",
+            "bounded",
+            "--freshness-wait-seconds",
+            "1",
+            "--json",
+        )
+
+        assert result.exit_code == 2
+        assert json.loads(result.output)["error"] == (
+            "bounded_freshness_requires_service"
+        )
+
+    def test_human_readiness_renders_all_sources_waits_and_dedupes_remediation(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        remediation = "wait for durable publication"
+        sources = [
+            _readiness_source(source, overrides={"remediation": remediation})
+            for source in ("vault", "code", "document")
+        ]
+        payload: dict[str, object] = {
+            "ok": True,
+            "results": [{"path": "src/a.py", "snippet": "answer"}],
+            "readiness": _readiness_block(sources),
+            "remediation": remediation,
+        }
+        with _search_envelope_service(payload) as (port, _requests):
+            result = _invoke_readiness_search(tmp_path, port)
+
+        assert result.exit_code == 0
+        # Mutation evidence: removing the nonempty-success readiness render
+        # failed this exact state assertion (exit 1); restoration passed (0).
+        assert "Readiness: usable / updating / non_authoritative" in result.output
+        for source in ("vault", "code", "document"):
+            assert f"{source}: usable, current" in result.output
+        for source in ("vault", "code", "document"):
+            # Mutation evidence: removing the wait's source prefix failed this
+            # per-source assertion (exit 1); restoration passed (exit 0).
+            assert (
+                f"Wait {source} index_transition: 0.25s / 1.0s (0.75s remaining)"
+            ) in result.output
+        assert "reason=published_generation_current" in result.output
+        assert "Evidence: publication_pending" in result.output
+        # Mutation evidence: removing global source-remediation deduplication
+        # rendered this action three times (exit 1); restoration passed (0).
+        assert result.output.count(remediation) == 1
+
+    def test_human_failure_renders_code_distinct_fallback_and_display_bounds(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        long_identifier = "x" * 300
+        boundary_identifier = "y" * 256
+        overflow_identifier = "z" * 257
+        long_source = "s" * 300
+        long_generation = "g" * 300
+        long_wait_cause = "w" * 300
+        long_top_remediation = "r" * 1_100
+        source = _readiness_source(
+            long_source,
+            overrides={
+                "availability": "unavailable",
+                "freshness": "unverifiable",
+                "reason_code": "index_unverifiable",
+                "remediation": "establish publication evidence",
+                "evidence": [
+                    boundary_identifier,
+                    overflow_identifier,
+                    *[f"evidence-{index}-{long_identifier}" for index in range(8)],
+                ],
+                "generation": {"served_generation": long_generation},
+                "waits": [
+                    {
+                        "cause": long_wait_cause,
+                        "waited_seconds": 0.25,
+                        "configured_bound_seconds": 1.0,
+                        "remaining_bound_seconds": 0.75,
+                    }
+                ],
+            },
+        )
+        payload: dict[str, object] = {
+            "ok": False,
+            "error": "index_unverifiable",
+            "message": "Publication evidence is unavailable.",
+            "retryable": True,
+            "readiness": _readiness_block([source]),
+            "remediation": long_top_remediation,
+        }
+        with _search_envelope_service(payload, status=503) as (port, _requests):
+            result = _invoke_readiness_search(tmp_path, port)
+
+        assert result.exit_code == 1
+        assert "Code: index_unverifiable" in result.output
+        assert "Next action: establish publication evidence" in result.output
+        assert result.output.count("Evidence:") == 1
+        compact_output = "".join(result.output.split())
+        assert boundary_identifier in compact_output
+        assert overflow_identifier not in compact_output
+        assert "z" * 255 in compact_output
+        # Mutation evidence: removing evidence/item bounds exposed evidence-6
+        # and 300 x's, failing both assertions (exit 1); restoration passed (0).
+        assert "evidence-6" not in result.output
+        assert long_identifier not in result.output
+        for overlong in (
+            long_source,
+            long_generation,
+            long_wait_cause,
+            long_top_remediation,
+        ):
+            assert overlong not in compact_output
+        assert "s" * 255 in compact_output
+        assert "g" * 255 in compact_output
+        assert "w" * 255 in compact_output
+        # Mutation evidence: printing top-level remediation raw exposed all
+        # 1,100 r characters (exit 1); restoration passed (exit 0).
+        assert "r" * 1_023 in compact_output
+
+
 class TestMcpFastPath:
     """Tests for MCP fast-path functions (try_http_search, _display_search_results)."""
 
     pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_search_transport_propagates_default_and_bounded_freshness(self) -> None:
+        success: dict[str, object] = {
+            "ok": True,
+            "results": [{"text": "canonical"}],
+        }
+        with _search_envelope_service(success) as (port, requests):
+            immediate = try_http_search("q", "code", 5, port, "/tmp/proj")
+            bounded = try_http_search(
+                "q",
+                "code",
+                5,
+                port,
+                "/tmp/proj",
+                freshness_policy="bounded",
+                freshness_wait_seconds=2.5,
+            )
+
+        assert immediate == success
+        assert bounded == success
+        # Mutation evidence: removing freshness_policy from the wire payload
+        # failed here with KeyError (exit 1); restoration passed (exit 0).
+        assert requests[0]["freshness_policy"] == "immediate"
+        assert "freshness_wait_seconds" not in requests[0]
+        assert requests[1]["freshness_policy"] == "bounded"
+        assert requests[1]["freshness_wait_seconds"] == 2.5
+
+    def test_search_transport_preserves_canonical_failure_envelope_exactly(
+        self,
+    ) -> None:
+        failure: dict[str, object] = {
+            "ok": False,
+            "error": "freshness_wait_timeout",
+            "message": "canonical service refusal",
+            "retryable": True,
+            "request_id": "request-1",
+            "readiness": {"sources": [], "aggregate": {"authoritative": False}},
+            "remediation": "wait for publication",
+        }
+        with _search_envelope_service(failure, status=503) as (port, requests):
+            result = try_http_search(
+                "q",
+                "vault",
+                5,
+                port,
+                "/tmp/proj",
+                freshness_policy="bounded",
+                freshness_wait_seconds=1.0,
+            )
+
+        # Mutation evidence: wrapping the returned service dict with a client
+        # timeout diagnosis failed this exact equality (exit 1); restoration
+        # passed (exit 0). This guards adapter ownership of the canonical body.
+        assert result == failure
+        assert requests == [
+            {
+                "query": "q",
+                "top_k": 5,
+                "project_root": "/tmp/proj",
+                "type": "vault",
+                "freshness_policy": "bounded",
+                "freshness_wait_seconds": 1.0,
+            }
+        ]
+
+    def test_search_timeout_remains_transport_only_without_diagnostic_probes(
+        self,
+    ) -> None:
+        observed_paths: list[str] = []
+        entered = threading.Event()
+        release = threading.Event()
+        results: list[dict[str, object] | None] = []
+        with _misbehaving_service(
+            observed_paths=observed_paths,
+            stall_entered=entered,
+            stall_release=release,
+        ) as port:
+            worker = threading.Thread(
+                target=lambda: results.append(
+                    try_http_search("q", "code", 5, port, "/tmp/proj", timeout=1.0)
+                )
+            )
+            worker.start()
+            try:
+                assert entered.wait(timeout=2), (
+                    "server did not enter the response stall"
+                )
+                worker.join(timeout=3)
+                assert not worker.is_alive(), "transport did not honor its timeout"
+            finally:
+                release.set()
+                worker.join(timeout=2)
+
+        [result] = results
+        assert result is not None
+        assert result["ok"] is False
+        assert result["error"] == "http_call_failed"
+        # Mutation evidence: restoring the removed timeout-diagnostics branch
+        # failed on the exact error assertion above (exit 1); restoration passed
+        # (exit 0), proving the client cannot recreate readiness or retry facts.
+        assert "readiness" not in result
+        assert "retryable" not in result
+        assert "remediation" not in result
+        assert "Retry-After" not in result
+        assert "diagnostics" not in result
+        assert observed_paths == ["/search"]
 
     def test_tool_map_vault(self):
         """Connection refused on port 1 returns None, no exception."""
@@ -416,7 +838,13 @@ class TestMcpFastPath:
 
         import typer
 
-        from .._source_types import PublicSourceType
+        from .._search_state import (
+            AbsenceAuthority,
+            SearchAvailability,
+            SearchFreshness,
+            SearchSourceFact,
+        )
+        from .._source_types import IndexSource, PublicSourceType
         from ..cli._search import _InProcessRenderRequest, _render_in_process_results
         from ..search._outcomes import (
             COMBINED_SEARCH_FAILED,
@@ -425,15 +853,35 @@ class TestMcpFastPath:
             SearchDomainOutcome,
         )
 
+        def unavailable_fact(source: IndexSource) -> SearchSourceFact:
+            return SearchSourceFact(
+                source=source,
+                availability=SearchAvailability.UNAVAILABLE,
+                freshness=SearchFreshness.UNVERIFIABLE,
+                absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+                reason_code="index_unavailable",
+                retryable=True,
+                remediation="vaultspec-rag server status --verbose",
+            )
+
         outcome = CombinedSearchOutcome(
             SearchDomainOutcome.failure(
-                PublicSourceType.VAULT, "index_unavailable", "vault index missing"
+                PublicSourceType.VAULT,
+                "index_unavailable",
+                "vault index missing",
+                source_fact=unavailable_fact("vault"),
             ),
             SearchDomainOutcome.failure(
-                PublicSourceType.CODE, "index_unavailable", "code index missing"
+                PublicSourceType.CODE,
+                "index_unavailable",
+                "code index missing",
+                source_fact=unavailable_fact("code"),
             ),
             SearchDomainOutcome.failure(
-                PublicSourceType.DOCUMENT, "index_unavailable", "document index missing"
+                PublicSourceType.DOCUMENT,
+                "index_unavailable",
+                "document index missing",
+                source_fact=unavailable_fact("document"),
             ),
             top_k=5,
         )
@@ -679,80 +1127,29 @@ class TestSearchResultRendering:
         assert "Search service returned an error." in out
         assert "RAG service" not in out
 
-    def test_display_search_timeout_error_humanizes_diagnostics(
-        self, capsys: pytest.CaptureFixture[str]
-    ):
-        """Search timeout errors answer readiness/work status without raw keys."""
-        _display_service_error(
-            {
-                "ok": False,
-                "error": "http_search_timeout",
-                "message": (
-                    "HTTP search on port 8766 timed out after 180.0s. "
-                    "The service may still be processing the request. "
-                    "Service status=unknown; running_jobs=unknown; "
-                    "same_project_search_strategy=serialized."
-                ),
-                "backend_capabilities": {
-                    "same_project_search_strategy": "serialized",
-                    "cross_project_search_strategy": "parallel",
-                    "local_storage_process_model": "exclusive",
-                },
-                "diagnostics": {
-                    "health": {
-                        "available": False,
-                        "error": "TimeoutError",
-                        "message": "timed out",
-                    },
-                    "jobs": {
-                        "available": True,
-                        "running_count": 2,
-                    },
-                },
-                "remediation": [
-                    "vaultspec-rag search ... --port 8766 --timeout 360",
-                    "vaultspec-rag server status",
-                    "vaultspec-rag server jobs --state active --port 8766",
-                ],
-            },
-        )
-
-        out = capsys.readouterr().out
-        assert "HTTP search on port 8766 timed out after 180.0s." in out
-        assert "Service: request check timed out" in out
-        assert "Work: 2 active index jobs" in out
-        assert "vaultspec-rag server jobs --state active --port 8766" in out
-        assert "same_project_search_strategy" not in out
-        assert "serialized" not in out
-        for forbidden in ("┌", "└", "│"):
-            assert forbidden not in out
-
-    def test_display_search_timeout_missing_job_count_uses_absence_language(
+    def test_display_transport_failure_uses_only_generic_error_fields(
         self, capsys: pytest.CaptureFixture[str]
     ):
         _display_service_error(
             {
                 "ok": False,
-                "error": "http_search_timeout",
-                "message": "HTTP search on port 8766 timed out after 180.0s.",
+                "error": "http_call_failed",
+                "message": "HTTP search on port 8766 failed: TimeoutError: timed out",
                 "diagnostics": {
-                    "health": {
-                        "available": True,
-                        "status": "ready",
-                    },
-                    "jobs": {
-                        "available": True,
-                    },
+                    "health": {"status": "ready"},
+                    "jobs": {"running_count": 2},
                 },
             },
         )
 
         out = capsys.readouterr().out
-        assert "Service: reachable; requests ready" in out
-        assert "Work: active job count not reported by service" in out
-        assert "running work status unknown" not in out
-        assert "unknown" not in out
-        assert "health check" not in out
+        assert "Error: HTTP search on port 8766 failed: TimeoutError: timed out" in out
+        assert "Code: http_call_failed" in out
+        # Mutation evidence: restoring client-side diagnostic rendering printed
+        # Service/Work lines and failed this exact assertion (exit 1); the
+        # transport-only renderer passed after restoration (exit 0).
+        assert "Service:" not in out
+        assert "Work:" not in out
 
 
 class TestArgvPathPatterns:

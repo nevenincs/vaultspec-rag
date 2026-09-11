@@ -9,14 +9,19 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+from .._search_state import SearchWaitCause, WaitObservation
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = [
     "DEFAULT_MAX_ACTIVE_SEARCHES",
+    "DEFAULT_MAX_QUEUED_SEARCHES",
     "DEFAULT_MAX_RECENT_SEARCHES",
+    "DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS",
     "DEFAULT_SEARCH_ACTIVITY_ROWS",
     "MAX_SEARCH_ACTIVITY_QUERY_CHARS",
+    "SearchActivityAdmissionError",
     "SearchActivityCompletion",
     "SearchActivityFilters",
     "SearchActivityLedger",
@@ -25,19 +30,21 @@ __all__ = [
 ]
 
 DEFAULT_MAX_ACTIVE_SEARCHES = 256
+DEFAULT_MAX_QUEUED_SEARCHES = 512
 DEFAULT_MAX_RECENT_SEARCHES = 512
+DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS = 30.0
 MAX_SEARCH_ACTIVITY_QUERY_CHARS = 10_000
 
 #: Rows an unfiltered activity read returns when the caller names no limit.
 #:
 #: The retention bounds above are a memory ceiling, not a response size: all
-#: 768 records carrying queries of the length allowed above serialize to
+#: 1280 records carrying queries of the length allowed above serialize to
 #: several megabytes, built in one pass while every other route waits. An
 #: operator list is bounded by default and widened on request, so the ceiling
 #: is what the caller asked for rather than what the ledger happens to hold.
 DEFAULT_SEARCH_ACTIVITY_ROWS = 200
 
-type ActivityState = Literal["active", "terminal"]
+type ActivityState = Literal["queued", "active", "terminal"]
 
 
 class _SearchActivityFilters(TypedDict):
@@ -50,9 +57,12 @@ class _SearchActivityFilters(TypedDict):
 
 
 class _SearchActivitySnapshot(TypedDict):
+    queued: list[dict[str, object]]
+    queued_count: int
     active: list[dict[str, object]]
     recent: list[dict[str, object]]
     counts: dict[str, int]
+    all_counts: dict[str, int]
     returned: int
     filters: _SearchActivityFilters
 
@@ -68,6 +78,24 @@ class SearchActivityCompletion:
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+
+
+class SearchActivityAdmissionError(TimeoutError):
+    """A bounded activity-ledger admission refusal with canonical evidence."""
+
+    def __init__(
+        self,
+        *,
+        request_id: str,
+        reason: Literal["queue_full", "deadline_exceeded"],
+        wait: WaitObservation,
+        deadline: float | None,
+    ) -> None:
+        super().__init__(f"search activity admission refused: {reason}")
+        self.request_id = request_id
+        self.reason = reason
+        self.wait = wait
+        self.deadline = deadline
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +122,8 @@ class _SearchActivity:
     top_k: int | None
     started_at: float
     started_monotonic: float
+    admission_wait_bound_seconds: float
+    admission_deadline: float | None
     state: ActivityState = "active"
     finished_at: float | None = None
     total_seconds: float | None = None
@@ -101,6 +131,7 @@ class _SearchActivity:
     outcome: str | None = None
     result_count: int | None = None
     timings: tuple[tuple[str, float], ...] = ()
+    waits: tuple[WaitObservation, ...] = ()
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
@@ -115,12 +146,14 @@ class _SearchActivity:
             "root": self.root,
             "top_k": self.top_k,
             "started_at": self.started_at,
+            "admission_deadline": self.admission_deadline,
             "finished_at": self.finished_at,
             "total_seconds": self.total_seconds,
             "status_code": self.status_code,
             "outcome": self.outcome,
             "result_count": self.result_count,
             "timings": dict(self.timings),
+            "waits": [wait.as_dict() for wait in self.waits],
             "availability_cause": self.availability_cause,
             "error_code": self.error_code,
             "error_message": self.error_message,
@@ -145,6 +178,9 @@ class SearchActivityTicket:
 
     request_id: str
     terminal: bool = False
+    admission_waits: tuple[WaitObservation, ...] = ()
+    admission_deadline: float | None = None
+    admission_refusal: Literal["queue_full", "deadline_exceeded"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +193,7 @@ class SearchActivityStart:
     root: str | None
     top_k: int | None
     ticket: SearchActivityTicket | None = None
+    admission_wait_seconds: float = DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS
 
 
 class SearchActivityLedger:
@@ -171,16 +208,21 @@ class SearchActivityLedger:
         self,
         *,
         max_active: int = DEFAULT_MAX_ACTIVE_SEARCHES,
+        max_queued: int = DEFAULT_MAX_QUEUED_SEARCHES,
         max_recent: int = DEFAULT_MAX_RECENT_SEARCHES,
     ) -> None:
         if isinstance(max_active, bool) or max_active < 1:
             raise ValueError("max_active must be at least 1")
         if isinstance(max_recent, bool) or max_recent < 1:
             raise ValueError("max_recent must be at least 1")
+        if isinstance(max_queued, bool) or max_queued < 1:
+            raise ValueError("max_queued must be at least 1")
         self._max_active = max_active
+        self._max_queued = max_queued
         self._max_recent = max_recent
         self._lock = threading.RLock()
         self._active: dict[str, _SearchActivity] = {}
+        self._queued: dict[str, _SearchActivity] = {}
         self._recent: deque[_SearchActivity] = deque()
         self._active_slot = threading.Condition(self._lock)
 
@@ -201,33 +243,98 @@ class SearchActivityLedger:
             raise ValueError(
                 "activity ticket request_id must match admission request_id"
             )
+        wait_bound = _normalise_wait_bound(admission.admission_wait_seconds)
+        admitted_at = time.time()
+        admitted_monotonic = time.perf_counter()
+        deadline = admitted_monotonic + wait_bound
+        deadline_wall = admitted_at + wait_bound
+        truncated_query = admission.query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
+        queued = _SearchActivity(
+            request_id=admission.request_id,
+            query=truncated_query,
+            query_truncated=len(admission.query) > len(truncated_query),
+            source=admission.search_type,
+            root=admission.root,
+            top_k=admission.top_k,
+            started_at=admitted_at,
+            started_monotonic=admitted_monotonic,
+            admission_wait_bound_seconds=wait_bound,
+            admission_deadline=deadline_wall,
+            state="queued",
+        )
         with self._active_slot:
-            while (
-                len(self._active) >= self._max_active and not activity_ticket.terminal
-            ):
-                self._active_slot.wait()
-            if activity_ticket.terminal:
-                return activity_ticket
-            if admission.request_id in self._active or self._contains_recent_locked(
-                admission.request_id
+            if (
+                admission.request_id in self._active
+                or self._contains_recent_locked(admission.request_id)
+                or admission.request_id in self._queued
             ):
                 raise ValueError(
                     f"request_id {admission.request_id!r} is already recorded"
                 )
-            moment = time.time()
-            monotonic = time.perf_counter()
-            truncated_query = admission.query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
-            self._active[admission.request_id] = _SearchActivity(
-                request_id=admission.request_id,
-                query=truncated_query,
-                query_truncated=len(admission.query) > len(truncated_query),
-                source=admission.search_type,
-                root=admission.root,
-                top_k=admission.top_k,
-                started_at=moment,
-                started_monotonic=monotonic,
-            )
-            return activity_ticket
+            if len(self._queued) >= self._max_queued:
+                wait = _admission_wait(wait_bound=0.0, waited=0.0)
+                activity_ticket.admission_waits = (wait,)
+                activity_ticket.admission_refusal = "queue_full"
+                self._record_refusal_locked(
+                    queued,
+                    ticket=activity_ticket,
+                    reason="queue_full",
+                    wait=wait,
+                    deadline=None,
+                )
+                raise SearchActivityAdmissionError(
+                    request_id=admission.request_id,
+                    reason="queue_full",
+                    wait=wait,
+                    deadline=None,
+                )
+            activity_ticket.admission_deadline = deadline_wall
+            self._queued[admission.request_id] = queued
+            try:
+                while (
+                    len(self._active) >= self._max_active
+                    and not activity_ticket.terminal
+                ):
+                    remaining = deadline - time.perf_counter()
+                    if remaining <= 0.0:
+                        wait = _admission_wait(
+                            wait_bound=wait_bound,
+                            waited=wait_bound,
+                        )
+                        activity_ticket.admission_waits = (wait,)
+                        activity_ticket.admission_refusal = "deadline_exceeded"
+                        self._record_refusal_locked(
+                            queued,
+                            ticket=activity_ticket,
+                            reason="deadline_exceeded",
+                            wait=wait,
+                            deadline=deadline_wall,
+                        )
+                        raise SearchActivityAdmissionError(
+                            request_id=admission.request_id,
+                            reason="deadline_exceeded",
+                            wait=wait,
+                            deadline=deadline_wall,
+                        )
+                    self._active_slot.wait(timeout=remaining)
+                if activity_ticket.terminal:
+                    return activity_ticket
+                finished_monotonic = time.perf_counter()
+                waited = min(
+                    wait_bound,
+                    max(0.0, finished_monotonic - admitted_monotonic),
+                )
+                activity_ticket.admission_waits = (
+                    _admission_wait(wait_bound=wait_bound, waited=waited),
+                )
+                self._active[admission.request_id] = replace(
+                    queued,
+                    state="active",
+                    waits=activity_ticket.admission_waits,
+                )
+                return activity_ticket
+            finally:
+                self._queued.pop(admission.request_id, None)
 
     def finish(
         self,
@@ -308,6 +415,11 @@ class SearchActivityLedger:
         """Serialize a bounded, newest-first projection of live activity."""
         selected_filters = _normalise_filters(filters or SearchActivityFilters())
         with self._lock:
+            queued = sorted(
+                self._queued.values(),
+                key=lambda record: (record.started_at, record.request_id),
+                reverse=True,
+            )
             active = sorted(
                 self._active.values(),
                 key=lambda record: (record.started_at, record.request_id),
@@ -319,8 +431,17 @@ class SearchActivityLedger:
                 "recent": len(recent),
                 "total": len(active) + len(recent),
             }
+            all_counts = {
+                "queued": len(queued),
+                **counts,
+                "total": len(queued) + counts["total"],
+            }
         active_matches = _filter_records(
             active,
+            selected_filters,
+        )
+        queued_matches = _filter_records(
+            queued,
             selected_filters,
         )
         recent_matches = _filter_records(
@@ -328,10 +449,21 @@ class SearchActivityLedger:
             selected_filters,
         )
         if selected_filters.limit is not None:
-            active_matches = active_matches[: selected_filters.limit]
-            remaining = max(0, selected_filters.limit - len(active_matches))
+            queued_matches = queued_matches[: selected_filters.limit]
+            remaining = max(0, selected_filters.limit - len(queued_matches))
+            active_matches = active_matches[:remaining]
+            remaining = max(0, remaining - len(active_matches))
             recent_matches = recent_matches[:remaining]
         return {
+            "queued": [
+                _serialise_queued(
+                    record,
+                    now=time.perf_counter(),
+                    include_query=include_query,
+                )
+                for record in queued_matches
+            ],
+            "queued_count": len(queued),
             "active": [
                 record.serialise(include_query=include_query)
                 for record in active_matches
@@ -341,7 +473,8 @@ class SearchActivityLedger:
                 for record in recent_matches
             ],
             "counts": counts,
-            "returned": len(active_matches) + len(recent_matches),
+            "all_counts": all_counts,
+            "returned": len(queued_matches) + len(active_matches) + len(recent_matches),
             "filters": {
                 "state": selected_filters.state,
                 "type": selected_filters.search_type,
@@ -355,6 +488,33 @@ class SearchActivityLedger:
     def _contains_recent_locked(self, request_id: str) -> bool:
         return any(record.request_id == request_id for record in self._recent)
 
+    def _record_refusal_locked(
+        self,
+        queued: _SearchActivity,
+        *,
+        ticket: SearchActivityTicket,
+        reason: Literal["queue_full", "deadline_exceeded"],
+        wait: WaitObservation,
+        deadline: float | None,
+    ) -> None:
+        """Retain one refusal exactly once while the admission lock is held."""
+        moment = time.time()
+        monotonic = time.perf_counter()
+        ticket.terminal = True
+        ticket.admission_deadline = deadline
+        self._append_recent_locked(
+            replace(
+                queued,
+                state="terminal",
+                admission_deadline=deadline,
+                finished_at=moment,
+                total_seconds=max(0.0, monotonic - queued.started_monotonic),
+                outcome="capacity_limited",
+                waits=(wait,),
+                error_code=f"search_admission_{reason}",
+            )
+        )
+
     def _append_recent_locked(self, record: _SearchActivity) -> None:
         self._recent.append(record)
         while len(self._recent) > self._max_recent:
@@ -365,6 +525,41 @@ def _bounded_text(value: str | None) -> str | None:
     if value is None:
         return None
     return value[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
+
+
+def _normalise_wait_bound(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError("admission_wait_seconds must be a finite positive number")
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric <= 0.0:
+        raise ValueError("admission_wait_seconds must be a finite positive number")
+    return numeric
+
+
+def _serialise_queued(
+    record: _SearchActivity,
+    *,
+    now: float,
+    include_query: bool,
+) -> dict[str, object]:
+    waited = min(
+        record.admission_wait_bound_seconds,
+        max(0.0, now - record.started_monotonic),
+    )
+    wait = _admission_wait(
+        wait_bound=record.admission_wait_bound_seconds,
+        waited=waited,
+    )
+    return {**record.serialise(include_query=include_query), "waits": [wait.as_dict()]}
+
+
+def _admission_wait(*, wait_bound: float, waited: float) -> WaitObservation:
+    return WaitObservation(
+        cause=SearchWaitCause.SEARCH_ADMISSION,
+        waited_seconds=waited,
+        configured_bound_seconds=wait_bound,
+        remaining_bound_seconds=max(0.0, wait_bound - waited),
+    )
 
 
 def _normalise_timings(
@@ -391,7 +586,7 @@ def _normalise_filter(value: str | None) -> str | None:
 
 def _normalise_state(value: str | None) -> str | None:
     normalised = _normalise_filter(value)
-    if normalised in {"active", "terminal"}:
+    if normalised in {"queued", "active", "terminal"}:
         return normalised
     return None
 

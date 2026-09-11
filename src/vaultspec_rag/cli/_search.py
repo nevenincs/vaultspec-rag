@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, cast
@@ -41,6 +42,13 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    exit_with_error,
+)
+from ._search_readiness_render import (
+    render_readiness as _render_readiness_payload,
+)
+from ._search_readiness_render import (
+    render_string_remediation as _render_string_remediation_payload,
 )
 
 if TYPE_CHECKING:
@@ -126,51 +134,33 @@ def _iter_result_rows(results: object) -> Iterator[object]:
 
 
 def _handle_service_results(
-    service_results: list[dict[str, object]] | dict[str, object] | None,
+    service_results: dict[str, object],
     request: _ServiceSearchRenderRequest,
 ) -> None:
-    if isinstance(service_results, dict):
-        if service_results.get("ok") is False:
-            _display_service_error(
-                service_results,
-                json_mode=request.json_mode,
-                command="search",
-            )
-            raise typer.Exit(code=1)
-        if "results" in service_results:
-            _handle_service_success(
-                service_results,
-                request,
-            )
-            return
+    if service_results.get("ok") is False:
         _display_service_error(
             service_results,
             json_mode=request.json_mode,
             command="search",
         )
+        if not request.json_mode:
+            rendered_remediation = _render_readiness(service_results)
+            _render_string_remediation(service_results, rendered_remediation)
         raise typer.Exit(code=1)
-    if request.json_mode:
-        _emit_json(
-            True,
-            "search",
-            data={
-                "query": request.query,
-                "search_type": request.search_type,
-                "via": "service",
-                "results": list(service_results or []),
-            },
+    if "results" in service_results:
+        _handle_service_success(
+            service_results,
+            request,
         )
         return
-    if not service_results:
-        _plain(f"No {request.search_type} results found for: {request.query}")
-        return
-    _display_search_results(
+    # The transport rejects non-dicts and empty/malformed dictionaries. Keep a
+    # final dictionary-shape defense for direct callers of this private seam.
+    _display_service_error(
         service_results,
-        request.search_type,
-        via="service",
-        show_scores=request.show_scores,
-        root=request.target,
+        json_mode=request.json_mode,
+        command="search",
     )
+    raise typer.Exit(code=1)
 
 
 def _handle_service_success(
@@ -192,6 +182,7 @@ def _handle_service_success(
         return
     if not results:
         _render_empty_service_results(payload, request.query, request.search_type)
+        _render_readiness(payload)
         _render_shortfall_warnings(payload)
         _render_partial_domain_failures(payload)
         return
@@ -202,8 +193,17 @@ def _handle_service_success(
         show_scores=request.show_scores,
         root=request.target,
     )
+    _render_readiness(payload)
     _render_shortfall_warnings(payload)
     _render_partial_domain_failures(payload)
+
+
+def _render_readiness(payload: dict[str, object]) -> set[str]:
+    return _render_readiness_payload(payload, _plain)
+
+
+def _render_string_remediation(payload: dict[str, object], rendered: set[str]) -> None:
+    _render_string_remediation_payload(payload, rendered, _plain)
 
 
 def _render_shortfall_warnings(payload: dict[str, object]) -> None:
@@ -914,6 +914,44 @@ def _local_search_mandated(allow_fallback: bool) -> bool:
     return bool(allow_fallback) or _local_only_configured()
 
 
+def _validate_freshness_options(
+    policy: str,
+    wait_seconds: float | None,
+    *,
+    json_mode: bool,
+) -> tuple[str, float | None]:
+    """Validate the CLI spelling of the service-owned freshness policy."""
+    if policy not in {"immediate", "bounded"}:
+        code = "invalid_freshness_policy"
+        message = "freshness_policy must be 'immediate' or 'bounded'"
+    elif policy == "immediate" and wait_seconds is not None:
+        code = "invalid_freshness_wait_seconds"
+        message = "freshness_wait_seconds requires freshness_policy 'bounded'"
+    elif policy == "immediate":
+        return policy, None
+    else:
+        from ..config._settings import get_config
+
+        maximum = float(get_config().search_freshness_wait_max_seconds)
+        if (
+            wait_seconds is None
+            or not math.isfinite(wait_seconds)
+            or wait_seconds < 0
+            or wait_seconds > maximum
+        ):
+            code = "invalid_freshness_wait_seconds"
+            message = (
+                "freshness_wait_seconds must be a finite number between 0 and "
+                f"{maximum:g}"
+            )
+        else:
+            return policy, wait_seconds
+    if json_mode:
+        _emit_json_error_and_exit("search", code, message, 2)
+    _plain(f"Error: {message}")
+    raise typer.Exit(code=2)
+
+
 def _display_service_down_error(*, json_mode: bool) -> NoReturn:
     """Report that no service is reachable and local search was not mandated."""
     if json_mode:
@@ -1257,6 +1295,25 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             ),
         ),
     ] = None,
+    freshness_policy: Annotated[
+        str,
+        typer.Option(
+            "--freshness-policy",
+            metavar="immediate|bounded",
+            help="Return immediately or wait within a bounded publication window.",
+            show_default=True,
+        ),
+    ] = "immediate",
+    freshness_wait_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--freshness-wait-seconds",
+            help=(
+                "Publication wait bound in seconds; requires "
+                "--freshness-policy bounded."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Search vault documents or source code."""
     _validate_search_extra_args(ctx)
@@ -1264,6 +1321,11 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         _suppress_hf_progress()
     state: CLIState = ctx.obj
     target = state.target
+    freshness_policy, freshness_wait_seconds = _validate_freshness_options(
+        freshness_policy,
+        freshness_wait_seconds,
+        json_mode=json_mode,
+    )
     prefer = _search_prefer_filter(prefer, json_mode=json_mode)
     search_type = _validate_search_type(search_type, json_mode=json_mode)
     local_request = _InProcessSearchRequest(
@@ -1324,6 +1386,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             port,
             str(target),
             timeout=timeout,
+            freshness_policy=freshness_policy,
+            freshness_wait_seconds=freshness_wait_seconds,
             language=language,
             path=path,
             node_type=structure,
@@ -1365,6 +1429,17 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             raise typer.Exit(code=1)
     elif not mandate:
         _display_service_down_error(json_mode=json_mode)
+
+    if freshness_policy == "bounded":
+        # The wait policy is service-owned; local execution cannot honour it.
+        exit_with_error(
+            "search",
+            "bounded_freshness_requires_service",
+            "Bounded freshness requires a running service; local search has no "
+            "publication-wait authority.",
+            2,
+            json_mode=json_mode,
+        )
 
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while

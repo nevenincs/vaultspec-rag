@@ -3,8 +3,8 @@
 Building the request from caller arguments, validating it before it leaves,
 and narrowing every field of the reply. A search that cannot be served has to
 come back as a described refusal rather than an exception, because the callers
-are operator surfaces that must say why - which is why the diagnostics that
-explain a timeout live here too.
+are operator surfaces that must say why. Transport failures remain transport
+failures rather than being recast as service readiness diagnoses.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Unpack, cast
 
-from .._operator_commands import server_jobs_command, server_status_command
 from .._source_types import (
     PublicSourceType,
     SourceTypeParseError,
@@ -25,7 +24,6 @@ from ._transport import (
     SearchCallRequest,
     _do_http_call,
     _is_connection_refused,
-    is_timeout,
     resolve_timeout,
 )
 
@@ -68,6 +66,7 @@ def document_search_filters(
 
 
 def probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
+    """Describe a failed caller-owned diagnostic probe."""
     logger.debug("%s diagnostic probe failed: %s", kind, exc, exc_info=True)
     return {
         "available": False,
@@ -76,114 +75,22 @@ def probe_unavailable(kind: str, exc: Exception) -> dict[str, object]:
     }
 
 
-def _running_jobs_summary(port: int) -> dict[str, object]:
-    try:
-        jobs = _do_http_call(port, "/jobs?limit=5&phase=running", None, timeout=1.0)
-    except Exception as exc:
-        return probe_unavailable("jobs", exc)
-    if not isinstance(jobs, dict):
-        return {"available": False}
-    if jobs.get("ok") is False:
-        return {
-            "available": False,
-            "error": jobs.get("error", "service_error"),
-            "message": jobs.get("message", "Jobs probe returned an error."),
-        }
-    raw_jobs = jobs.get("jobs")
-    summary = jobs.get("summary")
-    running_count: object = jobs.get("returned", 0)
-    if isinstance(summary, dict):
-        running_count = cast("dict[str, object]", summary).get("running", running_count)
-    return {
-        "available": True,
-        "running_count": running_count,
-        "jobs": raw_jobs if isinstance(raw_jobs, list) else [],
-    }
-
-
-def _health_summary(port: int) -> dict[str, object]:
-    try:
-        health = _do_http_call(port, "/health", None, timeout=1.0)
-    except Exception as exc:
-        return probe_unavailable("health", exc)
-    if not isinstance(health, dict):
-        return {"available": False}
-    if health.get("ok") is False:
-        return {
-            "available": False,
-            "error": health.get("error", "service_error"),
-            "message": health.get("message", "Readiness check returned an error."),
-        }
-    return {
-        "available": True,
-        "status": health.get("status", "unknown"),
-        "project_count": health.get("project_count", 0),
-        "backend_capabilities": health.get("backend_capabilities", {}),
-    }
-
-
-def _active_indexing_conflict(running_count: object) -> bool | None:
-    if isinstance(running_count, bool):
-        return None
-    if isinstance(running_count, int):
-        return running_count > 0
-    if isinstance(running_count, str):
-        try:
-            return int(running_count) > 0
-        except ValueError:
-            return None
-    return None
-
-
-def _timeout_diagnostics(port: int, timeout: float) -> dict[str, object]:
-    health = _health_summary(port)
-    jobs = _running_jobs_summary(port)
-    raw_caps = health.get("backend_capabilities")
-    caps: dict[str, object] = (
-        cast("dict[str, object]", raw_caps) if isinstance(raw_caps, dict) else {}
-    )
-    running_count = jobs.get("running_count", "unknown")
-    strategy = caps.get("same_project_search_strategy", "unknown")
-    retry_timeout = max(DEFAULT_SEARCH_TIMEOUT_SECONDS, timeout * 2)
-    return {
-        "ok": False,
-        "error": "http_search_timeout",
-        "message": (
-            f"The search request to the service on port {port} timed out "
-            f"after {timeout:g} seconds. The service may still be working "
-            "on that request; check service status and active index jobs "
-            "before retrying."
-        ),
-        "port": port,
-        "timeout_seconds": timeout,
-        "backend_capabilities": caps,
-        "diagnostics": {
-            "health": health,
-            "jobs": jobs,
-            "backpressure": {
-                "same_project_search_strategy": strategy,
-                "active_indexing_conflict": _active_indexing_conflict(running_count),
-                "observation": "jobs endpoint snapshot",
-            },
-        },
-        "remediation": [
-            server_status_command(port),
-            server_jobs_command(port),
-            f"Rerun the same search with --timeout {retry_timeout:g}",
-        ],
-    }
-
-
 def _build_http_search_payload(
     request: SearchCallRequest,
     source: PublicSourceType,
+    *,
+    freshness_policy: str,
+    freshness_wait_seconds: float | None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "query": request.query,
         "top_k": request.top_k,
         "project_root": request.project_root,
         "type": source.value,
+        "freshness_policy": freshness_policy,
     }
+    if freshness_wait_seconds is not None:
+        payload["freshness_wait_seconds"] = freshness_wait_seconds
     if request.like_ids:
         payload["like_ids"] = list(request.like_ids)
     if request.unlike_ids:
@@ -468,11 +375,8 @@ def _validate_search_request(
 def _search_transport_failure(
     exc: Exception,
     port: int,
-    timeout: float,
 ) -> dict[str, object] | None:
-    """Translate the general transport exception into the search contract."""
-    if is_timeout(exc):
-        return _timeout_diagnostics(port, timeout)
+    """Translate a genuine transport exception without diagnosing readiness."""
     if _is_connection_refused(exc):
         logger.debug("HTTP search on port %s: connection refused (%s)", port, exc)
         return None
@@ -488,6 +392,8 @@ def _search_transport_failure(
 
 def try_http_search(
     *positional: object,
+    freshness_policy: str = "immediate",
+    freshness_wait_seconds: float | None = None,
     **arguments: Unpack[SearchCallArguments],
 ) -> dict[str, object] | None:
     request = _search_request_from_arguments(positional, arguments)
@@ -496,7 +402,12 @@ def try_http_search(
         return refusal
 
     timeout = get_search_timeout(request.timeout)
-    payload = _build_http_search_payload(request, source)
+    payload = _build_http_search_payload(
+        request,
+        source,
+        freshness_policy=freshness_policy,
+        freshness_wait_seconds=freshness_wait_seconds,
+    )
 
     try:
         response: object = _do_http_call(
@@ -504,4 +415,4 @@ def try_http_search(
         )
         return _search_response_envelope(response, request.port)
     except Exception as exc:
-        return _search_transport_failure(exc, request.port, timeout)
+        return _search_transport_failure(exc, request.port)

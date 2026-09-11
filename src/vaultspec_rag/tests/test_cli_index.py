@@ -410,9 +410,9 @@ class TestIndexAuthorityBoundary:
                 path: str,
                 payload: dict[str, object],
                 timeout: float,
-            ) -> dict[str, object]:
+            ) -> tuple[int, dict[str, object]]:
                 requests.append((path, payload, timeout))
-                return {"job_id": "benchmark-job"}
+                return 202, {"job_id": "benchmark-job"}
 
         job_id = _start_reindex(_CaptureTarget(port=0, token=""), "project", 4.0)
 
@@ -1198,6 +1198,7 @@ try:
                 "top_k": 10,
                 "project_root": str(target),
                 "type": "code",
+                "freshness_policy": "immediate",
             },
         },
         {

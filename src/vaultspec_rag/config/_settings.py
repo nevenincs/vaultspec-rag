@@ -307,6 +307,9 @@ class VaultSpecConfigWrapper:
         # because a cold rebuild-class query can sit behind model load; the
         # admin bound covers lifecycle calls that should answer promptly.
         "service_search_timeout_seconds": 300.0,
+        # Caller-requested publication convergence is separately bounded from
+        # the transport timeout. Zero permits only an instantaneous readiness check.
+        "search_freshness_wait_max_seconds": 30.0,
         "service_admin_timeout_seconds": 30.0,
         # Reindex admits a domain before it queues, and code admission scans
         # the whole tree. That work is proportional to the repository, not to
@@ -1136,6 +1139,7 @@ class VaultSpecConfigWrapper:
     service_idle_ttl_seconds: int
     service_max_projects: int
     service_search_timeout_seconds: float
+    search_freshness_wait_max_seconds: float
     service_admin_timeout_seconds: float
     service_reindex_timeout_seconds: float
     qdrant_ready_timeout_seconds: float

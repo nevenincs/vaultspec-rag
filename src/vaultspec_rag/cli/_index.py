@@ -63,6 +63,7 @@ from ._render import (
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
     _plain,
+    exit_with_error,
 )
 from ._search import _suppress_hf_progress
 
@@ -573,18 +574,6 @@ def _borrow_gpu_refusal(error: BorrowGPUError, *, json_mode: bool) -> None:
     raise typer.Exit(code=1)
 
 
-def _borrow_gpu_required(*, json_mode: bool) -> None:
-    """Refuse local indexing unless the operator requested borrower authority."""
-    message = (
-        "No compatible running service is available for delegated indexing. "
-        "Start a compatible service, or explicitly rerun with --borrow-gpu."
-    )
-    if json_mode:
-        _emit_json_error_and_exit("index", "borrow_gpu_required", message, 1)
-    _plain(f"Error: {message}")
-    raise typer.Exit(code=1)
-
-
 def _try_borrowed_in_process_indexing(
     request: _IndexRunRequest,
     *,
@@ -962,7 +951,15 @@ def handle_index(  # noqa: PLR0913 - Typer exposes the stable public CLI option 
     ):
         return
 
-    _borrow_gpu_required(json_mode=json_mode)
+    # Local indexing needs borrower authority the operator did not request.
+    exit_with_error(
+        "index",
+        "borrow_gpu_required",
+        "No compatible running service is available for delegated indexing. "
+        "Start a compatible service, or explicitly rerun with --borrow-gpu.",
+        1,
+        json_mode=json_mode,
+    )
 
 
 def _try_in_process_indexing(request: _IndexRunRequest) -> None:

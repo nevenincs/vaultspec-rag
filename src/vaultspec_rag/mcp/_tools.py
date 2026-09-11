@@ -20,12 +20,24 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Self, cast
 
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .._source_types import SourceTypeParseError, parse_source_type
+from .._search_state import (
+    AbsenceAuthority,
+    FreshnessWaitPolicy,
+    SearchAvailability,
+    SearchFreshness,
+    SearchWaitCause,
+)
+from .._source_types import (
+    UNSUPPORTED_FEEDBACK_ERROR,
+    IndexSource,
+    SourceTypeParseError,
+    parse_source_type,
+)
 from ..indexer._run_ledger_models import RunAuthority
 from ..serviceclient._search_transport import document_search_filters, try_http_search
 from ..serviceclient._transport import (
@@ -41,6 +53,86 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+class SearchGenerationEvidence(BaseModel):
+    """Canonical publication identities reported for one source."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    served_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    observed_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    desired_generation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    served_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    observed_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+    desired_revision: int | None = Field(
+        default=None, ge=0, exclude_if=lambda value: value is None
+    )
+
+
+class SearchWaitContent(BaseModel):
+    """One service-owned bounded wait observation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cause: SearchWaitCause
+    waited_seconds: float = Field(ge=0)
+    configured_bound_seconds: float = Field(ge=0)
+    remaining_bound_seconds: float = Field(ge=0)
+
+
+class SearchSourceReadiness(BaseModel):
+    """Canonical readiness fact for one requested concrete source."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: IndexSource
+    availability: SearchAvailability
+    freshness: SearchFreshness
+    absence_authority: AbsenceAuthority
+    generation: SearchGenerationEvidence
+    wait_policy: FreshnessWaitPolicy
+    waits: list[SearchWaitContent]
+    evidence: list[str]
+    reason_code: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    retryable: bool
+    remediation: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+class SearchReadinessSummary(BaseModel):
+    """Canonical aggregate derived from the requested source facts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    availability: SearchAvailability
+    freshness: SearchFreshness
+    absence_authority: AbsenceAuthority
+    source_count: int = Field(gt=0)
+    usable_source_count: int = Field(ge=0)
+    degraded_sources: list[IndexSource]
+
+
+class SearchReadinessContent(BaseModel):
+    """Per-source readiness facts and their lossless aggregate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    sources: list[SearchSourceReadiness]
+    aggregate: SearchReadinessSummary
+
+
 class SearchResults(BaseModel):
     """Structured envelope returned by the search tools (MCP ``outputSchema``).
 
@@ -52,8 +144,46 @@ class SearchResults(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    results: list[dict[str, object]] = []
-    summary: str | None = None
+    ok: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    results: list[dict[str, object]] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    summary: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    error: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    message: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    retryable: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    request_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    remediation: str | list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    readiness: SearchReadinessContent
+
+    @model_validator(mode="after")
+    def _validate_envelope_variant(self) -> Self:
+        supplied = self.model_fields_set
+        if self.ok is not False:
+            if "results" not in supplied or self.results is None:
+                raise ValueError("a successful search envelope requires results")
+            return self
+        if "results" in supplied:
+            raise ValueError("a failed search envelope must not contain results")
+        for field in ("error", "message", "retryable", "request_id", "remediation"):
+            if field not in supplied or getattr(self, field) is None:
+                raise ValueError(f"a failed search envelope requires {field}")
+        return self
+
+
+FreshnessWaitSeconds = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+_CALLER_SEARCH_ERROR_CODES = frozenset(
+    {
+        "invalid_filter_for_search_type",
+        "invalid_prefer_value",
+        "unknown_source_type",
+        UNSUPPORTED_FEEDBACK_ERROR,
+    }
+)
 
 
 _SERVICE_DOWN_MESSAGE = (
@@ -135,10 +265,10 @@ def _canonical_tool_source(value: object) -> str:
         raise ValueError(f"{exc.error_kind}: {exc}") from None
 
 
-def _search_envelope_or_raise(
+def _validated_search_result(
     result: object,
-) -> dict[str, Any]:
-    """Return a successful search envelope or raise the daemon's failure."""
+) -> SearchResults:
+    """Validate one canonical search envelope without reducing its failure."""
     if not isinstance(result, dict):
         raise RuntimeError(
             "invalid_service_response: The search service returned an invalid "
@@ -147,32 +277,15 @@ def _search_envelope_or_raise(
     # isinstance narrows the key/value types no further than dict[Unknown,
     # Unknown]; the JSON object this daemon returns is always str-keyed.
     envelope = cast("dict[str, Any]", result)
-    if envelope.get("ok") is not False:
-        if not isinstance(envelope.get("results"), list):
+    error = envelope.get("error")
+    if envelope.get("ok") is False and error in _CALLER_SEARCH_ERROR_CODES:
+        message = envelope.get("message")
+        if not isinstance(message, str) or not message:
             raise RuntimeError(
-                "invalid_service_response: The search service returned an invalid "
-                "response; expected a success envelope containing a results list."
+                "invalid_service_response: A caller search refusal omitted its message."
             )
-        return envelope
-
-    error_code = str(envelope.get("error") or "search_failed")
-    message = str(envelope.get("message") or "The search request failed.")
-    raw_remediation = envelope.get("remediation")
-    if isinstance(raw_remediation, list):
-        remediation = [
-            step.strip()
-            for step in cast("list[object]", raw_remediation)
-            if isinstance(step, str) and step.strip()
-        ]
-    elif isinstance(raw_remediation, str) and raw_remediation.strip():
-        remediation = [raw_remediation.strip()]
-    else:
-        remediation = []
-
-    detail = f"{error_code}: {message}"
-    if remediation:
-        detail = f"{detail} Remediation: {' | '.join(remediation)}"
-    raise RuntimeError(detail)
+        raise ValueError(f"{error}: {message}")
+    return SearchResults.model_validate(envelope)
 
 
 def _with_domain_tokens(
@@ -266,6 +379,8 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
     intent: str | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search the documentation vault for relevant ADRs, plans, and research.
@@ -293,9 +408,11 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
             intent=intent,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search codebase", annotations=_READ_ONLY)
@@ -316,6 +433,8 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
     include_domains: list[str] | None = None,
     like_ids: list[str | int] | None = None,
     unlike_ids: list[str | int] | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search the source codebase for relevant functions, classes, or logic.
@@ -353,9 +472,11 @@ async def search_codebase(  # noqa: PLR0913 - MCP exposes the stable flat tool i
             prefer=prefer,
             like_ids=like_ids,
             unlike_ids=unlike_ids,
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search documents", annotations=_READ_ONLY)
@@ -366,6 +487,8 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search independently indexed extracted-document content."""
@@ -378,6 +501,8 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
             top_k,
             port,
             _resolve_project_root(project_root),
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
             document_filters=document_search_filters(
                 source_path=source_path,
                 extractor_id=extractor_id,
@@ -386,7 +511,7 @@ async def search_documents(  # noqa: PLR0913 - MCP exposes the stable flat tool 
             ),
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Search all index domains", annotations=_READ_ONLY)
@@ -414,6 +539,8 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
     extractor_id: str | None = None,
     extractor_version: str | None = None,
     locator_kind: str | None = None,
+    freshness_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
+    freshness_wait_seconds: FreshnessWaitSeconds | None = None,
     project_root: str | None = None,
 ) -> SearchResults:
     """Search vault, code, and document domains with partial outcomes intact."""
@@ -431,6 +558,8 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             top_k,
             port,
             _resolve_project_root(project_root),
+            freshness_policy=freshness_policy.value,
+            freshness_wait_seconds=freshness_wait_seconds,
             language=language,
             path=path,
             node_type=node_type,
@@ -453,7 +582,7 @@ async def search_combined(  # noqa: PLR0913 - MCP exposes each owned filter expl
             ),
         )
     )
-    return SearchResults.model_validate(_search_envelope_or_raise(result))
+    return _validated_search_result(result)
 
 
 @mcp.tool(title="Get code file", annotations=_READ_ONLY)

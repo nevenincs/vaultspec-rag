@@ -200,13 +200,49 @@ from vaultspec_rag.serviceclient._discovery import (
 )
 
 seen = []
-envelope = json.dumps(
-    {'ok': True, 'results': [], 'summary': 'stub', 'content': 'stub source\\n'}
-).encode('utf-8')
+
+
+def success_envelope(handler):
+    source = getattr(handler, 'request_body', {}).get('type', 'vault')
+    sources = ['vault', 'code', 'document'] if source == 'combined' else [source]
+    facts = [
+        {
+            'source': item,
+            'availability': 'usable',
+            'freshness': 'current',
+            'absence_authority': 'authoritative',
+            'generation': {},
+            'wait_policy': 'immediate',
+            'waits': [],
+            'evidence': [],
+            'retryable': False,
+        }
+        for item in sources
+    ]
+    envelope = {
+        'results': [],
+        'summary': 'stub',
+        'content': 'stub source\\n',
+        'readiness': {
+            'sources': facts,
+            'aggregate': {
+                'availability': 'usable',
+                'freshness': 'current',
+                'absence_authority': 'authoritative',
+                'source_count': len(sources),
+                'usable_source_count': len(sources),
+                'degraded_sources': [],
+            },
+        },
+    }
+    if source == 'combined':
+        envelope['ok'] = True
+    return envelope
 
 
 def answer(handler, status, body):
-    payload = json.dumps(body).encode('utf-8') if body is not None else envelope
+    response = body if body is not None else success_envelope(handler)
+    payload = json.dumps(response).encode('utf-8')
     handler.send_response(status)
     handler.send_header('Content-Type', 'application/json')
     handler.send_header('Content-Length', str(len(payload)))
@@ -231,8 +267,8 @@ class _Stub(QuietHandler):
     # fault in this stub, reported against the transport under test.
     def drain(self):
         length = int(self.headers.get('Content-Length') or 0)
-        if length:
-            self.rfile.read(length)
+        raw = self.rfile.read(length) if length else b'{}'
+        self.request_body = json.loads(raw)
 
     def do_GET(self):
         self.drain()
@@ -356,6 +392,97 @@ def check(name, events):
 def _drive_every_tool(stub: str) -> str:
     """Return probe source driving every tool against *stub*'s exchange."""
     return _DRIVE_EVERY_TOOL.replace("__STUB__", stub.strip())
+
+
+def test_search_result_dump_preserves_success_and_failure_variant_shapes() -> None:
+    import json
+
+    from ..mcp._tools import SearchResults, _validated_search_result
+
+    readiness: dict[str, object] = {
+        "sources": [
+            {
+                "source": "vault",
+                "availability": "usable",
+                "freshness": "current",
+                "absence_authority": "authoritative",
+                "generation": {},
+                "wait_policy": "immediate",
+                "waits": [],
+                "evidence": [],
+                "retryable": False,
+            }
+        ],
+        "aggregate": {
+            "availability": "usable",
+            "freshness": "current",
+            "absence_authority": "authoritative",
+            "source_count": 1,
+            "usable_source_count": 1,
+            "degraded_sources": [],
+        },
+    }
+    success = SearchResults.model_validate({"results": [], "readiness": readiness})
+    failure_readiness: dict[str, object] = {
+        "sources": [
+            {
+                "source": "vault",
+                "availability": "unavailable",
+                "freshness": "unverifiable",
+                "absence_authority": "non_authoritative",
+                "generation": {},
+                "wait_policy": "immediate",
+                "waits": [],
+                "evidence": [],
+                "reason_code": "index_unavailable",
+                "retryable": True,
+                "remediation": "Retry after the service recovers.",
+            }
+        ],
+        "aggregate": {
+            "availability": "unavailable",
+            "freshness": "unverifiable",
+            "absence_authority": "non_authoritative",
+            "source_count": 1,
+            "usable_source_count": 0,
+            "degraded_sources": ["vault"],
+        },
+    }
+    failure = _validated_search_result(
+        {
+            "ok": False,
+            "error": "index_unavailable",
+            "message": "Index unavailable.",
+            "retryable": True,
+            "request_id": "request-1",
+            "remediation": "Retry after the service recovers.",
+            "readiness": failure_readiness,
+        }
+    )
+
+    assert "ok" not in success.model_dump()
+    assert success.model_dump()["results"] == []
+    assert failure.model_dump()["ok"] is False
+    assert "results" not in failure.model_dump()
+    failure_text = json.dumps(failure.model_dump(mode="json"))
+    assert "index_unavailable" in failure_text
+    assert "Retry after the service recovers." in failure_text
+
+
+def test_caller_search_refusal_is_an_explicit_tool_argument_error() -> None:
+    from ..mcp._tools import _validated_search_result
+    from ..serviceclient._search_transport import try_http_search
+
+    refusal = try_http_search("q", "code", 1, 1, ".", prefer="production")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^invalid_prefer_value: --prefer must be one of production, tests, "
+            r"or documentation; got 'production'\.$"
+        ),
+    ):
+        _validated_search_result(refusal)
 
 
 def test_successful_calls_load_no_heavy_ml_libs() -> None:

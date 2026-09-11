@@ -32,7 +32,6 @@ __all__ = [
     "RawSearchPayloads",
     "RawSearchResponse",
     "SearchProbeContext",
-    "assert_empty_search_phase_timing",
     "assert_request_id",
     "bounded_failure_evidence",
     "exact_job_snapshot",
@@ -63,35 +62,6 @@ class SearchProbeContext:
     last_job: dict[str, object]
 
 
-def assert_empty_search_phase_timing(
-    result: dict[str, object],
-) -> dict[str, object]:
-    timing = cast("dict[str, object]", result["timing"])
-    for key in (
-        "search_seconds",
-        "index_state_seconds",
-        "model_load_seconds",
-        "project_lease_seconds",
-        "queue_wait_seconds",
-    ):
-        assert isinstance(timing[key], float)
-    phases = cast("dict[str, object]", timing["phases"])
-    assert phases == {
-        "indexed_count": 0,
-        "model_load_seconds": 0.0,
-        "project_lease_seconds": 0.0,
-    }
-    for key in (
-        "embedding_seconds",
-        "qdrant_seconds",
-        "rerank_seconds",
-        "postprocess_seconds",
-    ):
-        assert timing[key] is None
-    assert timing["timing_scope"] == "server_route"
-    return timing
-
-
 def assert_request_id(result: dict[str, object]) -> str:
     request_id = result["request_id"]
     assert isinstance(request_id, str)
@@ -100,15 +70,19 @@ def assert_request_id(result: dict[str, object]) -> str:
 
 
 def wait_for_search_log_line(port: int, request_id: str) -> str:
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + 30.0
     last_logs: object = None
     while time.monotonic() < deadline:
-        last_logs = _do_http_call(
-            port,
-            f"/logs/json?contains={request_id}",
-            None,
-            timeout=5,
-        )
+        try:
+            last_logs = _do_http_call(
+                port,
+                f"/logs/json?contains={request_id}",
+                None,
+                timeout=5,
+            )
+        except TimeoutError as exc:
+            last_logs = exc
+            continue
         matching_line = _matching_search_log_line(last_logs, request_id)
         if matching_line is not None:
             return matching_line

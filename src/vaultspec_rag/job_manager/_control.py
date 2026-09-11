@@ -383,6 +383,7 @@ class JobManagerControl(JobManagerQuiesceControl):
             )
             if outcome.status is JobOutcomeStatus.ERROR:
                 return outcome
+            controller_target = self._snapshot_locked(managed)
             self._supersede_quiesced_dispatch_claim_locked(job_id)
             dispatch_after_transition = (
                 managed.snapshot.state is JobState.QUEUED
@@ -391,6 +392,17 @@ class JobManagerControl(JobManagerQuiesceControl):
             )
         if schedule_dispatch and dispatch_after_transition:
             self._schedule_dispatch(job_id)
+        if (
+            self._on_controller_target is not None
+            and not controller_target.state.is_terminal
+        ):
+            try:
+                self._on_controller_target(controller_target)
+            except Exception:
+                logger.exception(
+                    "controller target notification failed after persistence",
+                    extra={"job_id": controller_target.id},
+                )
         return outcome
 
     def _schedule_dispatch(

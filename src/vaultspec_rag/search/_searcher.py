@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from .. import store_schema
+from .._search_state import SearchWaitCause
 from .._store_search import HybridSearchRequest
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
 from ._models import DocumentSearchResult, ParsedQuery, SearchResult
@@ -83,6 +84,11 @@ if TYPE_CHECKING:
     from ._noise import NoisePolicy
 
 logger = logging.getLogger(__name__)
+
+# Canonical wait-attribution key consumed by the service diagnostics boundary.
+# Keep the older queue keys below for wire compatibility, but do not make a
+# generic queue total the only way to recover which resource owned the wait.
+GPU_COMPUTE_WAIT_SECONDS = f"{SearchWaitCause.GPU_COMPUTE.value}_wait_seconds"
 
 
 class _Rerankable(Protocol):
@@ -376,6 +382,7 @@ class VaultSearcher:
         started = time.perf_counter()
         self._gpu_lock.acquire()
         wait_seconds = time.perf_counter() - started
+        _add_seconds(timings, GPU_COMPUTE_WAIT_SECONDS, wait_seconds)
         _add_seconds(timings, "gpu_queue_wait_seconds", wait_seconds)
         _add_seconds(timings, "queue_wait_seconds", wait_seconds)
         try:
