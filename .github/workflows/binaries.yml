@@ -37,7 +37,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: binaries-${{ inputs.tag || github.ref_name }}
+  # Shared with publish.yml. Both workflows merge and rewrite the same
+  # SHA256SUMS release asset, so a per-workflow lock would still permit a lost
+  # update when they run for one tag at the same time.
+  group: release-artifacts-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
