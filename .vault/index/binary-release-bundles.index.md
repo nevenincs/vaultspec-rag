@@ -6,7 +6,7 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-11'
 body_schema: 'body-v2'
-body_hash: 'sha256:ef2f1011f19e6c0ec3dcb2e1777462d1c6fc43229e97af8d15d4c56150b3be0e'
+body_hash: 'sha256:55b9ddb61f21e119bed01f5203a1c4f7c6f43e83886d232be1f8e47ec9344e44'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -21,12 +21,16 @@ related:
   - '[[2026-09-11-binary-release-bundles-P02-S10]]'
   - '[[2026-09-11-binary-release-bundles-P02-S11]]'
   - '[[2026-09-11-binary-release-bundles-P02-S12]]'
+  - '[[2026-09-11-binary-release-bundles-P02-summary]]'
   - '[[2026-09-11-binary-release-bundles-P03-S13]]'
   - '[[2026-09-11-binary-release-bundles-P03-S14]]'
   - '[[2026-09-11-binary-release-bundles-P03-S15]]'
+  - '[[2026-09-11-binary-release-bundles-P03-S16]]'
+  - '[[2026-09-11-binary-release-bundles-P03-summary]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
+  - '[[2026-09-11-binary-release-bundles-final-review-audit]]'
   - '[[2026-09-11-binary-release-bundles-plan]]'
   - '[[2026-09-11-binary-release-bundles-rag-port-research]]'
 ---
@@ -43,7 +47,8 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### audit
 
-- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P03.S15 implementation review`
+- `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P03.S16 implementation review`
+- `2026-09-11-binary-release-bundles-final-review-audit` - `binary-release-bundles` audit: `final review`
 
 ### exec
 
@@ -60,9 +65,12 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 - `2026-09-11-binary-release-bundles-P02-S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication
 - `2026-09-11-binary-release-bundles-P02-S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums
 - `2026-09-11-binary-release-bundles-P02-S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest
+- `2026-09-11-binary-release-bundles-P02-summary` - `binary-release-bundles` `P02` summary
 - `2026-09-11-binary-release-bundles-P03-S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats
 - `2026-09-11-binary-release-bundles-P03-S14` - Update channel, checksum, pointer, target-coverage, and archive-contract tests for bundle assets and failure cases
 - `2026-09-11-binary-release-bundles-P03-S15` - Document direct-download archive layout, supported targets, manifest and checksum verification, and GPU/network/CUDA first-launch requirements
+- `2026-09-11-binary-release-bundles-P03-S16` - Document maintainer bundle publication, complete-target gating, checksum reconciliation, and release recovery
+- `2026-09-11-binary-release-bundles-P03-summary` - `binary-release-bundles` `P03` summary
 
 ### plan
 
