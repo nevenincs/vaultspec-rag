@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:f91cf1e0891d3bc27739d34ae5fd358d1ac15a1c081f4456d997c515475e8a82'
+body_hash: 'sha256:8221518c9e6f7a813270b85b7f61c21727ac3d1c98ffe489b5d7595ce364035f'
 ---
 
 # `binary-release-bundles` plan
@@ -30,7 +30,7 @@ Centralize the RAG product contract, finalize executable metadata, and prove det
 - [x] `P01.S01` - Centralize RAG's supported targets, stable executable names, private staging names, archive suffixes, and release metadata; `tools/packaging/products.py`.
 - [x] `P01.S02` - Implement deterministic per-target ZIP and TAR.GZ bundle creation with stable executables, manifest, license, usage material, and checksum sidecars; `tools/packaging/bundles.py`.
 - [x] `P01.S03` - Add Windows PE version-resource stamping and read-back verification while retaining icon resource verification; `tools/binaries/windows_icon.py`.
-- [ ] `P01.S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted; `tools/binaries/build_pyapp.py`.
+- [x] `P01.S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted; `tools/binaries/build_pyapp.py`.
 - [ ] `P01.S05` - Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs; `tools/packaging/tests`.
 - [ ] `P01.S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage; `tools/binaries/tests`.
 

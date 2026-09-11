@@ -58,7 +58,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.binaries.torch_channel import pip_extra_args
-from tools.binaries.windows_icon import stamp_icon
+from tools.binaries.windows_icon import VersionInfo, stamp_icon, stamp_version_info
+from tools.packaging import products
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -180,8 +181,24 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
 
 
 def asset_name(binary: Binary, target: str) -> str:
-    suffix = ".exe" if target.endswith("windows-msvc") else ""
-    return f"{binary.name}-{target}{suffix}"
+    return products.raw_asset_name(binary.name, target)
+
+
+def binary_version_info(binary: Binary, version: str, target: str) -> VersionInfo:
+    """Return the Windows metadata for one finalized release executable."""
+    executable = next(
+        item for item in products.VAULTSPEC_RAG.executables if item.name == binary.name
+    )
+    product = products.VAULTSPEC_RAG
+    return VersionInfo(
+        file_version=version,
+        product_version=version,
+        product_name=product.display_name or product.name,
+        file_description=executable.summary,
+        original_filename=products.executable_filename(binary.name, target),
+        company_name=product.publisher,
+        legal_copyright=product.legal_copyright,
+    )
 
 
 # --- platform floor ---------------------------------------------------------
@@ -387,8 +404,9 @@ def main() -> int:
             raw = build_one(binary, version, target, workdir)
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
-            if target.endswith("windows-msvc"):
+            if products.is_windows_target(target):
                 stamp_icon(asset, APPLICATION_ICON)
+                stamp_version_info(asset, binary_version_info(binary, version, target))
             else:
                 asset.chmod(0o755)
             # Refuse the artifact HERE, before it is renamed into place and
