@@ -10,7 +10,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
 modified: '2026-09-11'
 body_schema: body-v2
-body_hash: 'sha256:b4f456b232a5b7751d9828b909c0e5529c09378d20a2685f5dd5cb5cabde828e'
+body_hash: 'sha256:f7ccd24fdce71b20e30f065dd3dbd0bca04540ab139e2dc12f727cd4a514b53c'
 ---
 
 # `binary-release-bundles` plan
@@ -38,7 +38,7 @@ Centralize the RAG product contract, finalize executable metadata, and prove det
 
 Build bundles from the exact release inputs, publish them alongside Python artifacts, and gate stable/latest pointers on complete validated target coverage.
 
-- [ ] `P02.S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel; `tools/binaries/build_pyapp.py`.
+- [x] `P02.S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel; `tools/binaries/build_pyapp.py`.
 - [ ] `P02.S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation; `justfile`.
 - [ ] `P02.S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars; `.github/workflows/binaries.yml`.
 - [ ] `P02.S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication; `.github/workflows/binaries.yml`.

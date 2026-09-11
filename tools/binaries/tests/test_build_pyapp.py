@@ -14,6 +14,7 @@ import ast
 import inspect
 import re
 import textwrap
+import zipfile
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+import tools.binaries.build_pyapp as build_pyapp
 from tools.binaries.build_pyapp import (
     APPLICATION_ICON,
     BINARIES,
@@ -28,12 +30,16 @@ from tools.binaries.build_pyapp import (
     PROJECT_NAME,
     PYTHON_VERSION,
     Binary,
+    WheelError,
     asset_name,
     binary_version_info,
     build_one,
+    sole_wheel,
+    validate_project_wheel,
     version_from_tag,
     write_checksum,
 )
+from tools.binaries.torch_channel import pip_extra_args
 from tools.binaries.windows_icon import parse_ico
 from tools.packaging.products import VAULTSPEC_RAG
 
@@ -43,6 +49,89 @@ pytestmark = pytest.mark.unit
 #: hashing the function under test performs.
 EMPTY_DIGEST = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 ABC_DIGEST = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+
+def _write_wheel(
+    path: Path, *, name: str = PROJECT_NAME, version: str = "0.4.6"
+) -> None:
+    """Write the metadata-bearing minimum archive accepted as a wheel fixture."""
+    dist_info = f"{name.replace('-', '_')}-{version}.dist-info"
+    metadata = (
+        "Metadata-Version: 2.3\n"
+        f"Name: {name}\n"
+        f"Version: {version}\n\n"
+    ).encode()
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(f"{dist_info}/METADATA", metadata)
+
+
+def test_sole_wheel_requires_one_release_input(tmp_path: Path) -> None:
+    """A recipe directory cannot silently select a stale or ambiguous wheel."""
+    with pytest.raises(WheelError, match="no wheel"):
+        sole_wheel(tmp_path)
+
+    first = tmp_path / "vaultspec_rag-0.4.6-py3-none-any.whl"
+    _write_wheel(first)
+    assert sole_wheel(tmp_path) == first
+
+    _write_wheel(tmp_path / "vaultspec_rag-0.4.7-py3-none-any.whl", version="0.4.7")
+    with pytest.raises(WheelError, match="expected one wheel"):
+        sole_wheel(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("name", "wheel_version", "expected"),
+    [
+        ("another-project", "0.4.6", "contains 'another-project'"),
+        (PROJECT_NAME, "0.4.7", "contains version '0.4.7'"),
+    ],
+)
+def test_validate_project_wheel_rejects_a_mismatched_release(
+    tmp_path: Path, name: str, wheel_version: str, expected: str
+) -> None:
+    """PyApp cannot be pointed at a wheel for another project or release.
+
+    Mutation proof: inverting the version comparison let the 0.4.7 fixture
+    through and failed this assertion; the release check was restored before
+    the passing run.
+    """
+    wheel = tmp_path / "candidate.whl"
+    _write_wheel(wheel, name=name, version=wheel_version)
+
+    with pytest.raises(WheelError, match=expected):
+        validate_project_wheel(wheel, "0.4.6")
+
+
+def test_build_one_embeds_the_exact_wheel_and_keeps_the_torch_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project source is local, while accelerated torch remains a direct wheel."""
+    wheel = tmp_path / "vaultspec_rag-0.4.6-py3-none-any.whl"
+    _write_wheel(wheel)
+    workdir = tmp_path / "build"
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], *, check: bool, env: dict[str, str]) -> None:
+        captured["command"] = command
+        captured["check"] = check
+        captured["env"] = env
+        produced = workdir / BINARIES[0].name / "bin" / "pyapp"
+        produced.parent.mkdir(parents=True)
+        produced.write_bytes(b"pyapp")
+
+    monkeypatch.setattr(build_pyapp.subprocess, "run", fake_run)
+
+    produced = build_one(
+        BINARIES[0], "0.4.6", "x86_64-unknown-linux-gnu", workdir, wheel
+    )
+
+    assert produced.is_file()
+    assert captured["check"] is True
+    environment = captured["env"]
+    assert environment["PYAPP_PROJECT_PATH"] == str(wheel)
+    assert environment["PYAPP_PIP_EXTRA_ARGS"] == pip_extra_args(
+        "x86_64-unknown-linux-gnu", PYTHON_VERSION
+    )
 
 
 @pytest.mark.parametrize(
