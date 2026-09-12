@@ -63,6 +63,7 @@ ______________________________________________________________________
 ```python
 _cached_config: VaultSpecConfigWrapper | None = None
 
+
 def get_config(overrides: dict[str, Any] | None = None) -> VaultSpecConfigWrapper:
     global _cached_config
     if overrides is not None:

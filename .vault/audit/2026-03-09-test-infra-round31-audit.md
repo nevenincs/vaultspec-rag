@@ -298,7 +298,7 @@ def test_get_engine_cache_isolation(tmp_path):
 
     engine1a = get_engine(root1)
     engine1b = get_engine(root1)  # Same root, should reuse
-    engine2 = get_engine(root2)   # Different root, should be new
+    engine2 = get_engine(root2)  # Different root, should be new
 
     assert engine1a is engine1b, "Same root should return cached engine"
     assert engine1a is not engine2, "Different roots should have different engines"

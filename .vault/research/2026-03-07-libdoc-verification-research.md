@@ -320,8 +320,8 @@ This is a **multiplicative** boost ranging from 1.0x to 2.0x. With CrossEncoder 
 ### Finding 4: Weight application in `search_all()` is correct
 
 ```python
-_normalize_minmax(vault_results, vault_weight)   # default 0.5
-_normalize_minmax(code_results, code_weight)      # default 0.5
+_normalize_minmax(vault_results, vault_weight)  # default 0.5
+_normalize_minmax(code_results, code_weight)  # default 0.5
 ```
 
 After normalization, vault scores are in [0, 0.5] and code scores are in [0, 0.5]. Combined and sorted correctly. Equal weighting prevents one source from dominating the other.

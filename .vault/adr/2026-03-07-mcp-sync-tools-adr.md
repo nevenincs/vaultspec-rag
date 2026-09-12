@@ -52,12 +52,14 @@ calls with `anyio.to_thread.run_sync()`:
 ```python
 import anyio
 
+
 @mcp.tool()
 async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
     def _run() -> SearchResponse:
         comp = get_comp()
         # ... blocking GPU + Qdrant code ...
         return result
+
     return await anyio.to_thread.run_sync(_run)
 ```
 

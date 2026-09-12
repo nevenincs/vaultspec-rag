@@ -1268,29 +1268,23 @@ class EmbeddingModel:
         cpu_sparse_tensor = None
         try:
             if gpu_lock is None:
-                accelerator_tensor = cast(
-                    "Tensor",
-                    sparse_model.encode_document(
+                accelerator_tensor = sparse_model.encode_document(
+                    bucket_texts,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    convert_to_tensor=True,
+                    convert_to_sparse_tensor=False,
+                    save_to_cpu=False,
+                )
+            else:
+                with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+                    accelerator_tensor = sparse_model.encode_document(
                         bucket_texts,
                         batch_size=batch_size,
                         show_progress_bar=False,
                         convert_to_tensor=True,
                         convert_to_sparse_tensor=False,
                         save_to_cpu=False,
-                    ),
-                )
-            else:
-                with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                    accelerator_tensor = cast(
-                        "Tensor",
-                        sparse_model.encode_document(
-                            bucket_texts,
-                            batch_size=batch_size,
-                            show_progress_bar=False,
-                            convert_to_tensor=True,
-                            convert_to_sparse_tensor=False,
-                            save_to_cpu=False,
-                        ),
                     )
             # Sentence Transformers otherwise performs this transfer inside
             # encode when save_to_cpu=True. Release the GPU tensor first.

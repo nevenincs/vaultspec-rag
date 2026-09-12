@@ -99,10 +99,10 @@ def rag_components(embedding_model):
     components = _build_rag_components(...)
     yield components
     # Teardown:
-    components["store"].close()          # Closes QdrantClient
+    components["store"].close()  # Closes QdrantClient
     db_dir = components["db_dir"]
     if db_dir.exists():
-        shutil.rmtree(db_dir)            # Removes .qdrant-fast/ directory
+        shutil.rmtree(db_dir)  # Removes .qdrant-fast/ directory
 ```
 
 **All 5 fixtures follow this pattern consistently.** No resource leaks detected.
@@ -187,10 +187,13 @@ The fixture hierarchy creates **multiple GPU model instances** without synchroni
 def embedding_model():
     return EmbeddingModel()
 
+
 # conftest.py:149-158
 @pytest.fixture(scope="session")
 def rag_components(embedding_model):
-    components = _build_rag_components(TEST_PROJECT, fast=True, qdrant_suffix=..., model=embedding_model)
+    components = _build_rag_components(
+        TEST_PROJECT, fast=True, qdrant_suffix=..., model=embedding_model
+    )
     # Reuses the shared embedding_model ✅
 ```
 
@@ -202,7 +205,9 @@ Session fixtures correctly **accept and reuse** the shared `embedding_model`.
 # integration/conftest.py:16-25
 @pytest.fixture(scope="session")
 def rag_components(embedding_model):
-    components = _build_rag_components(TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_UNIT, model=embedding_model)
+    components = _build_rag_components(
+        TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_UNIT, model=embedding_model
+    )
     # Reuses the shared embedding_model ✅
 ```
 
@@ -213,7 +218,9 @@ def rag_components(embedding_model):
 @pytest.fixture(scope="session")
 def rag_components_with_code():  # ❌ NO embedding_model parameter
     components = _build_rag_components(
-        TEST_PROJECT, fast=True, qdrant_suffix=QDRANT_SUFFIX_CODE
+        TEST_PROJECT,
+        fast=True,
+        qdrant_suffix=QDRANT_SUFFIX_CODE,
         # ❌ model parameter NOT provided
     )
     # Line 107-108 in conftest.py:
@@ -369,9 +376,10 @@ def rag_components_with_code(embedding_model):  # ADD THIS PARAMETER
         TEST_PROJECT,
         fast=True,
         qdrant_suffix=QDRANT_SUFFIX_CODE,
-        model=embedding_model  # ADD THIS ARGUMENT
+        model=embedding_model,  # ADD THIS ARGUMENT
     )
     ...
+
 
 # test_search_integration.py, line 138-152
 @pytest.fixture(scope="module")
@@ -380,7 +388,7 @@ def rag_components_mixed(embedding_model, tmp_path_factory):  # ADD embedding_mo
         TEST_PROJECT,
         fast=True,
         qdrant_suffix="-mixed",
-        model=embedding_model  # ADD THIS ARGUMENT
+        model=embedding_model,  # ADD THIS ARGUMENT
     )
     ...
 ```

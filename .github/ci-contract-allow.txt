@@ -73,3 +73,12 @@ acquisition.yml:The loader must accept them
 # isolated wheel. `just init` would build a project venv neither one uses.
 binaries.yml:Install Python
 publish.yml:Install Python
+
+# These release steps intentionally retain shell-level artifact and GitHub
+# bookkeeping: they consume the release event and cannot be reproduced by a
+# local recipe without changing the publication boundary.
+binaries.yml:Build the wheel
+binaries.yml:Validate the wheel matches the release tag
+binaries.yml:Assert every declared target archive ready
+release-please.yml:Hold the release out of latest until artifacts are complete
+release-please.yml:Trigger Publish workflow

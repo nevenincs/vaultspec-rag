@@ -72,7 +72,7 @@ TORCH_MIN_VERSION: Final[str] = "2.4"
 # asserts it equals the lockfile's value wherever the lockfile is reachable,
 # so a lock bump that forgets this line fails the suite rather than shipping a
 # stale wheel URL to an operator.
-TORCH_TOOL_PIN_VERSION: Final[str] = "2.13.0"
+TORCH_TOOL_PIN_VERSION: Final[str] = "2.14.0"
 DIRECT_TORCH_REQUIREMENT: Final[str] = f"torch>={TORCH_MIN_VERSION}"
 _MANAGED_DIRECT_DEP_KEY: Final[str] = "managed-torch-direct-dependency"
 

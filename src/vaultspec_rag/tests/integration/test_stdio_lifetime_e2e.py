@@ -77,7 +77,7 @@ def _recv(
         # Popen's stdout/stderr are typed IO[Any] regardless of the Popen[AnyStr]
         # type parameter (a typeshed imprecision); this shim's pipes are opened
         # without text=True, so a read is genuinely bytes.
-        line = cast("bytes", shim.stdout.readline())
+        line = shim.stdout.readline()
         if not line:
             raise AssertionError(
                 "shim closed stdout before responding; stderr tail: "

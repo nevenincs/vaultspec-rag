@@ -11,7 +11,7 @@ project ships against:
 - On **Linux**, the PyPI wheel does carry the CUDA stack, but it is not the
   build this project resolves. ``pyproject.toml`` routes torch to the
   ``pytorch-cu130`` index for ``sys_platform == 'linux' or 'win32'``, and
-  ``uv.lock`` pins ``2.13.0+cu130`` there.
+  ``uv.lock`` pins ``2.14.0+cu130`` there.
 - On **macOS**, no wheel is correct, because no macOS binary is built. The
   runtime is CUDA-only and raises without a CUDA device, and there is no CUDA
   build for macOS at any version. The mapping below therefore has no darwin

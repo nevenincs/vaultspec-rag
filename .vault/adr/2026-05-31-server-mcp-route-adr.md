@@ -55,6 +55,7 @@ async def _mcp_no_redirect(scope, receive, send):
         scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
     await app(scope, receive, send)
 
+
 uvicorn.run(_mcp_no_redirect, host=..., port=..., lifespan="on")
 ```
 

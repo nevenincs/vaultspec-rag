@@ -450,10 +450,7 @@ Audited files (new/rewritten code):
 ```python
 def _get_chunk_ids_for_files(self, rel_paths: set[str]) -> list[str]:
     all_ids = self.store.get_all_code_ids()
-    return [
-        cid for cid in all_ids
-        if any(cid.startswith(f"{rp}:") for rp in rel_paths)
-    ]
+    return [cid for cid in all_ids if any(cid.startswith(f"{rp}:") for rp in rel_paths)]
 ```
 
 This method calls `self.store.get_all_code_ids()` which must scroll the entire Qdrant `codebase_docs` collection to retrieve every chunk ID. Then it does an O(n\*m) list comprehension where n = total chunk count and m = number of files to remove. For a codebase with 50K chunks and 100 modified files, this is 5 million `str.startswith()` calls per incremental index.
@@ -503,9 +500,7 @@ Lines 952-956 hash every current file via `path.read_bytes()`. Then lines 972-97
 
 ```python
 for rel, path in current_files.items():
-    current_hashes[rel] = hashlib.sha256(
-        path.read_bytes()
-    ).hexdigest()
+    current_hashes[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
 ```
 
 If `read_bytes()` raises (permission denied, file deleted between scan and hash, symlink to missing target), the entire `incremental_index()` crashes. Unlike `_chunk_file()` which catches exceptions gracefully (line 787-789), the hashing loop has no error handling. A single unreadable file kills the entire incremental index.
@@ -515,9 +510,9 @@ If `read_bytes()` raises (permission denied, file deleted between scan and hash,
 **R9-m1. `_merge_small` preserves first non-None metadata on merge** (indexer.py:424-426)
 
 ```python
-prev[3] or chunk[3],    # node_type: keep first non-None
-prev[4] or chunk[4],    # function_name: keep first non-None
-prev[5] or chunk[5],    # class_name: keep first non-None
+(prev[3] or chunk[3],)  # node_type: keep first non-None
+(prev[4] or chunk[4],)  # function_name: keep first non-None
+(prev[5] or chunk[5],)  # class_name: keep first non-None
 ```
 
 When merging two small chunks, the merged chunk gets the first non-None value for each metadata field. If chunk A is `function_definition` with `function_name="foo"` and chunk B is `class_definition` with `class_name="Bar"`, the merged result is labeled `function_definition` with `function_name="foo"` and `class_name=None` (since chunk A had no class_name). This is misleading for `node_type` and loses the class_name from chunk B. Merged multi-node chunks should get `None` for `node_type`.
@@ -609,10 +604,11 @@ In Python's tree-sitter grammar, `decorated_definition` wraps both decorated fun
 
 ```python
 @dataclass
-class Foo: ...   # node_type = "decorated_definition"
+class Foo: ...  # node_type = "decorated_definition"
+
 
 @app.route("/")
-def index(): ... # node_type = "decorated_definition"
+def index(): ...  # node_type = "decorated_definition"
 ```
 
 Both produce `decorated_definition` nodes. Currently it's in `_FUNCTION_LIKE_NODES` only, so `@dataclass class Foo` gets `function_name="Foo"` and `class_name=None` — wrong. The code should check the child node type: if the child is `class_definition`, treat it as a class; if `function_definition`, treat it as a function.
@@ -635,7 +631,13 @@ A pattern like `/build` in `subdir/.gitignore` becomes `subdir//build`. While pa
 **R10-m4. `_containers` set created on every `_collect_chunks` call** (indexer.py:342-345)
 
 ```python
-_containers = {"module", "program", "translation_unit", "source_file", "compilation_unit"}
+_containers = {
+    "module",
+    "program",
+    "translation_unit",
+    "source_file",
+    "compilation_unit",
+}
 ```
 
 This frozenset is created inside `_collect_chunks()` which is called recursively for every AST node. Should be a module-level constant.
@@ -818,9 +820,7 @@ The store now holds `node_type`, `function_name`, and `class_name` in the Qdrant
 **R13-M1. `search_codebase()` only passes `language` and `path` filters — ignores `node_type`, `function_name`, `class_name`** (search.py:272-274)
 
 ```python
-store_filters = {
-    k: v for k, v in parsed.filters.items() if k in ("language", "path")
-}
+store_filters = {k: v for k, v in parsed.filters.items() if k in ("language", "path")}
 ```
 
 The store's `_build_code_filter()` supports five filter keys, but `search_codebase()` only passes two. A user who types `node_type:function_definition` or `function:encode_query` or `class:VaultStore` gets no filtering — the filter keys are silently dropped.
@@ -872,7 +872,7 @@ Previously flagged as M7 in Round 1. Still unfixed. `parse_query()` extracts `ta
 **R13-m1. `search_codebase()` uses `path` as `title` for code results** (search.py:292)
 
 ```python
-title=r["path"],
+title = (r["path"],)
 ```
 
 When code results have `function_name` or `class_name` available, a more descriptive title like `"MyClass.my_method"` or `"encode_query()"` would be more useful than the raw file path.
@@ -1345,8 +1345,7 @@ so it goes through the special `if key == "tag"` branch. Result:
 
 ```python
 store_filters = {
-    k: v for k, v in parsed.filters.items()
-    if k in ("doc_type", "feature", "date")
+    k: v for k, v in parsed.filters.items() if k in ("doc_type", "feature", "date")
 }
 ```
 

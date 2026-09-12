@@ -48,6 +48,7 @@ ______________________________________________________________________
 from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP, Context
 
+
 @asynccontextmanager
 async def app_lifespan(server):
     """Initialize at startup, cleanup at shutdown."""
@@ -58,7 +59,9 @@ async def app_lifespan(server):
     finally:
         print("Cleaning up...")
 
+
 mcp = FastMCP("VaultSpec", lifespan=app_lifespan)
+
 
 @mcp.tool()
 async def search_vault(query: str, ctx: Context) -> SearchResponse:
@@ -161,6 +164,7 @@ ______________________________________________________________________
 _comp_lock = threading.Lock()
 _gpu_sem = asyncio.Semaphore(1)
 
+
 @mcp.tool()
 async def search_vault(query: str, ctx: Context) -> SearchResponse:
     def _run():
@@ -188,6 +192,7 @@ async def app_lifespan(server):
         yield model
     finally:
         model.shutdown()
+
 
 @mcp.tool()
 async def search_vault(query: str, ctx: Context) -> SearchResponse:

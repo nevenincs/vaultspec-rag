@@ -34,10 +34,7 @@ BUNDLE_B = VAULTSPEC_RAG.bundle_name("0.4.6", products.LINUX_ARM64)
 
 def test_parses_a_well_formed_aggregate() -> None:
     """The two-space sha256sum format maps asset names to digests."""
-    text = (
-        f"{DIGEST_A}  {BUNDLE_A}\n"
-        f"{DIGEST_B}  {BUNDLE_B}\n"
-    )
+    text = f"{DIGEST_A}  {BUNDLE_A}\n{DIGEST_B}  {BUNDLE_B}\n"
 
     assert parse_checksums(text) == {
         BUNDLE_A: DIGEST_A,
@@ -77,10 +74,7 @@ def test_rejects_a_malformed_line(line: str) -> None:
 
 def test_rejects_an_asset_listed_twice_with_conflicting_digests() -> None:
     """Two digests for one name means the aggregate cannot pin that asset."""
-    text = (
-        f"{DIGEST_A}  {BUNDLE_A}\n"
-        f"{DIGEST_B}  {BUNDLE_A}\n"
-    )
+    text = f"{DIGEST_A}  {BUNDLE_A}\n{DIGEST_B}  {BUNDLE_A}\n"
 
     with pytest.raises(ChecksumError, match="twice"):
         parse_checksums(text)

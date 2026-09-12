@@ -143,10 +143,10 @@ def _get_graph(self) -> VaultGraph | None:
     if self._cached_graph is None or (now - self._graph_built_at) > self._graph_ttl:
         try:
             self._cached_graph = _VaultGraph(self.root_dir)  # WRITE
-            self._graph_built_at = now                       # WRITE
+            self._graph_built_at = now  # WRITE
         except Exception as e:
             logger.error("Graph build failed: %s", e)
-            self._graph_built_at = now                       # WRITE
+            self._graph_built_at = now  # WRITE
             return None
     return self._cached_graph
 ```

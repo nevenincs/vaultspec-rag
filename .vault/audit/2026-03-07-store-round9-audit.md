@@ -178,6 +178,7 @@ ______________________________________________________________________
 @staticmethod
 def _stable_id(string_id: str) -> int:
     import hashlib
+
     h = hashlib.sha256(string_id.encode("utf-8")).digest()
     return int.from_bytes(h[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF
 ```

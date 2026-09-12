@@ -84,8 +84,10 @@ Direct model loading for maximum control. Required for BGE-M3's multi-output (de
 from transformers import AutoTokenizer, AutoModel
 import torch
 
-model = AutoModel.from_pretrained("Qwen/Qwen3-Embedding-0.6B",
-    torch_dtype=torch.float16, attn_implementation="flash_attention_2"
+model = AutoModel.from_pretrained(
+    "Qwen/Qwen3-Embedding-0.6B",
+    torch_dtype=torch.float16,
+    attn_implementation="flash_attention_2",
 ).cuda()
 ```
 
@@ -185,7 +187,7 @@ from FlagEmbedding import BGEM3FlagModel
 model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
 
 output = model.encode(documents, return_dense=True, return_sparse=True)
-dense_vecs = output["dense_vecs"]       # np.ndarray (n, 1024)
+dense_vecs = output["dense_vecs"]  # np.ndarray (n, 1024)
 lexical_weights = output["lexical_weights"]  # list[dict[token_id, weight]]
 ```
 
@@ -286,8 +288,8 @@ documents = [...]  # list of document strings
 # Dense: prefixed for Qwen3
 dense_embeddings = dense_model.encode(
     documents,
-    prompt_name="document",   # auto-applies doc prompt if configured
-    batch_size=64,            # tune based on VRAM
+    prompt_name="document",  # auto-applies doc prompt if configured
+    batch_size=64,  # tune based on VRAM
     show_progress_bar=True,
     normalize_embeddings=True,
 )
@@ -295,7 +297,7 @@ dense_embeddings = dense_model.encode(
 # Sparse: SPLADE
 sparse_embeddings = sparse_model.encode(
     documents,
-    batch_size=32,            # SPLADE may need smaller batch
+    batch_size=32,  # SPLADE may need smaller batch
 )
 ```
 

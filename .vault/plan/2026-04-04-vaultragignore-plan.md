@@ -77,13 +77,15 @@ def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
 ```python
 def _build_vaultragignore_spec(self) -> pathspec.GitIgnoreSpec | None:
     import pathspec
+
     patterns: list[str] = []
     ignore_file = self.root_dir / ".vaultragignore"
     if ignore_file.is_file():
         try:
             lines = ignore_file.read_text(encoding="utf-8").splitlines()
             patterns.extend(
-                line.strip() for line in lines
+                line.strip()
+                for line in lines
                 if line.strip() and not line.strip().startswith("#")
             )
         except OSError:
@@ -152,8 +154,11 @@ if dry_run:
         console.print("[yellow]--dry-run only applies to codebase indexing.[/]")
         return
     from .indexer import CodebaseIndexer
+
     c_indexer = CodebaseIndexer(
-        target, None, None,  # type: ignore[arg-type]
+        target,
+        None,
+        None,  # type: ignore[arg-type]
         extra_excludes=exclude or [],
     )
     files = c_indexer.scan_files()
@@ -170,9 +175,7 @@ In the `--port` MCP delegation block, warn that `--exclude` is ignored:
 ```python
 if port is not None:
     if exclude:
-        console.print(
-            "[yellow]--exclude is ignored when delegating to MCP server.[/]"
-        )
+        console.print("[yellow]--exclude is ignored when delegating to MCP server.[/]")
     # ... existing MCP delegation ...
 ```
 

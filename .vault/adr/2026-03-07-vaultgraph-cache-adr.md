@@ -59,6 +59,7 @@ class _GraphCache:
         with self._lock:
             self._graph = None
 
+
 _graph_cache = _GraphCache()
 ```
 

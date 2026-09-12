@@ -10,7 +10,7 @@ rather than invented, and a pointer never moves backward.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -81,7 +81,8 @@ def test_scoop_manifest_pins_the_release_digests() -> None:
         ["vaultspec-rag.exe", "vaultspec-rag"],
         ["vaultspec-search-mcp.exe", "vaultspec-search-mcp"],
     ]
-    assert manifest["autoupdate"]["url"] == [
+    autoupdate = cast("dict[str, object]", manifest["autoupdate"])
+    assert autoupdate["url"] == [
         f"{VAULTSPEC_RAG.homepage}/releases/download/"
         f"{VAULTSPEC_RAG.tag_prefix}$version/"
         f"{VAULTSPEC_RAG.bundle_name('$version', products.WINDOWS_X86_64)}"

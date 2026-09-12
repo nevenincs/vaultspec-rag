@@ -167,8 +167,8 @@ VAULTSPEC_RAG = Product(
     # condition the leg's earlier removal was made against.
     supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
     display_name="Vaultspec RAG",
-    publisher="Gergely Wootsch",
-    legal_copyright="Copyright (c) Gergely Wootsch",
+    publisher="Vaultspec Project",
+    legal_copyright="Copyright (c) 2026 Vaultspec Project",
     notes=(
         # The binaries bootstrap the SAME accelerated torch build the project
         # resolves: `tools.binaries.torch_channel` pins the cu130 wheel from

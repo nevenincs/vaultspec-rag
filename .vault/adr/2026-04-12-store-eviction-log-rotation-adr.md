@@ -162,9 +162,11 @@ handlers (`for handler in root.handlers[:]: root.removeHandler(handler)`).
 def main() -> None:
     parser = argparse.ArgumentParser(...)
     args = parser.parse_args()
-    configure_logging()                              # core wipes handlers
-    install_daemon_log_rotation()                    # adds rotating handler + dup2 fds 1/2
-    uvicorn.run(mcp_app, host=..., port=args.port)   # may add its own access loggers AFTER ours
+    configure_logging()  # core wipes handlers
+    install_daemon_log_rotation()  # adds rotating handler + dup2 fds 1/2
+    uvicorn.run(
+        mcp_app, host=..., port=args.port
+    )  # may add its own access loggers AFTER ours
 ```
 
 `install_daemon_log_rotation()` is a new module-level helper in
@@ -316,10 +318,10 @@ def _acquire(self, root: Path) -> ProjectSlot:
             raise RuntimeError("ServiceRegistry is shutting down")
         slot = self._projects.get(root)
         if slot is None:
-            slot = self._admit_with_lru(root)   # may evict, may raise RegistryFullError
+            slot = self._admit_with_lru(root)  # may evict, may raise RegistryFullError
         slot.last_access = time.monotonic()
         slot.ref_count += 1
-        self._sweep_idle()                       # opportunistic
+        self._sweep_idle()  # opportunistic
         return slot
 ```
 
@@ -337,7 +339,8 @@ def _sweep_idle(self) -> None:
         return
     now = time.monotonic()
     victims = [
-        root for root, slot in self._projects.items()
+        root
+        for root, slot in self._projects.items()
         if slot.ref_count == 0 and (now - slot.last_access) >= self._idle_ttl_seconds
     ]
     if not victims:

@@ -130,6 +130,7 @@ vaultspec-core:
 
 ```python
 from importlib.metadata import PackageNotFoundError, version
+
 try:
     __version__: str = version("vaultspec-rag")
 except PackageNotFoundError:

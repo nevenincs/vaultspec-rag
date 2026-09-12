@@ -33,6 +33,7 @@ ______________________________________________________________________
 def handle_test(ctx: typer.Context):
     import subprocess
     import sys
+
     test_dir = str(Path(__file__).resolve().parent / "tests")
     cmd = [sys.executable, "-m", "pytest", test_dir, *ctx.args]
     raise SystemExit(subprocess.call(cmd))
@@ -157,11 +158,7 @@ if do_vault:
 # Phase 2: Codebase indexing
 if do_code:
     ...
-    c_res = (
-        c_indexer.full_index()
-        if clean
-        else c_indexer.incremental_index()
-    )
+    c_res = c_indexer.full_index() if clean else c_indexer.incremental_index()
 ```
 
 ### R14-M1: `handle_index` vault indexing always uses `incremental_index()` regardless of `--clean` flag (MEDIUM)
@@ -247,6 +244,7 @@ ______________________________________________________________________
 @mcp_app.command("start")
 def mcp_start(_ctx: typer.Context):
     from .mcp_server import main as run_mcp
+
     console.print("[bold green]Launching FastMCP server...[/]")
     run_mcp()
 ```

@@ -47,8 +47,8 @@ The model's prompt configuration (verified via runtime inspection):
 
 ```python
 model.prompts = {
-    'query': 'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:',
-    'document': '',  # empty string
+    "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    "document": "",  # empty string
 }
 model.default_prompt_name = None
 ```
@@ -65,7 +65,10 @@ model.default_prompt_name = None
    priority. This allows custom code-specific instructions:
 
    ```python
-   model.encode(queries, prompt="Instruct: Given a code search query, retrieve relevant source code\nQuery:")
+   model.encode(
+       queries,
+       prompt="Instruct: Given a code search query, retrieve relevant source code\nQuery:",
+   )
    ```
 
 1. **Current codebase is correct**: `embeddings.py` already uses

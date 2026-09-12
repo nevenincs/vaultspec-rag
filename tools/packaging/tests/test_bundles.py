@@ -98,8 +98,10 @@ def test_build_bundle_has_stable_contents_and_manifest(
         "LICENSE",
         "README.txt",
         "manifest.json",
-        *(VAULTSPEC_RAG.executable_name(executable, target)
-          for executable in VAULTSPEC_RAG.executables),
+        *(
+            VAULTSPEC_RAG.executable_name(executable, target)
+            for executable in VAULTSPEC_RAG.executables
+        ),
     }
     assert set(contents) == expected
     assert all(target not in name for name in contents if name != "manifest.json")
@@ -110,8 +112,8 @@ def test_build_bundle_has_stable_contents_and_manifest(
         "zip" if target.endswith("windows-msvc") else "tar.gz"
     )
     assert manifest["display_name"] == "Vaultspec RAG"
-    assert manifest["publisher"] == "Gergely Wootsch"
-    assert manifest["legal_copyright"] == "Copyright (c) Gergely Wootsch"
+    assert manifest["publisher"] == "Vaultspec Project"
+    assert manifest["legal_copyright"] == "Copyright (c) 2026 Vaultspec Project"
     assert manifest["target"] == target
     assert manifest["source_revision"] == REVISION
     assert manifest["runtime"]["python"] == "3.13"
@@ -124,9 +126,7 @@ def test_build_bundle_has_stable_contents_and_manifest(
         "manifest.json"
     }
     for entry in manifest["files"]:
-        assert entry["sha256"] == hashlib.sha256(
-            contents[entry["name"]]
-        ).hexdigest()
+        assert entry["sha256"] == hashlib.sha256(contents[entry["name"]]).hexdigest()
 
     checksum = archive.with_name(archive.name + ".sha256")
     assert checksum.read_text(encoding="utf-8") == (

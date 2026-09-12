@@ -338,6 +338,7 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 ```python
 _GPU_MARKERS = frozenset({"integration", "quality", "performance", "robustness"})
 
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     gpu_group = pytest.mark.xdist_group("gpu")
     for item in items:
