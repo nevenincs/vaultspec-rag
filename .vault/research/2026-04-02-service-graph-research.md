@@ -306,12 +306,13 @@ The pattern:
 
 ```python
 app = Starlette(
-    routes=[Mount("/mcp", app=mcp.streamable_http_app()),
-            Route("/health", health_handler)],
+    routes=[
+        Mount("/mcp", app=mcp.streamable_http_app()),
+        Route("/health", health_handler),
+    ],
     lifespan=combined_lifespan,
 )
-uvicorn.run(app, host="127.0.0.1", port=8766,
-            timeout_graceful_shutdown=30)
+uvicorn.run(app, host="127.0.0.1", port=8766, timeout_graceful_shutdown=30)
 ```
 
 The `/health` endpoint becomes available only after lifespan completes --

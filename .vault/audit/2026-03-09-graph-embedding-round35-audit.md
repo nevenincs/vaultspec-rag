@@ -128,8 +128,8 @@ def search_all(
     vault_weight: float = 0.5,
     code_weight: float = 0.5,
 ) -> list[SearchResult]:
-    vault_results = self.search_vault(raw_query, top_k=top_k)      # Line 406
-    code_results = self.search_codebase(raw_query, top_k=top_k)    # Line 407
+    vault_results = self.search_vault(raw_query, top_k=top_k)  # Line 406
+    code_results = self.search_codebase(raw_query, top_k=top_k)  # Line 407
     ...
 ```
 
@@ -139,8 +139,8 @@ def search_all(
 def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
     parsed = parse_query(raw_query)
     query_text = parsed.text or raw_query
-    query_vector = self.model.encode_query(query_text)             # Line 274
-    sparse_vector = self.model.encode_query_sparse(query_text)     # Line 275
+    query_vector = self.model.encode_query(query_text)  # Line 274
+    sparse_vector = self.model.encode_query_sparse(query_text)  # Line 275
     ...
 ```
 

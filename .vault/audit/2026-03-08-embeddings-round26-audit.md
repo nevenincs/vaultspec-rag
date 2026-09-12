@@ -311,7 +311,9 @@ sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
 This wraps the query string in a list for batch processing, then extracts [0] on line 321. Alternatively:
 
 ```python
-sparse_tensor = self._sparse_model.encode_query(query[:max_chars])  # if API supports scalar
+sparse_tensor = self._sparse_model.encode_query(
+    query[:max_chars]
+)  # if API supports scalar
 ```
 
 **Assessment:** This is not a bug; it's a defensive pattern that ensures consistent return type handling. SparseEncoder.encode_query() likely expects a list. No change needed.

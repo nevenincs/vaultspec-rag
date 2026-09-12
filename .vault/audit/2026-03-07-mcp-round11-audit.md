@@ -30,17 +30,16 @@ _comp: RagComponents | None = None
 _comp_lock = threading.Lock()
 _comp_error: Exception | None = None
 
+
 def get_comp() -> RagComponents:
     global _comp, _comp_error
-    if _comp is not None:          # Fast path (no lock)
+    if _comp is not None:  # Fast path (no lock)
         return _comp
     with _comp_lock:
-        if _comp is not None:      # Double-check after lock
+        if _comp is not None:  # Double-check after lock
             return _comp
-        if _comp_error is not None: # Failure caching
-            raise RuntimeError(
-                "RAG initialization previously failed"
-            ) from _comp_error
+        if _comp_error is not None:  # Failure caching
+            raise RuntimeError("RAG initialization previously failed") from _comp_error
         try:
             ...
             _comp = RagComponents(...)
@@ -239,7 +238,9 @@ try:
     if existing_ids:
         self.store.delete_documents(list(existing_ids))
 except OSError:
-    logger.error("Failed to delete existing documents during full re-index — aborting to prevent duplicates")
+    logger.error(
+        "Failed to delete existing documents during full re-index — aborting to prevent duplicates"
+    )
     raise
 self.store.upsert_documents(docs)
 ```

@@ -162,7 +162,8 @@ Filters vault results to: `doc_type`, `feature`, `date`, `tag`
 
 ```python
 store_filters = {
-    k: v for k, v in parsed.filters.items()
+    k: v
+    for k, v in parsed.filters.items()
     if k in ("doc_type", "feature", "date", "tag")
 }
 ```
@@ -175,7 +176,8 @@ Filters to: `language`, `path`, `node_type`, `function_name`, `class_name`
 
 ```python
 store_filters = {
-    k: v for k, v in parsed.filters.items()
+    k: v
+    for k, v in parsed.filters.items()
     if k in ("language", "path", "node_type", "function_name", "class_name")
 }
 ```

@@ -22,7 +22,7 @@ ______________________________________________________________________
 Our `ASTChunker._collect_chunks()` (indexer.py line 290) does:
 
 ```python
-text = source[node.start_byte:node.end_byte]
+text = source[node.start_byte : node.end_byte]
 ```
 
 where `source` is a Python `str`. Tree-sitter `start_byte`/`end_byte` are **byte
@@ -34,13 +34,13 @@ diverge and the slicing produces wrong text.
 ### Runtime proof
 
 ```python
-code_str = '\u4e16 = 1\ny = 2\n'  # CJK char at start
-code_bytes = code_str.encode('utf-8')
+code_str = "\u4e16 = 1\ny = 2\n"  # CJK char at start
+code_bytes = code_str.encode("utf-8")
 # str length: 12, bytes length: 14 (CJK char = 3 bytes)
 
 # For the first assignment node (byte range [0:7]):
-bytes_slice = code_bytes[0:7].decode('utf-8')  # '\u4e16 = 1'  (CORRECT)
-str_slice   = code_str[0:7]                     # '\u4e16 = 1\ny'  (WRONG â€” includes next line)
+bytes_slice = code_bytes[0:7].decode("utf-8")  # '\u4e16 = 1'  (CORRECT)
+str_slice = code_str[0:7]  # '\u4e16 = 1\ny'  (WRONG â€” includes next line)
 ```
 
 ### How LlamaIndex CodeSplitter solves it
@@ -54,7 +54,7 @@ text_bytes = bytes(text, "utf-8")
 tree = self._parser.parse(text_bytes)
 
 # _chunk_node() method â€” slices bytes, then decodes:
-child_text = text_bytes[child.start_byte:child.end_byte].decode("utf-8")
+child_text = text_bytes[child.start_byte : child.end_byte].decode("utf-8")
 ```
 
 **Pattern:** Parse `bytes`, slice `bytes` by byte offset, decode chunk to `str`.
@@ -114,12 +114,14 @@ the indexer produces `subdir/!important.log`. But pathspec requires the `!` at t
 
 ```python
 # BROKEN (current code): 'subdir/!important.log'
-spec = pathspec.GitIgnoreSpec.from_lines(['*.log', 'subdir/!important.log'])
-spec.match_file('subdir/important.log')  # True (STILL IGNORED â€” negation not recognized)
+spec = pathspec.GitIgnoreSpec.from_lines(["*.log", "subdir/!important.log"])
+spec.match_file(
+    "subdir/important.log"
+)  # True (STILL IGNORED â€” negation not recognized)
 
 # CORRECT: '!subdir/important.log'
-spec = pathspec.GitIgnoreSpec.from_lines(['*.log', '!subdir/important.log'])
-spec.match_file('subdir/important.log')  # False (NOT IGNORED â€” negation works)
+spec = pathspec.GitIgnoreSpec.from_lines(["*.log", "!subdir/important.log"])
+spec.match_file("subdir/important.log")  # False (NOT IGNORED â€” negation works)
 ```
 
 ### Recommended fix
@@ -169,6 +171,7 @@ Since each chunk has a `path` payload field, we can scroll with a filter:
 
 ```python
 from qdrant_client.models import Filter, FieldCondition, MatchAny
+
 
 def _get_chunk_ids_for_files(self, rel_paths: set[str]) -> list[str]:
     """Return chunk IDs from the store that belong to the given files."""
@@ -270,7 +273,7 @@ Runtime tests confirm how decorators/annotations are represented per language:
 ```python
 # To extract the name from a decorated_definition:
 defn = node.child_by_field_name("definition")  # function_definition or class_definition
-name = defn.child_by_field_name("name")         # identifier node
+name = defn.child_by_field_name("name")  # identifier node
 ```
 
 `decorated_definition` has NO direct `name` field â€” `node.child_by_field_name("name")`
@@ -348,7 +351,7 @@ client.create_payload_index(
     field_schema=models.IntegerIndexParams(
         type=models.IntegerIndexType.INTEGER,
         lookup=False,  # no exact match needed
-        range=True,    # range queries only
+        range=True,  # range queries only
     ),
 )
 
@@ -567,9 +570,11 @@ The correct approach is to add `filter=` to EACH `Prefetch` individually:
 
 ```python
 # CORRECT â€” filter on each prefetch branch
-query_filter = models.Filter(must=[
-    models.FieldCondition(key="language", match=models.MatchValue(value="python"))
-])
+query_filter = models.Filter(
+    must=[
+        models.FieldCondition(key="language", match=models.MatchValue(value="python"))
+    ]
+)
 
 client.query_points(
     collection_name="code_index",
@@ -700,8 +705,8 @@ ______________________________________________________________________
 
 ```python
 model.prompts = {
-    'query': 'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:',
-    'document': '',
+    "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    "document": "",
 }
 model.default_prompt_name = None
 model.max_seq_length = 32768
@@ -811,9 +816,9 @@ client.scroll(
 1. **`scroll_filter` works for payload filtering:**
 
    ```python
-   adr_filter = models.Filter(must=[
-       models.FieldCondition(key="doc_type", match=models.MatchValue(value="adr"))
-   ])
+   adr_filter = models.Filter(
+       must=[models.FieldCondition(key="doc_type", match=models.MatchValue(value="adr"))]
+   )
    records, _ = client.scroll("docs", scroll_filter=adr_filter, limit=100)
    ```
 
@@ -844,6 +849,7 @@ def list_documents(self, fields: list[str] | None = None) -> list[dict]:
         offset = next_offset
 
     return all_docs
+
 
 # Usage:
 docs = store.list_documents(fields=["path", "title", "doc_type"])
@@ -887,6 +893,7 @@ descriptions**. FastMCP does NOT parse docstring `Args:` sections.
 from typing import Annotated
 from pydantic import Field
 
+
 @mcp.tool()
 async def search(
     query: Annotated[str, Field(description="Natural language search string")],
@@ -907,9 +914,9 @@ class SearchInput(BaseModel):
     query: str = Field(description="Search string")
     top_k: int = Field(default=5, description="Number of results")
 
+
 @mcp.tool()
-async def search(params: SearchInput) -> str:
-    ...
+async def search(params: SearchInput) -> str: ...
 ```
 
 Schema has `$defs` + `$ref` nesting with a `params` wrapper. Some LLM clients
@@ -928,12 +935,23 @@ schema nesting. Example migration for `search_codebase`:
 ```python
 @mcp.tool()
 async def search_codebase(
-    query: Annotated[str, Field(description="Natural language search string or code snippet")],
+    query: Annotated[
+        str, Field(description="Natural language search string or code snippet")
+    ],
     top_k: Annotated[int, Field(description="Number of code chunks to return")] = 5,
-    language: Annotated[str | None, Field(description="Language filter (e.g. 'python', 'rust')")] = None,
-    node_type: Annotated[str | None, Field(description="AST node type filter (e.g. 'function_definition')")] = None,
-    function_name: Annotated[str | None, Field(description="Function/method name filter")] = None,
-    class_name: Annotated[str | None, Field(description="Class/struct name filter")] = None,
+    language: Annotated[
+        str | None, Field(description="Language filter (e.g. 'python', 'rust')")
+    ] = None,
+    node_type: Annotated[
+        str | None,
+        Field(description="AST node type filter (e.g. 'function_definition')"),
+    ] = None,
+    function_name: Annotated[
+        str | None, Field(description="Function/method name filter")
+    ] = None,
+    class_name: Annotated[
+        str | None, Field(description="Class/struct name filter")
+    ] = None,
     ctx: Context | None = None,
 ) -> SearchResponse:
     """Search the source codebase for relevant functions, classes, or logic."""
@@ -985,8 +1003,9 @@ To get bounded [0, 1] scores, use `activation_fn=torch.nn.Sigmoid()`:
 from sentence_transformers import CrossEncoder
 import torch
 
-model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2",
-                     activation_fn=torch.nn.Sigmoid())
+model = CrossEncoder(
+    "cross-encoder/ms-marco-MiniLM-L6-v2", activation_fn=torch.nn.Sigmoid()
+)
 # Now .predict() returns values in [0, 1]
 ```
 
@@ -1016,6 +1035,7 @@ Since CrossEncoder outputs logits, sigmoid is the natural normalization:
 
 ```python
 import math
+
 normalized = [1 / (1 + math.exp(-s)) for s in ce_scores]
 ```
 
@@ -1110,6 +1130,7 @@ threading code needed. This is the simplest approach.
 ```python
 import anyio
 
+
 @mcp.tool()
 async def search_codebase(query: str, top_k: int = 5) -> str:
     """Search source code."""
@@ -1177,6 +1198,7 @@ import threading
 
 _comp_lock = threading.Lock()
 _components: RAGComponents | None = None
+
 
 def get_comp() -> RAGComponents:
     global _components
@@ -1253,6 +1275,7 @@ import threading
 _comp_lock = threading.Lock()
 _components: RAGComponents | None = None
 
+
 def get_comp() -> RAGComponents:
     global _components
     if _components is not None:
@@ -1278,6 +1301,7 @@ thread), we would need a different approach:
 import anyio
 
 _comp_lock = anyio.Lock()
+
 
 async def get_comp() -> RAGComponents:
     global _components
@@ -1439,6 +1463,7 @@ The standard sigmoid function maps unbounded logits to \[0, 1\]:
 ```python
 import math
 
+
 def sigmoid(x: float) -> float:
     """Map logit to [0, 1]. Numerically stable for large negative values."""
     if x >= 0:
@@ -1525,6 +1550,7 @@ weighted arithmetic mean.
 import math
 from dataclasses import dataclass
 
+
 @dataclass
 class SearchResult:
     content: str
@@ -1533,11 +1559,13 @@ class SearchResult:
     source: str  # "vault" or "codebase"
     normalized_score: float = 0.0
 
+
 def _sigmoid(x: float) -> float:
     if x >= 0:
         return 1.0 / (1.0 + math.exp(-x))
     ex = math.exp(x)
     return ex / (1.0 + ex)
+
 
 def _min_max(scores: list[float]) -> list[float]:
     if len(scores) <= 1:
@@ -1546,6 +1574,7 @@ def _min_max(scores: list[float]) -> list[float]:
     if hi == lo:
         return [1.0] * len(scores)
     return [(s - lo) / (hi - lo) for s in scores]
+
 
 def normalize_and_combine(
     vault_results: list[SearchResult],
@@ -1604,6 +1633,7 @@ pattern that:
 import threading
 from pathlib import Path
 
+
 class _GraphCache:
     """Thread-safe cached VaultGraph with version-based invalidation."""
 
@@ -1627,6 +1657,7 @@ class _GraphCache:
         with self._lock:
             self._graph = None
             self._version += 1
+
 
 _graph_cache = _GraphCache()
 ```
@@ -1730,10 +1761,10 @@ Pathlib comparison is **lexical** (string-based), not filesystem-based:
 ```python
 from pathlib import Path
 
-Path("./project") == Path("project")        # False!
-Path("project") == Path("project/")          # True  (trailing slash stripped)
-Path("./a/../b") == Path("b")               # False!
-Path("/foo/bar") == Path("/foo/./bar")       # False!
+Path("./project") == Path("project")  # False!
+Path("project") == Path("project/")  # True  (trailing slash stripped)
+Path("./a/../b") == Path("b")  # False!
+Path("/foo/bar") == Path("/foo/./bar")  # False!
 ```
 
 Two Path objects are equal only if their string representations are identical
@@ -1747,7 +1778,7 @@ resolved and `..`/`.` components eliminated:
 
 ```python
 Path("./project").resolve() == Path("project").resolve()  # True
-Path("a/../b").resolve() == Path("b").resolve()           # True
+Path("a/../b").resolve() == Path("b").resolve()  # True
 ```
 
 **Gotchas:**
@@ -1785,12 +1816,14 @@ If you want lexical normalization WITHOUT following symlinks:
 from pathlib import Path
 import os
 
+
 def normalize_path(p: Path) -> Path:
     """Normalize path lexically without resolving symlinks."""
     return Path(os.path.normpath(os.path.abspath(p)))
 
+
 normalize_path(Path("./project")) == normalize_path(Path("project"))  # True
-normalize_path(Path("a/../b")) == normalize_path(Path("b"))           # True
+normalize_path(Path("a/../b")) == normalize_path(Path("b"))  # True
 ```
 
 This handles `.` and `..` components but does NOT follow symlinks. If two
@@ -1879,6 +1912,7 @@ BLAKE2b is:
 ```python
 import hashlib
 
+
 def file_hash(path: str) -> str:
     """Hash file contents using blake2b (stdlib, fast)."""
     with open(path, "rb") as f:
@@ -1905,10 +1939,12 @@ with optimal block sizes. No need to manually loop with `read(8192)`.
 import hashlib
 from pathlib import Path
 
+
 def content_hash(path: Path) -> str:
     """Compute blake2b hash of file contents for change detection."""
     with open(path, "rb") as f:
         return hashlib.file_digest(f, "blake2b").hexdigest()
+
 
 # For comparing sets of files (e.g., vault directory):
 def directory_hash(paths: list[Path]) -> str:
@@ -1986,6 +2022,7 @@ to MCP error responses:
    ```python
    from fastmcp import ToolError
 
+
    @mcp.tool()
    def search_vault(query: str) -> dict:
        if not query.strip():
@@ -2013,6 +2050,7 @@ async def search_codebase(query: str, top_k: int = 5) -> SearchResponse:
     results = searcher.search_codebase(query, top_k=top_k)
     return SearchResponse(results=results)
 
+
 # AFTER (sync, auto-threaded, identical behavior)
 @mcp.tool()
 def search_codebase(query: str, top_k: int = 5) -> SearchResponse:
@@ -2038,8 +2076,8 @@ to handle dense-only search?
 # Dense-only search -- no prefetch, no fusion
 results = client.query_points(
     collection_name="vault",
-    query=dense_vector,        # direct vector query
-    using="dense",             # named vector
+    query=dense_vector,  # direct vector query
+    using="dense",  # named vector
     limit=10,
     with_payload=True,
 )

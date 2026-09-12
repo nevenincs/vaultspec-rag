@@ -165,6 +165,7 @@ Post-sync hook (if provider=="all"):
 
 ```python
 from vaultspec_core.hooks import fire_hooks
+
 fire_hooks("config.synced", {"root": str(ctx.target_dir), "event": "config.synced"})
 ```
 

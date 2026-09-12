@@ -212,8 +212,10 @@ def detect_state(pyproject: Path) -> TorchConfigState:
     Pure read.
     """
 
+
 def preview_patch(pyproject: Path) -> str:
     """Return the TOML snippet install would add. Pure read."""
+
 
 def apply_patch(pyproject: Path) -> PatchReport:
     """Write the cu130 block using tomlkit round-trip semantics.
@@ -224,6 +226,7 @@ def apply_patch(pyproject: Path) -> PatchReport:
     is NO_PROJECT_FILE. Otherwise writes via atomic_write.
     """
 
+
 def remove_patch(pyproject: Path) -> PatchReport:
     """Inverse of apply_patch. Removes only canonical entries.
 
@@ -231,11 +234,13 @@ def remove_patch(pyproject: Path) -> PatchReport:
     state is MISSING or NO_PROJECT_FILE.
     """
 
+
 def diagnose_torch(cuda: str | None, available: bool) -> TorchDiagnosis:
     """Classify the torch install state from `torch.version.cuda`
     and `torch.cuda.is_available()`. Returns one of NO_TORCH,
     CPU_ONLY, NO_GPU, WORKING. Used by _handle_gpu_error.
     """
+
 
 def manual_snippet() -> str:
     """Return the canonical cu130 block as a string for error
@@ -261,8 +266,7 @@ def install_run(
     configure_torch: bool = True,
     assume_yes: bool = False,
     sync_after: bool = False,
-) -> InstallReport:
-    ...
+) -> InstallReport: ...
 ```
 
 After the existing `seed_builtins` + `sync_provider` steps, a new
@@ -298,7 +302,7 @@ block runs:
 @dataclass
 class InstallReport:
     ...
-    torch_config_action: str = "skipped"    # applied|skipped|conflict|absent|already
+    torch_config_action: str = "skipped"  # applied|skipped|conflict|absent|already
     torch_config_conflicts: list[str] = field(default_factory=list)
 ```
 
@@ -348,6 +352,7 @@ def _handle_gpu_error(exc: Exception) -> None:
     else:
         try:
             import torch
+
             diagnosis = diagnose_torch(torch.version.cuda, torch.cuda.is_available())
         except Exception:  # noqa: BLE001 — defensive fallback
             diagnosis = TorchDiagnosis.NO_TORCH
@@ -365,8 +370,7 @@ def _handle_gpu_error(exc: Exception) -> None:
             "  [cyan]uv run vaultspec-rag install[/] patches your "
             "pyproject.toml with the cu130 torch index. After patching, "
             "rerun [cyan]uv sync --reinstall-package torch[/].\n\n"
-            "  Or configure manually in your pyproject.toml:\n"
-            + manual_snippet(),
+            "  Or configure manually in your pyproject.toml:\n" + manual_snippet(),
         )
     elif diagnosis == TorchDiagnosis.NO_GPU:
         console.print(

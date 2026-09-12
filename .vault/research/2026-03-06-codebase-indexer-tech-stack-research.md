@@ -118,17 +118,17 @@ import pathspec
 # Load .gitignore patterns
 gitignore_path = root_dir / ".gitignore"
 if gitignore_path.exists():
-    spec = pathspec.GitIgnoreSpec.from_lines(
-        gitignore_path.read_text().splitlines()
-    )
+    spec = pathspec.GitIgnoreSpec.from_lines(gitignore_path.read_text().splitlines())
 else:
     spec = pathspec.GitIgnoreSpec.from_lines([])
 
 # Get all non-ignored files
 all_files = root_dir.rglob("*")
-kept = [f for f in all_files if f.is_file() and not spec.match_file(
-    str(f.relative_to(root_dir))
-)]
+kept = [
+    f
+    for f in all_files
+    if f.is_file() and not spec.match_file(str(f.relative_to(root_dir)))
+]
 ```
 
 **Advantages over git ls-files:**
@@ -150,8 +150,11 @@ def _load_gitignore_specs(root: Path) -> list[pathspec.GitIgnoreSpec]:
         rel_dir = gitignore.parent.relative_to(root)
         lines = gitignore.read_text().splitlines()
         # Prefix patterns with the directory they apply to
-        prefixed = [f"{rel_dir}/{line}" if rel_dir != Path(".") else line
-                     for line in lines if line.strip() and not line.startswith("#")]
+        prefixed = [
+            f"{rel_dir}/{line}" if rel_dir != Path(".") else line
+            for line in lines
+            if line.strip() and not line.startswith("#")
+        ]
         specs.append(pathspec.GitIgnoreSpec.from_lines(prefixed))
     return specs
 ```
@@ -170,6 +173,7 @@ preserve content but change mtime).
 
 ```python
 import hashlib
+
 
 def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -235,6 +239,7 @@ and would consume excessive VRAM during embedding.
 
 ```python
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
 
 def _is_too_large(path: Path) -> bool:
     return path.stat().st_size > MAX_FILE_SIZE
@@ -371,9 +376,9 @@ cursor.goto_first_child_for_byte(byte_offset)
 cursor.goto_first_child_for_point((row, col))
 
 # Properties:
-cursor.node        # current Node
+cursor.node  # current Node
 cursor.field_name  # field name if current node is a named field
-cursor.depth       # depth from start node
+cursor.depth  # depth from start node
 ```
 
 Complete tree walk generator:
@@ -424,14 +429,22 @@ def extract_chunk_metadata(node) -> dict[str, str | None]:
         "node_type": node.type,
     }
 
-    if node.type in ("function_definition", "function_declaration",
-                      "function_item", "method_declaration"):
+    if node.type in (
+        "function_definition",
+        "function_declaration",
+        "function_item",
+        "method_declaration",
+    ):
         name_node = node.child_by_field_name("name")
         if name_node:
             meta["function_name"] = name_node.text.decode()
 
-    if node.type in ("class_definition", "class_declaration",
-                      "class_specifier", "impl_item"):
+    if node.type in (
+        "class_definition",
+        "class_declaration",
+        "class_specifier",
+        "impl_item",
+    ):
         name_node = node.child_by_field_name("name")
         if name_node:
             meta["class_name"] = name_node.text.decode()
@@ -439,8 +452,7 @@ def extract_chunk_metadata(node) -> dict[str, str | None]:
     # Walk up to find enclosing class
     parent = node.parent
     while parent:
-        if parent.type in ("class_definition", "class_declaration",
-                            "class_specifier"):
+        if parent.type in ("class_definition", "class_declaration", "class_specifier"):
             name_node = parent.child_by_field_name("name")
             if name_node:
                 meta["class_name"] = name_node.text.decode()
@@ -572,7 +584,10 @@ client.create_payload_index(
 
 ```python
 from qdrant_client.models import (
-    Filter, FieldCondition, MatchValue, MatchAny,
+    Filter,
+    FieldCondition,
+    MatchValue,
+    MatchAny,
 )
 
 # Filter: language=python AND class_name=CodebaseIndexer

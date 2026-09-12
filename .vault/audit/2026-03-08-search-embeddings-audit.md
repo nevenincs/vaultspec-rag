@@ -179,7 +179,7 @@ ______________________________________________________________________
   sparse_vecs = self.model.encode_documents_sparse(texts)
   for doc, vec, svec in zip(docs, vectors, sparse_vecs, strict=True):
       doc.sparse_indices = list(svec.indices)  # ✓
-      doc.sparse_values = list(svec.values)    # ✓
+      doc.sparse_values = list(svec.values)  # ✓
   ```
 
   Correctly accesses `.indices` and `.values`. ✓
@@ -257,10 +257,12 @@ ______________________________________________________________________
 - **Store usage in store.py (lines 571–574):**
 
   ```python
-  query=models.SparseVector(
-      indices=list(sparse_vector.indices),  # ✓
-      values=list(sparse_vector.values),    # ✓
-  ),
+  query = (
+      models.SparseVector(
+          indices=list(sparse_vector.indices),  # ✓
+          values=list(sparse_vector.values),  # ✓
+      ),
+  )
   ```
 
   Correctly accesses `.indices` and `.values`. ✓

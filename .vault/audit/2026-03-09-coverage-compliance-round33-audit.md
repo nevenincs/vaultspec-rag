@@ -60,7 +60,7 @@ ______________________________________________________________________
 ```python
 def full_index(self, clean: bool = False) -> IndexResult:
     if clean:
-        self.store.drop_table()      # ← Deletes entire collection
+        self.store.drop_table()  # ← Deletes entire collection
         # Rebuilds from scratch
 ```
 

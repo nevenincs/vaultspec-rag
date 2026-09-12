@@ -46,6 +46,7 @@ import threading
 _comp_lock = threading.Lock()
 _components: RAGComponents | None = None
 
+
 def get_comp() -> RAGComponents:
     global _components
     if _components is not None:

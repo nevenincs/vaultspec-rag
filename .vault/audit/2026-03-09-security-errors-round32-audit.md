@@ -87,6 +87,7 @@ ______________________________________________________________________
 ```python
 def get_engine(root_dir: pathlib.Path) -> _Engine:
     from pathlib import Path
+
     global _engine
     root_dir = Path(root_dir).resolve()
     # No workspace validation — accepts any directory
@@ -190,7 +191,7 @@ If the exception contains environment variable names (e.g., `VAULTSPEC_ROOT=/sec
 - Example:
 
   ```python
-  error_msg = str(_comp_error).split('\n')[0]  # First line only
+  error_msg = str(_comp_error).split("\n")[0]  # First line only
   raise RuntimeError(f"RAG initialization failed: {error_msg}") from None
   ```
 

@@ -165,6 +165,7 @@ Lines 52–75 implement a correct singleton with safe mutation.
 ```python
 _cached_config: VaultSpecConfigWrapper | None = None
 
+
 def get_config(overrides: dict[str, Any] | None = None) -> VaultSpecConfigWrapper:
     global _cached_config
     if overrides is not None:
@@ -300,9 +301,7 @@ Lines 129 and 155 acquire `gpu_sem` before indexing.
 
 ```python
 async with gpu_sem:
-    result = await anyio.to_thread.run_sync(
-        vault_indexer.incremental_index
-    )
+    result = await anyio.to_thread.run_sync(vault_indexer.incremental_index)
 _last_vault_index = time.monotonic()
 ```
 

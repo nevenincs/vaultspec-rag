@@ -137,6 +137,7 @@ def count(self) -> int:
     self.ensure_table()
     return self._client.count(collection_name=self.TABLE_NAME).count
 
+
 def count_code(self) -> int:
     self.ensure_code_table()
     return self._client.count(collection_name=self.CODE_TABLE_NAME).count
@@ -397,7 +398,9 @@ ______________________________________________________________________
 Sample: `search_vault()` (line 118–132)
 
 ```python
-def search_vault(root_dir: pathlib.Path, query: str, *, top_k: int = 5) -> list[SearchResult]:
+def search_vault(
+    root_dir: pathlib.Path, query: str, *, top_k: int = 5
+) -> list[SearchResult]:
     engine = get_engine(root_dir)
     return engine.searcher.search_vault(query, top_k=top_k)
 ```

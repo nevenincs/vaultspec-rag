@@ -63,6 +63,7 @@ _comp: RagComponents | None = None
 _comp_lock = threading.Lock()
 _comp_error: Exception | None = None
 
+
 def get_comp() -> RagComponents:
     global _comp, _comp_error
     if _comp is not None:

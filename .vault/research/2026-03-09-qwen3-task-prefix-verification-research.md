@@ -40,8 +40,8 @@ Direct API inspection:
 
 ```python
 {
-  "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
-  "document": ""
+    "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    "document": "",
 }
 ```
 

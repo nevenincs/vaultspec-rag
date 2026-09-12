@@ -280,8 +280,8 @@ if to_index_ids:
 
 return IndexResult(
     total=total,
-    added=len(new_ids),        # ← counts files, not actual docs
-    updated=len(modified_ids), # ← counts files, not actual docs
+    added=len(new_ids),  # ← counts files, not actual docs
+    updated=len(modified_ids),  # ← counts files, not actual docs
     removed=len(deleted_ids),
     # ...
 )
@@ -441,7 +441,9 @@ def _is_binary(path: pathlib.Path, sample_size: int = 8192) -> bool:
     try:
         chunk = path.read_bytes()[:sample_size]
     except OSError as e:
-        logger.debug("Cannot read file for binary detection, skipping: %s (%s)", path, e)
+        logger.debug(
+            "Cannot read file for binary detection, skipping: %s (%s)", path, e
+        )
         return True
     return b"\x00" in chunk
 ```

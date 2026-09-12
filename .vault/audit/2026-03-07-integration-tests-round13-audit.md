@@ -102,7 +102,7 @@ for path in scan_vault(TEST_PROJECT):
     doc = prepare_document(path, TEST_PROJECT)
     if doc is not None:
         prepared += 1
-        assert doc.id == path.stem    # <--- WRONG
+        assert doc.id == path.stem  # <--- WRONG
     else:
         skipped += 1
 assert prepared > 0

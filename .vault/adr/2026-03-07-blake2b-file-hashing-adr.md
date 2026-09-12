@@ -42,6 +42,7 @@ file change detection.
 ```python
 import hashlib
 
+
 def content_hash(path: Path) -> str:
     with open(path, "rb") as f:
         return hashlib.file_digest(f, "blake2b").hexdigest()
