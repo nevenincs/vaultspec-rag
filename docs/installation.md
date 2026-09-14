@@ -130,8 +130,8 @@ also runs the MCP stdio adapter.
 
 ## Install without Python
 
-**Windows and Linux only.** The release publishes x86_64 Windows, and x86_64 and
-aarch64 Linux archives. It publishes no macOS binary or formula. Use a Python route on
+**Windows and Linux only.** The release publishes x86-64 Windows, and x86-64 and
+ARM64 Linux archives. It publishes no macOS binary or formula. Use a Python route on
 macOS. The GPU requirement remains the same.
 
 `vaultspec-rag` and `vaultspec-search-mcp` ship in one archive per target. The archive
@@ -207,7 +207,7 @@ chmod +x vaultspec-rag/vaultspec-rag vaultspec-rag/vaultspec-search-mcp
 ./vaultspec-rag/vaultspec-rag --version
 ```
 
-For an arm64 Linux host, use the arm64 asset from the table instead.
+For an ARM64 Linux host, use the ARM64 asset from the table instead.
 
 ### Inspect the archive layout
 
@@ -589,7 +589,7 @@ A binary links against whatever C library built it, so a download labelled only 
 
 Check yours with `ldd --version`. On an older distribution the binary doesn't start, and the error names a missing symbol version rather than saying the distribution is too old.
 
-Every currently offered download meets the 2.28 floor. Older `aarch64` binaries, built before that floor dropped, require glibc 2.39; if one refuses to start, take the current binary instead.
+Every currently offered download meets the 2.28 floor.
 
 Installing from the package index has no such floor and works wherever the Python and GPU requirements are met.
 

@@ -1,7 +1,8 @@
 name: CI
 
-# ONE TIER. Every event runs the same jobs, and a job that runs at all runs
-# everywhere.
+# ONE SOURCE-QUALITY WORKFLOW. Pull requests and pushes to main run the gates
+# appropriate to their trust and platform constraints. Release artifacts are
+# validated by the release workflows, not by rerunning source CI after publish.
 #
 # The split this replaced ran a small `pr-gate` on pull requests and a larger
 # comprehensive tier on pushes to main, which is the right shape on a hosted
@@ -44,8 +45,6 @@ on:
     branches:
       - main
   pull_request:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       # The two tiers that cannot simply run on a schedule: the GPU tier is
@@ -238,7 +237,7 @@ jobs:
   # interpreter named by UV_PYTHON instead, which is what the suite runs under
   # anyway.
   tests-windows:
-    name: "Test: Full Suite (Windows)"
+    name: "${{ github.event_name == 'pull_request' && 'Test: Provisioning Proofs (Windows)' || 'Test: Full Suite (Windows)' }}"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
@@ -319,7 +318,7 @@ jobs:
 
   tests-macos:
     name: "Test: Full Suite and Accelerator Backend (macOS)"
-    # Main pushes, releases, and explicit dispatches only. The main-push result
+    # Main pushes and explicit dispatches only. The main-push result
     # is the pre-publication support gate; pull requests from this public repo
     # never execute their code on a self-hosted workstation. The macOS runner is a laptop under
     # an AC-power policy: on battery it is deliberately booted out of the
@@ -332,11 +331,10 @@ jobs:
     # of the label-with-no-runner bug this workflow was just cleaned of, and
     # equally invisible.
     #
-    # Main integration and a release are deliberate acts. The machine must be
-    # plugged in before either is allowed to advertise MPS support.
+    # Main integration is deliberate. The machine must be plugged in before
+    # the repository is allowed to advertise MPS support.
     if: >-
       github.event_name == 'push' ||
-      github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
     timeout-minutes: 60

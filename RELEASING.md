@@ -94,8 +94,8 @@ rerun for the same tag.
 
 The required release checks include workflow lint, static analysis, tests,
 documentation checks, the Vault audit, and the dependency audit. The GPU
-integration suite is informational; the binary workflow's target matrix and
-runner preflight are the release gates for standalone artifacts.
+integration suite is informational; the binary workflow's target matrix is the
+release gate for standalone artifacts.
 
 ## Reproducing the binary artifacts locally
 

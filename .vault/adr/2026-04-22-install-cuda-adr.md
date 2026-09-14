@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#install-cuda'
 date: 2026-04-22
-modified: '2026-07-27'
-body_hash: 'sha256:2bc453800ad9d3624fc2e5c48775f2c241aad0f42909c78bfb952defcde4f7dd'
+modified: '2026-09-14'
+body_hash: 'sha256:3727f6c9af7e687dc61ca7d33505c0c26aa95d8f9c44896e4b0d5f6d5746ba7c'
 related:
   - '[[2026-04-22-install-cuda-research]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:bcd9fadcdcd66b2bbd628537b0a4ea17f3bd1ddbe699d01a7dcd5484d9c02c31'
+modified: '2026-09-14'
+body_hash: 'sha256:16aa05f915934f0a2b51c050139f620aaa958627fb70b737f27cac26d38a1538'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-03-09-qwen3-task-prefix-verification-research]]'

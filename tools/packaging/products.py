@@ -27,10 +27,8 @@ LINUX_ARM64 = "aarch64-unknown-linux-gnu"
 #: The triples Scoop serves. Scoop is Windows-only by construction.
 SCOOP_TARGETS = (WINDOWS_X86_64,)
 
-#: The triples Homebrew serves. Homebrew runs on macOS and on Linux, so a
-#: formula covers both - which is why the absence of a Linux ARM64 build is a
-#: delivery gap and not merely a missing convenience: Homebrew on Linux ARM64
-#: is a supported platform this product cannot currently be installed on.
+#: The triples Homebrew can serve. Product policy narrows this channel-level
+#: capability to the targets currently present in the release matrix.
 HOMEBREW_TARGETS = (MACOS_ARM64, MACOS_X86_64, LINUX_X86_64, LINUX_ARM64)
 
 
@@ -162,9 +160,6 @@ VAULTSPEC_RAG = Product(
     # Declaring a target the matrix does not build is not a promise of future
     # coverage: the generator warns and omits it on every single release, and
     # the formula silently lacks a platform the product claims to support.
-    # aarch64-unknown-linux-gnu is listed because a leg builds it again: its
-    # runner is online and enrolled in the host's fleet scripts, which is the
-    # condition the leg's earlier removal was made against.
     supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
     display_name="Vaultspec RAG",
     publisher="Vaultspec Project",

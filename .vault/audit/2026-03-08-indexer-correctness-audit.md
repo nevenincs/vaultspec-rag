@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:7ad01defdcc76f2a4f455263b16063c0149cadb6dfde6c4ac8f311c742211c30'
+modified: '2026-09-14'
+body_hash: 'sha256:261274fe69662c9703e39a07a55cf507595a08ec967897d2f08b2c974c9a59cd'
 ---
 
 # Deep Audit: indexer.py Pipeline Correctness
