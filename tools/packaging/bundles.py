@@ -27,6 +27,8 @@ MANIFEST_NAME = "manifest.json"
 LICENSE_NAME = "LICENSE"
 README_NAME = "README.txt"
 MANIFEST_SCHEMA = "vaultspec.release-bundle.v1"
+EXECUTABLE_MODE = 0o755
+DATA_MODE = 0o644
 
 
 class BundleError(RuntimeError):
@@ -40,6 +42,19 @@ class BundleFile:
     source: Path
     name: str
     role: str
+
+    @property
+    def mode(self) -> int:
+        """Return the canonical archive mode for this member's role."""
+        return EXECUTABLE_MODE if self.role == "executable" else DATA_MODE
+
+
+@dataclass(frozen=True)
+class ArchiveFile:
+    """One regular archive member and its portable permission bits."""
+
+    payload: bytes
+    mode: int
 
 
 @dataclass(frozen=True)
@@ -171,7 +186,7 @@ def _zip_archive(destination: Path, files: tuple[BundleFile, ...]) -> None:
         for member in sorted(files, key=lambda item: item.name):
             info = zipfile.ZipInfo(member.name, date_time=(1980, 1, 1, 0, 0, 0))
             info.create_system = 3
-            info.external_attr = (member.source.stat().st_mode & 0xFFFF) << 16
+            info.external_attr = member.mode << 16
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, member.source.read_bytes())
 
@@ -191,7 +206,7 @@ def _tar_archive(destination: Path, files: tuple[BundleFile, ...]) -> None:
             data = member.source.read_bytes()
             info = tarfile.TarInfo(member.name)
             info.size = len(data)
-            info.mode = member.source.stat().st_mode & 0o777
+            info.mode = member.mode
             info.uid = 0
             info.gid = 0
             info.uname = ""
@@ -276,7 +291,7 @@ def build_bundle(
     return archive
 
 
-def _archive_contents(archive: Path, target: str) -> dict[str, bytes]:
+def _archive_contents(archive: Path, target: str) -> dict[str, ArchiveFile]:
     """Read regular-file members, rejecting ambiguous archive layouts."""
     if is_windows_target(target):
         try:
@@ -287,7 +302,13 @@ def _archive_contents(archive: Path, target: str) -> dict[str, bytes]:
                     raise BundleError(f"bundle contains a directory: {archive}")
                 if len(names) != len(set(names)):
                     raise BundleError(f"bundle contains duplicate members: {archive}")
-                return {name: handle.read(name) for name in names}
+                return {
+                    info.filename: ArchiveFile(
+                        handle.read(info),
+                        (info.external_attr >> 16) & 0o777,
+                    )
+                    for info in infos
+                }
         except (OSError, zipfile.BadZipFile) as exc:
             raise BundleError(f"could not read ZIP bundle {archive}: {exc}") from exc
 
@@ -299,12 +320,12 @@ def _archive_contents(archive: Path, target: str) -> dict[str, bytes]:
                 raise BundleError(f"bundle contains a non-file member: {archive}")
             if len(names) != len(set(names)):
                 raise BundleError(f"bundle contains duplicate members: {archive}")
-            contents: dict[str, bytes] = {}
+            contents: dict[str, ArchiveFile] = {}
             for member in members:
                 payload = handle.extractfile(member)
                 if payload is None:
                     raise BundleError(f"bundle member cannot be read: {member.name}")
-                contents[member.name] = payload.read()
+                contents[member.name] = ArchiveFile(payload.read(), member.mode & 0o777)
             return contents
     except (OSError, tarfile.ReadError) as exc:
         raise BundleError(f"could not read TAR.GZ bundle {archive}: {exc}") from exc
@@ -322,10 +343,10 @@ def _expected_roles(spec: BundleSpec) -> dict[str, str]:
     }
 
 
-def _read_manifest(contents: dict[str, bytes]) -> dict[str, object]:
+def _read_manifest(contents: dict[str, ArchiveFile]) -> dict[str, object]:
     """Parse the manifest member as a JSON object."""
     try:
-        parsed: object = json.loads(contents[MANIFEST_NAME])
+        parsed: object = json.loads(contents[MANIFEST_NAME].payload)
     except json.JSONDecodeError as exc:
         raise BundleError(f"manifest.json is not valid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
@@ -382,7 +403,7 @@ def _verify_manifest_metadata(manifest: dict[str, object], spec: BundleSpec) -> 
 
 def _verify_manifest_files(
     manifest: dict[str, object],
-    contents: dict[str, bytes],
+    contents: dict[str, ArchiveFile],
     expected_roles: dict[str, str],
 ) -> None:
     """Verify manifest entries, member roles, sizes, and hashes."""
@@ -408,11 +429,25 @@ def _verify_manifest_files(
             raise BundleError(f"manifest.json role for {name} is incorrect")
         size = entry.get("size")
         digest = entry.get("sha256")
-        actual = contents[name]
+        actual = contents[name].payload
         if not isinstance(size, int) or isinstance(size, bool) or size != len(actual):
             raise BundleError(f"manifest.json size for {name} is incorrect")
         if digest != hashlib.sha256(actual).hexdigest():
             raise BundleError(f"manifest.json hash for {name} is incorrect")
+
+
+def _verify_member_modes(
+    contents: dict[str, ArchiveFile], expected_roles: dict[str, str]
+) -> None:
+    """Require canonical executable and data modes on every archive member."""
+    roles = {**expected_roles, MANIFEST_NAME: "manifest"}
+    for name, role in roles.items():
+        expected = EXECUTABLE_MODE if role == "executable" else DATA_MODE
+        actual = contents[name].mode
+        if actual != expected:
+            raise BundleError(
+                f"bundle mode for {name} is {actual:#05o}; expected {expected:#05o}"
+            )
 
 
 def verify_bundle(archive: Path, spec: BundleSpec) -> None:
@@ -435,6 +470,7 @@ def verify_bundle(archive: Path, spec: BundleSpec) -> None:
     manifest = _read_manifest(contents)
     _verify_manifest_metadata(manifest, spec)
     _verify_manifest_files(manifest, contents, expected_roles)
+    _verify_member_modes(contents, expected_roles)
 
 
 def main() -> int:
@@ -472,10 +508,12 @@ def main() -> int:
     if args.verify is not None:
         if args.target is None or (args.tag is None and args.version is None):
             parser.error("--verify requires --target and --tag or --version")
+        assert args.target is not None
+        assert args.tag is not None or args.version is not None
         version = (
             args.version
             if args.version is not None
-            else VAULTSPEC_RAG.version_from_tag(args.tag)
+            else VAULTSPEC_RAG.version_from_tag(cast("str", args.tag))
         )
         verify_bundle(args.verify, BundleSpec(VAULTSPEC_RAG, version, args.target))
         print(f"verified {args.verify}")
@@ -484,10 +522,11 @@ def main() -> int:
         parser.error("--target is required when building a bundle")
     if args.tag is None and args.version is None:
         parser.error("one of --tag or --version is required when building a bundle")
+    assert args.tag is not None or args.version is not None
     version = (
         args.version
         if args.version is not None
-        else VAULTSPEC_RAG.version_from_tag(args.tag)
+        else VAULTSPEC_RAG.version_from_tag(cast("str", args.tag))
     )
     archive = build_bundle(
         BundleSpec(VAULTSPEC_RAG, version, args.target),
