@@ -39,18 +39,18 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
 
     assert ready < upload
     assert 'expected_name="${TAG}-${triple}${suffix}"' in release_gate
-    assert "expected_names+=(\"${expected_name}\")" in release_gate
+    assert 'expected_names+=("${expected_name}")' in release_gate
     assert "raw=()" in release_gate
     assert "unexpected=()" in release_gate
     assert "exit 1" in release_gate
 
-    assert "expected_name=\"${TAG}-${triple}${suffix}\"" in verify_gate
+    assert 'expected_name="${TAG}-${triple}${suffix}"' in verify_gate
     assert "bundle_archives=()" in verify_gate
     assert "raw=()" in verify_gate
     assert "RELEASE_RESULT" in verify_gate
     assert "vaultspec-rag-*|vaultspec-search-mcp-*)" in verify_gate
     assert verify < promote
-    assert 'if: ${{ success() }}' in text[promote:]
+    assert "if: ${{ success() }}" in text[promote:]
 
 
 def test_python_and_binary_release_workflows_share_the_checksum_lock(

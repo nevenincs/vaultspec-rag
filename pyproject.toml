@@ -91,11 +91,7 @@ version = "0.4.28"
   # Local embedding and reranking are intentionally opt-in. The command and
   # service-control surfaces stay usable without these packages, while a
   # CUDA-capable workspace requests the complete model stack explicitly.
-  gpu = [
-    "sentence-transformers>=5.0",
-    "torch>=2.4",
-    "transformers>=4.51",
-  ]
+  gpu = ["sentence-transformers>=5.0", "torch>=2.4", "transformers>=4.51"]
 
 [dependency-groups]
 dev = [
@@ -505,6 +501,6 @@ known_first_party = ["vaultspec_rag"]
   DEP003 = ["tqdm"]
 
 [tool.vaultspec-rag.mcp-extra]
+added = true
 location = "[dependency-groups].dev"
 managed = "vaultspec-rag[mcp]"
-added = true
