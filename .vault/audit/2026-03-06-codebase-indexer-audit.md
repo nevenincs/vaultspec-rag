@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-27'
-body_hash: 'sha256:44a261a210efd80a2872e19983eea12dfddb8a0cc6ab827624535869f16a4cf3'
+modified: '2026-09-14'
+body_hash: 'sha256:6819636269a89d39c5fd2acdb063aa5eaed17b7fb6ed6c21f0bfd2aa81212dbc'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---

@@ -314,10 +314,8 @@ GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
     # the build environment enforces rather than one the build host happens to
     # satisfy. Verified on v0.4.15.
     "x86_64-unknown-linux-gnu": (2, 28),
-    # 2.28, matching x86_64. This target now builds inside the digest-pinned
-    # manylinux_2_28_aarch64 image on a GitHub-hosted ARM64 runner, so like
-    # x86_64 above this is a promise the build environment enforces rather than
-    # one the build host happens to satisfy.
+    # Built inside the digest-pinned manylinux_2_28_aarch64 image, matching the
+    # x86_64 floor rather than inheriting the ARM runner host's glibc version.
     #
     # It was 2.39 for as long as the only ARM64 Linux host was a colima
     # container that could not start the image and therefore built natively,

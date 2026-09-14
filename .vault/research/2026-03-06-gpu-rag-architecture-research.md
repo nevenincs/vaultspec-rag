@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-27'
-body_hash: 'sha256:19ce531f49479de0489cc26664ece15f77ddd64b8df9ac47bdc51cf8e1f15550'
+modified: '2026-09-14'
+body_hash: 'sha256:00e2e55a6124430503a9dcf60bbaef9eeec4103cd69e324ad26edc5c7dce606b'
 ---
 
 # GPU-Only RAG Architecture: Grounding Report

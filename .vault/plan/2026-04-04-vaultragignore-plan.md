@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#vaultragignore'
 date: '2026-04-04'
-modified: '2026-07-27'
-body_hash: 'sha256:9ac58034b354a216f86b33b7947b77ddf6665355ef28b54f66bfc1a7477656b2'
+modified: '2026-09-14'
+body_hash: 'sha256:4c4660eb6ff53554ac0f52995774304500f14922400432b161af56e933ce49a6'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-research]]'

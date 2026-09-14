@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:2abfd8b1efb5465f11f84fbd6aaf3b9052401b1922c114a33ccc9a904c9c7404'
+modified: '2026-09-14'
+body_hash: 'sha256:2e1c68aa12d51476cd381292b57c1a732a02b395ebd5f8231cd7747088753fba'
 ---
 
 # Round 32: Security & Error-Handling Audit

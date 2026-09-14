@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:d9641b0d9eee21dce790a0f99c7160a515c9adabcadb8b4ea96c9de5466c5f25'
+modified: '2026-09-14'
+body_hash: 'sha256:31c71717491157744f8d065cc0043afcd1d4d395c957eed846d6ef74f233aaef'
 ---
 
 # Round 34 Audit: Graph Cache Integrity and CrossEncoder Reranker Safety

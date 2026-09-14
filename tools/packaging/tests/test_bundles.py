@@ -6,6 +6,7 @@ import hashlib
 import json
 import tarfile
 import zipfile
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,6 +30,7 @@ TARGETS = (
     products.LINUX_X86_64,
     products.LINUX_ARM64,
 )
+MULTI_ARCH_PRODUCT = replace(VAULTSPEC_RAG, supported_targets=TARGETS)
 VERSION = "0.4.6"
 REVISION = "revision-1"
 
@@ -83,7 +85,7 @@ def test_build_bundle_has_stable_contents_and_manifest(
     repo.mkdir()
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")
     raw = _raw_outputs(tmp_path, target)
-    spec = BundleSpec(VAULTSPEC_RAG, VERSION, target)
+    spec = BundleSpec(MULTI_ARCH_PRODUCT, VERSION, target)
 
     archive = build_bundle(
         spec,
@@ -143,7 +145,7 @@ def test_build_bundle_is_deterministic(tmp_path: Path, target: str) -> None:
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")
     raw = _raw_outputs(tmp_path, target)
     output = tmp_path / "bundles"
-    spec = BundleSpec(VAULTSPEC_RAG, VERSION, target)
+    spec = BundleSpec(MULTI_ARCH_PRODUCT, VERSION, target)
 
     archive = build_bundle(spec, raw, output, repo, REVISION)
     first = archive.read_bytes()

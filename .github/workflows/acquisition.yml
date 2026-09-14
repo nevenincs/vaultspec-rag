@@ -89,36 +89,6 @@ jobs:
             arch: aarch64
             runner: [self-hosted, ARM64, Linux]
             triple: aarch64-unknown-linux-gnu
-    # BOTH ARCHITECTURES, and the aarch64 half is new because the artifact it
-    # tests is new.
-    #
-    # This workflow was x86_64-only for two different reasons in sequence.
-    # First no host could run these images on ARM64 at all. Then, once
-    # binaries.yml moved that target onto `ubuntu-24.04-arm` and the declared
-    # floor dropped to 2.28, the blocker became sequencing: this workflow tests
-    # the LATEST PUBLISHED release, and every release up to that point was
-    # built natively at 2.39, so an aarch64 almalinux:8 leg would have failed
-    # truthfully about an artifact the fix had not reached.
-    #
-    # v0.4.19 is the first release built under the pin. Its published aarch64
-    # binaries measure a 2.28 floor - read from `.gnu.version_r` on the
-    # downloaded assets, not inferred from the build succeeding - so the leg
-    # now has something real to pass or fail against.
-    #
-    # THE TRIPLE MOVED INTO THE MATRIX, and that is the load-bearing part of
-    # this change rather than the extra rows. The download URL used to hardcode
-    # `-x86_64-unknown-linux-gnu`; an aarch64 leg stacked on top of that would
-    # have pulled the x86_64 binary onto an ARM64 machine. `ldd` would have
-    # refused it and the leg would have failed for the wrong reason - or worse,
-    # been "fixed" by relaxing the assertion that catches it.
-    #
-    # THE aarch64 LEGS ARE KNOWN TO FAIL AS WRITTEN. They are container jobs
-    # on `macbook-neo-linux-arm-rag`, which is itself a colima container
-    # whose runner home is a named volume, so a sibling job container
-    # mounts a path that does not exist in the VM and the job dies in
-    # `Initialize containers` before any step runs. The fix is to bind-mount
-    # the runner's home from the identical path in the VM, which needs the
-    # runner re-enrolled.
     # A matrix job names its runner through `${ matrix.runner }`, which is
     # invisible to any check grepping for `self-hosted` - and these are the
     # longest-running jobs in the fleet, so the six-hour default ceiling was

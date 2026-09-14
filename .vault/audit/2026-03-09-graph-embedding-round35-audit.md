@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:8ff17045b2b83a39046df162f511dd7abf4aa3cb9c1d7cbf08df20aaf8ef96a0'
+modified: '2026-09-14'
+body_hash: 'sha256:44e01749d15ed700bd6afd0712c33d152841f7e74c9a8eff659289a985d36dc2'
 ---
 
 # Round 35: api.py Graph Invalidation + search_all() Double Encoding Audit

@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:9d611dfc11f803ede9b342f3a3a24189e9bb05f1e03c9b1527373e1460f9da0e'
+modified: '2026-09-14'
+body_hash: 'sha256:9149cd0061bc8df2a8d83c1a9beeb0c65fd9c9355722fb917455273d73cdd199'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
   - '[[2026-03-09-graph-embedding-round36-audit]]'

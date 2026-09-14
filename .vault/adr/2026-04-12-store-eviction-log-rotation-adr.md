@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-30'
-body_hash: 'sha256:0704e04aca7e044e772b7a4756f5a734192c55c3d2f46e7f381ff7fb1a915159'
+modified: '2026-09-14'
+body_hash: 'sha256:7ffd3cc0adb2f13e8329069eec5bceca2554c775b4295142598471d31e3909c1'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'

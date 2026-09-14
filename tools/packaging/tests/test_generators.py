@@ -10,6 +10,7 @@ rather than invented, and a pointer never moves backward.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -281,8 +282,9 @@ def test_homebrew_formula_states_the_shared_linux_glibc_floor() -> None:
     cannot drift apart.
     """
     targets = (products.WINDOWS_X86_64, products.LINUX_X86_64, products.LINUX_ARM64)
+    multi_arch_product = replace(VAULTSPEC_RAG, supported_targets=targets)
     formula = homebrew.render(
-        VAULTSPEC_RAG, VERSION, digests_for(targets), available=targets
+        multi_arch_product, VERSION, digests_for(targets), available=targets
     )
     floor = ".".join(str(part) for part in GLIBC_FLOOR[products.LINUX_X86_64])
     assert f"Linux builds require glibc {floor} or newer." in formula
@@ -303,12 +305,12 @@ def test_homebrew_formula_states_each_floor_when_targets_disagree(
         {products.LINUX_X86_64: (2, 28), products.LINUX_ARM64: (2, 39)},
     )
     targets = (products.WINDOWS_X86_64, products.LINUX_X86_64, products.LINUX_ARM64)
-    formula = homebrew.render(
-        VAULTSPEC_RAG, VERSION, digests_for(targets), available=targets
-    )
-    assert f"{products.LINUX_X86_64} requires glibc 2.28 or newer." in formula
-    assert f"{products.LINUX_ARM64} requires glibc 2.39 or newer." in formula
-    assert "Linux builds require glibc" not in formula
+    multi_arch_product = replace(VAULTSPEC_RAG, supported_targets=targets)
+    available = tuple(target for target in targets if multi_arch_product.serves(target))
+    caveats = homebrew._glibc_caveats(available)
+    assert f"{products.LINUX_X86_64} requires glibc 2.28 or newer." in caveats
+    assert f"{products.LINUX_ARM64} requires glibc 2.39 or newer." in caveats
+    assert not any("Linux builds require glibc" in caveat for caveat in caveats)
 
 
 def test_scoop_manifest_carries_no_glibc_caveat() -> None:

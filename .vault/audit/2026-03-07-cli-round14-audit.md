@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:9619d15ff4243eb122bbfe07a1b3554698c47685c070df251e6c1b63afb8cf90'
+modified: '2026-09-14'
+body_hash: 'sha256:578de9e53777b69aab19ee90c88b59169c5e240b725c93b2610f3afc1200ef7a'
 ---
 
 # Round 14 Audit -- cli.py (full audit)
