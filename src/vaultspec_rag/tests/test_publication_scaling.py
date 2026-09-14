@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from statistics import median
+from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
 import pytest
@@ -210,6 +212,49 @@ def test_an_exact_path_read_examines_the_same_work_at_any_parent_size(
         f"a read over a 10,000-path parent retired {large_cost.vm_steps} "
         f"instructions against {small_cost.vm_steps} over a 10-path parent; "
         "the exact-path read is examining the collection rather than seeking"
+    )
+
+
+def test_large_parent_single_path_read_meets_elapsed_budget(tmp_path: Path) -> None:
+    """A one-path read remains fast when the published parent is large.
+
+    VM instructions above are the deterministic regression guard. This companion
+    benchmark records the user-visible elapsed claim over warmed production reads:
+    the 25,000-path parent must stay within a generous absolute ceiling and may not
+    grow materially relative to a ten-path parent.
+
+    Proven able to fail: replacing the five-millisecond ceiling with one nanosecond
+    failed this test at the elapsed assertion with a measured 2.048ms read. Restoring
+    the production ceiling passed with the same large-parent workload.
+    """
+    small_ledger, small_key = _seed(tmp_path / "small-elapsed", 10)
+    large_ledger, large_key = _seed(tmp_path / "large-elapsed", 25_000)
+    small_path = "src/file-000009.py"
+    large_path = "src/file-024999.py"
+
+    def measured_ns(
+        ledger: RunLedger,
+        key: ProofCompatibilityKey,
+        rel_path: str,
+    ) -> float:
+        ledger.publication_evidence_for_paths(key, (rel_path,))
+        samples: list[int] = []
+        for _ in range(64):
+            started = perf_counter_ns()
+            result = ledger.publication_evidence_for_paths(key, (rel_path,))
+            samples.append(perf_counter_ns() - started)
+            assert result[rel_path].point_ids
+        return median(samples)
+
+    small_ns = measured_ns(small_ledger, small_key, small_path)
+    large_ns = measured_ns(large_ledger, large_key, large_path)
+
+    assert large_ns < 5_000_000, (
+        f"one exact-path read over 25,000 parents took {large_ns / 1_000_000:.3f}ms"
+    )
+    assert large_ns <= small_ns * 5, (
+        f"large-parent median {large_ns / 1_000_000:.3f}ms exceeded five times "
+        f"the small-parent median {small_ns / 1_000_000:.3f}ms"
     )
 
 
