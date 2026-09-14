@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-09-11'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:55b9ddb61f21e119bed01f5203a1c4f7c6f43e83886d232be1f8e47ec9344e44'
+body_hash: 'sha256:3bebed2263c256d2ea4d2ff959eb8239cef69130e0216112296315ff067e2937'
 related:
   - '[[2026-09-11-binary-release-bundles-P01-S01]]'
   - '[[2026-09-11-binary-release-bundles-P01-S02]]'
@@ -33,6 +33,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-final-review-audit]]'
   - '[[2026-09-11-binary-release-bundles-plan]]'
   - '[[2026-09-11-binary-release-bundles-rag-port-research]]'
+  - '[[2026-09-14-binary-release-bundles-post-fix-review-audit]]'
 ---
 
 # `binary-release-bundles` feature index
@@ -49,6 +50,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 - `2026-09-11-binary-release-bundles-audit` - `binary-release-bundles` audit: `P01 through P03.S16 implementation review`
 - `2026-09-11-binary-release-bundles-final-review-audit` - `binary-release-bundles` audit: `final review`
+- `2026-09-14-binary-release-bundles-post-fix-review-audit` - `binary-release-bundles` audit: `post-fix review`
 
 ### exec
 
