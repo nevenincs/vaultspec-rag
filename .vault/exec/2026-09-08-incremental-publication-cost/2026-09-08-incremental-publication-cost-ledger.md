@@ -590,4 +590,3 @@ related:
 - `S74` Evidence: governing plan scope plus Git history; no path invented.
 - `S75` Evidence: governing plan scope plus Git history; no path invented.
 - `S76` Evidence: governing plan scope plus Git history; no path invented.
-

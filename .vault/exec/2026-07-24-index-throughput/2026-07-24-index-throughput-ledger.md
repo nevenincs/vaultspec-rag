@@ -47,4 +47,3 @@ related:
 - `S18` `T` `pyproject.toml`
 - `S18` `T` `.python-version`
 - `S09` `T` `src/vaultspec_rag/config/_settings.py`
-
