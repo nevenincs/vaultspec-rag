@@ -934,10 +934,31 @@ async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_histor
     tmp_path: Path,
     managed_watcher_runtime: tuple[ServiceRegistry, JobManager],
 ) -> None:
-    """A crashed exact admission never becomes a duplicate or unscoped job."""
-    _registry, manager = managed_watcher_runtime
+    """A refused restart preserves both the served payload and publication.
+
+    Mutation proof: substituting a different post-refusal query changed a returned
+    score and failed the exact payload-equality assertion; restoring the original
+    query passes while the publication revision and generation also remain equal.
+    """
+    registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
-    (root / ".vault" / "adr").mkdir(parents=True)
+    registry.start_readiness(asyncio.get_running_loop())
+    _build_watched_code_project(root, registry)
+    registry.readiness_registry.publish_next(
+        root, "code", generation="baseline-publication"
+    )
+    before_results: tuple[tuple[str, str, float, str], ...] = ()
+    with registry.compute_lease(root) as lease:
+        before_results = tuple(
+            (result.id, result.path, result.score, result.snippet)
+            for result in lease.runtime.searcher.search_codebase(
+                "zebrafish unique token", top_k=5
+            )
+        )
+    before_publication = registry.readiness_registry.snapshot(root, "code")
+    assert before_results
+    assert before_publication.publication_revision is not None
+    assert before_publication.published_generation is not None
     state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
     script = "\n".join(
         (
@@ -979,8 +1000,26 @@ async def test_watcher_restart_refuses_fenced_scope_without_canonical_job_histor
             refused["attempt_job_id"],
             _watcher_jobs(manager, root),
         ) == ([], [], None, [])
+        after_results: tuple[tuple[str, str, float, str], ...] = ()
+        with registry.compute_lease(root) as lease:
+            after_results = tuple(
+                (result.id, result.path, result.score, result.snippet)
+                for result in lease.runtime.searcher.search_codebase(
+                    "zebrafish unique token", top_k=5
+                )
+            )
+        after_publication = registry.readiness_registry.snapshot(root, "code")
+        assert after_results == before_results
+        assert (
+            after_publication.publication_revision,
+            after_publication.published_generation,
+        ) == (
+            before_publication.publication_revision,
+            before_publication.published_generation,
+        )
     finally:
         await _stop_watcher(root)
+        registry.readiness_registry.close()
 
 
 @pytest.mark.asyncio

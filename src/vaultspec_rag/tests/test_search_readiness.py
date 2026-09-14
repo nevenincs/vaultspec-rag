@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -229,6 +230,58 @@ async def test_bounded_wait_releases_registry_lock_for_parallel_work(
     registry.publish_next(tmp_path, "code", generation="published")
     assert await waiting
     assert registry._observers == {}
+
+
+async def test_bounded_admission_holds_neither_service_nor_gpu_lock(
+    tmp_path: Path,
+) -> None:
+    """A freshness waiter cannot serialize registry work or GPU forwards.
+
+    Mutation proof: deliberately holding ``gpu_lock`` across the competing-thread
+    acquisition failed at the named GPU-serialization assertion; restoring the
+    unlocked production path passes with the admission still pending.
+    """
+    registry = ServiceRegistry()
+    registry.start_readiness(asyncio.get_running_loop())
+    readiness = registry.readiness_registry
+    readiness.notify_controller(tmp_path, "code", generation="wanted")
+    request = SearchRequest(
+        root=tmp_path,
+        query="parallel readiness",
+        top_k=1,
+        payload={},
+        search_type=PublicSourceType.CODE,
+        request_id="bounded-lock-proof",
+        freshness_policy=FreshnessWaitPolicy.BOUNDED,
+        freshness_wait_seconds=5,
+    )
+
+    def acquire_service_lock() -> None:
+        assert registry._lock.acquire(blocking=False), (
+            "bounded readiness wait held the service registry lock"
+        )
+        registry._lock.release()
+
+    def acquire_gpu_lock() -> None:
+        assert registry.gpu_lock.acquire(blocking=False), (
+            "bounded readiness wait held the GPU serialization lock"
+        )
+        registry.gpu_lock.release()
+
+    waiting = asyncio.create_task(_admit_requested_freshness(request, registry))
+    try:
+        await _wait_until_registered(readiness)
+        await asyncio.wait_for(asyncio.to_thread(acquire_service_lock), timeout=0.5)
+        await asyncio.wait_for(asyncio.to_thread(acquire_gpu_lock), timeout=0.5)
+        assert not waiting.done()
+        readiness.publish_next(tmp_path, "code", generation="wanted")
+        assert (await waiting).outcome == "satisfied"
+    finally:
+        if not waiting.done():
+            waiting.cancel()
+            with suppress(asyncio.CancelledError):
+                await waiting
+        readiness.close()
 
 
 async def test_already_satisfied_target_returns_without_waiting(tmp_path: Path) -> None:
