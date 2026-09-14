@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._search_state import FreshnessWaitPolicy
+from .._source_types import PublicSourceType
 from ..indexer._content_policy import RootContentPolicy, SourceProfileVersion
 from ..indexer._document_indexer import DocumentIndexer
 from ..indexer._generation_lifecycle import (
@@ -32,6 +34,7 @@ from ..job_models import (
     JobSpec,
 )
 from ..progress import NullProgressReporter
+from ..server._routes_search import SearchRequest, _admit_requested_freshness
 from ..server._search_readiness import (
     PublicationTarget,
     ReadinessRegistryClosedError,
@@ -48,7 +51,7 @@ if TYPE_CHECKING:
     from .._source_types import IndexSource
     from ..indexer._document_checkpoint import DocumentRunCheckpoint
 
-pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+pytestmark = pytest.mark.unit
 
 
 @dataclass(slots=True)
@@ -168,6 +171,63 @@ async def test_zero_timeout_bypasses_observer_registration(tmp_path: Path) -> No
 
     assert not satisfied
     assert scheduler.wait_calls == 0
+    assert registry._observers == {}
+
+
+async def test_immediate_admission_never_touches_the_readiness_waiter(
+    tmp_path: Path,
+) -> None:
+    """Immediate policy bypasses the registry rather than performing a zero wait.
+
+    Mutation proof: reversing the production immediate-policy comparison reached
+    ``readiness_registry`` and failed on ``immediate admission touched the readiness
+    registry`` (exit 1); restoring the comparison passed this test (exit 0).
+    """
+
+    class _RegistryThatMustNotBeRead:
+        @property
+        def readiness_registry(self) -> ReadinessRevisionRegistry:
+            raise AssertionError("immediate admission touched the readiness registry")
+
+    request = SearchRequest(
+        root=tmp_path,
+        query="readiness bypass",
+        top_k=1,
+        payload={},
+        search_type=PublicSourceType.CODE,
+        request_id="immediate-bypass",
+        freshness_policy=FreshnessWaitPolicy.IMMEDIATE,
+    )
+
+    admission = await _admit_requested_freshness(
+        request,
+        cast("ServiceRegistry", _RegistryThatMustNotBeRead()),
+    )
+
+    assert admission.outcome == "immediate"
+
+
+async def test_bounded_wait_releases_registry_lock_for_parallel_work(
+    tmp_path: Path,
+) -> None:
+    """A pending freshness wait owns no lock that serializes unrelated work."""
+    scheduler = VirtualReadinessDeadlineScheduler()
+    registry = _registry(scheduler)
+    target = _target(tmp_path, "code", 1, "published")
+    waiting = asyncio.create_task(
+        registry.published_at_least((target,), timeout_seconds=5)
+    )
+    await _wait_until_registered(registry)
+
+    parallel_snapshot = await asyncio.wait_for(
+        asyncio.to_thread(registry.snapshot, tmp_path / "parallel", "document"),
+        timeout=0.5,
+    )
+
+    assert parallel_snapshot.publication_revision is None
+    assert not waiting.done()
+    registry.publish_next(tmp_path, "code", generation="published")
+    assert await waiting
     assert registry._observers == {}
 
 
