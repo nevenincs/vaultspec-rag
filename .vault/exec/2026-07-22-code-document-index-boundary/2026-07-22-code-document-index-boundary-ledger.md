@@ -356,4 +356,3 @@ related:
 - `S84` Evidence: governing plan scope plus Git history; no path invented.
 - `S86` Evidence: governing plan scope plus Git history; no path invented.
 - `S87` Evidence: governing plan scope plus Git history; no path invented.
-

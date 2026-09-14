@@ -10,6 +10,7 @@ related:
   - "[[2026-07-24-index-throughput-plan]]"
   - "[[2026-07-24-index-throughput-adr]]"
 ---
+
 # `index-throughput` audit: `closeout decision and measurement safety`
 
 ## Scope
