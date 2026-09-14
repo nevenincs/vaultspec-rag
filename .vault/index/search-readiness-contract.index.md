@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:22d1c3bca60c7ff15bbea94f888bae4f3e01fe0dd290bd18c3694baf2d828049'
+body_hash: 'sha256:6cefa5662678987db92372ab0cf0c52e259890eac62a7f1af99bbe454fcd9c60'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -80,6 +80,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
   - '[[2026-09-08-search-readiness-contract-research]]'
   - '[[2026-09-09-search-readiness-contract-audit]]'
+  - '[[2026-09-14-search-readiness-contract-final-closeout-audit]]'
 ---
 
 # `search-readiness-contract` feature index
@@ -95,6 +96,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 ### audit
 
 - `2026-09-09-search-readiness-contract-audit` - `search-readiness-contract` audit: `post-merge integration alignment`
+- `2026-09-14-search-readiness-contract-final-closeout-audit` - `search-readiness-contract` audit: `final closeout`
 
 ### exec
 
