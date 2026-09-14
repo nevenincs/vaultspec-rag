@@ -56,11 +56,7 @@ def _write_wheel(
 ) -> None:
     """Write the metadata-bearing minimum archive accepted as a wheel fixture."""
     dist_info = f"{name.replace('-', '_')}-{version}.dist-info"
-    metadata = (
-        "Metadata-Version: 2.3\n"
-        f"Name: {name}\n"
-        f"Version: {version}\n\n"
-    ).encode()
+    metadata = (f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n\n").encode()
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(f"{dist_info}/METADATA", metadata)
 

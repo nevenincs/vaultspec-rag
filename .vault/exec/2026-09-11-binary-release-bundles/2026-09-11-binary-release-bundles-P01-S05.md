@@ -10,6 +10,7 @@ step_id: 'S05'
 related:
   - "[[2026-09-11-binary-release-bundles-plan]]"
 ---
+
 # Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs
 
 ## Scope

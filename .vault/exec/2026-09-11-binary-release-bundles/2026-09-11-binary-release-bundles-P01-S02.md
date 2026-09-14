@@ -10,6 +10,7 @@ step_id: 'S02'
 related:
   - "[[2026-09-11-binary-release-bundles-plan]]"
 ---
+
 # Implement deterministic per-target ZIP and TAR.GZ bundle creation with stable executables, manifest, license, usage material, and checksum sidecars
 
 ## Scope
