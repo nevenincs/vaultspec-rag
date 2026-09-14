@@ -256,6 +256,128 @@ async def _official_search_call(
         )
 
 
+def _search_source_for_scenario(scenario: SearchReadinessScenario) -> str:
+    """Return the public source name represented by a readiness scenario."""
+    if len(scenario.source_facts) > 1:
+        return "combined"
+    return next(iter(scenario.source_facts)).source
+
+
+def _search_tool_name(source: str) -> str:
+    """Map a canonical source to the official MCP search tool."""
+    return {
+        "vault": "search_vault",
+        "code": "search_codebase",
+        "document": "search_documents",
+        "combined": "search_combined",
+    }[source]
+
+
+def _assert_official_readiness_metadata(
+    response: CallToolResult,
+    scenario: SearchReadinessScenario,
+) -> tuple[dict[str, object], list[str], str]:
+    """Assert the envelope and readiness facts common to every scenario."""
+    assert response.is_error is False
+    structured = cast("dict[str, object]", response.structured_content)
+    assert structured == canonical_service_envelope(scenario)
+    readiness = cast("dict[str, object]", structured["readiness"])
+    expected_sources: list[str] = [str(fact.source) for fact in scenario.source_facts]
+    source_facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert [fact["source"] for fact in source_facts] == expected_sources
+    assert source_facts == [fact.as_dict() for fact in scenario.source_facts]
+    assert readiness["aggregate"] == scenario.aggregate.as_dict()
+    text = " ".join(
+        block.text for block in response.content if isinstance(block, TextContent)
+    )
+    return structured, expected_sources, text
+
+
+def _assert_official_success_text(
+    text: str,
+    *,
+    expected_sources: list[str],
+    scenario: SearchReadinessScenario,
+) -> None:
+    """Assert the text companion for a successful official MCP response."""
+    assert "readiness" in text
+    for expected_source in expected_sources:
+        assert expected_source in text
+    if scenario.results:
+        for result in scenario.results:
+            assert result.text in text
+        return
+    assert "results" in text
+    assert "[]" in text
+    assert "authoritative" in text
+
+
+def _assert_official_success_response(
+    structured: dict[str, object],
+    text: str,
+    *,
+    expected_sources: list[str],
+    scenario: SearchReadinessScenario,
+    source: str,
+) -> None:
+    """Assert result and text details for a successful search."""
+    assert structured["results"] == scenario.result_payloads()
+    assert structured["request_id"] == scenario.request_id
+    assert ("ok" in structured) is (source == "combined")
+    _assert_official_success_text(
+        text,
+        expected_sources=expected_sources,
+        scenario=scenario,
+    )
+
+
+def _assert_official_failure_response(
+    structured: dict[str, object],
+    text: str,
+    *,
+    scenario: SearchReadinessScenario,
+) -> None:
+    """Assert error details for an unavailable official MCP response."""
+    failure = scenario.failure
+    assert failure is not None
+    assert structured["ok"] is False
+    assert structured["error"] == failure.code
+    assert structured["message"] == failure.message
+    assert structured["retryable"] is failure.retryable
+    assert structured["request_id"] == scenario.request_id
+    assert structured["remediation"] == failure.remediation
+    assert "results" not in structured
+    assert failure.code in text
+    assert failure.message in text
+    assert failure.remediation in text
+
+
+def _assert_official_search_response(
+    response: CallToolResult,
+    scenario: SearchReadinessScenario,
+    *,
+    source: str,
+    requests: list[dict[str, object]],
+) -> None:
+    """Assert every public field emitted by the official MCP client."""
+    structured, expected_sources, text = _assert_official_readiness_metadata(
+        response,
+        scenario,
+    )
+    if scenario.failure is None:
+        _assert_official_success_response(
+            structured,
+            text,
+            expected_sources=expected_sources,
+            scenario=scenario,
+            source=source,
+        )
+    else:
+        _assert_official_failure_response(structured, text, scenario=scenario)
+    assert len(requests) == 1
+    assert requests[0]["type"] == source
+
+
 @pytest.mark.parametrize(
     "scenario", SEARCH_READINESS_SCENARIOS.values(), ids=lambda item: item.name
 )
@@ -263,17 +385,8 @@ def test_official_client_preserves_canonical_search_envelope(
     tmp_path: Path,
     scenario: SearchReadinessScenario,
 ) -> None:
-    source = (
-        "combined"
-        if len(scenario.source_facts) > 1
-        else next(iter(scenario.source_facts)).source
-    )
-    tool_name = {
-        "vault": "search_vault",
-        "code": "search_codebase",
-        "document": "search_documents",
-        "combined": "search_combined",
-    }[source]
+    source = _search_source_for_scenario(scenario)
+    tool_name = _search_tool_name(source)
     root = tmp_path / scenario.name
     (root / ".vaultspec").mkdir(parents=True)
     with _canonical_search_service(tmp_path, scenario=scenario) as (
@@ -295,45 +408,9 @@ def test_official_client_preserves_canonical_search_envelope(
     # exact assertion fail with ``is_error=True`` and ``structured_content=None``
     # (RED exit 1); in the same uninterrupted sequence, immediately removing the
     # reducer restored the identical case to a structured result (GREEN exit 0).
-    assert response.is_error is False
-    structured = cast("dict[str, object]", response.structured_content)
-    expected = canonical_service_envelope(scenario)
-    assert structured == expected
-    readiness = cast("dict[str, object]", structured["readiness"])
-    expected_sources = [fact.source for fact in scenario.source_facts]
-    source_facts = cast("list[dict[str, object]]", readiness["sources"])
-    assert [fact["source"] for fact in source_facts] == expected_sources
-    assert source_facts == [fact.as_dict() for fact in scenario.source_facts]
-    assert readiness["aggregate"] == scenario.aggregate.as_dict()
-    text = " ".join(
-        block.text for block in response.content if isinstance(block, TextContent)
+    _assert_official_search_response(
+        response,
+        scenario,
+        source=source,
+        requests=requests,
     )
-    if scenario.failure is None:
-        assert structured["results"] == scenario.result_payloads()
-        assert structured["request_id"] == scenario.request_id
-        assert ("ok" in structured) is (source == "combined")
-        # FastMCP's text companion must remain useful without requiring callers to
-        # decode the already-exact structured payload asserted above.
-        assert "readiness" in text
-        for expected_source in expected_sources:
-            assert expected_source in text
-        if scenario.results:
-            for result in scenario.results:
-                assert result.text in text
-        else:
-            assert "results" in text
-            assert "[]" in text
-            assert "authoritative" in text
-    else:
-        assert structured["ok"] is False
-        assert structured["error"] == scenario.failure.code
-        assert structured["message"] == scenario.failure.message
-        assert structured["retryable"] is scenario.failure.retryable
-        assert structured["request_id"] == scenario.request_id
-        assert structured["remediation"] == scenario.failure.remediation
-        assert "results" not in structured
-        assert scenario.failure.code in text
-        assert scenario.failure.message in text
-        assert scenario.failure.remediation in text
-    assert len(requests) == 1
-    assert requests[0]["type"] == source
