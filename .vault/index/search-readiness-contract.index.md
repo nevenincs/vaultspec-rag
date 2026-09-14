@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:f0a898db4b26de41dbb19331bf34f2451c6ee1eda29e5fb8c8b746784c7f577b'
+body_hash: 'sha256:22d1c3bca60c7ff15bbea94f888bae4f3e01fe0dd290bd18c3694baf2d828049'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -74,6 +74,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W04-P12-S53]]'
   - '[[2026-09-08-search-readiness-contract-W04-P12-S54]]'
   - '[[2026-09-08-search-readiness-contract-W04-P13-S55]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P13-S56]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -163,6 +164,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W04-P12-S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization
 - `2026-09-08-search-readiness-contract-W04-P12-S54` - Prove retrieval ordering ranking output and result shape remain unchanged
 - `2026-09-08-search-readiness-contract-W04-P13-S55` - Run focused unit integration MCP conformance concurrency guard and benchmark gates with individual exit codes
+- `2026-09-08-search-readiness-contract-W04-P13-S56` - Run repository lint format type full test vault and diff gates with individual exit codes
 
 ### plan
 
