@@ -8,7 +8,7 @@ related:
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-rag-port-research]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
-modified: '2026-09-11'
+modified: '2026-09-14'
 body_schema: body-v2
 body_hash: 'sha256:2993d83d8b3007f5bfcd6bf8fdbc2c9803a43485fbc09e886a4d6121ec5557bb'
 ---
