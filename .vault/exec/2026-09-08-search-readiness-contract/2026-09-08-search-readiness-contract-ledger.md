@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:9063a732dcaa0cb04ef2af09bc93963322572cbb60f11fa3721e5ec3a259c7bd'
+body_hash: 'sha256:0613e7874cfe26272b371c67ec7c17be43e41457024cef3f318dfdbb3f0b7151'
 related:
   - "[[2026-09-08-search-readiness-contract-plan]]"
 ---
@@ -430,6 +430,49 @@ related:
 - `S51` `verify:` `uv run ty check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
 - `S51` `verify:` `uv run basedpyright src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
 - `S51` `verify:` `git diff --check` -> `pass`
+- `S52` `M` `src/vaultspec_rag/tests/benchmarks/baselines/search_readiness_471_cpu_control.json`
+- `S52` `verify:` `uv run python -m json.tool src/vaultspec_rag/tests/benchmarks/baselines/search_readiness_471_cpu_control.json` -> `pass`
+- `S52` `verify:` `uv run python -c <baseline acceptance assertions>` -> `pass`
+- `S52` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run ruff check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run ty check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run basedpyright src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `git diff --check` -> `pass`
+- `S53` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S53` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_readiness.py -q` -> `pass`
+- `S53` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `git diff --check` -> `pass`
+- `S54` `M` `src/vaultspec_rag/server/_models.py`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_search_result_shape.py`
+- `S54` `verify:` `uv run pytest src/vaultspec_rag/tests/integration/test_search_result_shape.py -q` -> `pass`
+- `S54` `verify:` `uv run pytest src/vaultspec_rag/tests/test_server_document_models.py src/vaultspec_rag/tests/test_http_search_errors.py -q` -> `pass`
+- `S54` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run ruff check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run ty check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run basedpyright src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `git diff --check` -> `pass`
+- `S55` `T`
+- `S55` `verify:` `uv run pytest <readiness availability outcomes unit set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest <HTTP CLI routing set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest src/vaultspec_rag/tests/test_mcp_conformance_surface.py -q` -> `pass`
+- `S55` `verify:` `uv run pytest <search activity and diagnostics concurrency set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest <resident-service readiness integration set> -q` -> `fail`
+- `S55` `verify:` `uv run python -c <readiness control benchmark assertions>` -> `pass`
+- `S56` `T`
+- `S56` `verify:` `just check-python` -> `fail`
+- `S56` `verify:` `just check-type` -> `fail`
+- `S56` `verify:` `just check-vault` -> `fail`
+- `S56` `verify:` `just test-all` -> `fail`
+- `S56` `verify:` `git diff --check` -> `pass`
+- `S58` `M` `docs/search-and-index.md`
+- `S58` `verify:` `uv run mdformat --check docs/search-and-index.md` -> `pass`
+- `S58` `verify:` `uv run vaultspec-rag search --help` -> `pass`
+- `S58` `verify:` `ConvertFrom-Json <MCP example>` -> `pass`
+- `S58` `verify:` `uv run pytest <CLI and MCP freshness contract cases> -q` -> `pass`
+- `S58` `verify:` `git diff --check` -> `pass`
 
 ## Notes
 
@@ -458,3 +501,14 @@ related:
 - `S40` confirmed that the superseded timeout diagnostic helpers have no remaining
 - `S40` references.
 - `S51` The live service throughput cases were not executed because no compatible resident service was available; the CPU-only readiness control and loopback response-decoding smoke checks passed without GPU use.
+- `S52` No explicitly compatible resident GPU service was supplied. Live-service latency, throughput,
+- `S52` limiter, and GPU-queue fields remain null; the record contains only measured CPU-control data.
+- `S55` The resident-service integration selection exited 1 before collection because no compatible
+- `S55` machine-pointer GPU service was captured. The CPU-only integration result-shape file passed in
+- `S55` S54; no GPU service was started for this Step.
+- `S56` Repository failures predate and fall outside this Step's readiness ownership: three release-tool
+- `S56` tests need formatting; strict typing reports embeddings/store/release-tool diagnostics; the
+- `S56` installed vault CLI rejects 1,572 legacy per-Step records; the Python lane has two release/pin
+- `S56` failures; and no compatible GPU service was available. The CPU suite completed 4,921 passes,
+- `S56` four skips, and two failures unrelated to readiness.
+

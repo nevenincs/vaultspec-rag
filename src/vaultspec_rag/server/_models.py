@@ -74,6 +74,8 @@ class SearchResultItem(BaseModel):
     doc_type: str = ""
     feature: str = ""
     date: str = ""
+    status: str = ""
+    related: list[str] = Field(default_factory=list)
     language: str = ""
     line_start: int | None = None
     line_end: int | None = None
