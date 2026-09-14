@@ -743,7 +743,16 @@ def _run_clean_rebuild_availability_phase(
     raw_post_integrity = post_state["index_integrity"]
     assert isinstance(raw_post_integrity, dict), post_evidence
     post_integrity = cast("dict[str, object]", raw_post_integrity)
-    assert post_integrity["verdict"] == "unverifiable", post_evidence
+    # Mutation proof: restoring the stale ``unverifiable`` expectation fails
+    # here after the real rebuild publishes a consistent generation.
+    # The rebuild establishes canonical storage proof even though a fresh
+    # readiness-controller observation is still unavailable to this isolated
+    # process, so admission remains conservative while integrity is exact.
+    assert post_integrity["verdict"] == "consistent", post_evidence
+    assert post_integrity["claimed_count"] == post_integrity["live_count"], (
+        post_evidence
+    )
+    assert post_integrity["generation_id"], post_evidence
 
 
 def _persist_paused_matching_rebuild(state_path: Path, root: Path) -> str:
