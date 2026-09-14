@@ -778,6 +778,82 @@ def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
     )
 
 
+def _assert_publication_tables(
+    connection: sqlite3.Connection,
+    expected_tables: set[str],
+) -> None:
+    """Assert the normalized publication tables and their columns."""
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert expected_tables <= tables
+    assert expected_tables == set(PUBLICATION_PROOF_SCHEMA)
+    for table, expected_columns in PUBLICATION_PROOF_SCHEMA.items():
+        actual_columns = {
+            str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')
+        }
+        assert expected_columns <= actual_columns
+
+    receipt_columns = {
+        str(row[1]): row
+        for row in connection.execute('PRAGMA table_info("publication_receipts")')
+    }
+    assert bool(receipt_columns["receipt_id"][3])
+    assert int(receipt_columns["receipt_id"][5]) == 1
+
+
+def _assert_publication_indexes(connection: sqlite3.Connection) -> None:
+    """Assert every required publication index and optional predicate."""
+    for name, (table, columns, unique, partial) in REQUIRED_INDEXES.items():
+        index_row = next(
+            row
+            for row in connection.execute(f'PRAGMA index_list("{table}")')
+            if str(row[1]) == name
+        )
+        actual_columns = tuple(
+            str(row[2])
+            for row in sorted(
+                connection.execute(f'PRAGMA index_info("{name}")'),
+                key=lambda row: int(row[0]),
+            )
+        )
+        assert actual_columns == columns
+        assert bool(index_row[2]) is unique
+        assert bool(index_row[4]) is partial
+        expected_predicate = REQUIRED_INDEX_PREDICATES.get(name)
+        if expected_predicate is None:
+            continue
+        definition = " ".join(
+            str(
+                connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = ?", (name,)
+                ).fetchone()[0]
+            )
+            .lower()
+            .split()
+        )
+        _prefix, separator, predicate = definition.partition(" where ")
+        actual_predicate = f"where {predicate}" if separator else ""
+        assert actual_predicate == expected_predicate
+
+
+def _assert_publication_foreign_keys(connection: sqlite3.Connection) -> None:
+    """Assert the normalized publication foreign-key relationships."""
+    assert {
+        str(row[2])
+        for row in connection.execute('PRAGMA foreign_key_list("publication_evidence")')
+    } == {"generations", "publication_proofs"}
+    assert {
+        str(row[2])
+        for row in connection.execute(
+            'PRAGMA foreign_key_list("file_state_tombstones")'
+        )
+    } == {"generations"}
+
+
 def test_run_ledger_installs_and_verifies_normalized_publication_schema(
     tmp_path: Path,
 ) -> None:
@@ -799,70 +875,9 @@ def test_run_ledger_installs_and_verifies_normalized_publication_schema(
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        assert expected_tables <= tables
-        assert expected_tables == set(PUBLICATION_PROOF_SCHEMA)
-        for table, expected_columns in PUBLICATION_PROOF_SCHEMA.items():
-            actual_columns = {
-                str(row[1])
-                for row in connection.execute(f'PRAGMA table_info("{table}")')
-            }
-            assert expected_columns <= actual_columns
-        receipt_columns = {
-            str(row[1]): row
-            for row in connection.execute('PRAGMA table_info("publication_receipts")')
-        }
-        assert bool(receipt_columns["receipt_id"][3])
-        assert int(receipt_columns["receipt_id"][5]) == 1
-
-        for name, (table, columns, unique, partial) in REQUIRED_INDEXES.items():
-            index_row = next(
-                row
-                for row in connection.execute(f'PRAGMA index_list("{table}")')
-                if str(row[1]) == name
-            )
-            actual_columns = tuple(
-                str(row[2])
-                for row in sorted(
-                    connection.execute(f'PRAGMA index_info("{name}")'),
-                    key=lambda row: int(row[0]),
-                )
-            )
-            assert actual_columns == columns
-            assert bool(index_row[2]) is unique
-            assert bool(index_row[4]) is partial
-            expected_predicate = REQUIRED_INDEX_PREDICATES.get(name)
-            if expected_predicate is not None:
-                definition = " ".join(
-                    str(
-                        connection.execute(
-                            "SELECT sql FROM sqlite_master WHERE name = ?", (name,)
-                        ).fetchone()[0]
-                    )
-                    .lower()
-                    .split()
-                )
-                _prefix, separator, predicate = definition.partition(" where ")
-                actual_predicate = f"where {predicate}" if separator else ""
-                assert actual_predicate == expected_predicate
-
-        assert {
-            str(row[2])
-            for row in connection.execute(
-                'PRAGMA foreign_key_list("publication_evidence")'
-            )
-        } == {"generations", "publication_proofs"}
-        assert {
-            str(row[2])
-            for row in connection.execute(
-                'PRAGMA foreign_key_list("file_state_tombstones")'
-            )
-        } == {"generations"}
+        _assert_publication_tables(connection, expected_tables)
+        _assert_publication_indexes(connection)
+        _assert_publication_foreign_keys(connection)
 
 
 def _seeded_publication_lineage(

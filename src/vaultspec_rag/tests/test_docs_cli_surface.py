@@ -151,6 +151,24 @@ def _code_spans(text: str) -> list[str]:
 _INVOCATION = re.compile(rf"(?:^|\s){re.escape(_EXECUTABLE)}(?=\s|$)")
 
 
+def _parse_invocation_tail(tail: str) -> tuple[list[str], list[str]]:
+    """Split an invocation tail into command words and long options."""
+    words: list[str] = []
+    options: list[str] = []
+    for token in tail.split():
+        if token.startswith("--"):
+            options.append(token.split("=", 1)[0])
+            continue
+        if options or _ARG_START.match(token):
+            # Past the first option or the first argument-shaped token,
+            # nothing else can be a subcommand name.
+            if not options:
+                break
+            continue
+        words.append(token)
+    return words, options
+
+
 def _invocations(text: str) -> list[tuple[list[str], list[str]]]:
     """Return ``(command words, long options)`` for each documented invocation."""
     found: list[tuple[list[str], list[str]]] = []
@@ -163,21 +181,7 @@ def _invocations(text: str) -> list[tuple[list[str], list[str]]]:
         if _VERSION_LITERAL.match(remainder):
             continue
         # Everything before the executable belongs to uv, uvx, or a shell.
-        tail = line[match.end() :]
-        tokens = tail.split()
-        words: list[str] = []
-        options: list[str] = []
-        for token in tokens:
-            if token.startswith("--"):
-                options.append(token.split("=", 1)[0])
-                continue
-            if options or _ARG_START.match(token):
-                # Past the first option or the first argument-shaped token,
-                # nothing else can be a subcommand name.
-                if not options:
-                    break
-                continue
-            words.append(token)
+        words, options = _parse_invocation_tail(line[match.end() :])
         if words or options:
             found.append((words, options))
     return found
