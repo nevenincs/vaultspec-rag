@@ -187,9 +187,7 @@ def pytest_testnodedown(node: object, error: object) -> None:
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     """Report how many calls the suppression absorbed, across every process."""
     total = _fsync_suppressed + _fsync_from_workers
-    terminalreporter.write_line(
-        f"fsync: {total} call(s) suppressed this session."
-    )
+    terminalreporter.write_line(f"fsync: {total} call(s) suppressed this session.")
 
 
 def _load_dotenv_if_available() -> None:

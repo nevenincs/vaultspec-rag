@@ -82,8 +82,8 @@ def test_version_resource_contains_the_release_metadata() -> None:
         product_name="Vaultspec RAG",
         file_description="the vaultspec-rag CLI",
         original_filename="vaultspec-rag.exe",
-        company_name="Gergely Wootsch",
-        legal_copyright="Copyright (c) Gergely Wootsch",
+        company_name="Vaultspec Project",
+        legal_copyright="Copyright (c) 2026 Vaultspec Project",
     )
 
     payload = version_resource(info)
@@ -113,8 +113,8 @@ def test_version_resource_rejects_invalid_versions(version: str) -> None:
         product_name="Vaultspec RAG",
         file_description="the vaultspec-rag CLI",
         original_filename="vaultspec-rag.exe",
-        company_name="Gergely Wootsch",
-        legal_copyright="Copyright (c) Gergely Wootsch",
+        company_name="Vaultspec Project",
+        legal_copyright="Copyright (c) 2026 Vaultspec Project",
     )
 
     with pytest.raises(VersionResourceError, match="version"):

@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:8ff17045b2b83a39046df162f511dd7abf4aa3cb9c1d7cbf08df20aaf8ef96a0'
+modified: '2026-09-14'
+body_hash: 'sha256:44e01749d15ed700bd6afd0712c33d152841f7e74c9a8eff659289a985d36dc2'
 ---
 
 # Round 35: api.py Graph Invalidation + search_all() Double Encoding Audit
@@ -128,8 +128,8 @@ def search_all(
     vault_weight: float = 0.5,
     code_weight: float = 0.5,
 ) -> list[SearchResult]:
-    vault_results = self.search_vault(raw_query, top_k=top_k)      # Line 406
-    code_results = self.search_codebase(raw_query, top_k=top_k)    # Line 407
+    vault_results = self.search_vault(raw_query, top_k=top_k)  # Line 406
+    code_results = self.search_codebase(raw_query, top_k=top_k)  # Line 407
     ...
 ```
 
@@ -139,8 +139,8 @@ def search_all(
 def search_vault(self, raw_query: str, top_k: int = 5) -> list[SearchResult]:
     parsed = parse_query(raw_query)
     query_text = parsed.text or raw_query
-    query_vector = self.model.encode_query(query_text)             # Line 274
-    sparse_vector = self.model.encode_query_sparse(query_text)     # Line 275
+    query_vector = self.model.encode_query(query_text)  # Line 274
+    sparse_vector = self.model.encode_query_sparse(query_text)  # Line 275
     ...
 ```
 

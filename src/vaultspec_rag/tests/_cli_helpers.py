@@ -1122,7 +1122,7 @@ def process_the_identity_check_recognises() -> typing.Generator[int]:
         # (subprocess.pyi declares stdin/stdout/stderr as IO[Any] | None
         # unconditionally), so this is the one cast back to the str stream
         # `text=True` actually produces, rather than one at every read.
-        stdout = typing.cast("typing.IO[str]", process.stdout)
+        stdout = process.stdout
         if stdout.readline().strip() != "up":
             msg = "the stand-in daemon process never started"
             raise AssertionError(msg)
@@ -1163,7 +1163,7 @@ def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
         # stream as IO[Any] regardless of `text=True`, so this casts back to the
         # str stream `text=True` actually produces, once, rather than at every
         # read.
-        stdout = typing.cast("typing.IO[str]", process.stdout)
+        stdout = process.stdout
         if stdout.readline().strip() != "held":
             msg = "the holder process never took the store lock"
             raise AssertionError(msg)

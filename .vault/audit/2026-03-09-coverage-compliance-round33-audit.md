@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:d7089d8a16001927ae35ec3f81e594c29edff1f3835e455dd92f6ad90f587afc'
+modified: '2026-09-14'
+body_hash: 'sha256:1910d4cce4d614140aeca8d84e82168eaa1d563410f4df9ba70a0b303cf28a1f'
 ---
 
 # Round 33: Integration Test Coverage Gap & Compliance Audit
@@ -60,7 +60,7 @@ ______________________________________________________________________
 ```python
 def full_index(self, clean: bool = False) -> IndexResult:
     if clean:
-        self.store.drop_table()      # ← Deletes entire collection
+        self.store.drop_table()  # ← Deletes entire collection
         # Rebuilds from scratch
 ```
 

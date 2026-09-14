@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:bcd9fadcdcd66b2bbd628537b0a4ea17f3bd1ddbe699d01a7dcd5484d9c02c31'
+modified: '2026-09-14'
+body_hash: 'sha256:16aa05f915934f0a2b51c050139f620aaa958627fb70b737f27cac26d38a1538'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-03-09-qwen3-task-prefix-verification-research]]'
@@ -47,8 +47,8 @@ The model's prompt configuration (verified via runtime inspection):
 
 ```python
 model.prompts = {
-    'query': 'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:',
-    'document': '',  # empty string
+    "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    "document": "",  # empty string
 }
 model.default_prompt_name = None
 ```
@@ -65,7 +65,10 @@ model.default_prompt_name = None
    priority. This allows custom code-specific instructions:
 
    ```python
-   model.encode(queries, prompt="Instruct: Given a code search query, retrieve relevant source code\nQuery:")
+   model.encode(
+       queries,
+       prompt="Instruct: Given a code search query, retrieve relevant source code\nQuery:",
+   )
    ```
 
 1. **Current codebase is correct**: `embeddings.py` already uses

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,6 +18,18 @@ def _workflow(repo_root: Path) -> str:
     return (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
         encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize("workflow", ["binaries.yml", "publish.yml"])
+def test_artifact_workflows_are_release_only(repo_root: Path, workflow: str) -> None:
+    """Artifact production accepts tags and explicit maintainer dispatch only."""
+    path = repo_root / ".github" / "workflows" / workflow
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    triggers = document.get("on", document.get(True))
+
+    assert set(triggers) == {"push", "workflow_dispatch"}
+    assert triggers["push"] == {"tags": ["vaultspec-rag-v*"]}
+    assert "tag" in triggers["workflow_dispatch"]["inputs"]
 
 
 def test_release_workflow_publishes_only_a_complete_archive_set(
