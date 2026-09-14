@@ -503,18 +503,18 @@ def build_scenarios(
         ),
         (
             "same-root-code",
-            _cycle_payloads([primary], ["codebase"], n_requests, top_k),
+            _cycle_payloads([primary], ["code"], n_requests, top_k),
         ),
         (
             "same-root-mixed",
-            _cycle_payloads([primary], ["vault", "codebase"], n_requests, top_k),
+            _cycle_payloads([primary], ["vault", "code"], n_requests, top_k),
         ),
         (
             "readiness-immediate",
             [
                 _payload(
                     primary,
-                    "codebase",
+                    "code",
                     _QUERIES[i % len(_QUERIES)],
                     top_k,
                     freshness=("immediate", None),
@@ -527,7 +527,7 @@ def build_scenarios(
             [
                 _payload(
                     primary,
-                    "codebase",
+                    "code",
                     _QUERIES[i % len(_QUERIES)],
                     top_k,
                     freshness=("bounded", 1.0),
@@ -540,7 +540,7 @@ def build_scenarios(
         scenarios.append(
             (
                 "cross-root-mixed",
-                _cycle_payloads(roots, ["vault", "codebase"], n_requests, top_k),
+                _cycle_payloads(roots, ["vault", "code"], n_requests, top_k),
             ),
         )
     return scenarios
