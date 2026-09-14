@@ -33,13 +33,13 @@ _process_held_paths_lock = threading.Lock()
 class ReentrantLock(Protocol):
     """Minimal lock contract shared by local collection guards."""
 
-    def __enter__(self, /) -> bool: ...
+    def __enter__(self) -> bool: ...
 
     def __exit__(
         self,
-        t: type[BaseException] | None,
-        v: BaseException | None,
-        tb: TracebackType | None,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
         /,
     ) -> None: ...
 
