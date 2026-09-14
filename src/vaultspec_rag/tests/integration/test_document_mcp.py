@@ -217,33 +217,55 @@ def _assert_service_searches(
         "source",
     }
     for search_type in ("document", "combined"):
-        observed: list[tuple[tuple[object, object], ...]] = []
-        observed_shapes: list[tuple[tuple[str, ...], ...]] = []
-        for _ in range(2):
-            response = try_http_search(
-                phrase,
-                search_type,
-                5,
-                port,
-                str(root),
-                timeout=600.0,
-                document_filters={"source_path": source_path},
-            )
-            assert response is not None
-            assert response.get("ok", True) is True, response
-            assert "error" not in response, response
-            results = cast("list[dict[str, object]]", response["results"])
-            assert results
-            assert {item["path"] for item in results} == {source_path}
-            assert all(set(item) <= expected_fields for item in results)
-            assert all(required_fields <= set(item) for item in results)
-            assert all("rerank_text" not in item for item in results)
-            scores = [cast("float", item["score"]) for item in results]
-            assert scores == sorted(scores, reverse=True)
-            observed.append(tuple((item["id"], item["score"]) for item in results))
-            observed_shapes.append(tuple(tuple(sorted(item)) for item in results))
+        observed, observed_shapes = zip(
+            *(
+                _observed_service_search(
+                    (port, root),
+                    source_path,
+                    phrase,
+                    search_type,
+                    (expected_fields, required_fields),
+                )
+                for _ in range(2)
+            ),
+            strict=True,
+        )
         assert observed[1] == observed[0]
         assert observed_shapes[1] == observed_shapes[0]
+
+
+def _observed_service_search(
+    service: tuple[int, Path],
+    source_path: str,
+    phrase: str,
+    search_type: str,
+    field_contract: tuple[set[str], set[str]],
+) -> tuple[tuple[tuple[object, object], ...], tuple[tuple[str, ...], ...]]:
+    port, root = service
+    expected_fields, required_fields = field_contract
+    response = try_http_search(
+        phrase,
+        search_type,
+        5,
+        port,
+        str(root),
+        timeout=600.0,
+        document_filters={"source_path": source_path},
+    )
+    assert response is not None
+    assert response.get("ok", True) is True, response
+    assert "error" not in response, response
+    results = cast("list[dict[str, object]]", response["results"])
+    assert results
+    assert {item["path"] for item in results} == {source_path}
+    assert all(set(item) <= expected_fields for item in results)
+    assert all(required_fields <= set(item) for item in results)
+    assert all("rerank_text" not in item for item in results)
+    scores = [cast("float", item["score"]) for item in results]
+    assert scores == sorted(scores, reverse=True)
+    observed = tuple((item["id"], item["score"]) for item in results)
+    shapes = tuple(tuple(sorted(item)) for item in results)
+    return observed, shapes
 
 
 def _assert_unsupported_feedback_is_rejected(
