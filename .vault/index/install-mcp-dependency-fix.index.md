@@ -4,15 +4,12 @@ tags:
   - '#index'
   - '#install-mcp-dependency-fix'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:30721b6b001790bf1ef2da1dd2eb27351f9fcc09e9300dae78c758ba4e6fc667'
+body_hash: 'sha256:48069615ada964403a8427ba4a8dda022d83f332b2d835f55b969f231fb041dc'
 related:
-  - '[[2026-06-10-install-mcp-dependency-fix-S01]]'
-  - '[[2026-06-10-install-mcp-dependency-fix-S02]]'
-  - '[[2026-06-10-install-mcp-dependency-fix-S03]]'
-  - '[[2026-06-10-install-mcp-dependency-fix-S04]]'
   - '[[2026-06-10-install-mcp-dependency-fix-adr]]'
+  - '[[2026-06-10-install-mcp-dependency-fix-ledger]]'
   - '[[2026-06-10-install-mcp-dependency-fix-plan]]'
   - '[[2026-06-10-install-mcp-dependency-fix-research]]'
 ---
@@ -29,10 +26,7 @@ Auto-generated index of all documents tagged with `#install-mcp-dependency-fix`.
 
 ### exec
 
-- `2026-06-10-install-mcp-dependency-fix-S01` - Promote mcp to core dependencies, collapse the mcp extra to a deprecated no-op alias kept for backward-compat, and drop the duplicate mcp from the dev extra and dev dependency-group
-- `2026-06-10-install-mcp-dependency-fix-S02` - Guard the unconditional mcp import in main with try/except re-raising a chained RuntimeError carrying an actionable uv and pywin32 remediation message, messaging only with no DLL handling
-- `2026-06-10-install-mcp-dependency-fix-S03` - Add a packaging-metadata regression test asserting importlib.metadata.requires reports mcp as a core requirement with no extra marker
-- `2026-06-10-install-mcp-dependency-fix-S04` - Run uv sync, ruff, basedpyright and the unit suite, verify the server entry import path is clean, file the upstream mcp 2233 version-floor follow-up issue, then commit
+- `2026-06-10-install-mcp-dependency-fix-ledger` - `install-mcp-dependency-fix` ledger
 
 ### plan
 

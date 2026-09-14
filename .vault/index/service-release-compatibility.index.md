@@ -4,12 +4,12 @@ tags:
   - '#index'
   - '#service-release-compatibility'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:7dcf08c87d02f1800757b0f90b7cff8a18a4fb250222d99c3b91c740b61a3c4c'
+body_hash: 'sha256:36295ad9f9f136c7d2bd0232e1a05da046111717b425423e00f5ad4096a79d5b'
 related:
-  - '[[2026-07-25-service-release-compatibility-P03-S18]]'
   - '[[2026-07-25-service-release-compatibility-adr]]'
+  - '[[2026-07-25-service-release-compatibility-ledger]]'
   - '[[2026-07-25-service-release-compatibility-plan]]'
   - '[[2026-07-25-service-release-compatibility-reference]]'
   - '[[2026-07-27-service-release-compatibility-research]]'
@@ -27,7 +27,7 @@ Auto-generated index of all documents tagged with `#service-release-compatibilit
 
 ### exec
 
-- `2026-07-25-service-release-compatibility-P03-S18` - Stamp this install release into the discovered dead-service fixture
+- `2026-07-25-service-release-compatibility-ledger` - `service-release-compatibility` ledger
 
 ### plan
 

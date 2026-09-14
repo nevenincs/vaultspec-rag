@@ -6,31 +6,13 @@ tags:
 date: '2026-09-11'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:3bebed2263c256d2ea4d2ff959eb8239cef69130e0216112296315ff067e2937'
+body_hash: 'sha256:39cc58525d9f3365b368c7efbac981e6a076f4a2b3f70e0680bc88802159a760'
 related:
-  - '[[2026-09-11-binary-release-bundles-P01-S01]]'
-  - '[[2026-09-11-binary-release-bundles-P01-S02]]'
-  - '[[2026-09-11-binary-release-bundles-P01-S03]]'
-  - '[[2026-09-11-binary-release-bundles-P01-S04]]'
-  - '[[2026-09-11-binary-release-bundles-P01-S05]]'
-  - '[[2026-09-11-binary-release-bundles-P01-S06]]'
-  - '[[2026-09-11-binary-release-bundles-P01-summary]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S07]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S08]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S09]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S10]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S11]]'
-  - '[[2026-09-11-binary-release-bundles-P02-S12]]'
-  - '[[2026-09-11-binary-release-bundles-P02-summary]]'
-  - '[[2026-09-11-binary-release-bundles-P03-S13]]'
-  - '[[2026-09-11-binary-release-bundles-P03-S14]]'
-  - '[[2026-09-11-binary-release-bundles-P03-S15]]'
-  - '[[2026-09-11-binary-release-bundles-P03-S16]]'
-  - '[[2026-09-11-binary-release-bundles-P03-summary]]'
   - '[[2026-09-11-binary-release-bundles-adr]]'
   - '[[2026-09-11-binary-release-bundles-audit]]'
   - '[[2026-09-11-binary-release-bundles-current-pipeline-reference]]'
   - '[[2026-09-11-binary-release-bundles-final-review-audit]]'
+  - '[[2026-09-11-binary-release-bundles-ledger]]'
   - '[[2026-09-11-binary-release-bundles-plan]]'
   - '[[2026-09-11-binary-release-bundles-rag-port-research]]'
   - '[[2026-09-14-binary-release-bundles-post-fix-review-audit]]'
@@ -54,25 +36,7 @@ Auto-generated index of all documents tagged with `#binary-release-bundles`.
 
 ### exec
 
-- `2026-09-11-binary-release-bundles-P01-S01` - Centralize RAG's supported targets, stable executable names, private staging names, archive suffixes, and release metadata
-- `2026-09-11-binary-release-bundles-P01-S02` - Implement deterministic per-target ZIP and TAR.GZ bundle creation with stable executables, manifest, license, usage material, and checksum sidecars
-- `2026-09-11-binary-release-bundles-P01-S03` - Add Windows PE version-resource stamping and read-back verification while retaining icon resource verification
-- `2026-09-11-binary-release-bundles-P01-S04` - Order binary finalization and bundle inputs so icon, version metadata, permissions, platform-floor checks, and all digests complete before release archives are emitted
-- `2026-09-11-binary-release-bundles-P01-S05` - Prove deterministic archive bytes, exact member layout, manifest hashes and metadata, target naming, and refusal of missing or malformed inputs
-- `2026-09-11-binary-release-bundles-P01-S06` - Prove Windows icon and version resources, finalization ordering, platform-floor behavior, and checksum timing with fixture and real PE coverage
-- `2026-09-11-binary-release-bundles-P01-summary` - `binary-release-bundles` `P01` summary
-- `2026-09-11-binary-release-bundles-P02-S07` - Accept a version-checked release wheel as the PyApp input while preserving RAG's pinned CUDA torch bootstrap channel
-- `2026-09-11-binary-release-bundles-P02-S08` - Expose reproducible local commands for exact-wheel binary builds, target bundle creation, archive validation, and release checksum generation
-- `2026-09-11-binary-release-bundles-P02-S09` - Build the exact release wheel, bundle each matrix target, validate archive contents, and upload only validated public archives and sidecars
-- `2026-09-11-binary-release-bundles-P02-S10` - Gate release asset publication and stable/latest channel promotion on the complete declared target archive set and reject raw executable publication
-- `2026-09-11-binary-release-bundles-P02-S11` - Merge Python wheel and source artifacts with binary bundle digests and assets without clobbering concurrent release checksums
-- `2026-09-11-binary-release-bundles-P02-S12` - Coordinate explicit release-tag dispatch so Python and binary workflows use the same tag and neither partial workflow advances stable/latest
-- `2026-09-11-binary-release-bundles-P02-summary` - `binary-release-bundles` `P02` summary
-- `2026-09-11-binary-release-bundles-P03-S13` - Generate and validate Scoop and Homebrew channels from one archive URL and digest per target while preserving stable extracted command names and glibc caveats
-- `2026-09-11-binary-release-bundles-P03-S14` - Update channel, checksum, pointer, target-coverage, and archive-contract tests for bundle assets and failure cases
-- `2026-09-11-binary-release-bundles-P03-S15` - Document direct-download archive layout, supported targets, manifest and checksum verification, and GPU/network/CUDA first-launch requirements
-- `2026-09-11-binary-release-bundles-P03-S16` - Document maintainer bundle publication, complete-target gating, checksum reconciliation, and release recovery
-- `2026-09-11-binary-release-bundles-P03-summary` - `binary-release-bundles` `P03` summary
+- `2026-09-11-binary-release-bundles-ledger` - `binary-release-bundles` ledger
 
 ### plan
 

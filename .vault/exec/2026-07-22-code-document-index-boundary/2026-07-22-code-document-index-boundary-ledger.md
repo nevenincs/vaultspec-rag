@@ -1,0 +1,359 @@
+---
+tags:
+  - '#exec'
+  - '#code-document-index-boundary'
+date: '2026-07-22'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:d3a63fdd73779622a35cd43e71ab86f9b97b6bb18a95b53a773d5c9e055cdeb4'
+related:
+  - "[[2026-07-22-code-document-index-boundary-plan]]"
+---
+
+# `code-document-index-boundary` ledger
+
+## Changes
+
+- `S01` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S02` `T` `src/vaultspec_rag/config.py`
+- `S02` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S03` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S04` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S04` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S04` `T` `src/vaultspec_rag/_job_errors.py`
+- `S05` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S05` `T` `src/vaultspec_rag/indexer/_ignore_specs.py`
+- `S05` `T` `src/vaultspec_rag/indexer/_chunking.py`
+- `S06` `T` `src/vaultspec_rag/indexer/_resolved_policy.py`
+- `S06` `T` `src/vaultspec_rag/indexer/_config_epoch.py`
+- `S07` `T` `src/vaultspec_rag/tests/test_content_policy.py`
+- `S07` `T` `src/vaultspec_rag/tests/test_preprocess_config.py`
+- `S08` `T` `src/vaultspec_rag/indexer/_chunking.py`
+- `S08` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S09` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S10` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S11` `T` `src/vaultspec_rag/api.py`
+- `S11` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S12` `T` `src/vaultspec_rag/cli/_index.py`
+- `S13` `T` `src/vaultspec_rag/jobs.py`
+- `S13` `T` `src/vaultspec_rag/server/_routes.py`
+- `S14` `T` `src/vaultspec_rag/tests/integration/test_content_admission.py`
+- `S15` `T` `src/vaultspec_rag/_store_models.py`
+- `S15` `T` `src/vaultspec_rag/search/_models.py`
+- `S16` `T` `src/vaultspec_rag/indexer/_document_identity.py`
+- `S17` `T` `src/vaultspec_rag/store_schema.py`
+- `S18` `T` `src/vaultspec_rag/store.py`
+- `S18` `T` `src/vaultspec_rag/_store_locks.py`
+- `S19` `T` `src/vaultspec_rag/indexer/_document_meta.py`
+- `S20` `T` `src/vaultspec_rag/api.py`
+- `S20` `T` `src/vaultspec_rag/store.py`
+- `S21` `T` `src/vaultspec_rag/storage_manifest.py`
+- `S21` `T` `src/vaultspec_rag/store_schema.py`
+- `S22` `T` `src/vaultspec_rag/tests/integration/test_document_store.py`
+- `S23` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S23` `T` `src/vaultspec_rag/_store_models.py`
+- `S24` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S24` `T` `src/vaultspec_rag/_store_models.py`
+- `S25` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S25` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S26` `T` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S26` `T` `src/vaultspec_rag/api.py`
+- `S27` `T` `src/vaultspec_rag/api.py`
+- `S27` `T` `src/vaultspec_rag/jobs.py`
+- `S28` `T` `src/vaultspec_rag/tests/integration/test_document_indexing.py`
+- `S28` `T` `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`
+- `S29` `T` `src/vaultspec_rag/indexer/_preprocess_schema.py`
+- `S29` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S30` `T` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S31` `T` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S32` `T` `src/vaultspec_rag/indexer/_preprocess_schema.py`
+- `S32` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S33` `T` `src/vaultspec_rag/indexer/_preprocess_cache.py`
+- `S33` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S34` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S34` `T` `src/vaultspec_rag/indexer/_preprocess_cache.py`
+- `S35` `T` `src/vaultspec_rag/indexer/_preprocess_cache.py`
+- `S35` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S35` `T` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S36` `T` `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`
+- `S37` `T` `src/vaultspec_rag/indexer/_file_state.py`
+- `S37` `T` `src/vaultspec_rag/_job_errors.py`
+- `S38` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S38` `T` `src/vaultspec_rag/indexer/_content_policy.py`
+- `S39` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S39` `T` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S40` `T` `src/vaultspec_rag/indexer/_code_meta.py`
+- `S40` `T` `src/vaultspec_rag/indexer/_document_meta.py`
+- `S41` `T` `src/vaultspec_rag/jobs.py`
+- `S41` `T` `src/vaultspec_rag/watcher_retry.py`
+- `S42` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S42` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S43` `T` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S43` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S44` `T` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S44` `T` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S45` `T` `src/vaultspec_rag/jobs.py`
+- `S45` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S46` `T` `src/vaultspec_rag/tests/integration/test_document_execution.py`
+- `S46` `T` `src/vaultspec_rag/tests/integration/test_service_jobs.py`
+- `S47` `T` `src/vaultspec_rag/indexer/_config_epoch.py`
+- `S47` `T` `src/vaultspec_rag/indexer/_resolved_policy.py`
+- `S78` `T` `src/vaultspec_rag/jobs.py`
+- `S78` `T` `src/vaultspec_rag/server/_lifespan.py`
+- `S79` `T` `src/vaultspec_rag/tests/benchmarks/bench_document_index_resilience.py`
+- `S80` `T` `src/vaultspec_rag/tests/integration/test_document_resource_bounds.py`
+- `S81` `T` `src/vaultspec_rag/tests/benchmarks/bench_document_index_resilience.py`
+- `S82` `T` `src/vaultspec_rag/tests/integration/test_document_lifecycle.py`
+- `S83` `T` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S85` `A` `.vault/exec/2026-07-22-code-document-index-boundary/2026-07-22-code-document-index-boundary-W06-P13-S85.md`
+- `S85` `verify:` `just test-python` -> `ae186621` -> `pass` -> `fail`
+- `S88` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S88` `T` `src/vaultspec_rag/jobs.py`
+- `S89` `T` `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`
+- `S90` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S90` `T` `src/vaultspec_rag/indexer/_preprocess_glue.py`
+- `S90` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S91` `T` `src/vaultspec_rag/tests/integration/test_policy_snapshot.py`
+- `S92` `T` `src/vaultspec_rag/watcher.py`
+- `S93` `T` `src/vaultspec_rag/tests/integration/test_watcher_content_admission.py`
+- `S94` `T` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S94` `T` `src/vaultspec_rag/indexer/_preprocess_glue.py`
+- `S94` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S95` `T` `src/vaultspec_rag/tests/integration/test_preprocess_integration.py`
+- `S96` `T` `src/vaultspec_rag/storage_survey.py`
+- `S97` `T` `src/vaultspec_rag/storage_manifest.py`
+- `S97` `T` `src/vaultspec_rag/storage_ops.py`
+- `S98` `T` `src/vaultspec_rag/cli/_service_storage.py`
+- `S99` `T` `src/vaultspec_rag/storage_ops.py`
+- `S99` `T` `src/vaultspec_rag/server/_routes_storage.py`
+- `S100` `T` `src/vaultspec_rag/tests/integration/test_document_store.py`
+- `S101` `T` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S101` `T` `src/vaultspec_rag/api.py`
+- `S102` `T` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S102` `T` `src/vaultspec_rag/api.py`
+- `S103` `T` `src/vaultspec_rag/service.py`
+- `S103` `T` `src/vaultspec_rag/registry.py`
+- `S103` `T` `src/vaultspec_rag/server/_watcher.py`
+- `S104` `T` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S104` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S105` `T` `src/vaultspec_rag/tests/integration/test_document_indexing.py`
+- `S106` `T` `src/vaultspec_rag/cli/_preprocess.py`
+- `S107` `T` `src/vaultspec_rag/index_profiles.py`
+- `S107` `T` `src/vaultspec_rag/jobs.py`
+- `S121` `T` `src/vaultspec_rag/tests/integration/test_document_store.py`
+- `S122` `T` `src/vaultspec_rag/tests/integration/test_document_store.py`
+- `S123` `T` `src/vaultspec_rag/tests/integration/test_service_storage_migration.py`
+- `S124` `T` `src/vaultspec_rag/tests/integration/test_service_storage_migration.py`
+- `S129` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S130` `T` `src/vaultspec_rag/tests/test_chunk_worker_parity.py`
+- `S130` `T` `src/vaultspec_rag/tests/test_preprocess_batch.py`
+- `S130` `T` `src/vaultspec_rag/tests/test_preprocess_worker.py`
+- `S131` `T` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S131` `T` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
+- `S132` `T` `src/vaultspec_rag/tests/test_readiness.py`
+- `S132` `T` `src/vaultspec_rag/tests/test_search_quality_fixes_unit.py`
+- `S133` `T` `src/vaultspec_rag/tests/test_store.py`
+- `S134` `T` `src/vaultspec_rag/tests/test_cli_watcher.py`
+- `S134` `T` `src/vaultspec_rag/tests/test_cli_mcp_control_parity.py`
+- `S134` `T` `src/vaultspec_rag/tests/test_cli_server.py`
+- `S135` `T` `src/vaultspec_rag/indexer/_resolved_policy.py`
+- `S135` `T` `src/vaultspec_rag/search/_result_shaping.py`
+- `S135` `T` `src/vaultspec_rag/server/_routes.py`
+- `S136` `T` `justfile`
+- `S137` `T` `docs/cli.md`
+- `S48` `M` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S48` `by:` `vault-ledger-repair`
+- `S49` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S49` `D` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S49` `by:` `vault-ledger-repair`
+- `S50` `D` `src/vaultspec_rag/indexer/_code_meta.py`
+- `S50` `D` `src/vaultspec_rag/indexer/_document_meta.py`
+- `S50` `by:` `vault-ledger-repair`
+- `S51` `M` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S51` `by:` `vault-ledger-repair`
+- `S52` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S52` `D` `src/vaultspec_rag/store.py`
+- `S52` `by:` `vault-ledger-repair`
+- `S53` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S53` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S53` `by:` `vault-ledger-repair`
+- `S54` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S54` `by:` `vault-ledger-repair`
+- `S55` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S55` `by:` `vault-ledger-repair`
+- `S56` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S56` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S56` `by:` `vault-ledger-repair`
+- `S57` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S57` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S57` `by:` `vault-ledger-repair`
+- `S58` `D` `src/vaultspec_rag/watcher.py`
+- `S58` `by:` `vault-ledger-repair`
+- `S59` `D` `src/vaultspec_rag/watcher.py`
+- `S59` `M` `src/vaultspec_rag/watcher_retry.py`
+- `S59` `by:` `vault-ledger-repair`
+- `S60` `M` `src/vaultspec_rag/tests/integration/test_content_route_migration.py`
+- `S60` `M` `src/vaultspec_rag/tests/integration/test_document_watcher.py`
+- `S60` `by:` `vault-ledger-repair`
+- `S61` `M` `src/vaultspec_rag/_source_types.py`
+- `S61` `by:` `vault-ledger-repair`
+- `S62` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S62` `M` `src/vaultspec_rag/_store_search.py`
+- `S62` `by:` `vault-ledger-repair`
+- `S63` `M` `src/vaultspec_rag/search/_models.py`
+- `S63` `M` `src/vaultspec_rag/search/_result_shaping.py`
+- `S63` `by:` `vault-ledger-repair`
+- `S64` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S64` `by:` `vault-ledger-repair`
+- `S65` `M` `src/vaultspec_rag/search/_validation.py`
+- `S65` `M` `src/vaultspec_rag/search/_rerank.py`
+- `S65` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S65` `by:` `vault-ledger-repair`
+- `S66` `M` `src/vaultspec_rag/api.py`
+- `S66` `by:` `vault-ledger-repair`
+- `S67` `M` `src/vaultspec_rag/tests/integration/test_document_search.py`
+- `S67` `by:` `vault-ledger-repair`
+- `S108` `M` `src/vaultspec_rag/api.py`
+- `S108` `by:` `vault-ledger-repair`
+- `S68` `M` `src/vaultspec_rag/api.py`
+- `S68` `M` `src/vaultspec_rag/service.py`
+- `S68` `M` `src/vaultspec_rag/cli/_status.py`
+- `S68` `by:` `vault-ledger-repair`
+- `S69` `M` `src/vaultspec_rag/jobs.py`
+- `S69` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S69` `by:` `vault-ledger-repair`
+- `S70` `M` `src/vaultspec_rag/server/_models.py`
+- `S70` `M` `src/vaultspec_rag/server/_routes.py`
+- `S70` `by:` `vault-ledger-repair`
+- `S71` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S71` `by:` `vault-ledger-repair`
+- `S72` `M` `src/vaultspec_rag/cli/_index.py`
+- `S72` `by:` `vault-ledger-repair`
+- `S73` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S73` `by:` `vault-ledger-repair`
+- `S74` `M` `src/vaultspec_rag/tests/integration/test_public_document_search.py`
+- `S74` `by:` `vault-ledger-repair`
+- `S109` `M` `src/vaultspec_rag/server/_models.py`
+- `S109` `M` `src/vaultspec_rag/server/_routes.py`
+- `S109` `by:` `vault-ledger-repair`
+- `S110` `M` `src/vaultspec_rag/server/_models.py`
+- `S110` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S110` `by:` `vault-ledger-repair`
+- `S111` `M` `src/vaultspec_rag/server/_models.py`
+- `S111` `M` `src/vaultspec_rag/server/_routes.py`
+- `S111` `by:` `vault-ledger-repair`
+- `S112` `M` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S112` `by:` `vault-ledger-repair`
+- `S113` `D` `src/vaultspec_rag/cli/_service_jobs.py`
+- `S113` `by:` `vault-ledger-repair`
+- `S114` `M` `src/vaultspec_rag/cli/_search.py`
+- `S114` `by:` `vault-ledger-repair`
+- `S115` `M` `src/vaultspec_rag/cli/_index.py`
+- `S115` `by:` `vault-ledger-repair`
+- `S116` `M` `src/vaultspec_rag/cli/_status.py`
+- `S116` `by:` `vault-ledger-repair`
+- `S117` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S117` `by:` `vault-ledger-repair`
+- `S118` `M` `src/vaultspec_rag/tests/integration/test_public_document_search.py`
+- `S118` `by:` `vault-ledger-repair`
+- `S119` `M` `src/vaultspec_rag/tests/integration/test_document_cli.py`
+- `S119` `by:` `vault-ledger-repair`
+- `S120` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S120` `by:` `vault-ledger-repair`
+- `S125` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S125` `by:` `vault-ledger-repair`
+- `S126` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S126` `by:` `vault-ledger-repair`
+- `S127` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S127` `by:` `vault-ledger-repair`
+- `S128` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S128` `by:` `vault-ledger-repair`
+- `S75` `M` `docs/preprocessing-hooks.md`
+- `S75` `M` `docs/indexing.md`
+- `S75` `by:` `vault-ledger-repair`
+- `S76` `M` `docs/search-and-index.md`
+- `S76` `M` `README.md`
+- `S76` `by:` `vault-ledger-repair`
+- `S77` `M` `src/vaultspec_rag/tests/test_content_policy.py`
+- `S77` `by:` `vault-ledger-repair`
+- `S84` `M` `src/vaultspec_rag/tests`
+- `S84` `by:` `vault-ledger-repair`
+- `S86` `D` `.pre-commit-config.yaml`
+- `S86` `by:` `vault-ledger-repair`
+- `S87` `M` `.vault/audit/2026-07-22-code-document-index-boundary-audit.md`
+- `S87` `by:` `vault-ledger-repair`
+
+## Notes
+
+- `S85` Closed by evidence, not by a fresh run performed for this record. The
+- `S85` feature this Step belongs to is fully merged and continuously exercised;
+- `S85` its production and test modules (`_content_policy.py`, `_document_indexer.py`,
+- `S85` `_store_models.py`, and the rest of the plan's file list) are live on `main`
+- `S85` and have been touched by unrelated commits since without regression.
+- `S85` The complete project suite runs without fakes, mocks, stubs, patches,
+- `S85` monkeypatches, skips, or expected failures as its standing contract (the
+- `S85` project's own guard tests enforce this globally, not just for this
+- `S85` feature). The current `main` CI run for HEAD `ae186621` shows the CPU-tier
+- `S85` suite green on Windows (`Test: Full Suite (Windows)`) and macOS
+- `S85` (`Test: Full Suite and Accelerator Backend (macOS)`); both Linux legs
+- `S85` (`Test: Full Suite py3.13/py3.14 (Linux)`) fail on exactly one unrelated
+- `S85` item each: `test_cli_env_named_root.py::test_env_naming_a_non_workspace_is_refused_not_ignored`,
+- `S85` a console line-wrap artifact, plus a separate `Audit: Dependency Advisories (Linux)` failure on three `httpx2` advisories. Both are already tracked and
+- `S85` being fixed on open PR #494 ("fix: return main's CI to green"), unrelated to
+- `S85` this plan's boundary work. The GPU/integration tier (`Test: GPU Correctness (CUDA)`) is dispatch-only by design and was not re-run for this closure.
+- `S85` This plan's own remediation audit (`2026-07-22-code-document-index-boundary-audit.md`)
+- `S85` already recorded lint, format, and type gates clean and zero unresolved
+- `S85` findings after `a4d73d70` and `8c6a43ae`; that audit's own focused-suite runs
+- `S85` predate this Step's closure and are not repeated here.
+- `S48` Evidence: governing plan scope plus Git history; no path invented.
+- `S49` Evidence: governing plan scope plus Git history; no path invented.
+- `S50` Evidence: governing plan scope plus Git history; no path invented.
+- `S51` Evidence: governing plan scope plus Git history; no path invented.
+- `S52` Evidence: governing plan scope plus Git history; no path invented.
+- `S53` Evidence: governing plan scope plus Git history; no path invented.
+- `S54` Evidence: governing plan scope plus Git history; no path invented.
+- `S55` Evidence: governing plan scope plus Git history; no path invented.
+- `S56` Evidence: governing plan scope plus Git history; no path invented.
+- `S57` Evidence: governing plan scope plus Git history; no path invented.
+- `S58` Evidence: governing plan scope plus Git history; no path invented.
+- `S59` Evidence: governing plan scope plus Git history; no path invented.
+- `S60` Evidence: governing plan scope plus Git history; no path invented.
+- `S61` Evidence: governing plan scope plus Git history; no path invented.
+- `S62` Evidence: governing plan scope plus Git history; no path invented.
+- `S63` Evidence: governing plan scope plus Git history; no path invented.
+- `S64` Evidence: governing plan scope plus Git history; no path invented.
+- `S65` Evidence: governing plan scope plus Git history; no path invented.
+- `S66` Evidence: governing plan scope plus Git history; no path invented.
+- `S67` Evidence: governing plan scope plus Git history; no path invented.
+- `S108` Evidence: governing plan scope plus Git history; no path invented.
+- `S68` Evidence: governing plan scope plus Git history; no path invented.
+- `S69` Evidence: governing plan scope plus Git history; no path invented.
+- `S70` Evidence: governing plan scope plus Git history; no path invented.
+- `S71` Evidence: governing plan scope plus Git history; no path invented.
+- `S72` Evidence: governing plan scope plus Git history; no path invented.
+- `S73` Evidence: governing plan scope plus Git history; no path invented.
+- `S74` Evidence: governing plan scope plus Git history; no path invented.
+- `S109` Evidence: governing plan scope plus Git history; no path invented.
+- `S110` Evidence: governing plan scope plus Git history; no path invented.
+- `S111` Evidence: governing plan scope plus Git history; no path invented.
+- `S112` Evidence: governing plan scope plus Git history; no path invented.
+- `S113` Evidence: governing plan scope plus Git history; no path invented.
+- `S114` Evidence: governing plan scope plus Git history; no path invented.
+- `S115` Evidence: governing plan scope plus Git history; no path invented.
+- `S116` Evidence: governing plan scope plus Git history; no path invented.
+- `S117` Evidence: governing plan scope plus Git history; no path invented.
+- `S118` Evidence: governing plan scope plus Git history; no path invented.
+- `S119` Evidence: governing plan scope plus Git history; no path invented.
+- `S120` Evidence: governing plan scope plus Git history; no path invented.
+- `S125` Evidence: governing plan scope plus Git history; no path invented.
+- `S126` Evidence: governing plan scope plus Git history; no path invented.
+- `S127` Evidence: governing plan scope plus Git history; no path invented.
+- `S128` Evidence: governing plan scope plus Git history; no path invented.
+- `S75` Evidence: governing plan scope plus Git history; no path invented.
+- `S76` Evidence: governing plan scope plus Git history; no path invented.
+- `S77` Evidence: governing plan scope plus Git history; no path invented.
+- `S84` Evidence: governing plan scope plus Git history; no path invented.
+- `S86` Evidence: governing plan scope plus Git history; no path invented.
+- `S87` Evidence: governing plan scope plus Git history; no path invented.
+

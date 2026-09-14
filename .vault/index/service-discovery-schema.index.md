@@ -4,19 +4,13 @@ tags:
   - '#index'
   - '#service-discovery-schema'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:65254e97baf66e4ae58445dc01b69050c7f406f3d592056f152fd0462ebea956'
+body_hash: 'sha256:68424628af18e567464e39f1bb4030a836e935d18bf2bc9ecf56b602fe3eb90d'
 related:
-  - '[[2026-06-24-service-discovery-schema-P01-S01]]'
-  - '[[2026-06-24-service-discovery-schema-P01-S02]]'
-  - '[[2026-06-24-service-discovery-schema-P01-S03]]'
-  - '[[2026-06-24-service-discovery-schema-P01-S04]]'
-  - '[[2026-06-24-service-discovery-schema-P02-S05]]'
-  - '[[2026-06-24-service-discovery-schema-P03-S06]]'
-  - '[[2026-06-24-service-discovery-schema-P03-S07]]'
   - '[[2026-06-24-service-discovery-schema-adr]]'
   - '[[2026-06-24-service-discovery-schema-audit]]'
+  - '[[2026-06-24-service-discovery-schema-ledger]]'
   - '[[2026-06-24-service-discovery-schema-plan]]'
   - '[[2026-06-24-service-discovery-schema-research]]'
 ---
@@ -37,13 +31,7 @@ Auto-generated index of all documents tagged with `#service-discovery-schema`.
 
 ### exec
 
-- `2026-06-24-service-discovery-schema-P01-S01` - Normalise the CLI-parent initial write of started_at to ISO-8601 with offset at second precision, matching the heartbeat last_heartbeat format
-- `2026-06-24-service-discovery-schema-P01-S02` - Emit the schema string and integer version discriminator in the CLI-parent initial discovery-file write
-- `2026-06-24-service-discovery-schema-P01-S03` - Preserve and re-assert the schema, version, and staleness fields in the daemon heartbeat additive merge
-- `2026-06-24-service-discovery-schema-P01-S04` - Emit heartbeat_interval_s and stale_after_s from the same config the heartbeat loop uses so the liveness contract is machine-readable
-- `2026-06-24-service-discovery-schema-P02-S05` - Author the consumer-facing discovery-file schema document naming interface fields, marking internal diagnostics as non-interface, and stating the staleness and PID-reuse contract
-- `2026-06-24-service-discovery-schema-P03-S06` - Add a no-mock test asserting both writers emit the same schema and version and the same timestamp format and precision for started_at and last_heartbeat
-- `2026-06-24-service-discovery-schema-P03-S07` - Add a no-mock test asserting the version is present after the CLI-parent write and preserved across a heartbeat tick, with the atomic-write discipline intact
+- `2026-06-24-service-discovery-schema-ledger` - `service-discovery-schema` ledger
 
 ### plan
 

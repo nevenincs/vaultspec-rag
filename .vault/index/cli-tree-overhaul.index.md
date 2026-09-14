@@ -4,39 +4,12 @@ tags:
   - '#index'
   - '#cli-tree-overhaul'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:976f76d12b4ac1b59797c109fb1175451aac59ab4c121e0e1884e6e9f5a22f09'
+body_hash: 'sha256:4791f8e05c37444e036f560129dbebab3f245e904ac6f9b631b68f868e609a86'
 related:
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S36]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S37]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S38]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S39]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S40]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S41]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S42]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S43]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S44]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S45]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-S46]]'
-  - '[[2026-06-06-cli-tree-overhaul-W01-P01-summary]]'
-  - '[[2026-06-06-cli-tree-overhaul-W02-P02-S47]]'
-  - '[[2026-06-06-cli-tree-overhaul-W02-P02-S48]]'
-  - '[[2026-06-06-cli-tree-overhaul-W02-P02-S49]]'
-  - '[[2026-06-06-cli-tree-overhaul-W02-P02-summary]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P03-S50]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P03-summary]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P04-S51]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P04-S52]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P04-S53]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P04-S54]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P04-summary]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P05-S55]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P05-S56]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P05-summary]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P06-S57]]'
-  - '[[2026-06-06-cli-tree-overhaul-W03-P06-summary]]'
   - '[[2026-06-06-cli-tree-overhaul-adr]]'
+  - '[[2026-06-06-cli-tree-overhaul-ledger]]'
   - '[[2026-06-06-cli-tree-overhaul-plan]]'
   - '[[2026-06-06-cli-tree-overhaul-research]]'
 ---
@@ -53,34 +26,7 @@ Auto-generated index of all documents tagged with `#cli-tree-overhaul`.
 
 ### exec
 
-- `2026-06-06-cli-tree-overhaul-W01-P01-S36` - 2026-06-06-cli-tree-overhaul-W01-P01-S36
-- `2026-06-06-cli-tree-overhaul-W01-P01-S37` - 2026-06-06-cli-tree-overhaul-W01-P01-S37
-- `2026-06-06-cli-tree-overhaul-W01-P01-S38` - 2026-06-06-cli-tree-overhaul-W01-P01-S38
-- `2026-06-06-cli-tree-overhaul-W01-P01-S39` - 2026-06-06-cli-tree-overhaul-W01-P01-S39
-- `2026-06-06-cli-tree-overhaul-W01-P01-S40` - 2026-06-06-cli-tree-overhaul-W01-P01-S40
-- `2026-06-06-cli-tree-overhaul-W01-P01-S41` - 2026-06-06-cli-tree-overhaul-W01-P01-S41
-- `2026-06-06-cli-tree-overhaul-W01-P01-S42` - 2026-06-06-cli-tree-overhaul-W01-P01-S42
-- `2026-06-06-cli-tree-overhaul-W01-P01-S43` - 2026-06-06-cli-tree-overhaul-W01-P01-S43
-- `2026-06-06-cli-tree-overhaul-W01-P01-S44` - 2026-06-06-cli-tree-overhaul-W01-P01-S44
-- `2026-06-06-cli-tree-overhaul-W01-P01-S45` - 2026-06-06-cli-tree-overhaul-W01-P01-S45
-- `2026-06-06-cli-tree-overhaul-W01-P01-S46` - 2026-06-06-cli-tree-overhaul-W01-P01-S46
-- `2026-06-06-cli-tree-overhaul-W01-P01-summary` - Phase W01-P01 Summary
-- `2026-06-06-cli-tree-overhaul-W02-P02-S47` - 2026-06-06-cli-tree-overhaul-W02-P02-S47
-- `2026-06-06-cli-tree-overhaul-W02-P02-S48` - 2026-06-06-cli-tree-overhaul-W02-P02-S48
-- `2026-06-06-cli-tree-overhaul-W02-P02-S49` - 2026-06-06-cli-tree-overhaul-W02-P02-S49
-- `2026-06-06-cli-tree-overhaul-W02-P02-summary` - Phase W02-P02 Summary
-- `2026-06-06-cli-tree-overhaul-W03-P03-S50` - `cli-tree-overhaul` Step `S50`
-- `2026-06-06-cli-tree-overhaul-W03-P03-summary` - Phase W03-P03 Summary
-- `2026-06-06-cli-tree-overhaul-W03-P04-S51` - `cli-tree-overhaul` Step `S51`
-- `2026-06-06-cli-tree-overhaul-W03-P04-S52` - `cli-tree-overhaul` Step `S52`
-- `2026-06-06-cli-tree-overhaul-W03-P04-S53` - `cli-tree-overhaul` Step `S53`
-- `2026-06-06-cli-tree-overhaul-W03-P04-S54` - `cli-tree-overhaul` Step `S54`
-- `2026-06-06-cli-tree-overhaul-W03-P04-summary` - Phase W03-P04 Summary
-- `2026-06-06-cli-tree-overhaul-W03-P05-S55` - `cli-tree-overhaul` Step `S55`
-- `2026-06-06-cli-tree-overhaul-W03-P05-S56` - `cli-tree-overhaul` Step `S56`
-- `2026-06-06-cli-tree-overhaul-W03-P05-summary` - Phase W03-P05 Summary
-- `2026-06-06-cli-tree-overhaul-W03-P06-S57` - cli-tree-overhaul W03 P06 S57
-- `2026-06-06-cli-tree-overhaul-W03-P06-summary` - cli-tree-overhaul W03 P06 summary
+- `2026-06-06-cli-tree-overhaul-ledger` - `cli-tree-overhaul` ledger
 
 ### plan
 

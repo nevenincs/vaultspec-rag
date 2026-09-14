@@ -3,12 +3,11 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:038e9adf4fb2508bf3b46f40f2d5c396b0f959fea217ad684990f5b31bf95777'
 related:
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-service-job-control-plan]]"
-  - "[[2026-07-21-service-job-control-W01-P18-S40]]"
 ---
 
 # `service-job-control` audit: `S40 manager extraction`
