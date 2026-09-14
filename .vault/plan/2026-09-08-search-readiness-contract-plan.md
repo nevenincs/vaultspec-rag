@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-14'
 body_schema: body-v2
-body_hash: 'sha256:8ff3da727d0cb5af0b71f3adc0f2e62d8ae9519e9517fbbed0dba662df6828d0'
+body_hash: 'sha256:5294aa5891263f279cdf1cc30eb40efc3da33242ccb4912dada9329b983f7ee9'
 ---
 
 <!-- RETIRED: P14 -->
@@ -157,7 +157,7 @@ Prove immediate-mode semantics and concurrency performance remain intact.
 
 - [x] `W04.P12.S51` - Add immediate readiness overhead and bounded-wait contention to the concurrency benchmark; `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`.
 - [x] `W04.P12.S52` - Record accepted no-wait latency throughput limiter GPU queue and waiter-cleanup comparison output; `src/vaultspec_rag/tests/benchmarks/baselines`.
-- [ ] `W04.P12.S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization; `src/vaultspec_rag/tests/test_search_readiness.py`.
+- [x] `W04.P12.S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization; `src/vaultspec_rag/tests/test_search_readiness.py`.
 - [ ] `W04.P12.S54` - Prove retrieval ordering ranking output and result shape remain unchanged; `src/vaultspec_rag/tests/integration/test_search_result_shape.py`.
 
 ### Phase `W04.P13` - run repository gates documentation and formal review
