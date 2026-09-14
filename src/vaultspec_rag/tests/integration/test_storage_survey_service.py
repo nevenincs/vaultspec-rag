@@ -11,6 +11,7 @@ classification against the managed server and the persisted manifest.
 
 from __future__ import annotations
 
+import shutil
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, cast
@@ -275,54 +276,8 @@ def _expected_totals(
     return collections, backlog, unverified
 
 
-@pytest.mark.usefixtures("live_service")
-def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
-    live_service: tuple[int, Path],
-    tmp_path: Path,
-) -> None:
-    """``totals`` reports the whole-backend collection count and backlog.
-
-    ``collections`` sums every Qdrant collection across every namespace -
-    distinct from ``namespaces``, since one root can hold several
-    collections. ``ephemeral_backlog_bytes`` is the footprint of namespaces
-    that are both orphaned and temp-rooted: the population the ephemeral
-    grace window drains first. A namespace that is still live must not
-    count toward that backlog, even though its root sits under the same OS
-    temp directory pytest itself uses. Every namespace also carries its own
-    ``points_verified``, and ``totals`` rolls that up into
-    ``points_unverified_namespaces`` - a freshly indexed namespace has a
-    verified count, so it must not be counted there.
-
-    Each check recomputes the expected figures from the very namespace list
-    the same response carried, rather than from an earlier response: the
-    shared daemon this suite reuses is a live system whose other namespaces
-    keep changing footprint between calls (WAL checkpoints, manifest
-    flushes), so only a same-snapshot comparison is not itself flaky.
-    """
-    import shutil
-
-    from ..corpus import build_synthetic_vault
-
-    port, _status_dir = live_service
-
-    # tmp_path lives under the OS temp directory, so this root classifies
-    # temp-rooted once indexed.
-    root = tmp_path / "ephemeral-status-root"
-    root.mkdir()
-    build_synthetic_vault(root, n_docs=4, seed=91)
-    reindex = _do_http_call(
-        port,
-        "/reindex",
-        {"type": "vault", "clean": True, "project_root": str(root)},
-    )
-    assert reindex is not None and reindex.get("ok") is True, reindex
-    job_id = reindex.get("job_id")
-    assert isinstance(job_id, str)
-    _wait_for_job(port, job_id)
-
-    # Still live: temp-rooted, but not yet orphaned, so it must not be
-    # counted in the backlog. A namespace this survey just counted itself
-    # has a verified count.
+def _assert_live_survey_snapshot(port: int, root: Path) -> None:
+    """Assert a freshly indexed root is live and absent from its own backlog."""
     live_check = _survey_root_call(port, root, fresh=True)
     live_namespaces = cast("list[dict[str, object]]", live_check["namespaces"])
     assert live_namespaces and live_namespaces[0]["status"] == "live"
@@ -351,6 +306,9 @@ def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
         for ns in still_live_namespaces
     ), "a namespace this survey just counted must not read as unverified"
 
+
+def _assert_orphaned_survey_snapshot(port: int, root: Path) -> None:
+    """Assert the removed root contributes its footprint to the backlog."""
     # Orphan it: the root is gone, the namespace remains, still temp-rooted.
     shutil.rmtree(root)
     orphaned = _survey_root_call(port, root, fresh=True)
@@ -374,6 +332,53 @@ def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
     assert after_totals.get("points_unverified_namespaces") == after_expected_unverified
     # Now that it is orphaned, its own footprint is part of the backlog.
     assert after_expected_backlog >= footprint
+
+
+@pytest.mark.usefixtures("live_service")
+def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
+    live_service: tuple[int, Path],
+    tmp_path: Path,
+) -> None:
+    """``totals`` reports the whole-backend collection count and backlog.
+
+    ``collections`` sums every Qdrant collection across every namespace -
+    distinct from ``namespaces``, since one root can hold several
+    collections. ``ephemeral_backlog_bytes`` is the footprint of namespaces
+    that are both orphaned and temp-rooted: the population the ephemeral
+    grace window drains first. A namespace that is still live must not
+    count toward that backlog, even though its root sits under the same OS
+    temp directory pytest itself uses. Every namespace also carries its own
+    ``points_verified``, and ``totals`` rolls that up into
+    ``points_unverified_namespaces`` - a freshly indexed namespace has a
+    verified count, so it must not be counted there.
+
+    Each check recomputes the expected figures from the very namespace list
+    the same response carried, rather than from an earlier response: the
+    shared daemon this suite reuses is a live system whose other namespaces
+    keep changing footprint between calls (WAL checkpoints, manifest
+    flushes), so only a same-snapshot comparison is not itself flaky.
+    """
+    from ..corpus import build_synthetic_vault
+
+    port, _status_dir = live_service
+
+    # tmp_path lives under the OS temp directory, so this root classifies
+    # temp-rooted once indexed.
+    root = tmp_path / "ephemeral-status-root"
+    root.mkdir()
+    build_synthetic_vault(root, n_docs=4, seed=91)
+    reindex = _do_http_call(
+        port,
+        "/reindex",
+        {"type": "vault", "clean": True, "project_root": str(root)},
+    )
+    assert reindex is not None and reindex.get("ok") is True, reindex
+    job_id = reindex.get("job_id")
+    assert isinstance(job_id, str)
+    _wait_for_job(port, job_id)
+
+    _assert_live_survey_snapshot(port, root)
+    _assert_orphaned_survey_snapshot(port, root)
 
 
 @pytest.mark.usefixtures("live_service")
