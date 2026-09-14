@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:fff8f0daa88da889e3fb5c4411196a5c86465749fc87e8bc5f37a9e6975c8b09'
+body_hash: 'sha256:267f4557390a328b711ba13bf168233eaa432c864fd0b42b735061fdbb3831d0'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -72,6 +72,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W04-P12-S51]]'
   - '[[2026-09-08-search-readiness-contract-W04-P12-S52]]'
   - '[[2026-09-08-search-readiness-contract-W04-P12-S53]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P12-S54]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -159,6 +160,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W04-P12-S51` - Add immediate readiness overhead and bounded-wait contention to the concurrency benchmark
 - `2026-09-08-search-readiness-contract-W04-P12-S52` - Record accepted no-wait latency throughput limiter GPU queue and waiter-cleanup comparison output
 - `2026-09-08-search-readiness-contract-W04-P12-S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization
+- `2026-09-08-search-readiness-contract-W04-P12-S54` - Prove retrieval ordering ranking output and result shape remain unchanged
 
 ### plan
 
