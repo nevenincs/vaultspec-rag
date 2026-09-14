@@ -1,21 +1,11 @@
 name: Binaries
 
-# WHAT ACTUALLY STARTS THIS WORKFLOW: an explicit dispatch from
-# `release-please.yml:98`. Not the `push: tags` trigger below.
-#
-# The trigger is kept and it is not dead - a human running `git push --tags`
-# with a PAT does fire it, which is the manual-release path, and the
-# concurrency group keys on `github.ref_name` for exactly that case. But it
-# does not fire for a normal release, because **GitHub raises no workflow
-# events for refs created with the default GITHUB_TOKEN**, and release-please
-# publishes with exactly that token. Every one of the last fifteen runs of this
-# workflow was `workflow_dispatch`; none was `push`.
-#
-# This comment used to claim the opposite - that adding the tag trigger was the
-# fix for the v0.4.12 failure. It was not. #416's dispatch step in
-# release-please.yml is, and the distinction is load-bearing: a maintainer who
-# believed the comment could delete that step as redundant and reproduce
-# v0.4.12 exactly.
+# WHAT STARTS THIS WORKFLOW: Publish dispatches it only after PyPI and the
+# GitHub wheel/sdist publication have both succeeded. Keeping this workflow
+# dispatch-only makes that ordering enforceable: independent tag triggers can
+# be serialized, but serialization alone cannot say which workflow runs first.
+# A maintainer may still dispatch it explicitly to repair a release; the final
+# gate below independently proves the package and bundle set before promotion.
 #
 # The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
 # `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
@@ -23,9 +13,6 @@ name: Binaries
 # catch it and could not: that guard lives in THIS workflow, and a workflow
 # that never runs cannot demote anything. It was unreachable, not broken.
 on:
-  push:
-    tags:
-      - "vaultspec-rag-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -54,12 +41,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install Python
         run: uv python install 3.13
@@ -77,7 +64,7 @@ jobs:
             "import os; from pathlib import Path; from tools.binaries.build_pyapp import sole_wheel, validate_project_wheel, version_from_tag; wheel = validate_project_wheel(sole_wheel(Path('dist')), version_from_tag(os.environ['TAG'])); print(f'validated {wheel}')"
 
       - name: Upload the wheel
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: project-wheel
           path: dist/
@@ -135,23 +122,23 @@ jobs:
     container: ${{ matrix.container }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-10
         with:
           targets: ${{ matrix.target }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install Python
         run: uv python install 3.13
 
       - name: Download the wheel the binaries carry
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: project-wheel
           path: dist
@@ -177,7 +164,7 @@ jobs:
         run: just release-bundle "${{ inputs.tag || github.ref_name }}" "${{ matrix.target }}" dist-bin dist-bundles
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: binaries-${{ matrix.name }}
           path: dist-bundles/
@@ -211,7 +198,7 @@ jobs:
       # This repo, for the generator itself. No deploy key and no push: the
       # channel pointers no longer live here.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: main
 
@@ -226,7 +213,7 @@ jobs:
       # branch, which is what makes the per-product staging below load-bearing
       # rather than tidy.
       - name: Checkout the distribution repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/homebrew-tap
           ref: main
@@ -236,13 +223,13 @@ jobs:
       # The channel generator runs in this job, so it needs an interpreter
       # here too; previously only the build matrix installed one.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install Python
         run: uv python install 3.13
 
       - name: Download binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: binaries-*
           path: dist-bundles/
@@ -505,7 +492,7 @@ jobs:
       # loud refusal rather than a vacuous pass, which is the right failure to
       # have - but it is still a failure, and inheriting a workspace is not a
       # thing to rely on. So the file is now checked out explicitly.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
           path: .sparse-verify-release-assets
@@ -519,6 +506,33 @@ jobs:
           names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
           assets=$(printf '%s' "${names}" | grep -c . || true)
           echo "release ${TAG} carries ${assets} asset(s); release job=${RELEASE_RESULT}"
+
+          version="${TAG#vaultspec-rag-v}"
+          wheel="vaultspec_rag-${version}-py3-none-any.whl"
+          sdist="vaultspec_rag-${version}.tar.gz"
+          package_missing=()
+          [ "$(printf '%s\n' "${names}" | grep -Fxc "${wheel}" || true)" -eq 1 ] || package_missing+=("${wheel}")
+          [ "$(printf '%s\n' "${names}" | grep -Fxc "${sdist}" || true)" -eq 1 ] || package_missing+=("${sdist}")
+          [ "$(printf '%s\n' "${names}" | grep -Fxc SHA256SUMS || true)" -eq 1 ] || package_missing+=("SHA256SUMS")
+
+          checksum_problems=()
+          verify_dir=$(mktemp -d)
+          trap 'rm -rf -- "${verify_dir}"' EXIT
+          if [ ${#package_missing[@]} -eq 0 ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "${verify_dir}"
+            if ! (cd "${verify_dir}" && sha256sum -c SHA256SUMS); then
+              checksum_problems+=("SHA256SUMS verification failed")
+            else
+              release_names=$(printf '%s\n' "${names}" | grep -vFx SHA256SUMS | LC_ALL=C sort)
+              manifest_names=$(awk '{sub(/^\*/, "", $2); print $2}' "${verify_dir}/SHA256SUMS" | LC_ALL=C sort)
+              [ "${release_names}" = "${manifest_names}" ] || checksum_problems+=("SHA256SUMS does not cover exactly the published assets")
+            fi
+          fi
+
+          pypi_problem=()
+          if ! curl --fail --silent --show-error "https://pypi.org/pypi/vaultspec-rag/${version}/json" >/dev/null; then
+            pypi_problem+=("vaultspec-rag ${version} is absent from PyPI")
+          fi
 
           # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
           #
@@ -584,6 +598,9 @@ jobs:
 
           problems=()
           [ "${RELEASE_RESULT}" = "success" ] || problems+=("release job=${RELEASE_RESULT}")
+          [ ${#package_missing[@]} -eq 0 ] || problems+=("missing or duplicate package assets: ${package_missing[*]}")
+          [ ${#checksum_problems[@]} -eq 0 ] || problems+=("checksum integrity: ${checksum_problems[*]}")
+          [ ${#pypi_problem[@]} -eq 0 ] || problems+=("package publication: ${pypi_problem[*]}")
           [ ${#missing[@]} -eq 0 ] || problems+=("missing or unexpected target archives: ${missing[*]}")
           [ ${#duplicates[@]} -eq 0 ] || problems+=("duplicate target archives: ${duplicates[*]}")
           [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")

@@ -20,7 +20,7 @@ from ...storage_manifest import (
     record_root,
     remove_prefix,
 )
-from ...storage_restore import RestoreRequest, restore_archive
+from ...storage_restore import RestoreRequest, read_archive, restore_archive
 from ...store_schema import STORAGE_SCHEMA_VERSION, CollectionIdentity
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
@@ -240,7 +240,11 @@ def test_restore_rolls_back_after_a_real_corrupt_snapshot_failure(
         archive = _archive_namespace(
             client, restore_qdrant, source_root, (first, second)
         )
-        (archive / f"{second}.snapshot").write_bytes(b"corrupt snapshot")
+        archived = read_archive(archive)
+        second_snapshot = next(
+            item.snapshot for item in archived.collections if item.source == second
+        )
+        second_snapshot.write_bytes(b"corrupt snapshot")
         destination_root = tmp_path / "destination"
         destination_root.mkdir()
         destination_prefix = root_collection_prefix(destination_root)

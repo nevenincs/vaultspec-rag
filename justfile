@@ -154,11 +154,9 @@ deps-lock-upgrade:
 check-python:
     {{dev}} lint python
 
-# `check-type` checks `tools` alongside the package. tools/ carries the release
-# binary builder and the Scoop/Homebrew generators, where a break fails a
-# release rather than a test. Both were outside this gate when a generator
-# default naming a product that does not exist, and a builder invoked so it
-# could not import its own package, reached main with CI green.
+# `check-type` checks the release tooling, development harness, and root pytest
+# harness alongside the package. A break in any of them can invalidate a
+# release or make the gate itself report a false clean result.
 
 # Check types across the package and the release tooling.
 [group('check')]

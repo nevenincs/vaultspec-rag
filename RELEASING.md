@@ -52,9 +52,11 @@ The three workflows have deliberately separate responsibilities:
    commits. When the PR is merged, release-please creates the
    `vaultspec-rag-v<version>` tag and GitHub Release.
 1. The same workflow immediately marks the new Release as a prerelease and
-   explicitly dispatches both `Publish` and `Binaries` with the exact tag. Do
-   not remove the binary dispatch or rely on the tag-push trigger: a tag created
-   with the default `GITHUB_TOKEN` does not recursively start workflows.
+   explicitly dispatches `Publish` with the exact tag. `Publish` also performs
+   that prerelease hold for its tag-push and manual entrypoints, then dispatches
+   `Binaries` only after both package-publication jobs succeed. Do not dispatch
+   the two artifact workflows independently in the normal release path: their
+   ordering is the stable/latest safety boundary.
 1. `Publish` builds the wheel and source distribution, smoke-tests both across
    the supported Python versions, publishes to PyPI through the trusted
    publisher, and attaches the Python artifacts to the GitHub Release.
@@ -65,12 +67,13 @@ The three workflows have deliberately separate responsibilities:
    archives and merged checksum file, then generates and validates the Scoop
    manifest and Homebrew formula in the account channel repository.
 1. `Binaries` always runs `verify-release-assets` after its release job. The
-   verifier derives the expected targets from the matrix, checks the remote
-   Release for every correctly named archive, rejects raw executables, and
-   requires the binary release job to have succeeded. A failed or incomplete
-   set is demoted to a prerelease. A repaired normal release is promoted only
-   after the complete set passes; release tags containing `rc`, `alpha`,
-   `beta`, or `dev` remain prereleases by design.
+   verifier derives the expected targets from the matrix and requires every
+   correctly named archive, the exact wheel and source distribution, no raw
+   executables, exact `SHA256SUMS` coverage with valid digests, a visible
+   matching PyPI version, and a successful binary release job. A failed or
+   incomplete set is demoted to a prerelease. A repaired normal release is
+   promoted only after the full set passes; release tags containing `rc`,
+   `alpha`, `beta`, or `dev` remain prereleases by design.
 
 `Publish` and `Binaries` share the concurrency group
 `release-artifacts-<tag>` with `cancel-in-progress: false`. This serializes

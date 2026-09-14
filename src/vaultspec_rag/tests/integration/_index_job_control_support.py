@@ -197,26 +197,6 @@ def _write_code_files(root: Path, count: int, revision: str) -> list[Path]:
     return paths
 
 
-def request_after_first_code_upsert(
-    store: VaultStore,
-    token: RunControlToken,
-    control_request: ControlRequest,
-) -> None:
-    """Request control after the real code consumer publishes its first slice."""
-    deadline = time.monotonic() + _CONTROL_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        if store.count_code() > 0:
-            accepted = (
-                token.request_pause()
-                if control_request is ControlRequest.PAUSE
-                else token.request_cancel()
-            )
-            assert accepted
-            return
-        time.sleep(_CONTROL_POLL_SECONDS)
-    raise AssertionError("code pipeline never published a slice before the deadline")
-
-
 def _code_consumer_threads() -> list[threading.Thread]:
     return [
         thread

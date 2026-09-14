@@ -237,7 +237,7 @@ jobs:
   # interpreter named by UV_PYTHON instead, which is what the suite runs under
   # anyway.
   tests-windows:
-    name: "${{ github.event_name == 'pull_request' && 'Test: Provisioning Proofs (Windows)' || 'Test: Full Suite (Windows)' }}"
+    name: "Test: Python (Windows)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are

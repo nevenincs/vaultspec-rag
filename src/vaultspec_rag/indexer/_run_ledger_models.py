@@ -196,12 +196,25 @@ def _request_write_ahead_logging(connection: sqlite3.Connection) -> str:
     first contended answer as the filesystem's verdict would permanently fail a
     root over a condition that lasts milliseconds.
 
-    A lock error raised outright is left to propagate. The callers translate it
-    into transient contention, which is what it is.
+    SQLite may instead raise a lock error outright when two fresh openers race
+    to perform the same conversion. Retry that transient signal under this same
+    short budget; exhaustion still propagates for the caller to classify as
+    contention.
     """
     mode = ""
     for attempt in range(_JOURNAL_MODE_ATTEMPTS):
-        row: sqlite3.Row | None = fetch_one(connection, "PRAGMA journal_mode = WAL")
+        try:
+            row: sqlite3.Row | None = fetch_one(
+                connection,
+                "PRAGMA journal_mode = WAL",
+            )
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            if attempt == _JOURNAL_MODE_ATTEMPTS - 1:
+                raise
+            time.sleep(_JOURNAL_MODE_RETRY_SECONDS)
+            continue
         mode = column_text(row, 0).lower() if row is not None else "none"
         if mode == "wal":
             return mode

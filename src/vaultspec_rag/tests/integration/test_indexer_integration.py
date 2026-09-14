@@ -449,7 +449,7 @@ class TestCodeIndexBlockedStoreDeadline:
 
         _configure_cpu_code_index(
             cpu_code_embedding_model.dimension,
-            index_no_progress_timeout_seconds=2.0,
+            index_no_progress_timeout_seconds=5.0,
         )
         _write_code_memory_corpus(tmp_path, count=8)
         gpu_gate = threading.Lock()
@@ -467,47 +467,54 @@ class TestCodeIndexBlockedStoreDeadline:
                     gpu_lock=gpu_gate,
                 ),
             )
-            point_lock = store._collection_locks[store.CODE_TABLE_NAME]
             gpu_gate.acquire()
+            point_lock = None
             point_lock_held = False
+            executor = ThreadPoolExecutor(max_workers=1)
             try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    indexing = executor.submit(
-                        indexer.full_index,
-                        reporter=NullProgressReporter(),
-                        preflight=indexer.preflight_content(),
+                indexing = executor.submit(
+                    indexer.full_index,
+                    reporter=NullProgressReporter(),
+                    preflight=indexer.preflight_content(),
+                )
+                wait_deadline = time.monotonic() + 5.0
+                while time.monotonic() < wait_deadline:
+                    build_target = indexer._lifecycle.active_build_target
+                    if build_target is not None and store._ensured.get(
+                        build_target, False
+                    ):
+                        point_lock = store._lock_for(build_target)
+                        point_lock.acquire()
+                        point_lock_held = True
+                        break
+                    time.sleep(0.01)
+                else:
+                    raise AssertionError(
+                        "generation collection was not prepared before deadline"
                     )
-                    wait_deadline = time.monotonic() + 5.0
-                    while time.monotonic() < wait_deadline:
-                        if (
-                            indexer.support_measurement.generated_chunks >= 3
-                            and indexer._writer_lock.locked()
-                        ):
-                            break
-                        time.sleep(0.01)
-                    else:
-                        raise AssertionError(
-                            "producer did not fill the bounded queue before deadline"
-                        )
 
-                    point_lock.acquire()
-                    point_lock_held = True
-                    gpu_gate.release()
+                # The generation lock is now held before the consumer can
+                # enter its first write. Releasing the encode gate lets the
+                # consumer reach that lock while the producer fills the
+                # one-item queue behind it; the deadline, not a sampling
+                # race against queue motion, proves both unwind cleanly.
+                gpu_gate.release()
 
-                    # The deadline outcome is the invariant; the generous
-                    # result timeout is only a hang-guard, never a race
-                    # against machine load.
-                    with pytest.raises(JobError) as stopped:
-                        indexing.result(timeout=20.0)
+                # The deadline outcome is the invariant; the generous
+                # result timeout is only a hang-guard, never a race
+                # against machine load.
+                with pytest.raises(JobError) as stopped:
+                    indexing.result(timeout=20.0)
 
-                    assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
-                    assert store.count_code() == 0
-                    _assert_code_pipeline_released(indexer)
+                assert stopped.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
+                assert store.count_code() == 0
+                _assert_code_pipeline_released(indexer)
             finally:
                 if gpu_gate.locked():
                     gpu_gate.release()
-                if point_lock_held:
+                if point_lock_held and point_lock is not None:
                     point_lock.release()
+                executor.shutdown(wait=True)
 
         _assert_code_pipeline_released(indexer)
 
@@ -608,7 +615,7 @@ class TestDocumentIndexMemoryAndWriteDeadline:
             resilience = _document_resilience(indexer)
             assert resilience.peak_rss_mib == snapshot.peak_rss_mib
             assert resilience.rss_ceiling_mib == snapshot.rss_ceiling_mib == 1.0
-            assert resilience.terminal_outcome == "failed"
+            assert resilience.terminal_outcome == "rebuild_incomplete"
             assert store.count_document() == 0
 
     @pytest.mark.integration
@@ -1009,22 +1016,6 @@ class _CorpusChurn:
         self._thread.join(timeout=30)
 
 
-def _cancel_after_first_code_slice(store: object, token: object) -> None:
-    """Cancel only once production storage has published one real slice."""
-    from ...job_control import RunControlToken
-    from ...store_runtime import VaultStore
-
-    assert isinstance(store, VaultStore)
-    assert isinstance(token, RunControlToken)
-    deadline = time.monotonic() + 60.0
-    while time.monotonic() < deadline:
-        if store.count_code() > 0:
-            assert token.request_cancel()
-            return
-        time.sleep(0.01)
-    raise AssertionError("the code run never published a slice to cancel")
-
-
 @pytest.mark.integration
 @pytest.mark.timeout(600)
 def test_a_resumed_code_run_over_a_moving_tree_completes(
@@ -1045,8 +1036,8 @@ def test_a_resumed_code_run_over_a_moving_tree_completes(
     aborts, however, is the defect, and that cannot happen by timing.
     """
     from ... import CodebaseIndexer
-    from ...job_control import CancelRequested, RunControlToken
     from ...store_runtime import VaultStore
+    from ._index_job_control_support import AbortAfterFirstCommitReporter
 
     count = 8
     _write_code_memory_corpus(tmp_path, count)
@@ -1056,16 +1047,11 @@ def test_a_resumed_code_run_over_a_moving_tree_completes(
 
         # Interrupt a real attempt so the next one resumes carrying the indexed
         # paths of a generation that never published.
-        token = RunControlToken()
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            canceller = executor.submit(_cancel_after_first_code_slice, store, token)
-            with pytest.raises(CancelRequested):
-                indexer.full_index(
-                    reporter=NullProgressReporter(),
-                    preflight=indexer.preflight_content(),
-                    run_control=token,
-                )
-            canceller.result(timeout=60)
+        with pytest.raises(RuntimeError, match="injected mid-rebuild crash"):
+            indexer.full_index(
+                reporter=AbortAfterFirstCommitReporter(indexer),
+                preflight=indexer.preflight_content(),
+            )
 
         interrupted = indexer.last_checkpoint
         assert interrupted is not None

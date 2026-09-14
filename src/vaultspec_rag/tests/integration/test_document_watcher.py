@@ -20,6 +20,7 @@ from ...indexer._content_policy import (
     SourceProfileVersion,
 )
 from ...indexer._file_state import FileState
+from ...indexer._publication_proof import ProofEvidence
 from ...indexer._resolved_policy import (
     IndexPolicyResolutionOptions,
     resolve_index_policy,
@@ -27,6 +28,7 @@ from ...indexer._resolved_policy import (
 from ...indexer._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
+    RunAuthority,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
@@ -34,6 +36,7 @@ from ...indexer._run_ledger_models import (
 from ...indexer._run_ledger_runtime import RunLedger
 from ...job_models import JobSource
 from ...service import ServiceRegistry
+from ...store_runtime import configured_backend_identity
 from ...watcher_intake import _classify_watcher_changes
 from ...watcher_retry import (
     WatcherSource,
@@ -92,7 +95,7 @@ def _record_prior_code_owner(root: Path, rel_path: str) -> None:
         operation=RunOperation.FULL,
         clean=False,
         model_identity="watcher-prior-owner-test",
-        backend_identity="test-backend:document-watcher",
+        backend_identity=configured_backend_identity(root.resolve()),
         dense_dimensions=4,
         embedding_schema=1,
         payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
@@ -119,6 +122,11 @@ def _record_prior_code_owner(root: Path, rel_path: str) -> None:
         generation.generation_id,
         FileState.indexed(rel_path, ContentKind.CODE, digest),
     )
+    ledger.establish_verified_publication(
+        generation.generation_id,
+        RunAuthority.REBUILD,
+        (ProofEvidence(rel_path, digest, ("prior-code-point",)),),
+    )
 
 
 def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
@@ -131,7 +139,7 @@ def _start_incomplete_clean_code_generation(root: Path, rel_path: str) -> None:
             operation=RunOperation.FULL,
             clean=True,
             model_identity="watcher-incomplete-clean-test",
-            backend_identity="test-backend:document-watcher",
+            backend_identity=configured_backend_identity(root.resolve()),
             dense_dimensions=4,
             embedding_schema=1,
             payload_schema=store_schema.STORAGE_SCHEMA_VERSION,

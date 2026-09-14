@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,16 +21,37 @@ def _workflow(repo_root: Path) -> str:
     )
 
 
+def _assert_immutable_action_pins(text: str) -> None:
+    """Assert every action reference in *text* names a full commit SHA."""
+    uses = re.findall(r"^\s*uses:\s*[^@\s]+@([^\s#]+)", text, re.M)
+    assert uses
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in uses), uses
+
+
 @pytest.mark.parametrize("workflow", ["binaries.yml", "publish.yml"])
 def test_artifact_workflows_are_release_only(repo_root: Path, workflow: str) -> None:
-    """Artifact production accepts tags and explicit maintainer dispatch only."""
+    """Artifact production exposes only its intentional release entrypoints."""
     path = repo_root / ".github" / "workflows" / workflow
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     triggers = document.get("on", document.get(True))
 
-    assert set(triggers) == {"push", "workflow_dispatch"}
-    assert triggers["push"] == {"tags": ["vaultspec-rag-v*"]}
+    expected = {"workflow_dispatch"}
+    if workflow == "publish.yml":
+        expected.add("push")
+        assert triggers["push"] == {"tags": ["vaultspec-rag-v*"]}
+    assert set(triggers) == expected
     assert "tag" in triggers["workflow_dispatch"]["inputs"]
+
+
+def test_binary_release_actions_are_immutably_pinned(repo_root: Path) -> None:
+    """Privileged release actions resolve only reviewed immutable commits."""
+    _assert_immutable_action_pins(_workflow(repo_root))
+
+
+def test_binary_release_action_pin_guard_rejects_a_mutable_tag() -> None:
+    """Mutation proof: a release action tag cannot satisfy the pin guard."""
+    with pytest.raises(AssertionError, match="v7"):
+        _assert_immutable_action_pins("    uses: astral-sh/setup-uv@v7\n")
 
 
 def test_release_workflow_publishes_only_a_complete_archive_set(
@@ -61,6 +83,10 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     assert "bundle_archives=()" in verify_gate
     assert "raw=()" in verify_gate
     assert "RELEASE_RESULT" in verify_gate
+    assert 'wheel="vaultspec_rag-${version}-py3-none-any.whl"' in verify_gate
+    assert 'sdist="vaultspec_rag-${version}.tar.gz"' in verify_gate
+    assert "sha256sum -c SHA256SUMS" in verify_gate
+    assert "https://pypi.org/pypi/vaultspec-rag/${version}/json" in verify_gate
     assert "vaultspec-rag-*|vaultspec-search-mcp-*)" in verify_gate
     assert verify < promote
     assert "if: ${{ success() }}" in text[promote:]
@@ -95,10 +121,10 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     assert '--repo "$GITHUB_REPOSITORY"' in publish
 
 
-def test_release_please_holds_and_dispatches_the_same_tag_to_both_publishers(
+def test_release_please_holds_then_publish_dispatches_binaries(
     repo_root: Path,
 ) -> None:
-    """Release Please keeps stable/latest closed until both lanes are dispatched.
+    """Release Please holds stable/latest and starts the sequenced publisher.
 
     Mutation proof: removing the prerelease hold made this assertion fail on
     the named release-state guard; the hold was restored before the passing
@@ -111,16 +137,25 @@ def test_release_please_holds_and_dispatches_the_same_tag_to_both_publishers(
         "- name: Hold the release out of latest until artifacts are complete"
     )
     publish = text.index("- name: Trigger Publish workflow")
-    binaries = text.index("- name: Trigger Binaries workflow")
-
     hold_section = text[hold:publish]
-    publish_section = text[publish:binaries]
-    binaries_section = text[binaries:]
+    publish_section = text[publish:]
 
     assert "--prerelease" in hold_section
     assert "steps.release.outputs.tag_name" in hold_section
-    for section in (publish_section, binaries_section):
-        assert "steps.release.outputs.release_created == 'true'" in section
-        assert "TAG: ${{ steps.release.outputs.tag_name }}" in section
-        assert "--ref main" in section
-        assert '--field tag="${TAG}"' in section
+    assert "steps.release.outputs.release_created == 'true'" in publish_section
+    assert "TAG: ${{ steps.release.outputs.tag_name }}" in publish_section
+    assert "--ref main" in publish_section
+    assert '--field tag="${TAG}"' in publish_section
+    assert "Trigger Binaries workflow" not in text
+
+    downstream = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
+        encoding="utf-8"
+    )
+    hold = downstream.index("- name: Hold the release as a prerelease")
+    dispatch = downstream.index("- name: Trigger Binaries workflow")
+    dispatch_section = downstream[dispatch:]
+    assert "needs: hold-release" in downstream
+    assert "--prerelease" in downstream[hold:dispatch]
+    assert "needs: [publish-pypi, github-release]" in downstream
+    assert "gh workflow run Binaries \\" in dispatch_section
+    assert '--field tag="${TAG}"' in dispatch_section

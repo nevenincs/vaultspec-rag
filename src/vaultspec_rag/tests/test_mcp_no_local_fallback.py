@@ -2,7 +2,7 @@
 
 The MCP is a thin service client with **no local fallback**: when no
 ``service.json`` is present (the daemon is not running) every tool, admin tool,
-and resource must raise a single clear ``RuntimeError`` whose message contains
+and resource must raise a single clear MCP protocol error whose message contains
 "is not running", and must spin up no local engine — no GPU model, no vector
 store — in the process.
 
@@ -31,6 +31,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
+from mcp.server.mcpserver.exceptions import MCPServerError
 
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
@@ -99,7 +100,7 @@ def test_tool_raises_service_not_running(
     rather than constructing a local engine.
     """
     assert not (isolated_singleton_dirs / "service.json").exists()
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(MCPServerError) as exc_info:
         asyncio.run(make_coro())
     # SD6: the failure must be fast and carry the full actionable remediation,
     # not just the "is not running" diagnosis - a regression dropping the
@@ -115,7 +116,7 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
     Run in a fresh interpreter subprocess so the in-process session pollution
     cannot mask the absence of a local-engine spin-up.  The status dir is
     redirected at a real empty temp dir; the search tool is driven to its
-    service-down ``RuntimeError``; then ``sys.modules`` is asserted free of the
+    service-down ``MCPServerError``; then ``sys.modules`` is asserted free of the
     heavy ML libraries.
     """
     drive_a_failed_search = (
@@ -123,13 +124,14 @@ def test_failed_call_loads_no_heavy_ml_libs() -> None:
         "d = tempfile.mkdtemp()\n"
         "os.environ['VAULTSPEC_RAG_STATUS_DIR'] = d\n"
         "os.environ['VAULTSPEC_RAG_QDRANT_STORAGE_DIR'] = os.path.join(d, 'qdrant')\n"
+        "from mcp.server.mcpserver.exceptions import MCPServerError\n"
         "from vaultspec_rag.mcp._tools import search_vault\n"
         "raised = False\n"
         "try:\n"
         "    asyncio.run(search_vault('anything'))\n"
-        "except RuntimeError as exc:\n"
+        "except MCPServerError as exc:\n"
         "    raised = 'is not running' in str(exc)\n"
-        "assert raised, 'expected service-not-running RuntimeError'\n"
+        "assert raised, 'expected service-not-running MCPServerError'\n"
     )
     assert_fresh_import_excludes(
         import_probe_source(
