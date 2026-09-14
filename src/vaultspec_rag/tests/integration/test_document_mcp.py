@@ -15,6 +15,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from ...indexer._run_ledger_models import RunAuthority
+from ...server._models import SearchResultItem
 from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import (
     _do_http_call,
@@ -201,22 +202,48 @@ def _assert_partial_reindex(partial: dict[str, object], port: int) -> None:
 def _assert_service_searches(
     port: int, root: Path, source_path: str, phrase: str
 ) -> None:
+    """Real retrieval/reranking preserves ordered public shape across HTTP.
+
+    Mutation proof: requiring the private ``rerank_text`` field fails at the
+    public-shape assertion; restoring its omission makes this guard pass.
+    """
+    expected_fields = set(SearchResultItem.model_fields)
+    required_fields = {
+        "id",
+        "path",
+        "title",
+        "score",
+        "snippet",
+        "source",
+    }
     for search_type in ("document", "combined"):
-        response = try_http_search(
-            phrase,
-            search_type,
-            5,
-            port,
-            str(root),
-            timeout=600.0,
-            document_filters={"source_path": source_path},
-        )
-        assert response is not None
-        assert response.get("ok", True) is True, response
-        assert "error" not in response, response
-        results = cast("list[dict[str, object]]", response["results"])
-        assert results
-        assert {item["path"] for item in results} == {source_path}
+        observed: list[tuple[tuple[object, object], ...]] = []
+        observed_shapes: list[tuple[tuple[str, ...], ...]] = []
+        for _ in range(2):
+            response = try_http_search(
+                phrase,
+                search_type,
+                5,
+                port,
+                str(root),
+                timeout=600.0,
+                document_filters={"source_path": source_path},
+            )
+            assert response is not None
+            assert response.get("ok", True) is True, response
+            assert "error" not in response, response
+            results = cast("list[dict[str, object]]", response["results"])
+            assert results
+            assert {item["path"] for item in results} == {source_path}
+            assert all(set(item) <= expected_fields for item in results)
+            assert all(required_fields <= set(item) for item in results)
+            assert all("rerank_text" not in item for item in results)
+            scores = [cast("float", item["score"]) for item in results]
+            assert scores == sorted(scores, reverse=True)
+            observed.append(tuple((item["id"], item["score"]) for item in results))
+            observed_shapes.append(tuple(tuple(sorted(item)) for item in results))
+        assert observed[1] == observed[0]
+        assert observed_shapes[1] == observed_shapes[0]
 
 
 def _assert_unsupported_feedback_is_rejected(
@@ -260,6 +287,17 @@ def test_document_tools_through_real_mcp_session(
         'version = 2\n[[rule]]\npattern = "*.blob"\ncommand = [\n',
         encoding="utf-8",
     )
+    baseline = _try_http_reindex(
+        "vault",
+        True,
+        port,
+        str(root),
+        authority=RunAuthority.REBUILD,
+        initiator_kind="mcp",
+    )
+    assert baseline is not None
+    assert baseline["ok"] is True, baseline
+    _wait_for_succeeded_job(port, cast("str", baseline["job_id"]))
     partial = _try_http_reindex(
         "combined",
         False,
@@ -274,10 +312,10 @@ def test_document_tools_through_real_mcp_session(
     source_path, phrase = _write_indexed_document_fixture(root)
     created = _try_http_reindex(
         "document",
-        False,
+        True,
         port,
         str(root),
-        authority=RunAuthority.PUBLICATION,
+        authority=RunAuthority.REBUILD,
         initiator_kind="mcp",
     )
     assert created is not None
