@@ -142,7 +142,9 @@ class VaultRunCheckpoint(RunCheckpointBase):
             if current_path is not None and unit.rel_path != current_path:
                 assert current_digest is not None
                 evidence.append(
-                    ProofEvidence(current_path, current_digest, tuple(point_ids))
+                    ProofEvidence(
+                        current_path, current_digest, tuple(sorted(point_ids))
+                    )
                 )
                 point_ids = []
                 current_digest = None
@@ -154,6 +156,6 @@ class VaultRunCheckpoint(RunCheckpointBase):
         if current_path is not None:
             assert current_digest is not None
             evidence.append(
-                ProofEvidence(current_path, current_digest, tuple(point_ids))
+                ProofEvidence(current_path, current_digest, tuple(sorted(point_ids)))
             )
         return evidence
