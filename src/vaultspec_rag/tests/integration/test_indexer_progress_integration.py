@@ -185,12 +185,12 @@ class TestCodebaseIndexerProgress:
             # separate "hash files" phase is gone, and chunking + embedding are
             # pipelined into a single "chunk + embed" phase (#155) whose
             # counter the GPU consumer advances as files finish encoding
-            # and upserting.
+            # and upserting. A fresh publication has no stale generation to
+            # purge, so it does not emit an empty purge phase.
             expected = [
                 "scan codebase",
                 "prepare collection",
                 "chunk + embed",
-                "purge stale chunks",
                 "write metadata",
             ]
             assert names == expected, f"unexpected phase order: {names}"
@@ -214,7 +214,6 @@ class TestCodebaseIndexerProgress:
                 # A fresh full index confirms every scanned file through the
                 # consumer, so the phase's advances sum to the file count.
                 assert phase_totals["chunk + embed"] == result.files
-                assert phase_totals["purge stale chunks"] == 0
                 assert phase_totals["write metadata"] == 1
         finally:
             store.close()

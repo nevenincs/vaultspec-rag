@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Never, cast
 
 import pytest
+from mcp.server.mcpserver.exceptions import MCPServerError
 
 from ..config._settings import reset_config
 from ..config._types import EnvVar
@@ -653,7 +654,7 @@ class TestHttpModeResolveRoot:
 
         The resource delegates to the daemon's ``/vault-document`` endpoint
         through the shared ``serviceclient``; with an empty status dir (no
-        ``service.json``) that raises a clear service-not-running RuntimeError.
+        ``service.json``) that raises a clear MCP service error.
         """
         import os
 
@@ -672,7 +673,7 @@ class TestHttpModeResolveRoot:
         )
         reset_config()
         try:
-            with pytest.raises(RuntimeError, match="is not running"):
+            with pytest.raises(MCPServerError, match="is not running"):
                 _run(get_vault_document("adr/overview"))
         finally:
             for key, value in prev.items():

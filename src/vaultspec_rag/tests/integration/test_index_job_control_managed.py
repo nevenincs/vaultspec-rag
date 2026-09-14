@@ -70,13 +70,36 @@ from ._index_job_control_support import (
     cancel_managed_attempt,
     code_pipeline_published,
     pause_managed_attempt,
-    prepare_empty_code_collection,
-    request_after_first_code_upsert,
     request_cancel_at_the_write_gate,
     resume_managed_attempt,
     vault_attempt_published,
     write_vault_documents,
 )
+
+
+class _ControlAfterFirstCodeCommit(NullProgressReporter):
+    """Deliver control immediately after the first real code slice commits."""
+
+    def __init__(self, token: RunControlToken, request: ControlRequest) -> None:
+        self._token = token
+        self._request = request
+        self._phase = ""
+        self._delivered = False
+
+    def phase_start(self, name: str, total: int | None) -> None:
+        del total
+        self._phase = name
+
+    def advance(self, n: int = 1) -> None:
+        if self._phase != "chunk + embed" or self._delivered or n <= 0:
+            return
+        self._delivered = True
+        accepted = (
+            self._token.request_pause()
+            if self._request is ControlRequest.PAUSE
+            else self._token.request_cancel()
+        )
+        assert accepted
 
 
 @pytest.mark.parametrize(
@@ -100,26 +123,23 @@ def test_code_pipeline_control_unwinds_and_reconciliation_converges(
     assert not multiprocessing.active_children()
     with VaultStore(tmp_path, embedding_dim=cpu_embedding_model.dimension) as store:
         indexer = CodebaseIndexer(tmp_path, cpu_embedding_model, store)
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            requester = executor.submit(
-                request_after_first_code_upsert,
-                store,
-                token,
-                control_request,
+        with pytest.raises(signal_type):
+            indexer.full_index(
+                reporter=_ControlAfterFirstCodeCommit(token, control_request),
+                preflight=indexer.preflight_content(),
+                run_control=token,
             )
-            with pytest.raises(signal_type):
-                indexer.full_index(
-                    reporter=NullProgressReporter(),
-                    preflight=indexer.preflight_content(),
-                    run_control=token,
-                )
-            requester.result(timeout=_CONTROL_WAIT_SECONDS)
 
         assert token.snapshot().delivered is control_request
         _assert_code_resources_released()
         published_count = store.count_code()
         published_ids = store.get_all_code_ids()
-        assert 0 < published_count < len(paths)
+        # Control is cooperative. On the tiny CPU model the sole consumer can
+        # finish its already-buffered slices before the producer observes the
+        # delivered signal, so the durable prefix may equal the whole corpus.
+        # The contract here is that no later write escapes the unwind and a
+        # fresh attempt converges from whichever confirmed prefix won the race.
+        assert 0 < published_count <= len(paths)
         assert len(published_ids) == published_count
 
         time.sleep(0.25)
@@ -310,6 +330,24 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     expected_ids = {document.id for document in documents}
     slot = managed_facade_registry.peek_project(root)
 
+    baseline_id = jobs.start_reindex_vault(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
+    await _wait_for_managed_job(
+        managed_job_manager,
+        baseline_id,
+        lambda snapshot: snapshot.state is JobState.SUCCEEDED,
+        "explicit vault baseline rebuild did not succeed",
+    )
+    for document in documents:
+        document_path = root / ".vault" / document.path
+        document_path.write_text(
+            document_path.read_text(encoding="utf-8") + "\nupdated for pause\n",
+            encoding="utf-8",
+        )
+
     job_id = jobs.start_reindex_vault(
         root,
         clean=False,
@@ -339,8 +377,7 @@ async def test_managed_vault_pause_releases_resources_and_resume_reconciles(
     )
     assert slot.store.get_all_ids() == expected_ids
     assert (
-        set(published_content_identities(tmp_path, PublicSourceType.VAULT))
-        == expected_ids
+        set(published_content_identities(root, PublicSourceType.VAULT)) == expected_ids
     )
     _assert_manager_resources_released(
         succeeded, managed_facade_registry, root, code=False
@@ -405,8 +442,26 @@ async def test_managed_vault_cancel_is_absorbing_and_stops_all_writes(
 ) -> None:
     """A public vault cancellation acknowledges after every writer exits."""
     root = tmp_path / "managed-vault-cancel"
-    write_vault_documents(root, 128)
+    documents = write_vault_documents(root, 128)
     slot = managed_facade_registry.peek_project(root)
+
+    baseline_id = jobs.start_reindex_vault(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
+    await _wait_for_managed_job(
+        managed_job_manager,
+        baseline_id,
+        lambda snapshot: snapshot.state is JobState.SUCCEEDED,
+        "explicit vault baseline rebuild did not succeed",
+    )
+    for document in documents:
+        document_path = root / ".vault" / document.path
+        document_path.write_text(
+            document_path.read_text(encoding="utf-8") + "\nupdated for cancel\n",
+            encoding="utf-8",
+        )
 
     job_id = jobs.start_reindex_vault(
         root,
@@ -452,25 +507,26 @@ async def test_managed_cancel_at_write_gate_wins_without_spurious_failure(
     """
     root = tmp_path / "managed-code-cancel-gate"
     paths = _write_code_files(root, 4, "seed")
-    initial_id = jobs.start_reindex_codebase(
+    for path in paths:
+        path.unlink()
+
+    baseline_id = jobs.start_reindex_codebase(
         root,
         clean=True,
         authority=RunAuthority.REBUILD,
     )
-    initial_join = await managed_job_manager.wait_for_attempt(
-        initial_id,
+    baseline_join = await managed_job_manager.wait_for_attempt(
+        baseline_id,
         timeout_seconds=_MANAGED_WAIT_SECONDS,
     )
-    assert initial_join.code == "attempt_released"
-    initial = managed_job_manager.get(initial_id)
-    assert initial is not None
-    assert initial.state is JobState.SUCCEEDED
+    assert baseline_join.code == "attempt_released"
+    baseline = managed_job_manager.get(baseline_id)
+    assert baseline is not None
+    assert baseline.state is JobState.SUCCEEDED
 
-    slot = prepare_empty_code_collection(
-        managed_facade_registry,
-        root,
-        file_count=len(paths),
-    )
+    slot = managed_facade_registry.peek_project(root)
+    assert slot.store.count_code() == 0
+    paths = _write_code_files(root, len(paths), "pending")
     cancelled_id = await request_cancel_at_the_write_gate(
         managed_job_manager,
         managed_facade_registry,

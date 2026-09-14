@@ -56,7 +56,10 @@ def _spawn_shim(env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
         _SHIM_CMD,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # This harness validates the JSON-RPC wire. Leaving stderr as an
+        # unread PIPE can fill its Windows buffer on degraded paths and block
+        # the child before it writes the response being tested.
+        stderr=subprocess.DEVNULL,
         env=merged,
     )
 
@@ -79,12 +82,7 @@ def _recv(
         # without text=True, so a read is genuinely bytes.
         line = shim.stdout.readline()
         if not line:
-            raise AssertionError(
-                "shim closed stdout before responding; stderr tail: "
-                + (shim.stderr.read() if shim.stderr else b"").decode(errors="replace")[
-                    -2000:
-                ]
-            )
+            raise AssertionError("shim closed stdout before responding")
         try:
             message = cast("dict[str, object]", json.loads(line.decode("utf-8")))
         except json.JSONDecodeError:

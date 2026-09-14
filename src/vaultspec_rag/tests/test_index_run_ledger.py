@@ -2522,7 +2522,7 @@ def _open_concurrent_fresh_ledgers(
     require_schema = RunLedger._require_current_or_empty_schema
     first_base_created = threading.Event()
     release_first_creator = threading.Event()
-    second_preflight_finished = threading.Event()
+    second_preflight_entered = threading.Event()
     first_call = True
     call_lock = threading.Lock()
     ledgers: list[RunLedger] = []
@@ -2542,11 +2542,9 @@ def _open_concurrent_fresh_ledgers(
         self: RunLedger,
         connection: sqlite3.Connection,
     ) -> None:
-        try:
-            require_schema(self, connection)
-        finally:
-            if threading.current_thread().name == "second-schema-opener":
-                second_preflight_finished.set()
+        if threading.current_thread().name == "second-schema-opener":
+            second_preflight_entered.set()
+        require_schema(self, connection)
 
     def open_ledger() -> None:
         try:
@@ -2569,7 +2567,7 @@ def _open_concurrent_fresh_ledgers(
         try:
             assert first_base_created.wait(PROCESS_TIMEOUT_SECONDS)
             second.start()
-            assert second_preflight_finished.wait(PROCESS_TIMEOUT_SECONDS)
+            assert second_preflight_entered.wait(PROCESS_TIMEOUT_SECONDS)
         finally:
             release_first_creator.set()
         first.join(PROCESS_TIMEOUT_SECONDS)

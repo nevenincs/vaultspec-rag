@@ -100,8 +100,10 @@ async def _exercise_document_tools(
         args=["-c", "from vaultspec_rag.server import main; main()"],
         env=env,
     )
+    native_stderr = sys.__stderr__
+    assert native_stderr is not None
     async with (
-        stdio_client(server) as (read_stream, write_stream),
+        stdio_client(server, errlog=native_stderr) as (read_stream, write_stream),
         ClientSession(read_stream, write_stream) as session,
     ):
         await asyncio.wait_for(session.initialize(), timeout=60)

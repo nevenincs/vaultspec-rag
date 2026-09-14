@@ -48,6 +48,7 @@ from ..benchmarks.bench_large_index_resilience import (
     prepare_corpus,
     retain_benchmark_evidence,
 )
+from ._watcher_test_support import pending_code_observation, seed_vault_publication
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -738,7 +739,7 @@ async def test_watcher_detects_and_indexes_file(
     init_file.write_text(init_text, encoding="utf-8")
 
     # 2. Setup the canonical registry-owned RAG components.
-    registry, _manager = managed_watcher_runtime
+    registry, manager = managed_watcher_runtime
     assert registry.model is embedding_model
     slot = registry.peek_project(tmp_path)
     store = slot.store
@@ -782,22 +783,22 @@ async def test_watcher_detects_and_indexes_file(
         )
         new_file.write_text(new_text, encoding="utf-8")
 
-        # 5. Wait for watcher to detect, debounce, and trigger re-index
-        for _ in range(30):  # Poll for up to 3 seconds
-            await asyncio.sleep(0.1)
-            results = store.hybrid_search(
-                HybridSearchRequest(
-                    query_vector=q_vec,
-                    query_text="concurrency adversarial stress",
-                    limit=10,
-                )
+        # 5. Wait on the canonical watcher job rather than racing a fixed
+        # three-second search poll against debounce, admission, and indexing.
+        await _wait_for_watcher_job(
+            manager,
+            tmp_path,
+            lambda snapshot: snapshot.state is JobState.SUCCEEDED,
+            "watcher did not complete the new-document index",
+        )
+        results = store.hybrid_search(
+            HybridSearchRequest(
+                query_vector=q_vec,
+                query_text="concurrency adversarial stress",
+                limit=10,
             )
-            if any("adversarial" in r.get("content", "") for r in results):
-                break
-        else:
-            pytest.fail(
-                "Watcher failed to trigger and index the new document within timeout"
-            )
+        )
+        assert any("adversarial" in r.get("content", "") for r in results)
 
     finally:
         await _stop_watcher(tmp_path)
@@ -887,11 +888,17 @@ async def test_watcher_converges_code_create_modify_rename_delete_and_active_edi
             path=renamed_rel,
             expected_content="modified",
         )
+        deadline = asyncio.get_running_loop().time() + _WATCHER_WAIT_SECONDS
+        while (
+            _code_chunk_ids(registry, root, {created_rel})
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await asyncio.sleep(_WATCHER_POLL_SECONDS)
         assert not _code_chunk_ids(registry, root, {created_rel})
 
         with registry.compute_lease(root) as lease:
             writer_lock = lease.runtime.code_indexer._writer_lock
-            assert writer_lock.acquire(blocking=False)
+            await asyncio.to_thread(writer_lock.acquire)
             try:
                 target.write_text(
                     'def zebrafish_marker():\n    return "active-first"\n',
@@ -1101,6 +1108,7 @@ async def test_watcher_pause_coalesces_and_explicit_stop_joins_cleanup(
     registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
     slot = registry.peek_project(root)
+    seed_vault_publication(registry, root)
     first_path = root / ".vault" / "adr" / "first-paused.md"
     second_path = root / ".vault" / "adr" / "second-paused.md"
 
@@ -1151,6 +1159,7 @@ async def test_watcher_cancel_preserves_dirtiness_and_submits_replacement(
     registry, manager = managed_watcher_runtime
     root = tmp_path.resolve()
     slot = registry.peek_project(root)
+    seed_vault_publication(registry, root)
     first_path = root / ".vault" / "adr" / "first-cancelled.md"
     second_path = root / ".vault" / "adr" / "second-cancelled.md"
 
@@ -1411,7 +1420,8 @@ async def test_watcher_refreshes_intent_committed_by_retiring_policy(
         state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
         await _wait_for_path(state_path)
         retiring = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
-        await asyncio.to_thread(retiring.mark_convergence_pending)
+        observation = pending_code_observation(relative)
+        await asyncio.to_thread(retiring.mark_scope_pending, (observation,))
         await _wait_for_code_payload(
             slot,
             path=relative,
@@ -1442,7 +1452,7 @@ async def test_watcher_startup_retries_real_state_lock_contention(
         encoding="utf-8",
     )
     retiring = WatcherRetryPolicy.for_root(root, WatcherSource.CODE)
-    retiring.mark_convergence_pending()
+    retiring.mark_scope_pending((pending_code_observation(relative),))
     state_path = root / get_config().data_dir / "watcher-retry" / "code.json"
     ready_path = root / "watcher-startup-lock-ready.marker"
     holder = _start_state_lock_holder(

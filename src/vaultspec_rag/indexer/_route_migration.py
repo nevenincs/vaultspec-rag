@@ -16,6 +16,7 @@ from .. import store_schema
 from .._source_types import PublicSourceType
 from ._content_policy import ContentKind
 from ._run_ledger_models import (
+    PublicationPointCandidate,
     index_run_ledger_path,
     ledger_connection,
     ledger_transaction,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from ..store_runtime import VaultStore
     from ._file_state import FileState
     from ._resolved_policy import ResolvedIndexPolicy
+    from ._run_ledger_models import PublicationReceipt
     from ._run_policy import RunPolicy
 
 __all__ = [
@@ -69,6 +71,11 @@ class DestinationCheckpoint(Protocol):
 
     @property
     def run_policy(self) -> RunPolicy: ...
+
+    @property
+    def receipt(self) -> PublicationReceipt | None: ...
+
+    def seal_incremental_proof(self) -> int: ...
 
 
 class RouteMigrationPhase(StrEnum):
@@ -605,8 +612,7 @@ def purge_unpublished_rows(
         run_policy=checkpoint.run_policy,
         options=options,
     ):
-        states = _file_states_for_rows(checkpoint, page)
-        retained_ids = _retained_ids_for_rows(checkpoint, page)
+        states, retained_ids = _effective_route_evidence(checkpoint, page)
         stale_ids = [
             row.point_id
             for row in page
@@ -635,6 +641,33 @@ def purge_unpublished_rows(
     return removed
 
 
+def _effective_route_evidence(
+    checkpoint: DestinationCheckpoint,
+    rows: tuple[StoredRouteRow, ...],
+) -> tuple[dict[str, FileState], frozenset[str]]:
+    """Resolve one store page against its rebuild or sealed incremental view."""
+    receipt = checkpoint.receipt
+    if receipt is None:
+        return (
+            _file_states_for_rows(checkpoint, rows),
+            _retained_ids_for_rows(checkpoint, rows),
+        )
+    rel_paths = tuple(dict.fromkeys(row.source_path for row in rows))
+    candidates = tuple(
+        PublicationPointCandidate(row.source_path, row.point_id) for row in rows
+    )
+    effective = checkpoint.ledger.effective_file_state_page(
+        receipt.receipt_id,
+        checkpoint.generation_id,
+        rel_paths=rel_paths,
+        candidates=candidates,
+    )
+    return (
+        {state.rel_path: state for state in effective.file_states},
+        frozenset(candidate.point_id for candidate in effective.retained_candidates),
+    )
+
+
 def reconcile_generation_storage(
     store: VaultStore,
     checkpoint: DestinationCheckpoint,
@@ -652,6 +685,8 @@ def reconcile_generation_storage(
     breadth while allowing only destination-confirmed cross-kind cleanup.
     In-place code and document generations already select their destinations.
     """
+    if checkpoint.receipt is not None:
+        checkpoint.seal_incremental_proof()
     resumed = resume_pending_migrations(
         store,
         checkpoint.ledger.path.parent,

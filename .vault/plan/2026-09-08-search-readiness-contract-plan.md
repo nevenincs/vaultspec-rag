@@ -10,7 +10,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-reference]]'
 modified: '2026-09-14'
 body_schema: body-v2
-body_hash: 'sha256:f9b0e0cc8bd36dfc21c84ff376b2f5cd323e2a17d7f33db2b84aeb815917a151'
+body_hash: 'sha256:01b9f5bc91d94b027b21a69f33b7f897324f49932aeebe965c068118b66fa849'
 ---
 
 <!-- RETIRED: P14 -->
@@ -165,8 +165,8 @@ Prove immediate-mode semantics and concurrency performance remain intact.
 Complete explicit gates public documentation and independent review before closure.
 
 - [x] `W04.P13.S55` - Run focused unit integration MCP conformance concurrency guard and benchmark gates with individual exit codes; `src/vaultspec_rag/tests`.
-- [ ] `W04.P13.S56` - Run repository lint format type full test vault and diff gates with individual exit codes; `repository-wide verification`.
-- [ ] `W04.P13.S57` - Perform formal review for ADR service cancellation evidence retry GPU and storage conformance; `cohesive changed-file set`.
+- [x] `W04.P13.S56` - Run repository lint format type full test vault and diff gates with individual exit codes; `repository-wide verification`.
+- [x] `W04.P13.S57` - Perform formal review for ADR service cancellation evidence retry GPU and storage conformance; `cohesive changed-file set`.
 - [x] `W04.P13.S58` - Document immediate and bounded policy states retries CLI and MCP automation examples; `docs/search-and-index.md`.
 
 ## Parallelization

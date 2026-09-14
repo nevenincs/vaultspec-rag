@@ -263,7 +263,24 @@ def _register_controller_binding(binding: _ControllerBinding) -> None:
 
     async def reevaluate() -> None:
         nonlocal measurement_generation
-        state = binding.retry_policy.state
+        state = await _run_in_thread(binding.retry_policy.refresh)
+        if state.convergence_generation > binding.controller.snapshot.scope.generation:
+            if state.scope_refusal is not None:
+                binding.controller.refuse(
+                    ControllerReason(state.scope_refusal.value),
+                    remediation=(
+                        "Run an explicit full reindex before resuming "
+                        "automatic updates."
+                    ),
+                )
+            else:
+                binding.controller.observe(
+                    controller_scope_from_retry_state(
+                        state,
+                        monotonic_now=time.monotonic(),
+                        wall_now=time.time(),
+                    )
+                )
         measurement_generation += 1
         observed_at = time.monotonic()
         measurement = await _run_in_thread(

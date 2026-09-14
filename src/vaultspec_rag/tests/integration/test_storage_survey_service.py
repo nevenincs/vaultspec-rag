@@ -370,7 +370,12 @@ def test_storage_survey_totals_report_collections_and_ephemeral_backlog(
     reindex = _do_http_call(
         port,
         "/reindex",
-        {"type": "vault", "clean": True, "project_root": str(root)},
+        {
+            "type": "vault",
+            "clean": True,
+            "authority": "rebuild",
+            "project_root": str(root),
+        },
     )
     assert reindex is not None and reindex.get("ok") is True, reindex
     job_id = reindex.get("job_id")

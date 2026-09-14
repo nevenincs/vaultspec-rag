@@ -407,7 +407,7 @@ class RunCheckpointBase:
             )
             return len(evidence)
         if self.receipt is not None:
-            return self._seal_incremental_proof()
+            return self.seal_incremental_proof()
         from ._run_ledger_publication import compatibility_for_signature
 
         proof = self.ledger.publication_proof(
@@ -439,7 +439,8 @@ class RunCheckpointBase:
                 )
         return evidence
 
-    def _seal_incremental_proof(self) -> int:
+    def seal_incremental_proof(self) -> int:
+        """Freeze an incremental receipt's exact delta before stale deletion."""
         if self.receipt is None:
             raise RunLedgerStateError("incremental publication has no receipt")
         receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)

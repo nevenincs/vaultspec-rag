@@ -50,8 +50,9 @@ binaries.yml:Ask the acquisition check to try this release
 binaries.yml:Promote a repaired release back to latest
 publish.yml:Generate checksums
 publish.yml:Publish to PyPI
+publish.yml:Hold the release as a prerelease
 release-please.yml:Regenerate and push uv.lock
-release-please.yml:Trigger Binaries workflow
+publish.yml:Trigger Binaries workflow
 
 # Downloads the published binary onto a machine with no checkout and asks
 # whether the dynamic loader accepts it. Recipe needed: `test-acquisition`,

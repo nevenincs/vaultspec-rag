@@ -104,9 +104,11 @@ class TestTheAnchorEstablishesMembership:
         # silently returning False - a wrong access mask or a failed job
         # creation - which would leave the spawn path calling a no-op.
         from ..._test_isolation import anchor_spawned_process_to_pytest
+        from ...cli._process import WIN_DAEMON_SPAWN_FLAGS
 
         sleeper = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(60)"]
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            creationflags=WIN_DAEMON_SPAWN_FLAGS,
         )
         try:
             assert anchor_spawned_process_to_pytest(sleeper.pid), (

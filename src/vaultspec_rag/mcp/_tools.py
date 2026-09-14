@@ -22,6 +22,7 @@ import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Self, cast
 
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -319,7 +320,7 @@ def _require_port() -> int:
     """Return the port of a reachable, release-compatible service.
 
     Two preconditions for every tool call, both mapped to a single
-    ``RuntimeError`` here so neither contract is restated per tool: the daemon
+    ``ToolError`` here so neither contract is restated per tool: the daemon
     must be reachable (a tool never falls back to a local backend), and it must
     be the same release as this client. The version travels in the discovery
     pointer this call already reads, so confirming it costs no extra round trip.
@@ -333,9 +334,9 @@ def _require_port() -> int:
 
     service = resolve_data_plane_service()
     if service.port is None:
-        raise RuntimeError(_SERVICE_DOWN_MESSAGE)
+        raise ToolError(_SERVICE_DOWN_MESSAGE)
     if not service.version.is_compatible:
-        raise RuntimeError(
+        raise ToolError(
             f"{service.version.error_code()}: {service.version.reason()}. "
             f"{' '.join(service.version.remediation())}"
         )
@@ -347,10 +348,10 @@ def _unwrap[T](result: T | None) -> T:
 
     The ``serviceclient`` helpers return ``None`` when the service refuses the
     connection (down between the port read and the call); that maps to the same
-    single ``RuntimeError`` as a missing ``service.json``.
+    single ``ToolError`` as a missing ``service.json``.
     """
     if result is None:
-        raise RuntimeError(_SERVICE_DOWN_MESSAGE)
+        raise ToolError(_SERVICE_DOWN_MESSAGE)
     return result
 
 

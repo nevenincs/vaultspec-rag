@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from functools import partial
 
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+
 from ..serviceclient._transport import _try_http_vault_document
 from ._mcp import mcp
 from ._roots import _resolve_project_root
@@ -40,18 +42,21 @@ async def get_vault_document(doc_id: str) -> str:
 
     Raises:
         FileNotFoundError: If no document matches the given ID.
-        RuntimeError: If the service is not running or the REST call
-            fails.
+        ResourceError: If the service is not running.
+        RuntimeError: If the REST call fails.
     """
-    port = _require_port()
-    res = await _delegate(
-        partial(
-            _try_http_vault_document,
-            doc_id,
-            _resolve_project_root(None),
-            port,
+    try:
+        port = _require_port()
+        res = await _delegate(
+            partial(
+                _try_http_vault_document,
+                doc_id,
+                _resolve_project_root(None),
+                port,
+            )
         )
-    )
+    except ToolError as exc:
+        raise ResourceError(str(exc)) from exc
     if "content" in res:
         return str(res["content"])
     if res.get("error") == "not_found":

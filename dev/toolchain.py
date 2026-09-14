@@ -53,7 +53,7 @@ PACKAGE = "src/vaultspec_rag"
 #: rather than from the repository root.
 MODULE = "vaultspec_rag"
 
-#: Python trees carrying committed source, and therefore linted.
+#: Python paths carrying committed source, and therefore linted.
 #:
 #: ``tools`` joins the package because it holds the release binary builder and
 #: the Scoop/Homebrew generators, where a break fails a release rather than a
@@ -61,9 +61,9 @@ MODULE = "vaultspec_rag"
 #: does not exist, and a builder invoked so it could not import its own
 #: package, reached main with CI green.
 #:
-#: ``dev`` joins them because a harness that is not itself linted is the one
-#: place a convention can quietly stop applying.
-PYTHON_PATHS = ("src", "tools", "dev")
+#: ``dev`` and the root pytest harness join them because a harness that is not
+#: itself linted is the one place a convention can quietly stop applying.
+PYTHON_PATHS = ("src", "tools", "dev", "conftest.py")
 
 #: Markdown trees checked and formatted.
 MARKDOWN_PATHS = ("README.md", ".vaultspec/", ".vault/")
