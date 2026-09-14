@@ -8,7 +8,7 @@ related:
   - '[[2026-07-24-index-throughput-research]]'
   - '[[2026-07-24-index-throughput-adr]]'
 modified: '2026-09-14'
-body_hash: 'sha256:50a6c90518c2b5d4ef02e5b3bd4766fde88d0c2283848ba5859142789340484e'
+body_hash: 'sha256:492d0181a3915d2f9b8912de42983080436fdbabd4f829490f22056156547060'
 ---
 
 <!-- RETIRED: S15 -->
@@ -44,7 +44,7 @@ Move vault parsing into the spawn-safe CPU worker pool and adopt the code path's
 - [x] `P03.S06` - move vault document parsing into the spawn-safe CPU worker pool keeping every worker torch-free; `src/vaultspec_rag/indexer/_vault_indexer.py`; `src/vaultspec_rag/indexer/_streaming.py`.
 - [x] `P03.S07` - adopt the bounded-queue producer/consumer pattern for the vault encode path with sentinel shutdown and time-bounded joins; `src/vaultspec_rag/indexer/_streaming.py`; `src/vaultspec_rag/indexer/_vault_indexer.py`.
 - [x] `P03.S08` - adopt the bounded-queue producer/consumer pattern for the document encode path with sentinel shutdown and time-bounded joins; `src/vaultspec_rag/indexer/_streaming.py`; `src/vaultspec_rag/indexer/`.
-- [ ] `P03.S09` - re-tune the CUDA cache flush cadence under overlap and record the measured effect; `src/vaultspec_rag/config.py`.
+- [ ] `P03.S09` - re-tune the CUDA cache flush cadence under overlap and record the measured effect; `src/vaultspec_rag/config/_settings.py`.
 - [x] `P03.S10` - add overlap tests including mutation proofs that the single-consumer contract binds: a second consumer or lock-held-across-non-forward mutation goes red on the intended assertion, restore green, recorded; `src/vaultspec_rag/tests/`.
 - [x] `P03.S16` - apply the existing flush-cadence throttle to the vault slice path, which currently empties the CUDA cache every slice; `src/vaultspec_rag/indexer/_streaming.py`.
 - [x] `P03.S17` - throttle the document per-file loop's cache release, which currently syncs the device every slice by defaulting release-cache on; `src/vaultspec_rag/indexer/_document_indexer.py`; `src/vaultspec_rag/indexer/_streaming.py`.
