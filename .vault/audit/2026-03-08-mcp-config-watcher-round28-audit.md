@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:f2b37ea740fc1e3199b468796aa476b083459f33a5b021e18ea4ba2fefd8ccba'
+modified: '2026-09-14'
+body_hash: 'sha256:a6f5a7f2d8d2463e3da3ee3f970566e2310b343a9690b44bf158c944890b193b'
 ---
 
 # Audit: mcp_server.py, config.py, watcher.py — Round 28
@@ -165,6 +165,7 @@ Lines 52–75 implement a correct singleton with safe mutation.
 ```python
 _cached_config: VaultSpecConfigWrapper | None = None
 
+
 def get_config(overrides: dict[str, Any] | None = None) -> VaultSpecConfigWrapper:
     global _cached_config
     if overrides is not None:
@@ -300,9 +301,7 @@ Lines 129 and 155 acquire `gpu_sem` before indexing.
 
 ```python
 async with gpu_sem:
-    result = await anyio.to_thread.run_sync(
-        vault_indexer.incremental_index
-    )
+    result = await anyio.to_thread.run_sync(vault_indexer.incremental_index)
 _last_vault_index = time.monotonic()
 ```
 

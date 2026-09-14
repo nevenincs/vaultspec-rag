@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:9d611dfc11f803ede9b342f3a3a24189e9bb05f1e03c9b1527373e1460f9da0e'
+modified: '2026-09-14'
+body_hash: 'sha256:9149cd0061bc8df2a8d83c1a9beeb0c65fd9c9355722fb917455273d73cdd199'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
   - '[[2026-03-09-graph-embedding-round36-audit]]'
@@ -306,12 +306,13 @@ The pattern:
 
 ```python
 app = Starlette(
-    routes=[Mount("/mcp", app=mcp.streamable_http_app()),
-            Route("/health", health_handler)],
+    routes=[
+        Mount("/mcp", app=mcp.streamable_http_app()),
+        Route("/health", health_handler),
+    ],
     lifespan=combined_lifespan,
 )
-uvicorn.run(app, host="127.0.0.1", port=8766,
-            timeout_graceful_shutdown=30)
+uvicorn.run(app, host="127.0.0.1", port=8766, timeout_graceful_shutdown=30)
 ```
 
 The `/health` endpoint becomes available only after lifespan completes --

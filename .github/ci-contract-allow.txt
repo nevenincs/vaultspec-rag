@@ -8,19 +8,11 @@
 # --- runner-plane -----------------------------------------------------------
 # Acts on the MACHINE, not the product, so there is no local recipe it could
 # be hiding. These belong in ci-fleet, which already owns the job hooks, the
-# preflight and the fleet-health check.
-binaries.yml:Read the self-hosted selectors out of the matrix
-binaries.yml:Every required selector has an online runner
+# fleet operations.
 binaries.yml:Return the workspace to the runner's user
 acquisition.yml:Return the workspace to the runner's user
 acquisition.yml:Install what acquisition itself needs
 ci.yml:Put Homebrew and user binaries on PATH
-bootstrap-branch.yml:Bootstrap local worktree
-
-# ci-fleet ships this check as its own workflow. This is a second, independent
-# implementation of it in a consumer repo; the entry stays until the copy is
-# deleted in favour of the fleet's.
-fleet-health.yml
 
 # --- pending ----------------------------------------------------------------
 # The three interpreter heredocs and the raw vault check that stood here are
@@ -73,3 +65,12 @@ acquisition.yml:The loader must accept them
 # isolated wheel. `just init` would build a project venv neither one uses.
 binaries.yml:Install Python
 publish.yml:Install Python
+
+# These release steps intentionally retain shell-level artifact and GitHub
+# bookkeeping: they consume the release event and cannot be reproduced by a
+# local recipe without changing the publication boundary.
+binaries.yml:Build the wheel
+binaries.yml:Validate the wheel matches the release tag
+binaries.yml:Assert every declared target archive ready
+release-please.yml:Hold the release out of latest until artifacts are complete
+release-please.yml:Trigger Publish workflow
