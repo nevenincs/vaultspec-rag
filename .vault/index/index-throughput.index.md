@@ -6,7 +6,7 @@ tags:
 date: '2026-08-14'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:fc8215fc2c88727d32c199102bf74f3c2a9c5286cf6e6bf8b9a2e5524b2d74ed'
+body_hash: 'sha256:6407bb0c121f14d2563dc2548cda1c76ab2c7d373896ad165c8ee4d2087f8a89'
 related:
   - '[[2026-07-24-index-throughput-P01-S01]]'
   - '[[2026-07-24-index-throughput-P01-S02]]'
@@ -28,6 +28,7 @@ related:
   - '[[2026-07-24-index-throughput-adr]]'
   - '[[2026-07-24-index-throughput-plan]]'
   - '[[2026-07-24-index-throughput-research]]'
+  - '[[2026-09-14-index-throughput-closeout-audit]]'
 ---
 
 # `index-throughput` feature index
@@ -39,6 +40,10 @@ Auto-generated index of all documents tagged with `#index-throughput`.
 ### adr
 
 - `2026-07-24-index-throughput-adr` - `index-throughput` adr: `bound job admission and align pipeline overlap` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-14-index-throughput-closeout-audit` - `index-throughput` audit: `closeout decision and measurement safety`
 
 ### exec
 
