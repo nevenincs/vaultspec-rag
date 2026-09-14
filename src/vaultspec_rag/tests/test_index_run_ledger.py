@@ -2844,6 +2844,34 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
     assert ledger.file_complete(generation.generation_id, deletion.rel_path)
 
 
+def test_commit_units_accept_storage_order_but_finalize_in_file_order(
+    tmp_path: Path,
+) -> None:
+    """Keep length-sorted store batches independent of file-local ordinals.
+
+    Mutation proof: restoring the insertion-time ordinal/count comparison in
+    ``_assert_segment_matches_siblings`` makes the first assertion below fail
+    with ``commit-unit segment ordinals must be contiguous``.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    digest = _digest("length-sorted-source")
+    units = [_unit("src/large.py", ordinal, 3, digest=digest) for ordinal in range(3)]
+
+    assert ledger.record_storage_confirmed_unit(generation.generation_id, units[2])
+    assert not ledger.file_complete(generation.generation_id, "src/large.py")
+    assert (
+        ledger.record_storage_confirmed_units(
+            generation.generation_id,
+            (units[0], units[1]),
+        )
+        == 2
+    )
+
+    assert ledger.file_complete(generation.generation_id, "src/large.py")
+    assert list(ledger.iter_units(generation.generation_id)) == units
+
+
 def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(_signature(tmp_path))
