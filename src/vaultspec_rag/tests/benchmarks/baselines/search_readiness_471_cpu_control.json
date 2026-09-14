@@ -38,20 +38,39 @@
     "cleanup_evidence": "Each sample uses a registry capped at 32 observers, then completes two consecutive 32-waiter waves; the second full wave succeeds only after the first wave unregisters."
   },
   "live_service_comparison": {
-    "status": "unavailable",
-    "reason": "No explicitly compatible resident GPU service was supplied; GPU discipline forbids starting a competing service for this step.",
-    "no_wait_latency_seconds": null,
-    "search_throughput_rps": null,
-    "search_limiter_concurrency": null,
-    "gpu_queue_wait_seconds": null,
-    "bounded_readiness_wait_seconds": null
+    "status": "accepted",
+    "environment": "Windows 11, Python 3.13.14, CUDA, vaultspec-rag 0.4.28, managed Qdrant 1.19.0",
+    "command": "uv run --no-sync python -m vaultspec_rag.tests.benchmarks.bench_concurrency --root . --requests 32 --concurrency 8 --timeout 600 --json <temporary-report>",
+    "requests_per_scenario": 32,
+    "search_limiter_concurrency": 8,
+    "all_scenarios_error_free": true,
+    "no_wait_latency_seconds": {
+      "p50": 4.151,
+      "p95": 4.212,
+      "max": 4.478
+    },
+    "search_throughput_rps": {
+      "vault": 0.902,
+      "code": 1.756,
+      "mixed": 1.191,
+      "readiness_immediate": 1.884,
+      "readiness_bounded_contention": 1.852
+    },
+    "gpu_queue_wait_seconds": {
+      "immediate_mean": 3.1168,
+      "immediate_max": 3.6567,
+      "bounded_mean": 3.1603,
+      "bounded_max": 3.7709
+    },
+    "bounded_readiness_wait_seconds": 0.001328,
+    "waiter_cleanup_verified": true
   },
   "acceptance": {
     "cpu_control": "pass",
     "immediate_batch_within_budget_all_samples": true,
     "minimum_admissions_per_second_within_budget": true,
     "waiter_cleanup_verified_all_samples": true,
-    "live_service_metrics_accepted": false,
-    "live_service_follow_up": "Run the recorded benchmark command against one explicitly compatible resident GPU service and compare only with results from the same host, service build, roots, request count, and concurrency."
+    "live_service_metrics_accepted": true,
+    "live_service_follow_up": "Compare future runs only on the same host, service build, roots, request count, concurrency, and resident-service topology."
   }
 }
