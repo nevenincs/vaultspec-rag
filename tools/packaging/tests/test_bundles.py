@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 import tarfile
 import zipfile
 from typing import TYPE_CHECKING
@@ -55,7 +57,20 @@ def _contents(archive: Path, target: str) -> dict[str, bytes]:
             payload = handle.extractfile(member)
             assert payload is not None
             contents[member.name] = payload.read()
-        return contents
+    return contents
+
+
+def _modes(archive: Path, target: str) -> dict[str, int]:
+    """Read portable permission bits from either archive format."""
+    if target.endswith("windows-msvc"):
+        with zipfile.ZipFile(archive) as handle:
+            return {
+                info.filename: (info.external_attr >> 16) & 0o777
+                for info in handle.infolist()
+            }
+
+    with tarfile.open(archive, "r:gz") as handle:
+        return {member.name: member.mode & 0o777 for member in handle.getmembers()}
 
 
 def _tampered_manifest(archive: Path, root: Path, field: str, value: object) -> Path:
@@ -98,8 +113,10 @@ def test_build_bundle_has_stable_contents_and_manifest(
         "LICENSE",
         "README.txt",
         "manifest.json",
-        *(VAULTSPEC_RAG.executable_name(executable, target)
-          for executable in VAULTSPEC_RAG.executables),
+        *(
+            VAULTSPEC_RAG.executable_name(executable, target)
+            for executable in VAULTSPEC_RAG.executables
+        ),
     }
     assert set(contents) == expected
     assert all(target not in name for name in contents if name != "manifest.json")
@@ -124,9 +141,7 @@ def test_build_bundle_has_stable_contents_and_manifest(
         "manifest.json"
     }
     for entry in manifest["files"]:
-        assert entry["sha256"] == hashlib.sha256(
-            contents[entry["name"]]
-        ).hexdigest()
+        assert entry["sha256"] == hashlib.sha256(contents[entry["name"]]).hexdigest()
 
     checksum = archive.with_name(archive.name + ".sha256")
     assert checksum.read_text(encoding="utf-8") == (
@@ -137,7 +152,7 @@ def test_build_bundle_has_stable_contents_and_manifest(
 
 @pytest.mark.parametrize("target", TARGETS)
 def test_build_bundle_is_deterministic(tmp_path: Path, target: str) -> None:
-    """Host mtimes do not alter the public archive bytes."""
+    """Host modes, mtimes, and umask do not alter the public archive bytes."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")
@@ -145,11 +160,81 @@ def test_build_bundle_is_deterministic(tmp_path: Path, target: str) -> None:
     output = tmp_path / "bundles"
     spec = BundleSpec(VAULTSPEC_RAG, VERSION, target)
 
-    archive = build_bundle(spec, raw, output, repo, REVISION)
-    first = archive.read_bytes()
-    archive = build_bundle(spec, raw, output, repo, REVISION)
+    previous_umask = os.umask(0o077)
+    try:
+        archive = build_bundle(spec, raw, output, repo, REVISION)
+        first = archive.read_bytes()
+
+        for source in (repo / "LICENSE", *raw.iterdir()):
+            source.chmod(0o600)
+        os.umask(0o002)
+        archive = build_bundle(spec, raw, output, repo, REVISION)
+    finally:
+        os.umask(previous_umask)
 
     assert archive.read_bytes() == first
+
+
+@pytest.mark.parametrize("target", TARGETS)
+def test_build_bundle_writes_canonical_member_modes(
+    tmp_path: Path, target: str
+) -> None:
+    """Executables are 0755 and descriptive members are 0644 in every format."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("license\n", encoding="utf-8")
+    raw = _raw_outputs(tmp_path, target)
+    archive = build_bundle(
+        BundleSpec(VAULTSPEC_RAG, VERSION, target),
+        raw,
+        tmp_path / "bundles",
+        repo,
+        REVISION,
+    )
+
+    modes = _modes(archive, target)
+    executable_names = {
+        VAULTSPEC_RAG.executable_name(executable, target)
+        for executable in VAULTSPEC_RAG.executables
+    }
+    assert {modes[name] for name in executable_names} == {0o755}
+    assert {mode for name, mode in modes.items() if name not in executable_names} == {
+        0o644
+    }
+
+
+def test_verify_bundle_rejects_non_executable_unix_command(tmp_path: Path) -> None:
+    """A Unix command without its execute bits cannot cross verification.
+
+    Mutation proof: omitting member-mode verification made this test fail with
+    ``DID NOT RAISE``; the verification call was restored before the passing run.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("license\n", encoding="utf-8")
+    target = products.LINUX_X86_64
+    spec = BundleSpec(VAULTSPEC_RAG, VERSION, target)
+    archive = build_bundle(
+        spec,
+        _raw_outputs(tmp_path, target),
+        tmp_path / "bundles",
+        repo,
+        REVISION,
+    )
+    contents = _contents(archive, target)
+    modes = _modes(archive, target)
+    command = VAULTSPEC_RAG.executable_name(VAULTSPEC_RAG.executables[0], target)
+    modes[command] = 0o644
+
+    with tarfile.open(archive, "w:gz") as handle:
+        for name, payload in contents.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            member.mode = modes[name]
+            handle.addfile(member, io.BytesIO(payload))
+
+    with pytest.raises(BundleError, match=f"bundle mode for {command}"):
+        verify_bundle(archive, spec)
 
 
 def test_build_bundle_rejects_a_missing_executable(tmp_path: Path) -> None:
