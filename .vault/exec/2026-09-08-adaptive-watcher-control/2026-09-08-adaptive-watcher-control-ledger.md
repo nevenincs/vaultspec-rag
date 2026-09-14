@@ -1,0 +1,192 @@
+---
+tags:
+  - '#exec'
+  - '#adaptive-watcher-control'
+date: '2026-09-08'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:5c7d8cccbad9745ba7f3192cb71162400661382c146ff497c951c98445424a4e'
+related:
+  - "[[2026-09-08-adaptive-watcher-control-plan]]"
+---
+
+# `adaptive-watcher-control` ledger
+
+## Changes
+
+- `S01` `A` `src/vaultspec_rag/watcher_controller.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_watcher_controller.py`
+- `S01` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W01-P01-S01.md`
+- `S01` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S01` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S01` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ty check src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S02` `M` `src/vaultspec_rag/watcher_controller.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_watcher_controller.py`
+- `S02` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W01-P01-S02.md`
+- `S02` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S02` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S02` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ty check src/vaultspec_rag/watcher_controller.py src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S03` `M` `src/vaultspec_rag/config/_schema.py`
+- `S03` `M` `src/vaultspec_rag/config/_settings.py`
+- `S03` `M` `src/vaultspec_rag/config/_types.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S03` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/config src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/config src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check src/vaultspec_rag/config src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_config.py -q` -> `pass`
+- `S04` `M` `src/vaultspec_rag/watcher_retry.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S04` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W01-P02-S04.md`
+- `S04` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S04` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S04` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/tests/test_watcher_retry.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/tests/test_watcher_retry.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ty check src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/tests/test_watcher_retry.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_watcher_retry.py` -> `pass`
+- `S05` `M` `src/vaultspec_rag/watcher_retry.py`
+- `S05` `M` `src/vaultspec_rag/watcher_durability.py`
+- `S05` `A` `src/vaultspec_rag/tests/test_watcher_durable_scope.py`
+- `S05` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W01-P02-S05.md`
+- `S05` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S05` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S05` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/watcher_durability.py src/vaultspec_rag/tests/test_watcher_durable_scope.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/watcher_durability.py src/vaultspec_rag/tests/test_watcher_durable_scope.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ty check src/vaultspec_rag/watcher_retry.py src/vaultspec_rag/watcher_durability.py src/vaultspec_rag/tests/test_watcher_durable_scope.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_watcher_durable_scope.py src/vaultspec_rag/tests/test_watcher_retry.py` -> `pass`
+- `S06` `M` `src/vaultspec_rag/tests/test_watcher_controller.py`
+- `S06` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check src/vaultspec_rag/tests/test_watcher_controller.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_watcher_controller.py -q` -> `pass`
+- `S07` `A` `src/vaultspec_rag/watcher_admission.py`
+- `S07` `A` `src/vaultspec_rag/tests/test_watcher_admission.py`
+- `S07` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W02-P03-S07.md`
+- `S07` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S07` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S07` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/watcher_admission.py src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S07` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/watcher_admission.py src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S07` `verify:` `uv run --no-sync ty check src/vaultspec_rag/watcher_admission.py src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S07` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S08` `M` `src/vaultspec_rag/server/_watcher.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_watcher_scheduler.py`
+- `S08` `A` `.vault/audit/2026-09-08-adaptive-watcher-control-s08-scheduler-audit.md`
+- `S08` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W02-P03-S08.md`
+- `S08` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S08` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S08` `verify:` `uv run ruff format src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_watcher_scheduler.py` -> `pass`
+- `S08` `verify:` `uv run ruff check src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_watcher_scheduler.py` -> `pass`
+- `S08` `verify:` `uv run ty check src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_watcher_scheduler.py` -> `pass`
+- `S08` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_start_contract.py src/vaultspec_rag/tests/test_server.py -k "watcher or stop_all"` -> `pass`
+- `S08` `verify:` `uvx vaultspec-core vault check all` -> `pass`
+- `S09` `A` `src/vaultspec_rag/server/_watcher_measurements.py`
+- `S09` `A` `src/vaultspec_rag/tests/test_watcher_measurements.py`
+- `S09` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/server/_watcher_measurements.py src/vaultspec_rag/tests/test_watcher_measurements.py` -> `pass`
+- `S09` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/server/_watcher_measurements.py src/vaultspec_rag/tests/test_watcher_measurements.py` -> `pass`
+- `S09` `verify:` `uv run --no-sync ty check src/vaultspec_rag/server/_watcher_measurements.py src/vaultspec_rag/tests/test_watcher_measurements.py` -> `pass`
+- `S09` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_watcher_measurements.py -q` -> `pass`
+- `S10` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_watcher_controller_intake.py`
+- `S10` `M` `src/vaultspec_rag/tests/integration/test_document_watcher.py`
+- `S10` `A` `.vault/exec/2026-09-08-adaptive-watcher-control/2026-09-08-adaptive-watcher-control-W02-P04-S10.md`
+- `S10` `M` `.vault/plan/2026-09-08-adaptive-watcher-control-plan.md`
+- `S10` `M` `.vault/index/adaptive-watcher-control.index.md`
+- `S10` `verify:` `uv run ruff format src/vaultspec_rag/watcher_intake.py src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/integration/test_document_watcher.py` -> `pass`
+- `S10` `verify:` `uv run ruff check src/vaultspec_rag/watcher_intake.py src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/integration/test_document_watcher.py` -> `pass`
+- `S10` `verify:` `uv run ty check src/vaultspec_rag/watcher_intake.py src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/integration/test_document_watcher.py` -> `pass`
+- `S10` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/test_watcher_quiesce_intake.py src/vaultspec_rag/tests/test_watcher_controller.py src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_durable_scope.py` -> `pass`
+- `S10` `verify:` `uvx vaultspec-core vault check all` -> `pass`
+- `S11` `M` `src/vaultspec_rag/watcher_execution.py`
+- `S11` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_watcher_quiesce_intake.py`
+- `S11` `verify:` `uv run ruff check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/watcher_intake.py src/vaultspec_rag/tests/test_watcher_quiesce_intake.py` -> `pass`
+- `S11` `verify:` `uv run ty check src/vaultspec_rag/watcher_execution.py src/vaultspec_rag/watcher_intake.py` -> `pass`
+- `S11` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_watcher_controller_intake.py src/vaultspec_rag/tests/test_watcher_durable_scope.py src/vaultspec_rag/tests/test_watcher_quiesce_intake.py src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S12` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S12` `M` `src/vaultspec_rag/watcher_retry.py`
+- `S12` `M` `src/vaultspec_rag/watcher_runtime.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_watcher_recovery.py`
+- `S12` `verify:` `uv run ruff format <touched Python paths>` -> `pass`
+- `S12` `verify:` `uv run ruff check <touched Python paths>` -> `pass`
+- `S12` `verify:` `uv run ty check <touched Python paths>` -> `pass`
+- `S12` `verify:` `uv run pytest -qq <focused watcher recovery paths>` -> `pass`
+- `S13` `M` `src/vaultspec_rag/api.py`
+- `S13` `M` `src/vaultspec_rag/server/_watcher.py`
+- `S13` `A` `src/vaultspec_rag/tests/test_controller_projection.py`
+- `S13` `verify:` `uv run --no-sync ruff format src/vaultspec_rag/api.py src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_controller_projection.py` -> `pass`
+- `S13` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/api.py src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_controller_projection.py` -> `pass`
+- `S13` `verify:` `uv run --no-sync ty check src/vaultspec_rag/api.py src/vaultspec_rag/server/_watcher.py src/vaultspec_rag/tests/test_controller_projection.py` -> `pass`
+- `S13` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_controller_projection.py src/vaultspec_rag/tests/test_watcher_scheduler.py -q` -> `pass`
+- `S14` `M` `src/vaultspec_rag/server/_routes_registry.py`
+- `S14` `M` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S14` `A` `src/vaultspec_rag/tests/test_watcher_route_projection.py`
+- `S14` `verify:` `uv run ruff format src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/server/_routes_jobs.py src/vaultspec_rag/tests/test_watcher_route_projection.py` -> `pass`
+- `S14` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/server/_routes_jobs.py src/vaultspec_rag/tests/test_watcher_route_projection.py` -> `pass`
+- `S14` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_registry.py src/vaultspec_rag/server/_routes_jobs.py src/vaultspec_rag/tests/test_watcher_route_projection.py` -> `pass`
+- `S14` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_watcher_route_projection.py` -> `pass`
+- `S15` `M` `src/vaultspec_rag/cli/_service_watcher.py`
+- `S15` `M` `src/vaultspec_rag/cli/_service_jobs_presentation.py`
+- `S15` `M` `src/vaultspec_rag/mcp/_admin_client.py`
+- `S15` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_cli_watcher.py`
+- `S15` `A` `src/vaultspec_rag/tests/test_controller_client_adapters.py`
+- `S15` `verify:` `uv run ruff format src/vaultspec_rag/cli/_service_watcher.py src/vaultspec_rag/cli/_service_jobs_presentation.py src/vaultspec_rag/mcp/_admin_client.py src/vaultspec_rag/serviceclient/_transport.py src/vaultspec_rag/tests/test_cli_watcher.py src/vaultspec_rag/tests/test_controller_client_adapters.py` -> `pass`
+- `S15` `verify:` `uv run ruff check src/vaultspec_rag/cli/_service_watcher.py src/vaultspec_rag/cli/_service_jobs_presentation.py src/vaultspec_rag/mcp/_admin_client.py src/vaultspec_rag/serviceclient/_transport.py src/vaultspec_rag/tests/test_cli_watcher.py src/vaultspec_rag/tests/test_controller_client_adapters.py` -> `pass`
+- `S15` `verify:` `uv run ty check src/vaultspec_rag/cli/_service_watcher.py src/vaultspec_rag/cli/_service_jobs_presentation.py src/vaultspec_rag/mcp/_admin_client.py src/vaultspec_rag/serviceclient/_transport.py src/vaultspec_rag/tests/test_cli_watcher.py src/vaultspec_rag/tests/test_controller_client_adapters.py` -> `pass`
+- `S15` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_cli_watcher.py src/vaultspec_rag/tests/test_controller_client_adapters.py` -> `pass`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
+- `S16` `verify:` `uv run ruff format src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py` -> `pass`
+- `S16` `verify:` `uv run ruff check src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py` -> `pass`
+- `S16` `verify:` `uv run ty check src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py` -> `pass`
+- `S16` `verify:` `uv run pytest -q <non-service watcher recovery selections>` -> `pass`
+- `S17` `A` `src/vaultspec_rag/tests/test_watcher_load.py`
+- `S17` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_watcher_load.py src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py` -> `pass`
+- `S17` `verify:` `uv run ty check src/vaultspec_rag/tests/test_watcher_load.py` -> `pass`
+- `S17` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_watcher_load.py src/vaultspec_rag/tests/test_watcher_scheduler.py src/vaultspec_rag/tests/test_watcher_admission.py` -> `pass`
+- `S17` `verify:` `uv run pytest -q src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py -k "adaptive_load or load_scheduler or safety_pressure"` -> `fail`
+- `S18` `M` `src/vaultspec_rag/tests/test_cli_watcher.py`
+- `S18` `A` `src/vaultspec_rag/tests/test_controller_surface_conformance.py`
+- `S18` `verify:` `uv run ruff format src/vaultspec_rag/tests/test_controller_surface_conformance.py src/vaultspec_rag/tests/test_cli_watcher.py` -> `pass`
+- `S18` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_controller_surface_conformance.py src/vaultspec_rag/tests/test_cli_watcher.py` -> `pass`
+- `S18` `verify:` `uv run ty check src/vaultspec_rag/tests/test_controller_surface_conformance.py src/vaultspec_rag/tests/test_cli_watcher.py` -> `pass`
+- `S18` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_controller_surface_conformance.py src/vaultspec_rag/tests/test_cli_watcher.py` -> `pass`
+- `S19` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S19` `verify:` `pytest test_quiet_tree_deadline_is_scheduled_and_wakes [observe min removed]` -> `fail`
+- `S19` `verify:` `pytest test_quiet_tree_deadline_is_scheduled_and_wakes [restored]` -> `pass`
+- `S19` `verify:` `pytest test_maximum_freshness_caps_ordinary_deferral [freshness addition removed]` -> `fail`
+- `S19` `verify:` `pytest test_maximum_freshness_caps_ordinary_deferral [restored]` -> `pass`
+- `S19` `verify:` `pytest test_rebuild_refusal_is_terminal_to_retry_admission [predicate disabled]` -> `fail`
+- `S19` `verify:` `pytest test_rebuild_refusal_is_terminal_to_retry_admission [restored]` -> `pass`
+- `S19` `verify:` `pytest test_restart_requires_exact_scope_and_incremental_job_authority [incremental check removed]` -> `fail`
+- `S19` `verify:` `pytest test_restart_requires_exact_scope_and_incremental_job_authority [restored]` -> `pass`
+- `S19` `verify:` `pytest test_equal_deadlines_rotate_after_the_previous_selection [turn memory removed]` -> `fail`
+- `S19` `verify:` `pytest test_equal_deadlines_rotate_after_the_previous_selection [restored]` -> `pass`
+- `S19` `verify:` `pytest test_adapters_do_not_own_controller_scheduling [adapter symbol added]` -> `fail`
+- `S19` `verify:` `pytest test_adapters_do_not_own_controller_scheduling [restored]` -> `pass`
+- `S19` `verify:` `uv run ruff format src/vaultspec_rag/tests/test_adr_regression.py` -> `pass`
+- `S19` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_adr_regression.py` -> `pass`
+- `S19` `verify:` `uv run ty check src/vaultspec_rag/tests/test_adr_regression.py` -> `pass`
+- `S19` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_adr_regression.py::TestAdaptiveWatcherArchitecture` -> `pass`
+- `S20` `A` `docs/automatic-convergence.md`
+- `S20` `M` `docs/configuration.md`
+- `S20` `M` `docs/service-mode.md`
+- `S20` `verify:` `uv run mdformat --check docs/automatic-convergence.md docs/service-mode.md docs/configuration.md` -> `pass`
+- `S20` `verify:` `uv run pymarkdown --config .pymarkdown.json scan docs/automatic-convergence.md docs/service-mode.md docs/configuration.md` -> `pass`
+- `S20` `verify:` `lychee --config lychee.toml docs/automatic-convergence.md docs/service-mode.md docs/configuration.md` -> `pass`
+
+## Notes
+
+- `S10` The focused integration module could not enter its GPU-tier runner because no resident
+- `S10` machine-pointer service was available; equivalent classification cases and the CPU-only
+- `S10` intake/controller lifecycle ran in the focused unit suite.
+- `S16` The two added integration selectors were blocked before collection because no ready
+- `S16` compatible machine-pointer service was captured. Pytest reported zero tests run and
+- `S16` required the runner's resident service before selecting the GPU tier; the gate was not
+- `S16` bypassed.
+- `S17` The resident integration selector could not collect tests because no compatible machine-pointer service was captured before pytest isolated its managed paths. The CPU-only in-process module exercises the real controller, admission arbiter, and service scheduler callbacks without mocks, stubs, sleeps, or skips.
+- `S18` Resident selector unavailable: no ready compatible machine-pointer service was captured before pytest isolated its managed paths.

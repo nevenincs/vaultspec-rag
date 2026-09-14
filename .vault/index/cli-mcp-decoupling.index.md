@@ -4,21 +4,12 @@ tags:
   - '#index'
   - '#cli-mcp-decoupling'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:de31f20decd03ef31f15170bb36beee1b17b79833da4ff6cf163f2bb57182148'
+body_hash: 'sha256:e1a3e681fb255ef758604a2329fd36b514c8f0a87e463b92d06f9e569fdcd194'
 related:
-  - '[[2026-06-05-cli-mcp-decoupling-P01-S01]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P01-S02]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P01-S03]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P01-S04]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P01-summary]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P02-S05]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P02-S06]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P02-summary]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P03-S07]]'
-  - '[[2026-06-05-cli-mcp-decoupling-P03-summary]]'
   - '[[2026-06-05-cli-mcp-decoupling-adr]]'
+  - '[[2026-06-05-cli-mcp-decoupling-ledger]]'
   - '[[2026-06-05-cli-mcp-decoupling-plan]]'
   - '[[2026-06-05-cli-mcp-decoupling-research]]'
 ---
@@ -35,16 +26,7 @@ Auto-generated index of all documents tagged with `#cli-mcp-decoupling`.
 
 ### exec
 
-- `2026-06-05-cli-mcp-decoupling-P01-S01` - 2026-06-05-cli-mcp-decoupling-P01-S01
-- `2026-06-05-cli-mcp-decoupling-P01-S02` - 2026-06-05-cli-mcp-decoupling-P01-S02
-- `2026-06-05-cli-mcp-decoupling-P01-S03` - 2026-06-05-cli-mcp-decoupling-P01-S03
-- `2026-06-05-cli-mcp-decoupling-P01-S04` - 2026-06-05-cli-mcp-decoupling-P01-S04
-- `2026-06-05-cli-mcp-decoupling-P01-summary` - `cli-mcp-decoupling` `P01` summary
-- `2026-06-05-cli-mcp-decoupling-P02-S05` - 2026-06-05-cli-mcp-decoupling-P02-S05
-- `2026-06-05-cli-mcp-decoupling-P02-S06` - 2026-06-05-cli-mcp-decoupling-P02-S06
-- `2026-06-05-cli-mcp-decoupling-P02-summary` - `cli-mcp-decoupling` `P02` summary
-- `2026-06-05-cli-mcp-decoupling-P03-S07` - 2026-06-05-cli-mcp-decoupling-P03-S07
-- `2026-06-05-cli-mcp-decoupling-P03-summary` - `cli-mcp-decoupling` `P03` summary
+- `2026-06-05-cli-mcp-decoupling-ledger` - `cli-mcp-decoupling` ledger
 
 ### plan
 

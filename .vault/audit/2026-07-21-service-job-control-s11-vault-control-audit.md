@@ -3,12 +3,11 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:1707710d47672f6634308293de2360b06d6775f4f6a9649b85e25f4bbad6543f'
 related:
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-service-job-control-plan]]"
-  - "[[2026-07-21-service-job-control-W02-P04-S11]]"
 ---
 
 # `service-job-control` audit: `S11 vault run control`

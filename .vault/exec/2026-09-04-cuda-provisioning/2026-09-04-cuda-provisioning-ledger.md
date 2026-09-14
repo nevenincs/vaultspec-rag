@@ -1,0 +1,279 @@
+---
+tags:
+  - '#exec'
+  - '#cuda-provisioning'
+date: '2026-09-04'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:3bd08356d3779c9f95e7fc141930dda54057f5fc34b8619c60e769c111921839'
+related:
+  - "[[2026-09-04-cuda-provisioning-plan]]"
+---
+
+# `cuda-provisioning` ledger
+
+## Changes
+
+- `S01` `T`
+- `S02` `T`
+- `S03` `T`
+- `S04` `T`
+- `S05` `T`
+- `S06` `T`
+- `S07` `T`
+- `S08` `T`
+- `S09` `T`
+- `S10` `T`
+- `S11` `T`
+- `S12` `T`
+- `S13` `T`
+
+## Notes
+
+- `S02` Guard proof, one uninterrupted sequence, all three mutations restored and
+- `S02` verified absent from disk afterwards:
+- `S02` Removing the working-directory relation from `environment_holders` failed
+- `S02` `test_a_foreign_process_sitting_in_the_environment_is_a_directory_holder` at
+- `S02` its bounded wait - the query never reported the directory holder. Restored,
+- `S02` passes in 5s.
+- `S02` Dropping the uninspectable counter failed
+- `S02` `test_an_uninspectable_process_denies_certainty_without_inventing_a_holder`
+- `S02` on `assert result.uninspectable == 1` with `assert 0 == 1`. Restored.
+- `S02` Returning an empty complete result from a failed scan failed
+- `S02` `test_a_scan_that_cannot_enumerate_is_incomplete_rather_than_empty` on
+- `S02` `assert result.complete is False` with `assert True is False`. Restored.
+- `S02` The first mutation initially took 4m45s to fail because the holder-wait helper
+- `S02` spawned a subprocess per poll. The helper now sleeps in-process against a 15s
+- `S02` deadline, so the failing path costs 19s rather than five minutes; the passing
+- `S02` path was never affected.
+- `S03` The fixtures were exercised against real uv before being handed to the proof
+- `S03` Step, since shipping an unverified harness is the failure this campaign exists
+- `S03` to correct. In a throwaway tree: a forced tool install of a stand-in package
+- `S03` carrying a `--with` requirement over loopback HTTP exited zero and installed
+- `S03` both distributions; the receipt recorded that requirement as
+- `S03` `{ name = "torchstub", url = "http://127.0.0.1:PORT/..." }`, the shape
+- `S03` production reads; a wheel tagged `cp299` was refused as unsatisfiable; an
+- `S03` absent wheel returned 404 and left the environment and receipt intact; and a
+- `S03` forced reinstall while the environment's own interpreter held it exited 2 with
+- `S03` `failed to remove directory ...\Scripts: Access is denied`, leaving
+- `S03` site-packages empty - the field failure, reproduced in isolation.
+- `S03` One correction the exercise forced: a receipt always contains a `path` key,
+- `S03` because every recorded entry point carries an `install-path`. Asserting on the
+- `S03` presence of `path` anywhere in the file would pass regardless of how a
+- `S03` requirement was recorded, so the proofs must match the requirement's own line.
+- `S04` The first run failed on the receipt-matcher proof, for a real reason: the
+- `S04` shipped matcher only recognises a requirement NAMED torch, so a stand-in called
+- `S04` `torchstub` could never satisfy it. The stand-in now carries the name `torch`
+- `S04` and is served from the loopback index under `--no-index`, so nothing resolves
+- `S04` to the real distribution.
+- `S04` Guard proof: dropping the URL comparison from the matcher failed
+- `S04` `test_the_matcher_rejects_a_receipt_pinning_a_different_wheel` on
+- `S04` `assert not ...` with `assert not True`. Restored. Zero MUTATION markers remain
+- `S04` and the mutated file is byte-identical to its committed state.
+- `S04` The remaining assertions in this file characterise uv rather than this
+- `S04` project's code - what a blocked removal does, where a direct URL is recorded,
+- `S04` what an unreachable wheel leaves behind - so no mutation of ours can falsify
+- `S04` them. They are honest characterisation tests, and their value is that they will
+- `S04` fail when uv's behaviour changes under us.
+- `S04` Incident, recorded because it breached a campaign constraint. A second mutation
+- `S04` removed `UV_TOOL_DIR` from the sandbox environment to prove the redirect is
+- `S04` load-bearing. It proved that, and in doing so installed the stand-in tool into
+- `S04` the operator's real uv tool directory. The tool was uninstalled immediately and
+- `S04` the real installation verified intact. The lesson is that the isolation
+- `S04` mechanism is the one thing a guard mutation must never target: breaking it does
+- `S04` not fail safely, it escapes the sandbox.
+- `S05` The destructive invocation is gone rather than guarded. `_run_tool_reinstall`,
+- `S05` `_verify_tool_repair` and `_uv_failure_detail` are deleted along with the
+- `S05` `subprocess` import, so no path in the module can spawn a replacement, and a
+- `S05` test asserts that structurally rather than behaviourally - a refusal that only
+- `S05` avoids the call today is one refactor away from making it again.
+- `S05` `_service_holder_outcome` is folded into the holder preflight rather than kept.
+- `S05` It answered whether a machine service was running, which is neither necessary
+- `S05` nor sufficient: a daemon in an unrelated environment does not hold this one,
+- `S05` and a plain CLI invocation or an MCP server that has not yet claimed the
+- `S05` singleton does. The preflight asks the environment instead, so the exception
+- `S05` guard the old resolver needed no longer has a caller.
+- `S05` Terminal outcomes lost `UV_UNAVAILABLE`, `UV_FAILED`, `RECEIPT_UNVERIFIED`,
+- `S05` `REPAIRED` and `SERVICE_HELD`, none of which are reachable without a
+- `S05` replacement to run, and gained `HOLDER_DETECTED` and `HANDOFF_REQUIRED`. There
+- `S05` is deliberately no success value: this process runs inside the only environment
+- `S05` it targets, so every path ends in a refusal carrying the command.
+- `S05` Two tests were repointed in the same change rather than left exercising deleted
+- `S05` functions - the service-holder test now asserts the handoff, and the
+- `S05` verification test is replaced by one asserting the handoff reports a receipt
+- `S05` that already carries the pin.
+- `S05` Guard proof: replacing the refusal with a success outcome failed
+- `S05` `test_a_defective_tool_is_handed_off_rather_than_replaced` on its action
+- `S05` assertion. Restored; zero MUTATION markers remain. Gates: ruff, ty, and 24
+- `S05` provisioning plus 176 install tests green.
+- `S06` The Step was written to separate repair consent from the file-overwrite flag.
+- `S06` Execution found there is no longer anything to consent to: the previous Step
+- `S06` removed the replacement, so the prompt guarded a report. It is removed rather
+- `S06` than re-flagged, and `DECLINED`, `SKIPPED_NON_TTY` and `SKIPPED_EOF` go with
+- `S06` it, since none is reachable without a mutation to refuse. A defective tool
+- `S06` environment is now diagnosable from a non-interactive run, which the consent
+- `S06` gate previously made impossible - it exited 2 before saying anything useful.
+- `S06` `--no-tool-repair` replaces consent as the only choice that still changes
+- `S06` anything: it skips the check itself.
+- `S06` Scope is constrained where it actually mattered, in the request handed over.
+- `S06` `_tool_package_requirement` pins the installed version and reuses the extras
+- `S06` the receipt records, so the command no longer tells an operator to upgrade the
+- `S06` tool and adopt this build's extras while fixing a torch wheel. An environment
+- `S06` recording neither falls back to the bundled specification.
+- `S06` The ADR's D3 was amended in place to record the consent change and why, per the
+- `S06` template's rule that a refinement rewrites the accepted record rather than
+- `S06` superseding it.
+- `S06` Guard proof: dropping the version pin from the handed-over request failed
+- `S06` `test_the_handed_over_command_pins_the_version_and_keeps_recorded_extras` on
+- `S06` its equality assertion. Restored; zero MUTATION markers remain. Gates: ruff,
+- `S06` ty, 19 repair and provisioning tests, 32 CLI install tests, and the 183-test
+- `S06` install suite green.
+- `S07` The refusal detail is emitted as written rather than re-wrapped. It is already
+- `S07` operator-facing lines - one per holder, each naming the remediation its
+- `S07` relation needs - and folding them into a paragraph would bury the pids and the
+- `S07` command. A healthy or inapplicable environment prints nothing, so an install
+- `S07` with no tool problem does not grow a section saying so.
+- `S07` Guard proof, and it caught a real hole rather than confirming the obvious.
+- `S07` Removing the renderer call from the install report failed nothing on the first
+- `S07` attempt: both new tests called the helper directly, so they proved the helper
+- `S07` worked while saying nothing about whether the report reaches it - which is
+- `S07` precisely the defect this Step exists to close, a renderer that never read
+- `S07` `tool_torch_repair` at all. A third test renders a whole `InstallReport`, and
+- `S07` with that in place the same mutation fails on its assertion. Restored; zero
+- `S07` MUTATION markers remain. Gates: ruff, ty, 15 repair tests and 32 CLI install
+- `S07` tests green.
+- `S08` The Step is the one absorbed from the tool-mode-cuda plan, whose original
+- `S08` scope included verifying a repair's receipt postconditions. That verification
+- `S08` no longer exists - S05 deleted it with the replacement it followed - so what
+- `S08` is proven here is the shape the transaction actually has: every terminal
+- `S08` outcome, and that a real holder reaches the operator by pid.
+- `S08` `CUDA_UNVERIFIED` has one producer rather than the two the plan anticipated,
+- `S08` for the same reason: the post-install verifier that produced the second is
+- `S08` gone. The pre-flight producer is covered by the existing device-visibility
+- `S08` test.
+- `S08` Ten tests added: ALREADY_READY, NOT_APPLICABLE, DRY_RUN, a table over every
+- `S08` blocking action, a table over every non-blocking one, and a real-holder
+- `S08` refusal built on the harness - a real tool environment installed in a
+- `S08` redirected sandbox, held by a real process, asserting the pid and the phrase
+- `S08` an operator acts on both appear in the detail.
+- `S08` Guard proof. Removing HOLDER_DETECTED from the blocking set failed the
+- `S08` blocking table on `assert outcome.blocks_install`. A first attempt at the
+- `S08` holder mutation removed only the section heading and failed nothing - the
+- `S08` mutation was weak, not the test, since the assertion is about the per-holder
+- `S08` lines that follow it. Dropping those lines instead failed the real-holder test
+- `S08` on `assert f"pid {holder.pid}" in outcome.detail`. Both restored; zero
+- `S08` MUTATION markers remain and the file is byte-identical to its committed state.
+- `S08` Gates: ruff, ty, 38 tests across the three provisioning files green.
+- `S09` The distinction is drawn inside the probe, because the environment is the only
+- `S09` thing that can answer the question about itself. When the torch import fails
+- `S09` the probe now asks whether the GPU stack is installed at all, and exits 6 when
+- `S09` it is not. Exit 3 keeps its meaning and its defect classification: the stack is
+- `S09` present and torch is missing anyway, which is what a half-completed
+- `S09` replacement leaves behind.
+- `S09` Two axes rather than one. An environment without torch still cannot serve a
+- `S09` request, so exit 6 remains blocking for a service start; it is simply not a
+- `S09` defect, so an install must not fail over it and the repair has nothing to
+- `S09` offer. The repair transaction returns NOT_APPLICABLE for it, which does not
+- `S09` block, and the operator is told to choose the GPU extra rather than to run a
+- `S09` reinstall that would change nothing.
+- `S09` Verified live against real environments rather than only through the exit-code
+- `S09` map: a bare virtual environment reports absence by design and is not a defect;
+- `S09` the same environment with the GPU stack installed reports no supported
+- `S09` accelerator and is a defect.
+- `S09` Guard proof: disabling the by-design branch failed
+- `S09` `test_an_install_without_the_gpu_extra_is_not_a_defect` on its action
+- `S09` assertion, returning CUDA_UNVERIFIED - the blocking outcome that produced the
+- `S09` original exit 2. Restored; zero MUTATION markers remain. Gates: ruff, ty, and
+- `S09` 203 tests across the repair and install suites.
+- `S10` The Step called for deleting the runtime constant in favour of the lockfile
+- `S10` derivation. That is not possible, and the check that established it is
+- `S10` recorded here: a built wheel contains neither `uv.lock` nor `pyproject.toml`,
+- `S10` verified by inspecting the names in `dist/vaultspec_rag-0.3.13-py3-none-any.whl`.
+- `S10` An installed runtime therefore has nothing to derive from, and the constant is
+- `S10` the only thing an environment holding no torch can name a wheel by.
+- `S10` What was actually collapsed is the derivation, which is the duplication the
+- `S10` canonical-code rule is about. `locked_torch_version` now lives in the package,
+- `S10` the build tooling imports it, and `tools.binaries.torch_channel.locked_version`
+- `S10` is deleted rather than left as a wrapper - its two callers point at the package
+- `S10` function directly. The constant remains as a mirror held to the lockfile by a
+- `S10` test wherever a checkout is reachable, and skipped where it is not.
+- `S10` The ADR's D5 was amended in place to record why the chosen option could not be
+- `S10` taken literally and what replaced it.
+- `S10` Guard proof: drifting the constant to 2.12.0 failed
+- `S10` `test_the_runtime_pin_mirrors_the_locked_version` on
+- `S10` `assert '2.13.0' == '2.12.0'`. Restored; zero MUTATION markers remain. Gates:
+- `S10` ruff, ty, and 96 tests across the pin, pre-flight, repair and tools suites.
+- `S11` Holders are reported beside the dependency set, not inside it. The aggregate
+- `S11` `ready` is `all(dependencies READY)`, so a holder node would have turned every
+- `S11` machine with an editor session open on its tool environment red - a fault
+- `S11` hunt for a healthy service. They are also not a dependency in the first place:
+- `S11` the reporter's own boundary is torch, models and qdrant.
+- `S11` A measurement changed the design mid-Step. The first version scanned on every
+- `S11` readiness call under a 2 second budget; the process-table walk actually costs
+- `S11` 4.12s and 6.48s on this machine (~1700 processes), so the dimension would have
+- `S11` shipped permanently blind, reporting "cannot tell" every time and teaching an
+- `S11` operator to ignore it. The research had estimated 1-2s and flagged the figure
+- `S11` as inferred rather than measured, which it now is. The scan is therefore
+- `S11` opt-in: `server doctor` asks for it because an operator typed a diagnostic and
+- `S11` will wait, and the token-gated readiness route does not, because a broker polls
+- `S11` it. A third state, `scanned: false`, keeps "nobody asked" distinct from "held"
+- `S11` and from "clear".
+- `S11` Command lines are deliberately absent from the payload. The refusal an
+- `S11` operator reads locally carries them; this snapshot crosses a network, and an
+- `S11` argument vector can hold material nobody chose to publish.
+- `S11` The exact-key-set assertion in `test_readiness.py` failed on the new member,
+- `S11` which is that test working: the key set is a deliberate bound against the
+- `S11` report accreting into a general health console. It was widened with the
+- `S11` reason recorded rather than relaxed.
+- `S11` Guard proof: making the scan unconditional failed
+- `S11` `test_a_polled_route_does_not_pay_for_a_process_table_walk` on
+- `S11` `assert holders.scanned is False`. Restored; zero MUTATION markers remain.
+- `S11` Gates: ruff, ty, 26 readiness and holder tests green.
+- `S12` The research flagged as inference that this test class needs no GPU, model
+- `S12` cache or Hugging Face token. Confirmed before relying on it: every file in the
+- `S12` class imports only package modules, all five declare the fast tier, and the
+- `S12` token gate in the root conftest fires for `GPU_MARKERS | {SUBPROCESS_GPU}`
+- `S12` only, which the fast tier is not in. Measured locally at 45 tests in 52
+- `S12` seconds, against a 25 minute ceiling.
+- `S12` CI calls `just test provisioning` rather than an inline pytest invocation, so
+- `S12` the lane runs the same verb a developer does and the file list has one home.
+- `S12` The leg is hosted `windows-latest`, mirroring vaultspec-core's shape. The
+- `S12` self-hosted Windows job stays out of the pull-request lane: its exclusion is
+- `S12` the containment the workflow header describes, and this leg is not a route
+- `S12` into it.
+- `S12` A structural gate was added because the mutation exposed that nothing guarded
+- `S12` the decision - the workflow step could be changed to any other command and no
+- `S12` test would notice. `tools/test_ci_trust_boundary.py` asserts the two
+- `S12` properties that are invisible from reading a single job: no job reachable from
+- `S12` a fork's pull request runs on self-hosted infrastructure, and the
+- `S12` pull-request lane runs the provisioning class on Windows.
+- `S12` Guard proof, both directions. Replacing the step with `just test fast` failed
+- `S12` the provisioning assertion; moving the leg onto the self-hosted fleet failed
+- `S12` the containment assertion with the offending job named. Both restored; zero
+- `S12` MUTATION markers remain, actionlint passes, and the two gates pass.
+- `S13` Four corrections, each reproduced against real uv before being written down.
+- `S13` Only a blocked removal is destructive: a wheel that cannot be fetched, a tag
+- `S13` that matches nothing, an empty cache offline - all fail before uv replaces
+- `S13` anything and leave the environment and receipt untouched. The prose said a
+- `S13` forced reinstall "fails half-way" without saying which failures do that, which
+- `S13` teaches an operator to fear the wrong thing.
+- `S13` A holder is now described as two kinds rather than one. The executable inside
+- `S13` the tree is the obvious one; the working directory inside the tree is the one
+- `S13` operators miss, and it blocks removal even when the program has nothing to do
+- `S13` with this project.
+- `S13` The installer's behaviour changed under the earlier Steps and the docs still
+- `S13` described the old one. It refuses and hands over the command, naming holders by
+- `S13` pid with the remediation each needs, and `--no-tool-repair` is the opt-out -
+- `S13` not `--no-torch-config`, which governs only the pyproject step and was
+- `S13` previously misdescribed as covering this.
+- `S13` A control-plane-only install is documented as a supported state: install
+- `S13` completes, the service still refuses to start, and the remedy is choosing the
+- `S13` GPU extra rather than repairing anything.
+- `S13` No 404 copy existed to correct - the wheel host answers a missing wheel with
+- `S13` 403, but no page promised otherwise.
+- `S13` On gates: `docs/installation.md` is outside the repository's markdown gate,
+- `S13` which covers the readme, the harness sources and the vault. The file does not
+- `S13` satisfy mdformat and carries one MD022 finding in HEAD, both predating this
+- `S13` change. Rather than reformatting a file the project does not gate, the change
+- `S13` was checked for not making it worse: the finding count is the same before and
+- `S13` after. `README.md` is gated and passes both tools.

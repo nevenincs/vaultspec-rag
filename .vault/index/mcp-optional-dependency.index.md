@@ -4,16 +4,12 @@ tags:
   - '#index'
   - '#mcp-optional-dependency'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:1077bb18fbe61fa2d19b9600e824ee15b5caa6c970c90eefc1acb081b7b7e632'
+body_hash: 'sha256:b56323e4baa76a6741b5b8dc966a9b6b60bcf12ce4154b9520f9709d9ddc4411'
 related:
-  - '[[2026-06-30-mcp-optional-dependency-S01]]'
-  - '[[2026-06-30-mcp-optional-dependency-S02]]'
-  - '[[2026-06-30-mcp-optional-dependency-S03]]'
-  - '[[2026-06-30-mcp-optional-dependency-S04]]'
-  - '[[2026-06-30-mcp-optional-dependency-S05]]'
   - '[[2026-06-30-mcp-optional-dependency-adr]]'
+  - '[[2026-06-30-mcp-optional-dependency-ledger]]'
   - '[[2026-06-30-mcp-optional-dependency-plan]]'
   - '[[2026-06-30-mcp-optional-dependency-research]]'
 ---
@@ -30,11 +26,7 @@ Auto-generated index of all documents tagged with `#mcp-optional-dependency`.
 
 ### exec
 
-- `2026-06-30-mcp-optional-dependency-S01` - Move mcp from project.dependencies to the project.optional-dependencies mcp extra
-- `2026-06-30-mcp-optional-dependency-S02` - Ensure the dev/test dependency set provides mcp so the test suite resolves
-- `2026-06-30-mcp-optional-dependency-S03` - Retarget the MCP-entry-point ImportError guard message at the vaultspec-rag[mcp] extra
-- `2026-06-30-mcp-optional-dependency-S04` - Add a regression test asserting importing vaultspec_rag and the CLI loads no mcp or pywin32
-- `2026-06-30-mcp-optional-dependency-S05` - Make vaultspec-rag install ensure the [mcp] extra by default with a --mcp/--no-mcp opt-out mirroring core
+- `2026-06-30-mcp-optional-dependency-ledger` - `mcp-optional-dependency` ledger
 
 ### plan
 

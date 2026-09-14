@@ -3,13 +3,12 @@ tags:
   - '#audit'
   - '#incremental-publication-cost'
 date: '2026-09-09'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
 body_hash: 'sha256:75da6bf8a6ffe52879f11f9c1e367f0978f95204792a48b97052c0375a719a95'
 related:
   - "[[2026-09-08-incremental-publication-cost-adr]]"
   - "[[2026-09-08-incremental-publication-cost-plan]]"
-  - "[[2026-09-08-incremental-publication-cost-W03-P08-S39]]"
 ---
 
 # `incremental-publication-cost` audit: `s39 cli authority`

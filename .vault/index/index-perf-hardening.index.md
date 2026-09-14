@@ -4,19 +4,12 @@ tags:
   - '#index'
   - '#index-perf-hardening'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:7cb040da62abfd35ca85021bebb7a48603b2c898706bae18657808dffde99082'
+body_hash: 'sha256:b1214d9494b6fa01200d37042aac4e92f9358ff89397ea302e1fa57795894363'
 related:
-  - '[[2026-06-02-index-perf-hardening-P01-S01]]'
-  - '[[2026-06-02-index-perf-hardening-P01-S02]]'
-  - '[[2026-06-02-index-perf-hardening-P01-S03]]'
-  - '[[2026-06-02-index-perf-hardening-P02-S04]]'
-  - '[[2026-06-02-index-perf-hardening-P03-S05]]'
-  - '[[2026-06-02-index-perf-hardening-P03-S06]]'
-  - '[[2026-06-02-index-perf-hardening-P04-S07]]'
-  - '[[2026-06-02-index-perf-hardening-P04-S08]]'
   - '[[2026-06-02-index-perf-hardening-adr]]'
+  - '[[2026-06-02-index-perf-hardening-ledger]]'
   - '[[2026-06-02-index-perf-hardening-plan]]'
   - '[[2026-06-02-index-perf-hardening-research]]'
 ---
@@ -33,14 +26,7 @@ Auto-generated index of all documents tagged with `#index-perf-hardening`.
 
 ### exec
 
-- `2026-06-02-index-perf-hardening-P01-S01` - Extract a module-level chunk worker plus a pool initializer that builds the per-language parser once per worker and decodes source once per file
-- `2026-06-02-index-perf-hardening-P01-S02` - Swap the ThreadPoolExecutor chunk fan-out for a spawn-based ProcessPoolExecutor in the full-index path with an in-process serial fallback and a worker-count config knob
-- `2026-06-02-index-perf-hardening-P01-S03` - Apply the same process-pool chunking to the incremental and scoped-incremental paths
-- `2026-06-02-index-perf-hardening-P02-S04` - Wire a bounded producer/consumer so process-pool chunk batches feed a single in-process GPU consumer that advances the reporter and preserves stale-purge and failure-safe rebuild semantics
-- `2026-06-02-index-perf-hardening-P03-S05` - Decouple a code-path encode batch size in config with a higher default and throttle the per-slice empty_cache to a periodic flush
-- `2026-06-02-index-perf-hardening-P03-S06` - Fold file hashing into the single worker read so the tree is read once instead of twice
-- `2026-06-02-index-perf-hardening-P04-S07` - Add a benchmark that captures chunk and embed wall-clock before and after on a large synthetic tree
-- `2026-06-02-index-perf-hardening-P04-S08` - Add real-GPU tests for parallel chunking correctness and pipeline chunk-identity parity
+- `2026-06-02-index-perf-hardening-ledger` - `index-perf-hardening` ledger
 
 ### plan
 

@@ -4,15 +4,12 @@ tags:
   - '#index'
   - '#chunk-id-uniqueness'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:00addc5dfc0a01e7cccf825d4bfc226c44736c92cda62c906f6adbcc84bf606f'
+body_hash: 'sha256:19bb0ffb87af670cb929193c84e6b6f519eb408f330c5fd65fa854fb463b4855'
 related:
-  - '[[2026-07-23-chunk-id-uniqueness-S01]]'
-  - '[[2026-07-23-chunk-id-uniqueness-S02]]'
-  - '[[2026-07-23-chunk-id-uniqueness-S03]]'
-  - '[[2026-07-23-chunk-id-uniqueness-S04]]'
   - '[[2026-07-23-chunk-id-uniqueness-adr]]'
+  - '[[2026-07-23-chunk-id-uniqueness-ledger]]'
   - '[[2026-07-23-chunk-id-uniqueness-plan]]'
   - '[[2026-07-23-chunk-id-uniqueness-research]]'
 ---
@@ -29,10 +26,7 @@ Auto-generated index of all documents tagged with `#chunk-id-uniqueness`.
 
 ### exec
 
-- `2026-07-23-chunk-id-uniqueness-S01` - Add the zero-based per-file emit ordinal as a leading discriminator to the AST-path chunk identifier so byte-identical slices of one line cannot collide
-- `2026-07-23-chunk-id-uniqueness-S02` - Add the same per-file emit ordinal discriminator to the text-splitter fallback chunk identifier
-- `2026-07-23-chunk-id-uniqueness-S03` - Add a guard test that chunks a repeated-content over-budget line through the real chunker, asserts unique identifiers and commit-unit acceptance, and record it failing against the pre-fix construction then passing after
-- `2026-07-23-chunk-id-uniqueness-S04` - Run the indexer test suite plus lint and type checks for the touched modules and record them green with no new suppressions
+- `2026-07-23-chunk-id-uniqueness-ledger` - `chunk-id-uniqueness` ledger
 
 ### plan
 

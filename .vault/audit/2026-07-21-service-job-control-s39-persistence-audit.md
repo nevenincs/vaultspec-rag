@@ -3,12 +3,11 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:98d57d05d786ac38f46358eaf37339806c2e8186ef46fef14572dde0e86d87ba'
 related:
   - "[[2026-07-21-service-job-control-adr]]"
   - "[[2026-07-21-service-job-control-plan]]"
-  - "[[2026-07-21-service-job-control-W01-P18-S39]]"
 ---
 
 # `service-job-control` audit: `S39 persistence boundary`

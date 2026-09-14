@@ -3,11 +3,10 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-22'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:28c4b6afe933b94d9f824e7fdeb74dac15e89ab99936781dacfe4612f40e1362'
 related:
   - "[[2026-07-21-service-job-control-plan]]"
-  - "[[2026-07-21-service-job-control-W02-P05-S15]]"
 ---
 
 # `service-job-control` audit: `S15 code indexing job control review`

@@ -4,28 +4,12 @@ tags:
   - '#index'
   - '#async-service-index'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:f16f34c5c96a49d3456507d50362b09f4fa79c12d94bafd3f3231078fb0d1ec9'
+body_hash: 'sha256:e16f4a71b5cea3ac314ffadf8ef8362371e8b1ebf25b2a7c89dd7929aaed5fae'
 related:
-  - '[[2026-06-04-async-service-index-W01-P01-S01]]'
-  - '[[2026-06-04-async-service-index-W01-P01-S02]]'
-  - '[[2026-06-04-async-service-index-W01-P02-S03]]'
-  - '[[2026-06-04-async-service-index-W01-P02-S04]]'
-  - '[[2026-06-04-async-service-index-W01-P02-S05]]'
-  - '[[2026-06-04-async-service-index-W01-P02-S06]]'
-  - '[[2026-06-04-async-service-index-W02-P03-S07]]'
-  - '[[2026-06-04-async-service-index-W02-P03-S08]]'
-  - '[[2026-06-04-async-service-index-W02-P03-S09]]'
-  - '[[2026-06-04-async-service-index-W02-P03-S10]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S11]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S12]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S13]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S14]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S15]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S16]]'
-  - '[[2026-06-04-async-service-index-W03-P04-S17]]'
   - '[[2026-06-04-async-service-index-adr]]'
+  - '[[2026-06-04-async-service-index-ledger]]'
   - '[[2026-06-04-async-service-index-plan]]'
   - '[[2026-06-04-async-service-index-research]]'
 ---
@@ -42,23 +26,7 @@ Auto-generated index of all documents tagged with `#async-service-index`.
 
 ### exec
 
-- `2026-06-04-async-service-index-W01-P01-S01` - 2026-06-04-async-service-index-W01-P01-S01
-- `2026-06-04-async-service-index-W01-P01-S02` - 2026-06-04-async-service-index-W01-P01-S02
-- `2026-06-04-async-service-index-W01-P02-S03` - 2026-06-04-async-service-index-W01-P02-S03
-- `2026-06-04-async-service-index-W01-P02-S04` - 2026-06-04-async-service-index-W01-P02-S04
-- `2026-06-04-async-service-index-W01-P02-S05` - 2026-06-04-async-service-index-W01-P02-S05
-- `2026-06-04-async-service-index-W01-P02-S06` - 2026-06-04-async-service-index-W01-P02-S06
-- `2026-06-04-async-service-index-W02-P03-S07` - 2026-06-04-async-service-index-W02-P03-S07
-- `2026-06-04-async-service-index-W02-P03-S08` - 2026-06-04-async-service-index-W02-P03-S08
-- `2026-06-04-async-service-index-W02-P03-S09` - 2026-06-04-async-service-index-W02-P03-S09
-- `2026-06-04-async-service-index-W02-P03-S10` - 2026-06-04-async-service-index-W02-P03-S10
-- `2026-06-04-async-service-index-W03-P04-S11` - 2026-06-04-async-service-index-W03-P04-S11
-- `2026-06-04-async-service-index-W03-P04-S12` - 2026-06-04-async-service-index-W03-P04-S12
-- `2026-06-04-async-service-index-W03-P04-S13` - 2026-06-04-async-service-index-W03-P04-S13
-- `2026-06-04-async-service-index-W03-P04-S14` - 2026-06-04-async-service-index-W03-P04-S14
-- `2026-06-04-async-service-index-W03-P04-S15` - 2026-06-04-async-service-index-W03-P04-S15
-- `2026-06-04-async-service-index-W03-P04-S16` - 2026-06-04-async-service-index-W03-P04-S16
-- `2026-06-04-async-service-index-W03-P04-S17` - 2026-06-04-async-service-index-W03-P04-S17
+- `2026-06-04-async-service-index-ledger` - `async-service-index` ledger
 
 ### plan
 

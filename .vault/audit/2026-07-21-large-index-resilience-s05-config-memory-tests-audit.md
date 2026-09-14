@@ -3,11 +3,10 @@ tags:
   - '#audit'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:27d674373610f1c4f7d76d0600b25772eb9a83e37635de1234f2db3d9f40a230'
 related:
   - "[[2026-07-21-large-index-resilience-plan]]"
-  - "[[2026-07-21-large-index-resilience-W01-P01-S05]]"
 ---
 
 # `large-index-resilience` audit: `large-index-resilience audit: W01.P01.S05 configuration and memory-budget tests`

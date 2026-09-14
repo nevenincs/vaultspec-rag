@@ -4,16 +4,12 @@ tags:
   - '#index'
   - '#index-gpu-pipeline'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:4118bf2f158b6eaaa829ad8423bc1cfd3f1cefb108f21361089eced85836cad0'
+body_hash: 'sha256:68550b0dd598e73208b3e39722282977a0e17ffbbea7cdb5f6b9c7a25ba29576'
 related:
-  - '[[2026-06-02-index-gpu-pipeline-P01-S01]]'
-  - '[[2026-06-02-index-gpu-pipeline-P01-S02]]'
-  - '[[2026-06-02-index-gpu-pipeline-P01-S03]]'
-  - '[[2026-06-02-index-gpu-pipeline-P02-S04]]'
-  - '[[2026-06-02-index-gpu-pipeline-P02-S05]]'
   - '[[2026-06-02-index-gpu-pipeline-adr]]'
+  - '[[2026-06-02-index-gpu-pipeline-ledger]]'
   - '[[2026-06-02-index-gpu-pipeline-plan]]'
   - '[[2026-06-02-index-gpu-pipeline-research]]'
 ---
@@ -30,11 +26,7 @@ Auto-generated index of all documents tagged with `#index-gpu-pipeline`.
 
 ### exec
 
-- `2026-06-02-index-gpu-pipeline-P01-S01` - Add a bounded-queue feeder plus a single dedicated GPU consumer thread that owns the gpu_lock and runs dense then sparse encoding, replacing the inline drain
-- `2026-06-02-index-gpu-pipeline-P01-S02` - Shut the consumer down with a sentinel and re-raise any consumer-thread exception in the main thread, and move stale-purge and metadata accounting after the join
-- `2026-06-02-index-gpu-pipeline-P01-S03` - Preserve the serial byte-gate path and the BrokenProcessPool fallback as the single-threaded inline form under the two-thread structure
-- `2026-06-02-index-gpu-pipeline-P02-S04` - Add a real-GPU test asserting consumer-thread pipeline chunk-id and metadata parity with the serial path and that consumer exceptions propagate
-- `2026-06-02-index-gpu-pipeline-P02-S05` - Validate no regression on the real codebase end to end with the resident service stopped
+- `2026-06-02-index-gpu-pipeline-ledger` - `index-gpu-pipeline` ledger
 
 ### plan
 

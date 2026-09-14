@@ -4,19 +4,13 @@ tags:
   - '#index'
   - '#rag-broker-affordances'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:388d1ab9366cdb5d94f48fbfc05cd512ed0ac09422d67f0c4f234e4de82cb3cb'
+body_hash: 'sha256:5e06b8ed841e686d3e5fd82cb9675c68775f11b931bb62ea1e9ddd772fb44a37'
 related:
-  - '[[2026-06-27-rag-broker-affordances-P01-S01]]'
-  - '[[2026-06-27-rag-broker-affordances-P01-S02]]'
-  - '[[2026-06-27-rag-broker-affordances-P01-S03]]'
-  - '[[2026-06-27-rag-broker-affordances-P01-S04]]'
-  - '[[2026-06-27-rag-broker-affordances-P02-S05]]'
-  - '[[2026-06-27-rag-broker-affordances-P02-S06]]'
-  - '[[2026-06-27-rag-broker-affordances-P02-S07]]'
   - '[[2026-06-27-rag-broker-affordances-adr]]'
   - '[[2026-06-27-rag-broker-affordances-audit]]'
+  - '[[2026-06-27-rag-broker-affordances-ledger]]'
   - '[[2026-06-27-rag-broker-affordances-plan]]'
   - '[[2026-06-27-rag-broker-affordances-research]]'
 ---
@@ -37,13 +31,7 @@ Auto-generated index of all documents tagged with `#rag-broker-affordances`.
 
 ### exec
 
-- `2026-06-27-rag-broker-affordances-P01-S01` - Refactor \_existing_service_running to return the running pid and port instead of printing, moving the human lines to the caller
-- `2026-06-27-rag-broker-affordances-P01-S02` - Reorder service_start so the idempotent already-running check precedes the port and machine guards
-- `2026-06-27-rag-broker-affordances-P01-S03` - Add the --json option and emit one envelope per outcome (already_running, started, port_in_use, machine_owned, daemon_breakaway, start_timeout)
-- `2026-06-27-rag-broker-affordances-P01-S04` - Unit-test the reorder and each --json outcome shape with an isolated temp status dir
-- `2026-06-27-rag-broker-affordances-P02-S05` - Add machine_discovery_path and a tolerant read_machine_discovery to the machine-lock module
-- `2026-06-27-rag-broker-affordances-P02-S06` - Write the discovery payload to the machine-global pointer on the daemon heartbeat tick and clean it on shutdown
-- `2026-06-27-rag-broker-affordances-P02-S07` - Unit-test the pointer path, the heartbeat write beside the lock, the shutdown cleanup, and the tolerant reader with an isolated temp storage dir
+- `2026-06-27-rag-broker-affordances-ledger` - `rag-broker-affordances` ledger
 
 ### plan
 
