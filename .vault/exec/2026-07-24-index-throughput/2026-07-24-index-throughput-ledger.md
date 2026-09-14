@@ -5,7 +5,7 @@ tags:
 date: '2026-07-24'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:3fa8c2f4dbdde71ff9a03201d9445798e1ccdefe6d77b53f0ecb2b54dcc89144'
+body_hash: 'sha256:97d10a99dfe47020478d7db6d19102ad1f81f5c4ec45c139f562be442ed6172e'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
 ---
@@ -46,3 +46,5 @@ related:
 - `S17` `T` `src/vaultspec_rag/indexer/_streaming.py`
 - `S18` `T` `pyproject.toml`
 - `S18` `T` `.python-version`
+- `S09` `T` `src/vaultspec_rag/config/_settings.py`
+
