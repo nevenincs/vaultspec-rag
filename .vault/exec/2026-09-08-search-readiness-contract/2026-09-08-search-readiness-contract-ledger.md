@@ -5,7 +5,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:0613e7874cfe26272b371c67ec7c17be43e41457024cef3f318dfdbb3f0b7151'
+body_hash: 'sha256:3c1a169fe48aaed8add7beb673f6f95589c221a860eeec28f117bd389071081a'
 related:
   - "[[2026-09-08-search-readiness-contract-plan]]"
 ---
@@ -473,6 +473,18 @@ related:
 - `S58` `verify:` `ConvertFrom-Json <MCP example>` -> `pass`
 - `S58` `verify:` `uv run pytest <CLI and MCP freshness contract cases> -q` -> `pass`
 - `S58` `verify:` `git diff --check` -> `pass`
+- `S52` `M` `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`
+- `S52` `verify:` `resident CUDA benchmark, 5 scenarios x 32 requests, 160/160 successful` -> `pass`
+- `S52` `by:` `/root`
+- `S53` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_readiness.py -q: 20 passed` -> `pass`
+- `S53` `by:` `/root`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
+- `S54` `verify:` `watcher refusal plus readiness: 21 focused passed` -> `pass`
+- `S54` `by:` `/root`
+- `S55` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`
+- `S55` `verify:` `resident readiness benchmark: 160/160 requests successful` -> `pass`
+- `S55` `by:` `/root`
 
 ## Notes
 
@@ -511,3 +523,7 @@ related:
 - `S56` installed vault CLI rejects 1,572 legacy per-Step records; the Python lane has two release/pin
 - `S56` failures; and no compatible GPU service was available. The CPU suite completed 4,921 passes,
 - `S56` four skips, and two failures unrelated to readiness.
+- `S52` Accepted same-host 0.4.28/Qdrant 1.19.0 metrics record latency, throughput, limiter concurrency, GPU queue waits, bounded readiness control, and waiter cleanup.
+- `S53` Mutation held the GPU lock across bounded admission; the competing-thread assertion failed, then passed after restoration.
+- `S54` Private rerank field and changed-query mutations each failed their intended exact-shape/payload assertions before restoration.
+- `S55` GPU tiers were run as sequential selections per the repository collection guard.

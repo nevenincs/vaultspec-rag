@@ -5,7 +5,7 @@ tags:
 date: '2026-07-24'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:97d10a99dfe47020478d7db6d19102ad1f81f5c4ec45c139f562be442ed6172e'
+body_hash: 'sha256:6caf25660f52f21273e40059f1664c7ae743d9c009da17704e6bf2cf14540092'
 related:
   - "[[2026-07-24-index-throughput-plan]]"
 ---
@@ -47,3 +47,10 @@ related:
 - `S18` `T` `pyproject.toml`
 - `S18` `T` `.python-version`
 - `S09` `T` `src/vaultspec_rag/config/_settings.py`
+- `S09` `M` `src/vaultspec_rag/config/_settings.py`
+- `S09` `verify:` `cadence-8 vault rebuild: 3731 points, 76.714s, peak CUDA allocated 7954.0 MiB, zero OOM` -> `pass`
+- `S09` `by:` `/root`
+
+## Notes
+
+- `S09` Uncontended same-host alternating measurement showed only a 0.605% wall-time improvement at cadence 8 (0.467s), below a meaningful tuning signal; retained the safety-first default cadence 1.
