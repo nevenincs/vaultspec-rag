@@ -6,7 +6,7 @@ tags:
 date: '2026-09-08'
 modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:6cefa5662678987db92372ab0cf0c52e259890eac62a7f1af99bbe454fcd9c60'
+body_hash: 'sha256:863629260429e22175f5b9d5335f0497d0a5d21e1175723f0e155d43850a0ebb'
 related:
   - '[[2026-09-08-search-readiness-contract-W01-P01-S01]]'
   - '[[2026-09-08-search-readiness-contract-W01-P01-S02]]'
@@ -75,6 +75,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-W04-P12-S54]]'
   - '[[2026-09-08-search-readiness-contract-W04-P13-S55]]'
   - '[[2026-09-08-search-readiness-contract-W04-P13-S56]]'
+  - '[[2026-09-08-search-readiness-contract-W04-P13-S58]]'
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-plan]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
@@ -167,6 +168,7 @@ Auto-generated index of all documents tagged with `#search-readiness-contract`.
 - `2026-09-08-search-readiness-contract-W04-P12-S54` - Prove retrieval ordering ranking output and result shape remain unchanged
 - `2026-09-08-search-readiness-contract-W04-P13-S55` - Run focused unit integration MCP conformance concurrency guard and benchmark gates with individual exit codes
 - `2026-09-08-search-readiness-contract-W04-P13-S56` - Run repository lint format type full test vault and diff gates with individual exit codes
+- `2026-09-08-search-readiness-contract-W04-P13-S58` - Document immediate and bounded policy states retries CLI and MCP automation examples
 
 ### plan
 
