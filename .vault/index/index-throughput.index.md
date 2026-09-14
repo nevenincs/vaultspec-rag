@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#index-throughput'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:0a11cbcaf408bd37dc702c15f10c84051f476acc2b1ac99ee810870e8a6a6a4b'
+body_hash: 'sha256:fc8215fc2c88727d32c199102bf74f3c2a9c5286cf6e6bf8b9a2e5524b2d74ed'
 related:
   - '[[2026-07-24-index-throughput-P01-S01]]'
   - '[[2026-07-24-index-throughput-P01-S02]]'
@@ -14,7 +14,6 @@ related:
   - '[[2026-07-24-index-throughput-P02-S03]]'
   - '[[2026-07-24-index-throughput-P02-S04]]'
   - '[[2026-07-24-index-throughput-P02-S05]]'
-  - '[[2026-07-24-index-throughput-P02-S15]]'
   - '[[2026-07-24-index-throughput-P03-S06]]'
   - '[[2026-07-24-index-throughput-P03-S07]]'
   - '[[2026-07-24-index-throughput-P03-S08]]'
@@ -48,7 +47,6 @@ Auto-generated index of all documents tagged with `#index-throughput`.
 - `2026-07-24-index-throughput-P01-S14` - stamp admission-acquired time on job records and accumulate per-job GPU-lock wait via a timed-acquire helper, publishing both through the existing jobs envelope so queued-shown-as-running is fixed
 - `2026-07-24-index-throughput-P02-S03` - pass explicit non-blocking wait semantics on rebuild-path upserts and add the completion barrier before stale-purge and metadata publish
 - `2026-07-24-index-throughput-P02-S04` - add ingest-barrier tests including the mutation proof: remove the barrier, the terminal-state-precedes-applied-points assertion goes red, restore green, both directions recorded
-- `2026-07-24-index-throughput-P02-S15` - switch the server-mode store client to gRPC transport and record the measured per-batch upsert delta
 - `2026-07-24-index-throughput-P03-S10` - add overlap tests including mutation proofs that the single-consumer contract binds: a second consumer or lock-held-across-non-forward mutation goes red on the intended assertion, restore green, recorded
 - `2026-07-24-index-throughput-P03-S16` - apply the existing flush-cadence throttle to the vault slice path, which currently empties the CUDA cache every slice
 - `2026-07-24-index-throughput-P03-S17` - throttle the document per-file loop's cache release, which currently syncs the device every slice by defaulting release-cache on
