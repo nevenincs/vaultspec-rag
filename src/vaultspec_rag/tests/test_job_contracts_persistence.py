@@ -59,6 +59,129 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+def _authority_job_setup(
+    tmp_path: Path,
+    authority: RunAuthority,
+) -> tuple[JobManager, JobInitiator, JobSpec, JobSpec]:
+    """Build one manager and the two authority variants used by the guard."""
+    state_path = tmp_path / "jobs-state.json"
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=4,
+        state_path=state_path,
+    )
+    initiator = JobInitiator("test", "closed-authority", str(tmp_path))
+    spec = JobSpec(
+        JobOperation.INDEX,
+        JobSource.CODE,
+        str(tmp_path),
+        JobMode.INCREMENTAL,
+        authority,
+    )
+    other_authority = (
+        RunAuthority.REBUILD
+        if authority is RunAuthority.PUBLICATION
+        else RunAuthority.PUBLICATION
+    )
+    return manager, initiator, spec, replace(spec, authority=other_authority)
+
+
+def _assert_authority_create_lifecycle(
+    manager: JobManager,
+    initiator: JobInitiator,
+    spec: JobSpec,
+    other_spec: JobSpec,
+    authority: RunAuthority,
+) -> JobSnapshot:
+    """Assert creation, replay, conflict, and distinct-job authority rules."""
+    created = manager.create(
+        spec,
+        initiator,
+        idempotency_key="closed-authority-key",
+    )
+    assert created.code == "job_created"
+    assert created.job is not None
+    created_job = created.job
+    assert created_job.spec.authority is authority
+
+    replayed = manager.create(
+        spec,
+        initiator,
+        idempotency_key="closed-authority-key",
+    )
+    assert replayed.code == "idempotency_replayed"
+    assert replayed.job is not None
+    assert replayed.job.id == created_job.id
+    assert replayed.job.spec.authority is authority
+
+    conflict = manager.create(
+        other_spec,
+        initiator,
+        idempotency_key="closed-authority-key",
+    )
+    assert conflict.code == "idempotency_key_conflict"
+    assert conflict.job is not None
+    assert conflict.job.spec.authority is authority
+
+    distinct = manager.create(other_spec, initiator)
+    assert distinct.code == "job_created"
+    assert distinct.job is not None
+    assert distinct.job.spec.authority is other_spec.authority
+    return created_job
+
+
+def _assert_authority_retry(
+    manager: JobManager,
+    created: JobSnapshot,
+    authority: RunAuthority,
+) -> JobSnapshot:
+    """Assert failed admission and retry preserve the original authority."""
+    assert manager.fail_unstarted(created.id, result="retry me").code == (
+        "job_failed_before_dispatch"
+    )
+    retried = manager.retry(created.id)
+    assert retried.code == "job_retry_created"
+    assert retried.job is not None
+    assert retried.job.spec.authority is authority
+    return retried.job
+
+
+def _assert_authority_restart(
+    state_path: Path,
+    initiator: JobInitiator,
+    spec: JobSpec,
+    created_and_retried: tuple[JobSnapshot, JobSnapshot],
+    authority: RunAuthority,
+) -> None:
+    """Assert restart restores both retry history and deduplication authority."""
+    created, retried = created_and_retried
+    restored = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=4,
+        state_path=state_path,
+    )
+    assert restored.restore_persisted().code == "job_state_restored"
+    restored_retry = restored.get(retried.id)
+    assert restored_retry is not None
+    assert restored_retry.spec.authority is authority
+
+    replayed_after_restart = restored.create(
+        spec,
+        initiator,
+        idempotency_key="closed-authority-key",
+    )
+    assert replayed_after_restart.code == "idempotency_replayed"
+    assert replayed_after_restart.job is not None
+    assert replayed_after_restart.job.id == created.id
+    assert replayed_after_restart.job.spec.authority is authority
+
+    deduplicated_after_restart = restored.create(spec, initiator)
+    assert deduplicated_after_restart.code == "active_job_exists"
+    assert deduplicated_after_restart.job is not None
+    assert deduplicated_after_restart.job.id == retried.id
+    assert deduplicated_after_restart.job.spec.authority is authority
+
+
 class TestPersistedJobStateRoundTrip:
     """Anything the manager can hold must survive a write and read unchanged.
 
@@ -155,92 +278,22 @@ class TestPersistedJobStateRoundTrip:
     ) -> None:
         """Changing authority at any lifecycle copy breaks this end-to-end guard."""
         state_path = tmp_path / "jobs-state.json"
-        manager = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=4,
-            state_path=state_path,
-        )
-        initiator = JobInitiator("test", "closed-authority", str(tmp_path))
-        spec = JobSpec(
-            JobOperation.INDEX,
-            JobSource.CODE,
-            str(tmp_path),
-            JobMode.INCREMENTAL,
+        manager, initiator, spec, other_spec = _authority_job_setup(tmp_path, authority)
+        created = _assert_authority_create_lifecycle(
+            manager,
+            initiator,
+            spec,
+            other_spec,
             authority,
         )
-        other_authority = (
-            RunAuthority.REBUILD
-            if authority is RunAuthority.PUBLICATION
-            else RunAuthority.PUBLICATION
-        )
-        other_spec = replace(spec, authority=other_authority)
-
-        created = manager.create(
+        retried = _assert_authority_retry(manager, created, authority)
+        _assert_authority_restart(
+            state_path,
+            initiator,
             spec,
-            initiator,
-            idempotency_key="closed-authority-key",
+            (created, retried),
+            authority,
         )
-        assert created.code == "job_created"
-        assert created.job is not None
-        assert created.job.spec.authority is authority
-
-        replayed = manager.create(
-            spec,
-            initiator,
-            idempotency_key="closed-authority-key",
-        )
-        assert replayed.code == "idempotency_replayed"
-        assert replayed.job is not None
-        assert replayed.job.id == created.job.id
-        assert replayed.job.spec.authority is authority
-
-        conflict = manager.create(
-            other_spec,
-            initiator,
-            idempotency_key="closed-authority-key",
-        )
-        assert conflict.code == "idempotency_key_conflict"
-        assert conflict.job is not None
-        assert conflict.job.spec.authority is authority
-
-        distinct = manager.create(other_spec, initiator)
-        assert distinct.code == "job_created"
-        assert distinct.job is not None
-        assert distinct.job.spec.authority is other_authority
-
-        assert manager.fail_unstarted(created.job.id, result="retry me").code == (
-            "job_failed_before_dispatch"
-        )
-        retried = manager.retry(created.job.id)
-        assert retried.code == "job_retry_created"
-        assert retried.job is not None
-        assert retried.job.spec.authority is authority
-
-        restored = JobManager(
-            quiesce_controller=ServiceQuiesceController(),
-            max_nonterminal=4,
-            state_path=state_path,
-        )
-        assert restored.restore_persisted().code == "job_state_restored"
-        restored_retry = restored.get(retried.job.id)
-        assert restored_retry is not None
-        assert restored_retry.spec.authority is authority
-
-        replayed_after_restart = restored.create(
-            spec,
-            initiator,
-            idempotency_key="closed-authority-key",
-        )
-        assert replayed_after_restart.code == "idempotency_replayed"
-        assert replayed_after_restart.job is not None
-        assert replayed_after_restart.job.id == created.job.id
-        assert replayed_after_restart.job.spec.authority is authority
-
-        deduplicated_after_restart = restored.create(spec, initiator)
-        assert deduplicated_after_restart.code == "active_job_exists"
-        assert deduplicated_after_restart.job is not None
-        assert deduplicated_after_restart.job.id == retried.job.id
-        assert deduplicated_after_restart.job.spec.authority is authority
 
     def test_a_whole_generation_of_distinct_jobs_survives_with_its_bindings(
         self, tmp_path: Path

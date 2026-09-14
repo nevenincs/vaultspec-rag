@@ -355,7 +355,7 @@ class _ReadableResponse(Protocol):
     non-2xx status. Both share only this read method.
     """
 
-    def read(self, amt: int, /) -> bytes: ...
+    def read(self, _amt: int, /) -> bytes: ...
 
 
 class _StatusReadableResponse(_ReadableResponse, Protocol):
