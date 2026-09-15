@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:a8328dd4f23bb1eae7a27b7469e76729747ea98709486f8c6cd18b4ba6a4f9f2'
+modified: '2026-09-14'
+body_hash: 'sha256:3e0d64395587e6e7bf5d3ba5a6dcca4511a6a45f50e69e32d136938372f6e938'
 ---
 
 # Test Mandate Compliance Audit — 2026-03-07
@@ -44,6 +44,7 @@ These tests assert that specific string patterns exist in production source code
 def test_write_meta_uses_current_hashes_not_current_files(self):
     import inspect
     from vaultspec_rag.indexer import CodebaseIndexer
+
     source = inspect.getsource(CodebaseIndexer.incremental_index)
     assert "self._write_meta(current_hashes)" in source
 ```
@@ -57,6 +58,7 @@ def test_write_meta_uses_current_hashes_not_current_files(self):
 def test_unhashed_files_removed_from_current_files(self):
     import inspect
     from vaultspec_rag.indexer import CodebaseIndexer
+
     source = inspect.getsource(CodebaseIndexer.incremental_index)
     assert "set(current_files) - set(current_hashes)" in source
 ```

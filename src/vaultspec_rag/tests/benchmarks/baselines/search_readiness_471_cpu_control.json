@@ -3,7 +3,7 @@
   "issue": 471,
   "environment": {
     "platform": "Windows-11-10.0.26200-SP0",
-    "python": "3.13.15",
+    "python": "3.13.14",
     "gpu_service_used": false
   },
   "command": "uv run python -c 'import json,statistics; from vaultspec_rag.tests.benchmarks.bench_concurrency import run_readiness_control_benchmark; rows=[run_readiness_control_benchmark(\".\",32).to_dict() for _ in range(5)]; print(json.dumps(rows,indent=2))'",
@@ -11,39 +11,66 @@
     "scope": "CPU-only satisfied-target registry admission, 32 concurrent callers",
     "maximum_batch_wall_seconds": 0.005,
     "minimum_admissions_per_second": 6400.0,
-    "basis": "Tenfold headroom over the observed maximum 0.000458-second batch; this isolates readiness admission from retrieval, limiter, GPU, and storage work."
+    "basis": "Ninefold headroom over the observed maximum 0.000533-second batch; this isolates readiness admission from retrieval, limiter, GPU, and storage work."
   },
   "measured_cpu_control": {
     "concurrency": 32,
     "samples": 5,
     "immediate_batch_wall_seconds": [
-      0.000458,
-      0.000191,
-      0.000269,
-      0.000188,
-      0.000191
+      0.000522,
+      0.000364,
+      0.000352,
+      0.000513,
+      0.000533
     ],
-    "immediate_median_wall_seconds": 0.000191,
-    "immediate_minimum_observed_admissions_per_second": 69868.996,
+    "immediate_median_wall_seconds": 0.000513,
+    "immediate_minimum_observed_admissions_per_second": 60037.523,
     "bounded_two_wave_wall_seconds": [
-      0.002659,
-      0.002925,
-      0.002686,
-      0.003049,
-      0.002385
+      0.005303,
+      0.008571,
+      0.005098,
+      0.005209,
+      0.004966
     ],
-    "bounded_median_wall_seconds": 0.002686,
+    "bounded_median_wall_seconds": 0.005209,
     "bounded_waiters_per_sample": 64,
     "waiter_cleanup_verified_all_samples": true,
     "cleanup_evidence": "Each sample uses a registry capped at 32 observers, then completes two consecutive 32-waiter waves; the second full wave succeeds only after the first wave unregisters."
   },
   "live_service_comparison": {
-    "status": "unavailable",
-    "reason": "No explicitly compatible resident GPU service was supplied; GPU discipline forbids starting a competing service for this step.",
-    "no_wait_latency_seconds": null,
-    "search_throughput_rps": null,
-    "search_limiter_concurrency": null,
-    "gpu_queue_wait_seconds": null,
-    "bounded_readiness_wait_seconds": null
+    "status": "accepted",
+    "environment": "Windows 11, Python 3.13.14, CUDA, vaultspec-rag 0.4.28, managed Qdrant 1.19.0",
+    "command": "uv run --no-sync python -m vaultspec_rag.tests.benchmarks.bench_concurrency --root . --requests 32 --concurrency 8 --timeout 600 --json <temporary-report>",
+    "requests_per_scenario": 32,
+    "search_limiter_concurrency": 8,
+    "all_scenarios_error_free": true,
+    "no_wait_latency_seconds": {
+      "p50": 4.151,
+      "p95": 4.212,
+      "max": 4.478
+    },
+    "search_throughput_rps": {
+      "vault": 0.902,
+      "code": 1.756,
+      "mixed": 1.191,
+      "readiness_immediate": 1.884,
+      "readiness_bounded_contention": 1.852
+    },
+    "gpu_queue_wait_seconds": {
+      "immediate_mean": 3.1168,
+      "immediate_max": 3.6567,
+      "bounded_mean": 3.1603,
+      "bounded_max": 3.7709
+    },
+    "bounded_readiness_wait_seconds": 0.001328,
+    "waiter_cleanup_verified": true
+  },
+  "acceptance": {
+    "cpu_control": "pass",
+    "immediate_batch_within_budget_all_samples": true,
+    "minimum_admissions_per_second_within_budget": true,
+    "waiter_cleanup_verified_all_samples": true,
+    "live_service_metrics_accepted": true,
+    "live_service_follow_up": "Compare future runs only on the same host, service build, roots, request count, concurrency, and resident-service topology."
   }
 }

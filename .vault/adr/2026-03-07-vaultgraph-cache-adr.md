@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:86cd1ccacadb803cba8220725fd3287cd63cb14a115438947763d3e64fcf979d'
+modified: '2026-09-14'
+body_hash: 'sha256:dd21085af06b05ab7e98a4cdd0fa5e6f1346f67b74571e5fbf4c53a38904729f'
 related:
   - '[[2026-03-07-threading-lock-for-singleton-adr]]'
   - '[[2026-03-07-continuous-research]]'
@@ -58,6 +58,7 @@ class _GraphCache:
     def invalidate(self) -> None:
         with self._lock:
             self._graph = None
+
 
 _graph_cache = _GraphCache()
 ```

@@ -15,7 +15,8 @@ from pathlib import Path  # noqa: TC003
 
 import pytest
 
-from ..._store_models import read_served_code_collection
+from ..._job_errors import JobError, JobErrorKind
+from ..._store_models import generation_code_collection, read_served_code_collection
 from ...embeddings import EmbeddingModel  # noqa: TC001
 from ...indexer import CodebaseIndexer
 from ...job_control import (
@@ -80,9 +81,16 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
         committed = interrupted.ledger.committed_unit_count(interrupted.generation_id)
         assert committed > 0, "the crash must land after storage-confirmed progress"
 
-        # The storage-delete equivalent: the collection vanishes out-of-band
-        # while the per-root run ledger (index_runs.sqlite3) stays behind.
-        store.drop_code_table()
+        # The storage-delete equivalent: the private collection carrying this
+        # interrupted generation vanishes out-of-band while the per-root run
+        # ledger (index_runs.sqlite3) stays behind.  A clean rebuild writes
+        # beside the served collection, so deleting the served default would
+        # leave the ledger's actual backing collection intact.
+        interrupted_collection = generation_code_collection(
+            store.DERIVED_CODE_TABLE_NAME,
+            interrupted.generation_id,
+        )
+        store.drop_code_table(interrupted_collection)
 
         result = indexer.full_index(
             clean=True,
@@ -102,7 +110,7 @@ def test_clean_rebuild_reencodes_when_collection_vanished_under_the_ledger(
     _assert_code_resources_released()
 
 
-def test_incremental_reencodes_when_collection_vanished_under_published_metadata(
+def test_incremental_requires_rebuild_when_collection_vanished_under_metadata(
     tmp_path: Path,
     cpu_embedding_model: EmbeddingModel,
 ) -> None:
@@ -113,8 +121,8 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
     behind. An incremental diff against that carried metadata classifies
     every surviving file as unchanged, skips all encoding, and reports
     success over a collection whose points no longer exist anywhere. The
-    incremental path must detect the vanished collection and escalate to a
-    full failure-safe reconciliation.
+    incremental path must detect the vanished collection and require an
+    explicit full failure-safe reconciliation.
     """
     paths = _write_code_files(tmp_path, 32, "meta-stale")
 
@@ -136,7 +144,15 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         # while the canonical per-root run ledger stays behind.
         store.drop_code_table()
 
-        indexer.incremental_index(
+        with pytest.raises(JobError) as refusal:
+            indexer.incremental_index(
+                reporter=NullProgressReporter(),
+                preflight=indexer.preflight_content(),
+            )
+        assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+
+        rebuilt = indexer.full_index(
+            clean=True,
             reporter=NullProgressReporter(),
             preflight=indexer.preflight_content(),
         )
@@ -145,7 +161,7 @@ def test_incremental_reencodes_when_collection_vanished_under_published_metadata
         # scan trusts the carried metadata, skips every file, and reports a
         # mutation-free success while the store holds zero points.
         assert_current_code_state(indexer, store, paths, "meta-stale")
-        assert store.count_code() == published.added
+        assert store.count_code() == rebuilt.added == published.added
     _assert_code_resources_released()
 
 

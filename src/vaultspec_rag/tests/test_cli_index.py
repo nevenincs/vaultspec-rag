@@ -431,6 +431,25 @@ class TestIndexAuthorityBoundary:
             )
         ]
 
+    def test_benchmark_searches_use_canonical_wire_source_types(self) -> None:
+        """Every benchmark request uses the strict public route vocabulary.
+
+        Mutation proof: restoring the CLI-only ``codebase`` alias makes the
+        allowed-type assertion fail before a saturation run can misreport every
+        code request as a throughput error.
+        """
+        from .benchmarks.bench_concurrency import build_scenarios
+
+        scenarios = build_scenarios(["project", "other"], 8, 10)
+        source_types = {
+            str(payload["type"])
+            for _name, payloads in scenarios
+            for payload in payloads
+        }
+
+        assert source_types <= {"vault", "code", "document", "combined"}
+        assert "code" in source_types
+
     def test_full_audit_requires_explicit_type(self, tmp_path: Path) -> None:
         (tmp_path / ".vaultspec").mkdir()
 

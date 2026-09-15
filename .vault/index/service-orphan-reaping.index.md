@@ -4,22 +4,12 @@ tags:
   - '#index'
   - '#service-orphan-reaping'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:8d05962e659d5a286f7a38b29d452ce761dbd5fca24450d58115b40c5f4a5775'
+body_hash: 'sha256:7020a9438b0a94a3b48dd02fcc41a55a874f10b66f677135fbe05a029537d078'
 related:
-  - '[[2026-07-23-service-orphan-reaping-P01-S02]]'
-  - '[[2026-07-23-service-orphan-reaping-P02-S01]]'
-  - '[[2026-07-23-service-orphan-reaping-P02-S03]]'
-  - '[[2026-07-23-service-orphan-reaping-P02-S04]]'
-  - '[[2026-07-23-service-orphan-reaping-P02-S05]]'
-  - '[[2026-07-23-service-orphan-reaping-P03-S06]]'
-  - '[[2026-07-23-service-orphan-reaping-P03-S07]]'
-  - '[[2026-07-23-service-orphan-reaping-P03-S08]]'
-  - '[[2026-07-23-service-orphan-reaping-P03-S09]]'
-  - '[[2026-07-23-service-orphan-reaping-P04-S10]]'
-  - '[[2026-07-23-service-orphan-reaping-P04-S11]]'
   - '[[2026-07-23-service-orphan-reaping-adr]]'
+  - '[[2026-07-23-service-orphan-reaping-ledger]]'
   - '[[2026-07-23-service-orphan-reaping-plan]]'
   - '[[2026-07-23-service-orphan-reaping-research]]'
   - '[[2026-07-24-service-orphan-reaping-closing-review-audit]]'
@@ -42,17 +32,7 @@ Auto-generated index of all documents tagged with `#service-orphan-reaping`.
 
 ### exec
 
-- `2026-07-23-service-orphan-reaping-P02-S01` - Move the machine-singleton claim inside the lifespan startup try-guard so its failure routes through \_exit_standalone_daemon
-- `2026-07-23-service-orphan-reaping-P02-S03` - Make the release-on-failure teardown tolerate a claim that produced no lease
-- `2026-07-23-service-orphan-reaping-P02-S04` - Add a top-level entrypoint os.\_exit backstop on any startup exception escaping uvicorn.run
-- `2026-07-23-service-orphan-reaping-P03-S06` - Add the daemon-signature enumeration and the lock-and-pointer-anchored reap predicate
-- `2026-07-23-service-orphan-reaping-P03-S07` - Wire the opt-in server stop --orphans flag with its structured reaped-count success and refusal-fault envelope
-- `2026-07-23-service-orphan-reaping-P03-S08` - Add guard tests that the reap never targets the singleton, a foreign process, or an isolated-config instance
-- `2026-07-23-service-orphan-reaping-P01-S02` - Reproduce a race-losing daemon in an isolated sandbox and capture the launcher-daemon process tree, persisting the pair-origin confirmation
-- `2026-07-23-service-orphan-reaping-P02-S05` - Add a bidirectional guard test that a race-losing spawned daemon terminates instead of lingering
-- `2026-07-23-service-orphan-reaping-P03-S09` - Add a test that the reap clears a real lingering launcher-daemon orphan pair
-- `2026-07-23-service-orphan-reaping-P04-S10` - Reconcile the reap envelope with the broker and control-plane structured-stop regression suite
-- `2026-07-23-service-orphan-reaping-P04-S11` - Run the code review and the full gate suite for the changed lifecycle and stop surface
+- `2026-07-23-service-orphan-reaping-ledger` - `service-orphan-reaping` ledger
 
 ### plan
 

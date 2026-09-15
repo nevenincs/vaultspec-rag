@@ -4,16 +4,13 @@ tags:
   - '#index'
   - '#gpu-admission-unreadable'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:9142b38b1004cc6c9ac72a6c57a98d27c39045ac6219c95f5d0088058a8b2a02'
+body_hash: 'sha256:724a76815ff21c3ba8d48d538e0074a44de6a23de7075833f8ff9973e0bb86d7'
 related:
-  - '[[2026-08-14-gpu-admission-unreadable-S01]]'
-  - '[[2026-08-14-gpu-admission-unreadable-S02]]'
-  - '[[2026-08-14-gpu-admission-unreadable-S03]]'
-  - '[[2026-08-14-gpu-admission-unreadable-S04]]'
   - '[[2026-08-14-gpu-admission-unreadable-adr]]'
   - '[[2026-08-14-gpu-admission-unreadable-audit]]'
+  - '[[2026-08-14-gpu-admission-unreadable-ledger]]'
   - '[[2026-08-14-gpu-admission-unreadable-plan]]'
   - '[[2026-08-14-gpu-admission-unreadable-reference]]'
 ---
@@ -34,10 +31,7 @@ Auto-generated index of all documents tagged with `#gpu-admission-unreadable`.
 
 ### exec
 
-- `2026-08-14-gpu-admission-unreadable-S01` - Give the gate a consecutive-unreadable ledger and refuse past its limit under a distinct reason
-- `2026-08-14-gpu-admission-unreadable-S02` - Route the probed and the supplied reading through one judgement so neither bypasses the ledger
-- `2026-08-14-gpu-admission-unreadable-S03` - Repoint the fail-open guard and prove both directions of the new refusal
-- `2026-08-14-gpu-admission-unreadable-S04` - Assert the ledger coupling the audit found stated only in prose - that a diagnostic reading advances the streak a later load is refused on
+- `2026-08-14-gpu-admission-unreadable-ledger` - `gpu-admission-unreadable` ledger
 
 ### plan
 

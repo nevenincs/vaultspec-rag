@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:977a3d7cc7188e711bef4ebd4ff9a193f1ffbcfba4a4b62df6526e94a1d3151a'
+modified: '2026-09-14'
+body_hash: 'sha256:7e5c5f663d261c282c49622c3dfde237882d301d9f1a137f0f59191b86053fa4'
 ---
 
 # Round 13 Audit -- Integration Tests and Benchmarks
@@ -102,7 +102,7 @@ for path in scan_vault(TEST_PROJECT):
     doc = prepare_document(path, TEST_PROJECT)
     if doc is not None:
         prepared += 1
-        assert doc.id == path.stem    # <--- WRONG
+        assert doc.id == path.stem  # <--- WRONG
     else:
         skipped += 1
 assert prepared > 0

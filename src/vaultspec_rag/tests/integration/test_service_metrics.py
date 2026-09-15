@@ -26,8 +26,10 @@ from starlette.testclient import TestClient
 import vaultspec_rag.mcp._tools as tools
 
 from ... import server
+from ...indexer._run_ledger_models import RunAuthority
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
+from ...serviceclient._transport import _try_http_reindex
 from ._helpers import _make_root
 from .conftest import _attach_live_service, _live_service_context
 
@@ -139,12 +141,39 @@ async def _reindex_vault_to_completion(root: Path) -> None:
     response = await tools.reindex_vault(project_root=str(root))
     assert isinstance(response, dict)
     job_id: str = cast("str", response["job_id"])
-    for _ in range(50):
+    for _ in range(500):
         jobs_res = await admin_tools.get_jobs()
         jobs = [j for j in jobs_res.get("jobs", []) if j["id"] == job_id]
         if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
-            break
+            assert jobs[0]["phase"] == "done", jobs[0]
+            return
         await asyncio.sleep(0.1)
+    raise AssertionError(f"incremental publication job {job_id} did not finish")
+
+
+async def _seed_vault_publication(port: int, root: Path) -> None:
+    """Establish the publication proof required by the incremental MCP tool."""
+    import asyncio
+
+    response = await asyncio.to_thread(
+        _try_http_reindex,
+        "vault",
+        True,
+        port,
+        str(root),
+        authority=RunAuthority.REBUILD,
+        initiator_kind="mcp",
+    )
+    assert response is not None and response.get("ok") is True, response
+    job_id = cast("str", response["job_id"])
+    for _ in range(500):
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [job for job in jobs_res.get("jobs", []) if job["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            assert jobs[0]["phase"] == "done", jobs[0]
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"rebuild publication job {job_id} did not finish")
 
 
 @pytest.fixture(scope="module")
@@ -215,6 +244,8 @@ async def test_search_vault_increments_counter(
     health = _poll_health(port)
     token = str(health["service_token"])
 
+    await _seed_vault_publication(port, root)
+
     baseline = await _fetch_daemon_metrics(port, token)
     reindexes = _counter_value(baseline, "reindex_total")
     searches = _counter_value(baseline, "search_total")
@@ -246,6 +277,8 @@ async def test_reindex_vault_increments_counter(
 
     health = _poll_health(port)
     token = str(health["service_token"])
+
+    await _seed_vault_publication(port, root)
 
     before = await _fetch_daemon_metrics(port, token)
     reindexes = _counter_value(before, "reindex_total")

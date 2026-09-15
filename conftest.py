@@ -44,6 +44,8 @@ _session_failed = False
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from _typeshed import HasFileno
+
     from vaultspec_rag.cli._gpu_lease import BorrowerServiceTarget
 
 _gpu_borrower_target: BorrowerServiceTarget | None = None
@@ -119,27 +121,27 @@ _fsync_suppressed = 0
 _fsync_restored_depth = 0
 
 
-def _suppressed_fsync(descriptor: int) -> None:
+def _suppressed_fsync(fd: int | HasFileno) -> None:
     """Count the call and return, unless a `durable` test asked for the real one."""
     if _fsync_restored_depth:
-        _real_fsync(descriptor)
+        _real_fsync(fd)
         return
     global _fsync_suppressed
     _fsync_suppressed += 1
 
 
-def _suppressed_fdatasync(descriptor: int) -> None:
+def _suppressed_fdatasync(fd: int | HasFileno) -> None:
     """The data-only variant, suppressed on the same terms."""
     if _fsync_restored_depth and _real_fdatasync is not None:
-        _real_fdatasync(descriptor)
+        _real_fdatasync(fd)
         return
     global _fsync_suppressed
     _fsync_suppressed += 1
 
 
-os.fsync = _suppressed_fsync
+vars(os)["fsync"] = _suppressed_fsync
 if _real_fdatasync is not None:
-    os.fdatasync = _suppressed_fdatasync
+    vars(os)["fdatasync"] = _suppressed_fdatasync
 
 
 @pytest.fixture(autouse=True)
@@ -187,9 +189,7 @@ def pytest_testnodedown(node: object, error: object) -> None:
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     """Report how many calls the suppression absorbed, across every process."""
     total = _fsync_suppressed + _fsync_from_workers
-    terminalreporter.write_line(
-        f"fsync: {total} call(s) suppressed this session."
-    )
+    terminalreporter.write_line(f"fsync: {total} call(s) suppressed this session.")
 
 
 def _load_dotenv_if_available() -> None:

@@ -30,9 +30,8 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from tools.binaries.build_pyapp import BINARIES, asset_name
 from tools.packaging import products
 from tools.packaging.generate import formula_path, scoop_path
 from tools.packaging.pointer import existing_homebrew_version, existing_scoop_version
@@ -82,12 +81,28 @@ def buildable_targets(repo_root: Path) -> tuple[str, ...]:
     return targets
 
 
-def _buildable_asset_names(repo_root: Path) -> set[str]:
+def _buildable_asset_names(repo_root: Path, product: Product, version: str) -> set[str]:
     return {
-        asset_name(binary, target)
-        for binary in BINARIES
-        for target in buildable_targets(repo_root)
+        product.bundle_name(version, target) for target in buildable_targets(repo_root)
     }
+
+
+def _string_list(manifest: dict[str, object], key: str) -> list[str]:
+    """Return a manifest value as a list of strings, or an empty list."""
+    value = manifest.get(key)
+    if isinstance(value, list):
+        return [str(item) for item in cast("list[object]", value)]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+def _read_manifest(path: Path) -> dict[str, object]:
+    """Read a JSON object, turning a different JSON shape into a finding."""
+    parsed: object = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        return {}
+    return cast("dict[str, object]", parsed)
 
 
 def validate(root: Path, product: Product, repo_root: Path | None = None) -> list[str]:
@@ -112,22 +127,25 @@ def validate(root: Path, product: Product, repo_root: Path | None = None) -> lis
     if problems:
         return problems
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = _read_manifest(manifest_path)
     formula = formula_file.read_text(encoding="utf-8")
+    if not manifest:
+        problems.append(f"{manifest_path}: is not a JSON object")
+        return problems
 
     # (a) the empty-hash failure - a pointer that installs nothing.
-    hashes = manifest.get("hash") or []
+    hashes = _string_list(manifest, "hash")
+    urls = _string_list(manifest, "url")
     if not hashes:
         problems.append(f"{manifest_path}: pins no hashes")
-    if len(hashes) != len(manifest.get("url") or []):
+    if len(hashes) != len(urls):
         problems.append(
-            f"{manifest_path}: {len(hashes)} hash(es) for "
-            f"{len(manifest.get('url') or [])} url(s)",
+            f"{manifest_path}: {len(hashes)} hash(es) for {len(urls)} url(s)",
         )
     problems.extend(
         f"{manifest_path}: not a sha256 digest: {digest!r}"
         for digest in hashes
-        if not SHA256.match(str(digest))
+        if not SHA256.match(digest)
     )
 
     digests = re.findall(r'sha256 "([^"]*)"', formula)
@@ -154,10 +172,11 @@ def validate(root: Path, product: Product, repo_root: Path | None = None) -> lis
 
     # (c) every asset pointed at is one the builder can emit. A typo here is a
     #     404 at install time and nowhere earlier.
-    referenced = {str(url).rsplit("/", 1)[-1] for url in manifest.get("url") or []}
+    referenced = {url.rsplit("/", 1)[-1] for url in urls}
     referenced |= set(re.findall(r'url "[^"]*/([^"/]+)"', formula))
+    version = scoop_version or brew_version or ""
     try:
-        buildable = _buildable_asset_names(repo_root)
+        buildable = _buildable_asset_names(repo_root, product, version)
     except UnknownTargetsError as exc:
         # Not "assume everything is fine". An unreadable matrix means the
         # question cannot be answered, and answering it anyway - in either

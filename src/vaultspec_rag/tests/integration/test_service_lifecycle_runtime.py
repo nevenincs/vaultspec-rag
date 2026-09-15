@@ -45,6 +45,8 @@ from ._service_lifecycle_helpers import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import httpx
+
     from ...synthetic import CorpusManifest
 
 
@@ -240,8 +242,8 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
             JobOperation.INDEX,
             JobSource.VAULT,
             str(queued_root.resolve()),
-            JobMode.INCREMENTAL,
-            RunAuthority.PUBLICATION,
+            JobMode.REBUILD,
+            RunAuthority.REBUILD,
         ),
         JobInitiator("integration", "restart queued probe", str(queued_root)),
     )
@@ -319,6 +321,25 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     )
 
 
+def _assert_interrupted_index_search_response(response: httpx.Response) -> None:
+    """Require an interrupted rebuild to remain explicitly unverifiable."""
+    assert response.status_code in (200, 503), response.text
+    body = cast("dict[str, object]", response.json())
+    raw_index_state = body.get("index_state")
+    assert isinstance(raw_index_state, dict)
+    index_state = cast("dict[str, object]", raw_index_state)
+    raw_integrity = index_state.get("index_integrity")
+    assert isinstance(raw_integrity, dict)
+    integrity = cast("dict[str, object]", raw_integrity)
+    assert integrity.get("verdict") == "unverifiable"
+    if response.status_code == 503:
+        assert body["error"] == "index_unverifiable"
+        assert "results" not in body
+    else:
+        results = body.get("results")
+        assert isinstance(results, list) and results
+
+
 @pytest.mark.timeout(600)
 def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     tmp_path: Path,
@@ -357,8 +378,8 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             headers={"Authorization": f"Bearer {health['service_token']}"},
             json={
                 "type": "code",
-                "clean": False,
-                "authority": "publication",
+                "clean": True,
+                "authority": "rebuild",
                 "project_root": str(root),
             },
             timeout=30.0,
@@ -420,10 +441,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             },
             timeout=30.0,
         )
-        assert search.status_code == 503, search.text
-        body = search.json()
-        assert body["error"] == "index_unverifiable"
-        assert "results" not in body
+        _assert_interrupted_index_search_response(search)
 
 
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:

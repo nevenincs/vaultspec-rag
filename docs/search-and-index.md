@@ -101,6 +101,69 @@ between 0.6004 and 0.2748 tells you.
 
 If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
 
+## Choose immediate or bounded freshness
+
+Search uses `immediate` freshness by default. It returns against the currently published
+generation without polling or waiting for an in-progress index job. A successful response can
+therefore contain results while its readiness facts say `freshness=updating`; those results come
+from the last usable publication.
+
+Use a bounded wait when automation needs the publication target that existed when the request was
+admitted:
+
+```bash
+uv run vaultspec-rag search "newly added cancellation path" --type code \
+  --freshness-policy bounded --freshness-wait-seconds 5
+```
+
+The bound is in seconds and cannot exceed
+`VAULTSPEC_RAG_SEARCH_FRESHNESS_WAIT_MAX_SECONDS` (30 by default). It is not a job timeout and
+does not wait for job terminality. The service waits for publication evidence, unregisters the
+waiter on cancellation or disconnect, and returns a typed failure if the target cannot be proven
+before the bound.
+
+Read the response as two separate axes:
+
+- `availability=usable` means a published generation can answer; `unavailable` and
+  `capacity_limited` explain why it cannot.
+- `freshness=current`, `updating`, `unverifiable`, or `rebuild_required` describes that
+  generation relative to the captured target.
+- An empty result is authoritative only when `absence_authority=authoritative` for every requested
+  source. A combined search retains each domain's outcome and marks a useful partial answer with
+  `partial=true`.
+
+A bounded timeout is recoverable and carries canonical readiness facts and remediation. An HTTP
+`Retry-After` header appears only when the service has a future retry deadline; its absence means
+the service cannot truthfully promise when retrying will help. Treat `rebuild_required` as an
+operator action, not a reason to loop: inspect the reported remediation and run an explicit
+rebuild for the named source.
+
+The service accepts the same policy directly:
+
+```bash
+curl -sS http://127.0.0.1:8766/search \
+  -H "Authorization: Bearer $VAULTSPEC_RAG_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"code","query":"newly added cancellation path","top_k":10,"project_root":"/workspace/project","freshness_policy":"bounded","freshness_wait_seconds":5}'
+```
+
+For MCP automation, pass the typed fields to any search tool. Omit both fields for immediate mode:
+
+```json
+{
+  "name": "search_codebase",
+  "arguments": {
+    "query": "newly added cancellation path",
+    "project_root": "/workspace/project",
+    "freshness_policy": "bounded",
+    "freshness_wait_seconds": 5
+  }
+}
+```
+
+MCP returns the canonical structured success or failure content. The adapter does not reclassify
+readiness, so HTTP, CLI JSON, and MCP automation can make the same decision from the same fields.
+
 ## Narrow code results by path
 
 Use `--include-path` to keep only files matching a pattern, and `--exclude-path` to drop matching files. Both flags are repeatable and accept standard globs:
@@ -189,7 +252,6 @@ result ranks first. Inspect the returned passages to judge their relevance.
 
 To return only test code, use `only:tests` in the query instead. See
 [noise-domain filters](#filter-noise-by-domain) for other restrictions.
-
 
 ## Filter noise by domain
 

@@ -1,0 +1,124 @@
+---
+tags:
+  - '#exec'
+  - '#large-index-resilience'
+date: '2026-07-21'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:f2f1eb1e3bd42231237742fdca4316883320ce0c348e2d009e7c336f4a33bcda'
+related:
+  - "[[2026-07-21-large-index-resilience-plan]]"
+---
+
+# `large-index-resilience` ledger
+
+## Changes
+
+- `S01` `T` `src/vaultspec_rag/config.py`
+- `S02` `T` `src/vaultspec_rag/_job_errors.py`
+- `S03` `T` `src/vaultspec_rag/memory_probe.py`
+- `S05` `T` `src/vaultspec_rag/tests/test_config.py`
+- `S06` `T` `src/vaultspec_rag/embeddings.py`
+- `S06` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S07` `T` `src/vaultspec_rag/embeddings.py`
+- `S07` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S07` `T` `src/vaultspec_rag/tests/test_streaming_segments.py`
+- `S08` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S08` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S08` `T` `src/vaultspec_rag/indexer/_preprocess_glue.py`
+- `S08` `T` `src/vaultspec_rag/tests/test_streaming_segments.py`
+- `S08` `T` `src/vaultspec_rag/tests/test_chunk_worker_parity.py`
+- `S08` `T` `src/vaultspec_rag/tests/test_preprocess_batch.py`
+- `S09` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S09` `T` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S09` `T` `src/vaultspec_rag/tests/test_chunk_worker_parity.py`
+- `S09` `T` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S10` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S10` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S10` `T` `src/vaultspec_rag/indexer/__init__.py`
+- `S10` `T` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S11` `T` `src/vaultspec_rag/tests/integration/test_embeddings.py`
+- `S12` `T` `src/vaultspec_rag/store.py`
+- `S13` `T` `src/vaultspec_rag/_store_writes.py`
+- `S13` `T` `src/vaultspec_rag/store.py`
+- `S13` `T` `src/vaultspec_rag/indexer/_streaming.py`
+- `S14` `T` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S14` `T` `src/vaultspec_rag/tests/test_run_policy.py`
+- `S15` `T` `src/vaultspec_rag/watcher_retry.py`
+- `S15` `T` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S16` `T` `src/vaultspec_rag/watcher.py`
+- `S16` `T` `src/vaultspec_rag/server/_watcher.py`
+- `S16` `T` `src/vaultspec_rag/tests/test_watcher_unit.py`
+- `S16` `T` `src/vaultspec_rag/tests/integration/test_watcher_config.py`
+- `S17` `T` `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
+- `S17` `T` `src/vaultspec_rag/tests/integration/test_qdrant_server_mode.py`
+- `S17` `T` `src/vaultspec_rag/tests/integration/test_watcher_config.py`
+- `S17` `T` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S18` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S19` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S20` `T` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S21` `T` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S22` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S23` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S24` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S25` `T` `src/vaultspec_rag/indexer/_code_meta.py`
+- `S26` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S27` `T` `src/vaultspec_rag/indexer/_code_meta.py`
+- `S28` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S29` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S30` `T` `src/vaultspec_rag/tests/test_config_epoch.py`
+- `S31` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S32` `T` `src/vaultspec_rag/jobs.py`
+- `S33` `T` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S34` `T` `src/vaultspec_rag/server/_lifespan.py`
+- `S35` `T` `src/vaultspec_rag/cli/_service_jobs.py`
+- `S36` `T` `src/vaultspec_rag/tests/integration/test_service_jobs.py`
+- `S37` `T` `src/vaultspec_rag/indexer/_run_policy.py`
+- `S38` `T` `src/vaultspec_rag/tests/integration/test_index_job_control.py`
+- `S39` `T` `src/vaultspec_rag/tests/integration/test_service_jobs.py`
+- `S40` `T` `src/vaultspec_rag/index_profiles.py`
+- `S41` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S42` `T` `src/vaultspec_rag/jobs.py`
+- `S43` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S44` `T` `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`
+- `S45` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S46` `T` `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
+- `S47` `T` `src/vaultspec_rag/tests/benchmarks/bench_large_index_resilience.py`
+- `S48` `T` `src/vaultspec_rag/tests`
+- `S49` `T` `pyproject.toml`
+- `S52` `T` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S52` `T` `src/vaultspec_rag/indexer/_run_checkpoint.py`
+- `S53` `T` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S54` `T` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S55` `T` `src/vaultspec_rag/tests/integration/test_index_job_control.py`
+- `S56` `T` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S57` `T` `src/vaultspec_rag/indexer/_run_ledger.py`
+- `S58` `T` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S59` `T` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S60` `T` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S61` `T` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S62` `T` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S63` `T` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S64` `T` `src/vaultspec_rag/_job_errors.py`
+- `S65` `T` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S66` `T` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S67` `T` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S68` `T` `src/vaultspec_rag/tests/integration/test_indexer_integration.py`
+- `S69` `T` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S70` `T` `src/vaultspec_rag/tests/corpus.py`
+- `S71` `T` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S72` `T` `justfile`
+- `S73` `T` `conftest.py`
+- `S73` `T` `src/vaultspec_rag/tests/_tier_gate.py`
+- `S74` `T` `src/vaultspec_rag/tests/test_marker_discipline.py`
+- `S74` `T` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S75` `T` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S75` `T` `src/vaultspec_rag/indexer/_resolved_policy.py`
+- `S75` `T` `src/vaultspec_rag/commands/_models.py`
+- `S76` `T` `src/vaultspec_rag/tests/integration/`
+- `S76` `T` `src/vaultspec_rag/tests/_tier_gate.py`
+- `S76` `T` `src/vaultspec_rag/tests/test_marker_discipline.py`
+- `S77` `T` `src/vaultspec_rag/server/_routes.py`
+- `S77` `T` `src/vaultspec_rag/tests/test_service_quiesce_routes.py`
+- `S78` `T` `src/vaultspec_rag/cli/_service_start.py`
+- `S78` `T` `src/vaultspec_rag/cli/_service_lifecycle.py`

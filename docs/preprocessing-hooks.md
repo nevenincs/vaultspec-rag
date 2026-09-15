@@ -439,13 +439,24 @@ from pypdf import PdfReader  # BSD-3-Clause
 src = sys.argv[1]
 reader = PdfReader(src)
 units = [
-    {"text": page.extract_text() or "",
-     "anchor": f"{src}#page={i + 1}",
-     "locator": {"kind": "page", "value": i + 1}}
+    {
+        "text": page.extract_text() or "",
+        "anchor": f"{src}#page={i + 1}",
+        "locator": {"kind": "page", "value": i + 1},
+    }
     for i, page in enumerate(reader.pages)
 ]
-print(json.dumps({"schema_version": 1, "preprocessor_id": "pypdf",
-                  "preprocessor_version": "1.0", "source_path": src, "units": units}))
+print(
+    json.dumps(
+        {
+            "schema_version": 1,
+            "preprocessor_id": "pypdf",
+            "preprocessor_version": "1.0",
+            "source_path": src,
+            "units": units,
+        }
+    )
+)
 ```
 
 `PyMuPDF` / `fitz` is faster but **AGPL-3.0**, whose terms propagate to your project's license; prefer

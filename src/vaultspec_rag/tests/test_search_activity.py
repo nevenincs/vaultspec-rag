@@ -23,6 +23,8 @@ from ..server._search_activity import (
 if TYPE_CHECKING:
     from collections.abc import Sized
 
+    from ..server._search_activity import _SearchActivitySnapshot
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -30,6 +32,94 @@ class _ConditionWaiters(Protocol):
     """The observable wait queue exposed by CPython's real Condition."""
 
     _waiters: Sized
+
+
+async def _wait_for_activity_admission(ledger: SearchActivityLedger) -> None:
+    """Wait until the real route is blocked on a ledger slot."""
+    deadline = time.monotonic() + 5.0
+    waiters = cast("_ConditionWaiters", ledger._active_slot)
+    while not waiters._waiters:
+        if time.monotonic() >= deadline:
+            raise AssertionError("the real route never reached activity admission")
+        await asyncio.sleep(0.001)
+
+
+def _finish_held_activity_slots(
+    ledger: SearchActivityLedger,
+    held: list[SearchActivityTicket],
+) -> None:
+    """Release tickets that deliberately occupied every activity slot."""
+    for ticket in held:
+        assert ledger.finish(
+            ticket,
+            completion=SearchActivityCompletion(outcome="success", status_code=200),
+        )
+    held.clear()
+
+
+def _finish_one_held_activity_slot(
+    ledger: SearchActivityLedger,
+    held: list[SearchActivityTicket],
+) -> None:
+    """Release the first slot exactly as the route-cancellation probe does."""
+    assert ledger.finish(
+        held.pop(),
+        completion=SearchActivityCompletion(outcome="success", status_code=200),
+    )
+
+
+async def _wait_for_cancelled_admission_cleanup(
+    ledger: SearchActivityLedger,
+) -> _SearchActivitySnapshot:
+    """Wait for the cancelled admission to leave the observable queue."""
+    cleanup_deadline = time.monotonic() + 1.0
+    after = ledger.snapshot(include_query=True)
+    while after["queued_count"] and time.monotonic() < cleanup_deadline:
+        await asyncio.sleep(0.001)
+        after = ledger.snapshot(include_query=True)
+    return after
+
+
+def _assert_cancelled_admission_cleanup(
+    after: _SearchActivitySnapshot,
+    *,
+    before_ids: set[str],
+) -> None:
+    """Prove cancellation leaves neither a queued nor active phantom slot."""
+    assert after["queued_count"] == 0
+    assert after["all_counts"]["queued"] == 0
+    assert after["all_counts"]["total"] == (
+        after["all_counts"]["queued"] + after["counts"]["total"]
+    )
+    leaked = [
+        record
+        for record in after["active"]
+        if str(record["request_id"]) not in before_ids
+    ]
+    assert leaked == [], "a cancelled admission must not occupy an active slot"
+
+
+def _finish_cancelled_admission_leaks(
+    ledger: SearchActivityLedger,
+    *,
+    before_ids: set[str],
+) -> None:
+    """Defensively finish any records left by a failed test cleanup."""
+    for record in ledger.snapshot(include_query=True)["active"]:
+        if str(record["request_id"]) not in before_ids:
+            ledger.finish(
+                SearchActivityTicket(request_id=str(record["request_id"])),
+                completion=SearchActivityCompletion(
+                    outcome="cancelled", status_code=499
+                ),
+            )
+
+
+async def _cancel_route_task(task: asyncio.Task[object]) -> None:
+    """Cancel and await a route task, preserving its cancellation signal."""
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 def _start(
@@ -602,48 +692,18 @@ async def test_cancelled_route_admission_cannot_create_a_phantom_activity_slot()
     )
     task = asyncio.create_task(_search_route_response(request))
     try:
-        deadline = time.monotonic() + 5.0
-        waiters = cast("_ConditionWaiters", ledger._active_slot)
-        while not waiters._waiters:
-            if time.monotonic() >= deadline:
-                raise AssertionError("the real route never reached activity admission")
-            await asyncio.sleep(0.001)
+        await _wait_for_activity_admission(ledger)
 
         task.cancel()
-        assert ledger.finish(
-            held.pop(),
-            completion=SearchActivityCompletion(outcome="success", status_code=200),
-        )
+        _finish_one_held_activity_slot(ledger, held)
         with pytest.raises(asyncio.CancelledError):
             await task
-
-        for ticket in held:
-            assert ledger.finish(
-                ticket,
-                completion=SearchActivityCompletion(outcome="success", status_code=200),
-            )
-        held.clear()
-        cleanup_deadline = time.monotonic() + 1.0
-        after = ledger.snapshot(include_query=True)
-        while after["queued_count"] and time.monotonic() < cleanup_deadline:
-            await asyncio.sleep(0.001)
-            after = ledger.snapshot(include_query=True)
-        assert after["queued_count"] == 0
-        assert after["all_counts"]["queued"] == 0
-        assert after["all_counts"]["total"] == (
-            after["all_counts"]["queued"] + after["counts"]["total"]
-        )
-        leaked = [
-            record
-            for record in after["active"]
-            if str(record["request_id"]) not in before_ids
-        ]
-        assert leaked == [], "a cancelled admission must not occupy an active slot"
+        _finish_held_activity_slots(ledger, held)
+        after = await _wait_for_cancelled_admission_cleanup(ledger)
+        _assert_cancelled_admission_cleanup(after, before_ids=before_ids)
     finally:
         if not task.done():
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+            await _cancel_route_task(task)
         for ticket in held:
             ledger.finish(
                 ticket,
@@ -651,11 +711,4 @@ async def test_cancelled_route_admission_cannot_create_a_phantom_activity_slot()
                     outcome="cancelled", status_code=499
                 ),
             )
-        for record in ledger.snapshot(include_query=True)["active"]:
-            if str(record["request_id"]) not in before_ids:
-                ledger.finish(
-                    SearchActivityTicket(request_id=str(record["request_id"])),
-                    completion=SearchActivityCompletion(
-                        outcome="cancelled", status_code=499
-                    ),
-                )
+        _finish_cancelled_admission_leaks(ledger, before_ids=before_ids)

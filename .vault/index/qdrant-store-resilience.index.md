@@ -4,17 +4,13 @@ tags:
   - '#index'
   - '#qdrant-store-resilience'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:177bc9d3d56838bb3f007d5b8bca2924e9be8014aa3ce06d7a12d969d09f620f'
+body_hash: 'sha256:100f1d61bf4e9f0b059ffa6463d46c8027a4441302d7e4eea321b6e5dbccbdcc'
 related:
-  - '[[2026-06-30-qdrant-store-resilience-P01-S01]]'
-  - '[[2026-06-30-qdrant-store-resilience-P02-S02]]'
-  - '[[2026-06-30-qdrant-store-resilience-P03-S03]]'
-  - '[[2026-06-30-qdrant-store-resilience-P04-S04]]'
-  - '[[2026-06-30-qdrant-store-resilience-P05-S05]]'
   - '[[2026-06-30-qdrant-store-resilience-adr]]'
   - '[[2026-06-30-qdrant-store-resilience-audit]]'
+  - '[[2026-06-30-qdrant-store-resilience-ledger]]'
   - '[[2026-06-30-qdrant-store-resilience-plan]]'
   - '[[2026-06-30-qdrant-store-resilience-research]]'
 ---
@@ -35,11 +31,7 @@ Auto-generated index of all documents tagged with `#qdrant-store-resilience`.
 
 ### exec
 
-- `2026-06-30-qdrant-store-resilience-P01-S01` - Add \_quarantine_collection that moves `collections/<name>` to `collections/.quarantine/<name>.<timestamp>`
-- `2026-06-30-qdrant-store-resilience-P02-S02` - Add \_corrupt_collection_from_output that returns an on-disk collection name found in the failure tail or None
-- `2026-06-30-qdrant-store-resilience-P03-S03` - Wrap supervised start with a bounded detect-quarantine-retry loop, on by default, abstaining when no culprit is identified
-- `2026-06-30-qdrant-store-resilience-P04-S04` - Add a server qdrant quarantine CLI verb that lists collections and quarantines a named one
-- `2026-06-30-qdrant-store-resilience-P05-S05` - Add real-behavior tests for quarantine move, detection parser, bounded retry, and the CLI verb under an isolated storage dir
+- `2026-06-30-qdrant-store-resilience-ledger` - `qdrant-store-resilience` ledger
 
 ### plan
 

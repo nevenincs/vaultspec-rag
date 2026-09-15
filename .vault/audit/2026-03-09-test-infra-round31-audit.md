@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:4d1432d9cb1f90628eaaf6a32833a8a7cfb4ae86c7206bd37b76753516b5bd98'
+modified: '2026-09-14'
+body_hash: 'sha256:bf379d1d6d18ee6326490a917e66087a96a575f383d38dc653495119b7b820b4'
 ---
 
 # Round 31: Test Infrastructure & Integration Gap Analysis (2026-03-09)
@@ -298,7 +298,7 @@ def test_get_engine_cache_isolation(tmp_path):
 
     engine1a = get_engine(root1)
     engine1b = get_engine(root1)  # Same root, should reuse
-    engine2 = get_engine(root2)   # Different root, should be new
+    engine2 = get_engine(root2)  # Different root, should be new
 
     assert engine1a is engine1b, "Same root should return cached engine"
     assert engine1a is not engine2, "Different roots should have different engines"

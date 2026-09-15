@@ -4,14 +4,12 @@ tags:
   - '#index'
   - '#citation-gate-coverage'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:de3cdd7b2ed06437107678db4be70a2430e754d2c5275d59c83237b8a4dbd85f'
+body_hash: 'sha256:112d8a5b3c2092e1f8fe1dae4f55a486033140460889cd3f8a4b9e07cb92ca78'
 related:
-  - '[[2026-07-25-citation-gate-coverage-S01]]'
-  - '[[2026-07-25-citation-gate-coverage-S02]]'
-  - '[[2026-07-25-citation-gate-coverage-S03]]'
   - '[[2026-07-25-citation-gate-coverage-adr]]'
+  - '[[2026-07-25-citation-gate-coverage-ledger]]'
   - '[[2026-07-25-citation-gate-coverage-plan]]'
   - '[[2026-07-25-citation-gate-coverage-research]]'
 ---
@@ -28,9 +26,7 @@ Auto-generated index of all documents tagged with `#citation-gate-coverage`.
 
 ### exec
 
-- `2026-07-25-citation-gate-coverage-S01` - Widen the dated-stem pattern to any dated kebab stem and citation-scan the tooling surface
-- `2026-07-25-citation-gate-coverage-S02` - Sweep the tree for citations the widened gate reaches and repair the prose around each removal
-- `2026-07-25-citation-gate-coverage-S03` - Add guard tests for every shape the gate claims to catch and mutation-prove each direction
+- `2026-07-25-citation-gate-coverage-ledger` - `citation-gate-coverage` ledger
 
 ### plan
 

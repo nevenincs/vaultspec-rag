@@ -38,6 +38,48 @@ def _live(client: QdrantClient) -> set[str]:
     return {c.name for c in client.get_collections().collections}
 
 
+def _publish_code_proof(root: Path) -> None:
+    """Establish the canonical proof required to classify old generations."""
+    from ... import store_schema
+    from ..._source_types import PublicSourceType
+    from ..._store_writes import workspace_volume_path
+    from ...indexer._run_ledger_models import (
+        RunAuthority,
+        RunOperation,
+        RunSignature,
+        index_run_ledger_path,
+    )
+    from ...indexer._run_ledger_runtime import RunLedger
+    from ...store_runtime import configured_backend_identity
+
+    resolved = root.resolve()
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(resolved)))
+    generation = ledger.start_generation(
+        RunSignature(
+            root_identity=str(resolved),
+            collection_identity=store_schema.CODE_COLLECTION,
+            source_type=PublicSourceType.CODE,
+            operation=RunOperation.FULL,
+            clean=True,
+            model_identity="generation-reclaim-test",
+            dense_dimensions=4,
+            embedding_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            payload_schema=store_schema.STORAGE_SCHEMA_VERSION,
+            content_epoch="content",
+            membership_epoch="membership",
+            preprocessing_identity="preprocessing",
+            configuration_fingerprint="configuration",
+            policy_fingerprint="policy",
+            backend_identity=configured_backend_identity(resolved),
+        )
+    )
+    ledger.establish_verified_publication(
+        generation.generation_id,
+        RunAuthority.REBUILD,
+        (),
+    )
+
+
 class TestGenerationReclaimAgainstRealStorage:
     """The served collection survives every path; only earned drops happen."""
 
@@ -60,6 +102,7 @@ class TestGenerationReclaimAgainstRealStorage:
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
+        _publish_code_proof(tmp_path)
         try:
             results, stamps = reclaim_superseded_generations(
                 GenerationReclaimRequest(
@@ -98,6 +141,7 @@ class TestGenerationReclaimAgainstRealStorage:
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
+        _publish_code_proof(tmp_path)
         try:
             _results, stamps = reclaim_superseded_generations(
                 GenerationReclaimRequest(
@@ -176,6 +220,7 @@ class TestGenerationReclaimAgainstRealStorage:
         superseded = f"{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
+        _publish_code_proof(tmp_path)
         try:
             results, _stamps = reclaim_superseded_generations(
                 GenerationReclaimRequest(
@@ -236,6 +281,7 @@ class TestTheCycleRunsTheGenerationPass:
         superseded = f"{entry.prefix}{_DERIVED}_gold"
         client = _client(tmp_path, served, superseded)
         publish_served_code_collection(tmp_path, served)
+        _publish_code_proof(tmp_path)
         try:
             result = run_maintenance_cycle(
                 MaintenanceCycleRequest(

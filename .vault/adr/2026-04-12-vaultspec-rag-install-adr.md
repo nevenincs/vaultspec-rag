@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:ac64bef4f986897e31395da0500c605cf201a3f349d2a7acae30984b7453f6fa'
+modified: '2026-09-14'
+body_hash: 'sha256:d456d7a0113be895b2378666998001e2ea758b869177f83560c78cae2fb72d4c'
 related:
   - '[[2026-04-12-vaultspec-rag-install-research]]'
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
@@ -223,6 +223,7 @@ def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
     Returns relative paths actually written.
     """
 
+
 def list_builtins() -> list[str]:
     """Enumerate bundled builtin file paths (relative)."""
 ```
@@ -256,6 +257,7 @@ def install_run(
       4. vaultspec_core.core.commands.sync_provider("all", dry_run, force, skip)
       5. Return result dict shaped like core's install_run result
     """
+
 
 def uninstall_run(
     path: Path,
@@ -319,27 +321,52 @@ Flag names match `vaultspec_core/cli/root.py:cmd_install` and
 ```python
 from .commands import install_run, uninstall_run
 
+
 @app.command("install")
 def cmd_install(
-    target: Annotated[Path | None, typer.Option("--target", "-t", help="Workspace path")] = None,
-    upgrade: Annotated[bool, typer.Option("--upgrade", help="Re-seed bundled rule/MCP files even if present")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview changes without writing")] = False,
-    force: Annotated[bool, typer.Option("--force", help="Override contents if already installed")] = False,
-    skip: Annotated[list[str] | None, typer.Option("--skip", help="Skip a component (repeatable)")] = None,
+    target: Annotated[
+        Path | None, typer.Option("--target", "-t", help="Workspace path")
+    ] = None,
+    upgrade: Annotated[
+        bool,
+        typer.Option(
+            "--upgrade", help="Re-seed bundled rule/MCP files even if present"
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Preview changes without writing")
+    ] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Override contents if already installed")
+    ] = False,
+    skip: Annotated[
+        list[str] | None, typer.Option("--skip", help="Skip a component (repeatable)")
+    ] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Output as JSON")] = False,
-) -> None:
-    ...
+) -> None: ...
+
 
 @app.command("uninstall")
 def cmd_uninstall(
-    target: Annotated[Path | None, typer.Option("--target", "-t", help="Workspace path")] = None,
-    remove_data: Annotated[bool, typer.Option("--remove-data", help="Also remove .vault/data/ (rag's index)")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview changes without removing")] = False,
-    force: Annotated[bool, typer.Option("--force", help="Required to execute. Uninstall is destructive.")] = False,
-    skip: Annotated[list[str] | None, typer.Option("--skip", help="Skip a component (repeatable)")] = None,
+    target: Annotated[
+        Path | None, typer.Option("--target", "-t", help="Workspace path")
+    ] = None,
+    remove_data: Annotated[
+        bool,
+        typer.Option("--remove-data", help="Also remove .vault/data/ (rag's index)"),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Preview changes without removing")
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Required to execute. Uninstall is destructive."),
+    ] = False,
+    skip: Annotated[
+        list[str] | None, typer.Option("--skip", help="Skip a component (repeatable)")
+    ] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Output as JSON")] = False,
-) -> None:
-    ...
+) -> None: ...
 ```
 
 Flag-by-flag alignment with core:

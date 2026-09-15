@@ -1,0 +1,531 @@
+---
+tags:
+  - '#exec'
+  - '#search-readiness-contract'
+date: '2026-09-08'
+modified: '2026-09-15'
+body_schema: 'body-v2'
+body_hash: 'sha256:1425a9051672fa644a0547df61142db5dfce351f2261a6120a38315e814a02fe'
+related:
+  - "[[2026-09-08-search-readiness-contract-plan]]"
+---
+
+# `search-readiness-contract` ledger
+
+## Changes
+
+- `S01` `M` `src/vaultspec_rag/_search_state.py`
+- `S01` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S01` `M` `.vault/index/search-readiness-contract.index.md`
+- `S01` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P01-S01.md`
+- `S01` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/_search_state.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/_search_state.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync python -m ty check src/vaultspec_rag/_search_state.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_search_availability.py -q --tb=short` -> `pass`
+- `S02` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S02` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S02` `M` `.vault/index/search-readiness-contract.index.md`
+- `S02` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P01-S02.md`
+- `S02` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync python -m ty check src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_availability.py -q --tb=short` -> `pass`
+- `S03` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S03` `M` `.vault/index/search-readiness-contract.index.md`
+- `S03` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S03` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P01-S03.md`
+- `S03` `verify:` `uv run --no-sync pytest 'src/vaultspec_rag/tests/test_search_availability.py::test_source_fact_rejects_authoritative_contradictions' -q --tb=short` -> `pass`
+- `S04` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S04` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S04` `M` `.vault/index/search-readiness-contract.index.md`
+- `S04` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P02-S04.md`
+- `S04` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync python -m ty check src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_http_search_errors.py -q --tb=short` -> `pass`
+- `S05` `M` `src/vaultspec_rag/jobs.py`
+- `S05` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S05` `M` `.vault/index/search-readiness-contract.index.md`
+- `S05` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P02-S05.md`
+- `S05` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/jobs.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/jobs.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync python -m ty check src/vaultspec_rag/jobs.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_jobs_lifecycle.py src/vaultspec_rag/tests/test_job_manager_degradation.py src/vaultspec_rag/tests/test_job_resilience.py src/vaultspec_rag/tests/test_search_availability.py -q --tb=short` -> `pass`
+- `S06` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S06` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S06` `M` `.vault/index/search-readiness-contract.index.md`
+- `S06` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P02-S06.md`
+- `S06` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync python -m ty check src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_search_availability.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_availability.py -q --tb=short` -> `pass`
+- `S07` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S07` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S07` `M` `.vault/index/search-readiness-contract.index.md`
+- `S07` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P02-S07.md`
+- `S07` `verify:` `uv run --no-sync pytest 'src/vaultspec_rag/tests/test_search_availability.py::test_legacy_and_invalid_canonical_identity_are_rejected' -q --tb=short` -> `pass`
+- `S07` `verify:` `uv run --no-sync pytest 'src/vaultspec_rag/tests/test_search_availability.py::test_projection_and_legacy_job_evidence_share_one_bound' -q --tb=short` -> `pass`
+- `S08` `A` `src/vaultspec_rag/server/_search_readiness.py`
+- `S08` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S08` `M` `.vault/index/search-readiness-contract.index.md`
+- `S08` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S08.md`
+- `S08` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S08` `verify:` `uv run ruff check src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S08` `verify:` `uv run ty check src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S08` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_service_registry_recovery.py` -> `pass`
+- `S08` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py -k "DaemonLifecycleHelpers or ServiceRegistryIntegration"` -> `pass`
+- `S08` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_service_quiesce_routes.py` -> `pass`
+- `S09` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S09` `M` `src/vaultspec_rag/service.py`
+- `S09` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S09` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S09` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S09` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S09` `M` `.vault/index/search-readiness-contract.index.md`
+- `S09` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S09.md`
+- `S09` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
+- `S09` `verify:` `uv run ruff check src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
+- `S09` `verify:` `uv run ty check src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_lifespan.py src/vaultspec_rag/indexer/_codebase_indexer.py src/vaultspec_rag/indexer/_generation_lifecycle.py` -> `pass`
+- `S09` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_run_checkpoint.py` -> `pass`
+- `S09` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_service_registry_recovery.py` -> `pass`
+- `S09` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py -k "DaemonLifecycleHelpers or ServiceRegistryIntegration"` -> `pass`
+- `S10` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S10` `M` `src/vaultspec_rag/service.py`
+- `S10` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S10` `M` `.vault/index/search-readiness-contract.index.md`
+- `S10` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S10.md`
+- `S10` `verify:` `uv run ruff format --check src/vaultspec_rag/indexer/_document_indexer.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S10` `verify:` `uv run ruff check src/vaultspec_rag/indexer/_document_indexer.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S10` `verify:` `uv run ty check src/vaultspec_rag/indexer/_document_indexer.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S10` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_document_checkpoint.py` -> `pass`
+- `S10` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_document_index_escalation.py` -> `pass`
+- `S10` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_indexer_unit.py -k "document"` -> `pass`
+- `S10` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_scan_cache.py -k "document"` -> `pass`
+- `S11` `M` `src/vaultspec_rag/job_manager/_control.py`
+- `S11` `M` `src/vaultspec_rag/job_manager/manager.py`
+- `S11` `M` `src/vaultspec_rag/job_manager/state.py`
+- `S11` `M` `src/vaultspec_rag/service.py`
+- `S11` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S11` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S11` `M` `.vault/index/search-readiness-contract.index.md`
+- `S11` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S11.md`
+- `S11` `verify:` `uv run ruff format --check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/job_manager/manager.py src/vaultspec_rag/job_manager/state.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S11` `verify:` `uv run ruff check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/job_manager/manager.py src/vaultspec_rag/job_manager/state.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S11` `verify:` `uv run ty check src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/job_manager/manager.py src/vaultspec_rag/job_manager/state.py src/vaultspec_rag/service.py src/vaultspec_rag/server/_search_readiness.py` -> `pass`
+- `S11` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S11` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_job_contracts_persistence.py` -> `pass`
+- `S11` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_service_registry_recovery.py` -> `pass`
+- `S12` `A` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S12` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S12` `M` `.vault/index/search-readiness-contract.index.md`
+- `S12` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S12.md`
+- `S12` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S12` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S12` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S12` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S13` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S13` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S13` `M` `.vault/index/search-readiness-contract.index.md`
+- `S13` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W01-P03-S13.md`
+- `S13` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S13` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S13` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S13` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S13` `verify:` `git diff --exit-code -- src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/job_manager/_control.py src/vaultspec_rag/service.py` -> `pass`
+- `S14` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S14` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S14` `M` `.vault/index/search-readiness-contract.index.md`
+- `S14` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W02-P04-S14.md`
+- `S14` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S14` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S14` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S14` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py` -> `pass`
+- `S14` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S14` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S14` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S15` `M` `src/vaultspec_rag/config/_types.py`
+- `S15` `M` `src/vaultspec_rag/config/_schema.py`
+- `S15` `M` `src/vaultspec_rag/config/_settings.py`
+- `S15` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S15` `M` `.vault/plan/2026-09-08-search-readiness-contract-plan.md`
+- `S15` `M` `.vault/index/search-readiness-contract.index.md`
+- `S15` `A` `.vault/exec/2026-09-08-search-readiness-contract/2026-09-08-search-readiness-contract-W02-P04-S15.md`
+- `S15` `verify:` `uv run ruff format --check src/vaultspec_rag/config/_types.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S15` `verify:` `uv run ruff check src/vaultspec_rag/config/_types.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S15` `verify:` `uv run ty check src/vaultspec_rag/config/_types.py src/vaultspec_rag/config/_schema.py src/vaultspec_rag/config/_settings.py src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S15` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S15` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py` -> `pass`
+- `S15` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S15` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py` -> `pass`
+- `S16` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S16` `M` `src/vaultspec_rag/server/_search_readiness.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_http_search_routing.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S16` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S16` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S16` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_readiness.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S16` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_readiness.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_server.py --disable-warnings` -> `pass`
+- `S16` `verify:` `git diff --check` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S17` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S17` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S17` `verify:` `uv run ty check src/vaultspec_rag/tests/test_config.py` -> `pass`
+- `S17` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_config.py -k search_freshness_wait_max --disable-warnings` -> `pass`
+- `S17` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_config.py --disable-warnings` -> `pass`
+- `S17` `verify:` `git diff --check` -> `pass`
+- `S18` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S18` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S18` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S18` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S18` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S18` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py --disable-warnings` -> `pass`
+- `S18` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py --disable-warnings` -> `pass`
+- `S18` `verify:` `git diff --check` -> `pass`
+- `S19` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S19` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S19` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S19` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S19` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py --disable-warnings` -> `pass`
+- `S19` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py --disable-warnings` -> `pass`
+- `S19` `verify:` `git diff --check` -> `pass`
+- `S20` `M` `src/vaultspec_rag/_search_state.py`
+- `S20` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S20` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S20` `verify:` `uv run ruff format --check src/vaultspec_rag/_search_state.py src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S20` `verify:` `uv run ruff check src/vaultspec_rag/_search_state.py src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S20` `verify:` `uv run ty check src/vaultspec_rag/_search_state.py src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py` -> `pass`
+- `S20` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_http_search_routing.py --disable-warnings` -> `pass`
+- `S20` `verify:` `uv run pytest -q src/vaultspec_rag/tests/test_server.py --disable-warnings` -> `pass`
+- `S20` `verify:` `git diff --check` -> `pass`
+- `S21` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S21` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_http_search_errors.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_http_search_routing.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S21` `M` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
+- `S21` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_server.py -q` -> `pass`
+- `S21` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S21` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S21` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/server/_search_availability.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_availability.py src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S21` `verify:` `git diff --check` -> `pass`
+- `S22` `M` `src/vaultspec_rag/tests/test_http_search_errors.py`
+- `S22` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_errors.py -q` -> `pass`
+- `S22` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S22` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S22` `verify:` `uv run ty check src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S22` `verify:` `git diff --check` -> `pass`
+- `S23` `M` `src/vaultspec_rag/search/_outcomes.py`
+- `S23` `M` `src/vaultspec_rag/tests/test_cli_search.py`
+- `S23` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass`
+- `S23` `verify:` `uv run ruff format --check src/vaultspec_rag/search/_outcomes.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S23` `verify:` `uv run ruff check src/vaultspec_rag/search/_outcomes.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S23` `verify:` `uv run ty check src/vaultspec_rag/search/_outcomes.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S23` `verify:` `git diff --check` -> `pass`
+- `S24` `M` `src/vaultspec_rag/_public_search.py`
+- `S24` `verify:` `uv run ruff format --check src/vaultspec_rag/_public_search.py` -> `pass`
+- `S24` `verify:` `uv run ruff check src/vaultspec_rag/_public_search.py` -> `pass`
+- `S24` `verify:` `uv run ty check src/vaultspec_rag/_public_search.py src/vaultspec_rag/search/_outcomes.py` -> `pass`
+- `S24` `verify:` `git diff --check` -> `pass`
+- `S25` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S25` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_server.py -q` -> `pass`
+- `S25` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S25` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S25` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S25` `verify:` `git diff --check` -> `pass`
+- `S26` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S26` `M` `src/vaultspec_rag/tests/test_search_outcomes.py`
+- `S26` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_outcomes.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_server.py -q` -> `pass`
+- `S26` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_outcomes.py src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S26` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_outcomes.py src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S26` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_outcomes.py src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/_public_search.py src/vaultspec_rag/search/_outcomes.py` -> `pass`
+- `S26` `verify:` `git diff --check` -> `pass`
+- `S27` `M` `src/vaultspec_rag/tests/test_http_search_errors.py`
+- `S27` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S27` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_http_search_errors.py` -> `pass`
+- `S27` `verify:` `uv run ty check src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/server/_routes_search.py src/vaultspec_rag/search/_outcomes.py src/vaultspec_rag/_public_search.py` -> `pass`
+- `S27` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_search_outcomes.py src/vaultspec_rag/tests/test_server.py src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass`
+- `S27` `verify:` `git diff --check` -> `pass`
+- `S28` `M` `src/vaultspec_rag/server/_search_activity.py`
+- `S28` `verify:` `uv run basedpyright src/vaultspec_rag/server/_search_activity.py` -> `pass`
+- `S28` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_activity.py -q` -> `pass`
+- `S29` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S29` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S29` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S29` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S29` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_search_activity.py -q` -> `pass`
+- `S29` `verify:` `git diff --check` -> `pass`
+- `S30` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S30` `verify:` `uv run ruff check src/vaultspec_rag/search/_searcher.py` -> `pass`
+- `S30` `verify:` `uv run ruff format --check src/vaultspec_rag/search/_searcher.py` -> `pass`
+- `S30` `verify:` `uv run basedpyright src/vaultspec_rag/search/_searcher.py` -> `pass`
+- `S30` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_unit.py src/vaultspec_rag/tests/test_search_quality_fixes_unit.py src/vaultspec_rag/tests/test_service_search_diagnostics.py -q` -> `pass`
+- `S30` `verify:` `git diff --check -- src/vaultspec_rag/search/_searcher.py` -> `pass`
+- `S31` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S31` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S31` `verify:` `uv run ruff check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S31` `verify:` `uv run ty check src/vaultspec_rag/server/_routes_search.py` -> `pass`
+- `S31` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_http_search_errors.py src/vaultspec_rag/tests/test_service_search_diagnostics.py -q` -> `pass`
+- `S31` `verify:` `git diff --check` -> `pass`
+- `S32` `M` `src/vaultspec_rag/tests/test_search_activity.py`
+- `S32` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_activity.py` -> `pass`
+- `S32` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_activity.py` -> `pass`
+- `S32` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_activity.py` -> `pass`
+- `S32` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_activity.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_server.py -q` -> `pass`
+- `S32` `verify:` `git diff --check` -> `pass`
+- `S33` `M` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
+- `S33` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S33` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S33` `verify:` `uv run ty check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S33` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S33` `verify:` `uv run pytest src/vaultspec_rag/tests/test_service_search_diagnostics.py src/vaultspec_rag/tests/test_search_activity.py src/vaultspec_rag/tests/test_http_search_routing.py src/vaultspec_rag/tests/test_search_outcomes.py -q` -> `pass`
+- `S33` `verify:` `git diff --check` -> `pass`
+- `S34` `M` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
+- `S34` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S34` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S34` `verify:` `uv run ty check src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S34` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_service_search_diagnostics.py` -> `pass`
+- `S34` `verify:` `uv run pytest src/vaultspec_rag/tests/test_service_search_diagnostics.py -q` -> `pass`
+- `S34` `verify:` `git diff --check` -> `pass`
+- `S35` `M` `src/vaultspec_rag/serviceclient/_search_transport.py`
+- `S35` `verify:` `uv run ruff format --check src/vaultspec_rag/serviceclient/_search_transport.py` -> `pass`
+- `S35` `verify:` `uv run ruff check src/vaultspec_rag/serviceclient/_search_transport.py` -> `pass`
+- `S35` `verify:` `uv run ty check src/vaultspec_rag/serviceclient/_search_transport.py` -> `pass`
+- `S35` `verify:` `uv run basedpyright src/vaultspec_rag/serviceclient/_search_transport.py` -> `pass`
+- `S35` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass` -> `52 passed`
+- `S35` `verify:` `uv run pytest src/vaultspec_rag/tests/test_http_search_errors.py -q` -> `pass` -> `41 passed`
+- `S35` `verify:` `git diff --check -- src/vaultspec_rag/serviceclient/_search_transport.py` -> `pass`
+- `S36` `M` `src/vaultspec_rag/tests/test_cli_search.py`
+- `S36` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S36` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py` -> `pass`
+- `S36` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py` -> `pass`
+- `S36` `verify:` `uv run ty check src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py` -> `pass`
+- `S36` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py` -> `pass`
+- `S36` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass` -> `55 passed`
+- `S36` `verify:` `src/vaultspec_rag/tests/test_cli_search_safety.py` -> `pass` -> `5 passed`
+- `S36` `verify:` `red` -> `pass`
+- `S36` `verify:` `git diff --check` -> `pass`
+- `S37` `M` `src/vaultspec_rag/cli/_search.py`
+- `S37` `verify:` `uv run ruff format --check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S37` `verify:` `uv run ruff check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S37` `verify:` `uv run ty check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S37` `verify:` `uv run basedpyright src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S37` `verify:` `uv run vaultspec-rag search --help` -> `pass`
+- `S37` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass` -> `55 passed`
+- `S37` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q -k "not search_mcp_timeout_diagnostics and not search_timeout_human_output_is_plain_diagnostic and not search_timeout_missing_health_status_is_reported_absence and not search_timeout_jobs_error_is_reported_absence and not search_timeout_json_preserves_backend_diagnostics"` -> `pass` -> `21 passed` -> `5 deselected`
+- `S37` `verify:` `git diff --check` -> `pass`
+- `S38` `M` `src/vaultspec_rag/cli/_search.py`
+- `S38` `verify:` `uv run ruff format --check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S38` `verify:` `uv run ruff check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S38` `verify:` `uv run ty check src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S38` `verify:` `uv run basedpyright src/vaultspec_rag/cli/_search.py` -> `pass`
+- `S38` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass` -> `55 passed`
+- `S38` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q -k "not search_mcp_timeout_diagnostics and not search_timeout_human_output_is_plain_diagnostic and not search_timeout_missing_health_status_is_reported_absence and not search_timeout_jobs_error_is_reported_absence and not search_timeout_json_preserves_backend_diagnostics"` -> `pass` -> `21 passed` -> `5 deselected`
+- `S38` `verify:` `git diff --check` -> `pass`
+- `S39` `M` `src/vaultspec_rag/cli/_search.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_cli_search.py`
+- `S39` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass`
+- `S39` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q -k "not test_search_mcp_timeout_diagnostics and not test_search_timeout_human_output_is_plain_diagnostic and not test_search_timeout_missing_health_status_is_reported_absence and not test_search_timeout_jobs_error_is_reported_absence and not test_search_timeout_json_preserves_backend_diagnostics"` -> `pass`
+- `S39` `verify:` `uv run ruff format --check src/vaultspec_rag/cli/_search.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S39` `verify:` `uv run ruff check src/vaultspec_rag/cli/_search.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S39` `verify:` `uv run ty check src/vaultspec_rag/cli/_search.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S39` `verify:` `uv run basedpyright src/vaultspec_rag/cli/_search.py src/vaultspec_rag/tests/test_cli_search.py` -> `pass`
+- `S40` `M` `src/vaultspec_rag/cli/_render.py`
+- `S40` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S40` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`
+- `S40` `M` `src/vaultspec_rag/tests/test_cli_search.py`
+- `S40` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S40` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py -q` -> `pass`
+- `S40` `verify:` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/test_cli_search.py -q` -> `pass`
+- `S40` `verify:` `uv run ruff check src/vaultspec_rag/cli/_render.py src/vaultspec_rag/tests/_cli_helpers.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S40` `verify:` `uv run ty check src/vaultspec_rag/cli/_render.py src/vaultspec_rag/tests/_cli_helpers.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S40` `verify:` `uv run basedpyright src/vaultspec_rag/cli/_render.py src/vaultspec_rag/tests/_cli_helpers.py src/vaultspec_rag/tests/test_cli_search.py src/vaultspec_rag/tests/test_cli_search_safety.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S41` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S41` `M` `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`
+- `S41` `verify:` `uv run pytest src/vaultspec_rag/tests/test_mcp_conformance_surface.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py src/vaultspec_rag/tests/test_mcp_project_root.py src/vaultspec_rag/tests/test_mcp_import_isolation.py` -> `pass`
+- `S41` `verify:` `uv run ruff format --check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S41` `verify:` `uv run ruff check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S41` `verify:` `uv run ty check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S41` `verify:` `uv run basedpyright src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S41` `verify:` `git diff --check` -> `pass`
+- `S42` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S42` `M` `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`
+- `S42` `verify:` `uv run pytest src/vaultspec_rag/tests/test_mcp_conformance_surface.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py src/vaultspec_rag/tests/test_mcp_project_root.py src/vaultspec_rag/tests/test_mcp_import_isolation.py` -> `pass`
+- `S42` `verify:` `uv run ruff format --check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S42` `verify:` `uv run ruff check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S42` `verify:` `uv run ty check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S42` `verify:` `uv run basedpyright src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/test_mcp_no_local_fallback.py` -> `pass`
+- `S42` `verify:` `git diff --check` -> `pass`
+- `S43` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S43` `D` `src/vaultspec_rag/tests/integration/_service_search_diagnostics_mcp.py`
+- `S43` `A` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`
+- `S43` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`
+- `S43` `verify:` `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S43` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S43` `verify:` `uv run ruff format --check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S43` `verify:` `uv run ruff check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S43` `verify:` `uv run ty check src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S43` `verify:` `uv run basedpyright src/vaultspec_rag/mcp/_tools.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S43` `verify:` `git diff --check` -> `pass`
+- `S44` `M` `src/vaultspec_rag/tests/test_mcp_conformance_surface.py`
+- `S44` `verify:` `uv run pytest src/vaultspec_rag/tests/test_mcp_conformance_surface.py` -> `pass`
+- `S44` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_mcp_conformance_surface.py` -> `pass`
+- `S44` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_mcp_conformance_surface.py` -> `pass`
+- `S44` `verify:` `uv run ty check src/vaultspec_rag/tests/test_mcp_conformance_surface.py` -> `pass`
+- `S44` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_mcp_conformance_surface.py` -> `pass`
+- `S44` `verify:` `git diff --check` -> `pass`
+- `S45` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`
+- `S45` `verify:` `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S45` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S45` `verify:` `uv run ruff check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S45` `verify:` `uv run ty check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S45` `verify:` `uv run basedpyright src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S45` `verify:` `git diff --check` -> `pass`
+- `S46` `A` `src/vaultspec_rag/tests/_search_readiness_scenarios.py`
+- `S46` `verify:` `uv run python -c "from vaultspec_rag.tests._search_readiness_scenarios import SEARCH_READINESS_SCENARIOS; assert len(SEARCH_READINESS_SCENARIOS) == 10"` -> `pass`
+- `S46` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/_search_readiness_scenarios.py` -> `pass`
+- `S46` `verify:` `uv run ruff check src/vaultspec_rag/tests/_search_readiness_scenarios.py` -> `pass`
+- `S46` `verify:` `uv run ty check src/vaultspec_rag/tests/_search_readiness_scenarios.py` -> `pass`
+- `S46` `verify:` `uv run basedpyright src/vaultspec_rag/tests/_search_readiness_scenarios.py` -> `pass`
+- `S46` `verify:` `git diff --check` -> `pass`
+- `S47` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`
+- `S47` `verify:` `uv run pytest -m unit src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `uv run ruff check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `uv run ty check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `uv run basedpyright src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py` -> `pass`
+- `S47` `verify:` `git diff --check` -> `pass`
+- `S48` `M` `src/vaultspec_rag/tests/_search_readiness_scenarios.py`
+- `S48` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`
+- `S48` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`
+- `S48` `verify:` `uv run pytest -m unit src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/_search_readiness_scenarios.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `uv run ruff check src/vaultspec_rag/tests/_search_readiness_scenarios.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `uv run ty check src/vaultspec_rag/tests/_search_readiness_scenarios.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `uv run basedpyright src/vaultspec_rag/tests/_search_readiness_scenarios.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py` -> `pass`
+- `S48` `verify:` `git diff --check` -> `pass`
+- `S49` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py`
+- `S49` `verify:` `uv run pytest src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `uv run ruff check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `uv run ty check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `uv run basedpyright src/vaultspec_rag/tests/integration/test_service_search_diagnostics_mcp.py` -> `pass`
+- `S49` `verify:` `git diff --check` -> `pass`
+- `S50` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`
+- `S50` `verify:` `uv run pytest -m unit src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `uv run ruff check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `uv run ty check src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `uv run basedpyright src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py` -> `pass`
+- `S50` `verify:` `git diff --check` -> `pass`
+- `S51` `M` `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`
+- `S51` `verify:` `uv run python src/vaultspec_rag/tests/benchmarks/bench_concurrency.py --help` -> `pass`
+- `S51` `verify:` `uv run pytest --collect-only src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S51` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S51` `verify:` `uv run ruff check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S51` `verify:` `uv run ty check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S51` `verify:` `uv run basedpyright src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S51` `verify:` `git diff --check` -> `pass`
+- `S52` `M` `src/vaultspec_rag/tests/benchmarks/baselines/search_readiness_471_cpu_control.json`
+- `S52` `verify:` `uv run python -m json.tool src/vaultspec_rag/tests/benchmarks/baselines/search_readiness_471_cpu_control.json` -> `pass`
+- `S52` `verify:` `uv run python -c <baseline acceptance assertions>` -> `pass`
+- `S52` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run ruff check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run ty check src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `uv run basedpyright src/vaultspec_rag/tests/benchmarks/bench_concurrency.py` -> `pass`
+- `S52` `verify:` `git diff --check` -> `pass`
+- `S53` `M` `src/vaultspec_rag/tests/test_search_readiness.py`
+- `S53` `verify:` `uv run pytest src/vaultspec_rag/tests/test_search_readiness.py -q` -> `pass`
+- `S53` `verify:` `uv run ruff format --check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run ruff check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run ty check src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `uv run basedpyright src/vaultspec_rag/tests/test_search_readiness.py` -> `pass`
+- `S53` `verify:` `git diff --check` -> `pass`
+- `S54` `M` `src/vaultspec_rag/server/_models.py`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_search_result_shape.py`
+- `S54` `verify:` `uv run pytest src/vaultspec_rag/tests/integration/test_search_result_shape.py -q` -> `pass`
+- `S54` `verify:` `uv run pytest src/vaultspec_rag/tests/test_server_document_models.py src/vaultspec_rag/tests/test_http_search_errors.py -q` -> `pass`
+- `S54` `verify:` `uv run ruff format --check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run ruff check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run ty check src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `uv run basedpyright src/vaultspec_rag/server/_models.py src/vaultspec_rag/tests/integration/test_search_result_shape.py` -> `pass`
+- `S54` `verify:` `git diff --check` -> `pass`
+- `S55` `T`
+- `S55` `verify:` `uv run pytest <readiness availability outcomes unit set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest <HTTP CLI routing set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest src/vaultspec_rag/tests/test_mcp_conformance_surface.py -q` -> `pass`
+- `S55` `verify:` `uv run pytest <search activity and diagnostics concurrency set> -q` -> `pass`
+- `S55` `verify:` `uv run pytest <resident-service readiness integration set> -q` -> `fail`
+- `S55` `verify:` `uv run python -c <readiness control benchmark assertions>` -> `pass`
+- `S56` `T`
+- `S56` `verify:` `just check-python` -> `fail`
+- `S56` `verify:` `just check-type` -> `fail`
+- `S56` `verify:` `just check-vault` -> `fail`
+- `S56` `verify:` `just test-all` -> `fail`
+- `S56` `verify:` `git diff --check` -> `pass`
+- `S58` `M` `docs/search-and-index.md`
+- `S58` `verify:` `uv run mdformat --check docs/search-and-index.md` -> `pass`
+- `S58` `verify:` `uv run vaultspec-rag search --help` -> `pass`
+- `S58` `verify:` `ConvertFrom-Json <MCP example>` -> `pass`
+- `S58` `verify:` `uv run pytest <CLI and MCP freshness contract cases> -q` -> `pass`
+- `S58` `verify:` `git diff --check` -> `pass`
+- `S52` `M` `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`
+- `S52` `verify:` `resident CUDA benchmark, 5 scenarios x 32 requests, 160/160 successful` -> `pass`
+- `S52` `by:` `/root`
+- `S53` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_search_readiness.py -q: 20 passed` -> `pass`
+- `S53` `by:` `/root`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S54` `M` `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py`
+- `S54` `verify:` `watcher refusal plus readiness: 21 focused passed` -> `pass`
+- `S54` `by:` `/root`
+- `S55` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`
+- `S55` `verify:` `resident readiness benchmark: 160/160 requests successful` -> `pass`
+- `S55` `by:` `/root`
+- `S57` `verify:` `formal changed-file review` -> `pass`
+- `S57` `by:` `vaultspec-code-reviewer`
+
+## Notes
+
+- `S10` `uv run pytest -q src/vaultspec_rag/tests/integration/test_document_lifecycle.py` exited 1 before collection because no compatible resident machine-pointer service was available; no tests ran.
+- `S15` `uv run pytest -q src/vaultspec_rag/tests/test_configuration_doc.py` had 5 passing and 2 failing tests: the new environment variable remains intentionally undocumented until S58, and the unrelated pre-existing integrity-auto-repair default mismatch remains unchanged.
+- `S18` The expected legacy assertions deferred to S21 remain: `test_search_availability.py` has 79 passing and 1 failing test whose pre-S18 expectation marks an observed successful collection unavailable without publication identity; `test_http_search_errors.py` has 24 passing and 1 failing test expecting a non-authoritative empty HTTP 200; and `test_service_search_diagnostics.py` has 16 passing and 1 failing test expecting empty-success diagnostics without authoritative absence.
+- `S19` No current canonical response fact carries an enforced future capacity-reset deadline, so capacity remains HTTP 503 and `Retry-After` is omitted rather than inferred.
+- `S20` The expected legacy assertions deferred to S21 remain: `test_search_availability.py` has 78 passing and 2 failing tests whose pre-S18/S20 expectations mark an observed successful collection unavailable without publication identity and decline a collection disappearance without a matching job; `test_http_search_errors.py` has 24 passing and 1 failing test expecting a non-authoritative empty HTTP 200.
+- `S23` The staged S24 type gate reports five `source_fact` omissions in `src/vaultspec_rag/_public_search.py`. The staged S26 outcome suite has 16 passing and 2 failing tests because its legacy fixtures do not yet supply the required source facts.
+- `S24` The staged S26 outcome suite remains at 157 passing and 2 failing tests because its legacy fixtures do not yet supply the source facts required by S23.
+- `S29` Search-limiter and compute-ticket elapsed durations remain timing-only because those boundaries have no enforced server-side wait bound. Only the bounded search-activity admission wait is emitted as a canonical wait observation.
+- `S31` Storage duration remains timing-only because the route phase can aggregate multiple calls and therefore has no single enforced wait bound. Backend-unavailable responses have no canonical future deadline and emit no `Retry-After` header.
+- `S35` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q` retained 10 staged failures: five old payload assertions omit the new default `freshness_policy`, assigned to S36, and five assertions require removed client-synthesized `http_search_timeout` diagnostics, assigned to S40.
+- `S36` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q` retained exactly five staged timeout-render failures assigned to S40: `test_search_mcp_timeout_diagnostics`, `test_search_timeout_human_output_is_plain_diagnostic`, `test_search_timeout_missing_health_status_is_reported_absence`, `test_search_timeout_jobs_error_is_reported_absence`, and `test_search_timeout_json_preserves_backend_diagnostics`.
+- `S37` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q` retains the five already planned S40 stale timeout-render expectations: `test_search_mcp_timeout_diagnostics`, `test_search_timeout_human_output_is_plain_diagnostic`, `test_search_timeout_missing_health_status_is_reported_absence`, `test_search_timeout_jobs_error_is_reported_absence`, and `test_search_timeout_json_preserves_backend_diagnostics`.
+- `S38` `uv run pytest src/vaultspec_rag/tests/test_cli_search_safety.py -q` retains the five already planned S40 stale timeout-render expectations: `test_search_mcp_timeout_diagnostics`, `test_search_timeout_human_output_is_plain_diagnostic`, `test_search_timeout_missing_health_status_is_reported_absence`, `test_search_timeout_jobs_error_is_reported_absence`, and `test_search_timeout_json_preserves_backend_diagnostics`.
+- `S39` Five stale timeout-render assertions remain assigned to S40:
+- `S39` `test_search_mcp_timeout_diagnostics`,
+- `S39` `test_search_timeout_human_output_is_plain_diagnostic`,
+- `S39` `test_search_timeout_missing_health_status_is_reported_absence`,
+- `S39` `test_search_timeout_jobs_error_is_reported_absence`, and
+- `S39` `test_search_timeout_json_preserves_backend_diagnostics`.
+- `S40` The three integration scenarios collected successfully, but their live run was
+- `S40` not available because the GPU fixture found no ready compatible resident
+- `S40` machine-pointer service before pytest isolated its managed paths. Dead searches
+- `S40` confirmed that the superseded timeout diagnostic helpers have no remaining
+- `S40` references.
+- `S51` The live service throughput cases were not executed because no compatible resident service was available; the CPU-only readiness control and loopback response-decoding smoke checks passed without GPU use.
+- `S52` No explicitly compatible resident GPU service was supplied. Live-service latency, throughput,
+- `S52` limiter, and GPU-queue fields remain null; the record contains only measured CPU-control data.
+- `S55` The resident-service integration selection exited 1 before collection because no compatible
+- `S55` machine-pointer GPU service was captured. The CPU-only integration result-shape file passed in
+- `S55` S54; no GPU service was started for this Step.
+- `S56` Repository failures predate and fall outside this Step's readiness ownership: three release-tool
+- `S56` tests need formatting; strict typing reports embeddings/store/release-tool diagnostics; the
+- `S56` installed vault CLI rejects 1,572 legacy per-Step records; the Python lane has two release/pin
+- `S56` failures; and no compatible GPU service was available. The CPU suite completed 4,921 passes,
+- `S56` four skips, and two failures unrelated to readiness.
+- `S52` Accepted same-host 0.4.28/Qdrant 1.19.0 metrics record latency, throughput, limiter concurrency, GPU queue waits, bounded readiness control, and waiter cleanup.
+- `S53` Mutation held the GPU lock across bounded admission; the competing-thread assertion failed, then passed after restoration.
+- `S54` Private rerank field and changed-query mutations each failed their intended exact-shape/payload assertions before restoration.
+- `S55` GPU tiers were run as sequential selections per the repository collection guard.

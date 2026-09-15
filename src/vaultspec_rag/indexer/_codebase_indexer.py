@@ -475,6 +475,8 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Delete stale full-run identities and checkpoint removed paths."""
         stale_ids = sorted(request.existing_ids - request.retained_ids)
         removed_paths = set(request.previous_metadata) - set(request.metadata)
+        if not stale_ids:
+            return stale_ids
         removed_ids_by_path = self._lifecycle.checkpoint_ids_by_path(
             request.checkpoint,
             removed_paths,
@@ -482,8 +484,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         )
         request.reporter.phase_start("purge stale chunks", len(stale_ids))
         try:
-            if not stale_ids:
-                return stale_ids
             try:
                 path_removed_ids: set[str] = set()
                 for rel in sorted(removed_paths):
@@ -635,14 +635,14 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofMissingError
+        from ._publication_proof import ProofIncompatibleError, ProofMissingError
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.CODE,
             )
-        except ProofMissingError:
+        except (ProofIncompatibleError, ProofMissingError):
             previous_metadata = {}
         else:
             previous_metadata = {
@@ -877,6 +877,24 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 "request an explicit full code reindex",
             )
         self._membership_epoch, self._content_epoch = self._compute_code_epochs(policy)
+        from .._publication_state import acquire_publication_snapshot
+
+        proof_snapshot = acquire_publication_snapshot(
+            self.root_dir,
+            PublicSourceType.CODE,
+        )
+        proof_key = proof_snapshot.proof.compatibility_key
+        proof_snapshot.validate()
+        if proof_key.membership_identity != self._membership_epoch:
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "code membership policy changed; request an explicit full code reindex",
+            )
+        if proof_key.content_identity != self._content_epoch:
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "code content policy changed; request an explicit full code reindex",
+            )
         if changed_paths is not None:
             return self._scoped_incremental_locked(
                 changed_paths=changed_paths,

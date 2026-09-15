@@ -276,8 +276,7 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
                 )
             ),
         )
-        changed_paths = [paths.source, paths.html]
-        preflight = indexer.preflight_changed_paths(changed_paths)
+        preflight = indexer.preflight_content()
         entry_policy = preflight.policy
         entry_rule = entry_policy.preprocess_rules[0].materialize()
         assert entry_policy.html_strip
@@ -285,9 +284,8 @@ def test_config_edit_during_extraction_cannot_change_active_snapshot(
         try:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
-                    indexer.incremental_index,
+                    indexer.full_index,
                     reporter=NullProgressReporter(),
-                    changed_paths=preflight.changed_paths,
                     preflight=preflight,
                 )
                 result = _cross_mutation_barrier(future, paths, html_key)

@@ -4,21 +4,12 @@ tags:
   - '#index'
   - '#search-noise-filtering'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:1de8c4ee1e905c4b4a62dddf68d3dd2ce0921c1353ddce229751b2ff37f29f5f'
+body_hash: 'sha256:8f21695b9c9d227481b9849c448af787dc2a7f01b3464223ef31dc1e6c9e0fb6'
 related:
-  - '[[2026-06-30-search-noise-filtering-P01-S01]]'
-  - '[[2026-06-30-search-noise-filtering-P01-S02]]'
-  - '[[2026-06-30-search-noise-filtering-P01-summary]]'
-  - '[[2026-06-30-search-noise-filtering-P02-S03]]'
-  - '[[2026-06-30-search-noise-filtering-P02-S04]]'
-  - '[[2026-06-30-search-noise-filtering-P02-S05]]'
-  - '[[2026-06-30-search-noise-filtering-P02-summary]]'
-  - '[[2026-06-30-search-noise-filtering-P03-S06]]'
-  - '[[2026-06-30-search-noise-filtering-P03-S07]]'
-  - '[[2026-06-30-search-noise-filtering-P03-summary]]'
   - '[[2026-06-30-search-noise-filtering-adr]]'
+  - '[[2026-06-30-search-noise-filtering-ledger]]'
   - '[[2026-06-30-search-noise-filtering-plan]]'
   - '[[2026-06-30-search-noise-filtering-research]]'
   - '[[2026-07-22-search-noise-filtering-candidate-budget-audit]]'
@@ -40,16 +31,7 @@ Auto-generated index of all documents tagged with `#search-noise-filtering`.
 
 ### exec
 
-- `2026-06-30-search-noise-filtering-P01-S01` - Create a worker-safe pure classify_domain(path) returning prod/tests/docs/locale/generated/vendored/worktree, supersede the prefer classifier to consume it, with unit tests
-- `2026-06-30-search-noise-filtering-P01-S02` - Write a per-chunk domain payload at code index time, add domain to the code KEYWORD index set ensuring the index idempotently on existing collections, and exclude nested worktree clone dirs from the scan
-- `2026-06-30-search-noise-filtering-P01-summary` - `search-noise-filtering` `P01` summary
-- `2026-06-30-search-noise-filtering-P02-S03` - Extend the code filter builder for domain must/must_not pushdown driving exclude-domain and only-domain
-- `2026-06-30-search-noise-filtering-P02-S04` - Add the post-rerank apply_domain_policy demote-or-hide pass, resolve exclude/only/include-domain, add the backfill loop with a filtered envelope note, and flip dedup-locales default on, with unit tests
-- `2026-06-30-search-noise-filtering-P02-S05` - Add noise-profile config keys (hide and demote domain sets, dedup default) with shipped defaults and unit tests
-- `2026-06-30-search-noise-filtering-P02-summary` - `search-noise-filtering` `P02` summary
-- `2026-06-30-search-noise-filtering-P03-S06` - Thread the domain filter and profile contract identically through the facade, service search route, CLI flags, and the MCP tool, rejecting domain filters for vault search, with parity tests
-- `2026-06-30-search-noise-filtering-P03-S07` - Add a performance benchmark replaying the fixed query set against the live index asserting a noise@k reduction versus baseline, reindex and re-measure, and document the noise controls
-- `2026-06-30-search-noise-filtering-P03-summary` - `search-noise-filtering` `P03` summary
+- `2026-06-30-search-noise-filtering-ledger` - `search-noise-filtering` ledger
 
 ### plan
 

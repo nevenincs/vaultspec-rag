@@ -778,6 +778,82 @@ def test_publication_ledger_schema_has_a_distinct_current_version() -> None:
     )
 
 
+def _assert_publication_tables(
+    connection: sqlite3.Connection,
+    expected_tables: set[str],
+) -> None:
+    """Assert the normalized publication tables and their columns."""
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert expected_tables <= tables
+    assert expected_tables == set(PUBLICATION_PROOF_SCHEMA)
+    for table, expected_columns in PUBLICATION_PROOF_SCHEMA.items():
+        actual_columns = {
+            str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')
+        }
+        assert expected_columns <= actual_columns
+
+    receipt_columns = {
+        str(row[1]): row
+        for row in connection.execute('PRAGMA table_info("publication_receipts")')
+    }
+    assert bool(receipt_columns["receipt_id"][3])
+    assert int(receipt_columns["receipt_id"][5]) == 1
+
+
+def _assert_publication_indexes(connection: sqlite3.Connection) -> None:
+    """Assert every required publication index and optional predicate."""
+    for name, (table, columns, unique, partial) in REQUIRED_INDEXES.items():
+        index_row = next(
+            row
+            for row in connection.execute(f'PRAGMA index_list("{table}")')
+            if str(row[1]) == name
+        )
+        actual_columns = tuple(
+            str(row[2])
+            for row in sorted(
+                connection.execute(f'PRAGMA index_info("{name}")'),
+                key=lambda row: int(row[0]),
+            )
+        )
+        assert actual_columns == columns
+        assert bool(index_row[2]) is unique
+        assert bool(index_row[4]) is partial
+        expected_predicate = REQUIRED_INDEX_PREDICATES.get(name)
+        if expected_predicate is None:
+            continue
+        definition = " ".join(
+            str(
+                connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = ?", (name,)
+                ).fetchone()[0]
+            )
+            .lower()
+            .split()
+        )
+        _prefix, separator, predicate = definition.partition(" where ")
+        actual_predicate = f"where {predicate}" if separator else ""
+        assert actual_predicate == expected_predicate
+
+
+def _assert_publication_foreign_keys(connection: sqlite3.Connection) -> None:
+    """Assert the normalized publication foreign-key relationships."""
+    assert {
+        str(row[2])
+        for row in connection.execute('PRAGMA foreign_key_list("publication_evidence")')
+    } == {"generations", "publication_proofs"}
+    assert {
+        str(row[2])
+        for row in connection.execute(
+            'PRAGMA foreign_key_list("file_state_tombstones")'
+        )
+    } == {"generations"}
+
+
 def test_run_ledger_installs_and_verifies_normalized_publication_schema(
     tmp_path: Path,
 ) -> None:
@@ -799,70 +875,9 @@ def test_run_ledger_installs_and_verifies_normalized_publication_schema(
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        assert expected_tables <= tables
-        assert expected_tables == set(PUBLICATION_PROOF_SCHEMA)
-        for table, expected_columns in PUBLICATION_PROOF_SCHEMA.items():
-            actual_columns = {
-                str(row[1])
-                for row in connection.execute(f'PRAGMA table_info("{table}")')
-            }
-            assert expected_columns <= actual_columns
-        receipt_columns = {
-            str(row[1]): row
-            for row in connection.execute('PRAGMA table_info("publication_receipts")')
-        }
-        assert bool(receipt_columns["receipt_id"][3])
-        assert int(receipt_columns["receipt_id"][5]) == 1
-
-        for name, (table, columns, unique, partial) in REQUIRED_INDEXES.items():
-            index_row = next(
-                row
-                for row in connection.execute(f'PRAGMA index_list("{table}")')
-                if str(row[1]) == name
-            )
-            actual_columns = tuple(
-                str(row[2])
-                for row in sorted(
-                    connection.execute(f'PRAGMA index_info("{name}")'),
-                    key=lambda row: int(row[0]),
-                )
-            )
-            assert actual_columns == columns
-            assert bool(index_row[2]) is unique
-            assert bool(index_row[4]) is partial
-            expected_predicate = REQUIRED_INDEX_PREDICATES.get(name)
-            if expected_predicate is not None:
-                definition = " ".join(
-                    str(
-                        connection.execute(
-                            "SELECT sql FROM sqlite_master WHERE name = ?", (name,)
-                        ).fetchone()[0]
-                    )
-                    .lower()
-                    .split()
-                )
-                _prefix, separator, predicate = definition.partition(" where ")
-                actual_predicate = f"where {predicate}" if separator else ""
-                assert actual_predicate == expected_predicate
-
-        assert {
-            str(row[2])
-            for row in connection.execute(
-                'PRAGMA foreign_key_list("publication_evidence")'
-            )
-        } == {"generations", "publication_proofs"}
-        assert {
-            str(row[2])
-            for row in connection.execute(
-                'PRAGMA foreign_key_list("file_state_tombstones")'
-            )
-        } == {"generations"}
+        _assert_publication_tables(connection, expected_tables)
+        _assert_publication_indexes(connection)
+        _assert_publication_foreign_keys(connection)
 
 
 def _seeded_publication_lineage(
@@ -2507,7 +2522,7 @@ def _open_concurrent_fresh_ledgers(
     require_schema = RunLedger._require_current_or_empty_schema
     first_base_created = threading.Event()
     release_first_creator = threading.Event()
-    second_preflight_finished = threading.Event()
+    second_preflight_entered = threading.Event()
     first_call = True
     call_lock = threading.Lock()
     ledgers: list[RunLedger] = []
@@ -2527,11 +2542,9 @@ def _open_concurrent_fresh_ledgers(
         self: RunLedger,
         connection: sqlite3.Connection,
     ) -> None:
-        try:
-            require_schema(self, connection)
-        finally:
-            if threading.current_thread().name == "second-schema-opener":
-                second_preflight_finished.set()
+        if threading.current_thread().name == "second-schema-opener":
+            second_preflight_entered.set()
+        require_schema(self, connection)
 
     def open_ledger() -> None:
         try:
@@ -2554,7 +2567,7 @@ def _open_concurrent_fresh_ledgers(
         try:
             assert first_base_created.wait(PROCESS_TIMEOUT_SECONDS)
             second.start()
-            assert second_preflight_finished.wait(PROCESS_TIMEOUT_SECONDS)
+            assert second_preflight_entered.wait(PROCESS_TIMEOUT_SECONDS)
         finally:
             release_first_creator.set()
         first.join(PROCESS_TIMEOUT_SECONDS)
@@ -2827,6 +2840,34 @@ def test_commit_units_are_atomic_idempotent_and_row_streamed(tmp_path: Path) -> 
     )
     assert ledger.record_storage_confirmed_unit(generation.generation_id, deletion)
     assert ledger.file_complete(generation.generation_id, deletion.rel_path)
+
+
+def test_commit_units_accept_storage_order_but_finalize_in_file_order(
+    tmp_path: Path,
+) -> None:
+    """Keep length-sorted store batches independent of file-local ordinals.
+
+    Mutation proof: restoring the insertion-time ordinal/count comparison in
+    ``_assert_segment_matches_siblings`` makes the first assertion below fail
+    with ``commit-unit segment ordinals must be contiguous``.
+    """
+    ledger = RunLedger(tmp_path / "runs.sqlite3")
+    generation = ledger.start_generation(_signature(tmp_path))
+    digest = _digest("length-sorted-source")
+    units = [_unit("src/large.py", ordinal, 3, digest=digest) for ordinal in range(3)]
+
+    assert ledger.record_storage_confirmed_unit(generation.generation_id, units[2])
+    assert not ledger.file_complete(generation.generation_id, "src/large.py")
+    assert (
+        ledger.record_storage_confirmed_units(
+            generation.generation_id,
+            (units[0], units[1]),
+        )
+        == 2
+    )
+
+    assert ledger.file_complete(generation.generation_id, "src/large.py")
+    assert list(ledger.iter_units(generation.generation_id)) == units
 
 
 def test_file_outcomes_and_finalization_are_immutable(tmp_path: Path) -> None:

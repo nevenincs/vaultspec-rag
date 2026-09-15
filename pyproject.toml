@@ -91,11 +91,7 @@ version = "0.4.28"
   # Local embedding and reranking are intentionally opt-in. The command and
   # service-control surfaces stay usable without these packages, while a
   # CUDA-capable workspace requests the complete model stack explicitly.
-  gpu = [
-    "sentence-transformers>=5.0",
-    "torch>=2.4",
-    "transformers>=4.51",
-  ]
+  gpu = ["sentence-transformers>=5.0", "torch>=2.4", "transformers>=4.51"]
 
 [dependency-groups]
 dev = [
@@ -446,6 +442,9 @@ ignore_decorators = [
 # - SupportedLanguage: imported under TYPE_CHECKING and referenced only from
 #   the string form `cast("SupportedLanguage", ...)`, which vulture does not
 #   resolve. Deleting the import breaks type checking.
+# - HTTPResponse: imported under TYPE_CHECKING and referenced only from the
+#   string form `cast("HTTPResponse", ...)`, which vulture does not resolve.
+#   Deleting the imports breaks type checking at the urllib response boundary.
 #
 # Two further names were listed here and have been REMOVED, because listing
 # them was the mistake this comment exists to prevent. They were the parameters
@@ -454,7 +453,13 @@ ignore_decorators = [
 # showed the names were fixed by a signature, which is true and irrelevant -
 # the question the scanner was actually asking is whether anything still uses
 # the thing they belong to. Follow a finding up to its owner before listing it.
-ignore_names = ["exc_type", "exc_val", "exc_tb", "SupportedLanguage"]
+ignore_names = [
+  "exc_type",
+  "exc_val",
+  "exc_tb",
+  "SupportedLanguage",
+  "HTTPResponse",
+]
 min_confidence = 80
 paths = ["src/vaultspec_rag"]
 
@@ -505,6 +510,6 @@ known_first_party = ["vaultspec_rag"]
   DEP003 = ["tqdm"]
 
 [tool.vaultspec-rag.mcp-extra]
+added = true
 location = "[dependency-groups].dev"
 managed = "vaultspec-rag[mcp]"
-added = true

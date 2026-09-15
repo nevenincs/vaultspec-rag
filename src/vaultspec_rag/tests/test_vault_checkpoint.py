@@ -51,3 +51,33 @@ def test_vault_rebuild_establishes_proof_from_confirmed_chunk_units(
     assert proof.aggregate.indexed_identities == 1
     assert proof.aggregate.retained_points == 2
     checkpoint.publish_generation()
+
+
+def test_vault_rebuild_accepts_length_sorted_chunk_batches(tmp_path: Path) -> None:
+    """Confirm storage order while publishing canonical lexical point order.
+
+    Mutation proof: removing ``sorted`` from ``_verified_evidence`` makes
+    ``publish_proof_transition`` fail with the canonical-ordering assertion.
+    """
+    checkpoint = VaultRunCheckpoint.open(
+        tmp_path,
+        backend_identity="backend-v1",
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    digest = hashlib.blake2b(b"docs/a").hexdigest()
+    chunks = [_chunk("docs/a", ordinal, 12) for ordinal in range(12)]
+
+    checkpoint.record_confirmed_chunks(chunks[10:], {"docs/a": digest})
+    checkpoint.record_confirmed_chunks(chunks[:10], {"docs/a": digest})
+
+    assert checkpoint.publish_proof_transition() == 1
+    key = compatibility_for_signature(checkpoint.generation.signature)
+    proof = checkpoint.ledger.publication_proof(key)
+    assert proof.aggregate.indexed_identities == 1
+    assert proof.aggregate.retained_points == 12
+    evidence = checkpoint.ledger.publication_evidence_for_paths(key, ("docs/a",))
+    assert evidence["docs/a"].point_ids == tuple(
+        sorted(chunk.point_key for chunk in chunks)
+    )

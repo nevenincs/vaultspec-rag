@@ -16,6 +16,7 @@ import pytest
 from ... import server
 from ...indexer._vault_prep import prepare_document
 from ...job_models import DesiredJobState, JobState
+from ...progress import NullProgressReporter
 from ...registry import get_registry
 from ...server import WatcherStartOutcome
 from ._service_job_control_e2e_support import (
@@ -262,6 +263,8 @@ async def test_watcher_coalesces_replaces_stops_and_closes_store_safely(
     root = (tmp_path / "watcher-shutdown").resolve()
     (root / ".vault").mkdir(parents=True)
     slot = registry.peek_project(root)
+    with registry.compute_lease(root) as lease:
+        lease.runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
     await _start_real_watcher(root)
     paused_generation = await _exercise_watcher_pause_coalescing(

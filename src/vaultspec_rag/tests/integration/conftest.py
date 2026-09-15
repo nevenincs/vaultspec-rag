@@ -767,15 +767,15 @@ def _attach_live_service(
         yield port, status_dir
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def _live_service_daemon(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: TempPathFactory,
 ) -> Generator[tuple[int, Path, dict[str, str | None]]]:
-    """Hold one cache-prepared, offline real service for the session.
+    """Hold one cache-prepared, offline real service for each consumer module.
 
-    Five modules in the serialized subprocess-GPU invocation request this
-    daemon. Scoped per module they paid five full spawns for five identical
-    daemons; scoped per session they share one.
+    Module scope keeps a consumer near its daemon and prevents an unrelated
+    lifecycle test from invalidating a process retained across most of the
+    serialized integration suite. Tests within a module still share one spawn.
     """
     with _shared_live_service(
         tmp_path_factory,

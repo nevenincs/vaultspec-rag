@@ -1,21 +1,11 @@
 name: Binaries
 
-# WHAT ACTUALLY STARTS THIS WORKFLOW: an explicit dispatch from
-# `release-please.yml:98`. Not the `push: tags` trigger below.
-#
-# The trigger is kept and it is not dead - a human running `git push --tags`
-# with a PAT does fire it, which is the manual-release path, and the
-# concurrency group keys on `github.ref_name` for exactly that case. But it
-# does not fire for a normal release, because **GitHub raises no workflow
-# events for refs created with the default GITHUB_TOKEN**, and release-please
-# publishes with exactly that token. Every one of the last fifteen runs of this
-# workflow was `workflow_dispatch`; none was `push`.
-#
-# This comment used to claim the opposite - that adding the tag trigger was the
-# fix for the v0.4.12 failure. It was not. #416's dispatch step in
-# release-please.yml is, and the distinction is load-bearing: a maintainer who
-# believed the comment could delete that step as redundant and reproduce
-# v0.4.12 exactly.
+# WHAT STARTS THIS WORKFLOW: Publish dispatches it only after PyPI and the
+# GitHub wheel/sdist publication have both succeeded. Keeping this workflow
+# dispatch-only makes that ordering enforceable: independent tag triggers can
+# be serialized, but serialization alone cannot say which workflow runs first.
+# A maintainer may still dispatch it explicitly to repair a release; the final
+# gate below independently proves the package and bundle set before promotion.
 #
 # The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
 # `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
@@ -23,9 +13,6 @@ name: Binaries
 # catch it and could not: that guard lives in THIS workflow, and a workflow
 # that never runs cannot demote anything. It was unreachable, not broken.
 on:
-  push:
-    tags:
-      - "vaultspec-rag-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -37,208 +24,55 @@ permissions:
   contents: read
 
 concurrency:
-  group: binaries-${{ inputs.tag || github.ref_name }}
+  # Shared with publish.yml. Both workflows merge and rewrite the same
+  # SHA256SUMS release asset, so a per-workflow lock would still permit a lost
+  # update when they run for one tag at the same time.
+  group: release-artifacts-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  # Refuse a build whose runners cannot serve it.
-  #
-  # A selector with no ONLINE runner does not fail - it QUEUES, unbounded by
-  # timeout-minutes, and this workflow sets no timeouts at all. v0.4.9 hung
-  # exactly that way: two legs green, the third queued, cancelled by hand.
-  #
-  # Both selectors this matrix requires are served from the workstation today,
-  # so on main this is a cheap assertion rather than a live catch. It earns its
-  # place at the moment the linux-aarch64 leg returns - that runner lives on the
-  # power-gated MacBook, and re-enabling the leg without this reconstructs the
-  # v0.4.9 hang precisely, behind a release job that needs the whole matrix.
-  #
-  # The gate is not the problem and this does not fight it. Stopping runners on
-  # battery is correct; spending a day discovering it is not.
-  #
-  # DERIVE, then call the fleet's own guard.
-  #
-  # This job used to contain a full copy of the preflight, and so did
-  # vaultspec-core and vaultspec-dashboard - three hand-maintained
-  # implementations of one check, while nevenincs/ci-fleet shipped a reusable
-  # one that had ZERO callers because its Actions access level was `none` and
-  # nothing could call it. The copies drifted exactly as duplication does:
-  # this one checked two of the three label sets its matrix required, because
-  # a comment instructing a maintainer to add the third is not a mechanism.
-  #
-  # What stays here is the part that CANNOT be shared: deriving the selectors
-  # from this repo's own matrix. Passing a hardcoded list to the shared guard
-  # would reintroduce the drift the derivation exists to prevent, so the list
-  # is computed here and handed over as an input.
-  #
-  # On the fleet, like every other job here. The derivation is a checkout and
-  # an awk pass over a file in this repository - it needs no capability the
-  # build runners do not already have.
-  derive-selectors:
-    timeout-minutes: 15
-    name: Derive the selectors this matrix requires
+  # Build the project wheel once from the release tag. The binary matrix consumes
+  # this artifact rather than resolving the version from PyPI, so a release tag
+  # can be built and validated before either publication workflow wins a race to
+  # the package index.
+  wheel:
+    timeout-minutes: 30
+    name: Build the wheel the binaries carry
     runs-on: [self-hosted, Linux, X64, build]
-    outputs:
-      selectors: ${{ steps.derive.outputs.selectors }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
-          path: .sparse-derive-selectors
-          sparse-checkout: .github/workflows
-          sparse-checkout-cone-mode: false
+          ref: ${{ inputs.tag || github.ref_name }}
 
-      - name: Read the self-hosted selectors out of the matrix
-        id: derive
-        shell: bash
-        run: |
-          set -euo pipefail
-          workflow=".sparse-derive-selectors/.github/workflows/binaries.yml"
-          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out" >&2; exit 1; }
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-          # Only bracketed `runner:` values are label sets, and every leg of
-          # this matrix now carries one.
-          mapfile -t selectors < <(awk -F'[][]' '/^[[:space:]]*runner:/ && NF > 2 {print $2}' "${workflow}" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | sort -u)
-          if [ "${#selectors[@]}" -eq 0 ]; then
-            echo "::error::derived no selector from ${workflow}; refusing to pass vacuously" >&2
-            exit 1
-          fi
-          printf 'derived selector: %s\n' "${selectors[@]}"
+      - name: Install Python
+        run: uv python install 3.13
 
-          {
-            echo 'selectors<<SELECTORS_EOF'
-            printf '%s\n' "${selectors[@]}"
-            echo 'SELECTORS_EOF'
-          } >> "${GITHUB_OUTPUT}"
+      - name: Build the wheel
+        run: uv build --wheel --out-dir dist
 
-  # The fleet's guard, called rather than copied. SHA-pinned per the fleet
-  # standard; nevenincs/ci-fleet is private, and same-owner reusable calls are
-  # permitted by its Actions access level.
-  preflight:
-    timeout-minutes: 15
-    name: Preflight runners
-    needs: derive-selectors
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - name: Every required selector has an online runner
+      - name: Validate the wheel matches the release tag
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.FLEET_PREFLIGHT_TOKEN }}
-          TARGET_REPO: ${{ github.event.repository.name }}
-          SELECTORS: ${{ needs.derive-selectors.outputs.selectors }}
-          ALLOW_GATED: false
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          # BEGIN generated by ci-fleet: runners/ci/preflight.sh - do not edit here
-          # THE canonical runner preflight. One implementation for the whole fleet.
-          #
-          # WHY THIS IS A SCRIPT AND NOT A REUSABLE WORKFLOW. It was one, and every
-          # consumer's call was rejected before a single job started: ci-fleet is
-          # PRIVATE and all six consuming repos are PUBLIC, and a public repository
-          # cannot call a reusable workflow from a private one. GitHub reports that as a
-          # run with zero jobs and "this run likely failed because of a workflow file
-          # issue", which is why it survived actionlint, survived review, and would have
-          # surfaced first on a release.
-          #
-          # So the sharing model is DEPLOYMENT, not runtime resolution: this file is the
-          # source, `fleetctl ci preflight` renders it into a consumer's workflow, and
-          # `tests/test_preflight_parity.py` fails when a rendered copy drifts from it.
-          #
-          # Contract - the caller sets these, all required:
-          #   GH_TOKEN     PAT with Administration:read. NEVER the default GITHUB_TOKEN:
-          #                it cannot read actions/runners at any `permissions:` value.
-          #   TARGET_REPO  repository name, without the owner
-          #   SELECTORS    newline-separated, each a comma-joined label set
-          #   ALLOW_GATED  "true" tolerates registered-but-offline runners
-
           set -euo pipefail
+          uv run --no-project --python 3.13 -- python -c \
+            "import os; from pathlib import Path; from tools.binaries.build_pyapp import sole_wheel, validate_project_wheel, version_from_tag; wheel = validate_project_wheel(sole_wheel(Path('dist')), version_from_tag(os.environ['TAG'])); print(f'validated {wheel}')"
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::fleet_token is empty. This check needs a PAT with Administration:read; GITHUB_TOKEN cannot read actions/runners." >&2
-            exit 1
-          fi
+      - name: Upload the wheel
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: project-wheel
+          path: dist/
+          if-no-files-found: error
+          retention-days: 5
 
-          # GitHub-HOSTED runners are not in `actions/runners`, which lists only
-          # self-hosted ones. A hosted label is therefore indistinguishable from
-          # a self-hosted label nobody registered, so checking one would fail
-          # every run for a runner that is always available. Two legs on this
-          # fleet are hosted BY DECISION - the aarch64 Linux builds, because the
-          # ARM machine cannot host a `container:` job - and this check must not
-          # contradict that decision.
-          #
-          # The prefixes are GitHub's hosted-image vocabulary, not ours, and a
-          # hosted image label always carries a version or channel suffix
-          # (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-2022`, `macos-15`).
-          # Fleet labels carry no such suffix and are checked normally. Never
-          # name a fleet label `windows-<something>`: it would be skipped here
-          # and go unchecked.
-          checkable=""
-          while IFS= read -r selector; do
-            [ -n "${selector}" ] || continue
-            case "${selector}" in
-              ubuntu-*|windows-*|macos-*)
-                echo "hosted    [${selector}] -> GitHub-hosted, not in the self-hosted list; not checked"
-                ;;
-              *) checkable+="${selector}"$'\n' ;;
-            esac
-          done <<< "${SELECTORS}"
-
-          if [ -z "${checkable}" ]; then
-            echo "every selector is GitHub-hosted; nothing to check against the fleet."
-            exit 0
-          fi
-
-          runners=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${TARGET_REPO}/actions/runners" \
-            --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv')
-
-          if [ -z "${runners}" ]; then
-            echo "::error::${TARGET_REPO} has no registered self-hosted runners at all" >&2
-            exit 1
-          fi
-
-          failed=0
-          while IFS= read -r selector; do
-            [ -n "${selector}" ] || continue
-            # Normalise: lowercase, strip spaces. GitHub matches labels
-            # case-insensitively, and a selector written `Linux` must match a
-            # runner advertising `linux`.
-            want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-
-            online=0; registered=0
-            while IFS=$'\t' read -r status labels; do
-              missing=0
-              IFS=',' read -ra parts <<< "${want}"
-              for part in "${parts[@]}"; do
-                case ",${labels}," in
-                  *",${part},"*) ;;
-                  *) missing=1; break ;;
-                esac
-              done
-              [ "${missing}" -eq 0 ] || continue
-              registered=$((registered + 1))
-              [ "${status}" = "online" ] && online=$((online + 1))
-            done <<< "${runners}"
-
-            if [ "${online}" -gt 0 ]; then
-              echo "ok        [${want}] -> ${online} online"
-            elif [ "${registered}" -eq 0 ]; then
-              echo "::error::[${want}] is carried by NO registered runner. A job dispatched to it queues until GitHub cancels it." >&2
-              failed=1
-            elif [ "${ALLOW_GATED}" = "true" ]; then
-              echo "::warning::[${want}] matches ${registered} runner(s), all offline. Continuing because allow_gated is set."
-            else
-              echo "::error::[${want}] matches ${registered} registered runner(s) but NONE are online. On this fleet that usually means the power-gated host is on battery; a job dispatched now would queue rather than fail." >&2
-              failed=1
-            fi
-          done <<< "${checkable}"
-
-          if [ "${failed}" -ne 0 ]; then
-            echo "::error::preflight refused to start work that cannot be scheduled" >&2
-            exit 1
-          fi
-          echo "preflight passed: every required selector has an online runner"
-          # END generated by ci-fleet
   build:
-    needs: preflight
+    needs: wheel
     name: Build ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -263,35 +97,6 @@ jobs:
             runner: [self-hosted, Windows, X64]
             target: x86_64-pc-windows-msvc
             container: ""
-          # Restored. It was dropped because no leg could be scheduled while
-          # the host stood its runners down on battery, on the explicit
-          # condition that it return once that stopped being true. The host is
-          # on AC, `macbook-neo-linux-arm-rag` is online, and its container is
-          # enrolled in both of the host's fleet scripts - runner-powergate.sh
-          # and runner-deploy-hooks.sh - so the condition is met.
-          #
-          # The accelerated torch pin already covers this target: the cu130
-          # index publishes a manylinux_2_28_aarch64 wheel, which
-          # tools/binaries/torch_channel.py resolves like any other.
-          # ON THE FLEET, like every other leg. This target is served by
-          # `macbook-neo-linux-arm-rag`.
-          #
-          # KNOWN TO FAIL AS WRITTEN, and stated here rather than discovered:
-          # that runner is itself a colima container whose runner home is a
-          # named volume, so the container this leg declares mounts a path that
-          # does not exist in the VM and the job dies in `Initialize containers`
-          # before any step runs. The fix is to bind-mount the runner's home
-          # from the identical path in the VM, which needs the runner
-          # re-enrolled; until then this leg cannot build.
-          #
-          # Same manylinux RELEASE as the x86_64 leg (2026.08.24-1), not merely
-          # the same floor: the build environment is a downloaded, executed
-          # input, and two builds of one toolchain can differ in ways the floor
-          # check does not measure.
-          #
-          # This also takes the target off the laptop entirely, continuing what
-          # #397 started - a release no longer waits on that host being on AC
-          # for this leg.
           - name: linux-aarch64
             runner: [self-hosted, ARM64, Linux]
             target: aarch64-unknown-linux-gnu
@@ -305,33 +110,7 @@ jobs:
           # unsupported platform. tools/packaging refuses to offer them too:
           # the product's supported_targets excludes darwin, so the Homebrew
           # formula covers Linux only.
-          # DELIVERY GAP for Linux ARM64, deliberately unschedulable rather
-          # than silently absent. Homebrew supports the platform, so the
-          # missing aarch64-unknown-linux-gnu build is one the formula cannot
-          # offer an install on at all. The generator prints a `::warning::`
-          # naming the gap on every release, and omits the platform from the
-          # formula rather than pinning an asset that was never built.
-          #
-          # It was enabled once, on `macbook-neo-linux-arm-rag`, and the build
-          # itself is fine - it produced working aarch64 binaries for v0.4.8.
-          # What is not fine is what carries it: that runner is a container on
-          # a laptop, and the host's powergate stops it on battery. It went
-          # offline between one release and the next, and because `release`
-          # needs the whole matrix and a label no ONLINE runner carries QUEUES
-          # rather than fails, v0.4.9 hung with the other two legs green and
-          # had to be cancelled by hand. A job that is queued rather than
-          # running is not bounded by `timeout-minutes`, so nothing in the
-          # workflow rescues it.
-          #
-          # Re-enable by uncommenting the three lines below - but only once
-          # this label is served by a runner that does not sleep. A release
-          # gated on a laptop is a release that stops whenever the lid closes,
-          # which is worse than the gap this closes.
-          # - name: linux-aarch64
-          #   runner: [self-hosted, Linux, ARM64]
-          #   target: aarch64-unknown-linux-gnu
-    # Artifact builds run on the shared self-hosted fleet (hosted multiplatform
-    # runners are cost-prohibitive); see publish.yml for the same constraint.
+    # Artifact builds run only for release events and explicit release repair.
     # A matrix job names its runner through `${ matrix.runner }`, which is
     # invisible to any check grepping for `self-hosted` - and these are the
     # longest-running jobs in the fleet, so the six-hour default ceiling was
@@ -343,20 +122,26 @@ jobs:
     container: ${{ matrix.container }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-10
         with:
           targets: ${{ matrix.target }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install Python
         run: uv python install 3.13
+
+      - name: Download the wheel the binaries carry
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: project-wheel
+          path: dist
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -373,13 +158,16 @@ jobs:
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
           TARGET: ${{ matrix.target }}
-        run: just release-binaries "${TAG}" "${TARGET}" dist-bin
+        run: just release-binaries "${TAG}" "${TARGET}" dist-bin dist
+
+      - name: Package and verify the release bundle
+        run: just release-bundle "${{ inputs.tag || github.ref_name }}" "${{ matrix.target }}" dist-bin dist-bundles
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: binaries-${{ matrix.name }}
-          path: dist-bin/
+          path: dist-bundles/
           if-no-files-found: error
           retention-days: 5
 
@@ -410,7 +198,7 @@ jobs:
       # This repo, for the generator itself. No deploy key and no push: the
       # channel pointers no longer live here.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: main
 
@@ -425,7 +213,7 @@ jobs:
       # branch, which is what makes the per-product staging below load-bearing
       # rather than tidy.
       - name: Checkout the distribution repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: ${{ github.repository_owner }}/homebrew-tap
           ref: main
@@ -435,16 +223,16 @@ jobs:
       # The channel generator runs in this job, so it needs an interpreter
       # here too; previously only the build matrix installed one.
       - name: Set up uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install Python
         run: uv python install 3.13
 
       - name: Download binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: binaries-*
-          path: dist-bin/
+          path: dist-bundles/
           merge-multiple: true
 
       - name: Aggregate checksums
@@ -457,11 +245,26 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          cd dist-bin
-          # Per-asset .sha256 files are produced by build_pyapp.py; fold them
-          # into one sha256sum-compatible manifest and drop the fragments.
+          cd dist-bundles
+          # Per-bundle .sha256 files are produced by tools.packaging.bundles;
+          # fold them into one sha256sum-compatible manifest and drop the
+          # fragments. The bundle command already validated each archive before
+          # this artifact was uploaded.
           cat ./*.sha256 > SHA256SUMS
           rm -f ./*.sha256
+          # Only public archives and the aggregate may cross the release edge.
+          # Raw target-qualified executables remain private build intermediates.
+          for asset in *; do
+            [ "${asset}" = "SHA256SUMS" ] && continue
+            case "${asset}" in
+              *.zip|*.tar.gz) ;;
+              *)
+                echo "::error::unexpected non-archive release artifact: ${asset}"
+                exit 1
+                ;;
+            esac
+          done
+          sha256sum -c SHA256SUMS
           # MERGE into whatever the release already carries rather than
           # replacing it. binaries.yml and publish.yml both publish a file named
           # SHA256SUMS to the same release with --clobber, and neither knows
@@ -491,12 +294,74 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload to release
+      # The release mutation is last. Every declared target must have exactly
+      # one correctly named public archive before this job can attach anything;
+      # a successful matrix is not enough when an artifact upload is stale,
+      # renamed, or accidentally points at the private raw directory.
+      - name: Assert every declared target archive ready
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/binaries.yml
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not found; cannot derive targets"; exit 1; }
+          mapfile -t expected < <(awk '/^[[:space:]]+target:[[:space:]]/ {print $2}' "${workflow}" | sort -u)
+          if [ ${#expected[@]} -eq 0 ]; then
+            echo "::error::could not derive any target from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+
+          missing=()
+          duplicates=()
+          expected_names=()
+          for triple in "${expected[@]}"; do
+            suffix=.tar.gz
+            [[ "${triple}" == *-windows-msvc ]] && suffix=.zip
+            expected_name="${TAG}-${triple}${suffix}"
+            expected_names+=("${expected_name}")
+            [ -f "dist-bundles/${expected_name}" ] || missing+=("${expected_name}")
+            matches=()
+            for asset in "dist-bundles/${TAG}-${triple}.zip" "dist-bundles/${TAG}-${triple}.tar.gz"; do
+              [ -f "${asset}" ] && matches+=("${asset}")
+            done
+            [ ${#matches[@]} -le 1 ] || duplicates+=("${triple} (${#matches[@]})")
+          done
+
+          raw=()
+          unexpected=()
+          for asset in dist-bundles/*; do
+            [ -f "${asset}" ] || continue
+            asset_name="${asset#dist-bundles/}"
+            case "${asset_name}" in
+              SHA256SUMS) ;;
+              *.zip|*.tar.gz)
+                allowed=0
+                for expected_name in "${expected_names[@]}"; do
+                  [ "${asset_name}" = "${expected_name}" ] && allowed=1 && break
+                done
+                [ "${allowed}" -eq 1 ] || unexpected+=("${asset_name}")
+                ;;
+              *) raw+=("${asset_name}") ;;
+            esac
+          done
+
+          if [ ${#missing[@]} -ne 0 ] || [ ${#duplicates[@]} -ne 0 ] || [ ${#raw[@]} -ne 0 ] || [ ${#unexpected[@]} -ne 0 ]; then
+            [ ${#missing[@]} -eq 0 ] || echo "::error::${TAG} is missing target archives: ${missing[*]}"
+            [ ${#duplicates[@]} -eq 0 ] || echo "::error::${TAG} has duplicate target archives: ${duplicates[*]}"
+            [ ${#raw[@]} -eq 0 ] || echo "::error::raw or unexpected files cannot be published: ${raw[*]}"
+            [ ${#unexpected[@]} -eq 0 ] || echo "::error::unexpected public archives cannot be published: ${unexpected[*]}"
+            echo "### Incomplete binary archive set" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "all ${#expected[@]} declared target archives are ready for ${TAG}"
+
+      - name: Upload bundles to release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.ref_name }}
-        run: gh release upload "${TAG}" dist-bin/* --clobber
+        run: gh release upload "${TAG}" dist-bundles/* --clobber
 
       # Regenerate BOTH release-channel pointers from the SHA256SUMS just
       # built, then commit them. A Scoop manifest and a Homebrew formula are
@@ -527,7 +392,7 @@ jobs:
         shell: bash
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
-        run: just release-channels "${TAG}" channels dist-bin/SHA256SUMS
+        run: just release-channels "${TAG}" channels dist-bundles/SHA256SUMS
 
       - name: Commit the Scoop manifest and Homebrew formula
         shell: bash
@@ -627,7 +492,7 @@ jobs:
       # loud refusal rather than a vacuous pass, which is the right failure to
       # have - but it is still a failure, and inheriting a workspace is not a
       # thing to rely on. So the file is now checked out explicitly.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
           path: .sparse-verify-release-assets
@@ -641,6 +506,33 @@ jobs:
           names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
           assets=$(printf '%s' "${names}" | grep -c . || true)
           echo "release ${TAG} carries ${assets} asset(s); release job=${RELEASE_RESULT}"
+
+          version="${TAG#vaultspec-rag-v}"
+          wheel="vaultspec_rag-${version}-py3-none-any.whl"
+          sdist="vaultspec_rag-${version}.tar.gz"
+          package_missing=()
+          [ "$(printf '%s\n' "${names}" | grep -Fxc "${wheel}" || true)" -eq 1 ] || package_missing+=("${wheel}")
+          [ "$(printf '%s\n' "${names}" | grep -Fxc "${sdist}" || true)" -eq 1 ] || package_missing+=("${sdist}")
+          [ "$(printf '%s\n' "${names}" | grep -Fxc SHA256SUMS || true)" -eq 1 ] || package_missing+=("SHA256SUMS")
+
+          checksum_problems=()
+          verify_dir=$(mktemp -d)
+          trap 'rm -rf -- "${verify_dir}"' EXIT
+          if [ ${#package_missing[@]} -eq 0 ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "${verify_dir}"
+            if ! (cd "${verify_dir}" && sha256sum -c SHA256SUMS); then
+              checksum_problems+=("SHA256SUMS verification failed")
+            else
+              release_names=$(printf '%s\n' "${names}" | grep -vFx SHA256SUMS | LC_ALL=C sort)
+              manifest_names=$(awk '{sub(/^\*/, "", $2); print $2}' "${verify_dir}/SHA256SUMS" | LC_ALL=C sort)
+              [ "${release_names}" = "${manifest_names}" ] || checksum_problems+=("SHA256SUMS does not cover exactly the published assets")
+            fi
+          fi
+
+          pypi_problem=()
+          if ! curl --fail --silent --show-error "https://pypi.org/pypi/vaultspec-rag/${version}/json" >/dev/null; then
+            pypi_problem+=("vaultspec-rag ${version} is absent from PyPI")
+          fi
 
           # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
           #
@@ -665,16 +557,60 @@ jobs:
           fi
 
           missing=()
+          duplicates=()
+          expected_names=()
           for triple in "${expected[@]}"; do
-            printf '%s' "${names}" | grep -q -- "${triple}" || missing+=("${triple}")
+            suffix=.tar.gz
+            [[ "${triple}" == *-windows-msvc ]] && suffix=.zip
+            expected_name="${TAG}-${triple}${suffix}"
+            expected_names+=("${expected_name}")
+            matches=()
+            while IFS= read -r asset; do
+              [ -n "${asset}" ] || continue
+              case "${asset}" in
+                "${TAG}-${triple}".zip|"${TAG}-${triple}".tar.gz)
+                  matches+=("${asset}")
+                  ;;
+              esac
+            done <<< "${names}"
+            [ ${#matches[@]} -le 1 ] || duplicates+=("${triple} (${#matches[@]})")
+            found=0
+            for asset in "${matches[@]}"; do
+              [ "${asset}" = "${expected_name}" ] && found=1
+            done
+            [ "${found}" -eq 1 ] || missing+=("${expected_name}")
           done
 
-          if [ ${#missing[@]} -eq 0 ]; then
-            echo "all ${#expected[@]} declared target(s) present on ${TAG}"
+          bundle_archives=()
+          raw=()
+          while IFS= read -r asset; do
+            [ -n "${asset}" ] || continue
+            case "${asset}" in
+              vaultspec-rag-v*.zip|vaultspec-rag-v*.tar.gz)
+                bundle_archives+=("${asset}")
+                ;;
+              vaultspec-rag-*|vaultspec-search-mcp-*)
+                raw+=("${asset}")
+                ;;
+            esac
+          done <<< "${names}"
+          [ ${#bundle_archives[@]} -eq ${#expected[@]} ] || missing+=("expected ${#expected[@]} bundle archives, found ${#bundle_archives[@]}")
+
+          problems=()
+          [ "${RELEASE_RESULT}" = "success" ] || problems+=("release job=${RELEASE_RESULT}")
+          [ ${#package_missing[@]} -eq 0 ] || problems+=("missing or duplicate package assets: ${package_missing[*]}")
+          [ ${#checksum_problems[@]} -eq 0 ] || problems+=("checksum integrity: ${checksum_problems[*]}")
+          [ ${#pypi_problem[@]} -eq 0 ] || problems+=("package publication: ${pypi_problem[*]}")
+          [ ${#missing[@]} -eq 0 ] || problems+=("missing or unexpected target archives: ${missing[*]}")
+          [ ${#duplicates[@]} -eq 0 ] || problems+=("duplicate target archives: ${duplicates[*]}")
+          [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")
+
+          if [ ${#problems[@]} -eq 0 ]; then
+            echo "all ${#expected[@]} declared target archives present on ${TAG}"
             exit 0
           fi
 
-          echo "::warning::${TAG} is missing: ${missing[*]}"
+          echo "::warning::${TAG} failed the complete archive gate: ${problems[*]}"
 
           if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                   --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
@@ -682,7 +618,7 @@ jobs:
             echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
           fi
 
-          echo "::error::${TAG} is INCOMPLETE - missing ${missing[*]} (release job=${RELEASE_RESULT}). It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back once every declared target attaches."
+          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back only after every declared target archive is attached and the release job succeeds."
           exit 1
 
       # Undo an earlier demotion once a re-dispatch actually attaches something,

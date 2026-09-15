@@ -1,0 +1,379 @@
+---
+tags:
+  - '#exec'
+  - '#qdrant-collection-sprawl'
+date: '2026-09-08'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:1e8837759f87b44a8721772b5d0d5562897325a7cd351ca128bc4c8398476d76'
+related:
+  - "[[2026-09-08-qdrant-collection-sprawl-plan]]"
+---
+
+# `qdrant-collection-sprawl` ledger
+
+## Changes
+
+- `S01` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S01` `M` `docs/configuration.md`
+- `S01` `verify:` `just check-python` -> `pass`
+- `S01` `verify:` `just check-type` -> `pass`
+- `S01` `verify:` `just check-complexity` -> `pass`
+- `S01` `verify:` `just check-nesting` -> `pass`
+- `S01` `verify:` `just check-size` -> `pass`
+- `S01` `verify:` `just check-markdown` -> `pass`
+- `S01` `verify:` `just check-links` -> `pass`
+- `S02` `A` `src/vaultspec_rag/tests/test_qdrant_supervise.py`
+- `S02` `verify:` `pytest test_qdrant_supervise.py::TestProgressCountsAsLiveness` -> `pass`
+- `S03` `M` `src/vaultspec_rag/tests/test_qdrant_supervise.py`
+- `S03` `verify:` `pytest test_qdrant_supervise.py::TestWedgedChildIsStillStopped` -> `pass`
+- `S04` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S04` `verify:` `just check-python` -> `pass`
+- `S04` `verify:` `just check-type` -> `pass`
+- `S05` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S05` `verify:` `just check-python` -> `pass`
+- `S05` `verify:` `just check-type` -> `pass`
+- `S06` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S06` `verify:` `just check-python` -> `pass`
+- `S06` `verify:` `just check-type` -> `pass`
+- `S07` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S07` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops_reclaim.py::TestTransportTimeoutIsolation::test_a_snapshot_timeout_fails_one_namespace_and_the_cycle_goes_on` -> `pass`
+- `S08` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S08` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops_reclaim.py::TestTransportTimeoutIsolation::test_a_recount_timeout_defers_one_namespace_and_the_cycle_goes_on` -> `pass`
+- `S09` `M` `src/vaultspec_rag/config/_settings.py`
+- `S09` `M` `src/vaultspec_rag/config/_schema.py`
+- `S09` `M` `src/vaultspec_rag/config/_types.py`
+- `S09` `M` `docs/configuration.md`
+- `S09` `M` `.env.example`
+- `S09` `verify:` `just check-python` -> `pass`
+- `S09` `verify:` `just check-type` -> `pass`
+- `S09` `verify:` `just check-markdown` -> `pass`
+- `S09` `verify:` `just check-links` -> `pass`
+- `S09` `verify:` `pytest src/vaultspec_rag/tests/test_configuration_doc.py src/vaultspec_rag/tests/test_env_example_coverage.py src/vaultspec_rag/tests/test_config.py src/vaultspec_rag/tests/test_index_lifecycle.py` -> `pass`
+- `S10` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S10` `verify:` `just check-python` -> `pass`
+- `S10` `verify:` `just check-type` -> `pass`
+- `S10` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S11` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S11` `M` `docs/storage-maintenance.md`
+- `S11` `verify:` `just check-python` -> `pass`
+- `S11` `verify:` `just check-type` -> `pass`
+- `S11` `verify:` `just check-markdown` -> `pass`
+- `S11` `verify:` `just check-links` -> `pass`
+- `S11` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S12` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S12` `verify:` `just check-python` -> `pass`
+- `S12` `verify:` `just check-type` -> `pass`
+- `S12` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S13` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S13` `verify:` `just check-python` -> `pass`
+- `S13` `verify:` `just check-type` -> `pass`
+- `S13` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S14` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S14` `verify:` `just check-python` -> `pass`
+- `S14` `verify:` `just check-type` -> `pass`
+- `S14` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S15` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S15` `verify:` `just check-python` -> `pass`
+- `S15` `verify:` `just check-type` -> `pass`
+- `S15` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S16` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S16` `verify:` `just check-python` -> `pass`
+- `S16` `verify:` `just check-type` -> `pass`
+- `S16` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S17` `verify:` `just check-python` -> `pass`
+- `S17` `verify:` `just check-type` -> `pass`
+- `S17` `verify:` `pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S18` `M` `src/vaultspec_rag/config/_settings.py`
+- `S18` `M` `.env.example`
+- `S18` `M` `docs/configuration.md`
+- `S18` `M` `docs/storage-maintenance.md`
+- `S18` `verify:` `just check-python` -> `pass`
+- `S18` `verify:` `just check-type` -> `pass`
+- `S18` `verify:` `just check-type-strict` -> `pass`
+- `S18` `verify:` `pytest src/vaultspec_rag/tests/test_configuration_doc.py src/vaultspec_rag/tests/test_env_example_coverage.py` -> `pass`
+- `S19` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S19` `verify:` `just check-python` -> `pass`
+- `S19` `verify:` `just check-type` -> `pass`
+- `S19` `verify:` `just check-type-strict` -> `pass`
+- `S19` `verify:` `pytest src/vaultspec_rag/tests/test_storage_adversarial.py` -> `pass`
+- `S20` `M` `src/vaultspec_rag/server/_routes_storage.py`
+- `S20` `verify:` `just check-python` -> `pass`
+- `S20` `verify:` `just check-type` -> `pass`
+- `S20` `verify:` `just check-type-strict` -> `pass`
+- `S20` `verify:` `pytest src/vaultspec_rag/tests/integration/test_storage_survey_service.py` -> `pass`
+- `S21` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S21` `verify:` `just check-python` -> `pass`
+- `S21` `verify:` `just check-type` -> `pass`
+- `S21` `verify:` `just check-type-strict` -> `pass`
+- `S21` `verify:` `pytest src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py::test_service_status_running` -> `pass`
+- `S22` `M` `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`
+- `S22` `verify:` `just check-python` -> `pass`
+- `S22` `verify:` `just check-type` -> `pass`
+- `S22` `verify:` `just check-type-strict` -> `pass`
+- `S22` `verify:` `pytest src/vaultspec_rag/tests/integration/test_storage_survey_service.py` -> `pass`
+- `S23` `M` `src/vaultspec_rag/generation_survey.py`
+- `S23` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S23` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_generation_survey.py src/vaultspec_rag/tests/integration/test_generation_reclaim.py` -> `pass`
+- `S24` `M` `src/vaultspec_rag/tests/test_generation_survey.py`
+- `S24` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_generation_survey.py` -> `pass`
+- `S25` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S25` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_safety.py src/vaultspec_rag/tests/test_storage_survey.py` -> `pass`
+- `S26` `T`
+- `S26` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_survey.py` -> `pass`
+- `S27` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S27` `verify:` `just check-python` -> `pass`
+- `S27` `verify:` `just check-type` -> `pass`
+- `S27` `verify:` `just check-type-strict` -> `pass`
+- `S27` `verify:` `pytest test_storage_survey.py test_storage_ops.py test_storage_safety.py` -> `pass`
+- `S28` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S28` `M` `src/vaultspec_rag/storage_survey.py`
+- `S28` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S28` `M` `src/vaultspec_rag/storage_manifest.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S28` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S28` `verify:` `just check-python` -> `pass`
+- `S28` `verify:` `just check-type` -> `pass`
+- `S28` `verify:` `just check-type-strict` -> `pass`
+- `S28` `verify:` `pytest test_storage_survey.py test_storage_ops.py test_storage_safety.py test_storage_ops_reclaim.py test_storage_manifest.py test_index_lifecycle.py` -> `pass`
+- `S29` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S29` `verify:` `just check-python` -> `pass`
+- `S29` `verify:` `just check-type` -> `pass`
+- `S29` `verify:` `just check-type-strict` -> `pass`
+- `S29` `verify:` `pytest test_storage_ops.py test_storage_safety.py test_storage_ops_reclaim.py` -> `pass`
+- `S30` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S30` `verify:` `just check-python` -> `pass`
+- `S30` `verify:` `just check-type` -> `pass`
+- `S30` `verify:` `just check-type-strict` -> `pass`
+- `S30` `verify:` `pytest test_storage_ops.py test_storage_safety.py test_storage_ops_reclaim.py test_storage_survey.py` -> `pass`
+- `S31` `M` `src/vaultspec_rag/tests/test_storage_survey.py`
+- `S31` `verify:` `just check-python` -> `pass`
+- `S31` `verify:` `just check-type` -> `pass`
+- `S31` `verify:` `just check-type-strict` -> `pass`
+- `S31` `verify:` `pytest test_storage_survey.py test_storage_ops.py test_storage_safety.py` -> `pass`
+- `S31` `verify:` `mutation: survey count guard narrowed to the two builtins` -> `fail`
+- `S31` `verify:` `mutation: uncountable collection swallowed to zero points` -> `fail`
+- `S32` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S32` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S32` `verify:` `just check-python` -> `pass`
+- `S32` `verify:` `just check-type` -> `pass`
+- `S32` `verify:` `just check-type-strict` -> `pass`
+- `S32` `verify:` `pytest test_storage_safety.py test_storage_ops.py test_storage_survey.py test_storage_ops_reclaim.py test_storage_manifest.py test_index_lifecycle.py test_generation_survey.py` -> `pass`
+- `S32` `verify:` `mutation: unestablished probe read as the empty set` -> `fail`
+- `S32` `verify:` `mutation: unverifiable deferral wired to the busy reason` -> `fail`
+- `S33` `A` `src/vaultspec_rag/_qdrant_transport.py`
+- `S33` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S33` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S33` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S33` `verify:` `just check-python` -> `pass`
+- `S33` `verify:` `just check-type` -> `pass`
+- `S33` `verify:` `just check-type-strict` -> `pass`
+- `S33` `verify:` `pytest test_storage_ops.py test_storage_ops_reclaim.py test_storage_survey.py test_storage_safety.py test_storage_adversarial.py test_cli_storage_migrate.py` -> `pass`
+- `S34` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S34` `verify:` `just check-python` -> `pass`
+- `S34` `verify:` `just check-type` -> `pass`
+- `S34` `verify:` `just check-type-strict` -> `pass`
+- `S34` `verify:` `pytest test_storage_ops.py test_storage_ops_reclaim.py test_storage_safety.py` -> `pass`
+- `S35` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S35` `verify:` `just check-python` -> `pass`
+- `S35` `verify:` `just check-type` -> `pass`
+- `S35` `verify:` `just check-type-strict` -> `pass`
+- `S35` `verify:` `pytest test_storage_ops.py test_storage_ops_reclaim.py test_storage_safety.py test_generation_survey.py` -> `pass`
+- `S36` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S36` `verify:` `just check-python` -> `pass`
+- `S36` `verify:` `just check-type` -> `pass`
+- `S36` `verify:` `just check-type-strict` -> `pass`
+- `S36` `verify:` `pytest test_storage_ops_reclaim.py test_storage_ops.py test_storage_safety.py` -> `pass`
+- `S37` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S37` `verify:` `just check-python` -> `pass`
+- `S37` `verify:` `just check-type` -> `pass`
+- `S37` `verify:` `just check-type-strict` -> `pass`
+- `S37` `verify:` `pytest test_storage_ops_reclaim.py test_storage_ops.py test_storage_safety.py test_generation_survey.py` -> `pass`
+- `S38` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S38` `M` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S38` `M` `src/vaultspec_rag/tests/test_qdrant_ready_timeout.py`
+- `S38` `verify:` `just check-python` -> `pass`
+- `S38` `verify:` `just check-type` -> `pass`
+- `S38` `verify:` `just check-type-strict` -> `pass`
+- `S38` `verify:` `pytest test_qdrant_ready_timeout.py test_cli_server.py test_cli_server_start.py test_cli_start_outcomes.py test_cli_no_mcp_import.py test_qdrant_supervise.py` -> `pass`
+- `S39` `M` `src/vaultspec_rag/tests/test_cli_server.py`
+- `S39` `verify:` `just check-python` -> `pass`
+- `S39` `verify:` `just check-type` -> `pass`
+- `S39` `verify:` `just check-type-strict` -> `pass`
+- `S39` `verify:` `pytest test_cli_server.py test_substitution_discipline.py` -> `pass`
+- `S40` `M` `src/vaultspec_rag/config/_schema.py`
+- `S40` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S40` `M` `docs/configuration.md`
+- `S40` `M` `.env.example`
+- `S40` `verify:` `just check-python` -> `pass`
+- `S40` `verify:` `just check-type` -> `pass`
+- `S40` `verify:` `just check-type-strict` -> `pass`
+- `S40` `verify:` `just check-markdown` -> `pass`
+- `S40` `verify:` `just check-links` -> `pass`
+- `S40` `verify:` `pytest test_config.py test_storage_ops_reclaim.py` -> `pass`
+- `S41` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S41` `verify:` `just check-python` -> `pass`
+- `S41` `verify:` `just check-type` -> `pass`
+- `S41` `verify:` `just check-type-strict` -> `pass`
+- `S41` `verify:` `pytest test_storage_ops.py test_storage_ops_reclaim.py test_storage_safety.py test_storage_adversarial.py` -> `pass`
+- `S42` `M` `src/vaultspec_rag/tests/test_storage_safety.py`
+- `S42` `verify:` `just check-python` -> `pass`
+- `S42` `verify:` `just check-type` -> `pass`
+- `S42` `verify:` `just check-type-strict` -> `pass`
+- `S42` `verify:` `pytest test_storage_safety.py test_storage_ops.py test_storage_ops_reclaim.py` -> `pass`
+- `S43` `M` `src/vaultspec_rag/_qdrant_transport.py`
+- `S43` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S43` `verify:` `just check-python` -> `pass`
+- `S43` `verify:` `just check-type` -> `pass`
+- `S43` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_adversarial.py src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py` -> `pass`
+- `S44` `M` `src/vaultspec_rag/_qdrant_transport.py`
+- `S44` `verify:` `just check-python` -> `pass`
+- `S44` `verify:` `just check-type` -> `pass`
+- `S45` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S45` `verify:` `just check-python` -> `pass`
+- `S45` `verify:` `just check-type` -> `pass`
+- `S45` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py` -> `pass`
+- `S46` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S46` `M` `src/vaultspec_rag/tests/integration/test_storage_ops_integration.py`
+- `S46` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S46` `verify:` `just check-python` -> `pass`
+- `S46` `verify:` `just check-type` -> `pass`
+- `S46` `verify:` `just check-type-strict` -> `pass`
+- `S46` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_adr_regression.py src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_restore.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S46` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S46` `M` `src/vaultspec_rag/tests/test_storage_restore.py`
+- `S47` `M` `src/vaultspec_rag/storage_restore.py`
+- `S47` `verify:` `just check-python` -> `pass`
+- `S47` `verify:` `just check-type` -> `pass`
+- `S47` `verify:` `just check-type-strict` -> `pass`
+- `S47` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_adversarial.py src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_restore.py` -> `pass`
+- `S48` `M` `src/vaultspec_rag/tests/test_storage_restore.py`
+- `S48` `verify:` `just check-python` -> `pass`
+- `S48` `verify:` `just check-type` -> `pass`
+- `S48` `verify:` `just check-type-strict` -> `pass`
+- `S48` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_adversarial.py src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_restore.py` -> `pass`
+- `S49` `M` `src/vaultspec_rag/storage_manifest.py`
+- `S49` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S49` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S49` `verify:` `just check-python` -> `pass`
+- `S49` `verify:` `just check-type` -> `pass`
+- `S49` `verify:` `just check-type-strict` -> `pass`
+- `S49` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_donor_candidates.py src/vaultspec_rag/tests/test_storage_manifest.py src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_restore.py src/vaultspec_rag/tests/test_storage_safety.py src/vaultspec_rag/tests/test_storage_survey.py src/vaultspec_rag/tests/test_store_donor_reads.py` -> `pass`
+- `S50` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S50` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S50` `verify:` `just check-python` -> `pass`
+- `S50` `verify:` `just check-type` -> `pass`
+- `S50` `verify:` `just check-type-strict` -> `pass`
+- `S50` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_ops.py src/vaultspec_rag/tests/test_storage_ops_reclaim.py src/vaultspec_rag/tests/test_storage_restore.py src/vaultspec_rag/tests/test_storage_safety.py` -> `pass`
+- `S51` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S51` `verify:` `just check-python` -> `pass`
+- `S51` `verify:` `just check-type` -> `pass`
+- `S51` `verify:` `just check-type-strict` -> `pass`
+- `S51` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_process_probe_source_structure.py` -> `pass`
+- `S51` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_cli_service_status.py src/vaultspec_rag/tests/test_cli_status.py src/vaultspec_rag/tests/test_jobs_tui_status.py` -> `pass`
+- `S52` `M` `src/vaultspec_rag/tests/test_storage_ops_reclaim.py`
+- `S52` `verify:` `just check-python` -> `pass`
+- `S52` `verify:` `just check-type` -> `pass`
+- `S52` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_storage_ops_reclaim.py` -> `pass`
+- `S53` `M` `.env.example`
+- `S53` `verify:` `just check-python` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_citation_gate.py src/vaultspec_rag/tests/test_env_example_coverage.py` -> `pass`
+
+## Notes
+
+- `S23` The prune landed in `advance_generation_stamps` (`generation_survey.py`) rather than in
+- `S23` `generation_stamps.py`. `record_generation_stamps` only ever serialises a map its caller
+- `S23` already assembled; the map is assembled in `advance_generation_stamps`, which already
+- `S23` receives `held`/`unreferenced` classifications derived from the same live-collection
+- `S23` listing its caller (`reclaim_superseded_generations` in `storage_reclamation.py`) reads
+- `S23` once per cycle. Passing that listing into `advance_generation_stamps` as a plain
+- `S23` `Iterable[str]` keeps `generation_stamps.py` free of any qdrant dependency, matches the
+- `S23` existing parameter shape of `survey_generations`'s own `existing` argument, and avoids a
+- `S23` second `get_collections()` round trip. A stamp survives unless its collection is absent
+- `S23` from that listing; the listing is only ever the caller's own confirmed read, never a
+- `S23` guess, so an unlistable collection is never treated as gone.
+- `S23` The two adaptations this signature change required in `test_generation_survey.py`'s
+- `S23` pre-existing `TestGenerationStampAdvance` tests are recorded under `S24`, which owns
+- `S23` that file and lands in the same commit.
+- `S24` Also updates the two pre-existing `TestGenerationStampAdvance` calls to pass the new
+- `S24` `live` argument the `S23` signature change requires; both land in the same commit as
+- `S24` that change. Broke the guard (reverted the live-membership filter to `dict(stamps)`),
+- `S24` ran the new test alone, watched it fail on the `"c_vanished" not in advanced` assertion,
+- `S24` restored, watched all 21 tests in the file pass.
+- `S25` No test here reaches a live qdrant client or the identity sidecar / machine lock:
+- `S25` every client in this file is a fake, and `manifest_path()` resolves only through
+- `S25` `VAULTSPEC_RAG_STATUS_DIR`. What was real was cross-test manifest pollution: a
+- `S25` module-wide autouse fixture isolated every test's status dir regardless of whether
+- `S25` that test ever wrote to the manifest. Replaced it with
+- `S25` `@pytest.mark.usefixtures("isolated_status_dir")` on only the six classes that call
+- `S25` `record_root`/`update_orphan_stamps`/`update_activity_stamps` (`TestOrphanStamps`,
+- `S25` `TestLastIndexedStamping`, `TestPreDropRecount`, `TestLivenessGate`,
+- `S25` `TestActivityClock`, `TestEphemeralTierNeedsObservedStability`), matching the existing
+- `S25` narrow-scoping idiom already established in `TestEphemeralWindowKeepsEveryDestructionGate`
+- `S25` (`test_storage_safety.py`). Proved this is load-bearing rather than decorative: with the
+- `S25` decorator removed from two of the six classes, a full-file run left 4 stale entries in
+- `S25` the shared manifest and `test_fresh_stamp_overwrites_and_persists` failed reading the
+- `S25` wrong one via `next(iter(load_manifest().values()))`; restored, all 55 tests pass.
+- `S25` Verified against the operator's real backend rather than asserted: captured
+- `S25` `~/.vaultspec-rag/storage-manifest.json`'s root count (65) before touching anything, ran
+- `S25` this file's full suite plus the three sibling files that import its helpers (106 tests),
+- `S25` and confirmed the count was still 65 afterward - the same result the untouched file
+- `S25` already produced, since nothing here was ever unisolated at the session level.
+- `S25` `test_storage_ops_reclaim.py` uses `_orphaned_namespace` (which calls `record_root`)
+- `S25` with no isolation fixture of its own; that file is outside this Step's scope
+- `S25` (`src/vaultspec_rag/tests/test_storage_ops.py` only) and was left untouched, but the
+- `S25` gap is worth a maintainer's attention.
+- `S26` No file change: this file already scoped isolation correctly before this Step ran.
+- `S26` Every test that only classifies namespaces (`test_live_orphaned_unknown` and its
+- `S26` siblings) builds `ManifestEntry` values in memory and never touches
+- `S26` `storage-manifest.json`. The one class that does write it,
+- `S26` `TestSurveyTimeoutDoesNotUnwindTheCycle`, already carries its own
+- `S26` `@pytest.mark.usefixtures("isolated_status_dir")` rather than relying on a module-wide
+- `S26` fixture, which is exactly the narrow-scoping this Phase's sibling Step applies to
+- `S26` `test_storage_ops.py`. No test in this file constructs a real `QdrantClient`, calls
+- `S26` `storage_identity`, or takes the machine lock, so the storage-dir knob specifically
+- `S26` (as opposed to the status-dir knob `manifest_path()` actually resolves through) has
+- `S26` nothing to isolate here.
+- `S26` Verified against the operator's real backend rather than asserted: captured
+- `S26` `~/.vaultspec-rag/storage-manifest.json`'s root count (65), ran this file together with
+- `S26` `test_storage_ops.py`, `test_storage_ops_reclaim.py`, and `test_storage_safety.py`
+- `S26` (106 tests), and confirmed the count was still 65 afterward.
+- `S26` The 8 `vaultspec-livetest-*` roots present in the real manifest predate this Step:
+- `S26` their names carry a random 6-character `tempfile.mkdtemp` suffix that neither this
+- `S26` file's `is_temp_rooted` test (a fixed literal, `vaultspec-livetest-xyz`, asserted only
+- `S26` in memory) nor `test_storage_ops.py`'s `_temp_survey` helper (a fixed literal built
+- `S26` from a hardcoded test prefix, also never persisted) can produce, and the same literal
+- `S26` string does not appear anywhere else in the tree across any local worktree. Their
+- `S26` origin was not traced further, as doing so was outside this Step's scope.
+- `S28` Threading the unverifiable count reached four modules beyond the scoped one.
+- `S28` `classify_namespaces` and `NamespaceSurvey` carry the new signal, the two
+- `S28` tiering functions and the activity clock consume it, and two existing
+- `S28` pre-drop-gate tests were repointed: a namespace the survey cannot count is
+- `S28` now held at evaluation, so a stand-in refusing every count no longer reaches
+- `S28` the gate those tests exist to prove, and each now fails its own count only
+- `S28` after the survey has taken one.
+- `S32` The gate is exercised through the injected liveness probe, which is the
+- `S32` seam the cycle already exposes for it. The probe's own read-failure branch
+- `S32` is not reached: the job registry it consults is in-memory with no failure
+- `S32` to induce, so covering that branch would take a test double standing in for
+- `S32` the registry, which would assert nothing about the registry.
+- `S46` A follow-up commit on this Step's file closes a defect this Step's merge and its
+- `S46` sibling refusal introduced together, found by re-reading the pair rather than by a
+- `S46` test. An archive attempt that raises after moving at least one snapshot leaves that
+- `S46` file in the destination under no manifest, and the next attempt takes a fresh
+- `S46` snapshot under a fresh name rather than adopting it. The refusal then rejected an
+- `S46` otherwise complete archive, permanently, over a file that was never published - and
+- `S46` a server too slow to finish an archive is the exact condition this work exists for,
+- `S46` so the sequence is expected rather than exotic.
+- `S46` The archiver now sweeps its destination to exactly what its published manifest names,
+- `S46` which subsumes the superseded-artifact removal the merge did inline. The shared cycle
+- `S46` stand-in was given per-snapshot names, matching what qdrant writes: with one name per
+- `S46` collection a later attempt silently overwrote the residue and the condition could not
+- `S46` be expressed at all.
+- `S46` One mutation note in the restore suite was corrected to the failure now observed
+- `S46` rather than the one observed before the sweep existed.

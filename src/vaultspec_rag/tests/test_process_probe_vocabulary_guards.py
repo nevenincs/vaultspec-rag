@@ -488,7 +488,7 @@ class TestNoFacadeReExportServesOnlyTests:
         }
         exports: list[str] = []
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom) or not (node.module or ""):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
                 continue
             exports.extend(
                 f"{package}.{name} (line {node.lineno})"

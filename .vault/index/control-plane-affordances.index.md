@@ -4,20 +4,13 @@ tags:
   - '#index'
   - '#control-plane-affordances'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:b59df9081ff14f5c1db1c8182fd0b1fc665e068c5b45cc018231fad08e6d1324'
+body_hash: 'sha256:f916ab43726b77fab284e6831e60dcb5fe12c723cbeac2a1a8be358b799c3dd8'
 related:
-  - '[[2026-07-13-control-plane-affordances-P01-S01]]'
-  - '[[2026-07-13-control-plane-affordances-P01-S02]]'
-  - '[[2026-07-13-control-plane-affordances-P01-S03]]'
-  - '[[2026-07-13-control-plane-affordances-P01-S04]]'
-  - '[[2026-07-13-control-plane-affordances-P01-summary]]'
-  - '[[2026-07-13-control-plane-affordances-P02-S05]]'
-  - '[[2026-07-13-control-plane-affordances-P02-S06]]'
-  - '[[2026-07-13-control-plane-affordances-P02-summary]]'
   - '[[2026-07-13-control-plane-affordances-adr]]'
   - '[[2026-07-13-control-plane-affordances-audit]]'
+  - '[[2026-07-13-control-plane-affordances-ledger]]'
   - '[[2026-07-13-control-plane-affordances-plan]]'
   - '[[2026-07-13-control-plane-affordances-research]]'
 ---
@@ -38,14 +31,7 @@ Auto-generated index of all documents tagged with `#control-plane-affordances`.
 
 ### exec
 
-- `2026-07-13-control-plane-affordances-P01-S01` - Extend the storage survey route to accept an optional root query parameter, resolve it through root_collection_prefix, narrow the namespace list to the matching prefix, and add the top-level queried_root object (present only when root is passed, returned even for unindexed roots)
-- `2026-07-13-control-plane-affordances-P01-S02` - Admit root into the survey transport params and thread the optional root argument through the MCP survey client and the get_storage_survey tool surface
-- `2026-07-13-control-plane-affordances-P01-S03` - Add --root to server storage survey, pass it through both the service-first and CLI-direct paths, and render queried_root in human and --json output
-- `2026-07-13-control-plane-affordances-P01-S04` - Cover the root-scoped lookup end to end: indexed root returns prefix plus populated namespaces, unindexed root returns prefix plus empty list, and the CLI and MCP adapters pass the parameter through
-- `2026-07-13-control-plane-affordances-P01-summary` - `control-plane-affordances` `P01` summary
-- `2026-07-13-control-plane-affordances-P02-S05` - Add --json to server stop with one envelope per exit path (stopped, already_stopped, cleaned, reclaimed as ok:true and identity_unconfirmed as ok:false) and make the identity-unconfirmed skip exit 1 in both human and json modes, covering the --port variant
-- `2026-07-13-control-plane-affordances-P02-S06` - Assert the stop --json envelope and exit code on each exit path alongside the existing start --json matrix
-- `2026-07-13-control-plane-affordances-P02-summary` - `control-plane-affordances` `P02` summary
+- `2026-07-13-control-plane-affordances-ledger` - `control-plane-affordances` ledger
 
 ### plan
 
