@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
@@ -64,8 +67,7 @@ _NON_TERMINAL = (
 _FAILED = (JobState.FAILED, JobState.INTERRUPTED)
 
 
-def _snapshot(state: JobState) -> JobSnapshot:
-    root = Path("/tmp/root")
+def _snapshot(state: JobState, root: Path) -> JobSnapshot:
     return JobSnapshot(
         id="job-1",
         revision=1,
@@ -126,14 +128,16 @@ def _events(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int]]:
 def _log(
     state: JobState,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> list[tuple[str, int]]:
-    root = Path("/tmp/root")
+    root = tmp_path / "root"
+    state_path = tmp_path / "watcher-retry.json"
     slot = WatcherConvergenceSlot(
         source=JobSource.CODE,
         root=root,
         registry=ServiceRegistry(),
         retry_policy=WatcherRetryPolicy(
-            root,
+            state_path,
             _WatcherRetryOptions(
                 canonical_root=str(root),
                 source=WatcherSource.CODE,
@@ -153,7 +157,7 @@ def _log(
     with caplog.at_level(logging.DEBUG, logger=_log_managed_transition.__module__):
         _log_managed_transition(
             slot,
-            _snapshot(state),
+            _snapshot(state, root),
             _TransitionLogContext(
                 watcher_owned=True,
                 pending_count=0,
@@ -168,9 +172,10 @@ def _log(
 def test_a_non_terminal_transition_is_never_reported_as_a_failure(
     state: JobState,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """Progress must not be logged as an error, at any severity."""
-    events = _log(state, caplog)
+    events = _log(state, caplog, tmp_path)
     assert events, f"{state.value} produced no event at all"
     for name, level in events:
         assert name != "reindex_failed", (
@@ -185,9 +190,10 @@ def test_a_non_terminal_transition_is_never_reported_as_a_failure(
 def test_a_failed_terminal_state_is_still_reported_as_a_failure(
     state: JobState,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """The fix must not silence the outcomes the branch exists to report."""
-    events = _log(state, caplog)
+    events = _log(state, caplog, tmp_path)
     assert ("reindex_failed", logging.ERROR) in events, (
         f"{state.value} must still surface as an error, got {events}"
     )
@@ -197,6 +203,7 @@ def test_a_failed_terminal_state_is_still_reported_as_a_failure(
 def test_a_failure_event_always_carries_a_populated_error(
     state: JobState,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """``reindex_failed`` must never fire with a null error again.
 
@@ -208,7 +215,7 @@ def test_a_failure_event_always_carries_a_populated_error(
     fallback (dropping the explicit no-recorded-error text) makes this fail
     on the ``error=null`` assertion below, not on collection.
     """
-    _log(state, caplog)
+    _log(state, caplog, tmp_path)
     failed_lines = [
         record.getMessage()
         for record in caplog.records
@@ -222,6 +229,7 @@ def test_a_failure_event_always_carries_a_populated_error(
 
 def test_supersession_is_its_own_outcome_at_ordinary_severity(
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """A coalesced-away job reports supersession, not failure and not progress.
 
@@ -235,7 +243,7 @@ def test_supersession_is_its_own_outcome_at_ordinary_severity(
     branch's ``log_event`` call entirely fails on the emptiness assertion,
     neither on collection.
     """
-    events = _log(JobState.SUPERSEDED, caplog)
+    events = _log(JobState.SUPERSEDED, caplog, tmp_path)
     assert events, "supersession produced no event at all"
     assert events == [("reindex_superseded", logging.INFO)], (
         f"supersession must report itself once, at INFO; got {events}"
@@ -244,6 +252,7 @@ def test_supersession_is_its_own_outcome_at_ordinary_severity(
 
 def test_every_job_state_has_an_explicit_outcome(
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """No state may reach the failure branch by fallthrough.
 
@@ -254,7 +263,7 @@ def test_every_job_state_has_an_explicit_outcome(
     reported_failed = {
         state
         for state in JobState
-        if any(name == "reindex_failed" for name, _ in _log(state, caplog))
+        if any(name == "reindex_failed" for name, _ in _log(state, caplog, tmp_path))
     }
     assert reported_failed == set(_FAILED), (
         "states reaching the failure branch: "
