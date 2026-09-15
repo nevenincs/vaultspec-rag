@@ -73,6 +73,13 @@ env:
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
 
+# Every runner in this workflow is persistent, and `contain-writes` points
+# `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
+# archive that same multi-gigabyte directory after every job and download it
+# again before the next one, making the remote cache slower than the warm local
+# cache it duplicates. Each setup therefore keeps Actions caching explicitly
+# disabled; uv still reads and populates the persistent runner cache normally.
+
 jobs:
   lint:
     name: "Lint: Source, Documents and Workflows (Linux)"
@@ -121,7 +128,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Native binaries, so they cannot be pinned in the lockfile. The recipes
       # fall back to the pinned container image when either is absent; these
@@ -191,7 +198,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -224,20 +231,17 @@ jobs:
   # merge rules, not of the coverage. Read it here and in
   # `continue-on-error` above each job.
   #
-  # THIS JOB ABSORBED THE WINDOWS RECIPE GATE. That was a separate job proving
-  # `just` recipes execute under `cmd.exe` at all - init, init again, and one
-  # real gate. Its assertions are steps here now: the recipe-execution claim is
-  # proved by this job running recipes, the idempotence claim by calling `init`
-  # twice, and the gate it ran was `check-python`, which reads only committed
-  # files and so was re-answering on Windows what the Linux job had already
-  # answered.
+  # The full accelerator-free suite runs on Windows for both pull requests and
+  # main. It already includes the provisioning proofs; running their subset as
+  # a separate PR step measured only those five files while letting every other
+  # Windows-specific path, lock and process behaviour reach main untested.
   #
   # Neither job uses actions/setup-python. The GPU job below documents why: its
   # MSI registry cleanup fails under a runner service account. uv fetches the
   # interpreter named by UV_PYTHON instead, which is what the suite runs under
   # anyway.
   tests-windows:
-    name: "Test: Python (Windows)"
+    name: "Test: Full Suite (Windows)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
@@ -271,7 +275,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Same pinned, checksum-verified download the GPU job uses: this
       # runner's service account has no bash on PATH, so the marketplace
@@ -301,19 +305,7 @@ jobs:
       - name: The worktree reports itself initialized
         run: just init-check
 
-      # The provisioning proofs drive real uv against real environments, and
-      # the failure they exist to catch - a forced reinstall removing an
-      # environment's contents and then dying on a file something else holds -
-      # is a Windows file-locking behaviour the Linux legs cannot reproduce.
-      # They are a SELECTION WITHIN the full suite below, so a pull request
-      # pays for the five files that can only fail here rather than for the
-      # whole suite on the machine with the least headroom.
-      - name: Provisioning proofs
-        if: github.event_name == 'pull_request'
-        run: just test-provisioning
-
-      - name: Run tests
-        if: github.event_name != 'pull_request'
+      - name: Run full test suite
         run: just test-python
 
   tests-macos:
@@ -367,7 +359,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -501,7 +493,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Install `just` without the bash-based marketplace action: this runner's
       # service account has no `bash` on PATH, so a pinned, SHA256-verified
@@ -616,7 +608,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
