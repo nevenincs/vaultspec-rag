@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.4.29](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.28...vaultspec-rag-v0.4.29) (2026-09-15)
+
+
+### Features
+
+* build deterministic rag release bundles ([2b3bcaa](https://github.com/nevenincs/vaultspec-rag/commit/2b3bcaa115c4c3f976411e0a5545b806400e388c))
+* consume exact rag release wheel in pyapp ([e213557](https://github.com/nevenincs/vaultspec-rag/commit/e213557d7b2e6c5ec521f9806d7000613b2e26ea))
+* define rag release bundle product contract ([bd69b40](https://github.com/nevenincs/vaultspec-rag/commit/bd69b409ddba935e309ab1b3901c1be4a1dda23a))
+* order rag binary release finalization ([bc708a7](https://github.com/nevenincs/vaultspec-rag/commit/bc708a721c77c301740d6c80c99135a730dbc575))
+* publish deterministic binary release bundles ([22fed34](https://github.com/nevenincs/vaultspec-rag/commit/22fed34e354cd5dc4f99b893237bacd85898e678))
+* publish rag channels from bundles ([4eb29b1](https://github.com/nevenincs/vaultspec-rag/commit/4eb29b1e49a716ead0fdcad8fca47f0a2e84b2a8))
+* stamp rag windows version metadata ([1ca340c](https://github.com/nevenincs/vaultspec-rag/commit/1ca340c7a20a6ef273c4d11e7973a9b69da0a1d5))
+
+
+### Bug Fixes
+
+* **audit:** resolve Windows scanner shims ([d2ee649](https://github.com/nevenincs/vaultspec-rag/commit/d2ee649f33a0148173c6ec1397db35471431e880))
+* **bench:** use canonical search source types ([dd618f8](https://github.com/nevenincs/vaultspec-rag/commit/dd618f8808c267c5f708de8c986c902253ea81d7))
+* canonicalize release bundle modes ([a853054](https://github.com/nevenincs/vaultspec-rag/commit/a85305461417207e9455b0c92ccdcd84541d4218))
+* **ci:** pin the singleton race to spawn and format two closure records ([189b0c3](https://github.com/nevenincs/vaultspec-rag/commit/189b0c3efe6fc5fcd34a454f5df623640b5c4922))
+* complete release and publication hardening ([8fe3579](https://github.com/nevenincs/vaultspec-rag/commit/8fe3579b713ae61664dd32a7e88347258db2beda))
+* consolidate CI hardening, release binding and Windows coverage ([0c582c7](https://github.com/nevenincs/vaultspec-rag/commit/0c582c715ebcdc5c61597e0a995f416b5ee002b9))
+* gate Windows and remove the causes of its intermittent failures ([231d257](https://github.com/nevenincs/vaultspec-rag/commit/231d257817c40a82aeb550436c686dc08c1399c0))
+* **index:** accept storage-ordered commit units ([9cbe1a7](https://github.com/nevenincs/vaultspec-rag/commit/9cbe1a7a6960e1a81a40b3518cdf00ced15a24b9))
+* **index:** canonicalize vault proof points ([3acfcbb](https://github.com/nevenincs/vaultspec-rag/commit/3acfcbb55f40e5d3545e50e3ae74106bada34456))
+* isolate CI caches and public automation ([572a2af](https://github.com/nevenincs/vaultspec-rag/commit/572a2af2b16e4f9df85b07c5f6666d5e313b724b))
+* isolate watcher transition state paths ([282c9cb](https://github.com/nevenincs/vaultspec-rag/commit/282c9cbcdcc4e2b20c90acd7f7fdf81751313212))
+* keep branch probes off intermittent capacity ([f0401a2](https://github.com/nevenincs/vaultspec-rag/commit/f0401a21ec3fc90bc004e4f433155de23f05404d))
+* keep ledger preflight coherent under WAL ([442900c](https://github.com/nevenincs/vaultspec-rag/commit/442900c6e341bcaedcf1a11ccc4398d0b93571fd))
+* keep the full Windows suite advisory until it is green ([a29ffd7](https://github.com/nevenincs/vaultspec-rag/commit/a29ffd7b817215d438a95eab1ddb5bf26591a0df))
+* make self-hosted CI coverage honest ([81d7e43](https://github.com/nevenincs/vaultspec-rag/commit/81d7e43830f6a5767f033227cf5d8848909ce8be))
+* preserve search result transport shape ([e223a0f](https://github.com/nevenincs/vaultspec-rag/commit/e223a0f2c305fbd031303a4a792b95590e3897c7))
+* preserve version stamping error contract ([1983dcc](https://github.com/nevenincs/vaultspec-rag/commit/1983dccfc6350f0e10315384645a94730bb4a802))
+* reap the venv launcher's interpreter before a deadline error ([db06951](https://github.com/nevenincs/vaultspec-rag/commit/db06951db409bd6d805d1eab0944983b5327502b))
+* stamp Windows PE metadata atomically ([4b4a899](https://github.com/nevenincs/vaultspec-rag/commit/4b4a8997a754bae50f7c2bf50ca0b00f15450bee))
+* **types:** align cross-platform reentrant lock protocol ([a3a3d01](https://github.com/nevenincs/vaultspec-rag/commit/a3a3d018b9a85e8bf3e7310e2bc1a88d887782ad))
+
 ## [0.4.28](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.27...vaultspec-rag-v0.4.28) (2026-09-10)
 
 
