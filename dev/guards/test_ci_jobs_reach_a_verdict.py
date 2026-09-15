@@ -54,6 +54,11 @@ MAIN_SHA_CLAUSE = (
 #: expression is the sharper form, which keeps pull requests superseding.
 CANCEL_IN_PROGRESS = (False, "${{ github.ref != 'refs/heads/main' }}")
 
+#: Merge-box jobs that report without deciding the run, because their platform
+#: is not yet green. A platform leaves this set when its failure count reaches
+#: zero; a gating job never joins it.
+ADVISORY_JOBS = frozenset({"tests-windows"})
+
 
 def _normalised(text: str) -> str:
     """Collapse an expression's whitespace so formatting is not a finding."""
@@ -147,41 +152,47 @@ def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
     Mutation proof: changing one ``enable-cache`` value to true makes this fail
     naming that job; restoring false makes this test pass again.
     """
-    path = workflows.repository_root() / ".github" / "workflows" / "ci.yml"
-    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict), "ci.yml is not a mapping"
-    document = cast("dict[object, object]", loaded)
-    jobs = document.get("jobs")
-    assert isinstance(jobs, dict), "ci.yml has no jobs mapping"
-
     setups: list[str] = []
     offenders: list[str] = []
-    for job_id, raw_job in cast("dict[object, object]", jobs).items():
-        if not isinstance(raw_job, dict):
-            continue
-        steps = cast("dict[object, object]", raw_job).get("steps")
-        if not isinstance(steps, list):
-            continue
-        for step in cast("list[object]", steps):
-            if not isinstance(step, dict):
+    for job in workflows.load_jobs("ci.yml"):
+        for step in job.steps:
+            if not str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
                 continue
-            step_mapping = cast("dict[object, object]", step)
-            if not str(step_mapping.get("uses", "")).startswith("astral-sh/setup-uv@"):
-                continue
-            setups.append(str(job_id))
-            options = step_mapping.get("with")
+            setups.append(job.job_id)
+            options = step.get("with")
             enabled = (
-                cast("dict[object, object]", options).get("enable-cache")
+                cast("dict[str, object]", options).get("enable-cache")
                 if isinstance(options, dict)
                 else None
             )
             if enabled is not False:
-                offenders.append(f"{job_id}: enable-cache={enabled!r}")
+                offenders.append(f"{job.job_id}: enable-cache={enabled!r}")
 
     assert setups, "ci.yml has no setup-uv steps to verify"
     assert not offenders, (
         "Persistent self-hosted runners must use their local UV_CACHE_DIR "
         "without exporting it through the Actions cache.\n\n" + "\n".join(offenders)
+    )
+
+
+def test_only_the_named_platform_jobs_are_advisory() -> None:
+    """Exactly the jobs in :data:`ADVISORY_JOBS` finish without deciding the run.
+
+    A job-level ``continue-on-error`` keeps a failed job visible while the run
+    still concludes success. Added to a gating job, it silently stops that job
+    failing anything; removed from a platform that is not yet green, it turns
+    every run red on failures nobody has triaged.
+
+    Mutation proof: deleting ``continue-on-error`` from ``tests-windows`` makes
+    this fail naming it as missing; restoring it makes this pass again.
+    """
+    advisory = {
+        job.job_id for job in workflows.load_jobs("ci.yml") if job.continue_on_error
+    }
+    assert advisory == ADVISORY_JOBS, (
+        f"ci.yml's advisory jobs are {sorted(advisory)}, expected "
+        f"{sorted(ADVISORY_JOBS)}. Missing: {sorted(ADVISORY_JOBS - advisory)}; "
+        f"unexpected: {sorted(advisory - ADVISORY_JOBS)}."
     )
 
 

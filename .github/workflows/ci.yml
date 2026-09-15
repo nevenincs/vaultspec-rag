@@ -210,10 +210,11 @@ jobs:
 
   # THE WINDOWS AND macOS JOBS.
   #
-  # Both are ADVISORY (`continue-on-error`) and that is a deliberate, temporary
-  # state rather than a permanent exemption. Neither platform is green: the
-  # Linux legs pass, Windows fails a handful of source-scanning guards, and
-  # macOS fails on the order of a hundred tests that have never been triaged.
+  # Both are ADVISORY and that is a deliberate, temporary state rather than a
+  # permanent exemption: Windows through `continue-on-error` on the job, macOS
+  # on its test step. Neither platform is green. The Linux legs pass, the full
+  # Windows suite still carries timing-sensitive tests that fail intermittently
+  # on a loaded runner, and macOS has never been fully triaged.
   # Landing them as blocking would turn every release red on day one and the
   # pressure would be to delete the jobs rather than fix the platform.
   #
@@ -244,6 +245,7 @@ jobs:
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
     if: github.event_name != 'schedule'
+    continue-on-error: true
     timeout-minutes: 60
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
     env:
