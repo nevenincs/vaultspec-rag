@@ -180,15 +180,16 @@ jobs:
       # still resolves inside one.
       - uses: ./.github/actions/contain-writes
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: false
+          # setup-python's Linux 3.13 build depends on LD_LIBRARY_PATH. The
+          # product deliberately removes loader variables from untrusted hook
+          # children, so those children cannot safely inherit that interpreter.
+          # uv's managed distributions remain executable under the same
+          # curated environment that production uses.
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
