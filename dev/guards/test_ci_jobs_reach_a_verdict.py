@@ -159,18 +159,26 @@ def test_main_runs_never_share_a_concurrency_group() -> None:
 
 
 def test_the_merge_box_groups_every_job_it_runs() -> None:
-    """Every merge-box job declares a group, so none is left ungoverned.
+    """Workflow- or job-level grouping governs every merge-box job.
 
     A job with no concurrency at all is never cancelled, which is safe - but
     it is also never superseded on a pull request, so a branch pushed five
     times queues five copies of it on a serial fleet. Declaring the group is
     what makes the main-only exemption above meaningful.
     """
-    findings = [
-        f"ci.yml:{job.job_id} declares no concurrency group"
-        for job in workflows.load_jobs("ci.yml")
-        if job.concurrency is None
-    ]
+    workflow_grouped = any(
+        workflow == "ci.yml" and where == "workflow"
+        for workflow, where, _concurrency in _concurrency_declarations()
+    )
+    findings = (
+        []
+        if workflow_grouped
+        else [
+            f"ci.yml:{job.job_id} declares no concurrency group"
+            for job in workflows.load_jobs("ci.yml")
+            if job.concurrency is None
+        ]
+    )
     assert not findings, (
         "A merge-box job is not in a concurrency group, so pushes to a branch "
         "queue one copy of it each on a serial fleet.\n\n" + "\n".join(findings)
