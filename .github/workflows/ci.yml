@@ -335,7 +335,7 @@ jobs:
     # Main integration is deliberate. The machine must be plugged in before
     # the repository is allowed to advertise MPS support.
     if: >-
-      github.event_name == 'push' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
     timeout-minutes: 60
