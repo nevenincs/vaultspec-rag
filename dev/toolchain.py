@@ -707,6 +707,25 @@ TEST = Verb(
             ),
         ),
         Target(
+            "windows",
+            "Run the focused native-Windows compatibility contract.",
+            (
+                uv_run(
+                    "pytest",
+                    f"{PACKAGE}/tests/test_watcher_transition_logging.py",
+                    f"{PACKAGE}/tests/test_env_holders.py",
+                    f"{PACKAGE}/tests/test_tool_env_provisioning_hostile.py",
+                    f"{PACKAGE}/tests/test_tool_torch_repair.py",
+                    f"{PACKAGE}/tests/test_torch_pin_single_source.py",
+                    f"{PACKAGE}/tests/test_readiness_holders.py",
+                    f"{PACKAGE}/tests/test_process_probe_scan_cost.py",
+                    f"{PACKAGE}/tests/test_process_probe_os_guards.py::TestFdLockHasOneImplementation::test_the_offset_is_honoured_so_a_locked_payload_stays_readable",
+                    "tools/binaries/tests/test_windows_icon.py::test_real_pe_stamp_is_exact_and_precedes_checksum",
+                    "-q",
+                ),
+            ),
+        ),
+        Target(
             "all",
             "Run every lane; a failed or gated lane never hides the ones after it.",
             (

@@ -375,6 +375,11 @@ test-mps:
 test-provisioning:
     {{dev}} test provisioning
 
+# Run the focused native-Windows compatibility contract.
+[group('test')]
+test-windows:
+    {{dev}} test windows
+
 # `test-all` runs EVERY lane: python, gpu, mps and perf. The three
 # hardware-gated lanes are probed first and, where the host cannot run one,
 # reported by name as SKIPPED with the reason - they are never silently

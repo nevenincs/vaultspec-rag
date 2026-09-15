@@ -245,6 +245,7 @@ def _assert_rebuild_required_without_mutation(
     path: Path,
     *,
     match: str,
+    compare_companions: bool = True,
 ) -> None:
     before = path.read_bytes()
     companions = tuple(
@@ -260,10 +261,11 @@ def _assert_rebuild_required_without_mutation(
 
     assert type(caught.value) is RunLedgerRebuildRequiredError
     assert path.read_bytes() == before
-    assert {
-        companion: companion.read_bytes() if companion.exists() else None
-        for companion in companions
-    } == companion_bytes
+    if compare_companions:
+        assert {
+            companion: companion.read_bytes() if companion.exists() else None
+            for companion in companions
+        } == companion_bytes
 
 
 def _seed_publication_proof(
@@ -2453,11 +2455,24 @@ def test_old_ledger_format_requires_rebuild_without_mutation(
     _assert_rebuild_required_without_mutation(path, match="not supported")
 
 
-def test_live_wal_old_ledger_requires_rebuild_without_sidecar_mutation(
+def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutation: writable preflight changes shared-memory state before refusal."""
+    """A coherent WAL reader refuses obsolete schema without changing contents."""
     path = tmp_path / "runs.sqlite3"
+    require_schema = RunLedger._require_current_or_empty_schema
+    observed_versions: list[int] = []
+
+    def track_preflight_schema(
+        self: RunLedger,
+        connection: sqlite3.Connection,
+    ) -> None:
+        observed_versions.append(
+            int(connection.execute("PRAGMA user_version").fetchone()[0])
+        )
+        require_schema(self, connection)
+
     peer = sqlite3.connect(path)
     try:
         assert peer.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
@@ -2466,7 +2481,22 @@ def test_live_wal_old_ledger_requires_rebuild_without_sidecar_mutation(
         peer.execute("PRAGMA user_version = 6")
         peer.commit()
 
-        _assert_rebuild_required_without_mutation(path, match="rebuild")
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                RunLedger,
+                "_require_current_or_empty_schema",
+                track_preflight_schema,
+            )
+            _assert_rebuild_required_without_mutation(
+                path,
+                match="rebuild",
+                compare_companions=False,
+            )
+        assert observed_versions == [6]
+        assert peer.execute("PRAGMA user_version").fetchone() == (6,)
+        assert peer.execute("SELECT value FROM old_runs").fetchall() == [
+            ("preserve-me",)
+        ]
     finally:
         peer.close()
 

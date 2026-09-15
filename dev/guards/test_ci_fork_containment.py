@@ -16,6 +16,8 @@ never start it regardless of the guard every other self-hosted job carries.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from dev.guards import _workflows as workflows
@@ -27,13 +29,16 @@ WORKFLOW = "ci.yml"
 #: The job whose runner is a workstation with a live service and the one card.
 GPU_JOB = "gpu-tests"
 
-#: The lane that can only fail on Windows, and so must run there.
-WINDOWS_ONLY_LANE = "test-provisioning"
+#: The accelerator-free lane. It contains every Windows-sensitive subset, so a
+#: pull request running it on Windows leaves none of them unmeasured there.
+FULL_LANE = "test-python"
 
 #: The clause that excludes a fork's pull request specifically. A self-hosted
 #: job reachable by `pull_request` at all must carry this in its `if:`; one
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
+
+REQUIRED_PR_JOBS = ("lint", "tests", "tests-windows")
 
 
 def _job(job_id: str) -> workflows.Job:
@@ -66,6 +71,25 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
 
+def test_forks_emit_every_required_context_on_hosted_isolation() -> None:
+    """Fork PRs retain required evidence without reaching persistent runners."""
+    source = (
+        workflows.repository_root() / ".github" / "workflows" / WORKFLOW
+    ).read_text(encoding="utf-8")
+    for job_id in REQUIRED_PR_JOBS:
+        match = re.search(
+            rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [a-z][\w-]*:|\Z)",
+            source,
+        )
+        assert match is not None
+        body = match.group("body")
+        assert "head.repo.full_name != github.repository" in body
+        assert "fromJSON(" in body
+        assert "self-hosted" in body
+    assert '"ubuntu-24.04"' in source
+    assert '"windows-2025"' in source
+
+
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
     """No pull request can start the GPU tier.
 
@@ -91,9 +115,9 @@ def test_the_pull_request_lane_runs_the_full_windows_suite() -> None:
     subset under a broad Windows job name gives reviewers a green result for
     coverage that never ran.
 
-    Mutation proof: restoring the PR-only ``test-provisioning`` step and
-    skipping ``test-python`` makes this fail on the missing full-suite recipe;
-    restoring the unconditional full-suite step makes it pass again.
+    Mutation proof: replacing the Windows job's ``test-python`` step with the
+    focused ``test-windows`` subset makes this fail on the missing full-suite
+    recipe; restoring the full-suite step makes it pass again.
     """
     covering = {
         job.job_id: job.recipes_on("pull_request")
@@ -105,11 +129,8 @@ def test_the_pull_request_lane_runs_the_full_windows_suite() -> None:
         "no Windows job runs on a pull request, so the provisioning proofs "
         "skip in the only lane that gates a merge."
     )
-    from dev.guards.test_ci_no_repeated_work import SUBSET_LANES
-
-    cover = SUBSET_LANES[WINDOWS_ONLY_LANE][0]
-    assert any(cover in recipes for recipes in running.values()), (
+    assert any(FULL_LANE in recipes for recipes in running.values()), (
         f"a pull request's Windows job runs {running}, which does not include "
-        f"the full `{cover}` lane. `{WINDOWS_ONLY_LANE}` alone is only its "
-        "five-file provisioning subset."
+        f"the full `{FULL_LANE}` lane. A focused subset leaves every other "
+        "Windows-specific path, lock and process behaviour unmeasured."
     )

@@ -306,38 +306,41 @@ def _update_resource(
         _raise_win32(f"updating resource {kind}/{resource_id} in", executable)
 
 
-def stamp_icon(executable: Path, icon: Path) -> None:
-    """Replace the primary PE icon with *icon* and verify the committed bytes."""
-    if not executable.is_file():
-        raise IconResourceError(f"Windows executable does not exist: {executable}")
-    images = parse_ico(icon)
-    kernel32 = _kernel32()
+def _commit_resources(
+    executable: Path,
+    resources: tuple[tuple[tuple[int, int], bytes], ...],
+    error_type: type[RuntimeError] = IconResourceError,
+) -> None:
+    """Commit all *resources* through one Win32 update transaction."""
+    kernel32 = _kernel32(error_type)
     handle = kernel32.BeginUpdateResourceW(os.fspath(executable), False)
     if not handle:
         _raise_win32("opening resources in", executable)
     committed = False
     try:
-        for resource_id, image in enumerate(images, start=1):
-            _update_resource(
-                kernel32,
-                handle,
-                (RT_ICON, resource_id),
-                image.payload,
-                executable,
-            )
-        _update_resource(
-            kernel32,
-            handle,
-            (RT_GROUP_ICON, PRIMARY_ICON_GROUP),
-            _group_data(images),
-            executable,
-        )
+        for resource, payload in resources:
+            _update_resource(kernel32, handle, resource, payload, executable)
         if not kernel32.EndUpdateResourceW(handle, False):
             _raise_win32("committing resources in", executable)
         committed = True
     finally:
         if not committed:
             kernel32.EndUpdateResourceW(handle, True)
+
+
+def stamp_icon(executable: Path, icon: Path) -> None:
+    """Replace the primary PE icon with *icon* and verify the committed bytes."""
+    if not executable.is_file():
+        raise IconResourceError(f"Windows executable does not exist: {executable}")
+    images = parse_ico(icon)
+    resources = (
+        *(
+            ((RT_ICON, resource_id), image.payload)
+            for resource_id, image in enumerate(images, start=1)
+        ),
+        ((RT_GROUP_ICON, PRIMARY_ICON_GROUP), _group_data(images)),
+    )
+    _commit_resources(executable, resources)
     verify_icon(executable, icon)
 
 
@@ -346,25 +349,30 @@ def stamp_version_info(executable: Path, info: VersionInfo) -> None:
     if not executable.is_file():
         raise VersionResourceError(f"Windows executable does not exist: {executable}")
     payload = version_resource(info)
-    kernel32 = _kernel32(VersionResourceError)
-    handle = kernel32.BeginUpdateResourceW(os.fspath(executable), False)
-    if not handle:
-        _raise_win32("opening resources in", executable)
-    committed = False
-    try:
-        _update_resource(
-            kernel32,
-            handle,
-            (RT_VERSION, VERSION_RESOURCE_ID),
-            payload,
-            executable,
-        )
-        if not kernel32.EndUpdateResourceW(handle, False):
-            _raise_win32("committing resources in", executable)
-        committed = True
-    finally:
-        if not committed:
-            kernel32.EndUpdateResourceW(handle, True)
+    _commit_resources(
+        executable,
+        (((RT_VERSION, VERSION_RESOURCE_ID), payload),),
+        VersionResourceError,
+    )
+    verify_version_info(executable, info)
+
+
+def stamp_icon_and_version(executable: Path, icon: Path, info: VersionInfo) -> None:
+    """Commit the PE icon and version metadata in one resource transaction."""
+    if not executable.is_file():
+        raise IconResourceError(f"Windows executable does not exist: {executable}")
+    images = parse_ico(icon)
+    version_payload = version_resource(info)
+    resources = (
+        *(
+            ((RT_ICON, resource_id), image.payload)
+            for resource_id, image in enumerate(images, start=1)
+        ),
+        ((RT_GROUP_ICON, PRIMARY_ICON_GROUP), _group_data(images)),
+        ((RT_VERSION, VERSION_RESOURCE_ID), version_payload),
+    )
+    _commit_resources(executable, resources)
+    verify_icon(executable, icon)
     verify_version_info(executable, info)
 
 

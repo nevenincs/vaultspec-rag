@@ -19,6 +19,10 @@ on:
         description: "Release tag to build binaries for (e.g. vaultspec-rag-v0.4.6)"
         required: true
         type: string
+      target_sha:
+        description: "Immutable release commit to build and publish"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -43,10 +47,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.target_sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Install Python
         run: uv python install 3.13
@@ -66,7 +78,7 @@ jobs:
       - name: Upload the wheel
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: project-wheel
+          name: project-wheel-${{ inputs.target_sha }}
           path: dist/
           if-no-files-found: error
           retention-days: 5
@@ -98,7 +110,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             container: ""
           - name: linux-aarch64
-            runner: [self-hosted, ARM64, Linux]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_aarch64@sha256:29a6ceb78de5b00494e6e7456a72782a4cb54238de102e7491d15fe47789b4d1
           # NO macOS LEGS, deliberately. vaultspec-rag is CUDA-only:
@@ -124,7 +136,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.target_sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-10
@@ -133,6 +151,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Install Python
         run: uv python install 3.13
@@ -140,7 +160,7 @@ jobs:
       - name: Download the wheel the binaries carry
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: project-wheel
+          name: project-wheel-${{ inputs.target_sha }}
           path: dist
 
       - name: Set up just
@@ -166,7 +186,7 @@ jobs:
       - name: Upload binaries
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: binaries-${{ matrix.name }}
+          name: binaries-${{ inputs.target_sha }}-${{ matrix.name }}
           path: dist-bundles/
           if-no-files-found: error
           retention-days: 5
@@ -200,7 +220,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: main
+          ref: ${{ inputs.target_sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       # The ORG-WIDE distribution repository. Scoop manifests and Homebrew
       # formulae belong to the account rather than to each product, so a user
@@ -224,6 +250,8 @@ jobs:
       # here too; previously only the build matrix installed one.
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Install Python
         run: uv python install 3.13
@@ -231,7 +259,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: binaries-*
+          pattern: binaries-${{ inputs.target_sha }}-*
           path: dist-bundles/
           merge-multiple: true
 
@@ -480,6 +508,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET_SHA: ${{ inputs.target_sha }}
       RELEASE_RESULT: ${{ needs.release.result }}
     steps:
       # #422 taught this job to read the matrix out of this file, but never
@@ -495,9 +524,16 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
+          ref: ${{ inputs.target_sha }}
           path: .sparse-verify-release-assets
           sparse-checkout: .github/workflows
           sparse-checkout-cone-mode: false
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git -C .sparse-verify-release-assets rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Require artifacts on the published release
         shell: bash
@@ -634,19 +670,40 @@ jobs:
       # which is why the binaries build is dispatched rather than waiting on a
       # tag push, and this is the same move for the same reason.
       #
-      # A failure to dispatch does not fail the release: the artifacts are
-      # already attached and verified by this point, and the weekly run still
-      # covers the release eventually. It warns rather than passing silently.
-      - name: Ask the acquisition check to try this release
+      # Promotion waits for the public acquisition path. The build cannot
+      # prove that a checksum-verified bundle loads inside each supported
+      # hosted x64/ARM container; treating dispatch as best-effort promoted the
+      # release before that distinct guarantee existed.
+      - name: Require the acquisition check for this release
         if: ${{ success() }}
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          if gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"; then
-            echo "dispatched the acquisition check for ${TAG}"
-          else
-            echo "::warning::could not dispatch the acquisition check for ${TAG}; the weekly run still covers it"
-          fi
+          title="Acquisition check ${TAG} @ ${TARGET_SHA}"
+          before_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow acquisition.yml --event workflow_dispatch --limit 1 \
+            --json databaseId --jq '.[0].databaseId // 0')
+          gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f tag="$TAG" -f target_sha="$TARGET_SHA"
+
+          deadline=$((SECONDS + 180))
+          run_id=""
+          while [ -z "$run_id" ] && [ "$SECONDS" -lt "$deadline" ]; do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow acquisition.yml --event workflow_dispatch --limit 20 \
+              --json databaseId,displayTitle \
+              --jq ".[] | select(.databaseId > ${before_id} and .displayTitle == \"${title}\") | .databaseId" \
+              | head -n 1)
+            [ -n "$run_id" ] || sleep 5
+          done
+          [ -n "$run_id" ] || {
+            echo "::error::acquisition run did not appear for ${TAG} at ${TARGET_SHA}"
+            exit 1
+          }
+          echo "waiting for acquisition run ${run_id} for ${TAG} at ${TARGET_SHA}"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
 
       - name: Promote a repaired release back to latest
         if: ${{ success() }}
