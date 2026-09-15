@@ -30,6 +30,7 @@ approximation of it is the thing that silently stops working.
 from __future__ import annotations
 
 import re
+from typing import cast
 
 import pytest
 import yaml
@@ -62,12 +63,19 @@ def _normalised(text: str) -> str:
 def _reaches_default_branch(workflow: str) -> bool:
     """Whether a push to the default branch triggers *workflow*."""
     path = workflows.repository_root() / ".github" / "workflows" / workflow
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        return False
+    document = cast("dict[object, object]", loaded)
     triggers = document.get("on", document.get(True))
-    push = triggers.get("push") if isinstance(triggers, dict) else None
+    push = (
+        cast("dict[object, object]", triggers).get("push")
+        if isinstance(triggers, dict)
+        else None
+    )
     if not isinstance(push, dict):
         return False
-    branches = push.get("branches")
+    branches = cast("dict[object, object]", push).get("branches")
     return isinstance(branches, list) and DEFAULT_BRANCH in branches
 
 
@@ -85,10 +93,19 @@ def _concurrency_declarations() -> list[tuple[str, str, dict[str, object]]]:
     for path in sorted(directory.glob("*.yml")):
         if not _reaches_default_branch(path.name):
             continue
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            continue
+        document = cast("dict[object, object]", loaded)
         workflow_level = document.get("concurrency")
         if isinstance(workflow_level, dict):
-            found.append((path.name, "workflow", workflow_level))
+            found.append(
+                (
+                    path.name,
+                    "workflow",
+                    cast("dict[str, object]", workflow_level),
+                )
+            )
         for job in workflows.load_jobs(path.name):
             if job.concurrency is not None:
                 found.append((path.name, job.job_id, job.concurrency))
@@ -116,6 +133,55 @@ def test_every_self_hosted_job_is_bounded() -> None:
         "Note that a matrix job names its runner through `${{ matrix.runner }}`: "
         "these are found by resolving the matrix, and they are the "
         "longest-running jobs in the fleet.\n\n" + "\n".join(findings)
+    )
+
+
+def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
+    """setup-uv never transfers the runner's already-persistent cache.
+
+    Every merge-box runner keeps ``UV_CACHE_DIR`` on runner-owned storage.
+    Enabling the Actions cache archives that same multi-gigabyte directory in
+    each job, then downloads it onto a host where the local copy was already
+    warm. The transfer is both duplicate storage and the long pole of the job.
+
+    Mutation proof: changing one ``enable-cache`` value to true makes this fail
+    naming that job; restoring false makes this test pass again.
+    """
+    path = workflows.repository_root() / ".github" / "workflows" / "ci.yml"
+    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict), "ci.yml is not a mapping"
+    document = cast("dict[object, object]", loaded)
+    jobs = document.get("jobs")
+    assert isinstance(jobs, dict), "ci.yml has no jobs mapping"
+
+    setups: list[str] = []
+    offenders: list[str] = []
+    for job_id, raw_job in cast("dict[object, object]", jobs).items():
+        if not isinstance(raw_job, dict):
+            continue
+        steps = cast("dict[object, object]", raw_job).get("steps")
+        if not isinstance(steps, list):
+            continue
+        for step in cast("list[object]", steps):
+            if not isinstance(step, dict):
+                continue
+            step_mapping = cast("dict[object, object]", step)
+            if not str(step_mapping.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                continue
+            setups.append(str(job_id))
+            options = step_mapping.get("with")
+            enabled = (
+                cast("dict[object, object]", options).get("enable-cache")
+                if isinstance(options, dict)
+                else None
+            )
+            if enabled is not False:
+                offenders.append(f"{job_id}: enable-cache={enabled!r}")
+
+    assert setups, "ci.yml has no setup-uv steps to verify"
+    assert not offenders, (
+        "Persistent self-hosted runners must use their local UV_CACHE_DIR "
+        "without exporting it through the Actions cache.\n\n" + "\n".join(offenders)
     )
 
 

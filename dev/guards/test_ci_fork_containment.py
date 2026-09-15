@@ -83,12 +83,17 @@ def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
     )
 
 
-def test_the_pull_request_lane_runs_the_windows_only_proofs() -> None:
-    """A pull request runs the proofs that can only fail on Windows.
+def test_the_pull_request_lane_runs_the_full_windows_suite() -> None:
+    """A pull request runs the accelerator-free suite on Windows.
 
-    Guard assertion: those tests skip silently on Linux, so a lane without a
-    Windows leg reports the same green whether the behaviour they cover works
-    or was deleted.
+    The full suite contains the provisioning proofs and every other test whose
+    path, lock, process or subprocess behaviour differs on Windows. A narrow
+    subset under a broad Windows job name gives reviewers a green result for
+    coverage that never ran.
+
+    Mutation proof: restoring the PR-only ``test-provisioning`` step and
+    skipping ``test-python`` makes this fail on the missing full-suite recipe;
+    restoring the unconditional full-suite step makes it pass again.
     """
     covering = {
         job.job_id: job.recipes_on("pull_request")
@@ -103,9 +108,8 @@ def test_the_pull_request_lane_runs_the_windows_only_proofs() -> None:
     from dev.guards.test_ci_no_repeated_work import SUBSET_LANES
 
     cover = SUBSET_LANES[WINDOWS_ONLY_LANE][0]
-    assert any(
-        WINDOWS_ONLY_LANE in recipes or cover in recipes for recipes in running.values()
-    ), (
-        f"a pull request's Windows job runs {running}, which includes neither "
-        f"`{WINDOWS_ONLY_LANE}` nor the lane that contains it, `{cover}`."
+    assert any(cover in recipes for recipes in running.values()), (
+        f"a pull request's Windows job runs {running}, which does not include "
+        f"the full `{cover}` lane. `{WINDOWS_ONLY_LANE}` alone is only its "
+        "five-file provisioning subset."
     )
