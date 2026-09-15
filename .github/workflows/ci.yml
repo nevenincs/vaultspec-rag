@@ -138,19 +138,6 @@ jobs:
         with:
           enable-cache: false
 
-      # Native binaries, so they cannot be pinned in the lockfile. The recipes
-      # fall back to the pinned container image when either is absent; these
-      # steps mean the fallback is not the normal path on the fleet.
-      - name: Install lychee
-        uses: taiki-e/install-action@v2
-        with:
-          tool: lychee
-
-      - name: Install taplo
-        uses: taiki-e/install-action@v2
-        with:
-          tool: taplo-cli
-
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
         with:
@@ -593,7 +580,7 @@ jobs:
 
   dependency-audit:
     name: "Audit: Dependency Advisories (Linux)"
-    if: github.event_name != 'pull_request' && github.event_name != 'schedule'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
