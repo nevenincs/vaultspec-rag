@@ -1,6 +1,6 @@
 name: Acquisition check
 
-run-name: Acquisition check ${{ inputs.tag || github.event.release.tag_name || 'latest' }}
+run-name: Acquisition check ${{ inputs.tag || github.event.release.tag_name || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
 
 # Everything else in this repository tests what is IN the tree. This tests what
 # a user actually receives: it downloads the published target bundle onto a machine
@@ -42,9 +42,17 @@ on:
         description: 'Release tag to acquire (defaults to the latest release)'
         required: false
         type: string
+      target_sha:
+        description: 'Immutable producer commit expected by the release gate'
+        required: false
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: acquisition-${{ inputs.tag || github.event.release.tag_name || 'latest' }}
+  cancel-in-progress: false
 
 jobs:
   acquire:
