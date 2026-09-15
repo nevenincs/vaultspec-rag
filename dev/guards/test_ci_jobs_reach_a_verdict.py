@@ -54,11 +54,6 @@ MAIN_SHA_CLAUSE = (
 #: expression is the sharper form, which keeps pull requests superseding.
 CANCEL_IN_PROGRESS = (False, "${{ github.ref != 'refs/heads/main' }}")
 
-#: Merge-box jobs that report without deciding the run, because their platform
-#: is not yet green. A platform leaves this set when its failure count reaches
-#: zero; a gating job never joins it.
-ADVISORY_JOBS = frozenset({"tests-windows"})
-
 
 def _normalised(text: str) -> str:
     """Collapse an expression's whitespace so formatting is not a finding."""
@@ -175,24 +170,22 @@ def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
     )
 
 
-def test_only_the_named_platform_jobs_are_advisory() -> None:
-    """Exactly the jobs in :data:`ADVISORY_JOBS` finish without deciding the run.
+def test_no_merge_box_job_is_advisory() -> None:
+    """Every merge-box job that fails also fails the run.
 
-    A job-level ``continue-on-error`` keeps a failed job visible while the run
-    still concludes success. Added to a gating job, it silently stops that job
-    failing anything; removed from a platform that is not yet green, it turns
-    every run red on failures nobody has triaged.
+    A job-level ``continue-on-error`` shows a failed job while the run still
+    concludes success, so a pull request merges over failures that everyone
+    can see and nothing stops. A failing test is fixed, not reported around.
 
-    Mutation proof: deleting ``continue-on-error`` from ``tests-windows`` makes
-    this fail naming it as missing; restoring it makes this pass again.
+    Mutation proof: adding ``continue-on-error: true`` to ``tests-windows``
+    makes this fail naming that job; removing it makes this pass again.
     """
-    advisory = {
+    advisory = sorted(
         job.job_id for job in workflows.load_jobs("ci.yml") if job.continue_on_error
-    }
-    assert advisory == ADVISORY_JOBS, (
-        f"ci.yml's advisory jobs are {sorted(advisory)}, expected "
-        f"{sorted(ADVISORY_JOBS)}. Missing: {sorted(ADVISORY_JOBS - advisory)}; "
-        f"unexpected: {sorted(advisory - ADVISORY_JOBS)}."
+    )
+    assert not advisory, (
+        f"ci.yml jobs {advisory} declare continue-on-error, so their failures "
+        "never fail the run. Fix what fails instead."
     )
 
 

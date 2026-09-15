@@ -307,6 +307,9 @@ class GPUResidencyMixin:
         )
         with self._gpu_lock, self._lock:
             detached_slot_count = len(self._projects)
+            runtime_detached = any(
+                slot.compute_runtime is not None for slot in self._projects.values()
+            )
             model_detached = self._model is not None
             reranker_detached = self._reranker is not None
             recipe = self._gpu_residency_recipe
@@ -319,7 +322,13 @@ class GPUResidencyMixin:
                 slot.compute_runtime = None
             self._model = None
             self._reranker = None
-        self._release_gpu_residency()
+        # Releasing reads the CUDA allocator, which loads torch on first use. A
+        # pause that detached no model, reranker, or slot runtime freed nothing
+        # on the device: there is no cache to flush, no baseline to re-measure,
+        # and no admission verdict it made stale. Loading torch for it costs an
+        # idle service seconds of pause latency and buys nothing.
+        if model_detached or reranker_detached or runtime_detached:
+            self._release_gpu_residency()
         return GPUReleaseEvidence(
             admission_epoch=admission_epoch,
             detached_slot_count=detached_slot_count,

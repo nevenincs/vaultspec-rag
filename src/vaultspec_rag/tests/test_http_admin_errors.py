@@ -129,7 +129,7 @@ class _AuthDeadlineHandler(QuietHandler):
             self._json(200, {"service_token": self.service_token})
             return
         if authorization == f"Bearer {self.service_token}":
-            time.sleep(0.300)
+            time.sleep(2.0)
             self._json(200, {"projects": []})
             return
         time.sleep(0.005)
@@ -335,8 +335,8 @@ class TestAdminErrorSurfacing:
         the call must expire against the ORIGINAL deadline somewhere at or
         after the health-token stage. Which of those stages the clock lands in
         is a host-timing detail, so the assertion names the set rather than one
-        member - a reset deadline would let the 300ms retry complete and return
-        a result instead of timing out at all.
+        member - a reset deadline would let the two-second retry complete and
+        return a result instead of timing out at all.
         """
         _AuthDeadlineHandler.requests = []
         server, port = _serve(_AuthDeadlineHandler)
@@ -362,9 +362,10 @@ class TestAdminErrorSurfacing:
                 "authenticated retry response",
             )
         ), message
-        # Bounded well below the 300ms retry sleep: had the deadline been
-        # reset at re-auth, the call would have run to ~0.3s and succeeded.
-        assert 0.100 <= elapsed < 0.280
+        # Bounded far below the two-second retry sleep: had the deadline been
+        # reset at re-auth, the call would have run past two seconds and
+        # succeeded. The margin absorbs a loaded host's scheduling stalls.
+        assert 0.100 <= elapsed < 1.0
         assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
         assert len(_AuthDeadlineHandler.requests) <= 3
 
