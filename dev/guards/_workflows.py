@@ -115,6 +115,8 @@ class Job:
         steps: The raw step mappings, in order.
         matrix_axes: The matrix variables this job varies over, so a name
             that omits them can be recognised as one label over many rows.
+        continue_on_error: Whether the job declares ``continue-on-error: true``,
+            so its failure is reported without failing the run.
     """
 
     workflow: str
@@ -126,6 +128,7 @@ class Job:
     concurrency: dict[str, Any] | None
     steps: tuple[dict[str, Any], ...]
     matrix_axes: tuple[str, ...] = ()
+    continue_on_error: bool = False
 
     @property
     def platforms(self) -> frozenset[str]:
@@ -329,6 +332,7 @@ def _job(workflow: str, job_id: str, body: dict[str, Any]) -> Job:
             step for step in (body.get("steps") or []) if isinstance(step, dict)
         ),
         matrix_axes=_matrix_axis_names(body),
+        continue_on_error=body.get("continue-on-error") is True,
     )
 
 

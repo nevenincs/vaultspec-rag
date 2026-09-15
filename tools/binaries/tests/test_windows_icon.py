@@ -22,6 +22,7 @@ from tools.binaries.windows_icon import (
     VersionResourceError,
     parse_ico,
     stamp_icon,
+    stamp_icon_and_version,
     stamp_version_info,
     verify_icon,
     verify_version_info,
@@ -152,9 +153,8 @@ def test_real_pe_stamp_is_exact_and_precedes_checksum(tmp_path: Path) -> None:
     executable = tmp_path / "python.exe"
     shutil.copy2(sys.executable, executable)
 
-    stamp_icon(executable, APPLICATION_ICON)
     info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
-    stamp_version_info(executable, info)
+    stamp_icon_and_version(executable, APPLICATION_ICON, info)
     stamped = executable.read_bytes()
     checksum = write_checksum(executable)
 

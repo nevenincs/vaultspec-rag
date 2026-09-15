@@ -30,6 +30,7 @@ approximation of it is the thing that silently stops working.
 from __future__ import annotations
 
 import re
+from typing import cast
 
 import pytest
 import yaml
@@ -62,12 +63,19 @@ def _normalised(text: str) -> str:
 def _reaches_default_branch(workflow: str) -> bool:
     """Whether a push to the default branch triggers *workflow*."""
     path = workflows.repository_root() / ".github" / "workflows" / workflow
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        return False
+    document = cast("dict[object, object]", loaded)
     triggers = document.get("on", document.get(True))
-    push = triggers.get("push") if isinstance(triggers, dict) else None
+    push = (
+        cast("dict[object, object]", triggers).get("push")
+        if isinstance(triggers, dict)
+        else None
+    )
     if not isinstance(push, dict):
         return False
-    branches = push.get("branches")
+    branches = cast("dict[object, object]", push).get("branches")
     return isinstance(branches, list) and DEFAULT_BRANCH in branches
 
 
@@ -85,10 +93,19 @@ def _concurrency_declarations() -> list[tuple[str, str, dict[str, object]]]:
     for path in sorted(directory.glob("*.yml")):
         if not _reaches_default_branch(path.name):
             continue
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            continue
+        document = cast("dict[object, object]", loaded)
         workflow_level = document.get("concurrency")
         if isinstance(workflow_level, dict):
-            found.append((path.name, "workflow", workflow_level))
+            found.append(
+                (
+                    path.name,
+                    "workflow",
+                    cast("dict[str, object]", workflow_level),
+                )
+            )
         for job in workflows.load_jobs(path.name):
             if job.concurrency is not None:
                 found.append((path.name, job.job_id, job.concurrency))
@@ -116,6 +133,59 @@ def test_every_self_hosted_job_is_bounded() -> None:
         "Note that a matrix job names its runner through `${{ matrix.runner }}`: "
         "these are found by resolving the matrix, and they are the "
         "longest-running jobs in the fleet.\n\n" + "\n".join(findings)
+    )
+
+
+def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
+    """setup-uv never transfers the runner's already-persistent cache.
+
+    Every merge-box runner keeps ``UV_CACHE_DIR`` on runner-owned storage.
+    Enabling the Actions cache archives that same multi-gigabyte directory in
+    each job, then downloads it onto a host where the local copy was already
+    warm. The transfer is both duplicate storage and the long pole of the job.
+
+    Mutation proof: changing one ``enable-cache`` value to true makes this fail
+    naming that job; restoring false makes this test pass again.
+    """
+    setups: list[str] = []
+    offenders: list[str] = []
+    for job in workflows.load_jobs("ci.yml"):
+        for step in job.steps:
+            if not str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                continue
+            setups.append(job.job_id)
+            options = step.get("with")
+            enabled = (
+                cast("dict[str, object]", options).get("enable-cache")
+                if isinstance(options, dict)
+                else None
+            )
+            if enabled is not False:
+                offenders.append(f"{job.job_id}: enable-cache={enabled!r}")
+
+    assert setups, "ci.yml has no setup-uv steps to verify"
+    assert not offenders, (
+        "Persistent self-hosted runners must use their local UV_CACHE_DIR "
+        "without exporting it through the Actions cache.\n\n" + "\n".join(offenders)
+    )
+
+
+def test_no_merge_box_job_is_advisory() -> None:
+    """Every merge-box job that fails also fails the run.
+
+    A job-level ``continue-on-error`` shows a failed job while the run still
+    concludes success, so a pull request merges over failures that everyone
+    can see and nothing stops. A failing test is fixed, not reported around.
+
+    Mutation proof: adding ``continue-on-error: true`` to ``tests-windows``
+    makes this fail naming that job; removing it makes this pass again.
+    """
+    advisory = sorted(
+        job.job_id for job in workflows.load_jobs("ci.yml") if job.continue_on_error
+    )
+    assert not advisory, (
+        f"ci.yml jobs {advisory} declare continue-on-error, so their failures "
+        "never fail the run. Fix what fails instead."
     )
 
 
@@ -159,18 +229,26 @@ def test_main_runs_never_share_a_concurrency_group() -> None:
 
 
 def test_the_merge_box_groups_every_job_it_runs() -> None:
-    """Every merge-box job declares a group, so none is left ungoverned.
+    """Workflow- or job-level grouping governs every merge-box job.
 
     A job with no concurrency at all is never cancelled, which is safe - but
     it is also never superseded on a pull request, so a branch pushed five
     times queues five copies of it on a serial fleet. Declaring the group is
     what makes the main-only exemption above meaningful.
     """
-    findings = [
-        f"ci.yml:{job.job_id} declares no concurrency group"
-        for job in workflows.load_jobs("ci.yml")
-        if job.concurrency is None
-    ]
+    workflow_grouped = any(
+        workflow == "ci.yml" and where == "workflow"
+        for workflow, where, _concurrency in _concurrency_declarations()
+    )
+    findings = (
+        []
+        if workflow_grouped
+        else [
+            f"ci.yml:{job.job_id} declares no concurrency group"
+            for job in workflows.load_jobs("ci.yml")
+            if job.concurrency is None
+        ]
+    )
     assert not findings, (
         "A merge-box job is not in a concurrency group, so pushes to a branch "
         "queue one copy of it each on a serial fleet.\n\n" + "\n".join(findings)

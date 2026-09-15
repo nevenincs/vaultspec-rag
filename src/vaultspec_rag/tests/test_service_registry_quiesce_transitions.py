@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 from typing import TYPE_CHECKING
 
 import pytest
 
+from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_models import (
@@ -71,6 +75,48 @@ def test_concurrent_pause_calls_share_one_terminal_transition() -> None:
     assert outcomes[0].code is QuiesceTransitionCode.QUIESCED
     assert outcomes[0].snapshot.state is QuiesceState.QUIESCED
     assert outcomes[0].snapshot.safe_to_borrow_gpu
+
+
+def test_pausing_a_registry_with_no_gpu_residency_never_loads_torch(
+    tmp_path: Path,
+) -> None:
+    """A pause that detaches nothing has no device memory to release.
+
+    Releasing reads the CUDA allocator, and the first read in a process imports
+    torch - seconds on Windows, long enough that a second caller joining the
+    same pause timed out waiting for it while the owner still succeeded. The
+    child interpreter matters: this one may already hold torch from another
+    test, which would make the final assertion pass without proving anything.
+    The first assertion names the other branch, so a registry import that
+    itself loads torch fails distinctly rather than passing vacuously.
+
+    Mutation check: releasing residency unconditionally after the detach makes
+    the child exit non-zero on the idle-pause assertion; restoring the guard
+    passes.
+    """
+    probe = (
+        "import sys\n"
+        "from vaultspec_rag.service import ServiceRegistry\n"
+        "assert 'torch' not in sys.modules, 'importing the registry loaded torch'\n"
+        "transition = ServiceRegistry().quiesce_resources(timeout_seconds=5.0)\n"
+        "assert transition.snapshot.state.value == 'quiesced', transition\n"
+        "assert 'torch' not in sys.modules, 'an idle pause loaded torch'\n"
+    )
+    env = {
+        **os.environ,
+        EnvVar.STATUS_DIR.value: str(tmp_path / "status"),
+        EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant" / "storage"),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        timeout=120,
+    )
+
+    assert proc.returncode == 0, proc.stderr
 
 
 def test_terminal_transition_requests_are_successful_without_new_side_effects() -> None:

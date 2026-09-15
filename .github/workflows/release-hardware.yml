@@ -1,0 +1,67 @@
+name: Release hardware validation
+
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Immutable release commit to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-hardware-${{ inputs.target_sha }}
+  cancel-in-progress: false
+
+jobs:
+  mps:
+    name: Release MPS correctness
+    timeout-minutes: 60
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      UV_PYTHON: '3.13'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - uses: ./.github/actions/contain-writes
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+      - uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+      - run: just init
+      - run: just test-mps
+
+  cuda:
+    name: Release CUDA correctness
+    timeout-minutes: 90
+    runs-on: [self-hosted, windows, gpu, cuda]
+    env:
+      UV_PYTHON: '3.13'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_sha }}
+      - name: Require the exact release commit
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'release SHA mismatch' }
+      - uses: ./.github/actions/contain-writes
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+      - uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+      - run: just init
+      - run: just test-gpu

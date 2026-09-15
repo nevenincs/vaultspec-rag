@@ -45,6 +45,8 @@ on:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: '17 5 * * 3'
   workflow_dispatch:
     inputs:
       # The two tiers that cannot simply run on a schedule: the GPU tier is
@@ -62,9 +64,20 @@ on:
           - macos
           - gpu
           - macos-and-gpu
+      cache_mode:
+        description: "Runner-local cache namespace"
+        type: choice
+        default: normal
+        options:
+          - normal
+          - isolated
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # NO_COLOR alone disables colour. A non-empty FORCE_COLOR (even "0") forces
@@ -72,10 +85,18 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
+  CI_CACHE_MODE: ${{ inputs.cache_mode || 'normal' }}
+
+# Every runner in this workflow is persistent, and `contain-writes` points
+# `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
+# archive that same multi-gigabyte directory after every job and download it
+# again before the next one, making the remote cache slower than the warm local
+# cache it duplicates. Each setup therefore keeps Actions caching explicitly
+# disabled; uv still reads and populates the persistent runner cache normally.
 
 jobs:
   lint:
-    name: "Lint: Source, Documents and Workflows (Linux)"
+    name: "Lint: Static Validation (Linux)"
     # ONE STEP, and that is the point. This job used to hand-list every
     # dimension of `just check-all` except one, with that one running as a
     # separate job of its own - which is the exact drift `dev/ci_contract.py`
@@ -96,12 +117,12 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'schedule'
     timeout-minutes: 40
-    concurrency:
-      group: ci-lint-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on: [self-hosted, Linux, X64, build]
+    # Same-repository work uses the persistent fleet. A fork must still emit
+    # the required context, but only on GitHub-hosted isolation where its
+    # workflow cannot reach fleet state or credentials.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -121,20 +142,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
-
-      # Native binaries, so they cannot be pinned in the lockfile. The recipes
-      # fall back to the pinned container image when either is absent; these
-      # steps mean the fallback is not the normal path on the fleet.
-      - name: Install lychee
-        uses: taiki-e/install-action@v2
-        with:
-          tool: lychee
-
-      - name: Install taplo
-        uses: taiki-e/install-action@v2
-        with:
-          tool: taplo-cli
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -148,19 +156,14 @@ jobs:
         run: just check-all
 
   tests:
-    name: "Test: Full Suite py${{ matrix.python-version }} (Linux)"
+    name: "Test: Python ${{ matrix.python-version }} Correctness (Linux)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'schedule'
     timeout-minutes: 45
-    concurrency:
-      # The matrix leg is part of the group, so the two interpreters queue
-      # independently. Without it both legs share one group and serialise.
-      group: ci-tests-${{ github.ref }}-${{ matrix.python-version }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
       # failure is the whole signal, and cancelling the other hides whether
@@ -183,15 +186,16 @@ jobs:
       # still resolves inside one.
       - uses: ./.github/actions/contain-writes
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
+          # setup-python's Linux 3.13 build depends on LD_LIBRARY_PATH. The
+          # product deliberately removes loader variables from untrusted hook
+          # children, so those children cannot safely inherit that interpreter.
+          # uv's managed distributions remain executable under the same
+          # curated environment that production uses.
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -206,49 +210,39 @@ jobs:
 
   # THE WINDOWS AND macOS JOBS.
   #
-  # Both are ADVISORY (`continue-on-error`) and that is a deliberate, temporary
-  # state rather than a permanent exemption. Neither platform is green: the
-  # Linux legs pass, Windows fails a handful of source-scanning guards, and
-  # macOS fails on the order of a hundred tests that have never been triaged.
-  # Landing them as blocking would turn every release red on day one and the
-  # pressure would be to delete the jobs rather than fix the platform.
+  # Windows GATES. Its full suite fails the run like a Linux leg does, because
+  # a test that fails only on Windows is a defect on a supported platform, and
+  # a failure reported without consequence ships anyway.
   #
-  # So they report instead. The failures become visible and attributable, and
-  # each platform flips to blocking - by deleting its `continue-on-error` -
-  # once its count reaches zero. Ratchet down, never up; an advisory job that
-  # nobody ever promotes is just an expensive way to ignore a platform.
+  # macOS is still ADVISORY, through `continue-on-error` on its test step. It
+  # has never been fully triaged, and it runs only on schedule and dispatch, so
+  # it is never a pull request's verdict. It flips to gating by deleting that
+  # flag once its failure count reaches zero. Ratchet down, never up.
   #
   # THAT STATUS IS NOT IN THE NAME, and the omission is deliberate. A job name
   # says what is COVERED, so that a reviewer can find the row that covers the
   # file they changed; whether a row can fail the merge is a property of the
-  # merge rules, not of the coverage. Read it here and in
-  # `continue-on-error` above each job.
+  # merge rules, not of the coverage. Read it here and in the macOS test
+  # step's `continue-on-error`.
   #
-  # THIS JOB ABSORBED THE WINDOWS RECIPE GATE. That was a separate job proving
-  # `just` recipes execute under `cmd.exe` at all - init, init again, and one
-  # real gate. Its assertions are steps here now: the recipe-execution claim is
-  # proved by this job running recipes, the idempotence claim by calling `init`
-  # twice, and the gate it ran was `check-python`, which reads only committed
-  # files and so was re-answering on Windows what the Linux job had already
-  # answered.
+  # The full accelerator-free suite runs on Windows for both pull requests and
+  # main. It already includes the provisioning proofs; running their subset as
+  # a separate PR step measured only those five files while letting every other
+  # Windows-specific path, lock and process behaviour reach main untested.
   #
   # Neither job uses actions/setup-python. The GPU job below documents why: its
   # MSI registry cleanup fails under a runner service account. uv fetches the
   # interpreter named by UV_PYTHON instead, which is what the suite runs under
   # anyway.
   tests-windows:
-    name: "Test: Python (Windows)"
+    name: "Test: Full Suite (Windows)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true
+    if: github.event_name != 'schedule'
     timeout-minutes: 60
-    concurrency:
-      group: ci-tests-windows-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
     env:
       UV_PYTHON: "3.13"
       # This runner's agent is a Windows service, so its account is SYSTEM and
@@ -271,7 +265,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Same pinned, checksum-verified download the GPU job uses: this
       # runner's service account has no bash on PATH, so the marketplace
@@ -301,25 +295,13 @@ jobs:
       - name: The worktree reports itself initialized
         run: just init-check
 
-      # The provisioning proofs drive real uv against real environments, and
-      # the failure they exist to catch - a forced reinstall removing an
-      # environment's contents and then dying on a file something else holds -
-      # is a Windows file-locking behaviour the Linux legs cannot reproduce.
-      # They are a SELECTION WITHIN the full suite below, so a pull request
-      # pays for the five files that can only fail here rather than for the
-      # whole suite on the machine with the least headroom.
-      - name: Provisioning proofs
-        if: github.event_name == 'pull_request'
-        run: just test-provisioning
-
-      - name: Run tests
-        if: github.event_name != 'pull_request'
+      - name: Run full test suite
         run: just test-python
 
   tests-macos:
     name: "Test: Full Suite and Accelerator Backend (macOS)"
-    # Main pushes and explicit dispatches only. The main-push result
-    # is the pre-publication support gate; pull requests from this public repo
+    # Scheduled diagnostics and explicit dispatches only. Exact-release-SHA
+    # validation lives in release-hardware.yml; pull requests from this public repo
     # never execute their code on a self-hosted workstation. The macOS runner is a laptop under
     # an AC-power policy: on battery it is deliberately booted out of the
     # fleet, so it is absent for long stretches by design.
@@ -331,10 +313,10 @@ jobs:
     # of the label-with-no-runner bug this workflow was just cleaned of, and
     # equally invisible.
     #
-    # Main integration is deliberate. The machine must be plugged in before
-    # the repository is allowed to advertise MPS support.
+    # Release integration is deliberate. The machine must be plugged in before
+    # publish.yml is allowed to advertise MPS support for the selected SHA.
     if: >-
-      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
     timeout-minutes: 60
@@ -367,7 +349,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -468,8 +450,9 @@ jobs:
     # machine carrying the cuda label - and blocked every other GPU run while
     # it did. Still dispatch-only, so a fork pull request can never reach it.
     if: >-
-      github.event_name == 'workflow_dispatch' &&
-      (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu')
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu'))
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
@@ -501,7 +484,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Install `just` without the bash-based marketplace action: this runner's
       # service account has no `bash` on PATH, so a pinned, SHA256-verified
@@ -591,7 +574,7 @@ jobs:
 
   dependency-audit:
     name: "Audit: Dependency Advisories (Linux)"
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
@@ -616,7 +599,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
