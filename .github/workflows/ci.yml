@@ -114,9 +114,12 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule'
     timeout-minutes: 40
-    runs-on: [self-hosted, Linux, X64, build]
+    # Same-repository work uses the persistent fleet. A fork must still emit
+    # the required context, but only on GitHub-hosted isolation where its
+    # workflow cannot reach fleet state or credentials.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -155,9 +158,9 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule'
     timeout-minutes: 45
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
       # failure is the whole signal, and cancelling the other hides whether
@@ -240,9 +243,9 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'schedule'
     timeout-minutes: 60
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
     env:
       UV_PYTHON: "3.13"
       # This runner's agent is a Windows service, so its account is SYSTEM and

@@ -16,6 +16,8 @@ never start it regardless of the guard every other self-hosted job carries.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from dev.guards import _workflows as workflows
@@ -34,6 +36,8 @@ WINDOWS_ONLY_LANE = "test-windows"
 #: job reachable by `pull_request` at all must carry this in its `if:`; one
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
+
+REQUIRED_PR_JOBS = ("lint", "tests", "tests-windows")
 
 
 def _job(job_id: str) -> workflows.Job:
@@ -64,6 +68,25 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
         and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
     }
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
+
+
+def test_forks_emit_every_required_context_on_hosted_isolation() -> None:
+    """Fork PRs retain required evidence without reaching persistent runners."""
+    source = (
+        workflows.repository_root() / ".github" / "workflows" / WORKFLOW
+    ).read_text(encoding="utf-8")
+    for job_id in REQUIRED_PR_JOBS:
+        match = re.search(
+            rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [a-z][\w-]*:|\Z)",
+            source,
+        )
+        assert match is not None
+        body = match.group("body")
+        assert "head.repo.full_name != github.repository" in body
+        assert "fromJSON(" in body
+        assert "self-hosted" in body
+    assert '"ubuntu-24.04"' in source
+    assert '"windows-2025"' in source
 
 
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
