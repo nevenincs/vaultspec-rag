@@ -47,6 +47,8 @@ jobs:
       - name: Set up uv
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Regenerate and push uv.lock
         if: steps.release.outputs.pr && !steps.release.outputs.release_created

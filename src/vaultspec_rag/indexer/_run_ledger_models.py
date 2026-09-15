@@ -136,12 +136,13 @@ def open_ledger_connection(
     one writer and removes the escalation entirely.
 
     A caller that gates durable format supplies ``read_only_preflight``. Existing
-    files are then inspected through a side-effect-free read-only connection
-    before a writable handle can create or alter journal sidecars. Immutable mode
-    protects WAL shared memory; an active rollback journal instead needs SQLite's
-    locked read-only snapshot. ``before_journal_mode`` may atomically initialize a
-    preflight-approved empty file before the normal WAL conversion. The returned
-    connection always uses WAL for durable files.
+    files are then inspected through a read-only connection before a writable
+    handle can create or alter durable database contents. The reader participates
+    in SQLite's locking and WAL protocol so its snapshot remains coherent while a
+    peer writes; that protocol may update shared-memory bookkeeping.
+    ``before_journal_mode`` may atomically initialize a preflight-approved empty
+    file before the normal WAL conversion. The returned connection always uses WAL
+    for durable files.
 
     The journal mode is a property of the database file, not of the connection.
     A file that will not hold the conversion cannot honour the contract - a
@@ -149,14 +150,8 @@ def open_ledger_connection(
     returning a connection that would quietly reintroduce the starvation.
     """
     if read_only_preflight is not None and path != Path(":memory:") and path.exists():
-        # Immutable mode cannot update WAL shared memory. With a live rollback
-        # journal, however, it could observe the writer's uncommitted in-place
-        # pages, so a normal read-only connection must honor the journal locks.
-        query = "mode=ro"
-        if not Path(f"{path}-journal").exists():
-            query += "&immutable=1"
         preflight_connection = sqlite3.connect(
-            f"{path.resolve().as_uri()}?{query}",
+            f"{path.resolve().as_uri()}?mode=ro",
             uri=True,
             timeout=LEDGER_BUSY_TIMEOUT_SECONDS,
         )

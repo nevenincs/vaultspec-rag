@@ -1,7 +1,9 @@
 name: Acquisition check
 
+run-name: Acquisition check ${{ inputs.tag || github.event.release.tag_name || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
+
 # Everything else in this repository tests what is IN the tree. This tests what
-# a user actually receives: it downloads the published binary onto a machine
+# a user actually receives: it downloads the published target bundle onto a machine
 # with no checkout, no warm cache and no toolchain, and asks the one question
 # the build cannot answer about itself - does the dynamic loader accept it.
 #
@@ -40,9 +42,17 @@ on:
         description: 'Release tag to acquire (defaults to the latest release)'
         required: false
         type: string
+      target_sha:
+        description: 'Immutable producer commit expected by the release gate'
+        required: false
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: acquisition-${{ inputs.tag || github.event.release.tag_name || 'latest' }}
+  cancel-in-progress: false
 
 jobs:
   acquire:
@@ -57,37 +67,37 @@ jobs:
           # slipped a version or two. RHEL 8's glibc is 2.28 exactly, which
           # makes these the two legs that can actually fail when a container
           # pin in binaries.yml stops doing its job.
-          - image: almalinux:8
-            setup: dnf install -y -q curl
+          - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
+            setup: dnf install -y -q curl ca-certificates unzip jq
             arch: x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: almalinux:8
-            setup: dnf install -y -q curl
+          - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
+            setup: dnf install -y -q curl ca-certificates unzip jq
             arch: aarch64
-            runner: [self-hosted, ARM64, Linux]
+            runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
           # Above the floor and below the build host, which is the band a user
           # is most likely to be in. bookworm is 2.36, jammy is 2.35.
-          - image: debian:bookworm-slim
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+          - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: debian:bookworm-slim
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+          - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
-            runner: [self-hosted, ARM64, Linux]
+            runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
-          - image: ubuntu:22.04
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+          - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: ubuntu:22.04
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates
+          - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
-            runner: [self-hosted, ARM64, Linux]
+            runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
     # A matrix job names its runner through `${ matrix.runner }`, which is
     # invisible to any check grepping for `self-hosted` - and these are the
@@ -108,7 +118,10 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
           TRIPLE: ${{ matrix.triple }}
+          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
+          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
         run: |
           set -eux
           tag="${EVENT_TAG:-${INPUT_TAG:-}}"
@@ -117,27 +130,122 @@ jobs:
                   | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
           fi
           [ -n "${tag}" ] || { echo "::error::could not resolve a release tag"; exit 1; }
+          case "${tag}" in
+            vaultspec-rag-v[0-9]*) ;;
+            *) echo "::error::refusing unexpected release tag: ${tag}"; exit 1 ;;
+          esac
           echo "TAG=${tag}" >> "$GITHUB_ENV"
 
           mkdir -p /opt/acq
-          # BOTH executables. They are built the same way from the same spec, so
-          # a floor regression would hit both - but they are separate assets and
-          # a release can attach one without the other, which is exactly the
-          # partial-release shape the guard in binaries.yml exists to catch.
-          for name in vaultspec-rag vaultspec-search-mcp; do
-            curl -fsSL -o "/opt/acq/${name}" \
-              "https://github.com/${REPO}/releases/download/${tag}/${name}-${TRIPLE}"
-            chmod +x "/opt/acq/${name}"
-          done
+          release_url="https://github.com/${REPO}/releases/download/${tag}"
+          archive="${tag}-${TRIPLE}${ARCHIVE_SUFFIX}"
+          checksum_manifest=/opt/acq/SHA256SUMS
+          archive_path="/opt/acq/${archive}"
 
-      - name: The loader must accept them
+          # The archive and its checksum manifest are the public release
+          # contract. A raw target-qualified executable is a private build
+          # intermediate and must never be accepted by acquisition.
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' \
+            -o "${checksum_manifest}" "${release_url}/SHA256SUMS"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' \
+            -o "${archive_path}" "${release_url}/${archive}"
+
+          # SHA256SUMS also covers the wheel and sdist, so select exactly this
+          # target archive before invoking sha256sum. Missing or duplicate
+          # entries fail closed; extraction is never reached on a mismatch.
+          checksum_line=$(awk -v archive="${archive}" \
+            '($2 == archive || $2 == "*" archive) { print; count++ }
+             END { if (count != 1) exit 1 }' "${checksum_manifest}")
+          [ -n "${checksum_line}" ] || {
+            echo "::error::SHA256SUMS has no unique entry for ${archive}"; exit 1;
+          }
+          printf '%s\n' "${checksum_line}" > "${archive_path}.sha256"
+          (cd /opt/acq && sha256sum -c "${archive}.sha256")
+
+          # A matching archive checksum proves integrity, but not which source
+          # commit produced the bytes. Release-gated dispatches name the exact
+          # producer SHA; bind that request to the manifest inside the archive.
+          if [ -n "${TARGET_SHA:-}" ]; then
+            case "${TARGET_SHA}" in
+              *[!0-9a-f]*|'')
+                echo "::error::target_sha is not a lowercase full commit ID"; exit 1 ;;
+            esac
+            [ "${#TARGET_SHA}" -eq 40 ] || {
+              echo "::error::target_sha is not a 40-character commit ID"; exit 1;
+            }
+            case "${ARCHIVE_SUFFIX}" in
+              .tar.gz) tar -xOzf "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
+              .zip) unzip -p "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
+            esac
+            producer_sha=$(jq -er '.source_revision | select(type == "string")' /opt/acq/manifest.json)
+            [ "${producer_sha}" = "${TARGET_SHA}" ] || {
+              echo "::error::bundle producer ${producer_sha} does not match requested ${TARGET_SHA}"; exit 1;
+            }
+          fi
+
+      - name: Extract the stable executables
+        env:
+          TRIPLE: ${{ matrix.triple }}
+          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
+          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="/opt/acq/${TAG}-${TRIPLE}${ARCHIVE_SUFFIX}"
+          destination=/opt/acq/extracted
+          mkdir -p "${destination}"
+
+          case "${ARCHIVE_SUFFIX}" in
+            .tar.gz)
+              members=$(tar -tzf "${archive}")
+              for name in vaultspec-rag vaultspec-search-mcp; do
+                member="${name}${EXECUTABLE_SUFFIX}"
+                count=$(printf '%s\n' "${members}" | grep -Fxc -- "${member}" || true)
+                [ "${count}" -eq 1 ] || {
+                  echo "::error::bundle is missing exactly one ${member}"; exit 1;
+                }
+                tar -xOzf "${archive}" "${member}" > "${destination}/${member}"
+                chmod +x "${destination}/${member}"
+              done
+              ;;
+            .zip)
+              members=$(unzip -Z1 "${archive}")
+              for name in vaultspec-rag vaultspec-search-mcp; do
+                member="${name}${EXECUTABLE_SUFFIX}"
+                count=$(printf '%s\n' "${members}" | grep -Fxc -- "${member}" || true)
+                [ "${count}" -eq 1 ] || {
+                  echo "::error::bundle is missing exactly one ${member}"; exit 1;
+                }
+                unzip -p "${archive}" "${member}" > "${destination}/${member}"
+                chmod +x "${destination}/${member}"
+              done
+              ;;
+            *)
+              echo "::error::unsupported bundle format: ${ARCHIVE_SUFFIX}"
+              exit 1
+              ;;
+          esac
+
+      - name: The loader must accept the extracted executables
+        env:
+          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
+          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
         run: |
           set -eu
+          if [ "${ARCHIVE_SUFFIX}" = ".zip" ]; then
+            echo "extracted Windows executables are present and executable"
+            exit 0
+          fi
           echo "distribution glibc: $(ldd --version | head -1)"
 
           failed=0
           for name in vaultspec-rag vaultspec-search-mcp; do
-            binary="/opt/acq/${name}"
+            binary="/opt/acq/extracted/${name}${EXECUTABLE_SUFFIX}"
+            [ -x "${binary}" ] || {
+              echo "::error::extracted executable is not runnable: ${binary}"; failed=1; continue;
+            }
 
             # `ldd` resolves every symbol version the binary requires against
             # this distribution's libc and reports what it cannot satisfy. It

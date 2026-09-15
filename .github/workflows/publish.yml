@@ -24,8 +24,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-target:
+    name: Resolve exact release SHA
+    timeout-minutes: 10
+    runs-on: [self-hosted, Linux, X64, build]
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  hardware-validation:
+    name: Validate release hardware
+    needs: resolve-target
+    uses: ./.github/workflows/release-hardware.yml
+    with:
+      target_sha: ${{ needs.resolve-target.outputs.sha }}
+
   hold-release:
     name: Hold release out of latest
+    needs: [resolve-target, hardware-validation]
+    outputs:
+      sha: ${{ needs.resolve-target.outputs.sha }}
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
@@ -51,6 +75,8 @@ jobs:
     name: Build
     timeout-minutes: 20
     needs: hold-release
+    outputs:
+      sha: ${{ needs.hold-release.outputs.sha }}
     # Release artifacts build on the self-hosted fleet, on the same runners
     # CI's lint and test jobs use. The wheel is therefore built on a machine
     # that also runs agent sessions and a live service; the build's own
@@ -60,10 +86,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.hold-release.outputs.sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.hold-release.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -79,7 +113,7 @@ jobs:
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: dist
+          name: dist-${{ needs.hold-release.outputs.sha }}
           path: dist/
           if-no-files-found: error
           retention-days: 5
@@ -88,6 +122,8 @@ jobs:
     name: Smoke Test (py${{ matrix.python-version }})
     timeout-minutes: 20
     needs: build
+    outputs:
+      sha: ${{ needs.build.outputs.sha }}
     runs-on: [self-hosted, Linux, X64, build]
     strategy:
       # One artifact, every supported interpreter. A leg that fails is the
@@ -108,10 +144,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.build.outputs.sha }}
+
+      - name: Require the exact release commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.build.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Install Python
         run: uv python install ${{ matrix.python-version }}
@@ -119,7 +163,7 @@ jobs:
       - name: Download dist artifacts
         uses: actions/download-artifact@v8.0.1
         with:
-          name: dist
+          name: dist-${{ needs.build.outputs.sha }}
           path: dist/
 
       - name: Smoke test (wheel)
@@ -132,6 +176,8 @@ jobs:
     name: Publish to PyPI
     timeout-minutes: 15
     needs: smoke-test
+    outputs:
+      sha: ${{ needs.smoke-test.outputs.sha }}
     # OIDC trusted publishing works from self-hosted runners: the id-token
     # comes from GitHub's OIDC provider, not from the runner host.
     runs-on: [self-hosted, Linux, X64, build]
@@ -144,11 +190,13 @@ jobs:
       - name: Download dist artifacts
         uses: actions/download-artifact@v8.0.1
         with:
-          name: dist
+          name: dist-${{ needs.smoke-test.outputs.sha }}
           path: dist/
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Publish to PyPI
         run: uv publish --check-url https://pypi.org/simple/ dist/*
@@ -157,6 +205,8 @@ jobs:
     name: Attach Release Assets
     timeout-minutes: 15
     needs: smoke-test
+    outputs:
+      sha: ${{ needs.smoke-test.outputs.sha }}
     # On the fleet, like every other job in this workflow. It needs `gh` and
     # `sha256sum`, both of which the Linux build runners provide.
     runs-on: [self-hosted, Linux, X64, build]
@@ -166,7 +216,7 @@ jobs:
       - name: Download dist artifacts
         uses: actions/download-artifact@v8.0.1
         with:
-          name: dist
+          name: dist-${{ needs.smoke-test.outputs.sha }}
           path: dist/
 
       - name: Generate checksums
@@ -225,10 +275,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.ref_name }}
+          TARGET_SHA: ${{ needs.github-release.outputs.sha }}
         run: |
           set -euo pipefail
           gh workflow run Binaries \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
-            --field tag="${TAG}"
-          echo "Dispatched Binaries for ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+            --field tag="${TAG}" \
+            --field target_sha="${TARGET_SHA}"
+          echo "Dispatched Binaries for ${TAG} at ${TARGET_SHA}" >> "$GITHUB_STEP_SUMMARY"
