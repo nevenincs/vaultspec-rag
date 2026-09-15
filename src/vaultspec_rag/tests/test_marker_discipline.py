@@ -519,4 +519,4 @@ def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     assert "ref: ${{ inputs.target_sha }}" in release_hardware
     assert "run: just test-mps" in release_hardware
     assert "target_sha: ${{ needs.resolve-target.outputs.sha }}" in publish
-    assert "needs: hardware-validation" in publish
+    assert "needs: [resolve-target, hardware-validation]" in publish
