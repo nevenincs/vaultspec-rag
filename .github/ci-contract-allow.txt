@@ -59,6 +59,8 @@ publish.yml:Trigger Binaries workflow
 # shared in shape with vaultspec-core's three-OS version of the same lane.
 acquisition.yml:Acquire the published binaries
 acquisition.yml:The loader must accept them
+acquisition.yml:Extract the stable executables
+acquisition.yml:The loader must accept the extracted executables
 
 # Provisions the interpreter for a job that never enters the project
 # environment: the binaries build runs under a bare `--no-project` python by
@@ -80,3 +82,6 @@ release-please.yml:Trigger Publish workflow
 # They are Git identity bookkeeping, not a reusable source validation command.
 publish.yml:Resolve exact release SHA
 release-hardware.yml:Require the exact release commit
+publish.yml:Require the exact release commit
+binaries.yml:Require the exact release commit
+binaries.yml:Require the acquisition check for this release
