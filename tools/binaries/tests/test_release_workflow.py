@@ -226,6 +226,8 @@ def test_promotion_waits_for_checksum_verified_bundle_acquisition(
     assert "${tag}-${TRIPLE}${ARCHIVE_SUFFIX}" in acquisition
     assert '"${release_url}/SHA256SUMS"' in acquisition
     assert 'sha256sum -c "${archive}.sha256"' in acquisition
+    assert "producer_sha=$(jq -er '.source_revision" in acquisition
+    assert '[ "${producer_sha}" = "${TARGET_SHA}" ]' in acquisition
     assert 'tar -xOzf "${archive}"' in acquisition
     assert 'unzip -p "${archive}"' in acquisition
     assert "vaultspec-rag-${TRIPLE}" not in acquisition
@@ -235,6 +237,8 @@ def test_promotion_waits_for_checksum_verified_bundle_acquisition(
     promote = binaries.index("- name: Promote a repaired release back to latest")
     section = binaries[wait:promote]
     assert '-f target_sha="$TARGET_SHA"' in section
+    assert "before_id=$(gh run list" in section
+    assert ".databaseId > ${before_id}" in section
     assert 'gh run watch "$run_id"' in section
     assert "--exit-status" in section
     assert wait < promote
