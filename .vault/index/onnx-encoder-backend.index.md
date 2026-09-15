@@ -4,14 +4,12 @@ tags:
   - '#index'
   - '#onnx-encoder-backend'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:218db8ee85ab344b8c310d41b35f456a87a3259e5e82d0f0729c15fe47055da0'
+body_hash: 'sha256:69d267b6977d40e4e90de664ae0a9ee5e613226d7b1bff9f07013a94005eee54'
 related:
-  - '[[2026-06-02-onnx-encoder-backend-P01-S01]]'
-  - '[[2026-06-02-onnx-encoder-backend-P01-S02]]'
-  - '[[2026-06-02-onnx-encoder-backend-P02-S03]]'
   - '[[2026-06-02-onnx-encoder-backend-adr]]'
+  - '[[2026-06-02-onnx-encoder-backend-ledger]]'
   - '[[2026-06-02-onnx-encoder-backend-plan]]'
   - '[[2026-06-02-onnx-encoder-backend-research]]'
 ---
@@ -28,9 +26,7 @@ Auto-generated index of all documents tagged with `#onnx-encoder-backend`.
 
 ### exec
 
-- `2026-06-02-onnx-encoder-backend-P01-S01` - Add dense_backend and dense_onnx_file config knobs defaulting to torch with env overrides
-- `2026-06-02-onnx-encoder-backend-P01-S02` - Add a backend-aware dense loader that selects ONNX on CUDAExecutionProvider when configured and falls back to torch on any failure, logged
-- `2026-06-02-onnx-encoder-backend-P02-S03` - Add a unit test for the config default and override and a real-GPU test that the onnx backend degrades to torch and still embeds
+- `2026-06-02-onnx-encoder-backend-ledger` - `onnx-encoder-backend` ledger
 
 ### plan
 

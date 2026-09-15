@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-30'
-body_hash: 'sha256:0704e04aca7e044e772b7a4756f5a734192c55c3d2f46e7f381ff7fb1a915159'
+modified: '2026-09-14'
+body_hash: 'sha256:7ffd3cc0adb2f13e8329069eec5bceca2554c775b4295142598471d31e3909c1'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -162,9 +162,11 @@ handlers (`for handler in root.handlers[:]: root.removeHandler(handler)`).
 def main() -> None:
     parser = argparse.ArgumentParser(...)
     args = parser.parse_args()
-    configure_logging()                              # core wipes handlers
-    install_daemon_log_rotation()                    # adds rotating handler + dup2 fds 1/2
-    uvicorn.run(mcp_app, host=..., port=args.port)   # may add its own access loggers AFTER ours
+    configure_logging()  # core wipes handlers
+    install_daemon_log_rotation()  # adds rotating handler + dup2 fds 1/2
+    uvicorn.run(
+        mcp_app, host=..., port=args.port
+    )  # may add its own access loggers AFTER ours
 ```
 
 `install_daemon_log_rotation()` is a new module-level helper in
@@ -316,10 +318,10 @@ def _acquire(self, root: Path) -> ProjectSlot:
             raise RuntimeError("ServiceRegistry is shutting down")
         slot = self._projects.get(root)
         if slot is None:
-            slot = self._admit_with_lru(root)   # may evict, may raise RegistryFullError
+            slot = self._admit_with_lru(root)  # may evict, may raise RegistryFullError
         slot.last_access = time.monotonic()
         slot.ref_count += 1
-        self._sweep_idle()                       # opportunistic
+        self._sweep_idle()  # opportunistic
         return slot
 ```
 
@@ -337,7 +339,8 @@ def _sweep_idle(self) -> None:
         return
     now = time.monotonic()
     victims = [
-        root for root, slot in self._projects.items()
+        root
+        for root, slot in self._projects.items()
         if slot.ref_count == 0 and (now - slot.last_access) >= self._idle_ttl_seconds
     ]
     if not victims:

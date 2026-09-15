@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:2abfd8b1efb5465f11f84fbd6aaf3b9052401b1922c114a33ccc9a904c9c7404'
+modified: '2026-09-14'
+body_hash: 'sha256:2e1c68aa12d51476cd381292b57c1a732a02b395ebd5f8231cd7747088753fba'
 ---
 
 # Round 32: Security & Error-Handling Audit
@@ -87,6 +87,7 @@ ______________________________________________________________________
 ```python
 def get_engine(root_dir: pathlib.Path) -> _Engine:
     from pathlib import Path
+
     global _engine
     root_dir = Path(root_dir).resolve()
     # No workspace validation — accepts any directory
@@ -190,7 +191,7 @@ If the exception contains environment variable names (e.g., `VAULTSPEC_ROOT=/sec
 - Example:
 
   ```python
-  error_msg = str(_comp_error).split('\n')[0]  # First line only
+  error_msg = str(_comp_error).split("\n")[0]  # First line only
   raise RuntimeError(f"RAG initialization failed: {error_msg}") from None
   ```
 

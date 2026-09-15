@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:36c3787ec688b8a2abef3aafb253557a8055169ebe4403d1c720487fd237e25c'
+modified: '2026-09-14'
+body_hash: 'sha256:28944523e084f6f47060c4f32231d0806c5a2f4bb0bab842ea507a5b7cc1457c'
 ---
 
 # Round 29: Cross-Module Integration Audit
@@ -41,8 +41,8 @@ ______________________________________________________________________
 
 ```python
 if clean:
-    self.store.drop_table()        # Line 686: Deletes collection
-    self.store.ensure_table()      # Line 687: Recreates it
+    self.store.drop_table()  # Line 686: Deletes collection
+    self.store.ensure_table()  # Line 687: Recreates it
 else:
     self.store.ensure_table()
 ```
@@ -72,7 +72,7 @@ self.store.upsert_code_chunks(all_new_chunks)  # Line 1218
 # Save updated metadata (file path -> content hash).
 # Use current_hashes (not current_files) as source — files that
 # failed hashing are excluded so they don't cause KeyError.
-self._write_meta(current_hashes)               # Line 1223
+self._write_meta(current_hashes)  # Line 1223
 ```
 
 **Risk:**
@@ -149,9 +149,7 @@ ______________________________________________________________________
 ```python
 try:
     async with gpu_sem:
-        result = await anyio.to_thread.run_sync(
-            vault_indexer.incremental_index
-        )
+        result = await anyio.to_thread.run_sync(vault_indexer.incremental_index)
     _last_vault_index = time.monotonic()
     logger.info(...)
 except Exception:

@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:d99da1ce682201a507f7c2d45b0a582abe1b3181cba69c312c055dd048616452'
+modified: '2026-09-14'
+body_hash: 'sha256:49853ac4261bfb8d4d07bd95eaee60caf7c6489918e9f01da6bb19dec68e628f'
 ---
 
 # Round 26 Audit: embeddings.py Deep Dive
@@ -311,7 +311,9 @@ sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
 This wraps the query string in a list for batch processing, then extracts [0] on line 321. Alternatively:
 
 ```python
-sparse_tensor = self._sparse_model.encode_query(query[:max_chars])  # if API supports scalar
+sparse_tensor = self._sparse_model.encode_query(
+    query[:max_chars]
+)  # if API supports scalar
 ```
 
 **Assessment:** This is not a bug; it's a defensive pattern that ensures consistent return type handling. SparseEncoder.encode_query() likely expects a list. No change needed.

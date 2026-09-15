@@ -4,21 +4,13 @@ tags:
   - '#index'
   - '#module-split'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:ce2aaf727163fee8f64c29e77130dc2b4164a4735295a08fc0596786112fb5fe'
+body_hash: 'sha256:50f48b4263c8d8abc2918603a31ce1faf2a6084e868c75e804d553354e2585e2'
 related:
-  - '[[2026-06-01-module-split-P07-S07]]'
-  - '[[2026-06-01-module-split-P08-S08]]'
-  - '[[2026-06-01-module-split-P09-S09]]'
-  - '[[2026-06-01-module-split-P09-S10]]'
-  - '[[2026-06-01-module-split-P10-S11]]'
-  - '[[2026-06-01-module-split-P12-S13]]'
-  - '[[2026-06-01-module-split-P13-S14]]'
-  - '[[2026-06-01-module-split-P14-S15]]'
-  - '[[2026-06-01-module-split-P15-S16]]'
   - '[[2026-06-01-module-split-adr]]'
   - '[[2026-06-01-module-split-audit]]'
+  - '[[2026-06-01-module-split-ledger]]'
   - '[[2026-06-01-module-split-plan]]'
   - '[[2026-06-01-module-split-research]]'
   - '[[2026-07-27-module-split-install-test-split-audit]]'
@@ -53,15 +45,7 @@ Auto-generated index of all documents tagged with `#module-split`.
 
 ### exec
 
-- `2026-06-01-module-split-P07-S07` - Split canonical process-probe guard domains into directly collected test modules and concrete shared helpers
-- `2026-06-01-module-split-P08-S08` - Split installation integration behavior domains into directly collected modules
-- `2026-06-01-module-split-P09-S09` - Split job-manager unit behavior domains into directly collected modules
-- `2026-06-01-module-split-P09-S10` - Split service jobs integration behavior domains into directly collected modules
-- `2026-06-01-module-split-P10-S11` - Split service lifecycle integration behavior domains into directly collected modules
-- `2026-06-01-module-split-P12-S13` - Decompose storage-operation responsibilities and migrate all direct importers
-- `2026-06-01-module-split-P13-S14` - Decompose store responsibilities and migrate all direct importers
-- `2026-06-01-module-split-P14-S15` - Decompose watcher responsibilities and migrate all direct importers
-- `2026-06-01-module-split-P15-S16` - Decompose run-ledger responsibilities and migrate all direct importers after the active edit lands
+- `2026-06-01-module-split-ledger` - `module-split` ledger
 
 ### plan
 

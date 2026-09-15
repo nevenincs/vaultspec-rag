@@ -72,11 +72,9 @@ class _ContentHashRow(TypedDict):
 
 
 class _SiblingAggregateRow(TypedDict):
-    """The sibling aggregate :func:`_assert_segment_follows_siblings` reads."""
+    """The sibling aggregate :func:`_assert_segment_matches_siblings` reads."""
 
     source_digest: str | None
-    last_ordinal: int | None
-    has_file_end: int | None
     unit_count: int
 
 
@@ -1037,15 +1035,14 @@ class RunLedgerCommitMethods:
         sibling: _SiblingAggregateRow | None = fetch_one(
             connection,
             """
-            SELECT source_digest, MAX(segment_ordinal) AS last_ordinal,
-                   MAX(is_file_end) AS has_file_end, COUNT(*) AS unit_count
+            SELECT source_digest, COUNT(*) AS unit_count
             FROM commit_units
             WHERE generation_id = ? AND rel_path = ? AND unit_kind = ?
             """,
             (generation_id, unit.rel_path, unit.kind.value),
         )
         assert sibling is not None
-        self._assert_segment_follows_siblings(sibling, unit)
+        self._assert_segment_matches_siblings(sibling, unit)
         self._assert_point_ids_are_unowned(connection, generation_id, unit)
         connection.execute(
             """
@@ -1117,7 +1114,7 @@ class RunLedgerCommitMethods:
         )
 
     @staticmethod
-    def _assert_segment_follows_siblings(
+    def _assert_segment_matches_siblings(
         sibling: _SiblingAggregateRow,
         unit: CommitUnit,
     ) -> None:
@@ -1126,12 +1123,6 @@ class RunLedgerCommitMethods:
             raise RunLedgerStateError(
                 "segments for one path must share one source digest"
             )
-        if sibling_count and bool(sibling["has_file_end"]):
-            raise RunLedgerStateError(
-                "cannot add a segment after the file-end commit unit"
-            )
-        if unit.segment_ordinal != sibling_count:
-            raise RunLedgerStateError("commit-unit segment ordinals must be contiguous")
 
     @staticmethod
     def _assert_point_ids_are_unowned(

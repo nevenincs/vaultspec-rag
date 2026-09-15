@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:f11e4a9debea3753ab6c682be1d02594c56107ff116e142815bb869ef390ad3c'
+modified: '2026-09-14'
+body_hash: 'sha256:0af7dda9607627f7dedb39fb279afd0f8bca967025ee3a16e656fa0e878aa201'
 ---
 
 # Round 10 Audit -- embeddings.py (deep dive)
@@ -95,6 +95,7 @@ model_kwargs = {
 }
 try:
     import flash_attn
+
     model_kwargs["attn_implementation"] = "flash_attention_2"
 except ImportError:
     logger.info("flash_attention_2 not available, using default attention")
@@ -175,20 +176,15 @@ ______________________________________________________________________
 def _check_rag_deps() -> None:
     try:
         import torch
+
         if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA GPU required. No CUDA device found. ..."
-            )
+            raise RuntimeError("CUDA GPU required. No CUDA device found. ...")
     except ImportError:
-        raise ImportError(
-            "GPU RAG dependencies not installed. ..."
-        ) from None
+        raise ImportError("GPU RAG dependencies not installed. ...") from None
     try:
         import sentence_transformers
     except ImportError:
-        raise ImportError(
-            "sentence-transformers not installed. ..."
-        ) from None
+        raise ImportError("sentence-transformers not installed. ...") from None
 ```
 
 **Verdict: PASS.** Raises `RuntimeError` for missing CUDA, `ImportError` for missing packages. Both with clear messages. Called at top of `EmbeddingModel.__init__()` (line 153).

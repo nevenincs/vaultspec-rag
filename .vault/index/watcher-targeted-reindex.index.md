@@ -4,14 +4,12 @@ tags:
   - '#index'
   - '#watcher-targeted-reindex'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:17802de3ca0fe91ae27eeacd655d6292dc23f7aa25d48753bb7978cd39a03e73'
+body_hash: 'sha256:7efd8593a2b1760ce17ecd5e49fac1db7e6df5cede9973aa125c44c7cf28b1a6'
 related:
-  - '[[2026-06-02-watcher-targeted-reindex-P03-S06]]'
-  - '[[2026-06-02-watcher-targeted-reindex-P03-S07]]'
-  - '[[2026-06-02-watcher-targeted-reindex-P03-S08]]'
   - '[[2026-06-02-watcher-targeted-reindex-adr]]'
+  - '[[2026-06-02-watcher-targeted-reindex-ledger]]'
   - '[[2026-06-02-watcher-targeted-reindex-plan]]'
   - '[[2026-06-02-watcher-targeted-reindex-research]]'
   - '[[2026-06-18-watcher-targeted-reindex-adr]]'
@@ -31,9 +29,7 @@ Auto-generated index of all documents tagged with `#watcher-targeted-reindex`.
 
 ### exec
 
-- `2026-06-02-watcher-targeted-reindex-P03-S06` - Construct the watcher's awatch with yield_on_timeout=True and an explicit one-second rust_timeout, and re-drain the pending vault and code sets on every loop iteration so an empty idle-tick batch reconciles cooldown-suppressed changes while the unchanged per-source cooldown guard still gates the actual reindex
-- `2026-06-02-watcher-targeted-reindex-P03-S07` - Add a real-backend watcher regression test that deletes a tracked file during the cooldown window then leaves the tree quiet and asserts the chunks are evicted, plus a guard that an idle tick during an open cooldown does not trigger a premature reindex, folding in the reproduction scenarios and exercising the real backend with no mocks or skips
-- `2026-06-02-watcher-targeted-reindex-P03-S08` - Run ruff and the full pytest suite and confirm zero violations and green before PR
+- `2026-06-02-watcher-targeted-reindex-ledger` - `watcher-targeted-reindex` ledger
 
 ### plan
 

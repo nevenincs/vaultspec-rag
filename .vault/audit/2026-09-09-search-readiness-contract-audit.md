@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#search-readiness-contract'
 date: '2026-09-09'
-modified: '2026-09-09'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:d91141da1be78de5949940d28989ff6c7b9fd01e9e137a29d0847d0d12c6f099'
+body_hash: 'sha256:56bda45f63d8fd887c3c2220cca48a161e9916e952cf77823aa50a06fb30e238'
 related: []
 ---
 

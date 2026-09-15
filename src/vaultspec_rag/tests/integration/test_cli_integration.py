@@ -62,6 +62,21 @@ def _run_cli(
     )
 
 
+def _seed_cli_publication(root: str, source: str) -> None:
+    """Establish rebuild authority before testing an incremental CLI."""
+    baseline = _run_cli(
+        "--target",
+        root,
+        "index",
+        "--type",
+        source,
+        "--rebuild",
+        "--borrow-gpu",
+        cwd=root,
+    )
+    assert baseline.returncode == 0, f"stderr: {baseline.stderr}"
+
+
 class TestCLIStatus:
     """Tests for ``vaultspec-rag status``."""
 
@@ -108,6 +123,7 @@ class TestCLIIndex:
         """``vaultspec-rag index --type vault`` should print a summary."""
         root = str(cli_vault)
         with production_service(cli_vault):
+            _seed_cli_publication(root, "vault")
             result = _run_cli(
                 "--target",
                 root,
@@ -143,6 +159,7 @@ class TestCLIIndex:
         """``vaultspec-rag index --type code`` prints summary."""
         root = str(cli_vault)
         with production_service(cli_vault):
+            _seed_cli_publication(root, "code")
             result = _run_cli(
                 "--target",
                 root,

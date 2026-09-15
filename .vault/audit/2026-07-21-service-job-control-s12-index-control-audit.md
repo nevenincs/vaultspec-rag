@@ -3,10 +3,9 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-21'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:a999acfc37da4ef152dea02d0269533fb3e8883ccc22863f97419aca0d4471b5'
-related:
-  - "[[2026-07-21-service-job-control-W02-P04-S12]]"
+related: []
 ---
 
 # `service-job-control` audit: `s12 index control`

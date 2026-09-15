@@ -171,7 +171,7 @@ class TestRAGAPI:
 
         get_registry().load_model()
 
-        index_res = vaultspec_rag.index(tmp_path)
+        index_res = vaultspec_rag.index(tmp_path, full=True)
         assert index_res.added == 1
 
         # 2. Call get_status()

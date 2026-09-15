@@ -23,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 
@@ -61,6 +62,26 @@ def verdict(returncode: int, finding_exits: frozenset[int]) -> int:
     return returncode
 
 
+def resolve_command(command: list[str]) -> list[str]:
+    """Resolve the command executable without introducing a shell.
+
+    Windows command-line tools such as ``npx`` are commonly installed as a
+    ``.cmd`` shim.  ``subprocess.run`` with ``shell=False`` does not resolve a
+    bare command through ``PATHEXT`` the way an interactive shell does, so a
+    bare ``npx`` can fail even when ``npx.cmd`` is on ``PATH``.  ``shutil.which``
+    performs that platform-aware lookup; passing its resulting path to
+    ``subprocess.run`` preserves the original argument vector and keeps shell
+    interpretation disabled.
+
+    If the executable is absent, retain the original command so ``main`` keeps
+    its existing ``OSError``/127 broken-scanner handling.
+    """
+    executable = shutil.which(command[0])
+    if executable is None:
+        return command
+    return [executable, *command[1:]]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the scanner and return the advisory verdict."""
     try:
@@ -70,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        proc = subprocess.run(command, check=False)
+        proc = subprocess.run(resolve_command(command), check=False, shell=False)
     except OSError as error:
         # An absent scanner is a broken dimension, never a clean one.
         print(f"advisory: cannot run {command[0]!r}: {error}", file=sys.stderr)

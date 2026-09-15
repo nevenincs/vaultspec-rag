@@ -7,8 +7,8 @@ related:
   - "[[2026-03-07-threading-lock-for-singleton-adr]]"
   - "[[2026-03-07-continuous-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-07-27'
-body_hash: 'sha256:e7f63efb75906022ffbb35f77a4263e6d7d69a4f64900840fafa5ec8b3daabd3'
+modified: '2026-09-14'
+body_hash: 'sha256:4a335282be28c3b421ef0bd5dc897d928d6bbe3270158d9480d85ddee072f06f'
 ---
 
 # `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)
@@ -52,12 +52,14 @@ calls with `anyio.to_thread.run_sync()`:
 ```python
 import anyio
 
+
 @mcp.tool()
 async def search_vault(query: str, top_k: int = 5) -> SearchResponse:
     def _run() -> SearchResponse:
         comp = get_comp()
         # ... blocking GPU + Qdrant code ...
         return result
+
     return await anyio.to_thread.run_sync(_run)
 ```
 

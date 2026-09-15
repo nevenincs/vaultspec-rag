@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:b2eda3290254879b8aca4672f60fb5183772764cfdb5ee4f4f0c971d20ef71b6'
+modified: '2026-09-14'
+body_hash: 'sha256:06f3c876174c1b252f74b4ffdaa60b66c2b6f874eec3c7118cf1e0a0f0e72dd7'
 ---
 
 # Round 25 Correctness Audit: store.py & api.py
@@ -136,6 +136,7 @@ ______________________________________________________________________
 def count(self) -> int:
     self.ensure_table()
     return self._client.count(collection_name=self.TABLE_NAME).count
+
 
 def count_code(self) -> int:
     self.ensure_code_table()
@@ -397,7 +398,9 @@ ______________________________________________________________________
 Sample: `search_vault()` (line 118–132)
 
 ```python
-def search_vault(root_dir: pathlib.Path, query: str, *, top_k: int = 5) -> list[SearchResult]:
+def search_vault(
+    root_dir: pathlib.Path, query: str, *, top_k: int = 5
+) -> list[SearchResult]:
     engine = get_engine(root_dir)
     return engine.searcher.search_vault(query, top_k=top_k)
 ```

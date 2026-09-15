@@ -1,0 +1,592 @@
+---
+tags:
+  - '#exec'
+  - '#incremental-publication-cost'
+date: '2026-09-08'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:862cd90042abe349c70ed3d7cb821b7d3aa6863cacb44a1d643e58181b8c412e'
+related:
+  - "[[2026-09-08-incremental-publication-cost-plan]]"
+---
+
+# `incremental-publication-cost` ledger
+
+## Changes
+
+- `S01` `A` `src/vaultspec_rag/indexer/_publication_proof.py`
+- `S01` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_publication_proof.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_publication_proof.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_publication_proof.py` -> `pass`
+- `S01` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_publication_proof.py` -> `pass`
+- `S01` `verify:` `git diff --check` -> `pass`
+- `S02` `A` `src/vaultspec_rag/tests/test_publication_proof.py`
+- `S02` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ty check src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py` -> `fail`
+- `S02` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S02` `verify:` `git diff --check` -> `pass`
+- `S03` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S03` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_run_ledger_models.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_run_ledger_models.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_models.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_models.py` -> `pass`
+- `S03` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_publication_proof.py` -> `pass`
+- `S03` `verify:` `git diff --check` -> `pass`
+- `S04` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S04` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_run_ledger_installs_and_verifies_normalized_publication_schema` -> `fail`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_run_ledger_installs_and_verifies_normalized_publication_schema` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_schema_enforces_open_receipt_and_state_constraints` -> `fail`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_schema_enforces_open_receipt_and_state_constraints` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_incompatible_publication_index` -> `fail`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_incompatible_publication_index` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_publication_table_without_constraints` -> `fail`
+- `S04` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_publication_table_without_constraints` -> `pass`
+- `S04` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S04` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S05` `A` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py -k publication_reservation_sequence_fences_open_and_rolled_back_receipts` -> `fail`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py -k publication_reservation_sequence_fences_open_and_rolled_back_receipts` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py -k sealed_receipt_commit_is_exact_atomic_and_replayable` -> `fail`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py -k sealed_receipt_commit_is_exact_atomic_and_replayable` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S06` `M` `src/vaultspec_rag/indexer/_publication_proof.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S06` `M` `src/vaultspec_rag/indexer/_streaming_types.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_slice_writer_overlap.py`
+- `S06` `verify:` `uv run --no-sync pytest -q -n 0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_reserves_streaming_work_then_seals_complete_deltas src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_ledger_schema_has_a_distinct_current_version src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_mutation_journal_is_monotonic_exact_and_replayable src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_receipt_seal_refuses_foreign_new_point_ownership src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_receipt_rollback_requires_exact_confirmed_compensation src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_seal_refuses_stale_parent_or_old_evidence_atomically` -> `fail`
+- `S06` `verify:` `uv run --no-sync pytest -q -n 0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_reserves_streaming_work_then_seals_complete_deltas src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_ledger_schema_has_a_distinct_current_version src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_mutation_journal_is_monotonic_exact_and_replayable src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_mutation_prepare_refuses_foreign_point_ownership src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_receipt_seal_rechecks_late_point_ownership src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_receipt_rollback_requires_exact_confirmed_compensation src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_seal_refuses_stale_parent_or_old_evidence_atomically src/vaultspec_rag/tests/test_slice_writer_overlap.py::TestSliceWriterContract::test_mutation_intent_precedes_store_and_confirmation_precedes_release src/vaultspec_rag/tests/test_slice_writer_overlap.py::TestSliceWriterContract::test_store_failure_leaves_only_prepared_mutation_intent src/vaultspec_rag/tests/test_slice_writer_overlap.py::TestSliceWriterContract::test_async_acknowledgement_stays_applied_until_owning_barrier src/vaultspec_rag/tests/test_slice_writer_overlap.py::TestSliceWriterContract::test_confirmed_exact_replay_skips_the_complete_store_path` -> `pass`
+- `S06` `verify:` `uv run --no-sync pytest -q -n 0 src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_slice_writer_overlap.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_commits.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_streaming_types.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_slice_writer_overlap.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_commits.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_streaming_types.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_slice_writer_overlap.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_commits.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_streaming_types.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_slice_writer_overlap.py` -> `pass`
+- `S06` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/indexer/_run_ledger_commits.py src/vaultspec_rag/indexer/_streaming.py src/vaultspec_rag/indexer/_streaming_types.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_slice_writer_overlap.py` -> `pass`
+- `S06` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S06` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S06` `verify:` `git diff --check` -> `pass`
+- `S07` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_generation_start_leaves_canonical_publication_projection_unchanged` -> `fail`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_generation_start_leaves_canonical_publication_projection_unchanged` -> `pass`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_changed_parent_revision_refuses_proof_commit_without_mutation` -> `fail`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_changed_parent_revision_refuses_proof_commit_without_mutation` -> `pass`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit` -> `fail`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit` -> `pass`
+- `S07` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S07` `verify:` `.venv/Scripts/ruff.exe check src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S07` `verify:` `.venv/Scripts/ruff.exe format --check src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S07` `verify:` `.venv/Scripts/ty.exe check src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S07` `verify:` `.venv/Scripts/basedpyright.exe src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S07` `verify:` `git diff --check` -> `pass`
+- `S07` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S07` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S08` `M` `src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py`
+- `S08` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py::test_independent_connection_observes_an_active_publication_receipt` -> `fail`
+- `S08` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py::test_independent_connection_observes_an_active_publication_receipt` -> `pass`
+- `S08` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py::test_read_token_rejects_a_revision_committed_by_an_independent_writer` -> `fail`
+- `S08` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py::test_read_token_rejects_a_revision_committed_by_an_independent_writer` -> `pass`
+- `S08` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S08` `verify:` `.venv/Scripts/ruff.exe check src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S08` `verify:` `.venv/Scripts/ruff.exe format --check src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S08` `verify:` `.venv/Scripts/ty.exe check src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S08` `verify:` `.venv/Scripts/basedpyright.exe src/vaultspec_rag/tests/test_index_run_ledger_concurrency.py` -> `pass`
+- `S08` `verify:` `git diff --check` -> `pass`
+- `S08` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S08` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S10` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S10` `M` `src/vaultspec_rag/indexer/_run_ledger_finalization.py`
+- `S10` `M` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `fail`
+- `S10` `verify:` `pass`
+- `S10` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py -k "generation_finalization or compaction_bounds_closed or compaction_preserves_every_canonical"` -> `pass`
+- `S10` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_document_checkpoint.py::test_publish_generation_certifies_and_compacts` -> `pass`
+- `S10` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S10` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_document_checkpoint.py` -> `pass`
+- `S10` `verify:` `.venv/Scripts/ruff.exe check src/vaultspec_rag/indexer/_run_ledger_finalization.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S10` `verify:` `.venv/Scripts/ruff.exe format --check src/vaultspec_rag/indexer/_run_ledger_finalization.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S10` `verify:` `.venv/Scripts/ty.exe check src/vaultspec_rag/indexer/_run_ledger_finalization.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S10` `verify:` `.venv/Scripts/basedpyright.exe src/vaultspec_rag/indexer/_run_ledger_finalization.py src/vaultspec_rag/indexer/_run_ledger_publication.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S10` `verify:` `git diff --check` -> `pass`
+- `S37` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S37` `A` `.vault/audit/2026-09-08-incremental-publication-cost-s37-authority-audit.md`
+- `S37` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S37` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S37` `verify:` `fail`
+- `S37` `verify:` `pass`
+- `S37` `verify:` `.venv/Scripts/python.exe -m pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S37` `verify:` `.venv/Scripts/ruff.exe check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S37` `verify:` `.venv/Scripts/ruff.exe format --check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S37` `verify:` `.venv/Scripts/ty.exe check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S37` `verify:` `.venv/Scripts/basedpyright.exe src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S37` `verify:` `git diff --check` -> `pass`
+- `S37` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S37` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S37` `verify:` `pass`
+- `S38` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S38` `A` `.vault/audit/2026-09-09-incremental-publication-cost-s38-execution-admission-audit.md`
+- `S38` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S38` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S38` `M` `src/vaultspec_rag/tests/integration/test_document_execution.py`
+- `S38` `M` `src/vaultspec_rag/tests/integration/test_document_resource_bounds.py`
+- `S38` `verify:` `fail`
+- `S38` `verify:` `pass`
+- `S38` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py` -> `pass`
+- `S38` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_manager_encode_admission.py` -> `pass`
+- `S38` `verify:` `uv run --no-sync ruff format --check <all modified Python files>` -> `pass`
+- `S38` `verify:` `uv run --no-sync ruff check <all modified Python files>` -> `pass`
+- `S38` `verify:` `uv run --no-sync ty check <all modified Python files>` -> `pass`
+- `S38` `verify:` `uv run --no-sync basedpyright <all modified Python files>` -> `pass`
+- `S38` `verify:` `_AttemptDispatch` -> `clean` -> `pass`
+- `S38` `verify:` `git diff --check` -> `pass`
+- `S38` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md --json` -> `pass`
+- `S38` `verify:` `pass`
+- `S39` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S39` `A` `.vault/audit/2026-09-09-incremental-publication-cost-s39-cli-authority-audit.md`
+- `S39` `M` `src/vaultspec_rag/_integrity_remediation.py`
+- `S39` `M` `src/vaultspec_rag/cli/_index.py`
+- `S39` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S39` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S39` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S39` `M` `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/_service_search_diagnostics_support.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/test_service_eviction.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_controls.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S39` `M` `src/vaultspec_rag/tests/integration/test_storage_survey_service.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_cli_index.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_cli_search.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_integrity_remediation.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_search_timeout.py`
+- `S39` `M` `src/vaultspec_rag/tests/test_server_routes.py`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `fail`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_integrity_remediation.py` -> `pass`
+- `S39` `verify:` `uv run --frozen pytest -q -m unit` -> `fail`
+- `S39` `verify:` `uv run --frozen ruff format --check <all modified Python files>` -> `pass`
+- `S39` `verify:` `uv run --frozen ruff check <all modified Python files>` -> `pass`
+- `S39` `verify:` `uv run --frozen ty check src/vaultspec_rag` -> `pass`
+- `S39` `verify:` `uv run --frozen basedpyright src/vaultspec_rag` -> `pass`
+- `S39` `verify:` `pass`
+- `S39` `verify:` `git diff --check` -> `pass`
+- `S39` `verify:` `pass`
+- `S40` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S40` `A` `.vault/audit/2026-09-09-incremental-publication-cost-s40-fail-closed-proof-audit.md`
+- `S40` `M` `.vault/index/incremental-publication-cost.index.md`
+- `S40` `M` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S40` `M` `src/vaultspec_rag/tests/test_document_index_escalation.py`
+- `S40` `verify:` `fail`
+- `S40` `verify:` `fail`
+- `S40` `verify:` `fail`
+- `S40` `verify:` `fail`
+- `S40` `verify:` `pass`
+- `S40` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_document_index_escalation.py` -> `pass`
+- `S40` `verify:` `pass`
+- `S40` `verify:` `uv run --no-sync ruff check <scoped Python files>` -> `pass`
+- `S40` `verify:` `uv run --no-sync ruff format --check <scoped Python files>` -> `pass`
+- `S40` `verify:` `uv run --no-sync ty check src/vaultspec_rag` -> `pass`
+- `S40` `verify:` `uv run --no-sync basedpyright <scoped Python files>` -> `pass`
+- `S40` `verify:` `git diff --check` -> `pass`
+- `S40` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md --json` -> `pass`
+- `S40` `verify:` `vaultspec-core vault check all --feature incremental-publication-cost --no-hints --json` -> `pass`
+- `S40` `verify:` `pass`
+- `S52` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S52` `M` `src/vaultspec_rag/_job_admission.py`
+- `S52` `M` `src/vaultspec_rag/job_manager/_execution.py`
+- `S52` `M` `src/vaultspec_rag/job_manager/models.py`
+- `S52` `M` `src/vaultspec_rag/job_models.py`
+- `S52` `M` `src/vaultspec_rag/job_persistence.py`
+- `S52` `M` `src/vaultspec_rag/jobs.py`
+- `S52` `M` `src/vaultspec_rag/server/_routes.py`
+- `S52` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S52` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S52` `M` `src/vaultspec_rag/tests/_job_manager_transition_helpers.py`
+- `S52` `M` `src/vaultspec_rag/tests/benchmarks/bench_progress_publish.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/_index_job_control_support.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/_service_jobs_route_helpers.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_content_policy_fail_closed.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_document_execution.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_document_resource_bounds.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_index_job_control_managed.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_index_reuse_daemon_path.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_index_support_admission.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_jobs_registry_quarantine.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_jobs_registry_recovery.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_job_control.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_job_control_pause_restart.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_job_control_transport_matrix.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_resilience.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_controls.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S52` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_rebuild.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_contracts.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_contracts_persistence.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_admission.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_degradation.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_encode_admission.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_loopless_dispatch.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_quiesce.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_manager_transitions.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_progress_durability.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_resilience.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_retry_resolution.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_job_runtime_owner_tickets.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_jobs_lifecycle.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_search_availability.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_service_quiesce_routes.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_service_registry_quiesce_transitions.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_service_registry_recovery.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_storage_ops.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_watcher_quiesce_intake.py`
+- `S52` `M` `src/vaultspec_rag/tests/test_watcher_transition_logging.py`
+- `S52` `M` `src/vaultspec_rag/watcher_execution.py`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_contracts.py -k "explicit_authority or canonical_authority or serializes_one_explicit_authority_shape or active_work_identity"` -> `fail`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_contracts.py -k "explicit_authority or canonical_authority or serializes_one_explicit_authority_shape or active_work_identity"` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_contracts_persistence.py -k "explicit_authority or idempotency_spec_writes or version_one or missing_persisted_authority or old_start_paused"` -> `fail`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_contracts_persistence.py -k "explicit_authority or idempotency_spec_writes or version_one or missing_persisted_authority or old_start_paused"` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_manager_encode_admission.py -k "dispatch_context_carries or dispatch_refuses_authority"` -> `fail`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_manager_encode_admission.py -k "dispatch_context_carries or dispatch_refuses_authority"` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_manager_transitions.py -k "pause_resume_race or terminal_first_writer"` -> `fail`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_manager_transitions.py -k "pause_resume_race or terminal_first_writer"` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py::test_job_mutations_keep_real_asgi_loop_responsive` -> `fail`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py::test_job_mutations_keep_real_asgi_loop_responsive` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_job_contracts.py src/vaultspec_rag/tests/test_job_contracts_persistence.py src/vaultspec_rag/tests/test_job_manager_admission.py src/vaultspec_rag/tests/test_job_manager_encode_admission.py src/vaultspec_rag/tests/test_job_manager_transitions.py` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q <all modified non-integration test modules>` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_jobs_registry_quarantine.py src/vaultspec_rag/tests/integration/test_jobs_registry_recovery.py src/vaultspec_rag/tests/integration/test_service_job_control.py src/vaultspec_rag/tests/integration/test_service_jobs_resilience.py` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_service_job_control.py src/vaultspec_rag/tests/integration/test_service_job_control_transport_matrix.py src/vaultspec_rag/tests/integration/test_service_jobs_routes_controls.py src/vaultspec_rag/tests/integration/test_index_support_admission.py` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/integration/test_service_jobs_routes_collection.py src/vaultspec_rag/tests/integration/test_service_jobs_routes_auth.py` -> `pass`
+- `S52` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_process_probe_vocabulary_guards.py` -> `pass`
+- `S52` `verify:` `uv run --no-sync ruff format --check <all modified Python files>` -> `pass`
+- `S52` `verify:` `uv run --no-sync ruff check <all modified Python files>` -> `pass`
+- `S52` `verify:` `uv run --no-sync ty check <all modified Python files>` -> `pass`
+- `S52` `verify:` `uv run --no-sync basedpyright <all modified Python files>` -> `pass`
+- `S52` `verify:` `repository-wide AST authority constructor and POST /jobs payload census` -> `pass`
+- `S52` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md --json` -> `pass`
+- `S52` `verify:` `vaultspec-core vault check all --json` -> `pass`
+- `S52` `verify:` `git diff --check` -> `pass`
+- `S53` `M` `src/vaultspec_rag/indexer/_publication_proof.py`
+- `S53` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S53` `M` `src/vaultspec_rag/tests/test_publication_proof.py`
+- `S53` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py::test_modify_requires_changed_evidence_and_noop_requires_exact_evidence` -> `fail`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py::test_modify_requires_changed_evidence_and_noop_requires_exact_evidence` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py::test_read_token_fences_open_or_changed_receipt_snapshots` -> `fail`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py::test_read_token_fences_open_or_changed_receipt_snapshots` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_reserves_streaming_work_then_seals_complete_deltas` -> `fail`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_reserves_streaming_work_then_seals_complete_deltas` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_rejects_ambiguous_point_ownership_across_paths` -> `fail`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_receipt_rejects_ambiguous_point_ownership_across_paths` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_schema_separates_receipts_from_streaming_mutations` -> `fail`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_schema_separates_receipts_from_streaming_mutations` -> `pass`
+- `S53` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S53` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S53` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S53` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S53` `verify:` `uv run --no-sync pytest -q src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S53` `verify:` `git diff --check` -> `pass`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_files.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_commits.py`
+- `S54` `M` `src/vaultspec_rag/indexer/_run_ledger_finalization.py`
+- `S54` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S54` `M` `src/vaultspec_rag/tests/test_document_checkpoint.py`
+- `S54` `verify:` `.venv/Scripts/python.exe -m pytest src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_ledger_schema_has_a_distinct_current_version -q` -> `fail`
+- `S54` `verify:` `.venv/Scripts/python.exe -m pytest src/vaultspec_rag/tests/test_index_run_ledger.py::test_run_ledger_installs_and_verifies_normalized_publication_schema -q` -> `fail`
+- `S54` `verify:` `.venv/Scripts/python.exe -m pytest src/vaultspec_rag/tests/test_index_run_ledger.py -k "effective_receipt_read" -q` -> `pass`
+- `S54` `verify:` `.venv/Scripts/python.exe -m pytest src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py -q` -> `pass`
+- `S54` `verify:` `.venv/Scripts/python.exe -m ruff format --check <S54 paths>` -> `pass`
+- `S54` `verify:` `.venv/Scripts/python.exe -m ruff check <S54 paths>` -> `pass`
+- `S54` `verify:` `.venv/Scripts/ty.exe check <S54 paths>` -> `pass`
+- `S54` `verify:` `.venv/Scripts/basedpyright.exe <S54 paths>` -> `pass`
+- `S54` `verify:` `git diff --check` -> `pass`
+- `S54` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S54` `verify:` `vaultspec-core vault check all` -> `pass`
+- `S60` `M` `.vault/plan/2026-09-08-incremental-publication-cost-plan.md`
+- `S60` `A` `.vault/audit/2026-09-09-incremental-publication-cost-s60-canonical-proof-verification-audit.md`
+- `S60` `M` `.vault/index/incremental-publication-cost.index.md`
+- `S60` `M` `src/vaultspec_rag/_index_integrity.py`
+- `S60` `M` `src/vaultspec_rag/cli/_index.py`
+- `S60` `M` `src/vaultspec_rag/indexer/_run_ledger_publication.py`
+- `S60` `M` `src/vaultspec_rag/server/_routes.py`
+- `S60` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S60` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S60` `M` `src/vaultspec_rag/store_catalog.py`
+- `S60` `M` `src/vaultspec_rag/tests/test_cli_index.py`
+- `S60` `M` `src/vaultspec_rag/tests/test_index_integrity.py`
+- `S60` `M` `src/vaultspec_rag/tests/test_server_routes.py`
+- `S60` `M` `src/vaultspec_rag/tests/test_store.py`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `fail`
+- `S60` `verify:` `pass`
+- `S60` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_index_integrity.py` -> `pass`
+- `S60` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_cli_index.py` -> `pass`
+- `S60` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_server_routes.py` -> `pass`
+- `S60` `verify:` `uv run --frozen pytest -q src/vaultspec_rag/tests/test_store.py` -> `pass`
+- `S60` `verify:` `uv run --frozen ruff format --check <all modified Python files>` -> `pass`
+- `S60` `verify:` `uv run --frozen ruff check <all modified Python files>` -> `pass`
+- `S60` `verify:` `uv run --frozen ty check src/vaultspec_rag` -> `pass`
+- `S60` `verify:` `uv run --frozen basedpyright <all modified Python files>` -> `pass`
+- `S60` `verify:` `git diff --check` -> `pass`
+- `S60` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md --json` -> `pass`
+- `S60` `verify:` `vaultspec-core vault check all --feature incremental-publication-cost --no-hints --json` -> `pass`
+- `S60` `verify:` `pass`
+- `S62` `A` `.vault/audit/2026-09-09-incremental-publication-cost-s62-authority-lifecycle-audit.md`
+- `S62` `M` `.vault/index/incremental-publication-cost.index.md`
+- `S62` `M` `src/vaultspec_rag/tests/test_job_contracts_persistence.py`
+- `S62` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_routes_mutations.py`
+- `S62` `M` `src/vaultspec_rag/tests/test_cli_index.py`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `fail`
+- `S62` `verify:` `pass`
+- `S62` `verify:` `uv run --frozen ruff format --check <scoped Python files>` -> `pass`
+- `S62` `verify:` `uv run --frozen ruff check <scoped Python files>` -> `pass`
+- `S62` `verify:` `uv run --frozen ty check <scoped Python files>` -> `pass`
+- `S62` `verify:` `uv run --frozen basedpyright <scoped Python files>` -> `pass`
+- `S62` `verify:` `git diff --check` -> `pass`
+- `S62` `verify:` `pass`
+- `S62` `verify:` `vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md --json` -> `pass`
+- `S62` `verify:` `vaultspec-core vault check all --feature incremental-publication-cost --no-hints --json` -> `pass`
+- `S68` `M` `src/vaultspec_rag/indexer/_publication_proof.py`
+- `S68` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S68` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S68` `M` `src/vaultspec_rag/tests/test_publication_proof.py`
+- `S68` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_ledger_schema_has_a_distinct_current_version` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_publication_ledger_schema_has_a_distinct_current_version` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_publication_proof.py::test_rebuild_reasons_exclude_old_format_statuses` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_publication_proof.py::test_rebuild_reasons_exclude_old_format_statuses` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_old_ledger_format_requires_rebuild_without_mutation src/vaultspec_rag/tests/test_index_run_ledger.py::test_nonempty_schema_zero_requires_rebuild_without_mutation` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_old_ledger_format_requires_rebuild_without_mutation src/vaultspec_rag/tests/test_index_run_ledger.py::test_nonempty_schema_zero_requires_rebuild_without_mutation` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_unexpected_current_schema_objects_without_mutation` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_unexpected_current_schema_objects_without_mutation` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_publication_table_without_constraints` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_publication_table_without_constraints` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_incompatible_publication_index` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_a_preexisting_incompatible_publication_index` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_unexpected_schema_authorities_without_mutation` -> `fail`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_open_refuses_unexpected_schema_authorities_without_mutation` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S68` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_adr_regression.py::TestLedgerConcurrencyContract` -> `pass`
+- `S68` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S68` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S68` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S68` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_publication_proof.py src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/tests/test_publication_proof.py src/vaultspec_rag/tests/test_index_run_ledger.py` -> `pass`
+- `S68` `verify:` `git diff --check` -> `pass`
+- `S70` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S70` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S70` `M` `src/vaultspec_rag/indexer/_run_checkpoint.py`
+- `S70` `M` `src/vaultspec_rag/indexer/_document_checkpoint.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_checkpoint_common.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_config_epoch.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_document_index_escalation.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_run_checkpoint.py`
+- `S70` `M` `src/vaultspec_rag/tests/test_document_checkpoint.py`
+- `S70` `M` `src/vaultspec_rag/tests/integration/test_document_watcher.py`
+- `S70` `M` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S70` `M` `src/vaultspec_rag/tests/integration/test_content_route_migration.py`
+- `S70` `M` `src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py`
+- `S70` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_run_signature_and_decoder_require_backend_identity src/vaultspec_rag/tests/test_run_checkpoint.py::test_code_run_open_request_requires_backend_identity src/vaultspec_rag/tests/test_document_checkpoint.py::test_document_run_open_request_requires_backend_identity` -> `fail`
+- `S70` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_index_run_ledger.py::test_run_signature_and_decoder_require_backend_identity src/vaultspec_rag/tests/test_run_checkpoint.py::test_code_run_open_request_requires_backend_identity src/vaultspec_rag/tests/test_document_checkpoint.py::test_document_run_open_request_requires_backend_identity` -> `pass`
+- `S70` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_config_epoch.py src/vaultspec_rag/tests/test_document_index_escalation.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py` -> `pass`
+- `S70` `verify:` `uv run --no-sync pytest -q -n0 src/vaultspec_rag/tests/integration/test_document_watcher.py::test_deleted_path_uses_prior_ledger_owner_not_current_route src/vaultspec_rag/tests/integration/test_document_watcher.py::test_deleted_path_keeps_prior_owner_across_an_incomplete_clean src/vaultspec_rag/tests/integration/test_content_kind_restart.py::test_each_kind_replays_only_its_final_unconfirmed_unit src/vaultspec_rag/tests/integration/test_content_route_migration.py::test_interrupted_destination_first_flip_resumes_idempotently src/vaultspec_rag/tests/integration/test_content_route_migration.py::test_generation_route_cleanup_uses_bounded_store_and_ledger_pages src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py::TestCleanGenerationCleanupKeepsServing::test_stale_cleanup_deletes_from_the_build_collection_only` -> `fail`
+- `S70` `verify:` `uv run --no-sync ruff format --check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_checkpoint.py src/vaultspec_rag/indexer/_document_checkpoint.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_config_epoch.py src/vaultspec_rag/tests/test_document_index_escalation.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py src/vaultspec_rag/tests/integration/test_document_watcher.py src/vaultspec_rag/tests/integration/test_content_kind_restart.py src/vaultspec_rag/tests/integration/test_content_route_migration.py src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py` -> `pass`
+- `S70` `verify:` `uv run --no-sync ruff check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_checkpoint.py src/vaultspec_rag/indexer/_document_checkpoint.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_config_epoch.py src/vaultspec_rag/tests/test_document_index_escalation.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py src/vaultspec_rag/tests/integration/test_document_watcher.py src/vaultspec_rag/tests/integration/test_content_kind_restart.py src/vaultspec_rag/tests/integration/test_content_route_migration.py src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py` -> `pass`
+- `S70` `verify:` `uv run --no-sync ty check src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_checkpoint.py src/vaultspec_rag/indexer/_document_checkpoint.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_config_epoch.py src/vaultspec_rag/tests/test_document_index_escalation.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py src/vaultspec_rag/tests/integration/test_document_watcher.py src/vaultspec_rag/tests/integration/test_content_kind_restart.py src/vaultspec_rag/tests/integration/test_content_route_migration.py src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py` -> `pass`
+- `S70` `verify:` `uv run --no-sync basedpyright src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_checkpoint.py src/vaultspec_rag/indexer/_document_checkpoint.py src/vaultspec_rag/tests/test_checkpoint_common.py src/vaultspec_rag/tests/test_config_epoch.py src/vaultspec_rag/tests/test_document_index_escalation.py src/vaultspec_rag/tests/test_index_run_ledger.py src/vaultspec_rag/tests/test_run_checkpoint.py src/vaultspec_rag/tests/test_document_checkpoint.py src/vaultspec_rag/tests/integration/test_document_watcher.py src/vaultspec_rag/tests/integration/test_content_kind_restart.py src/vaultspec_rag/tests/integration/test_content_route_migration.py src/vaultspec_rag/tests/integration/test_index_rebuild_survivability.py` -> `pass`
+- `S70` `verify:` `$matches = rg -n -F 'legacy:unknown' src/vaultspec_rag/indexer/_run_ledger_models.py src/vaultspec_rag/indexer/_run_ledger_runtime.py src/vaultspec_rag/indexer/_run_checkpoint.py src/vaultspec_rag/indexer/_document_checkpoint.py; if ($LASTEXITCODE -eq 0) { $matches; exit 1 }; exit 0` -> `pass`
+- `S70` `verify:` `uv run --no-sync vaultspec-core vault check all` -> `pass`
+- `S70` `verify:` `uv run --no-sync vaultspec-core vault plan check .vault/plan/2026-09-08-incremental-publication-cost-plan.md` -> `pass`
+- `S70` `verify:` `git diff --check` -> `pass`
+- `S77` `M` `docs/cli.md`
+- `S77` `M` `src/vaultspec_rag/_index_breadth.py`
+- `S77` `M` `src/vaultspec_rag/_index_integrity.py`
+- `S77` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S77` `M` `src/vaultspec_rag/_search_state.py`
+- `S77` `M` `src/vaultspec_rag/_source_types.py`
+- `S77` `M` `src/vaultspec_rag/api.py`
+- `S77` `M` `src/vaultspec_rag/cli/_index.py`
+- `S77` `M` `src/vaultspec_rag/cli/_search.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_document_checkpoint.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_publication_proof.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_run_checkpoint.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_run_ledger_models.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_streaming_types.py`
+- `S77` `M` `src/vaultspec_rag/indexer/_vault_fingerprint.py`
+- `S77` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S77` `M` `src/vaultspec_rag/search/_validation.py`
+- `S77` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S77` `M` `src/vaultspec_rag/serviceclient/_search_transport.py`
+- `S77` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S77` `M` `src/vaultspec_rag/store_catalog.py`
+- `S77` `D` `src/vaultspec_rag/tests/benchmarks/bench_incremental_publication_cost.py`
+- `S77` `M` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S77` `M` `src/vaultspec_rag/tests/integration/test_content_route_migration.py`
+- `S77` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_http.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_cli_index.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_http_search_errors.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_publication_scaling.py`
+- `S77` `A` `src/vaultspec_rag/tests/test_scoped_publication_cost_guard.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_slice_writer_overlap.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_source_types.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S77` `M` `src/vaultspec_rag/tests/test_vault_fingerprint.py`
+- `S77` `verify:` `just check-python` -> `pass`
+- `S77` `verify:` `just check-type` -> `pass`
+- `S77` `verify:` `just check-all` -> `pass`
+- `S77` `verify:` `just test-python` -> `pass`
+- `S71` `M` `src/vaultspec_rag/_index_breadth.py`
+- `S71` `M` `src/vaultspec_rag/_index_integrity.py`
+- `S71` `M` `src/vaultspec_rag/indexer/_donor_candidates.py`
+- `S71` `M` `src/vaultspec_rag/generation_survey.py`
+- `S71` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S71` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S71` `M` `src/vaultspec_rag/storage_manifest.py`
+- `S71` `M` `src/vaultspec_rag/api.py`
+- `S71` `M` `src/vaultspec_rag/cli/_search.py`
+- `S71` `M` `src/vaultspec_rag/_public_search.py`
+- `S71` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S71` `M` `src/vaultspec_rag/tests`
+- `S71` `by:` `vault-ledger-repair`
+- `S72` `M` `src/vaultspec_rag/indexer/_checkpoint_common.py`
+- `S72` `M` `src/vaultspec_rag/indexer/_run_checkpoint.py`
+- `S72` `M` `src/vaultspec_rag/indexer/_document_checkpoint.py`
+- `S72` `M` `src/vaultspec_rag/indexer/_run_ledger_finalization.py`
+- `S72` `M` `src/vaultspec_rag/indexer/_route_migration.py`
+- `S72` `M` `src/vaultspec_rag/indexer/_stat_gate.py`
+- `S72` `by:` `vault-ledger-repair`
+- `S73` `M` `src/vaultspec_rag/indexer/_incremental_commit.py`
+- `S73` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S73` `M` `src/vaultspec_rag/indexer/_generation_lifecycle.py`
+- `S73` `M` `src/vaultspec_rag/indexer/_codebase_indexer.py`
+- `S73` `D` `src/vaultspec_rag/indexer/_code_meta.py`
+- `S73` `M` `src/vaultspec_rag/store_catalog.py`
+- `S73` `by:` `vault-ledger-repair`
+- `S74` `M` `src/vaultspec_rag/indexer/_document_checkpoint.py`
+- `S74` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S74` `M` `src/vaultspec_rag/indexer/_document_indexer.py`
+- `S74` `D` `src/vaultspec_rag/indexer/_document_meta.py`
+- `S74` `by:` `vault-ledger-repair`
+- `S75` `M` `src/vaultspec_rag/indexer/_vault_incremental.py`
+- `S75` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S75` `M` `src/vaultspec_rag/indexer/_vault_indexer.py`
+- `S75` `D` `src/vaultspec_rag/indexer/_vault_meta.py`
+- `S75` `by:` `vault-ledger-repair`
+- `S76` `M` `src/vaultspec_rag/indexer`
+- `S76` `M` `src/vaultspec_rag/tests/test_process_probe_ownership_guards.py`
+- `S76` `by:` `vault-ledger-repair`
+
+## Notes
+
+- `S38` The two unchanged document integration regression nodes were refused before collection because another process held the GPU borrower lease. Their S38-only edits supply required constructor arguments; focused execution guards and strict static gates passed.
+- `S39` The full unit gate reported 4,626 passed, 3 skipped, and 6 failures outside S39: configuration-reference default drift, duplicated finalization phase ownership, pre-existing duplicate function shapes, an undeclared test substitution, binary-workflow drift, and CI runner trust-boundary drift.
+- `S39` The GPU-marked service source-type integration module was refused before collection because no compatible machine-pointer service lease was available. Its wire contract is covered by the CPU route, transport, CLI, and benchmark guards plus repository-wide static analysis.
+- `S52` The remaining changed integration modules could not start because another process held the GPU borrower lease. The explicit GPU-discipline gate refused the mixed integration selection before collection; no GPU-dependent test was skipped or run concurrently.
+- `S54` The scoped route-migration integration file could not collect because another process
+- `S54` held the global GPU borrower lease. No route-migration source or test file changed in this
+- `S54` Step; all changed CPU-scoped suites completed successfully.
+- `S70` The focused integration selection collected no tests because pytest could not capture a version-compatible resident machine-pointer service. The already-running service reports ready, but its installed package is not compatible with this checkout; the guarded GPU tier correctly refused to borrow it.
+- `S77` The gate run above is the CPU-only lane, not the whole suite. It selects
+- `S77` 4,678 of 5,445 collected tests and deselects 767 by marker: the integration,
+- `S77` quality, performance, robustness, subprocess-GPU, CUDA and MPS tiers. Those
+- `S77` 767 include the real-Qdrant integration suites this issue's acceptance
+- `S77` criteria depend on for exact breadth, deletion, backend identity and
+- `S77` concurrent publication, and they have not been run here. An earlier version
+- `S77` of this record reported the four exit codes without that distinction, which
+- `S77` read as full-suite coverage.
+- `S77` Before that, the lane was not merely narrow - it was refused outright. A
+- `S77` deleted test took the next one's tier marker with it, and a test declaring
+- `S77` no tier makes the tier gate reject every selection, so each worker exited
+- `S77` before running anything. No gate run on this branch had executed a single
+- `S77` test until that marker was restored.
+- `S77` The large-index performance budget the Step names has not been measured. The
+- `S77` deterministic half is gated and mutation-proven: an exact-path read retires
+- `S77` the same instruction count over a 10-path parent and a 10,000-path one, and
+- `S77` the statement production actually emits is explained and required to seek
+- `S77` every table it touches. The elapsed-time half needs a representative index
+- `S77` and a lane to run it in, and has neither here. The benchmark that stood in
+- `S77` for it was collected by no lane and asserted no threshold, so it is deleted
+- `S77` rather than left as evidence it never provided.
+- `S77` The formal code review ran and returned a fail with three blocking findings,
+- `S77` all of them about evidence rather than design. Each is addressed above and
+- `S77` re-driven in both directions. The Step stays open for the re-review.
+- `S71` Evidence: governing plan scope plus Git history; no path invented.
+- `S72` Evidence: governing plan scope plus Git history; no path invented.
+- `S73` Evidence: governing plan scope plus Git history; no path invented.
+- `S74` Evidence: governing plan scope plus Git history; no path invented.
+- `S75` Evidence: governing plan scope plus Git history; no path invented.
+- `S76` Evidence: governing plan scope plus Git history; no path invented.

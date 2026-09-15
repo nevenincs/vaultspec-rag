@@ -20,6 +20,7 @@ import threading
 from typing import TYPE_CHECKING
 
 import pytest
+from mcp.server.mcpserver.exceptions import MCPServerError
 from typer.testing import CliRunner
 
 from ..cli._app import app
@@ -324,7 +325,7 @@ def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
     document[SERVICE_VERSION_FIELD] = _FOREIGN_RELEASE
     status_path.write_text(json.dumps(document), encoding="utf-8")
 
-    with pytest.raises(RuntimeError) as exc_info:
+    with pytest.raises(MCPServerError) as exc_info:
         asyncio.run(search_vault("anything"))
 
     message = str(exc_info.value)

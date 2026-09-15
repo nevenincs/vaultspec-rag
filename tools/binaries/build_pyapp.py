@@ -26,17 +26,20 @@ not the build this project resolves on Linux. See
 and why it is a direct wheel reference rather than an extra index.
 
 The distribution source is the published PyPI package pinned to the release
-version: PyApp installs it into a per-user data directory on first launch
-(PYAPP_PROJECT_NAME + PYAPP_PROJECT_VERSION), while the CPython runtime is
-embedded into the binary itself (PYAPP_DISTRIBUTION_EMBED). The binary
-therefore needs no Python on the user's machine, but does resolve
-``vaultspec-rag==<version>`` from PyPI on first run - so the release must
-be published to PyPI for the binary to bootstrap.
+version by default. A release build can instead pass the exact wheel it just
+built with ``--wheel`` (or ``--wheel-dir``); PyApp embeds that wheel as
+``PYAPP_PROJECT_PATH`` while retaining the first-launch install model. In
+both cases the project is installed into a per-user data directory on first
+launch (PYAPP_PROJECT_NAME + PYAPP_PROJECT_VERSION), while the CPython runtime
+is embedded into the binary itself (PYAPP_DISTRIBUTION_EMBED). The binary
+therefore needs no Python on the user's machine, but still needs network access
+to resolve the project and its dependencies on first run.
 
 Usage::
 
     uv run --no-project --python 3.13 python tools/binaries/build_pyapp.py \
-        --tag vaultspec-rag-v0.4.6 --outdir dist-bin [--target <triple>]
+        --tag vaultspec-rag-v0.4.6 --outdir dist-bin [--target <triple>] \
+        [--wheel dist/vaultspec_rag-0.4.6-py3-none-any.whl]
 
 ``--target`` cross-compiles for a Rust target triple other than the host
 (the CI matrix uses it to build the macOS x86_64 binary on an Apple Silicon
@@ -47,18 +50,22 @@ Python standard library is used, so any Python 3.13 interpreter can run it.
 from __future__ import annotations
 
 import argparse
+import email
 import hashlib
 import os
+import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from tools.binaries.torch_channel import pip_extra_args
-from tools.binaries.windows_icon import stamp_icon
+from tools.binaries.windows_icon import VersionInfo, stamp_icon, stamp_version_info
+from tools.packaging import products
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
 # embedded python-build-standalone distributions it selects, so it is an
@@ -103,6 +110,10 @@ BINARIES = (
 PROJECT_FEATURES = "gpu,mcp"
 
 
+class WheelError(RuntimeError):
+    """The release wheel is absent, malformed, or names another release."""
+
+
 def version_from_tag(tag: str) -> str:
     """Derive the PyPI version from a release tag.
 
@@ -113,6 +124,74 @@ def version_from_tag(tag: str) -> str:
         if tag.startswith(prefix):
             return tag[len(prefix) :]
     return tag
+
+
+def sole_wheel(directory: Path) -> Path:
+    """Return the one wheel in *directory*, refusing zero or several.
+
+    The release recipe passes a directory because a recipe cannot expand a
+    shell glob portably. Requiring exactly one file prevents a stale wheel or
+    an sdist from becoming the silent PyApp input.
+    """
+    wheels = sorted(directory.glob("*.whl"))
+    if not wheels:
+        raise WheelError(f"no wheel in {directory}; build one first")
+    if len(wheels) > 1:
+        found = ", ".join(wheel.name for wheel in wheels)
+        raise WheelError(f"expected one wheel in {directory}, found: {found}")
+    return wheels[0]
+
+
+def _normalise_project_name(name: str) -> str:
+    """Apply the canonical comparison form for a Python distribution name."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _wheel_identity(wheel: Path) -> tuple[str, str]:
+    """Read the authoritative distribution name and version from *wheel*."""
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            metadata = [
+                info.filename
+                for info in archive.infolist()
+                if info.filename.endswith(".dist-info/METADATA")
+            ]
+            if len(metadata) != 1:
+                raise WheelError(
+                    f"{wheel} must contain exactly one dist-info/METADATA file"
+                )
+            message = email.message_from_bytes(archive.read(metadata[0]))
+    except (OSError, zipfile.BadZipFile) as error:
+        raise WheelError(f"{wheel} is not a readable wheel archive") from error
+
+    name = message.get("Name")
+    version = message.get("Version")
+    if not name or not version:
+        raise WheelError(f"{wheel} has no Name and Version in its wheel metadata")
+    return name.strip(), version.strip()
+
+
+def validate_project_wheel(wheel: Path, version: str) -> Path:
+    """Validate and return the exact RAG release wheel used by PyApp.
+
+    Wheel filenames can be renamed without changing their payload, so the
+    metadata inside the archive is the identity check. This closes the race
+    where a release tag says one version while a stale local wheel silently
+    supplies another package to the binary.
+    """
+    wheel = wheel.resolve()
+    if wheel.suffix != ".whl" or not wheel.is_file():
+        raise WheelError(f"--wheel {wheel} does not exist or is not a .whl file")
+    name, wheel_version = _wheel_identity(wheel)
+    if _normalise_project_name(name) != _normalise_project_name(PROJECT_NAME):
+        raise WheelError(
+            f"--wheel {wheel} contains {name!r}, expected {PROJECT_NAME!r}"
+        )
+    if wheel_version != version:
+        raise WheelError(
+            f"--wheel {wheel} contains version {wheel_version!r}, expected {version!r}"
+        )
+    return wheel
 
 
 def host_target_triple() -> str:
@@ -129,7 +208,13 @@ def host_target_triple() -> str:
     raise RuntimeError("could not determine host target triple from `rustc -vV`")
 
 
-def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
+def build_one(
+    binary: Binary,
+    version: str,
+    target: str,
+    workdir: Path,
+    project_wheel: Path | None = None,
+) -> Path:
     """Build a single PyApp binary and return the path to the raw executable."""
     root = workdir / binary.name
     env = os.environ.copy()
@@ -148,6 +233,11 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
         }
     )
     env.update(binary.pyapp_exec_env())
+    if project_wheel is not None:
+        # PyApp embeds this exact wheel as its project source. The first-launch
+        # installer still resolves the wheel's dependencies, including the
+        # target-specific accelerated torch reference below.
+        env["PYAPP_PROJECT_PATH"] = str(project_wheel)
     # Bootstrap the accelerated torch build on every target that has one.
     # Without this the first launch resolves torch from default PyPI, which on
     # Windows is CPU-only - a GPU product delivered with the GPU absent.
@@ -180,8 +270,24 @@ def build_one(binary: Binary, version: str, target: str, workdir: Path) -> Path:
 
 
 def asset_name(binary: Binary, target: str) -> str:
-    suffix = ".exe" if target.endswith("windows-msvc") else ""
-    return f"{binary.name}-{target}{suffix}"
+    return products.raw_asset_name(binary.name, target)
+
+
+def binary_version_info(binary: Binary, version: str, target: str) -> VersionInfo:
+    """Return the Windows metadata for one finalized release executable."""
+    executable = next(
+        item for item in products.VAULTSPEC_RAG.executables if item.name == binary.name
+    )
+    product = products.VAULTSPEC_RAG
+    return VersionInfo(
+        file_version=version,
+        product_version=version,
+        product_name=product.display_name or product.name,
+        file_description=executable.summary,
+        original_filename=products.executable_filename(binary.name, target),
+        company_name=product.publisher,
+        legal_copyright=product.legal_copyright,
+    )
 
 
 # --- platform floor ---------------------------------------------------------
@@ -208,10 +314,8 @@ GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
     # the build environment enforces rather than one the build host happens to
     # satisfy. Verified on v0.4.15.
     "x86_64-unknown-linux-gnu": (2, 28),
-    # 2.28, matching x86_64. This target now builds inside the digest-pinned
-    # manylinux_2_28_aarch64 image on a GitHub-hosted ARM64 runner, so like
-    # x86_64 above this is a promise the build environment enforces rather than
-    # one the build host happens to satisfy.
+    # Built inside the digest-pinned manylinux_2_28_aarch64 image, matching the
+    # x86_64 floor rather than inheriting the ARM runner host's glibc version.
     #
     # It was 2.39 for as long as the only ARM64 Linux host was a colima
     # container that could not start the image and therefore built natively,
@@ -372,10 +476,30 @@ def main() -> int:
         "--target",
         help="Rust target triple to (cross-)build for; defaults to the host",
     )
+    parser.add_argument(
+        "--wheel",
+        type=Path,
+        help=(
+            "exact release wheel to embed as the PyApp project source; "
+            "defaults to resolving the version from PyPI"
+        ),
+    )
+    parser.add_argument(
+        "--wheel-dir",
+        type=Path,
+        help="directory holding exactly one release wheel",
+    )
     args = parser.parse_args()
 
     version = args.version if args.version else version_from_tag(args.tag)
     target = args.target if args.target else host_target_triple()
+    if args.wheel and args.wheel_dir:
+        raise WheelError("pass --wheel or --wheel-dir, not both")
+    project_wheel = args.wheel
+    if args.wheel_dir:
+        project_wheel = sole_wheel(args.wheel_dir)
+    if project_wheel is not None:
+        project_wheel = validate_project_wheel(project_wheel, version)
 
     outdir: Path = args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
@@ -384,11 +508,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="pyapp-build-") as tmp:
         workdir = Path(tmp)
         for binary in BINARIES:
-            raw = build_one(binary, version, target, workdir)
+            raw = build_one(binary, version, target, workdir, project_wheel)
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
-            if target.endswith("windows-msvc"):
+            if products.is_windows_target(target):
                 stamp_icon(asset, APPLICATION_ICON)
+                stamp_version_info(asset, binary_version_info(binary, version, target))
             else:
                 asset.chmod(0o755)
             # Refuse the artifact HERE, before it is renamed into place and

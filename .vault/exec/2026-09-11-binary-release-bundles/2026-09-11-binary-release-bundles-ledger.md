@@ -1,0 +1,111 @@
+---
+tags:
+  - '#exec'
+  - '#binary-release-bundles'
+date: '2026-09-11'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:b3176eef66d3f585060dd4fe4f2e128613ced0941e0d0c322c69e9e1b7d64db1'
+related:
+  - "[[2026-09-11-binary-release-bundles-plan]]"
+---
+
+# `binary-release-bundles` ledger
+
+## Changes
+
+- `S01` `M` `tools/packaging/products.py`
+- `S01` `verify:` `uv run pytest tools/packaging/tests/test_generators.py -q` -> `pass`
+- `S02` `A` `tools/packaging/bundles.py`
+- `S02` `verify:` `uv run --no-sync ruff format --check tools/packaging/bundles.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync ruff check tools/packaging/bundles.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync basedpyright tools/packaging/bundles.py` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest tools/packaging/tests/test_bundles.py -q` -> `pass`
+- `S02` `verify:` `git diff --check -- tools/packaging/bundles.py` -> `pass`
+- `S03` `M` `tools/binaries/windows_icon.py`
+- `S03` `verify:` `uv run ruff check tools/binaries/windows_icon.py` -> `pass`
+- `S03` `verify:` `uv run pytest tools/binaries/tests/test_windows_icon.py -q` -> `pass`
+- `S04` `M` `tools/binaries/build_pyapp.py`
+- `S04` `verify:` `uv run ruff check tools/binaries/build_pyapp.py` -> `pass`
+- `S04` `verify:` `uv run pytest tools/binaries/tests/test_build_pyapp.py tools/binaries/tests/test_platform_floor.py -q` -> `pass`
+- `S05` `A` `tools/packaging/tests/test_bundles.py`
+- `S05` `verify:` `uv run --no-sync ruff format --check tools/packaging/tests/test_bundles.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync ruff check tools/packaging/tests/test_bundles.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync basedpyright tools/packaging/tests/test_bundles.py` -> `pass`
+- `S05` `verify:` `uv run --no-sync pytest tools/packaging/tests/test_bundles.py -q` -> `pass`
+- `S05` `verify:` `guard mutation: omit member-mode verification` -> `fail as expected, then pass after restore`
+- `S05` `verify:` `git diff --check -- tools/packaging/tests/test_bundles.py` -> `pass`
+- `S06` `M` `tools/binaries/tests/test_windows_icon.py`
+- `S06` `M` `tools/binaries/tests/test_build_pyapp.py`
+- `S06` `verify:` `uv run ruff check tools/binaries/tests/test_windows_icon.py tools/binaries/tests/test_build_pyapp.py` -> `pass`
+- `S06` `verify:` `uv run pytest tools/binaries/tests/test_windows_icon.py tools/binaries/tests/test_build_pyapp.py tools/binaries/tests/test_platform_floor.py -q` -> `pass`
+- `S07` `M` `tools/binaries/build_pyapp.py`
+- `S07` `M` `tools/binaries/tests/test_build_pyapp.py`
+- `S07` `verify:` `uv run ruff check tools/binaries/build_pyapp.py tools/binaries/tests/test_build_pyapp.py` -> `pass`
+- `S07` `verify:` `uv run pytest tools/binaries/tests/test_build_pyapp.py -q` -> `pass`
+- `S08` `M` `justfile`
+- `S08` `M` `tools/binaries/tests/test_build_pyapp.py`
+- `S08` `verify:` `uv run ruff check tools/binaries/tests/test_build_pyapp.py` -> `pass`
+- `S08` `verify:` `uv run pytest tools/binaries/tests/test_build_pyapp.py -q` -> `pass`
+- `S08` `verify:` `just --dry-run release-binaries vaultspec-rag-v0.4.6 x86_64-unknown-linux-gnu` -> `pass`
+- `S08` `verify:` `just --dry-run release-bundle vaultspec-rag-v0.4.6 x86_64-unknown-linux-gnu` -> `pass`
+- `S08` `verify:` `just --dry-run release-checksums` -> `pass`
+- `S09` `M` `.github/workflows/binaries.yml`
+- `S09` `verify:` `python -c "import pathlib, yaml; yaml.safe_load(pathlib.Path('.github/workflows/binaries.yml').read_text(encoding='utf-8'))"` -> `pass`
+- `S09` `verify:` `actionlint -shellcheck= -pyflakes= -no-color .github/workflows/binaries.yml` -> `pass`
+- `S09` `verify:` `python workflow bundle handoff structural checks` -> `pass`
+- `S10` `M` `.github/workflows/binaries.yml`
+- `S10` `A` `tools/binaries/tests/test_release_workflow.py`
+- `S10` `verify:` `uv run pytest tools/binaries/tests/test_release_workflow.py -q` -> `pass`
+- `S10` `verify:` `actionlint -shellcheck= -pyflakes= -no-color .github/workflows/binaries.yml` -> `pass`
+- `S10` `verify:` `python -c "from pathlib import Path; import yaml; yaml.safe_load(Path('.github/workflows/binaries.yml').read_text(encoding='utf-8'))"` -> `pass`
+- `S10` `verify:` `uv run ruff check tools/binaries/tests/test_release_workflow.py` -> `pass`
+- `S10` `verify:` `git diff --check` -> `pass`
+- `S11` `M` `.github/workflows/binaries.yml`
+- `S11` `M` `.github/workflows/publish.yml`
+- `S11` `A` `tools/binaries/tests/test_release_workflow.py`
+- `S11` `verify:` `uv run pytest tools/binaries/tests/test_release_workflow.py -q` -> `pass`
+- `S11` `verify:` `uv run pytest tools/binaries/tests tools/packaging/tests -q` -> `pass`
+- `S11` `verify:` `actionlint -shellcheck= -pyflakes= -no-color .github/workflows/binaries.yml .github/workflows/publish.yml` -> `pass`
+- `S11` `verify:` `python -c "from pathlib import Path; import yaml; [yaml.safe_load(Path(path).read_text(encoding='utf-8')) for path in ('.github/workflows/binaries.yml', '.github/workflows/publish.yml')]"` -> `pass`
+- `S11` `verify:` `uv run ruff check tools/binaries/tests/test_release_workflow.py` -> `pass`
+- `S11` `verify:` `git diff --check` -> `pass`
+- `S12` `M` `.github/workflows/release-please.yml`
+- `S12` `M` `tools/binaries/tests/test_release_workflow.py`
+- `S12` `verify:` `uv run pytest tools/binaries/tests/test_release_workflow.py -q` -> `pass`
+- `S12` `verify:` `uv run pytest tools/binaries/tests tools/packaging/tests -q` -> `pass`
+- `S12` `verify:` `actionlint -shellcheck= -pyflakes= -no-color .github/workflows/release-please.yml .github/workflows/binaries.yml .github/workflows/publish.yml` -> `pass`
+- `S12` `verify:` `uv run ruff check tools/binaries/tests/test_release_workflow.py` -> `pass`
+- `S12` `verify:` `git diff --check` -> `pass`
+- `S13` `M` `justfile`
+- `S13` `M` `tools/packaging/generate.py`
+- `S13` `M` `tools/packaging/homebrew.py`
+- `S13` `M` `tools/packaging/scoop.py`
+- `S13` `M` `tools/packaging/tests/test_generators.py`
+- `S13` `M` `tools/packaging/tests/test_validate.py`
+- `S13` `M` `tools/packaging/validate.py`
+- `S13` `verify:` `uv run ruff check tools/packaging tools/packaging/tests/test_generators.py tools/packaging/tests/test_validate.py` -> `pass`
+- `S13` `verify:` `uv run pytest tools/packaging/tests/test_generators.py tools/packaging/tests/test_validate.py -q` -> `pass`
+- `S13` `verify:` `uv run pytest tools/binaries/tests tools/packaging/tests -q` -> `pass`
+- `S14` `A` `tools/packaging/tests/test_committed_channels.py`
+- `S14` `M` `tools/packaging/tests/test_bundles.py`
+- `S14` `M` `tools/packaging/tests/test_checksums.py`
+- `S14` `M` `tools/packaging/tests/test_generators.py`
+- `S14` `M` `tools/packaging/tests/test_validate.py`
+- `S14` `verify:` `uv run ruff check tools/binaries tools/packaging` -> `pass`
+- `S14` `verify:` `git diff --check` -> `pass`
+- `S14` `verify:` `uv run pytest tools/binaries/tests tools/packaging/tests -q` -> `pass`
+- `S14` `verify:` `actionlint -shellcheck= -pyflakes= -no-color .github/workflows/binaries.yml` -> `pass`
+- `S15` `M` `docs/installation.md`
+- `S15` `verify:` `uv run mdformat docs/installation.md` -> `pass`
+- `S15` `verify:` `uv run pymarkdown --config .pymarkdown.json scan docs/installation.md` -> `pass`
+- `S15` `verify:` `just check-markdown check-docs-version check-docs-conventions` -> `pass`
+- `S15` `verify:` `just check-links` -> `pass`
+- `S15` `verify:` `uv run python -c "bundle names and supported targets"` -> `pass`
+- `S16` `M` `RELEASING.md`
+- `S16` `verify:` `uv run --no-sync mdformat --check RELEASING.md` -> `pass`
+- `S16` `verify:` `uv run --no-sync pymarkdown --config .pymarkdown.json scan RELEASING.md` -> `pass`
+- `S16` `verify:` `just check-markdown check-docs-version check-docs-conventions` -> `pass`
+- `S16` `verify:` `just check-links` -> `pass`
+- `S16` `verify:` `uv run --no-sync lychee --config lychee.toml RELEASING.md` -> `pass`
+- `S16` `verify:` `release runbook product/workflow contract check` -> `pass`

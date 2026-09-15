@@ -4,14 +4,13 @@ tags:
   - '#index'
   - '#serviceclient-admin-errors'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:6c2f9877a305e5ad6052a9ec70a418fee160591d4c2d5b7fb0aae531c87ef259'
+body_hash: 'sha256:20e33b41095b661ebe9dd857724f0f968d45257b0553830998e7bc0a5272acf4'
 related:
-  - '[[2026-06-24-serviceclient-admin-errors-S01]]'
-  - '[[2026-06-24-serviceclient-admin-errors-S02]]'
   - '[[2026-06-24-serviceclient-admin-errors-adr]]'
   - '[[2026-06-24-serviceclient-admin-errors-audit]]'
+  - '[[2026-06-24-serviceclient-admin-errors-ledger]]'
   - '[[2026-06-24-serviceclient-admin-errors-plan]]'
   - '[[2026-06-24-serviceclient-admin-errors-research]]'
 ---
@@ -32,8 +31,7 @@ Auto-generated index of all documents tagged with `#serviceclient-admin-errors`.
 
 ### exec
 
-- `2026-06-24-serviceclient-admin-errors-S01` - Replace the catch-all empty-dict swallow in the admin helper with the structured http_call_failed ok=False envelope (mirroring the search and reindex helpers), leaving the connection-refused→None and timeout→admin_timeout branches unchanged
-- `2026-06-24-serviceclient-admin-errors-S02` - Add a no-mock regression test: drive an admin call against a real in-process route that raises a non-refused, non-timeout error (e.g. a malformed non-JSON response) and assert it returns the http_call_failed envelope, distinguishable from a real empty result and from the unreachable None sentinel
+- `2026-06-24-serviceclient-admin-errors-ledger` - `serviceclient-admin-errors` ledger
 
 ### plan
 

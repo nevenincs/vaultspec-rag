@@ -1183,14 +1183,14 @@ class DocumentIndexer:
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofMissingError
+        from ._publication_proof import ProofIncompatibleError, ProofMissingError
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.DOCUMENT,
             )
-        except ProofMissingError:
+        except (ProofIncompatibleError, ProofMissingError):
             previous_files = {}
         else:
             previous_files = {

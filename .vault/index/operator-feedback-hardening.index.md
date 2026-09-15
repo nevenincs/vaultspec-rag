@@ -4,22 +4,13 @@ tags:
   - '#index'
   - '#operator-feedback-hardening'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:fd22685a68a8e865bcd80c032ff9e99f749e4ea9733b0202084547ed1ab64df2'
+body_hash: 'sha256:757d22daae83ba3488837f0bc1c5a23666b39d6ba5684537bf20c571f9b5f17e'
 related:
-  - '[[2026-07-24-operator-feedback-hardening-P01-S01]]'
-  - '[[2026-07-24-operator-feedback-hardening-P01-S02]]'
-  - '[[2026-07-24-operator-feedback-hardening-P01-S03]]'
-  - '[[2026-07-24-operator-feedback-hardening-P02-S04]]'
-  - '[[2026-07-24-operator-feedback-hardening-P02-S05]]'
-  - '[[2026-07-24-operator-feedback-hardening-P02-S06]]'
-  - '[[2026-07-24-operator-feedback-hardening-P03-S07]]'
-  - '[[2026-07-24-operator-feedback-hardening-P03-S08]]'
-  - '[[2026-07-24-operator-feedback-hardening-P03-S09]]'
-  - '[[2026-07-24-operator-feedback-hardening-P03-S10]]'
   - '[[2026-07-24-operator-feedback-hardening-adr]]'
   - '[[2026-07-24-operator-feedback-hardening-audit]]'
+  - '[[2026-07-24-operator-feedback-hardening-ledger]]'
   - '[[2026-07-24-operator-feedback-hardening-plan]]'
   - '[[2026-07-27-operator-feedback-hardening-grounding-research]]'
 ---
@@ -40,16 +31,7 @@ Auto-generated index of all documents tagged with `#operator-feedback-hardening`
 
 ### exec
 
-- `2026-07-24-operator-feedback-hardening-P01-S01` - Resolve console interactivity once, from the real stdout stream
-- `2026-07-24-operator-feedback-hardening-P01-S02` - Add a startup status reporter whose output is stream-placed by mode
-- `2026-07-24-operator-feedback-hardening-P01-S03` - Report every start pre-flight stage and the daemon cold-start phases
-- `2026-07-24-operator-feedback-hardening-P02-S04` - Complete the start wait when the daemon can serve, not on the ready word
-- `2026-07-24-operator-feedback-hardening-P02-S05` - Bound job-history degradation to the current service generation
-- `2026-07-24-operator-feedback-hardening-P02-S06` - Log the startup refusal cause before the daemon process exit
-- `2026-07-24-operator-feedback-hardening-P03-S07` - Render every degradation with its cause and a remedying command
-- `2026-07-24-operator-feedback-hardening-P03-S08` - Measure the vector store volume in the index disk pre-flight
-- `2026-07-24-operator-feedback-hardening-P03-S09` - Keep the main thread interruptible across blocking operator polls
-- `2026-07-24-operator-feedback-hardening-P03-S10` - Route every operator-facing size through one byte vocabulary
+- `2026-07-24-operator-feedback-hardening-ledger` - `operator-feedback-hardening` ledger
 
 ### plan
 

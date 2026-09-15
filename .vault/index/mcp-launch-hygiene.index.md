@@ -4,16 +4,13 @@ tags:
   - '#index'
   - '#mcp-launch-hygiene'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:12378974bb1a649a264c5311f14c1a9e0fb7ff634fdaee1d00cda69f44e81fcf'
+body_hash: 'sha256:dd1d480c4b0eec8fe3433c763cfa7c8e31c4cdb2c254bf91e99f4992fde4a30d'
 related:
-  - '[[2026-07-17-mcp-launch-hygiene-S01]]'
-  - '[[2026-07-17-mcp-launch-hygiene-S02]]'
-  - '[[2026-07-17-mcp-launch-hygiene-S03]]'
-  - '[[2026-07-17-mcp-launch-hygiene-S04]]'
   - '[[2026-07-17-mcp-launch-hygiene-adr]]'
   - '[[2026-07-17-mcp-launch-hygiene-audit]]'
+  - '[[2026-07-17-mcp-launch-hygiene-ledger]]'
   - '[[2026-07-17-mcp-launch-hygiene-plan]]'
   - '[[2026-07-17-mcp-launch-hygiene-research]]'
 ---
@@ -34,10 +31,7 @@ Auto-generated index of all documents tagged with `#mcp-launch-hygiene`.
 
 ### exec
 
-- `2026-07-17-mcp-launch-hygiene-S01` - Add the \_vaultspec_mode_tool_spec token (vaultspec-rag[mcp]) to the builtin MCP seed and regenerate the committed workspace mirror through the seeder
-- `2026-07-17-mcp-launch-hygiene-S02` - Make the ensure-mcp-extra step placement-aware: detect rag's existing declaration in the host pyproject, fall back to the declared mode, skip in tool mode, and thread the resolved placement from the install orchestrator
-- `2026-07-17-mcp-launch-hygiene-S03` - Pin the contract with tests: placement matrix for the extra step and the stale-exe-seed refresh on install --upgrade
-- `2026-07-17-mcp-launch-hygiene-S04` - Document the pre-parity workspace remediation (install --upgrade seed refresh) in the installation guide
+- `2026-07-17-mcp-launch-hygiene-ledger` - `mcp-launch-hygiene` ledger
 
 ### plan
 

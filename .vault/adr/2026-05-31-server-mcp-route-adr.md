@@ -6,8 +6,8 @@ date: '2026-05-31'
 related:
   - "[[2026-05-31-server-mcp-route-research]]"
 superseded_by: '2026-06-18-mcp-service-client-adr'
-modified: '2026-07-27'
-body_hash: 'sha256:1b35e89f6ee8791e344020013c7ac7b6bb8067fd8eddb755f7e8a32737297f37'
+modified: '2026-09-14'
+body_hash: 'sha256:a580eb0b6b4abf079a368d18d42040aece9ba3295097482adc8978724f8cd246'
 ---
 
 # `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)
@@ -54,6 +54,7 @@ async def _mcp_no_redirect(scope, receive, send):
     if scope["type"] == "http" and scope.get("path") == "/mcp":
         scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
     await app(scope, receive, send)
+
 
 uvicorn.run(_mcp_no_redirect, host=..., port=..., lifespan="on")
 ```

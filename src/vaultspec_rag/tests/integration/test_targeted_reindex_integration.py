@@ -21,6 +21,7 @@ from vaultspec_core.vaultcore import (
     scan_vault,
 )
 
+from ..._job_errors import JobError, JobErrorKind
 from ..._source_types import PublicSourceType
 from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
@@ -265,7 +266,7 @@ class TestCodeScopedReindex:
             store.close()
 
     @pytest.mark.timeout(180)
-    def test_gitignored_file_is_noop(
+    def test_gitignore_policy_drift_requires_rebuild(
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
         store, code_indexer, _a, _b = _build_code(tmp_path, embedding_model)
@@ -275,16 +276,23 @@ class TestCodeScopedReindex:
             ignored.write_text("def ignored():\n    return 0\n", encoding="utf-8")
             meta_before = published_content_identities(tmp_path, PublicSourceType.CODE)
 
-            result = code_indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths={ignored},
-                preflight=code_indexer.preflight_changed_paths({ignored}),
-            )
+            with pytest.raises(JobError) as exc_info:
+                code_indexer.incremental_index(
+                    reporter=NullProgressReporter(),
+                    changed_paths={ignored},
+                    preflight=code_indexer.preflight_changed_paths({ignored}),
+                )
 
-            assert (result.added, result.updated, result.removed) == (0, 0, 0)
+            assert exc_info.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
             assert (
                 published_content_identities(tmp_path, PublicSourceType.CODE)
                 == meta_before
             )
+            code_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=code_indexer.preflight_content(),
+            )
+            ignored_rel = str(ignored.relative_to(tmp_path)).replace("\\", "/")
+            assert not code_indexer.store.get_code_ids_by_paths({ignored_rel})
         finally:
             store.close()

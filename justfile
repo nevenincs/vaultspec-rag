@@ -154,11 +154,9 @@ deps-lock-upgrade:
 check-python:
     {{dev}} lint python
 
-# `check-type` checks `tools` alongside the package. tools/ carries the release
-# binary builder and the Scoop/Homebrew generators, where a break fails a
-# release rather than a test. Both were outside this gate when a generator
-# default naming a product that does not exist, and a builder invoked so it
-# could not import its own package, reached main with CI green.
+# `check-type` checks the release tooling, development harness, and root pytest
+# harness alongside the package. A break in any of them can invalidate a
+# release or make the gate itself report a false clean result.
 
 # Check types across the package and the release tooling.
 [group('check')]
@@ -434,7 +432,7 @@ check-docs-cli:
 # ===========================================================================
 #  release
 #
-#  Both recipes deliberately bypass the project environment and run under a
+#  Release recipes deliberately bypass the project environment and run under a
 #  bare `--no-project` interpreter, exactly as .github/workflows/binaries.yml
 #  does, so a local reproduction and CI execute the same command. Routing them
 #  through .venv would put the environment between the maintainer and the
@@ -443,8 +441,23 @@ check-docs-cli:
 
 # Build the standalone PyApp binaries for one release tag and Rust target.
 [group('release')]
-release-binaries tag rust_target outdir='dist-bin':
-    uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}}
+release-binaries tag rust_target outdir='dist-bin' wheel_dir='dist':
+    uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}} --wheel-dir {{wheel_dir}}
+
+# Package finalized target-qualified executables as the public archive consumed
+# by release publication and the distribution channels. The bundle command
+# verifies the finished archive before writing its sidecar checksum.
+[group('release')]
+release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles':
+    uv run --no-project --python 3.13 -- python -m tools.packaging.bundles --tag {{tag}} --target {{rust_target}} --raw-dir {{raw_dir}} --outdir {{outdir}}
+
+# Aggregate the deterministic archive sidecars into the local release checksum
+# view. CI merges this view with the wheel and sdist entries already attached to
+# the GitHub Release; keeping the archive-only form here makes local validation
+# independent of a remote release.
+[group('release')]
+release-checksums bundle_dir='dist-bundles' checksums='dist-bundles/SHA256SUMS':
+    uv run --no-project --python 3.13 -- python -c "from pathlib import Path; paths = sorted(Path('{{bundle_dir}}').glob('*.sha256')); raise SystemExit('no bundle checksums found') if not paths else None; output = Path('{{checksums}}'); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(''.join(path.read_text(encoding='utf-8', newline='') for path in paths), encoding='utf-8', newline='')"
 
 # `root` is REQUIRED and is a checkout of nevenincs/homebrew-tap - the account
 # channel root, which is where these pointers live. It used to default to this
@@ -454,7 +467,7 @@ release-binaries tag rust_target outdir='dist-bin':
 
 # Regenerate and validate a release's channel pointers, as the release job does.
 [group('release')]
-release-channels tag root checksums='dist-bin/SHA256SUMS':
+release-channels tag root checksums='dist-bundles/SHA256SUMS':
     uv run --no-project --python 3.13 -- python -m tools.packaging.generate --tag {{tag}} --checksums {{checksums}} --root {{root}}
     uv run --no-project --python 3.13 -- python -m tools.packaging.validate --root {{root}}
 

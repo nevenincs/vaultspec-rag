@@ -1,0 +1,211 @@
+---
+tags:
+  - '#exec'
+  - '#provider-mcp-enrollment'
+date: '2026-07-15'
+modified: '2026-09-14'
+body_schema: 'body-v2'
+body_hash: 'sha256:2a0586816f3c20cfa675e7d88b0ce72bad8d0f9941e7251df898e79eca2758d1'
+related:
+  - "[[2026-07-15-provider-mcp-enrollment-plan]]"
+---
+
+# `provider-mcp-enrollment` ledger
+
+## Changes
+
+- `S01` `T` `src/vaultspec_rag/builtins/mcps/vaultspec-rag.builtin.json`
+- `S02` `T` `src/vaultspec_rag/commands/_mode.py`
+- `S02` `T` `src/vaultspec_rag/tests/test_install_mode.py`
+- `S03` `T` `src/vaultspec_rag/commands/_install.py`
+- `S03` `T` `src/vaultspec_rag/tests/test_install_mode.py`
+- `S04` `T` `src/vaultspec_rag/commands/_uninstall.py`
+- `S05` `T` `src/vaultspec_rag/commands/_models.py`
+- `S05` `T` `src/vaultspec_rag/cli/_render.py`
+- `S05` `T` `and src/vaultspec_rag/tests/test_cli.py`
+- `S06` `T` `src/vaultspec_rag/commands/_mcp_extra.py`
+- `S07` `T` `src/vaultspec_rag/commands/_install.py`
+- `S07` `T` `src/vaultspec_rag/tests/test_install_mcp_extra.py`
+- `S07` `T` `src/vaultspec_rag/tests/test_install_mode.py`
+- `S08` `T` `src/vaultspec_rag/commands/_uninstall.py and src/vaultspec_rag/tests/test_install_mcp_extra.py`
+- `S09` `T` `src/vaultspec_rag/tests/test_install_mode.py`
+- `S09` `T` `src/vaultspec_rag/tests/test_cli.py`
+- `S09` `T` `src/vaultspec_rag/commands/_models.py`
+- `S09` `T` `src/vaultspec_rag/commands/_install.py`
+- `S09` `T` `and src/vaultspec_rag/commands/_uninstall.py`
+- `S10` `T` `src/vaultspec_rag/tests/test_install_mcp_extra.py`
+- `S11` `T` `src/vaultspec_rag/tests/integration/test_install.py`
+- `S12` `T` `pyproject.toml, uv.lock, src/vaultspec_rag/commands/_mode.py, src/vaultspec_rag/commands/_install.py, and src/vaultspec_rag/commands/_uninstall.py`
+- `S13` `T` `src/vaultspec_rag/tests/test_packaging_metadata.py, tests/smoke_check.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/tests/test_install_mcp_extra.py, src/vaultspec_rag/tests/test_cli.py, and src/vaultspec_rag/tests/test_server_doctor.py`
+- `S14` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md`
+- `S15` `T` `src/vaultspec_rag/commands/_install.py`
+- `S15` `T` `src/vaultspec_rag/tests/integration/test_install.py`
+- `S15` `T` `and src/vaultspec_rag/tests/test_cli.py`
+- `S16` `T` `src/vaultspec_rag/commands/_models.py`
+- `S16` `T` `src/vaultspec_rag/commands/_install.py`
+- `S16` `T` `src/vaultspec_rag/commands/_uninstall.py`
+- `S16` `T` `src/vaultspec_rag/cli/_install.py`
+- `S16` `T` `src/vaultspec_rag/cli/_render.py`
+- `S16` `T` `and tests`
+- `S17` `T` `src/vaultspec_rag/commands/_uv_sync.py`
+- `S17` `T` `src/vaultspec_rag/tests/test_install_mcp_extra.py`
+- `S17` `T` `src/vaultspec_rag/cli/_install.py`
+- `S17` `T` `and tests/smoke_check.py`
+- `S18` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S19` `T` `src/vaultspec_rag/commands/_install.py`
+- `S19` `T` `src/vaultspec_rag/server/_main.py`
+- `S19` `T` `and real mode-transition tests`
+- `S20` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S21` `T` `src/vaultspec_rag/commands/_mode.py`
+- `S21` `T` `src/vaultspec_rag/commands/_install.py`
+- `S21` `T` `and partial-provider integration tests`
+- `S22` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S23` `T` `src/vaultspec_rag/commands/_mode.py`
+- `S23` `T` `src/vaultspec_rag/tests/integration/test_install.py`
+- `S23` `T` `and collision acceptance tests`
+- `S24` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S25` `T` `src/vaultspec_rag/commands/_install.py and skipped mode-transition integration tests`
+- `S26` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S27` `T` `src/vaultspec_rag/commands/_install.py`
+- `S27` `T` `src/vaultspec_rag/commands/_mode.py`
+- `S27` `T` `src/vaultspec_rag/commands/_mcp_extra.py`
+- `S27` `T` `and real placement regressions`
+- `S28` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S29` `T` `src/vaultspec_rag/commands/_install.py`
+- `S29` `T` `src/vaultspec_rag/builtins/__init__.py`
+- `S29` `T` `and real transaction regressions`
+- `S30` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and full repository gates`
+- `S31` `T` `src/vaultspec_rag/commands/_install.py`
+- `S31` `T` `mode and torch contract tests`
+- `S31` `T` `and isolated real CLI gates`
+- `S32` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and complete segmented repository gates`
+- `S33` `T` `src/vaultspec_rag/commands/_install.py and real install transaction tests`
+- `S34` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the full selected test inventory`
+- `S35` `T` `src/vaultspec_rag/commands/_install.py and ordered real seed rollback tests`
+- `S36` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact selected test inventory`
+- `S37` `T` `src/vaultspec_rag/commands/_install.py and real symlink/junction rollback tests`
+- `S38` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`
+- `S39` `T` `src/vaultspec_rag/commands/_install.py and real rollback collision tests`
+- `S40` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`
+- `S41` `T` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S41` `T` `service-job behavior tests`
+- `S41` `T` `and isolated real service fixtures`
+- `S42` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1820-test inventory`
+- `S43` `T` `src/vaultspec_rag/commands/_install.py`
+- `S43` `T` `src/vaultspec_rag/commands/_uninstall.py`
+- `S43` `T` `preview topology and context handling`
+- `S43` `T` `and real lifecycle regressions`
+- `S44` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1823-test inventory`
+- `S45` `T` `real singleton and Qdrant integration fixtures with foreign-holder process regressions`
+- `S46` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`
+- `S47` `T` `preview projection`
+- `S47` `T` `provider and workspace intent writes`
+- `S47` `T` `native targets`
+- `S47` `T` `ownership`
+- `S47` `T` `and real relative-link regressions`
+- `S48` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1824-test inventory`
+- `S49` `T` `src/vaultspec_rag/commands/_mcp_topology.py`
+- `S49` `T` `install and uninstall lifecycle tests`
+- `S49` `T` `pyproject.toml`
+- `S49` `T` `and uv.lock`
+- `S50` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`
+- `S51` `T` `src/vaultspec_rag/commands/_install.py and real install regressions`
+- `S52` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md and the exact 1830-test inventory`
+- `S53` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; Windows test items: 2,269 total, 1,832 selected, 437 excluded; POSIX test items: 2,270 total, 1,833 selected, 437 excluded`
+- `S54` `T` `src/vaultspec_rag/tests/integration/test_jobs_registry.py and S53 release-gate diagnostics`
+- `S55` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; Windows 2,269 total, 1,832 selected, 437 excluded; POSIX 2,270 total, 1,833 selected, 437 excluded with actual FIFO execution; full selected tests; static, type, complexity, and diff gates; wheel, sdist, and public Core 0.1.45 smoke; fresh isolated installed-package Claude and Codex configs, idempotence, and selective uninstall`
+- `S56` `T` `src/vaultspec_rag/embeddings.py`
+- `S56` `T` `src/vaultspec_rag/search/_searcher.py`
+- `S56` `T` `src/vaultspec_rag/tests/conftest.py`
+- `S56` `T` `src/vaultspec_rag/tests/_model_setup.py`
+- `S56` `T` `src/vaultspec_rag/tests/test_model_setup.py`
+- `S56` `T` `src/vaultspec_rag/tests/integration/test_intent_ranking.py`
+- `S57` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; Windows 2,271 total, 1,834 selected, 437 excluded; POSIX 2,272 total, 1,835 selected, 437 excluded with actual FIFO execution; S56 full 1,111-document corpus, 600-second whole-worker boundary, sharded cache completeness, cold online repair diagnostics, and warm no-network behavior; all selected tests; static, package, public Core 0.1.45, fresh Claude and Codex, idempotence, and selective uninstall gates`
+- `S58` `T` `src/vaultspec_rag/tests/test_config.py`
+- `S58` `T` `src/vaultspec_rag/tests/test_torch_config.py`
+- `S58` `T` `Windows and POSIX collection ledgers`
+- `S58` `T` `and S58 formal review`
+- `S59` `T` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md; no carried credit; Windows 2,271 total and unique, 1,834 campaign, 437 excluded; POSIX 2,259 total and unique, 1,835 campaign, 424 excluded; named zero-overlap M/P/J/F proof; complete S56 full-corpus, 600-second, cache, repair, offline, cleanup, and ranking contract; all runtime, static, package, public Core 0.1.45, fresh Claude and Codex, idempotence, selective unenrollment, and uninstall gates`
+- `S60` `T` `.venv scikit-learn 1.9.0 installation`
+- `S60` `T` `uv cache and public wheel evidence`
+- `S60` `T` `installed msvcp140.dll and vcomp140.dll hashes`
+- `S60` `T` `direct sklearn import`
+- `S60` `T` `exact failed intent selector`
+- `S60` `T` `six-item S56 model group`
+- `S60` `T` `and S60 formal review`
+- `S61` `T` `c9cf20697dd647096c2f070b51ff72d152031c7c`
+- `S61` `T` `M`
+- `S61` `T` `P`
+- `S61` `T` `J`
+- `S61` `T` `F`
+- `S62` `T` `src/vaultspec_rag/tests/test_cli.py TestAutoDelegation`
+- `S62` `T` `real temporary STATUS_DIR and QDRANT_STORAGE_DIR state`
+- `S62` `T` `real OS machine lock and discovery pointer`
+- `S62` `T` `search and index shared resolution`
+- `S62` `T` `repeated live-55108 coexistence`
+- `S62` `T` `affected CLI`
+- `S62` `T` `discovery`
+- `S62` `T` `service-first`
+- `S62` `T` `static`
+- `S62` `T` `and formal review gates`
+- `S63` `T` `46eca748447eace8cbb70fce539d3e58e6b59e5a`
+- `S63` `T` `M`
+- `S63` `T` `P`
+- `S63` `T` `J`
+- `S63` `T` `F`
+- `S64` `T` `src/vaultspec_rag/tests/test_cli.py TestAutoDelegation`
+- `S64` `T` `fresh subprocesses`
+- `S64` `T` `real loopback HTTP capture server`
+- `S64` `T` `reserved conflicting endpoint`
+- `S64` `T` `exact search and reindex routes and payloads`
+- `S64` `T` `initiator_kind=cli`
+- `S64` `T` `no heavy ML load or local indexing`
+- `S64` `T` `repeated live-55108`
+- `S64` `T` `adjacent`
+- `S64` `T` `full CLI`
+- `S64` `T` `static`
+- `S64` `T` `and formal review gates`
+- `S65` `T` `4b097c026bb6a475ce4a6f8207b469a3a6678fbd`
+- `S65` `T` `M`
+- `S65` `T` `P`
+- `S65` `T` `J`
+- `S65` `T` `F`
+- `S66` `T` `live_service`
+- `S67` `T`
+- `S68` `T` `service environment`
+- `S68` `T` `HTTP transport`
+- `S68` `T` `service discovery`
+- `S68` `T` `startup fixture`
+- `S68` `T` `managed Qdrant identity and teardown`
+- `S68` `T` `real Windows and POSIX regressions`
+- `S68` `T` `focused gates`
+- `S68` `T` `documentation`
+- `S68` `T` `and formal review`
+- `S69` `A` `.vault/exec/2026-07-15-provider-mcp-enrollment/2026-07-15-provider-mcp-enrollment-P03-S69.md`
+
+## Notes
+
+- `S69` Superseded, not re-run. This Step's own audit records that the feature
+- `S69` (Core-managed provider lifecycle, `--mcp`/`--no-mcp` symmetry, dependency
+- `S69` placement) was merged to `main` in a dedicated pull request and released as
+- `S69` part of `vaultspec-rag` 0.3.3, and that its S45-S68 hardening (service
+- `S69` singleton, managed-Qdrant identity, auto-delegation precedence) shipped in
+- `S69` further commits afterward; those production modules remain live and
+- `S69` continue to be exercised and touched without regression.
+- `S69` The bespoke "platform-aware release gate campaign" this Step describes -
+- `S69` hand-counted Windows/POSIX node-id ledgers, a manual wheel/sdist/smoke pass,
+- `S69` and fresh installed-Claude/Codex acceptance run before every merge - was a
+- `S69` substitute for automation that did not exist yet. It now does: the standing
+- `S69` CI pipeline runs the CPU-tier suite plus lint, format, and strict typing on
+- `S69` every push to `main` on Windows, macOS, and Linux, and the separate release
+- `S69` pipeline builds the wheel and sdist and smoke-tests both across the
+- `S69` supported interpreter range before publishing, gating on that outcome.
+- `S69` Recent release runs (`2026-09-07`, `2026-09-05`, `2026-09-02`, and earlier)
+- `S69` completed that build-and-smoke gate successfully, and the current `main`
+- `S69` HEAD's CI run shows the CPU-tier suite green on Windows and macOS, with
+- `S69` Linux failing on exactly two unrelated items (a console line-wrap test and
+- `S69` three `httpx2` advisories) already being closed by open PR #494. Fresh
+- `S69` install, idempotence, and selective-unenrollment coverage for both
+- `S69` providers (`test_install_mode.py`, `test_install_mcp_extra.py`,
+- `S69` `tests/integration/test_install.py`) is part of that same green CPU-tier
+- `S69` run. No GPU-tier work was launched to produce this evidence.

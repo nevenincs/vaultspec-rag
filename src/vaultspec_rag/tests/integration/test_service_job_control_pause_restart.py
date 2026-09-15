@@ -29,6 +29,7 @@ from ...job_models import (
     JobSpec,
     JobState,
 )
+from ...progress import NullProgressReporter
 from ...server import _lifespan as server_lifespan
 from ...service_quiesce import ServiceQuiesceController
 from ._service_job_control_e2e_support import (
@@ -189,6 +190,24 @@ async def _pause_and_resume_large_job(
     assert_released(succeeded, slot)
 
 
+async def _seed_vault_publication(manager: JobManager, root: Path) -> None:
+    """Establish the explicit first-use proof required by incremental jobs."""
+    job_id = jobs.start_reindex_vault(
+        root,
+        clean=True,
+        authority=RunAuthority.REBUILD,
+    )
+    assert (
+        await manager.wait_for_attempt(
+            job_id,
+            timeout_seconds=E2E_TIMEOUT_SECONDS,
+        )
+    ).code == "attempt_released"
+    seeded = manager.get(job_id)
+    assert seeded is not None
+    assert seeded.state is JobState.SUCCEEDED
+
+
 async def _cancel_large_job(
     manager: JobManager,
     registry: ServiceRegistry,
@@ -259,8 +278,10 @@ async def test_large_corpus_pause_resume_cancel_releases_and_converges(
     """Pause and resume one large job, then prove cancellation is absorbing."""
     registry, manager = _e2e_runtime
     root = tmp_path / "large-vault"
-    _write_vault_corpus(root, start=0, count=384)
+    _write_vault_corpus(root, start=0, count=1)
     slot = registry.peek_project(root)
+    await _seed_vault_publication(manager, root)
+    _write_vault_corpus(root, start=1, count=383)
     await _pause_and_resume_large_job(manager, slot, root)
     await _cancel_large_job(manager, registry, slot, root)
 
@@ -483,6 +504,8 @@ async def test_restart_dispatches_queued_preserves_pause_and_links_retry(
         (interrupted_root, 3000),
     ):
         _write_vault_corpus(root, start=marker, count=8)
+        with registry.compute_lease(root) as lease:
+            lease.runtime.vault_indexer.full_index(reporter=NullProgressReporter())
 
     crash_state_path = tmp_path / "running-generation.json"
     queued, paused, interrupted = _seed_restart_jobs(
@@ -552,6 +575,13 @@ async def test_paused_code_job_rediscovers_current_corpus_before_resume(
         "def removed_before_resume() -> str:\n    return 'stale'\n",
         encoding="utf-8",
     )
+
+    with registry.compute_lease(root) as lease:
+        code_indexer = lease.runtime.code_indexer
+        code_indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=code_indexer.preflight_content(),
+        )
 
     preflight = _job_admission.validate_code_index_policy(root)
     created = manager.create(

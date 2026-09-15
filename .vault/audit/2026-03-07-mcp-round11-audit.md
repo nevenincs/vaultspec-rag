@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:8e8941c47dbc1625b427185f8d01417c8dde19d6dfd4ba86ad3c6e8cb38e7bbf'
+modified: '2026-09-14'
+body_hash: 'sha256:273933a6f5d76749c4c3533221d980005d4757253db05a3d4ad77f71a14d8e48'
 ---
 
 # Round 11 Audit -- mcp_server.py (deep dive, post-fix verification)
@@ -30,17 +30,16 @@ _comp: RagComponents | None = None
 _comp_lock = threading.Lock()
 _comp_error: Exception | None = None
 
+
 def get_comp() -> RagComponents:
     global _comp, _comp_error
-    if _comp is not None:          # Fast path (no lock)
+    if _comp is not None:  # Fast path (no lock)
         return _comp
     with _comp_lock:
-        if _comp is not None:      # Double-check after lock
+        if _comp is not None:  # Double-check after lock
             return _comp
-        if _comp_error is not None: # Failure caching
-            raise RuntimeError(
-                "RAG initialization previously failed"
-            ) from _comp_error
+        if _comp_error is not None:  # Failure caching
+            raise RuntimeError("RAG initialization previously failed") from _comp_error
         try:
             ...
             _comp = RagComponents(...)
@@ -239,7 +238,9 @@ try:
     if existing_ids:
         self.store.delete_documents(list(existing_ids))
 except OSError:
-    logger.error("Failed to delete existing documents during full re-index — aborting to prevent duplicates")
+    logger.error(
+        "Failed to delete existing documents during full re-index — aborting to prevent duplicates"
+    )
     raise
 self.store.upsert_documents(docs)
 ```

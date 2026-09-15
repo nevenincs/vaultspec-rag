@@ -4,14 +4,12 @@ tags:
   - '#index'
   - '#mcp-project-root-contract'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:e3edd687481e2fbf2caa10687a546be138a72084ff2607dbaf241d5f3b444563'
+body_hash: 'sha256:e1c72a9d124fd51f1aad7546cb9483c536dcd7acefe07094d86d334fc9ec4bb1'
 related:
-  - '[[2026-07-25-mcp-project-root-contract-S01]]'
-  - '[[2026-07-25-mcp-project-root-contract-S02]]'
-  - '[[2026-07-25-mcp-project-root-contract-S03]]'
   - '[[2026-07-25-mcp-project-root-contract-adr]]'
+  - '[[2026-07-25-mcp-project-root-contract-ledger]]'
   - '[[2026-07-25-mcp-project-root-contract-plan]]'
   - '[[2026-07-25-mcp-project-root-contract-research]]'
   - '[[2026-07-27-mcp-project-root-contract-s03-root-wire-review-audit]]'
@@ -33,9 +31,7 @@ Auto-generated index of all documents tagged with `#mcp-project-root-contract`.
 
 ### exec
 
-- `2026-07-25-mcp-project-root-contract-S01` - Add a single dispatch-root seam on the MCP adapter and forward every delegation site through it
-- `2026-07-25-mcp-project-root-contract-S02` - Route the vault document resource through the same seam, since a resource URI carries no root
-- `2026-07-25-mcp-project-root-contract-S03` - Assert against a recording daemon that an omitting caller sends a concrete root and an explicit root still wins
+- `2026-07-25-mcp-project-root-contract-ledger` - `mcp-project-root-contract` ledger
 
 ### plan
 

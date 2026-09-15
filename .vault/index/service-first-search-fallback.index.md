@@ -4,17 +4,13 @@ tags:
   - '#index'
   - '#service-first-search-fallback'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:53703f635986eeee58937596099861f534d8c614b17266bd788287922b92631c'
+body_hash: 'sha256:88405dcf6777e0de7cc51f9de8f0a91f7725a7ad53aa52afe5a888d8506ce1d7'
 related:
-  - '[[2026-06-21-service-first-search-fallback-S01]]'
-  - '[[2026-06-21-service-first-search-fallback-S02]]'
-  - '[[2026-06-21-service-first-search-fallback-S03]]'
-  - '[[2026-06-21-service-first-search-fallback-S04]]'
-  - '[[2026-06-21-service-first-search-fallback-S05]]'
   - '[[2026-06-21-service-first-search-fallback-adr]]'
   - '[[2026-06-21-service-first-search-fallback-audit]]'
+  - '[[2026-06-21-service-first-search-fallback-ledger]]'
   - '[[2026-06-21-service-first-search-fallback-plan]]'
   - '[[2026-06-21-service-first-search-fallback-research]]'
 ---
@@ -35,11 +31,7 @@ Auto-generated index of all documents tagged with `#service-first-search-fallbac
 
 ### exec
 
-- `2026-06-21-service-first-search-fallback-S01` - Add a local-mandate resolver (explicit --allow-fallback or configured local-only mode)
-- `2026-06-21-service-first-search-fallback-S02` - Make routing service-first by dropping the silent auto-fallback and bare-search local path so a search without a mandate exits service-down
-- `2026-06-21-service-first-search-fallback-S03` - Bound any mandated local run with a wall-clock deadline that releases the store lock and exits non-zero on expiry
-- `2026-06-21-service-first-search-fallback-S04` - Add regression tests simulating a dead and a wedged service that assert bounded return and a released lock
-- `2026-06-21-service-first-search-fallback-S05` - Run lint, type check, and the search and transport test suite
+- `2026-06-21-service-first-search-fallback-ledger` - `service-first-search-fallback` ledger
 
 ### plan
 

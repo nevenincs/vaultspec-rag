@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:a6207907b6d9a3a801591fd720e59c2c51150088b767a818f57c6d9d5d6f2ba1'
+modified: '2026-09-14'
+body_hash: 'sha256:8e5bf61f88e99d1c52c31a5e931a678e4be1a483d21ad80cdcdc4566968077a4'
 ---
 
 # Research Topic 21: Qwen3 Embedding Task Prefixes â€” Deep Verification
@@ -40,8 +40,8 @@ Direct API inspection:
 
 ```python
 {
-  "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
-  "document": ""
+    "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    "document": "",
 }
 ```
 

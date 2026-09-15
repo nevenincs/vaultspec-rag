@@ -3,10 +3,9 @@ tags:
   - '#audit'
   - '#service-job-control'
 date: '2026-07-22'
-modified: '2026-07-22'
+modified: '2026-09-14'
 body_hash: 'sha256:bfb4204e727a39d1b604dc58429bc884441b144bab76e33a34853d981e7e7456'
-related:
-  - "[[2026-07-21-service-job-control-W02-P05-S13]]"
+related: []
 ---
 
 # `service-job-control` audit: `s13 code pipeline control`

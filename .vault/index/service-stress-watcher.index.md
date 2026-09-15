@@ -4,16 +4,12 @@ tags:
   - '#index'
   - '#service-stress-watcher'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-14'
 body_schema: 'body-v2'
-body_hash: 'sha256:2ec06b1c848f42291cfc8a68f83e8bb607d0f10166ee3b40e8f3bc6a68949f7a'
+body_hash: 'sha256:ca3129d0c0bb410ce11fde631b5143e68dc019f3c3bd950bf72e546c821ecf2f'
 related:
-  - '[[2026-06-05-service-stress-watcher-W01-P01-S01]]'
-  - '[[2026-06-05-service-stress-watcher-W01-P01-S02]]'
-  - '[[2026-06-05-service-stress-watcher-W01-P01-summary]]'
-  - '[[2026-06-05-service-stress-watcher-W01-P02-S03]]'
-  - '[[2026-06-05-service-stress-watcher-W01-P02-summary]]'
   - '[[2026-06-05-service-stress-watcher-adr]]'
+  - '[[2026-06-05-service-stress-watcher-ledger]]'
   - '[[2026-06-05-service-stress-watcher-plan]]'
   - '[[2026-06-05-service-stress-watcher-research]]'
 ---
@@ -30,11 +26,7 @@ Auto-generated index of all documents tagged with `#service-stress-watcher`.
 
 ### exec
 
-- `2026-06-05-service-stress-watcher-W01-P01-S01` - 2026-06-05-service-stress-watcher-W01-P01-S01
-- `2026-06-05-service-stress-watcher-W01-P01-S02` - 2026-06-05-service-stress-watcher-W01-P01-S02
-- `2026-06-05-service-stress-watcher-W01-P01-summary` - `service-stress-watcher` `W01-P01` summary
-- `2026-06-05-service-stress-watcher-W01-P02-S03` - 2026-06-05-service-stress-watcher-W01-P02-S03
-- `2026-06-05-service-stress-watcher-W01-P02-summary` - `service-stress-watcher` `W01-P02` summary
+- `2026-06-05-service-stress-watcher-ledger` - `service-stress-watcher` ledger
 
 ### plan
 

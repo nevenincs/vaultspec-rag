@@ -15,18 +15,42 @@ permissions:
   contents: read
 
 concurrency:
-  # KEYED BY TAG. An unkeyed `publish` group means GitHub holds at most one
-  # running and one pending run, so a third release silently CANCELS the
-  # queued one - and a cancelled run reports `cancelled`, not `failed`, so a
-  # release that never happened raises no alarm. binaries.yml already keys
-  # its group this way; this is that line.
-  group: publish-${{ inputs.tag || github.ref_name }}
+  # SHARED WITH binaries.yml AND KEYED BY TAG. Both workflows merge and rewrite
+  # the same SHA256SUMS release asset, so separate per-workflow locks would
+  # still permit a lost update when they run for one tag at the same time.
+  # `cancel-in-progress: false` keeps a repair run queued rather than replacing
+  # the only run that can attach the missing artifact.
+  group: release-artifacts-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  hold-release:
+    name: Hold release out of latest
+    timeout-minutes: 10
+    runs-on: [self-hosted, Linux, X64, build]
+    permissions:
+      contents: write
+    steps:
+      - name: Hold the release as a prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
+          else
+            gh release create "${TAG}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --prerelease
+          fi
+
   build:
     name: Build
     timeout-minutes: 20
+    needs: hold-release
     # Release artifacts build on the self-hosted fleet, on the same runners
     # CI's lint and test jobs use. The wheel is therefore built on a machine
     # that also runs agent sessions and a live service; the build's own
@@ -176,25 +200,35 @@ jobs:
             LC_ALL=C sort -k2 -o SHA256SUMS SHA256SUMS
           fi
 
-      - name: Ensure the GitHub Release exists
-        # release-please normally creates the Release before dispatching this
-        # workflow, but the manual tag-push trigger can fire against a tag
-        # with no Release yet. --verify-tag refuses to create one for a tag
-        # that isn't pushed; `|| true` is safe because the only failure mode
-        # once the tag is verified is "already exists", which is the case we
-        # want to no-op through.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ inputs.tag || github.ref_name }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --generate-notes || true
-
       - name: Attach wheel, sdist, and checksums to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release upload "${{ inputs.tag || github.ref_name }}" dist/* \
+          gh release upload "${TAG}" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+  dispatch-binaries:
+    name: Dispatch binary publication
+    timeout-minutes: 10
+    needs: [publish-pypi, github-release]
+    runs-on: [self-hosted, Linux, X64, build]
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      # Publication is deliberately sequenced. Binaries is the sole finalizer
+      # that may promote the release, so it must not start until both PyPI and
+      # the GitHub wheel/sdist publication have succeeded.
+      - name: Trigger Binaries workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh workflow run Binaries \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            --field tag="${TAG}"
+          echo "Dispatched Binaries for ${TAG}" >> "$GITHUB_STEP_SUMMARY"

@@ -52,3 +52,82 @@ def test_advisory_argument_parsing() -> None:
         advisory.parse_args(["bandit", "-r", "src"])
     with pytest.raises(ValueError):
         advisory.parse_args(["--finding-exit", "1", "--"])
+
+
+@pytest.mark.unit
+def test_advisory_resolves_windows_batch_shim_without_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolve ``npx.cmd`` while keeping argv opaque to a shell."""
+
+    def fake_which(executable: str) -> str | None:
+        return r"C:\Program Files\nodejs\npx.CMD" if executable == "npx" else None
+
+    monkeypatch.setattr(
+        advisory.shutil,
+        "which",
+        fake_which,
+    )
+
+    command = ["npx", "--yes", "jscpd", "src", "folder with spaces"]
+
+    assert advisory.resolve_command(command) == [
+        r"C:\Program Files\nodejs\npx.CMD",
+        "--yes",
+        "jscpd",
+        "src",
+        "folder with spaces",
+    ]
+
+
+@pytest.mark.unit
+def test_advisory_launches_resolved_command_with_original_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner passes the resolved executable and no shell command string."""
+    calls: list[tuple[list[str], bool, bool]] = []
+
+    def fake_which(executable: str) -> str | None:
+        return r"C:\Node\npx.cmd" if executable == "npx" else None
+
+    class Completed:
+        returncode = 1
+
+    def fake_run(command: list[str], *, check: bool, shell: bool) -> Completed:
+        calls.append((command, check, shell))
+        return Completed()
+
+    monkeypatch.setattr(
+        advisory.shutil,
+        "which",
+        fake_which,
+    )
+    monkeypatch.setattr(advisory.subprocess, "run", fake_run)
+
+    assert (
+        advisory.main(
+            ["--finding-exit", "1", "--", "npx", "--yes", "jscpd", "folder with spaces"]
+        )
+        == 0
+    )
+    assert calls == [
+        (
+            [r"C:\Node\npx.cmd", "--yes", "jscpd", "folder with spaces"],
+            False,
+            False,
+        )
+    ]
+
+
+@pytest.mark.unit
+def test_advisory_keeps_missing_scanner_as_broken(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolution must not turn an absent scanner into an advisory pass."""
+
+    def fake_which(_executable: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(advisory.shutil, "which", fake_which)
+
+    assert advisory.main(["--", "missing-scanner"]) == 127

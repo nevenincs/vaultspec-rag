@@ -3,8 +3,8 @@ tags:
   - '#reference'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:1f297d713b8076194f018bda3a5ab10877c34a51f9af3ae68c16d1707a467d16'
+modified: '2026-09-14'
+body_hash: 'sha256:c19705102e7a23e3a910bdd6ffe4b45fcc54c711cd42694e3849882e70c501a9'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
@@ -165,6 +165,7 @@ Post-sync hook (if provider=="all"):
 
 ```python
 from vaultspec_core.hooks import fire_hooks
+
 fire_hooks("config.synced", {"root": str(ctx.target_dir), "event": "config.synced"})
 ```
 

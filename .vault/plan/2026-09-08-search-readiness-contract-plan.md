@@ -8,9 +8,9 @@ related:
   - '[[2026-09-08-search-readiness-contract-adr]]'
   - '[[2026-09-08-search-readiness-contract-research]]'
   - '[[2026-09-08-search-readiness-contract-reference]]'
-modified: '2026-09-08'
+modified: '2026-09-14'
 body_schema: body-v2
-body_hash: 'sha256:dd708d2cc64ac68fed9b07f475970976a7f35184226a6fac74a651c6f0df54cd'
+body_hash: 'sha256:01b9f5bc91d94b027b21a69f33b7f897324f49932aeebe965c068118b66fa849'
 ---
 
 <!-- RETIRED: P14 -->
@@ -156,18 +156,18 @@ Drive identical readiness scenarios through HTTP CLI MCP and combined search.
 Prove immediate-mode semantics and concurrency performance remain intact.
 
 - [x] `W04.P12.S51` - Add immediate readiness overhead and bounded-wait contention to the concurrency benchmark; `src/vaultspec_rag/tests/benchmarks/bench_concurrency.py`.
-- [ ] `W04.P12.S52` - Record accepted no-wait latency throughput limiter GPU queue and waiter-cleanup comparison output; `src/vaultspec_rag/tests/benchmarks/baselines`.
-- [ ] `W04.P12.S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization; `src/vaultspec_rag/tests/test_search_readiness.py`.
-- [ ] `W04.P12.S54` - Prove retrieval ordering ranking output and result shape remain unchanged; `src/vaultspec_rag/tests/integration/test_search_result_shape.py`.
+- [x] `W04.P12.S52` - Record accepted no-wait latency throughput limiter GPU queue and waiter-cleanup comparison output; `src/vaultspec_rag/tests/benchmarks/baselines`.
+- [x] `W04.P12.S53` - Prove immediate requests do not poll or wait and bounded waits add no global or GPU serialization; `src/vaultspec_rag/tests/test_search_readiness.py`.
+- [x] `W04.P12.S54` - Prove retrieval ordering ranking output and result shape remain unchanged; `src/vaultspec_rag/tests/integration/test_search_result_shape.py`.
 
 ### Phase `W04.P13` - run repository gates documentation and formal review
 
 Complete explicit gates public documentation and independent review before closure.
 
-- [ ] `W04.P13.S55` - Run focused unit integration MCP conformance concurrency guard and benchmark gates with individual exit codes; `src/vaultspec_rag/tests`.
-- [ ] `W04.P13.S56` - Run repository lint format type full test vault and diff gates with individual exit codes; `repository-wide verification`.
-- [ ] `W04.P13.S57` - Perform formal review for ADR service cancellation evidence retry GPU and storage conformance; `cohesive changed-file set`.
-- [ ] `W04.P13.S58` - Document immediate and bounded policy states retries CLI and MCP automation examples; `docs/search-and-index.md`.
+- [x] `W04.P13.S55` - Run focused unit integration MCP conformance concurrency guard and benchmark gates with individual exit codes; `src/vaultspec_rag/tests`.
+- [x] `W04.P13.S56` - Run repository lint format type full test vault and diff gates with individual exit codes; `repository-wide verification`.
+- [x] `W04.P13.S57` - Perform formal review for ADR service cancellation evidence retry GPU and storage conformance; `cohesive changed-file set`.
+- [x] `W04.P13.S58` - Document immediate and bounded policy states retries CLI and MCP automation examples; `docs/search-and-index.md`.
 
 ## Parallelization
 
