@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.binaries.torch_channel import pip_extra_args
-from tools.binaries.windows_icon import VersionInfo, stamp_icon, stamp_version_info
+from tools.binaries.windows_icon import VersionInfo, stamp_icon_and_version
 from tools.packaging import products
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
@@ -512,8 +512,11 @@ def main() -> int:
             asset = outdir / asset_name(binary, target)
             shutil.copy2(raw, asset)
             if products.is_windows_target(target):
-                stamp_icon(asset, APPLICATION_ICON)
-                stamp_version_info(asset, binary_version_info(binary, version, target))
+                stamp_icon_and_version(
+                    asset,
+                    APPLICATION_ICON,
+                    binary_version_info(binary, version, target),
+                )
             else:
                 asset.chmod(0o755)
             # Refuse the artifact HERE, before it is renamed into place and
