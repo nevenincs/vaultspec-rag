@@ -682,6 +682,9 @@ jobs:
         run: |
           set -euo pipefail
           title="Acquisition check ${TAG} @ ${TARGET_SHA}"
+          before_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow acquisition.yml --event workflow_dispatch --limit 1 \
+            --json databaseId --jq '.[0].databaseId // 0')
           gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" --ref main \
             -f tag="$TAG" -f target_sha="$TARGET_SHA"
 
@@ -691,7 +694,7 @@ jobs:
             run_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
               --workflow acquisition.yml --event workflow_dispatch --limit 20 \
               --json databaseId,displayTitle \
-              --jq ".[] | select(.displayTitle == \"${title}\") | .databaseId" \
+              --jq ".[] | select(.databaseId > ${before_id} and .displayTitle == \"${title}\") | .databaseId" \
               | head -n 1)
             [ -n "$run_id" ] || sleep 5
           done

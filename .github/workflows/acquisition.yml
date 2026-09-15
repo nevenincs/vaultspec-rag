@@ -68,34 +68,34 @@ jobs:
           # makes these the two legs that can actually fail when a container
           # pin in binaries.yml stops doing its job.
           - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
-            setup: dnf install -y -q curl ca-certificates unzip
+            setup: dnf install -y -q curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
-            setup: dnf install -y -q curl ca-certificates unzip
+            setup: dnf install -y -q curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
           # Above the floor and below the build host, which is the band a user
           # is most likely to be in. bookworm is 2.36, jammy is 2.35.
           - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip
+            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
@@ -118,6 +118,7 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
           TRIPLE: ${{ matrix.triple }}
           ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
           EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
@@ -162,6 +163,27 @@ jobs:
           }
           printf '%s\n' "${checksum_line}" > "${archive_path}.sha256"
           (cd /opt/acq && sha256sum -c "${archive}.sha256")
+
+          # A matching archive checksum proves integrity, but not which source
+          # commit produced the bytes. Release-gated dispatches name the exact
+          # producer SHA; bind that request to the manifest inside the archive.
+          if [ -n "${TARGET_SHA:-}" ]; then
+            case "${TARGET_SHA}" in
+              *[!0-9a-f]*|'')
+                echo "::error::target_sha is not a lowercase full commit ID"; exit 1 ;;
+            esac
+            [ "${#TARGET_SHA}" -eq 40 ] || {
+              echo "::error::target_sha is not a 40-character commit ID"; exit 1;
+            }
+            case "${ARCHIVE_SUFFIX}" in
+              .tar.gz) tar -xOzf "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
+              .zip) unzip -p "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
+            esac
+            producer_sha=$(jq -er '.source_revision | select(type == "string")' /opt/acq/manifest.json)
+            [ "${producer_sha}" = "${TARGET_SHA}" ] || {
+              echo "::error::bundle producer ${producer_sha} does not match requested ${TARGET_SHA}"; exit 1;
+            }
+          fi
 
       - name: Extract the stable executables
         env:
