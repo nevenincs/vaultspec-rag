@@ -44,7 +44,6 @@ on:
   push:
     branches:
       - main
-      - audit/ci-20260915-093249
   pull_request:
   workflow_dispatch:
     inputs:
@@ -73,6 +72,10 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
+
+# These persistent runners already keep UV_CACHE_DIR on runner-owned storage.
+# setup-uv's remote cache duplicated that state and restored multi-gigabyte
+# archives before each job, so uv uses only the local hot cache here.
 
 jobs:
   lint:
