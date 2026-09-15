@@ -106,10 +106,12 @@ def _resource_id(value: int) -> ctypes.c_void_p:
     return ctypes.c_void_p(value)
 
 
-def _kernel32() -> Any:
+def _kernel32(
+    error_type: type[RuntimeError] = IconResourceError,
+) -> Any:
     """Load kernel32 with pointer-safe signatures, or reject a non-Windows host."""
     if sys.platform != "win32":
-        raise IconResourceError("Windows PE resources can only be updated on Windows")
+        raise error_type("Windows PE resources can only be updated on Windows")
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     void_pointer = ctypes.c_void_p
     kernel32.BeginUpdateResourceW.argtypes = [ctypes.c_wchar_p, ctypes.c_int]
@@ -344,7 +346,7 @@ def stamp_version_info(executable: Path, info: VersionInfo) -> None:
     if not executable.is_file():
         raise VersionResourceError(f"Windows executable does not exist: {executable}")
     payload = version_resource(info)
-    kernel32 = _kernel32()
+    kernel32 = _kernel32(VersionResourceError)
     handle = kernel32.BeginUpdateResourceW(os.fspath(executable), False)
     if not handle:
         _raise_win32("opening resources in", executable)

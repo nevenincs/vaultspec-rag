@@ -132,10 +132,12 @@ def test_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
         stamp_icon(executable, APPLICATION_ICON)
 
 
-def test_version_stamping_is_rejected_off_windows(tmp_path: Path) -> None:
+def test_version_stamping_is_rejected_off_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A non-Windows release host cannot silently claim it stamped PE metadata."""
-    if sys.platform == "win32":
-        pytest.skip("non-Windows contract")
+    monkeypatch.setattr("tools.binaries.windows_icon.sys.platform", "linux")
     executable = tmp_path / "sample.exe"
     executable.write_bytes(b"MZ")
     info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
