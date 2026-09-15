@@ -306,8 +306,8 @@ jobs:
 
   tests-macos:
     name: "Test: Full Suite and Accelerator Backend (macOS)"
-    # Main pushes and explicit dispatches only. The main-push result
-    # is the pre-publication support gate; pull requests from this public repo
+    # Scheduled diagnostics and explicit dispatches only. Exact-release-SHA
+    # validation lives in release-hardware.yml; pull requests from this public repo
     # never execute their code on a self-hosted workstation. The macOS runner is a laptop under
     # an AC-power policy: on battery it is deliberately booted out of the
     # fleet, so it is absent for long stretches by design.
@@ -319,8 +319,8 @@ jobs:
     # of the label-with-no-runner bug this workflow was just cleaned of, and
     # equally invisible.
     #
-    # Main integration is deliberate. The machine must be plugged in before
-    # the repository is allowed to advertise MPS support.
+    # Release integration is deliberate. The machine must be plugged in before
+    # publish.yml is allowed to advertise MPS support for the selected SHA.
     if: >-
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&

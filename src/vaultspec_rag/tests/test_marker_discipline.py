@@ -502,11 +502,23 @@ def test_mps_acceptance_proves_each_model_parameter_device() -> None:
     assert labels == {"dense model", "sparse model", "reranker"}
 
 
-def test_main_push_runs_the_prepublication_mps_gate() -> None:
-    """The support guard must run before a later release advertises MPS."""
-    workflow = (
+def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
+    """MPS stays off PR/main while an exact release commit still gates publish."""
+    ci_workflow = (
         Path(__file__).parents[3] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
-    macos_job = workflow.split("  tests-macos:", 1)[1].split("  gpu-tests:", 1)[0]
-    assert "github.event_name == 'push'" in macos_job
+    macos_job = ci_workflow.split("  tests-macos:", 1)[1].split(
+        "  gpu-tests:", 1
+    )[0]
+    assert "github.event_name == 'schedule'" in macos_job
+    assert "github.event_name == 'push'" not in macos_job
+    assert "github.event_name == 'pull_request'" not in macos_job
     assert "run: just test-mps" in macos_job
+
+    root = Path(__file__).parents[3] / ".github" / "workflows"
+    release_hardware = (root / "release-hardware.yml").read_text(encoding="utf-8")
+    publish = (root / "publish.yml").read_text(encoding="utf-8")
+    assert "ref: ${{ inputs.target_sha }}" in release_hardware
+    assert "run: just test-mps" in release_hardware
+    assert "target_sha: ${{ needs.resolve-target.outputs.sha }}" in publish
+    assert "needs: hardware-validation" in publish
