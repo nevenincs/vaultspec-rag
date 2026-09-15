@@ -45,6 +45,8 @@ on:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: '17 5 * * 3'
   workflow_dispatch:
     inputs:
       # The two tiers that cannot simply run on a schedule: the GPU tier is
@@ -62,9 +64,20 @@ on:
           - macos
           - gpu
           - macos-and-gpu
+      cache_mode:
+        description: "Runner-local cache namespace"
+        type: choice
+        default: normal
+        options:
+          - normal
+          - isolated
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # NO_COLOR alone disables colour. A non-empty FORCE_COLOR (even "0") forces
@@ -72,6 +85,7 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
+  CI_CACHE_MODE: ${{ inputs.cache_mode || 'normal' }}
 
 # These persistent runners already keep UV_CACHE_DIR on runner-owned storage.
 # setup-uv's remote cache duplicated that state and restored multi-gigabyte
@@ -79,7 +93,7 @@ env:
 
 jobs:
   lint:
-    name: "Lint: Source, Documents and Workflows (Linux)"
+    name: "Lint: Static Validation (Linux)"
     # ONE STEP, and that is the point. This job used to hand-list every
     # dimension of `just check-all` except one, with that one running as a
     # separate job of its own - which is the exact drift `dev/ci_contract.py`
@@ -100,11 +114,8 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 40
-    concurrency:
-      group: ci-lint-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
@@ -152,18 +163,13 @@ jobs:
         run: just check-all
 
   tests:
-    name: "Test: Full Suite py${{ matrix.python-version }} (Linux)"
+    name: "Test: Python ${{ matrix.python-version }} Correctness (Linux)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 45
-    concurrency:
-      # The matrix leg is part of the group, so the two interpreters queue
-      # independently. Without it both legs share one group and serialise.
-      group: ci-tests-${{ github.ref }}-${{ matrix.python-version }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on: [self-hosted, Linux, X64]
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
@@ -241,17 +247,13 @@ jobs:
   # interpreter named by UV_PYTHON instead, which is what the suite runs under
   # anyway.
   tests-windows:
-    name: "Test: Python (Windows)"
+    name: "Test: Focused Compatibility (Windows)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true
+    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 60
-    concurrency:
-      group: ci-tests-windows-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
@@ -312,13 +314,8 @@ jobs:
       # They are a SELECTION WITHIN the full suite below, so a pull request
       # pays for the five files that can only fail here rather than for the
       # whole suite on the machine with the least headroom.
-      - name: Provisioning proofs
-        if: github.event_name == 'pull_request'
-        run: just test-provisioning
-
-      - name: Run tests
-        if: github.event_name != 'pull_request'
-        run: just test-python
+      - name: Run focused Windows compatibility tests
+        run: just test-windows
 
   tests-macos:
     name: "Test: Full Suite and Accelerator Backend (macOS)"
@@ -338,7 +335,7 @@ jobs:
     # Main integration is deliberate. The machine must be plugged in before
     # the repository is allowed to advertise MPS support.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' &&
        (inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'))
     timeout-minutes: 60
@@ -472,8 +469,9 @@ jobs:
     # machine carrying the cuda label - and blocked every other GPU run while
     # it did. Still dispatch-only, so a fork pull request can never reach it.
     if: >-
-      github.event_name == 'workflow_dispatch' &&
-      (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu')
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu'))
     runs-on: [self-hosted, windows, gpu, cuda]
     permissions:
       contents: read
@@ -595,7 +593,7 @@ jobs:
 
   dependency-audit:
     name: "Audit: Dependency Advisories (Linux)"
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'schedule'
     timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}

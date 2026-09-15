@@ -30,6 +30,17 @@ runs:
         set -euo pipefail
         temp="${RUNNER_TEMP}"
         tools="${RUNNER_TOOL_CACHE}"
+        if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+          trust=pr-untrusted
+        elif [[ "${GITHUB_REF:-}" == refs/tags/* ]] || [[ "${GITHUB_WORKFLOW:-}" =~ ^(Publish|Binaries|Acquisition) ]]; then
+          trust=release-trusted
+        else
+          trust=branch-trusted
+        fi
+        cache_base=""
+        [ "${CI_CACHE_MODE:-normal}" = "isolated" ] && cache_base="${temp}/vaultspec-rag-cache/isolated"
+        fingerprint=$(sha256sum uv.lock pyproject.toml 2>/dev/null | sha256sum | cut -c1-16)
+        compat="vaultspec-rag/${trust}/${RUNNER_OS}/${RUNNER_ARCH}/${UV_PYTHON:-default}/${fingerprint}"
         # Defer to a value the runner's own `.env` already set. That file is
         # host-level and covers every repo on the runner, so it is the source of
         # truth; setting a second value here would win by running later and
@@ -37,24 +48,29 @@ runs:
         pin() {
           local current=""
           eval "current=\${$1:-}"
-          if [ -n "$current" ]; then
-            printf '  %-34s -> %s (runner .env)\n' "$1" "$current"
-            return
+          if [ -n "$cache_base" ]; then
+            current="$cache_base/$2"
+          elif [ -n "$current" ]; then
+            current="$current/$compat"
+          else
+            current="$tools/$2/$compat"
           fi
-          mkdir -p "$2"
-          printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV"
-          printf '  %-34s -> %s (default)\n' "$1" "$2"
+          mkdir -p "$current"
+          printf '%s=%s\n' "$1" "$current" >> "$GITHUB_ENV"
+          printf '  %-34s -> %s (%s)\n' "$1" "$current" "$trust"
+          return
         }
         echo "pinning writable paths to runner-owned storage"
-        pin TMPDIR                           "$temp"
-        pin XDG_CACHE_HOME                   "$tools/xdg-cache"
-        pin HF_HOME                          "$tools/huggingface"
-        pin UV_CACHE_DIR                     "$tools/uv-cache"
-        pin UV_PYTHON_INSTALL_DIR            "$tools/uv-python"
-        pin CARGO_HOME                       "$tools/cargo"
-        pin RUSTUP_HOME                      "$tools/rustup"
-        pin VAULTSPEC_RAG_STATUS_DIR         "$temp/vaultspec-rag-status"
-        pin VAULTSPEC_RAG_QDRANT_STORAGE_DIR "$temp/vaultspec-rag-qdrant"
+        printf 'TMPDIR=%s\n' "$temp" >> "$GITHUB_ENV"
+        pin XDG_CACHE_HOME                   "xdg-cache"
+        pin HF_HOME                          "huggingface"
+        pin UV_CACHE_DIR                     "uv-cache"
+        pin UV_PYTHON_INSTALL_DIR            "uv-python"
+        pin CARGO_HOME                       "cargo"
+        pin RUSTUP_HOME                      "rustup"
+        mkdir -p "$temp/vaultspec-rag-status" "$temp/vaultspec-rag-qdrant"
+        printf 'VAULTSPEC_RAG_STATUS_DIR=%s\n' "$temp/vaultspec-rag-status" >> "$GITHUB_ENV"
+        printf 'VAULTSPEC_RAG_QDRANT_STORAGE_DIR=%s\n' "$temp/vaultspec-rag-qdrant" >> "$GITHUB_ENV"
 
     - name: Contain writes (Windows)
       if: runner.os == 'Windows'
@@ -62,14 +78,27 @@ runs:
       run: |
         $temp = $env:RUNNER_TEMP
         $tools = $env:RUNNER_TOOL_CACHE
+        if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+          $trust = 'pr-untrusted'
+        } elseif ($env:GITHUB_REF -like 'refs/tags/*' -or $env:GITHUB_WORKFLOW -match '^(Publish|Binaries|Acquisition)') {
+          $trust = 'release-trusted'
+        } else {
+          $trust = 'branch-trusted'
+        }
+        $cacheBase = if ($env:CI_CACHE_MODE -eq 'isolated') { Join-Path $temp 'vaultspec-rag-cache/isolated' } else { $null }
+        $sourceHashes = (Get-FileHash uv.lock, pyproject.toml -Algorithm SHA256 | ForEach-Object Hash) -join ''
+        $fingerprint = [Convert]::ToHexString(
+          [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sourceHashes))
+        ).Substring(0, 16).ToLowerInvariant()
+        $compat = "vaultspec-rag/$trust/$env:RUNNER_OS/$env:RUNNER_ARCH/$($env:UV_PYTHON ?? 'default')/$fingerprint"
         $pinned = [ordered]@{
           TMP                              = $temp
           TEMP                             = $temp
-          HF_HOME                          = (Join-Path $tools 'huggingface')
-          UV_CACHE_DIR                     = (Join-Path $tools 'uv-cache')
-          UV_PYTHON_INSTALL_DIR            = (Join-Path $tools 'uv-python')
-          CARGO_HOME                       = (Join-Path $tools 'cargo')
-          RUSTUP_HOME                      = (Join-Path $tools 'rustup')
+          HF_HOME                          = 'huggingface'
+          UV_CACHE_DIR                     = 'uv-cache'
+          UV_PYTHON_INSTALL_DIR            = 'uv-python'
+          CARGO_HOME                       = 'cargo'
+          RUSTUP_HOME                      = 'rustup'
           VAULTSPEC_RAG_STATUS_DIR         = (Join-Path $temp 'vaultspec-rag-status')
           VAULTSPEC_RAG_QDRANT_STORAGE_DIR = (Join-Path $temp 'vaultspec-rag-qdrant')
         }
@@ -79,13 +108,17 @@ runs:
           # runner, so a value already set there wins. Overriding it here would
           # split one shared cache into a per-repo copy of itself.
           $current = [Environment]::GetEnvironmentVariable($name)
-          if (-not [string]::IsNullOrWhiteSpace($current)) {
-            Write-Host ("  {0,-34} -> {1} (runner .env)" -f $name, $current)
-            continue
+          if ($name -in @('TMP', 'TEMP', 'VAULTSPEC_RAG_STATUS_DIR', 'VAULTSPEC_RAG_QDRANT_STORAGE_DIR')) {
+            $value = $pinned[$name]
+          } elseif ($cacheBase) {
+            $value = Join-Path $cacheBase $pinned[$name]
+          } elseif (-not [string]::IsNullOrWhiteSpace($current)) {
+            $value = Join-Path $current $compat
+          } else {
+            $value = Join-Path (Join-Path $tools $pinned[$name]) $compat
           }
-          $value = $pinned[$name]
           New-Item -ItemType Directory -Force -Path $value | Out-Null
-          Write-Host ("  {0,-34} -> {1} (default)" -f $name, $value)
+          Write-Host ("  {0,-34} -> {1} ({2})" -f $name, $value, $trust)
           "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
         }
 

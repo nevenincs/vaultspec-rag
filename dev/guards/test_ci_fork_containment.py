@@ -28,7 +28,7 @@ WORKFLOW = "ci.yml"
 GPU_JOB = "gpu-tests"
 
 #: The lane that can only fail on Windows, and so must run there.
-WINDOWS_ONLY_LANE = "test-provisioning"
+WINDOWS_ONLY_LANE = "test-windows"
 
 #: The clause that excludes a fork's pull request specifically. A self-hosted
 #: job reachable by `pull_request` at all must carry this in its `if:`; one
@@ -100,12 +100,7 @@ def test_the_pull_request_lane_runs_the_windows_only_proofs() -> None:
         "no Windows job runs on a pull request, so the provisioning proofs "
         "skip in the only lane that gates a merge."
     )
-    from dev.guards.test_ci_no_repeated_work import SUBSET_LANES
-
-    cover = SUBSET_LANES[WINDOWS_ONLY_LANE][0]
-    assert any(
-        WINDOWS_ONLY_LANE in recipes or cover in recipes for recipes in running.values()
-    ), (
+    assert any(WINDOWS_ONLY_LANE in recipes for recipes in running.values()), (
         f"a pull request's Windows job runs {running}, which includes neither "
-        f"`{WINDOWS_ONLY_LANE}` nor the lane that contains it, `{cover}`."
+        f"the focused compatibility lane `{WINDOWS_ONLY_LANE}`."
     )

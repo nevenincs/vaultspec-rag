@@ -24,8 +24,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-target:
+    name: Resolve exact release SHA
+    timeout-minutes: 10
+    runs-on: [self-hosted, Linux, X64, build]
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  hardware-validation:
+    name: Validate release hardware
+    needs: resolve-target
+    uses: ./.github/workflows/release-hardware.yml
+    with:
+      target_sha: ${{ needs.resolve-target.outputs.sha }}
+
   hold-release:
     name: Hold release out of latest
+    needs: hardware-validation
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
@@ -64,6 +86,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -112,6 +136,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Install Python
         run: uv python install ${{ matrix.python-version }}
@@ -149,6 +175,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Publish to PyPI
         run: uv publish --check-url https://pypi.org/simple/ dist/*
