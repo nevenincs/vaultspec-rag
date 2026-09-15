@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from statistics import median
 from time import perf_counter_ns
 from typing import TYPE_CHECKING
 
@@ -223,38 +222,52 @@ def test_large_parent_single_path_read_meets_elapsed_budget(tmp_path: Path) -> N
     the 25,000-path parent must stay within a generous absolute ceiling and may not
     grow materially relative to a ten-path parent.
 
-    Proven able to fail: replacing the five-millisecond ceiling with one nanosecond
-    failed this test at the elapsed assertion with a measured 2.048ms read. Restoring
-    the production ceiling passed with the same large-parent workload.
+    The two parents are sampled alternately and each is judged by its fastest
+    read, so a transient stall slows some samples of both without deciding
+    either verdict, whereas a scan is slow on every sample. Medians taken over
+    two separate blocks measured whatever else the host was doing during each
+    block. The ratio holds under any load; the absolute ceiling still measures
+    the host, and sustained saturation well beyond a normal parallel suite can
+    lift even the fastest read past it, because each read opens and closes its
+    own ledger connection and that lifecycle dominates the cost.
+
+    Proven able to fail: widening the production exact-path predicate to
+    ``(evidence.rel_path IN (...) OR 1 = 1)`` - a full scan that still returns
+    the right rows - failed this at the absolute ceiling with a 485.474ms
+    fastest read. Restoring the production predicate passed.
     """
     small_ledger, small_key = _seed(tmp_path / "small-elapsed", 10)
     large_ledger, large_key = _seed(tmp_path / "large-elapsed", 25_000)
     small_path = "src/file-000009.py"
     large_path = "src/file-024999.py"
 
-    def measured_ns(
+    def timed_ns(
         ledger: RunLedger,
         key: ProofCompatibilityKey,
         rel_path: str,
-    ) -> float:
-        ledger.publication_evidence_for_paths(key, (rel_path,))
-        samples: list[int] = []
-        for _ in range(64):
-            started = perf_counter_ns()
-            result = ledger.publication_evidence_for_paths(key, (rel_path,))
-            samples.append(perf_counter_ns() - started)
-            assert result[rel_path].point_ids
-        return median(samples)
+    ) -> int:
+        started = perf_counter_ns()
+        result = ledger.publication_evidence_for_paths(key, (rel_path,))
+        elapsed = perf_counter_ns() - started
+        assert result[rel_path].point_ids
+        return elapsed
 
-    small_ns = measured_ns(small_ledger, small_key, small_path)
-    large_ns = measured_ns(large_ledger, large_key, large_path)
+    timed_ns(small_ledger, small_key, small_path)
+    timed_ns(large_ledger, large_key, large_path)
+    small_samples: list[int] = []
+    large_samples: list[int] = []
+    for _ in range(64):
+        small_samples.append(timed_ns(small_ledger, small_key, small_path))
+        large_samples.append(timed_ns(large_ledger, large_key, large_path))
+    small_ns = min(small_samples)
+    large_ns = min(large_samples)
 
     assert large_ns < 5_000_000, (
         f"one exact-path read over 25,000 parents took {large_ns / 1_000_000:.3f}ms"
     )
     assert large_ns <= small_ns * 5, (
-        f"large-parent median {large_ns / 1_000_000:.3f}ms exceeded five times "
-        f"the small-parent median {small_ns / 1_000_000:.3f}ms"
+        f"large-parent fastest read {large_ns / 1_000_000:.3f}ms exceeded five "
+        f"times the small-parent fastest read {small_ns / 1_000_000:.3f}ms"
     )
 
 

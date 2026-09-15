@@ -522,8 +522,8 @@ class TestRunWriteWithRetry:
             _retry_policy(
                 attempts=5,
                 operation_timeout=120.0,
-                base_delay=2.0,
-                max_delay=2.0,
+                base_delay=10.0,
+                max_delay=10.0,
             ),
             pytest.raises(JobError) as caught,
         ):
@@ -536,7 +536,10 @@ class TestRunWriteWithRetry:
 
         assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
         assert calls == [1]
-        assert 1.0 <= elapsed < 1.8
+        # An unclamped wait sleeps the full ten-second delay; the clamped one
+        # ends near the 1.1s budget, far enough below the ceiling that a
+        # loaded host cannot close the gap.
+        assert 1.0 <= elapsed < 5.0
 
     def test_expired_budget_refuses_first_attempt(self) -> None:
         calls: list[int] = []

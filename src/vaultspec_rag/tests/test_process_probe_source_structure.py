@@ -534,19 +534,42 @@ class TestAtomicReplaceHasOneImplementation:
         # The whole argument for applying this everywhere is that the ladder
         # exits on its first attempt. If a future edit made it sleep
         # unconditionally, every publish in the codebase would slow down and
-        # no other test would notice.
+        # no other test would notice. The fastest of several replaces is held
+        # below the shortest sleep the ladder can take: an unconditional sleep
+        # lifts every sample above that floor, while a loaded host slows only
+        # some samples and leaves the fastest below it. Mutation check: an
+        # unconditional sleep of that shortest backoff at the top of the
+        # ladder fails this on the floor assertion; removing it passes.
         import time
 
-        from .._atomic_write import replace_atomically
+        from .._atomic_write import (
+            _BASE_SECONDS,
+            _JITTER_FRACTION,
+            _MAX_SLEEP_SECONDS,
+            replace_atomically,
+        )
+        from .._backoff import jittered_backoff
 
-        source = tmp_path / "s.tmp"
-        source.write_text("x", encoding="utf-8")
-        started = time.perf_counter()
-        replace_atomically(source, tmp_path / "d.json")
-        elapsed = time.perf_counter() - started
-        assert elapsed < 0.05, (
-            f"an uncontended replace took {elapsed * 1000:.1f} ms; the retry "
-            "ladder must not sleep when the first attempt succeeds"
+        shortest_sleep = jittered_backoff(
+            0,
+            base=_BASE_SECONDS,
+            cap=_MAX_SLEEP_SECONDS,
+            fraction=_JITTER_FRACTION,
+            random_unit=0.0,
+        )
+        samples: list[float] = []
+        for index in range(20):
+            source = tmp_path / f"s{index}.tmp"
+            source.write_text("x", encoding="utf-8")
+            started = time.perf_counter()
+            replace_atomically(source, tmp_path / "d.json")
+            samples.append(time.perf_counter() - started)
+        fastest = min(samples)
+        assert fastest < shortest_sleep, (
+            f"the fastest of {len(samples)} uncontended replaces took "
+            f"{fastest * 1000:.2f} ms, not below the ladder's shortest "
+            f"{shortest_sleep * 1000:.2f} ms sleep; the retry ladder must not "
+            "sleep when the first attempt succeeds"
         )
 
     def test_durability_is_opt_in_and_separate(self) -> None:
