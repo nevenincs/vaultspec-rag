@@ -44,6 +44,7 @@ on:
   push:
     branches:
       - main
+      - audit/ci-20260915-093249
   pull_request:
   workflow_dispatch:
     inputs:
@@ -121,7 +122,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Native binaries, so they cannot be pinned in the lockfile. The recipes
       # fall back to the pinned container image when either is absent; these
@@ -191,7 +192,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -271,7 +272,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Same pinned, checksum-verified download the GPU job uses: this
       # runner's service account has no bash on PATH, so the marketplace
@@ -367,7 +368,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
@@ -501,7 +502,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       # Install `just` without the bash-based marketplace action: this runner's
       # service account has no `bash` on PATH, so a pinned, SHA256-verified
@@ -616,7 +617,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up just
         uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
