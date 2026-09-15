@@ -32,15 +32,18 @@ runs:
         tools="${RUNNER_TOOL_CACHE}"
         if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
           trust=pr-untrusted
+          trust_key=p
         elif [[ "${GITHUB_REF:-}" == refs/tags/* ]] || [[ "${GITHUB_WORKFLOW:-}" =~ ^(Publish|Binaries|Acquisition) ]]; then
           trust=release-trusted
+          trust_key=r
         else
           trust=branch-trusted
+          trust_key=b
         fi
         cache_base=""
         [ "${CI_CACHE_MODE:-normal}" = "isolated" ] && cache_base="${temp}/vaultspec-rag-cache/isolated"
         fingerprint=$(sha256sum uv.lock pyproject.toml 2>/dev/null | sha256sum | cut -c1-16)
-        compat="vaultspec-rag/${trust}/${RUNNER_OS}/${RUNNER_ARCH}/${UV_PYTHON:-default}/${fingerprint}"
+        compat="vr/${trust_key}/${RUNNER_OS:0:1}${RUNNER_ARCH}/${UV_PYTHON:-d}/${fingerprint}"
         # Defer to a value the runner's own `.env` already set. That file is
         # host-level and covers every repo on the runner, so it is the source of
         # truth; setting a second value here would win by running later and
@@ -80,17 +83,22 @@ runs:
         $tools = $env:RUNNER_TOOL_CACHE
         if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
           $trust = 'pr-untrusted'
+          $trustKey = 'p'
         } elseif ($env:GITHUB_REF -like 'refs/tags/*' -or $env:GITHUB_WORKFLOW -match '^(Publish|Binaries|Acquisition)') {
           $trust = 'release-trusted'
+          $trustKey = 'r'
         } else {
           $trust = 'branch-trusted'
+          $trustKey = 'b'
         }
         $cacheBase = if ($env:CI_CACHE_MODE -eq 'isolated') { Join-Path $temp 'vaultspec-rag-cache/isolated' } else { $null }
         $sourceHashes = (Get-FileHash uv.lock, pyproject.toml -Algorithm SHA256 | ForEach-Object Hash) -join ''
         $fingerprint = [Convert]::ToHexString(
           [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($sourceHashes))
         ).Substring(0, 16).ToLowerInvariant()
-        $compat = "vaultspec-rag/$trust/$env:RUNNER_OS/$env:RUNNER_ARCH/$($env:UV_PYTHON ?? 'default')/$fingerprint"
+        $platformKey = "$($env:RUNNER_OS.Substring(0, 1))$env:RUNNER_ARCH"
+        $pythonKey = ($env:UV_PYTHON ?? 'd').Replace('.', '')
+        $compat = "vr/$trustKey/$platformKey/$pythonKey/$fingerprint"
         $pinned = [ordered]@{
           TMP                              = $temp
           TEMP                             = $temp
