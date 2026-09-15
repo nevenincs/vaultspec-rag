@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ _DEFAULT_SETUP_TIMEOUT_SECONDS = 600.0
 _SETUP_TIMEOUT_ENV = "VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT"
 _OUTPUT_TAIL_CHARS = 12_000
 _TERMINATE_GRACE_SECONDS = 5.0
+_DESCENDANT_EXIT_SECONDS = 0.25
 _TOKENIZER_FILENAMES = frozenset(
     {
         "tokenizer.json",
@@ -140,6 +142,33 @@ class _TerminationRequest:
     output: str
 
 
+def _kill_worker_descendants(pid: int) -> list[int]:
+    """Kill every process the worker started and return the pids still alive.
+
+    A Windows venv launcher re-executes the real interpreter as a child that
+    carries the worker's command line, so terminating the launcher alone lets
+    the deadline error surface while that interpreter is still running.
+    Suspending the launcher first stops it starting the child between the
+    snapshot and the kill. The suspension is Windows-only: Windows terminates a
+    suspended process, whereas a stopped POSIX process would not act on the
+    SIGTERM the escalation sends next.
+    """
+    import psutil
+
+    try:
+        worker = psutil.Process(pid)
+        if sys.platform == "win32":
+            worker.suspend()
+        descendants = worker.children(recursive=True)
+    except psutil.Error:
+        return []
+    for child in descendants:
+        with contextlib.suppress(psutil.Error):
+            child.kill()
+    _, alive = psutil.wait_procs(descendants, timeout=_DESCENDANT_EXIT_SECONDS)
+    return [child.pid for child in alive]
+
+
 def _terminate_kill_and_raise(
     process: subprocess.Popen[str], request: _TerminationRequest
 ) -> NoReturn:
@@ -156,6 +185,7 @@ def _terminate_kill_and_raise(
     termination_grace = request.termination_grace
     context = request.context
     output = request.output
+    surviving = _kill_worker_descendants(process.pid)
     process.terminate()
     try:
         trailing, _ = process.communicate(
@@ -177,6 +207,14 @@ def _terminate_kill_and_raise(
             )
             raise RuntimeError(msg) from kill_exc
     output += trailing or ""
+    if surviving:
+        msg = (
+            f"{operation} exceeded {timeout_seconds:.3f}s whole-operation "
+            f"deadline and killed worker descendants {surviving} did not exit; "
+            f"termination_grace={termination_grace:.3f}s; {context}\n"
+            f"worker output tail:\n{_output_tail(output)}"
+        )
+        raise RuntimeError(msg)
     msg = (
         f"{operation} exceeded {timeout_seconds:.3f}s whole-operation deadline; "
         f"termination_grace={termination_grace:.3f}s; {context}\n"
