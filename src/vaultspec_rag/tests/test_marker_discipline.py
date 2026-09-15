@@ -507,9 +507,7 @@ def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     ci_workflow = (
         Path(__file__).parents[3] / ".github" / "workflows" / "ci.yml"
     ).read_text(encoding="utf-8")
-    macos_job = ci_workflow.split("  tests-macos:", 1)[1].split(
-        "  gpu-tests:", 1
-    )[0]
+    macos_job = ci_workflow.split("  tests-macos:", 1)[1].split("  gpu-tests:", 1)[0]
     assert "github.event_name == 'schedule'" in macos_job
     assert "github.event_name == 'push'" not in macos_job
     assert "github.event_name == 'pull_request'" not in macos_job
