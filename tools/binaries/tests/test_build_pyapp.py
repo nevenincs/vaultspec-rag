@@ -229,8 +229,8 @@ def test_binary_names_are_unique() -> None:
 def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
     """The published digest must bind every finalized executable byte.
 
-    Mutation proof: swapping the icon and version calls failed this ordering
-    assertion; the original order was restored before the passing run.
+    Mutation proof: replacing the combined production call with ``stamp_icon``
+    fails the exact combined-stamp assertion before checksum ordering is checked.
     """
     tree = ast.parse(
         textwrap.dedent(
@@ -253,8 +253,10 @@ def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
 
-    assert calls.index("stamp_icon") < calls.index("stamp_version_info")
-    assert calls.index("stamp_version_info") < calls.index("write_checksum")
+    assert "stamp_icon_and_version" in calls, (
+        "Windows binaries must commit icon and version metadata together"
+    )
+    assert calls.index("stamp_icon_and_version") < calls.index("write_checksum")
     assert tuple(image.width for image in parse_ico(APPLICATION_ICON)) == (
         256,
         128,
