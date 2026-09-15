@@ -121,6 +121,57 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     assert '--repo "$GITHUB_REPOSITORY"' in publish
 
 
+def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> None:
+    """The source checkout and every handoff carry one immutable release SHA."""
+    publish = yaml.safe_load(
+        (repo_root / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    binaries = yaml.safe_load(
+        (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert publish["jobs"]["resolve-target"]["outputs"]["sha"] == (
+        "${{ steps.commit.outputs.sha }}"
+    )
+    assert publish["jobs"]["hold-release"]["outputs"]["sha"] == (
+        "${{ needs.resolve-target.outputs.sha }}"
+    )
+    assert publish["jobs"]["build"]["outputs"]["sha"] == (
+        "${{ needs.hold-release.outputs.sha }}"
+    )
+    assert publish["jobs"]["smoke-test"]["outputs"]["sha"] == (
+        "${{ needs.build.outputs.sha }}"
+    )
+    assert publish["jobs"]["publish-pypi"]["outputs"]["sha"] == (
+        "${{ needs.smoke-test.outputs.sha }}"
+    )
+    assert publish["jobs"]["github-release"]["outputs"]["sha"] == (
+        "${{ needs.smoke-test.outputs.sha }}"
+    )
+
+    publish_text = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
+        encoding="utf-8"
+    )
+    binaries_text = (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "name: dist-${{ needs.hold-release.outputs.sha }}" in publish_text
+    assert "name: dist-${{ needs.build.outputs.sha }}" in publish_text
+    assert "name: dist-${{ needs.smoke-test.outputs.sha }}" in publish_text
+    assert '--field target_sha="${TARGET_SHA}"' in publish_text
+    triggers = binaries.get("on", binaries.get(True))
+    assert triggers["workflow_dispatch"]["inputs"]["target_sha"]["required"] is True
+    assert "name: project-wheel-${{ inputs.target_sha }}" in binaries_text
+    assert "name: binaries-${{ inputs.target_sha }}-${{ matrix.name }}" in binaries_text
+    assert "pattern: binaries-${{ inputs.target_sha }}-*" in binaries_text
+    assert "ref: ${{ inputs.target_sha }}" in binaries_text
+    assert "git rev-parse HEAD" in binaries_text
+
+
 def test_release_please_holds_then_publish_dispatches_binaries(
     repo_root: Path,
 ) -> None:
@@ -159,3 +210,35 @@ def test_release_please_holds_then_publish_dispatches_binaries(
     assert "needs: [publish-pypi, github-release]" in downstream
     assert "gh workflow run Binaries \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
+
+
+def test_promotion_waits_for_checksum_verified_bundle_acquisition(
+    repo_root: Path,
+) -> None:
+    """Public x64/ARM bundles must load before a stable release is promoted."""
+    acquisition = (repo_root / ".github" / "workflows" / "acquisition.yml").read_text(
+        encoding="utf-8"
+    )
+    binaries = (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "${tag}-${TRIPLE}${ARCHIVE_SUFFIX}" in acquisition
+    assert '"${release_url}/SHA256SUMS"' in acquisition
+    assert 'sha256sum -c "${archive}.sha256"' in acquisition
+    assert "producer_sha=$(jq -er '.source_revision" in acquisition
+    assert '[ "${producer_sha}" = "${TARGET_SHA}" ]' in acquisition
+    assert 'tar -xOzf "${archive}"' in acquisition
+    assert 'unzip -p "${archive}"' in acquisition
+    assert "vaultspec-rag-${TRIPLE}" not in acquisition
+    assert "vaultspec-search-mcp-${TRIPLE}" not in acquisition
+
+    wait = binaries.index("- name: Require the acquisition check for this release")
+    promote = binaries.index("- name: Promote a repaired release back to latest")
+    section = binaries[wait:promote]
+    assert '-f target_sha="$TARGET_SHA"' in section
+    assert "before_id=$(gh run list" in section
+    assert ".databaseId > ${before_id}" in section
+    assert 'gh run watch "$run_id"' in section
+    assert "--exit-status" in section
+    assert wait < promote

@@ -427,19 +427,20 @@ def test_updates_start_output_uses_project_block() -> None:
 def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
     project = str(tmp_path.resolve())
     previous = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
-    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "0.05"
+    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "0.5"
     try:
-        with _slow_updates_http_server() as (_server, port):
+        with _slow_updates_http_server(delay_seconds=1.5) as (_server, port):
             result = runner.invoke(
                 app,
                 ["server", "updates", "start", project, "--port", str(port)],
             )
-            # The client stops waiting after its 0.05s deadline, but the
-            # request it sent is recorded by the server's own thread, and
-            # leaving this block shuts that server down. Assert on the record
-            # only once it exists: otherwise the test asks whether the host
-            # scheduled that thread inside a 50ms window, which is a property
-            # of the machine and not of the code under test. A request that
+            # The server records a request only after reading its whole body,
+            # so the client's deadline must outlast connecting and sending on a
+            # loaded host; a 50ms deadline let the client give up first, and no
+            # request was ever recorded. The server still answers well after
+            # the deadline, so the timeout path is what runs. Its own thread
+            # records the request, and leaving this block shuts that server
+            # down, so assert on the record only once it exists. A request that
             # never arrives still fails the assertion below, just later.
             deadline = time.monotonic() + 5.0
             while not _SlowUpdatesHTTPHandler.requests:
@@ -462,7 +463,7 @@ def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
     joined = " ".join(lines)
     assert (
         f"Automatic index updates: The service on port {port} "
-        "did not answer within 0.05 seconds."
+        "did not answer within 0.5 seconds."
     ) in joined
     assert labels["Project"] == tmp_path.name
     assert labels["Path"] == project

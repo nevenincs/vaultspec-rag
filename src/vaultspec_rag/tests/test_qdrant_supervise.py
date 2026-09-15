@@ -39,6 +39,11 @@ pytestmark = [pytest.mark.unit]
 
 _SUPERVISE_LOGGER = "vaultspec_rag.qdrant_runtime._supervise"
 
+# How long a spawned child may take to write its first line. Generous on
+# purpose: it bounds interpreter startup on a loaded host, which says nothing
+# about the supervisor, and a passing run never spends it.
+_CHILD_START_SECONDS = 30.0
+
 # Emits a load line every 50ms forever and never listens on anything: the shape
 # of a store working through its collections, and the shape of one that has
 # work to report but will never finish it. Which of the two it stands for is
@@ -51,10 +56,12 @@ while True:
     time.sleep(0.05)
 """
 
-# Alive, reachable by every liveness check, and doing nothing observable.
+# Alive, reachable by every liveness check, and doing nothing observable once
+# its interpreter is up. The one startup line drains before any wait begins.
 _SILENT_CHILD = """
 import time
 
+print("started", flush=True)
 time.sleep(600.0)
 """
 
@@ -88,6 +95,12 @@ def _supervised_child(
     supervisor spawns its binary with no arguments, and these children are
     scripts. Everything after the handoff - the drain thread, the ring, the
     line counter the readiness wait reads - is the production path.
+
+    Every child writes a line as soon as its interpreter is up, and the
+    supervisor is handed over only once that line has drained. The readiness
+    wait counts progress from its own start, so each test's patience window
+    then times the behaviour under test rather than interpreter startup, which
+    alone can outlast a two-second window on a loaded Windows host.
     """
     supervisor = QdrantSupervisor(
         Path(sys.executable),
@@ -106,9 +119,22 @@ def _supervised_child(
     supervisor._proc = process
     supervisor._start_output_drain()
     try:
+        _await_first_line(supervisor)
         yield supervisor
     finally:
         assert supervisor.stop(timeout=10.0)
+
+
+def _await_first_line(supervisor: QdrantSupervisor) -> None:
+    """Return once the child's first output line has drained, or fail the test."""
+    deadline = time.monotonic() + _CHILD_START_SECONDS
+    while supervisor._output_lines < 1:
+        if time.monotonic() >= deadline:
+            pytest.fail(
+                f"the child wrote nothing within {_CHILD_START_SECONDS:.0f}s of "
+                "its spawn, so no readiness outcome below would mean anything"
+            )
+        time.sleep(0.01)
 
 
 @contextlib.contextmanager
@@ -247,8 +273,9 @@ class TestWedgedChildIsStillStopped:
     ) -> None:
         # A dead child is evidence of a load failure and must reach the
         # caller's recovery path at once. Its output must never be mistaken for
-        # liveness: drop the death check and the drained line holds the wait
-        # open to the ceiling, and neither the branch nor the bound below hold.
+        # liveness: drop the death check and the wait runs out the patience
+        # window as silence instead, so the branch assertions and the bound
+        # below all fail.
         patience = 2.0
         port = free_loopback_port()
 

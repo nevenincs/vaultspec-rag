@@ -28,6 +28,10 @@ from dev.toolchain import VERBS, Target, Verb
 EXEMPT: dict[tuple[str, str], str] = {
     ("test", "fast"): "the unit tier, a subset of the python lane",
     ("test", "provisioning"): "five files the python lane already collects",
+    ("test", "windows"): (
+        "the path, permission, process, and native-file subset of the python "
+        "lane selected for focused execution on native Windows"
+    ),
     ("audit", "deps"): (
         "the one target in this verb that GATES, and it holds a CI job of its "
         "own. `audit all` is a report that cannot fail, which is the wrong "
