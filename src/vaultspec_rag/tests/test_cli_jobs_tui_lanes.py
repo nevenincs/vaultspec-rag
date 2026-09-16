@@ -442,6 +442,13 @@ class TestBoundedSearchProjectionAnnouncesItself:
 
         Removing the ``showing`` append in ``_render_search_title`` fails this
         on the membership assertion below, not on a count.
+
+        Waited on the counts rather than on the marker: the activity arrives
+        through a worker thread, so a frame read straight off ``_ready`` can
+        still carry the pre-fetch title, where the marker is absent because
+        nothing has been served yet rather than because it was not rendered.
+        Waiting on the marker itself would assert the same thing twice and
+        report the mutation as a timeout instead of a failed membership.
         """
         control_service.set_search_activity(
             active=[_served_search("search-active-001", query="a served query")],
@@ -451,7 +458,9 @@ class TestBoundedSearchProjectionAnnouncesItself:
         app = _app(control_service, [_job("abc123def456")], watch_mode="server")
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
-            painted = _screen_text(app)
+            painted = await _await_painted(
+                pilot, app, "Served searches · 1 active · 0 recent"
+            )
 
         assert "showing 1 of 300" in painted, (
             "a bounded projection must name what it served against what exists"
@@ -466,6 +475,11 @@ class TestBoundedSearchProjectionAnnouncesItself:
         Asserted on a two-record figure rather than the bare phrase: the jobs
         header carries its own ``showing N of M`` for the work list, so a
         looser matcher passes on that one and proves nothing about this lane.
+
+        The absence is asserted on a frame that has the activity on it, for
+        the reason given on the sibling above: read straight off ``_ready``,
+        this would pass on a title that had not yet been given anything to
+        announce.
         """
         control_service.set_search_activity(
             active=[
@@ -477,6 +491,8 @@ class TestBoundedSearchProjectionAnnouncesItself:
         app = _app(control_service, [_job("abc123def456")], watch_mode="server")
         async with app.run_test(size=_WIDE, notifications=True) as pilot:
             await _ready(pilot, app)
-            painted = _screen_text(app)
+            painted = await _await_painted(
+                pilot, app, "Served searches · 2 active · 0 recent"
+            )
 
         assert "showing 2 of 2" not in painted

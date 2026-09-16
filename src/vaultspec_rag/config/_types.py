@@ -85,6 +85,10 @@ class EnvVar(StrEnum):
     )
     SERVICE_ADMIN_TIMEOUT = "VAULTSPEC_RAG_ADMIN_TIMEOUT"
     SERVICE_REINDEX_TIMEOUT = "VAULTSPEC_RAG_REINDEX_TIMEOUT"
+    # How long a pause waits for in-flight work to drain. Operator-tunable
+    # because what has to drain is the operator's workload, not a round trip:
+    # a service running long jobs needs longer than one serving searches.
+    SERVICE_PAUSE_DRAIN_TIMEOUT = "VAULTSPEC_RAG_PAUSE_DRAIN_TIMEOUT"
     # Managed qdrant readiness bound, operator-tunable for very large stores.
     QDRANT_READY_TIMEOUT = "VAULTSPEC_RAG_QDRANT_READY_TIMEOUT"
     # Diagnostic memory probe on/off switch. Named here so this enum stays the

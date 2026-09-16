@@ -33,7 +33,7 @@ from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     import ctypes
@@ -521,8 +521,12 @@ def iter_process_info(attrs: list[str]) -> Iterator[Mapping[str, object]]:
 
     Each yielded mapping reads an attribute only when the caller asks for it
     (see :class:`_ProcessInfo` for why that is the difference between a
-    two-second scan and a ninety-second one), so a caller MUST test its cheap
-    discriminator - the command line - before touching anything else.
+    two-second scan and a ninety-second one), so a caller MUST test its
+    discriminators in cost order and stop at the first that rules a process
+    out. ``name`` comes off the process snapshot and is the cheapest; the
+    command line is read out of the target's own address space and costs a
+    second on a process that is permanently protected; ``ppid`` and
+    ``create_time`` cost a full-system snapshot each.
 
     Skips the two conditions that are NORMAL while walking a live process
     table - a process exiting mid-scan, and another user's process that is not
@@ -689,51 +693,100 @@ def _rendered_cmdline(value: object) -> str | None:
     return None
 
 
+#: Processes inspected at once by the holder scan. This scan is the one caller
+#: that needs BOTH expensive attributes for very nearly every process: a
+#: process is ruled out only after its command line and its working directory
+#: have both failed to name the tree. On Windows each of those reads the
+#: target's own address space, and a permanently protected process - the
+#: isolated LSA and NGC hosts, the WSL VM memory processes - is retried for a
+#: full second before the read is converted to a refusal. Four such processes
+#: put a 554-process scan at 6.2s, of which about 6 were spent asleep in those
+#: retries. The waits are what overlap: the same reads across a small pool
+#: answer in 2.1s, and the remainder is one process's own two reads, which are
+#: serial because they are the same process. More workers than this changed
+#: nothing, because the floor is that one process and not the pool.
+_HOLDER_SCAN_WORKERS = 8
+
+
+def _holder_of(
+    info: Mapping[str, object],
+    resolved: Path,
+    named: Path,
+    excluded: frozenset[int],
+    resolved_paths: dict[str, Path | None],
+) -> EnvironmentHolder | Literal["blind"] | None:
+    """Classify one process: a holder, not a holder, or not inspectable.
+
+    Reads the process's attributes, so it is what the pool above runs. The
+    path memo is shared across workers on purpose - it holds the answer to
+    "where does this string resolve to", which does not depend on who asks -
+    and two workers racing to fill one key compute the same value and store it
+    twice, which costs a duplicate ``resolve`` and changes nothing.
+    """
+    pid = info["pid"]
+    if not isinstance(pid, int) or pid in excluded:
+        return None
+    image = info["exe"]
+    working_directory: object = None
+    if _resolves_under(image, resolved, resolved_paths):
+        relation = HolderRelation.IMAGE
+    elif _names_under(_launch_path(info["cmdline"]), resolved, named):
+        relation = HolderRelation.LAUNCH_PATH
+    else:
+        working_directory = info["cwd"]
+        if _resolves_under(working_directory, resolved, resolved_paths):
+            relation = HolderRelation.WORKING_DIRECTORY
+        else:
+            if image is None and working_directory is None:
+                return "blind"
+            return None
+    if working_directory is None:
+        working_directory = info["cwd"]
+    return EnvironmentHolder(
+        pid=pid,
+        relation=relation,
+        image=image if isinstance(image, str) else None,
+        working_directory=(
+            working_directory if isinstance(working_directory, str) else None
+        ),
+        cmdline=_rendered_cmdline(info["cmdline"]),
+    )
+
+
 def _scan_environment_holders(
     resolved: Path,
     named: Path,
     excluded: frozenset[int],
 ) -> tuple[tuple[EnvironmentHolder, ...], int] | None:
+    from concurrent.futures import ThreadPoolExecutor
+
     found: list[EnvironmentHolder] = []
     blind = 0
     resolved_paths: dict[str, Path | None] = {}
+
+    def classify(
+        info: Mapping[str, object],
+    ) -> EnvironmentHolder | Literal["blind"] | None:
+        return _holder_of(info, resolved, named, excluded, resolved_paths)
+
     try:
-        for info in iter_process_info(["pid", "exe", "cwd", "cmdline"]):
-            pid = info["pid"]
-            if not isinstance(pid, int) or pid in excluded:
-                continue
-            image = info["exe"]
-            working_directory: object = None
-            if _resolves_under(image, resolved, resolved_paths):
-                relation = HolderRelation.IMAGE
-            elif _names_under(_launch_path(info["cmdline"]), resolved, named):
-                relation = HolderRelation.LAUNCH_PATH
-            else:
-                working_directory = info["cwd"]
-                if _resolves_under(working_directory, resolved, resolved_paths):
-                    relation = HolderRelation.WORKING_DIRECTORY
-                else:
-                    if image is None and working_directory is None:
-                        blind += 1
-                    continue
-            if working_directory is None:
-                working_directory = info["cwd"]
-            found.append(
-                EnvironmentHolder(
-                    pid=pid,
-                    relation=relation,
-                    image=image if isinstance(image, str) else None,
-                    working_directory=(
-                        working_directory
-                        if isinstance(working_directory, str)
-                        else None
-                    ),
-                    cmdline=_rendered_cmdline(info["cmdline"]),
-                )
-            )
+        # Drained inside the guard: enumerating the table is what raises, and
+        # a scan that could not run must still be reported as unknown rather
+        # than as an environment nothing holds.
+        processes = list(iter_process_info(["pid", "exe", "cwd", "cmdline"]))
+        with ThreadPoolExecutor(max_workers=_HOLDER_SCAN_WORKERS) as pool:
+            verdicts = list(pool.map(classify, processes))
     except OSError as exc:
         logger.warning("could not scan for holders of %s: %s", resolved, exc)
         return None
+    for verdict in verdicts:
+        if isinstance(verdict, EnvironmentHolder):
+            found.append(verdict)
+        elif verdict == "blind":
+            blind += 1
+    # Ordered by pid rather than by whatever order the pool finished in, so a
+    # caller that shows only the first few holders shows the same few twice.
+    found.sort(key=lambda holder: holder.pid)
     return tuple(found), blind
 
 

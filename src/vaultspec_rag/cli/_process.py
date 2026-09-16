@@ -62,6 +62,7 @@ __all__ = [
     "TerminationResult",
     "_call_interruptibly",
     "_is_our_service",
+    "_may_carry_launch_witness",
     "_port_is_available",
     "_probe_daemon_accelerator",
     "_resolve_daemon_interpreter",
@@ -409,6 +410,43 @@ def _resolve_daemon_interpreter() -> str:
         if candidate.exists():
             return str(candidate)
     return sys.executable
+
+
+#: Lowercased image-name prefix every process that can carry the daemon's launch
+#: witness runs under. The witness is a ``-m`` argv, so the image is whichever
+#: interpreter `_resolve_daemon_interpreter` picked - the venv ``python``, the
+#: base interpreter a Windows venv shim re-execs into, or ``sys.executable``.
+#: All of them basename to ``python`` plus a version, suffix or capitalisation,
+#: which `test_a_spawned_daemon_runs_under_an_image_the_scans_admit` holds to.
+_LAUNCH_WITNESS_IMAGE_PREFIX = "python"
+
+
+def _may_carry_launch_witness(name: object) -> bool:
+    """Whether a process under image *name* could carry the launch witness.
+
+    The witness both process scans look for is an argv subsequence, and reading
+    a process's command line is the expensive part of a scan: psutil retries a
+    Windows ``ERROR_PARTIAL_COPY`` for a full second before converting it to
+    ``AccessDenied``, which is the right workaround for a process mid-startup
+    and pure waste on one that is permanently protected. Four such processes -
+    Credential Guard's isolated LSA, the isolated NGC host, and the WSL VM
+    memory processes - put a sweep of a 546-process table at 4.2 seconds, of
+    which 4.09 were those four. The same table costs 66ms once the image is
+    asked first, because the image comes off the process snapshot rather than
+    out of the target's own address space.
+
+    The retry stays where it earns its keep: a daemon spawned microseconds ago
+    runs under an interpreter image, so it still gets the full retried read.
+
+    An UNREADABLE name is not a non-match. ``None`` from the scan means "could
+    not tell", and a scan that skipped on it would convert a process it failed
+    to describe into a process it had ruled out - the shape of quiet zero the
+    reap must never produce. Those fall through to the command-line read and
+    are answered by the witness itself.
+    """
+    if not isinstance(name, str):
+        return True
+    return Path(name).stem.lower().startswith(_LAUNCH_WITNESS_IMAGE_PREFIX)
 
 
 def _probe_daemon_accelerator(
@@ -860,12 +898,15 @@ def _scan_witness_pids(*, port: int, launch_token: str) -> dict[int, float] | st
     """Return witness pids by argv, or an error string. Runs under a budget."""
     found: dict[int, float] = {}
     try:
-        for info in iter_process_info(["pid", "cmdline", "create_time"]):
-            # The argv witness is the cheap discriminator and MUST be tested
-            # first: the scan reads attributes lazily, and `create_time` costs a
-            # full-system snapshot per process, so leading with it would pay
-            # that for every process on the machine instead of the handful
-            # carrying this launch token.
+        for info in iter_process_info(["pid", "name", "cmdline", "create_time"]):
+            # Cheapest discriminator first, in cost order. The scan reads
+            # attributes lazily: the image comes off the process snapshot, the
+            # command line out of the target's own address space, and
+            # `create_time` costs a full-system snapshot per process. Leading
+            # with either of the last two would pay it for every process on the
+            # machine instead of the handful carrying this launch token.
+            if not _may_carry_launch_witness(info.get("name")):
+                continue
             if not _is_service_command(
                 info.get("cmdline"),
                 port,

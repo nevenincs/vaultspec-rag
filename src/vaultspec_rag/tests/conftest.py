@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .. import CodebaseIndexer, EmbeddingModel, VaultIndexer
     from ..indexer import IndexResult
     from ..store_runtime import VaultStore
+    from ._jobs_tui_harness import _JobService
 
 from vaultspec_core.config import (
     reset_config,
@@ -34,7 +35,6 @@ from ..config._settings import get_config
 from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
 from ..progress import NullProgressReporter
-from ._jobs_tui_harness import _JobService
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
 
@@ -426,6 +426,17 @@ def clean_config() -> Generator[None]:
 
 @pytest.fixture
 def control_service() -> typing.Iterator[_JobService]:
+    """A real loopback job service for the watch-interface suites.
+
+    Imported here rather than at module scope because this conftest is loaded
+    by EVERY pytest invocation and the harness is wanted by four files. It
+    reaches the watch interface, which reaches the CLI and the indexer behind
+    it: 674 modules and 0.72s, on top of the 275 and 0.24s the rest of this
+    file costs. That was most of the price of collecting a single test, and
+    all of it was paid by runs that never build a job service.
+    """
+    from ._jobs_tui_harness import _JobService
+
     server = _JobService()
     try:
         yield server

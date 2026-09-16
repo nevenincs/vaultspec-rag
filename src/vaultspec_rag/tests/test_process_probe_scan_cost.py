@@ -12,15 +12,18 @@ test would name.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING, cast
 
+import psutil
 import pytest
 
 from .._process_probe import iter_process_info, pid_alive
+from ..cli._process import _may_carry_launch_witness, _resolve_daemon_interpreter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -131,3 +134,87 @@ class TestScanReadsAttributesOnDemand:
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=5)
+
+
+class TestTheImageGateAdmitsEveryDaemon:
+    """The cheap image discriminator must never rule out a real daemon.
+
+    Both scans ask a process's image before its command line, because reading
+    a command line costs a second on a permanently protected process and the
+    image costs nothing. That trade is only sound while every process a daemon
+    launch produces passes the gate - a launcher the gate rejects is an orphan
+    the reap cannot see, which is the one failure the reap exists to prevent.
+    So the gate is held against the interpreter the production launcher
+    actually resolves, and against the process tree spawning it actually
+    creates, rather than against an assumption about how a venv is laid out.
+    """
+
+    def test_a_spawned_daemon_runs_under_an_image_the_scans_admit(self) -> None:
+        """Every process of a real daemon spawn passes the image gate.
+
+        The launcher is not the only one that has to: a Windows venv
+        ``python.exe`` is a shim that re-execs the base interpreter, so one
+        logical daemon is a launcher plus a worker and the reap has to see the
+        pair. The name asserted on is the one the SCAN reads - psutil's, not
+        the path's basename - because a shim on Windows and ``comm``
+        truncation on POSIX both sit between the two.
+
+        Mutation proving this can fail: narrowing
+        ``_LAUNCH_WITNESS_IMAGE_PREFIX`` to an image no interpreter is named
+        (``pythonw``) rejects the launcher and reds this by name.
+        """
+        interpreter = _resolve_daemon_interpreter()
+        argv = [interpreter, "-c", "import time; time.sleep(30)"]
+        if sys.platform == "win32":
+            proc = subprocess.Popen(argv, creationflags=0x00000200)
+        else:
+            proc = subprocess.Popen(argv, start_new_session=True)
+        try:
+            parent = psutil.Process(proc.pid)
+            # The shim's worker appears a moment after the launcher does.
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline and not parent.children(recursive=True):
+                if sys.platform != "win32":
+                    break
+                time.sleep(0.05)
+            spawned = [parent, *parent.children(recursive=True)]
+            rejected = [
+                process.name()
+                for process in spawned
+                if not _may_carry_launch_witness(process.name())
+            ]
+            assert not rejected, (
+                f"the image gate rules out {rejected}, which a daemon spawned "
+                f"through {interpreter!r} runs under; the scans would not see "
+                "that daemon, and an orphan reap would report a clean machine"
+            )
+        finally:
+            for child in psutil.Process(proc.pid).children(recursive=True):
+                with contextlib.suppress(psutil.Error):
+                    child.kill()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    def test_an_unreadable_image_is_not_ruled_out(self) -> None:
+        """An image the scan could not read is not an image it ruled out.
+
+        The scan reports ``None`` for an attribute it could not read. Treating
+        that as a non-match would convert a process the scan failed to describe
+        into one it had cleared, so the gate admits it and lets the command
+        line - the authority on what a process is - answer.
+        """
+        assert _may_carry_launch_witness(None)
+
+    def test_a_foreign_image_is_ruled_out(self) -> None:
+        """And the gate must actually be a gate, or it saves nothing.
+
+        The images named here are the ones measured to cost a second each:
+        psutil retries their command-line read for a full second before
+        converting it to ``AccessDenied``. If they were admitted the scan would
+        be back to paying for them.
+        """
+        for image in ("LsaIso.exe", "NgcIso.exe", "vmmemWSL", "svchost.exe"):
+            assert not _may_carry_launch_witness(image), image
+        for image in ("python.exe", "python", "python3.13", "Python", "python3"):
+            assert _may_carry_launch_witness(image), image
