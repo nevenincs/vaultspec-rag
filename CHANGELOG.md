@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.30](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.29...vaultspec-rag-v0.4.30) (2026-09-16)
+
+
+### Bug Fixes
+
+* clear both CI gates - the quiesce module split and a TUI paint race ([b5d78d2](https://github.com/nevenincs/vaultspec-rag/commit/b5d78d253742428f45d02cc079b0d8002aa0e604))
+* defer release PR CI until uv lock refresh ([5caa656](https://github.com/nevenincs/vaultspec-rag/commit/5caa65659c022c4fa3a067a6e55e8900765df3d4))
+* end the store budget race and cover the POSIX reap backstop ([6bf53b9](https://github.com/nevenincs/vaultspec-rag/commit/6bf53b95edeb5af717b09d05c343583f3f72f353))
+* end the store retry budget race and cover the POSIX reap backstop ([2eb2998](https://github.com/nevenincs/vaultspec-rag/commit/2eb2998211be7d1108884484ebc201230d6ec9e1))
+* give the holder scan and the table probe types the checker can read ([10bb396](https://github.com/nevenincs/vaultspec-rag/commit/10bb3966b08c2995e3ce66ce040314263ca32aa0))
+
 ## [0.4.29](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.28...vaultspec-rag-v0.4.29) (2026-09-15)
 
 
