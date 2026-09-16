@@ -40,4 +40,4 @@ def install_cancel_safe_timer_sleep() -> None:
     """Make every Textual timer sleep on the event loop. Idempotent."""
     # Written through the module namespace: the attribute is typed as Textual's
     # own platform sleep, and this replaces it with an equivalent signature.
-    vars(textual.timer)["sleep"] = _cancel_safe_sleep
+    textual.timer.__dict__["sleep"] = _cancel_safe_sleep
