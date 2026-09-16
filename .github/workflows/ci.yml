@@ -117,7 +117,15 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule'
+    # release-please updates pyproject.toml before its own follow-up commit
+    # refreshes uv.lock on the release branch. That one-commit head is
+    # transient, and running `just init` there only proves the repair has not
+    # landed yet. Wait for the second commit, then run the usual gates.
+    if: >-
+      github.event_name != 'schedule' &&
+      (github.event_name != 'pull_request' ||
+       !startsWith(github.head_ref, 'release-please--') ||
+       github.event.pull_request.commits > 1)
     timeout-minutes: 40
     # Same-repository work uses the persistent fleet. A fork must still emit
     # the required context, but only on GitHub-hosted isolation where its
@@ -161,7 +169,11 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule'
+    if: >-
+      github.event_name != 'schedule' &&
+      (github.event_name != 'pull_request' ||
+       !startsWith(github.head_ref, 'release-please--') ||
+       github.event.pull_request.commits > 1)
     timeout-minutes: 45
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     strategy:
@@ -240,7 +252,11 @@ jobs:
     # workflow it would run is the fork's own, so admitting one hands a
     # stranger execution on this hardware. Same-repo pull requests are
     # unaffected, which is every pull request this project actually gets.
-    if: github.event_name != 'schedule'
+    if: >-
+      github.event_name != 'schedule' &&
+      (github.event_name != 'pull_request' ||
+       !startsWith(github.head_ref, 'release-please--') ||
+       github.event.pull_request.commits > 1)
     timeout-minutes: 60
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
     env:
