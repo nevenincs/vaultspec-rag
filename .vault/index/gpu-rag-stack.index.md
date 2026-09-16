@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#gpu-rag-stack'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-09-16'
 body_schema: 'body-v2'
-body_hash: 'sha256:5064b0c4582ff8097f5a3097f0201b5d002977dfdc8866d2d17f209b8ae7b2a0'
+body_hash: 'sha256:353a261f1da783090684e149d16f4ebfc6fbd121d4e54c6324f962456d435b5f'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'
@@ -122,9 +122,9 @@ Auto-generated index of all documents tagged with `#gpu-rag-stack`.
 - `2026-03-07-api-adr-tests-audit` - api.py and ADR Regression Tests Audit
 - `2026-03-07-api-config-audit` - Round 24 Audit -- api.py, config.py
 - `2026-03-07-cli-round14-audit` - Round 14 Audit -- cli.py (full audit)
-- `2026-03-07-config-init-round12-audit` - Round 12 Audit -- config.py and __init__.py
+- `2026-03-07-config-init-round12-audit` - Round 12 Audit -- config.py and `__init__.py`
 - `2026-03-07-embeddings-round10-audit` - Round 10 Audit -- embeddings.py (deep dive)
-- `2026-03-07-final-sweep-round27-audit` - Round 27 Audit -- Final Sweep (__init__.py, mcp_server.py second pass, root conftest.py)
+- `2026-03-07-final-sweep-round27-audit` - Round 27 Audit -- Final Sweep (`__init__.py`, mcp_server.py second pass, root conftest.py)
 - `2026-03-07-indexer-round23-audit` - Round 23 Audit -- indexer.py (deep dive)
 - `2026-03-07-indexer-round8-audit` - Round 8 Audit -- indexer.py (deep dive)
 - `2026-03-07-indexer-store-api-audit` - Round 22 Audit -- indexer.py, store.py, api.py
