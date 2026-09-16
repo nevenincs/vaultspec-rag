@@ -3,8 +3,8 @@ tags:
   - '#reference'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-09-14'
-body_hash: 'sha256:c19705102e7a23e3a910bdd6ffe4b45fcc54c711cd42694e3849882e70c501a9'
+modified: '2026-09-16'
+body_hash: 'sha256:f33d6efb788ebac529e52403bc6ccea258eecbd963de681699c86f6c37d521c5'
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
 ---
@@ -24,7 +24,7 @@ Source `.vaultspec/rules/` bundled into wheel as `vaultspec_core/builtins/`:
 ".vaultspec/rules" = "vaultspec_core/builtins"
 ```
 
-### seed_builtins() - src/vaultspec_core/builtins/__init__.py:48-87
+### seed_builtins() - `src/vaultspec_core/builtins/__init__.py:48-87`
 
 Recursively walk bundled tree, skip Python artifacts, write if not exists or force=True:
 
@@ -45,7 +45,7 @@ def seed_builtins(target_rules_dir: Path, *, force: bool = False) -> list[str]:
     return written
 ```
 
-### check_outdated() - src/vaultspec_core/builtins/__init__.py:107-133
+### check_outdated() - `src/vaultspec_core/builtins/__init__.py:107-133`
 
 Binary comparison detects out-of-date files. Used by sync to prompt for upgrade.
 
