@@ -688,7 +688,56 @@ def _string_lines(node: ast.AST) -> list[tuple[int, str]]:
     return out
 
 
-def _comment_blocks(source: str) -> list[list[tuple[int, str]]]:
+class _PythonSource:
+    """One Python file read, parsed and tokenized once.
+
+    Both Python scanners want the same three views of a file - its text, its
+    tree, and its comments - and a whole-tree run asks for every one of them
+    twice, because the citation walk and the path walk enumerate almost the
+    same set of files. Reading, parsing and tokenizing each file once per run
+    is most of what a scan of a tree this size costs.
+
+    The views are derived once at construction rather than lazily, because
+    every caller of this wants all three and a lazy view would only add a
+    branch per access. A cache keyed on the path would be the same saving with
+    a staleness hazard attached - a file rewritten in place between two scans
+    would answer from the first read - so the cache lives for the length of one
+    collection instead (:func:`_python_source`).
+    """
+
+    __slots__ = ("comments", "text", "tree")
+
+    def __init__(self, path: Path) -> None:
+        self.text = path.read_text(encoding="utf-8")
+        self.tree = ast.parse(self.text)
+        self.comments = [
+            (tok.start[0], tok.string)
+            for tok in tokenize.generate_tokens(io.StringIO(self.text).readline)
+            if tok.type == tokenize.COMMENT
+        ]
+
+
+def _python_source(
+    path: Path, sources: dict[Path, _PythonSource] | None
+) -> _PythonSource:
+    """Return *path* parsed, reusing *sources* when the caller keeps one.
+
+    One collection reaches most Python files twice - once through the citation
+    enumeration and once through the identity enumeration, which overlap almost
+    entirely - and each visit used to read, parse and tokenize the file again.
+    The cache belongs to the collection rather than to this module so it cannot
+    outlive the tree it was taken from: a file rewritten between two collections
+    is read again, which is what keeps the throwaway-tree cases honest.
+    """
+    if sources is None:
+        return _PythonSource(path)
+    held = sources.get(path)
+    if held is None:
+        held = sources[path] = _PythonSource(path)
+    return held
+
+
+def _comment_blocks(comments: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     """Group comment tokens into runs of consecutive lines.
 
     A comment sentence wraps across several ``#`` lines, and a citation inside it
@@ -704,21 +753,18 @@ def _comment_blocks(source: str) -> list[list[tuple[int, str]]]:
     blocks: list[list[tuple[int, str]]] = []
     run: list[tuple[int, str]] = []
     previous = -2
-    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-        if tok.type != tokenize.COMMENT:
-            continue
-        line = tok.start[0]
+    for line, text in comments:
         if line != previous + 1 and run:
             blocks.append(run)
             run = []
-        run.append((line, tok.string))
+        run.append((line, text))
         previous = line
     if run:
         blocks.append(run)
     return blocks
 
 
-def _iter_prose(path: Path) -> list[list[tuple[int, str]]]:
+def _iter_prose(source: _PythonSource) -> list[list[tuple[int, str]]]:
     """Return the prose of *path* as blocks of (line, text).
 
     Prose is a docstring at any position, a comment in any form, a documentary
@@ -734,13 +780,12 @@ def _iter_prose(path: Path) -> list[list[tuple[int, str]]]:
     joined before matching and offsets are mapped back, so the finding still
     reports the line the citation starts on.
     """
-    source = path.read_text(encoding="utf-8")
     blocks = [
         _string_lines(prose)
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(source.tree)
         for prose in _prose_nodes(node)
     ]
-    blocks.extend(_comment_blocks(source))
+    blocks.extend(_comment_blocks(source.comments))
     return [block for block in blocks if block]
 
 
@@ -773,8 +818,8 @@ def _prose_nodes(node: ast.AST) -> list[ast.expr]:
     return []
 
 
-def _iter_values_and_comments(path: Path) -> list[tuple[int, str]]:
-    """Return (line, text) for every string-literal VALUE and comment in *path*.
+def _iter_values_and_comments(source: _PythonSource) -> list[tuple[int, str]]:
+    """Return (line, text) for every string-literal VALUE and comment in a file.
 
     A workstation path is illegitimate whether it sits in a comment or a data
     value, so - unlike the prose-only citation scan - this inspects string
@@ -782,17 +827,13 @@ def _iter_values_and_comments(path: Path) -> list[tuple[int, str]]:
     a newline), which is what distinguishes a real ``Y:\\code`` path from a
     ``word:\\n`` escape sequence a raw-text scan cannot tell apart.
     """
-    source = path.read_text(encoding="utf-8")
     out: list[tuple[int, str]] = []
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
+    for node in ast.walk(source.tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             lines = node.value.splitlines() or [node.value]
             for offset, text in enumerate(lines):
                 out.append((node.lineno + offset, text))
-    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-        if tok.type == tokenize.COMMENT:
-            out.append((tok.start[0], tok.string))
+    out.extend(source.comments)
     return out
 
 
@@ -898,16 +939,26 @@ def _text_blocks(items: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     return blocks
 
 
-def scan_file(path: Path, *, repo_root: Path = REPO_ROOT) -> list[Finding]:
+def scan_file(
+    path: Path,
+    *,
+    repo_root: Path = REPO_ROOT,
+    sources: dict[Path, _PythonSource] | None = None,
+) -> list[Finding]:
     """Return every citation in the prose of a Python file.
 
     *repo_root* is a parameter rather than only the module constant because a
     gate whose detection can be run against nothing but the live checkout can be
     confirmed green and never shown able to go red. Being able to point the scan
     at a throwaway tree is part of the gate, not test scaffolding.
+
+    *sources* is the caller's own parse cache, described on
+    :func:`_python_source`. A caller that scans one file passes nothing and
+    reads it once, which is already the fewest reads that file can have.
     """
     rel = path.relative_to(repo_root).as_posix()
-    return _match_blocks(_iter_prose(path), rel, PATTERNS, allowed_lines=ALLOWLIST)
+    blocks = _iter_prose(_python_source(path, sources))
+    return _match_blocks(blocks, rel, PATTERNS, allowed_lines=ALLOWLIST)
 
 
 def scan_file_paths(
@@ -915,6 +966,7 @@ def scan_file_paths(
     *,
     repo_root: Path = REPO_ROOT,
     identity_patterns: tuple[tuple[str, re.Pattern[str]], ...] = (),
+    sources: dict[Path, _PythonSource] | None = None,
 ) -> tuple[list[Finding], list[Finding]]:
     """Return (hard identity leaks, soft absolute-path smells) for a Python file.
 
@@ -923,9 +975,12 @@ def scan_file_paths(
     account or author name reveals identity exactly as a home directory does,
     and they are passed in rather than read from a constant because which
     identity is being looked for is a property of the run, not of the gate.
+
+    *sources* is the caller's own parse cache, described on
+    :func:`_python_source`.
     """
     rel = path.relative_to(repo_root).as_posix()
-    items = _iter_values_and_comments(path)
+    items = _iter_values_and_comments(_python_source(path, sources))
     return _match_patterns(items, rel, PATH_PATTERNS + identity_patterns), (
         _match_patterns(items, rel, PATH_SMELL_PATTERNS)
     )
@@ -958,7 +1013,8 @@ def scan_text(
     # Only the CITATION walk skips them. The path and identity walks below
     # still read every line, because a captured run is exactly where a home
     # directory or a username leaks.
-    prose = [item for item in items if item[0] not in _fenced_lines(items)]
+    fenced = _fenced_lines(items)
+    prose = [item for item in items if item[0] not in fenced]
     return (
         _match_blocks(_text_blocks(prose), rel, PATTERNS, allowed_lines=ALLOWLIST),
         _match_patterns(items, rel, PATH_PATTERNS + identity_patterns),
@@ -1104,11 +1160,14 @@ def collect_findings(
     deferred: list[Finding] = []
     leaks: list[Finding] = []
     smells: list[Finding] = []
+    # Held for this collection only, so the two walks below read, parse and
+    # tokenize each Python file once between them - see `_python_source`.
+    sources: dict[Path, _PythonSource] = {}
     py_files, text_files = iter_surface_files(repo_root)
     for path in py_files:
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
-        target.extend(scan_file(path, repo_root=repo_root))
+        target.extend(scan_file(path, repo_root=repo_root, sources=sources))
     for path in text_files:
         rel = path.relative_to(repo_root).as_posix()
         target = deferred if rel in DEFERRED_PENDING_FOLLOWUP else active
@@ -1131,7 +1190,10 @@ def collect_findings(
         applied = () if rel in AUTHORSHIP_FILES else identity
         if path.name.endswith(".py"):
             p_leaks, p_smells = scan_file_paths(
-                path, repo_root=repo_root, identity_patterns=applied
+                path,
+                repo_root=repo_root,
+                identity_patterns=applied,
+                sources=sources,
             )
         else:
             _citations, p_leaks, p_smells = scan_text(
@@ -1150,7 +1212,7 @@ def collect_findings(
     if identity and gate_file.is_relative_to(root):
         leaks.extend(
             _match_patterns(
-                _iter_values_and_comments(gate_file),
+                _iter_values_and_comments(_python_source(gate_file, sources)),
                 gate_file.relative_to(root).as_posix(),
                 identity,
             )

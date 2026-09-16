@@ -753,11 +753,21 @@ async def _settled_paint(pilot: typing.Any, app: ServerWatchApp) -> None:
     while time.monotonic() < deadline:
         await pilot.pause()
         table = app.query("#jobs")
-        # A table the layout has taken off the screen has no width to settle
-        # on, and none of its own to divide.
-        if not table or not table.only_one(DataTable).display:
+        if not table:
             return
-        width = table.only_one(DataTable).size.width
+        displayed = table.only_one(DataTable)
+        width = displayed.size.width
+        # A table the layout has taken off the screen has no width to settle
+        # on, and none of its own to divide. Taken off covers both ways the
+        # layout does it: unset outright, and squeezed to no width by a pane
+        # that took the whole terminal - which is what a narrow screen does to
+        # the table when the log opens over it. Reading only the display flag
+        # missed the second, so the division stayed at the last real width, the
+        # zero could never agree with it, and this sat out its whole bound on
+        # every narrow toggle - forty-five seconds a call, silently, because a
+        # spent deadline here returns rather than fails.
+        if not displayed.display or width <= 0:
+            return
         now = time.monotonic()
         if app._layout.divided_width != width:
             matched_at = None
