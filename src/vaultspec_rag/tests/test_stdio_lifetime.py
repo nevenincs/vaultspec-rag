@@ -1,16 +1,22 @@
 """Unit tests for the stdio shim lifetime watchdog.
 
-Covers the pure ancestor-walk guards, the env kill switch, and (on Windows)
-real handle acquisition against the live test process's own ancestry - no
-mocks; the Windows assertions run against genuine kernel32 calls. The
-fires-on-death path is exercised end-to-end in the integration suite.
+Covers the pure ancestor-walk guards, the env kill switch, and each
+platform's backstop against real processes - no mocks: the Windows
+assertions run against genuine kernel32 calls, and the POSIX ones against a
+real reparent and the real liveness probe. Both halves are covered here
+because the watchdog is one contract with two implementations, and a suite
+that proves only the host's half lets the other reach a release untested.
+The Windows fires-on-death path is exercised end-to-end in the integration
+suite as well.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +25,7 @@ from ..server import _stdio_lifetime as lifetime
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -258,3 +265,195 @@ class TestOrphanRearm:
         assert survivors == []
         assert nearest_dead is not None
         assert nearest_dead.pid == doomed.pid
+
+
+#: Spawned by the intermediary below, then orphaned by it. Arms the real
+#: backstop on its real parent and polls fast enough for a test to wait on.
+_POSIX_ORPHAN_CHILD = """
+import os
+import pathlib
+import sys
+
+from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
+
+w._POSIX_POLL_SECONDS = 0.05
+initial = os.getppid()
+pathlib.Path(sys.argv[1]).write_text(str(initial), encoding="utf-8")
+w._posix_watchdog(initial, ())
+"""
+
+#: Spawns the watchdog child, reports both pids, and exits once the child has
+#: armed - the handshake matters, because an intermediary that exits before
+#: the child reads ``getppid`` leaves the child already reparented and its
+#: anchor can never be seen to break.
+#:
+#: The child gets its own stdout and stderr rather than inheriting this
+#: process's. An orphan holding the write end of the pipe the test is reading
+#: keeps that pipe open past its parent's exit, so the test would block on EOF
+#: until the child died - waiting on the very death it is supposed to be
+#: measuring, and stranding the child when it never comes.
+_POSIX_ORPHAN_PARENT = """
+import os
+import subprocess
+import sys
+import time
+
+armed, child_source, stderr_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(stderr_path, "wb") as err:
+    child = subprocess.Popen(
+        [sys.executable, "-c", child_source, armed],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=err,
+    )
+print(os.getpid(), child.pid, flush=True)
+deadline = time.monotonic() + 60
+while not os.path.exists(armed) and time.monotonic() < deadline:
+    time.sleep(0.02)
+"""
+
+#: Watches one explicitly named pid while its own parent stays alive, which
+#: isolates the explicit-anchor branch from the reparent branch.
+_POSIX_EXPLICIT_CHILD = """
+import os
+import sys
+
+from vaultspec_rag.server import _stdio_lifetime as w  # absolute-import-ok
+
+w._POSIX_POLL_SECONDS = 0.05
+w._posix_watchdog(os.getppid(), (int(sys.argv[1]),))
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX reparent semantics")
+class TestPosixWatchdog:
+    """The POSIX backstop: a coarse reparent poll with explicit-pid anchors.
+
+    Windows gets the layered handle machinery and the tests above; POSIX gets
+    this loop, and it carries the same duty - a shim whose client is gone must
+    reap itself rather than survive on an inherited stdin pipe that will never
+    reach EOF.
+
+    Both cases run the loop in a real child process against real anchors, and
+    read the verdict off that child's exit status and the event it emits.
+    Nothing is substituted, and that is not a preference: the loop never
+    returns and ends by calling ``os._exit``, so in-process it could only be
+    driven by replacing the clock it polls on and the exit it terminates with
+    - the two things these tests exist to observe.
+    """
+
+    def test_an_orphaned_shim_reaps_itself_when_its_parent_dies(
+        self, tmp_path: Path
+    ) -> None:
+        """A real reparent, end to end: the parent exits, the child follows.
+
+        Mutation: dropping the ``ppid != initial_ppid`` comparison leaves the
+        child polling forever and this test fails waiting for the event.
+        """
+        armed = tmp_path / "armed"
+        stderr_path = tmp_path / "orphan-stderr"
+        handshake = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                _POSIX_ORPHAN_PARENT,
+                str(armed),
+                _POSIX_ORPHAN_CHILD,
+                str(stderr_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        )
+        parent_pid, child_pid = (int(part) for part in handshake.stdout.split())
+        try:
+            event = _await_watchdog_event(stderr_path)
+        finally:
+            _reap_stray(child_pid)
+
+        assert event == {
+            "event": "stdio_watchdog_exit",
+            "dead_ancestor_pid": parent_pid,
+            "dead_ancestor_exe": "parent",
+            "shim_pid": child_pid,
+        }
+
+    def test_an_explicit_anchor_reaps_the_shim_only_once_it_dies(
+        self, tmp_path: Path
+    ) -> None:
+        """Death is the trigger, not the poll.
+
+        The two halves are each other's control: a watchdog that never reaps
+        passes the live half, and one that reaps on its first round passes the
+        dead half. The child's own parent stays alive throughout, so only the
+        explicit anchor can end it.
+
+        Mutation: dropping the ``pid_alive`` check leaves the child running
+        after the anchor dies; reaping unconditionally kills it while the
+        anchor still lives.
+        """
+        stderr_path = tmp_path / "watchdog-stderr"
+        anchor = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        with stderr_path.open("wb") as err:
+            watchdog = subprocess.Popen(
+                [sys.executable, "-c", _POSIX_EXPLICIT_CHILD, str(anchor.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+            )
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                watchdog.wait(timeout=2.0)
+            anchor.terminate()
+            # Reaped, not merely signalled: an unreaped zombie still answers a
+            # liveness probe, so the anchor is not dead until this returns.
+            anchor.wait(timeout=60)
+            assert watchdog.wait(timeout=60) == 0
+        finally:
+            _terminate(anchor)
+            _terminate(watchdog)
+
+        assert _await_watchdog_event(stderr_path) == {
+            "event": "stdio_watchdog_exit",
+            "dead_ancestor_pid": anchor.pid,
+            "dead_ancestor_exe": "explicit-parent",
+            "shim_pid": watchdog.pid,
+        }
+
+
+def _await_watchdog_event(stderr_path: Path, timeout: float = 60.0) -> object:
+    """Return a watchdog child's exit event, waiting for it to be written."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if stderr_path.exists():
+            for line in stderr_path.read_text(encoding="utf-8").splitlines():
+                if "stdio_watchdog_exit" in line:
+                    return json.loads(line)
+        time.sleep(0.05)
+    pytest.fail(f"no watchdog event within {timeout}s: {stderr_path.read_bytes()!r}")
+
+
+def _terminate(process: subprocess.Popen[bytes]) -> None:
+    """Make sure a test's child is gone, however the test ended."""
+    if process.poll() is not None:
+        return
+    process.kill()
+    process.wait(timeout=60)
+
+
+def _reap_stray(pid: int) -> None:
+    """Kill a watchdog child that outlived its test, so nothing is stranded.
+
+    The signal is the number rather than ``signal.SIGKILL`` because this module
+    is imported on Windows too, where that name does not exist; the caller is
+    POSIX-gated, so 9 is always SIGKILL where this runs.
+    """
+    try:
+        os.kill(pid, 9)
+    except OSError:
+        return
