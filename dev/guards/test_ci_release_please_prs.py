@@ -40,12 +40,15 @@ def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None
     Mutation proof: removing the release-please clause from any guarded job
     makes this fail naming that job; restoring the clause makes it pass again.
     """
+    expected = (
+        "github.event_name != 'schedule' && "
+        "(github.event_name != 'pull_request' || "
+        f"!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
+    )
     offenders = {
         job_id: condition
         for job_id in REQUIRED_JOBS
-        if not all(
-            clause in (condition := _job_condition(job_id)) for clause in REQUIRED_GUARD
-        )
+        if (condition := " ".join(_job_condition(job_id).split())) != expected
     }
     assert not offenders, (
         "A release-please PR head runs merge-box jobs before the workflow's "
