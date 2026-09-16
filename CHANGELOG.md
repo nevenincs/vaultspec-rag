@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.31](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.30...vaultspec-rag-v0.4.31) (2026-09-16)
+
+
+### Bug Fixes
+
+* cancel-safe Textual timer sleep on Windows; match qdrant-client 1.19.1 types ([b88f2f1](https://github.com/nevenincs/vaultspec-rag/commit/b88f2f183b4b3640c335fb3654dac0bca542f044))
+* cancel-safe Textual timer sleep on Windows; match qdrant-client 1.19.1 types ([6c2b602](https://github.com/nevenincs/vaultspec-rag/commit/6c2b602d6c25c02479068638803791c58721856f))
+* **cli:** install the timer sleep through the module dict basedpyright accepts ([882c48a](https://github.com/nevenincs/vaultspec-rag/commit/882c48a2136a4a305e49e4f8b281a14b5ec1f67a))
+
 ## [0.4.30](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.29...vaultspec-rag-v0.4.30) (2026-09-16)
 
 
