@@ -21,7 +21,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-_STARTUP_TIMEOUT_SECONDS = 10.0
+# A child interpreter on a runner executing a dozen workers can take far longer
+# than a developer machine simply to be scheduled; the wait ends on readiness.
+_STARTUP_TIMEOUT_SECONDS = 60.0
 
 _UNNAMED_HOLDER_SRC = """
 import os

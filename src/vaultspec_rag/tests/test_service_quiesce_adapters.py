@@ -31,6 +31,10 @@ pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "quiesce-adapter-route-token"
 
+# Bounds the in-thread server's start and graceful exit. A runner executing a
+# dozen workers can stall a thread for many seconds; a hung server still fails.
+_SERVER_THREAD_TIMEOUT_SECONDS = 60.0
+
 
 def test_the_envelope_field_set_is_derived_from_the_snapshot() -> None:
     """The published vocabulary must be what the controller actually renders.
@@ -264,7 +268,7 @@ def _production_routes(status_dir: Path) -> Generator[int]:
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     try:
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + _SERVER_THREAD_TIMEOUT_SECONDS
         while not server.started and time.monotonic() < deadline:
             time.sleep(0.01)
         assert server.started
@@ -273,7 +277,7 @@ def _production_routes(status_dir: Path) -> Generator[int]:
     finally:
         _try_http_admin("resume_service", {}, port)
         server.should_exit = True
-        thread.join(timeout=5)
+        thread.join(timeout=_SERVER_THREAD_TIMEOUT_SECONDS)
         assert not thread.is_alive()
 
 
@@ -296,8 +300,11 @@ async def _paint_quiesce_jobs_tui(
         watch_mode="jobs",
     )
     async with app.run_test(size=(220, 50), notifications=True) as pilot:
-        for _ in range(100):
-            await pilot.pause()
+        # The first refresh is an HTTP round trip on a worker thread; bound it
+        # by time, since how long one pause lasts is the event loop's business.
+        deadline = time.monotonic() + _SERVER_THREAD_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            await pilot.pause(0.01)
             if app._last_refresh is not None or app._last_error is not None:
                 break
         assert app._last_refresh is not None or app._last_error is not None

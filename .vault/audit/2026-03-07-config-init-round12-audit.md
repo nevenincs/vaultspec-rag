@@ -3,11 +3,11 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:86cb694cb5b0e7d443ce0590bfbe7b1f793b9ada11031f76806f2c80c90799b8'
+modified: '2026-09-16'
+body_hash: 'sha256:c61b3522409ede6d08449abf63d933ac67aae5d409f2b7c5f56b3dd2d676dace'
 ---
 
-# Round 12 Audit -- config.py and __init__.py
+# Round 12 Audit -- config.py and `__init__.py`
 
 ## Scope
 

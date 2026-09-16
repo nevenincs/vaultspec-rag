@@ -109,27 +109,33 @@ class _PopulatedJSONHandler(QuietHandler):
         self.wfile.write(body)
 
 
+# The health-token stage spends half the whole-call budget, so a budget
+# renewed at re-authentication visibly outlives the original one; both halves
+# are seconds wide, far above any loopback scheduling stall. The authenticated
+# retry outlasts the budget but not the default admin timeout.
+_AUTH_CALL_BUDGET_SECONDS = 3.0
+_AUTH_HEALTH_SECONDS = _AUTH_CALL_BUDGET_SECONDS / 2
+_AUTH_RETRY_SECONDS = 15.0
+
+
 class _AuthDeadlineHandler(QuietHandler):
     """Exercise the real 401, health-token, authenticated-retry sequence."""
 
     service_token = "live-loopback-token"
     requests: ClassVar[list[str]] = []
 
-    # The 401 and health-token stages are deliberately cheap and the
-    # authenticated retry deliberately far longer than the whole-call budget,
-    # so the sequence deterministically reaches the third request and expires
-    # there. Tight per-stage sleeps made the budget expire a stage earlier on
-    # a loaded host, which is a property of the host clock rather than of the
-    # deadline contract under test.
+    # The 401 is cheap, the health-token stage spends half the budget, and the
+    # authenticated retry is far longer than the budget, so the sequence
+    # reaches the third request with seconds to spare and expires there.
     def do_GET(self) -> None:
         authorization = self.headers.get("Authorization", "")
         type(self).requests.append(f"{self.path} {authorization}".rstrip())
         if self.path == "/health":
-            time.sleep(0.005)
+            time.sleep(_AUTH_HEALTH_SECONDS)
             self._json(200, {"service_token": self.service_token})
             return
         if authorization == f"Bearer {self.service_token}":
-            time.sleep(2.0)
+            time.sleep(_AUTH_RETRY_SECONDS)
             self._json(200, {"projects": []})
             return
         time.sleep(0.005)
@@ -329,20 +335,24 @@ class TestAdminErrorSurfacing:
         assert result is None
 
     def test_auth_recovery_obeys_one_whole_call_deadline(self) -> None:
-        """401, health-token recovery, and retry share one 120ms budget.
+        """401, health-token recovery, and retry share one whole-call budget.
 
         The invariant is that re-authentication does not buy a fresh budget:
         the call must expire against the ORIGINAL deadline somewhere at or
         after the health-token stage. Which of those stages the clock lands in
         is a host-timing detail, so the assertion names the set rather than one
-        member - a reset deadline would let the two-second retry complete and
-        return a result instead of timing out at all.
+        member. A retry granted a fresh budget expires one health stage late,
+        and a retry given the default timeout runs until the retry answers;
+        both land past the bound. Every bound is derived from the budget and
+        the stage delays, never from a host speed.
         """
         _AuthDeadlineHandler.requests = []
         server, port = _serve(_AuthDeadlineHandler)
         started = time.monotonic()
         try:
-            result = _try_http_admin("list_projects", {}, port, timeout=0.120)
+            result = _try_http_admin(
+                "list_projects", {}, port, timeout=_AUTH_CALL_BUDGET_SECONDS
+            )
             elapsed = time.monotonic() - started
         finally:
             server.shutdown()
@@ -352,7 +362,7 @@ class TestAdminErrorSurfacing:
         assert result.get("ok") is False
         assert result.get("error") == "admin_timeout"
         message = str(result.get("message"))
-        assert "0.12 seconds" in message
+        assert "3 seconds" in message
         assert any(
             stage in message
             for stage in (
@@ -362,10 +372,11 @@ class TestAdminErrorSurfacing:
                 "authenticated retry response",
             )
         ), message
-        # Bounded far below the two-second retry sleep: had the deadline been
-        # reset at re-auth, the call would have run past two seconds and
-        # succeeded. The margin absorbs a loaded host's scheduling stalls.
-        assert 0.100 <= elapsed < 1.0
+        assert (
+            _AUTH_CALL_BUDGET_SECONDS
+            <= elapsed
+            < _AUTH_CALL_BUDGET_SECONDS + _AUTH_HEALTH_SECONDS
+        )
         assert _AuthDeadlineHandler.requests[:2] == ["/projects", "/health"]
         assert len(_AuthDeadlineHandler.requests) <= 3
 

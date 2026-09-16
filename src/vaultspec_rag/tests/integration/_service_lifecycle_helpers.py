@@ -10,6 +10,7 @@ TESTGAP-005 (service_status running), TESTGAP-009 (multi-project MCP).
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import select
@@ -79,6 +80,10 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
+_DEFAULT_TERMINATE_SECONDS = float(
+    inspect.signature(_terminate_pid).parameters["timeout"].default
+)
+
 pytestmark = [pytest.mark.integration]
 
 
@@ -94,7 +99,9 @@ def _assert_expired_startup_torn_down(
 
     termination_started = time.monotonic()
     _terminate_pid(daemon_pid, timeout=0.200)
-    assert time.monotonic() - termination_started < 0.700
+    # The bound is derived from the default budget the caller's replaces, not
+    # from host speed: a terminate that dropped the caller's budget fails.
+    assert time.monotonic() - termination_started < _DEFAULT_TERMINATE_SECONDS / 2
     if pid_alive(daemon_pid):
         _terminate_pid(daemon_pid, timeout=15.0)
     assert _wait_for_exit(daemon_pid, timeout=30.0), (

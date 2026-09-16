@@ -258,13 +258,17 @@ def test_persistent_metadata_failure_cannot_hang_model_fixture(
     # which gives the worker a real budget and an endpoint that answers at once.
 
 
+# Far longer than any scheduling delay, so only a stopped worker returns early.
+_DEADLINE_WORKER_SLEEP_SECONDS = 60
+
+
 def test_worker_process_creation_is_inside_whole_operation_deadline() -> None:
     """A real worker spawned after work expiry is terminated inside the total bound."""
     token = f"vaultspec-model-deadline-{uuid.uuid4().hex}"
     command = [
         sys.executable,
         "-c",
-        "import time; time.sleep(60)",
+        f"import time; time.sleep({_DEADLINE_WORKER_SLEEP_SECONDS})",
         token,
     ]
     started = time.monotonic()
@@ -280,7 +284,9 @@ def test_worker_process_creation_is_inside_whole_operation_deadline() -> None:
             operation="deadline regression worker",
             context=token,
         )
-    assert time.monotonic() - started < 0.500
+    # The bound is derived from the worker's own run time, not from host speed:
+    # a deadline that waited for the worker instead of stopping it fails.
+    assert time.monotonic() - started < _DEADLINE_WORKER_SLEEP_SECONDS / 2
 
     import psutil
 

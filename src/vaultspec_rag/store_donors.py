@@ -63,8 +63,8 @@ class _VaultDonorMixin:
             *,
             collection_name: str,
             ids: Sequence[PointId],
-            with_payload: bool | Sequence[str] = ...,
-            with_vectors: bool | Sequence[str] = ...,
+            with_payload: bool | list[str] = ...,
+            with_vectors: bool | list[str] = ...,
         ) -> list[Record]: ...
 
     def supports_donor_reads(self, donor_collection: str) -> bool:
