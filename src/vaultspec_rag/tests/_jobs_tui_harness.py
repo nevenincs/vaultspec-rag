@@ -755,7 +755,7 @@ async def _settled_paint(pilot: typing.Any, app: ServerWatchApp) -> None:
         table = app.query("#jobs")
         if not table:
             return
-        displayed = table.only_one(DataTable)
+        displayed = typing.cast("DataTable[object]", table.only_one(DataTable))
         width = displayed.size.width
         # A table the layout has taken off the screen has no width to settle
         # on, and none of its own to divide. Taken off covers both ways the
