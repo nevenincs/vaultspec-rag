@@ -21,6 +21,7 @@ from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
+#: The workflow that carries the hardware tiers.
 WORKFLOW = "ci.yml"
 
 #: The job whose runner is a workstation with a live service and the one card.
@@ -31,7 +32,17 @@ GPU_JOB = "gpu-tests"
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
 
-REQUIRED_PR_JOBS = ("lint",)
+#: Every job a pull request reaches that lands on the fleet otherwise, by
+#: workflow, with the hosted image a fork runs it on instead.
+PULL_REQUEST_JOBS = {
+    "ci.yml": {"lint": "ubuntu-24.04"},
+    "merge-gate.yml": {
+        "lint": "ubuntu-24.04",
+        "tests": "ubuntu-24.04",
+        "tests-windows": "windows-2025",
+        "dependency-audit": "ubuntu-24.04",
+    },
+}
 
 
 def _job(job_id: str) -> workflows.Job:
@@ -55,8 +66,9 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     hardware, which is the exposure the trust boundary exists to close.
     """
     offenders = {
-        job.job_id: job.condition
-        for job in workflows.load_jobs(WORKFLOW)
+        f"{job.workflow}:{job.job_id}": job.condition
+        for workflow in workflows.MERGE_BOX
+        for job in workflows.load_jobs(workflow)
         if job.self_hosted
         and job.reaches("pull_request")
         and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
@@ -64,22 +76,31 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
 
-def test_forks_emit_every_required_context_on_hosted_isolation() -> None:
-    """Fork PRs retain required evidence without reaching persistent runners."""
+@pytest.mark.parametrize("workflow", sorted(PULL_REQUEST_JOBS))
+def test_forks_emit_every_check_on_hosted_isolation(workflow: str) -> None:
+    """Fork PRs keep their checks without reaching persistent runners.
+
+    Mutation proof: replacing ``"windows-2025"`` in the gate's Windows job
+    with a self-hosted label makes this fail naming that job; restoring it
+    makes this pass.
+    """
     source = (
-        workflows.repository_root() / ".github" / "workflows" / WORKFLOW
+        workflows.repository_root() / ".github" / "workflows" / workflow
     ).read_text(encoding="utf-8")
-    for job_id in REQUIRED_PR_JOBS:
+    for job_id, hosted in PULL_REQUEST_JOBS[workflow].items():
         match = re.search(
             rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [a-z][\w-]*:|\Z)",
             source,
         )
-        assert match is not None
-        body = match.group("body")
-        assert "head.repo.full_name != github.repository" in body
-        assert "fromJSON(" in body
-        assert "self-hosted" in body
-    assert '"ubuntu-24.04"' in source
+        assert match is not None, f"{workflow} has no job `{job_id}`"
+        runs_on = re.search(r"(?m)^    runs-on: (?P<value>.*)$", match.group("body"))
+        assert runs_on is not None, f"{workflow}:{job_id} declares no runs-on"
+        value = runs_on.group("value")
+        where = f"{workflow}:{job_id}"
+        assert "head.repo.full_name != github.repository" in value, where
+        assert "fromJSON(" in value, where
+        assert "self-hosted" in value, where
+        assert f'"{hosted}"' in value, f"{where} does not run a fork on {hosted}"
 
 
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:

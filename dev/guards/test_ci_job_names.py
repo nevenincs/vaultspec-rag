@@ -6,12 +6,13 @@ Checks`` and ``Tests (Windows, advisory)`` gives three different grammars for
 three jobs doing one kind of thing, and nothing in it says which of them
 covers the file the reviewer changed.
 
-**Kind** is one of three, and they are the harness verbs - ``dev lint``,
-``dev test``, ``dev audit`` - so the merge box and the recipe registry share a
-vocabulary rather than each inventing one. (The justfile files these under the
-fleet-wide consequence groups ``check``/``test``/``audit``; ``check`` and
-``lint`` are the same set of gates under two labels, and the verb is the one
-this guard can resolve mechanically.)
+**Kind** is a harness verb - ``dev lint``, ``dev test``, ``dev audit`` - so
+the merge box and the recipe registry share a vocabulary rather than each
+inventing one. (The justfile files these under the fleet-wide consequence
+groups ``check``/``test``/``audit``; ``check`` and ``lint`` are the same set
+of gates under two labels, and the verb is the one this guard can resolve
+mechanically.) The one addition is ``Gate``, for the single job that measures
+nothing itself and turns the other jobs' results into the merge verdict.
 
 **Subject** says WHAT IS COVERED, never which tool covers it. Two rules follow
 from that, and both were paid for:
@@ -44,13 +45,10 @@ from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-#: The workflow that is the merge box. Release-plane workflows build and
-#: publish rather than measure, so ``Build``/``Publish`` are honest Kinds
-#: there and this three-word vocabulary would be a lie.
-WORKFLOW = "ci.yml"
-
-#: The three Kinds, matching the harness verbs in :mod:`dev.toolchain`.
-KINDS = ("Lint", "Test", "Audit")
+#: The harness verbs in :mod:`dev.toolchain`, plus the merge verdict.
+#: Release-plane workflows build and publish rather than measure, so
+#: ``Build``/``Publish`` are honest Kinds there and are not checked here.
+KINDS = ("Lint", "Test", "Audit", "Gate")
 
 #: The platforms a job may name. A runner pool, not a tool or an adjective.
 PLATFORMS = ("Linux", "Windows", "macOS", "CUDA")
@@ -151,7 +149,14 @@ def _marker_names() -> frozenset[str]:
 
 def _names() -> tuple[tuple[str, str], ...]:
     """Return ``(job id, name)`` for every job in the merge box."""
-    return tuple((job.job_id, job.name) for job in workflows.load_jobs(WORKFLOW))
+    return tuple((f"{job.workflow}:{job.job_id}", job.name) for job in _jobs())
+
+
+def _jobs() -> tuple[workflows.Job, ...]:
+    """Return every job in the merge box."""
+    return tuple(
+        job for workflow in workflows.MERGE_BOX for job in workflows.load_jobs(workflow)
+    )
 
 
 def _collapsed(name: str) -> str:
@@ -247,10 +252,10 @@ def test_job_names_are_unique() -> None:
         if len(ids) > 1
     ]
     findings.extend(
-        f"{job.job_id}: {job.name!r} varies over "
+        f"{job.workflow}:{job.job_id}: {job.name!r} varies over "
         f"{', '.join(job.matrix_axes)} but names no leg, so every leg is one "
         "identically labelled row"
-        for job in workflows.load_jobs(WORKFLOW)
+        for job in _jobs()
         if job.matrix_axes
         and not any(f"matrix.{axis}" in job.name for axis in job.matrix_axes)
     )
