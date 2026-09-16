@@ -80,8 +80,8 @@ class _VaultCatalogMixin:
             *,
             collection_name: str,
             ids: Sequence[PointId],
-            with_payload: bool | Sequence[str] = ...,
-            with_vectors: bool | Sequence[str] = ...,
+            with_payload: bool | list[str] = ...,
+            with_vectors: bool | list[str] = ...,
         ) -> list[Record]: ...
 
         def _delete_points(

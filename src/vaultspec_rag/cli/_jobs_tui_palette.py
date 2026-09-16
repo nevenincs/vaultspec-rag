@@ -29,8 +29,14 @@ from typing import TYPE_CHECKING
 
 from textual.theme import Theme
 
+from ._textual_timer import install_cancel_safe_timer_sleep
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+# Every module that hosts or paints a Textual surface imports this one, so the
+# timer fix is in place before any app can start a timer.
+install_cancel_safe_timer_sleep()
 
 __all__ = [
     "DARK_THEME_NAME",

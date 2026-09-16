@@ -31,7 +31,11 @@ from ..service_quiesce import (
     ServiceQuiesceTransitionWaitTimeoutError,
 )
 from ._job_roots import _TEST_PROJECT_ROOT
-from ._quiesce_helpers import QUIESCE_THREAD_TIMEOUT, wait_for_quiesce_state
+from ._quiesce_helpers import (
+    QUIESCE_THREAD_TIMEOUT,
+    wait_for_quiesce_state,
+    wait_for_transition_follower,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,31 +47,36 @@ _THREAD_TIMEOUT = QUIESCE_THREAD_TIMEOUT
 
 
 def test_concurrent_pause_calls_share_one_terminal_transition() -> None:
-    """Two callers drain one epoch and receive the same immutable outcome."""
+    """Two callers drain one epoch and receive the same immutable outcome.
+
+    Mutation: letting a same-direction caller claim its own transition
+    instead of joining the active one fails the follower-join wait.
+    """
     registry = ServiceRegistry()
     held_ticket = registry.acquire_compute_ticket()
-    launch = threading.Barrier(3)
     outcomes: list[QuiesceTransition] = []
 
     def pause() -> None:
-        launch.wait()
         outcomes.append(registry.quiesce_resources(timeout_seconds=_THREAD_TIMEOUT))
 
-    workers = [
-        threading.Thread(target=pause, name=f"pause-{index}") for index in range(2)
-    ]
-    for worker in workers:
-        worker.start()
-    launch.wait()
+    owner, follower = (
+        threading.Thread(target=pause, name=f"pause-{role}")
+        for role in ("owner", "follower")
+    )
+    workers = [owner, follower]
     try:
+        owner.start()
         wait_for_quiesce_state(registry, QuiesceState.PAUSING)
+        follower.start()
+        wait_for_transition_follower(follower)
         held_ticket.release()
         for worker in workers:
             worker.join(timeout=_THREAD_TIMEOUT)
     finally:
         held_ticket.release()
         for worker in workers:
-            worker.join(timeout=_THREAD_TIMEOUT)
+            if worker.ident is not None:
+                worker.join(timeout=_THREAD_TIMEOUT)
 
     assert all(not worker.is_alive() for worker in workers)
     assert len(outcomes) == 2
@@ -285,25 +294,29 @@ def test_aborting_a_stranded_pause_never_waits_on_the_held_gpu_lock() -> None:
 
 
 def test_concurrent_resume_calls_share_one_terminal_transition() -> None:
-    """A held real GPU lock proves follower resume waits without duplicate rebuild."""
+    """A held real GPU lock proves follower resume waits without duplicate rebuild.
+
+    Mutation: letting a same-direction caller claim its own transition
+    instead of joining the active one fails the follower-join wait.
+    """
     registry = ServiceRegistry()
     assert registry.quiesce_resources(timeout_seconds=0).achieved
     assert registry.gpu_lock.acquire(timeout=_THREAD_TIMEOUT)
-    launch = threading.Barrier(3)
     outcomes: list[QuiesceTransition] = []
 
     def resume() -> None:
-        launch.wait()
         outcomes.append(registry.resume_resources(timeout_seconds=_THREAD_TIMEOUT))
 
-    workers = [
-        threading.Thread(target=resume, name=f"resume-{index}") for index in range(2)
-    ]
-    for worker in workers:
-        worker.start()
-    launch.wait()
+    owner, follower = (
+        threading.Thread(target=resume, name=f"resume-{role}")
+        for role in ("owner", "follower")
+    )
+    workers = [owner, follower]
     try:
+        owner.start()
         wait_for_quiesce_state(registry, QuiesceState.WARMING)
+        follower.start()
+        wait_for_transition_follower(follower)
         registry.gpu_lock.release()
         for worker in workers:
             worker.join(timeout=_THREAD_TIMEOUT)
@@ -311,7 +324,8 @@ def test_concurrent_resume_calls_share_one_terminal_transition() -> None:
         if registry.gpu_lock.locked():
             registry.gpu_lock.release()
         for worker in workers:
-            worker.join(timeout=_THREAD_TIMEOUT)
+            if worker.ident is not None:
+                worker.join(timeout=_THREAD_TIMEOUT)
 
     assert all(not worker.is_alive() for worker in workers)
     assert len(outcomes) == 2
