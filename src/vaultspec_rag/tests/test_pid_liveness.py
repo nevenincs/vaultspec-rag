@@ -88,6 +88,37 @@ class TestWindowsLiveness:
         assert pid_alive(reaped) is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill signalling is POSIX")
+class TestPosixLiveness:
+    """The same conflation, in POSIX spelling.
+
+    ``os.kill(pid, 0)`` raises ``PermissionError`` for a process that exists
+    but belongs to another user, and ``ProcessLookupError`` for one that does
+    not exist. Reading the first as dead is the same defect the Windows class
+    above guards, and left untested on this side the rule could be right on
+    one platform and wrong on the other - which is exactly how the original
+    bug survived two implementations.
+    """
+
+    def test_a_process_we_cannot_signal_counts_as_alive(self) -> None:
+        # pid 1 exists for the life of the host and is not this user's to
+        # signal, so it is the POSIX twin of the Windows system process.
+        try:
+            os.kill(1, 0)
+        except PermissionError:
+            pass
+        except ProcessLookupError:  # pragma: no cover - namespace without init
+            pytest.skip("pid 1 is absent here, so there is no unsignallable subject")
+        else:
+            # A root session may signal pid 1, which removes the condition
+            # under test. Skipping is honest; passing here would prove nothing.
+            pytest.skip(
+                "pid 1 is signallable in this session, so the permission "
+                "branch is not reachable"
+            )
+        assert pid_alive(1) is True
+
+
 class TestLivenessEverywhere:
     """Platform-independent expectations."""
 

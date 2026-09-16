@@ -163,6 +163,7 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "search_freshness_wait_max_seconds": EnvVar.SEARCH_FRESHNESS_WAIT_MAX_SECONDS,
     "service_admin_timeout_seconds": EnvVar.SERVICE_ADMIN_TIMEOUT,
     "service_reindex_timeout_seconds": EnvVar.SERVICE_REINDEX_TIMEOUT,
+    "service_pause_drain_timeout_seconds": EnvVar.SERVICE_PAUSE_DRAIN_TIMEOUT,
     "qdrant_ready_timeout_seconds": EnvVar.QDRANT_READY_TIMEOUT,
     "managed_log_max_bytes": EnvVar.MANAGED_LOG_MAX_BYTES,
     "managed_log_backup_count": EnvVar.MANAGED_LOG_BACKUP_COUNT,
@@ -307,6 +308,7 @@ SETTING_BOUNDS: dict[str, _SettingBound] = {
     "search_freshness_wait_max_seconds": _SEARCH_FRESHNESS_WAIT_MAX,
     "service_admin_timeout_seconds": _POSITIVE_NUMBER,
     "service_reindex_timeout_seconds": _POSITIVE_NUMBER,
+    "service_pause_drain_timeout_seconds": _POSITIVE_NUMBER,
     "qdrant_ready_timeout_seconds": _POSITIVE_NUMBER,
     "graph_ttl_seconds": _NON_NEGATIVE_NUMBER,
     # Managed log retention. Zero backups is a bounded no-history mode; a zero

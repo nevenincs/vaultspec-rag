@@ -311,6 +311,12 @@ class VaultSpecConfigWrapper:
         # the transport timeout. Zero permits only an instantaneous readiness check.
         "search_freshness_wait_max_seconds": 30.0,
         "service_admin_timeout_seconds": 30.0,
+        # A pause waits for in-flight work to drain before it reports. Longer
+        # than one compute slice, so a pause of a busy service does not refuse
+        # work that was about to finish; shorter than the admin bound, or the
+        # caller's transport deadline fires first and the operator gets a bare
+        # timeout instead of the envelope naming what is still holding.
+        "service_pause_drain_timeout_seconds": 20.0,
         # Reindex admits a domain before it queues, and code admission scans
         # the whole tree. That work is proportional to the repository, not to
         # a lifecycle round trip, so it cannot share the admin bound: a large
@@ -1142,6 +1148,7 @@ class VaultSpecConfigWrapper:
     search_freshness_wait_max_seconds: float
     service_admin_timeout_seconds: float
     service_reindex_timeout_seconds: float
+    service_pause_drain_timeout_seconds: float
     qdrant_ready_timeout_seconds: float
     managed_log_max_bytes: int
     managed_log_backup_count: int
