@@ -763,28 +763,27 @@ def _scan_environment_holders(
     found: list[EnvironmentHolder] = []
     blind = 0
     resolved_paths: dict[str, Path | None] = {}
+
+    def classify(
+        info: Mapping[str, object],
+    ) -> EnvironmentHolder | Literal["blind"] | None:
+        return _holder_of(info, resolved, named, excluded, resolved_paths)
+
     try:
         # Drained inside the guard: enumerating the table is what raises, and
         # a scan that could not run must still be reported as unknown rather
         # than as an environment nothing holds.
         processes = list(iter_process_info(["pid", "exe", "cwd", "cmdline"]))
         with ThreadPoolExecutor(max_workers=_HOLDER_SCAN_WORKERS) as pool:
-            verdicts = list(
-                pool.map(
-                    lambda info: _holder_of(
-                        info, resolved, named, excluded, resolved_paths
-                    ),
-                    processes,
-                )
-            )
+            verdicts = list(pool.map(classify, processes))
     except OSError as exc:
         logger.warning("could not scan for holders of %s: %s", resolved, exc)
         return None
     for verdict in verdicts:
-        if verdict == "blind":
-            blind += 1
-        elif verdict is not None:
+        if isinstance(verdict, EnvironmentHolder):
             found.append(verdict)
+        elif verdict == "blind":
+            blind += 1
     # Ordered by pid rather than by whatever order the pool finished in, so a
     # caller that shows only the first few holders shows the same few twice.
     found.sort(key=lambda holder: holder.pid)
