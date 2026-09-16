@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import TYPE_CHECKING
 
+from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceSnapshot, QuiesceState
 
 if TYPE_CHECKING:
-    from ..service import ServiceRegistry
+    import threading
 
 QUIESCE_THREAD_TIMEOUT = 5.0
 
@@ -30,6 +32,31 @@ def wait_for_quiesce_state(
     while registry.quiesce_snapshot().state is not state:
         if time.monotonic() >= deadline:
             raise AssertionError(f"registry did not reach {state.value!r}")
+        time.sleep(0.001)
+
+
+def wait_for_transition_follower(
+    follower: threading.Thread,
+    *,
+    timeout: float = QUIESCE_THREAD_TIMEOUT,
+) -> None:
+    """Block until *follower* is parked waiting on another caller's transition.
+
+    A caller that merely started may still be scheduled after the owner
+    finishes, and then it owns a fresh idempotent transition instead of
+    joining the first one. Only a thread whose stack is inside the registry's
+    join wait has provably joined.
+    """
+    join_wait = ServiceRegistry._wait_for_resource_transition.__code__
+    deadline = time.monotonic() + timeout
+    while True:
+        frame = sys._current_frames().get(follower.ident or 0)
+        while frame is not None:
+            if frame.f_code is join_wait:
+                return
+            frame = frame.f_back
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{follower.name} never joined the transition")
         time.sleep(0.001)
 
 
