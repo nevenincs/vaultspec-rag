@@ -1,30 +1,34 @@
 name: CI
 
-# ONE SOURCE-QUALITY WORKFLOW. Pull requests and pushes to main run the gates
-# appropriate to their trust and platform constraints. Release artifacts are
-# validated by the release workflows, not by rerunning source CI after publish.
+# ONE SOURCE-QUALITY WORKFLOW, THREE LANES, AND MAIN IS NOT ONE OF THEM.
 #
-# The split this replaced ran a small `pr-gate` on pull requests and a larger
-# comprehensive tier on pushes to main, which is the right shape on a hosted
-# fleet and the wrong one here: this account has ONE Linux runner and ONE
-# Windows runner, shared across every repository, and every job on them is
-# serial. Splitting work across more jobs buys parallelism where runners are
-# elastic; here it buys only latency, and a check the pull request never ran
-# is a check that first fails on main - after the merge, with nobody watching.
+# - `pull_request`: style and types only. Every push to a branch under review
+#   pays for this lane, so it answers the cheap questions and nothing else.
+# - `merge_group`: every gating dimension, the full Linux matrix, the full
+#   Windows suite and the dependency audit. `main` only accepts changes
+#   through the merge queue, so this lane runs on exactly the commit that
+#   lands, before it lands.
+# - `schedule` / `workflow_dispatch`: the hardware tiers that cannot gate a
+#   merge (macOS, CUDA), plus a weekly audit against newly published
+#   advisories.
+#
+# A push to main triggers nothing here. The merge queue already measured that
+# exact tree, so a post-merge run repeats the verdict on a serial fleet, and a
+# failure it found would arrive after the merge anyway.
+#
+# A job skipped by its `if:` reports as skipped, and a required check that is
+# skipped counts as passed. That is what lets the heavy jobs be required for
+# the merge queue while staying silent on pull requests.
 #
 # CONCURRENCY, AND WHY THE COMMIT IS IN THE GROUP ON MAIN. `cancel-in-progress:
 # false` governs runs that have STARTED. GitHub separately cancels a
 # previously PENDING run in the same group, and offers no switch for it. On a
-# saturated serial fleet a main run sits pending for a long time. The last
-# merge before this change is the evidence: it ran for 2h23m, and four of its
-# jobs - the workflow lint, the lint tier, the vault check and the dependency
-# audit - were cancelled after sitting 12 to 30 minutes each without ever
-# being assigned a runner. So each push to main was killing the verdict on the
-# push before it, and reporting `cancelled` rather than `failed` while it did.
-#
-# Putting the commit in the group, on main only, gives every main commit its
-# own group; pull requests keep superseding their own earlier runs, which is
-# what you want when only the tip of a branch is under review.
+# saturated serial fleet a run sits pending for a long time, so a scheduled
+# run and a dispatch against main would otherwise cancel each other and
+# report `cancelled` rather than `failed`. Putting the commit in the group, on
+# main only, gives every main commit its own group; pull requests keep
+# superseding their own earlier runs, and every merge group has a ref of its
+# own.
 #
 # The rule and its two guards live in `dev/guards/`:
 # `test_ci_no_repeated_work.py` expands every recipe to the commands it
@@ -39,12 +43,11 @@ name: CI
 # unreachable from a fork, unaffected for every pull request this project
 # actually gets. Job placement is the boundary; the repository's own
 # fork-approval setting for workflow runs is the backstop behind it, not the
-# other way around.
+# other way around. A merge group needs no such clause: only a maintainer can
+# enqueue a pull request, which is the same act of trust a merge was.
 on:
-  push:
-    branches:
-      - main
   pull_request:
+  merge_group:
   schedule:
     - cron: '17 5 * * 3'
   workflow_dispatch:
@@ -97,16 +100,12 @@ env:
 jobs:
   lint:
     name: "Lint: Static Validation (Linux)"
-    # ONE STEP, and that is the point. This job used to hand-list every
-    # dimension of `just check-all` except one, with that one running as a
-    # separate job of its own - which is the exact drift `dev/ci_contract.py`
-    # exists to catch, reproduced by a job that listed an aggregate's members
-    # instead of naming the aggregate. Three jobs are folded in here: the
-    # workflow lint that ran the missing dimension, the pull-request gate that
-    # ran two of these dimensions and no others, and the vault check, which
-    # became `just check-vault` and joined the aggregate rather than staying a
-    # raw command in a job. A dimension added to the registry now joins this
-    # job automatically; before, it joined nothing.
+    # ONE JOB NAME FOR BOTH LANES, so one required check covers the pull
+    # request and the merge queue. The merge queue names the aggregate rather
+    # than listing its members: a dimension added to the registry joins it
+    # automatically, and `dev/ci_contract.py` exists to catch a job that
+    # hand-lists an aggregate and drifts from it. The pull-request lane names
+    # only the two cheapest dimensions on purpose.
     #
     # `check-all` keeps going after a failure and reports every dimension, so
     # a contributor gets all the findings from one run rather than one per
@@ -160,22 +159,29 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
+      # A pull request answers only the two cheap questions; the merge queue
+      # runs the aggregate, which contains both.
+      - name: Style
+        if: github.event_name == 'pull_request'
+        run: just check-python
+
+      - name: Types
+        if: github.event_name == 'pull_request'
+        run: just check-type
+
       - name: Every gating dimension
+        if: github.event_name != 'pull_request'
         run: just check-all
 
   tests:
     name: "Test: Python ${{ matrix.python-version }} Correctness (Linux)"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own, so admitting one hands a
-    # stranger execution on this hardware. Same-repo pull requests are
-    # unaffected, which is every pull request this project actually gets.
+    # Merge queue and dispatch only. A pull request never reaches this job,
+    # so a fork never reaches the self-hosted fleet through it.
     if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name != 'pull_request' ||
-       !startsWith(github.head_ref, 'release-please--') ||
-       github.event.pull_request.commits > 1)
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 45
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
       # failure is the whole signal, and cancelling the other hides whether
@@ -237,10 +243,10 @@ jobs:
   # merge rules, not of the coverage. Read it here and in the macOS test
   # step's `continue-on-error`.
   #
-  # The full accelerator-free suite runs on Windows for both pull requests and
-  # main. It already includes the provisioning proofs; running their subset as
-  # a separate PR step measured only those five files while letting every other
-  # Windows-specific path, lock and process behaviour reach main untested.
+  # The full accelerator-free suite runs on Windows in the merge queue. It
+  # already includes the provisioning proofs; running only their subset would
+  # measure those five files while letting every other Windows-specific path,
+  # lock and process behaviour reach main untested.
   #
   # Neither job uses actions/setup-python. The GPU job below documents why: its
   # MSI registry cleanup fails under a runner service account. uv fetches the
@@ -248,17 +254,13 @@ jobs:
   # anyway.
   tests-windows:
     name: "Test: Full Suite (Windows)"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own, so admitting one hands a
-    # stranger execution on this hardware. Same-repo pull requests are
-    # unaffected, which is every pull request this project actually gets.
+    # Merge queue and dispatch only. A pull request never reaches this job,
+    # so a fork never reaches the self-hosted fleet through it.
     if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name != 'pull_request' ||
-       !startsWith(github.head_ref, 'release-please--') ||
-       github.event.pull_request.commits > 1)
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 60
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
+    runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
       # This runner's agent is a Windows service, so its account is SYSTEM and
@@ -590,7 +592,11 @@ jobs:
 
   dependency-audit:
     name: "Audit: Dependency Advisories (Linux)"
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # The merge queue audits the lock that is about to land; the schedule
+    # catches advisories published against a lock that has not changed.
+    if: >-
+      github.event_name == 'merge_group' ||
+      github.event_name == 'schedule'
     timeout-minutes: 15
     concurrency:
       group: ci-dependency-audit-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}

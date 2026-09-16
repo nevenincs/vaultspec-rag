@@ -61,13 +61,19 @@ def _normalised(text: str) -> str:
 
 
 def _reaches_default_branch(workflow: str) -> bool:
-    """Whether a push to the default branch triggers *workflow*."""
+    """Whether *workflow* runs for the default branch.
+
+    A merge-queue workflow counts: its verdict is what admits a commit to the
+    default branch, and it also runs there on schedule and dispatch.
+    """
     path = workflows.repository_root() / ".github" / "workflows" / workflow
     loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         return False
     document = cast("dict[object, object]", loaded)
     triggers = document.get("on", document.get(True))
+    if isinstance(triggers, dict) and "merge_group" in triggers:
+        return True
     push = (
         cast("dict[object, object]", triggers).get("push")
         if isinstance(triggers, dict)

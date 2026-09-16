@@ -51,11 +51,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: question and are not compared here.
 WORKFLOW = "ci.yml"
 
-#: Recipe groups whose repetition is what this guard exists to find. A repeat
-#: here is one measurement taken twice. ``setup`` is deliberately absent -
-#: every job must provision its worktree, so every job runs ``init``.
-MEASURING_GROUPS = frozenset({"check", "audit", "test"})
-
 #: Recipes whose ANSWER depends on the platform, so running them on two
 #: platforms is coverage rather than repetition. Each entry states what the
 #: platform actually changes; a gate that only reads committed files can never
@@ -90,21 +85,11 @@ SUBSET_LANES: dict[str, tuple[str, str]] = {
 }
 
 
-def _measuring_recipes(job: workflows.Job, event: str) -> tuple[str, ...]:
-    """Return the recipes *job* runs on *event* that measure the tree."""
-    groups = workflows.recipe_groups()
-    return tuple(
-        recipe
-        for recipe in job.recipes_on(event)
-        if groups.get(recipe) in MEASURING_GROUPS
-    )
-
-
 def _commands_by_job(event: str) -> dict[str, list[tuple[str, str]]]:
     """Return ``command -> [(job id, recipe)]`` for everything *event* reaches."""
     index: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for job in workflows.load_jobs(WORKFLOW):
-        for recipe in _measuring_recipes(job, event):
+        for recipe in job.measuring_recipes_on(event):
             for command in workflows.named(workflows.final_commands(recipe)):
                 index[command].append((job.job_id, recipe))
     return index
@@ -198,7 +183,7 @@ def test_no_event_runs_a_subset_lane_beside_its_cover() -> None:
     for event in workflows.workflow_events(WORKFLOW):
         running: dict[str, list[workflows.Job]] = defaultdict(list)
         for job in workflows.load_jobs(WORKFLOW):
-            for recipe in _measuring_recipes(job, event):
+            for recipe in job.measuring_recipes_on(event):
                 running[recipe].append(job)
         for lane, (cover, why) in sorted(SUBSET_LANES.items()):
             for subset_job in running.get(lane, []):

@@ -1,12 +1,9 @@
-"""What a fork's pull request may and may not reach, and what it must run.
+"""What a fork's pull request may and may not reach.
 
-Two properties hold the pull-request lane's shape together and neither is
-visible from reading one job. No self-hosted job may run for a fork's pull
-request, because the workflow it would run is the fork's own, and admitting
-one hands a stranger execution on this hardware. And the provisioning proofs
-must be among what a pull request runs, because the failure they exist to
-catch is a Windows file-locking behaviour that skips silently everywhere else
-- a regression in it would otherwise reach the default branch unseen.
+No self-hosted job may run for a fork's pull request, because the workflow it
+would run is the fork's own, and admitting one hands a stranger execution on
+this hardware. The jobs a pull request does reach must still report their
+required context for a fork, on GitHub-hosted isolation.
 
 THE GPU TIER NEEDS NO SAME-REPO CLAUSE OF ITS OWN. That job runs on a
 workstation carrying a live service and the only card in the fleet, and it
@@ -29,16 +26,12 @@ WORKFLOW = "ci.yml"
 #: The job whose runner is a workstation with a live service and the one card.
 GPU_JOB = "gpu-tests"
 
-#: The accelerator-free lane. It contains every Windows-sensitive subset, so a
-#: pull request running it on Windows leaves none of them unmeasured there.
-FULL_LANE = "test-python"
-
 #: The clause that excludes a fork's pull request specifically. A self-hosted
 #: job reachable by `pull_request` at all must carry this in its `if:`; one
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
 
-REQUIRED_PR_JOBS = ("lint", "tests", "tests-windows")
+REQUIRED_PR_JOBS = ("lint",)
 
 
 def _job(job_id: str) -> workflows.Job:
@@ -87,7 +80,6 @@ def test_forks_emit_every_required_context_on_hosted_isolation() -> None:
         assert "fromJSON(" in body
         assert "self-hosted" in body
     assert '"ubuntu-24.04"' in source
-    assert '"windows-2025"' in source
 
 
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
@@ -104,33 +96,4 @@ def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
         f"{job.condition!r}. It runs on a workstation with a live service and "
         "the fleet's only CUDA device; it stays dispatch-only, which requires "
         "write access, so a fork can never start it."
-    )
-
-
-def test_the_pull_request_lane_runs_the_full_windows_suite() -> None:
-    """A pull request runs the accelerator-free suite on Windows.
-
-    The full suite contains the provisioning proofs and every other test whose
-    path, lock, process or subprocess behaviour differs on Windows. A narrow
-    subset under a broad Windows job name gives reviewers a green result for
-    coverage that never ran.
-
-    Mutation proof: replacing the Windows job's ``test-python`` step with the
-    focused ``test-windows`` subset makes this fail on the missing full-suite
-    recipe; restoring the full-suite step makes it pass again.
-    """
-    covering = {
-        job.job_id: job.recipes_on("pull_request")
-        for job in workflows.load_jobs(WORKFLOW)
-        if "windows" in job.platforms
-    }
-    running = {job_id: recipes for job_id, recipes in covering.items() if recipes}
-    assert running, (
-        "no Windows job runs on a pull request, so the provisioning proofs "
-        "skip in the only lane that gates a merge."
-    )
-    assert any(FULL_LANE in recipes for recipes in running.values()), (
-        f"a pull request's Windows job runs {running}, which does not include "
-        f"the full `{FULL_LANE}` lane. A focused subset leaves every other "
-        "Windows-specific path, lock and process behaviour unmeasured."
     )

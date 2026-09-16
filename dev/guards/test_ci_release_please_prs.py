@@ -1,7 +1,7 @@
 """Release-please PRs wait for the lock refresh before CI initializes them.
 
 release-please writes the version bump first and regenerates ``uv.lock`` in a
-follow-up commit on the same branch. The merge-box jobs all start with
+follow-up commit on the same branch. The pull-request lane starts with
 ``just init``, which runs ``uv sync --locked`` and will therefore fail on the
 transient one-commit head for no code reason at all.
 """
@@ -19,7 +19,7 @@ REQUIRED_GUARD = (
     "startsWith(github.head_ref, 'release-please--')",
     "github.event.pull_request.commits > 1",
 )
-REQUIRED_JOBS = ("lint", "tests", "tests-windows")
+REQUIRED_JOBS = ("lint",)
 
 
 def _job_condition(job_id: str) -> str:
@@ -35,7 +35,7 @@ def _job_condition(job_id: str) -> str:
 
 
 def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None:
-    """Merge-box jobs skip the transient one-commit release-please head.
+    """The pull-request lane skips the transient one-commit release-please head.
 
     Mutation proof: removing the release-please clause from any guarded job
     makes this fail naming that job; restoring the clause makes it pass again.
