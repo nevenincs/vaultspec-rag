@@ -194,20 +194,28 @@ class TestDiscoverySchema:
             "f.write(b'0') if os.path.getsize(p)==0 else None;"
             "f.flush();f.seek(0);"
             f"{lock_call}"
-            "open(r,'w').close();time.sleep(5)"
+            "open(r,'w').close();time.sleep(60)"
         )
         proc = subprocess.Popen(
             [sys.executable, "-c", script, str(lock_path), str(ready_path)]
         )
         try:
-            deadline = time.monotonic() + 5.0
+            # A child interpreter on a loaded runner can take many seconds to
+            # be scheduled; the wait ends as soon as it holds the lock.
+            deadline = time.monotonic() + 60.0
             while not ready_path.exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert ready_path.exists()
-            started = time.monotonic()
-            with pytest.raises(TimeoutError, match="status write lock"):
+            # No clock is read here, so the verdict does not depend on how fast
+            # the host is. The message names the budget that set the deadline,
+            # so a writer that swapped the caller's budget for its default
+            # fails the match; the child holds the lock for a minute, so a
+            # writer that ignored its deadline waits it out, succeeds, and
+            # fails the raise.
+            with pytest.raises(
+                TimeoutError, match=r"status write lock exceeded 0\.050s"
+            ):
                 _write_service_status(1234, 8766, timeout=0.050)
-            assert time.monotonic() - started < 0.250
         finally:
             proc.kill()
             proc.wait(timeout=5)

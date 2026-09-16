@@ -7,6 +7,7 @@ the "a live holder is never reaped" guarantee is checked at the decision layer
 
 from __future__ import annotations
 
+import inspect
 import os
 import subprocess
 import sys
@@ -27,6 +28,10 @@ from ...qdrant_runtime._resolve import (
 pytestmark = [pytest.mark.unit]
 
 _SLEEP = "import time; time.sleep(60)"
+
+_DEFAULT_REAP_WAIT_SECONDS = float(
+    inspect.signature(reap_qdrant_orphan).parameters["wait_seconds"].default
+)
 
 
 class TestReap:
@@ -82,7 +87,10 @@ class TestReap:
                 wait_seconds=0.050,
                 expected_start_time=actual_start,
             )
-            assert time.monotonic() - started < 0.500
+            # The bound is derived from the default the budget replaces, not
+            # from host speed: a reap that dropped the caller's budget waits
+            # the full default and fails.
+            assert time.monotonic() - started < _DEFAULT_REAP_WAIT_SECONDS / 2
             if reaped:
                 assert not pid_alive(proc.pid)
         finally:
