@@ -29,6 +29,7 @@ from ._core import logger
 from ._process import (
     _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     _is_our_service,
+    _may_carry_launch_witness,
     _terminate_pid,
 )
 from ._service_lifecycle import (
@@ -569,7 +570,12 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
     """
     marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
     found: dict[int, int] = {}
-    for info in iter_process_info(["pid", "ppid", "cmdline"]):
+    for info in iter_process_info(["pid", "ppid", "name", "cmdline"]):
+        # The image is the cheapest discriminator and is asked first; see
+        # `_may_carry_launch_witness` for what it costs to ask the command
+        # line of every process on the machine instead.
+        if not _may_carry_launch_witness(info.get("name")):
+            continue
         raw = info.get("cmdline")
         if not isinstance(raw, list):
             continue

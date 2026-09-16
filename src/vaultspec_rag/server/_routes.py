@@ -45,6 +45,7 @@ import vaultspec_rag.server as _m
 from .. import _job_evidence
 from .. import jobs as _jobs
 from .._store_locks import VaultStoreLockedError
+from ..config._settings import rag_default
 from ..gpu_borrow_lease import is_borrower_capability
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import JobOutcome
@@ -63,6 +64,7 @@ from ..service_quiesce import (
     ServiceQuiesceTransitionConflictError,
     ServiceQuiesceTransitionWaitTimeoutError,
 )
+from ..serviceclient._transport import resolve_timeout
 from ._auth import require_token
 from ._routes_jobs import (
     JobFilter,
@@ -1246,7 +1248,29 @@ def _borrower_refusal_message(code: str) -> str:
 #: busy service therefore failed by construction, leaving admission closed each
 #: time, and succeeded only on a retry that happened to arrive after the work
 #: had drained on its own.
-_PAUSE_DRAIN_TIMEOUT_SECONDS: Final = 20.0
+#: Read from the settings defaults rather than restated here, so the shipped
+#: value has one home and the operator override below cannot drift from it.
+_PAUSE_DRAIN_TIMEOUT_SECONDS: Final[float] = float(
+    cast("float", rag_default("service_pause_drain_timeout_seconds"))
+)
+
+
+def _pause_drain_timeout() -> float:
+    """Return the effective pause-drain bound for this call.
+
+    Read per request rather than frozen at import, because what has to drain
+    is the operator's own workload: a service running long indexing jobs needs
+    a longer drain than one serving searches, and the two are the same binary.
+    An unusable override degrades to the shipped default with a warning rather
+    than raising, on the same terms as every other bound this client resolves -
+    an operator typo must not turn a lifecycle call into a crash.
+    """
+    return resolve_timeout(
+        None,
+        setting="service_pause_drain_timeout_seconds",
+        label="pause drain",
+        default=_PAUSE_DRAIN_TIMEOUT_SECONDS,
+    )
 
 
 def _quiesce_reason(status: str, snapshot: QuiesceSnapshot) -> str:
@@ -1394,7 +1418,7 @@ async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:
             transition = await _run_in_thread(
                 partial(
                     registry.quiesce_resources,
-                    timeout_seconds=_PAUSE_DRAIN_TIMEOUT_SECONDS,
+                    timeout_seconds=_pause_drain_timeout(),
                 ),
             )
         else:

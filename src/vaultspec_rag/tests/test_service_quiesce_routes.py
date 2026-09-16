@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import pytest
 from starlette.testclient import TestClient
 
+from ..config._settings import reset_config as reset_rag_config
+from ..config._types import EnvVar
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_manager.manager import JobManager
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
@@ -324,6 +326,7 @@ def test_resume_reports_unpublished_recovery_then_recovers_one_same_id_attempt(
 
 def test_a_joined_pause_that_outwaits_its_owner_answers_with_an_envelope(
     quiesce_routes: QuiesceRoutes,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two concurrent pauses are answered, never dropped as a bare 500.
 
@@ -331,7 +334,17 @@ def test_a_joined_pause_that_outwaits_its_owner_answers_with_an_envelope(
     its whole budget waiting for a release the owner is still holding.  A
     broker pausing speculatively has to read that as a refused lifecycle
     request, so it has to arrive as one envelope rather than a gateway fault.
+
+    The bound is set through the operator's own environment variable, so the
+    route resolves it exactly as it does in production and nothing here stands
+    in for production behaviour. What is under test is the SHAPE of the answer
+    a spent budget produces; the shipped LENGTH has its own guard in
+    ``TestThePauseDrainBudgetFitsItsCaller``, which pins both bounds and names
+    the silent failure each one catches. Spending the shipped twenty seconds
+    here would buy a second copy of that guard, once per run.
     """
+    monkeypatch.setenv(EnvVar.SERVICE_PAUSE_DRAIN_TIMEOUT, "0.5")
+    reset_rag_config()
     client, registry = quiesce_routes
     owner_outcomes: list[QuiesceTransition] = []
     assert registry.gpu_lock.acquire(timeout=QUIESCE_THREAD_TIMEOUT)
