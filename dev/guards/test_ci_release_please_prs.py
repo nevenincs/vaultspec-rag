@@ -41,9 +41,8 @@ def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None
     makes this fail naming that job; restoring the clause makes it pass again.
     """
     expected = (
-        "github.event_name != 'schedule' && "
-        "(github.event_name != 'pull_request' || "
-        f"!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
+        "github.event_name == 'pull_request' && "
+        f"(!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
     )
     offenders = {
         job_id: condition

@@ -46,10 +46,10 @@ from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-#: The workflow whose jobs are the merge box. Release-plane workflows publish
-#: artifacts rather than measure the tree, so their jobs answer a different
-#: question and are not compared here.
-WORKFLOW = "ci.yml"
+#: Each merge-box workflow is compared with itself: a repeat is one command
+#: twice in ONE run. Release-plane workflows publish artifacts rather than
+#: measure the tree, so their jobs answer a different question.
+MERGE_BOX = pytest.mark.parametrize("workflow", workflows.MERGE_BOX)
 
 #: Recipes whose ANSWER depends on the platform, so running them on two
 #: platforms is coverage rather than repetition. Each entry states what the
@@ -85,25 +85,26 @@ SUBSET_LANES: dict[str, tuple[str, str]] = {
 }
 
 
-def _commands_by_job(event: str) -> dict[str, list[tuple[str, str]]]:
+def _commands_by_job(workflow: str, event: str) -> dict[str, list[tuple[str, str]]]:
     """Return ``command -> [(job id, recipe)]`` for everything *event* reaches."""
     index: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for job in workflows.load_jobs(WORKFLOW):
+    for job in workflows.load_jobs(workflow):
         for recipe in job.measuring_recipes_on(event):
             for command in workflows.named(workflows.final_commands(recipe)):
                 index[command].append((job.job_id, recipe))
     return index
 
 
-def _platforms(job_id: str) -> frozenset[str]:
+def _platforms(workflow: str, job_id: str) -> frozenset[str]:
     """Return the platforms a job by that id lands on."""
-    for job in workflows.load_jobs(WORKFLOW):
+    for job in workflows.load_jobs(workflow):
         if job.job_id == job_id:
             return job.platforms
     return frozenset()
 
 
-def test_no_command_runs_in_two_jobs() -> None:
+@MERGE_BOX
+def test_no_command_runs_in_two_jobs(workflow: str) -> None:
     """No event reaches two jobs running one identical command.
 
     The exemption is narrow and is not a list of job names: a repeat is
@@ -113,12 +114,12 @@ def test_no_command_runs_in_two_jobs() -> None:
     like coverage and answers a question already answered.
     """
     findings: list[str] = []
-    for event in workflows.workflow_events(WORKFLOW):
-        for command, holders in sorted(_commands_by_job(event).items()):
+    for event in workflows.workflow_events(workflow):
+        for command, holders in sorted(_commands_by_job(workflow, event).items()):
             if len({job_id for job_id, _ in holders}) < 2:
                 continue
             recipes = {recipe for _, recipe in holders}
-            platforms = [_platforms(job_id) for job_id, _ in holders]
+            platforms = [_platforms(workflow, job_id) for job_id, _ in holders]
             distinct = all(
                 left.isdisjoint(right)
                 for index, left in enumerate(platforms)
@@ -127,7 +128,8 @@ def test_no_command_runs_in_two_jobs() -> None:
             if distinct and recipes <= PLATFORM_SENSITIVE.keys():
                 continue
             where = ", ".join(
-                f"{job_id} (just {recipe}, {'/'.join(sorted(_platforms(job_id)))})"
+                f"{job_id} (just {recipe}, "
+                f"{'/'.join(sorted(_platforms(workflow, job_id)))})"
                 for job_id, recipe in holders
             )
             findings.append(f"on {event}: `{command}` runs in {where}")
@@ -171,7 +173,8 @@ def test_every_subset_exemption_still_has_its_cover() -> None:
     )
 
 
-def test_no_event_runs_a_subset_lane_beside_its_cover() -> None:
+@MERGE_BOX
+def test_no_event_runs_a_subset_lane_beside_its_cover(workflow: str) -> None:
     """One event never runs both a subset lane and the lane containing it.
 
     This is the repeat no comparison of argument vectors can see: five named
@@ -180,9 +183,9 @@ def test_no_event_runs_a_subset_lane_beside_its_cover() -> None:
     recipes carry their platform-sensitivity in PLATFORM_SENSITIVE above.
     """
     findings: list[str] = []
-    for event in workflows.workflow_events(WORKFLOW):
+    for event in workflows.workflow_events(workflow):
         running: dict[str, list[workflows.Job]] = defaultdict(list)
-        for job in workflows.load_jobs(WORKFLOW):
+        for job in workflows.load_jobs(workflow):
             for recipe in job.measuring_recipes_on(event):
                 running[recipe].append(job)
         for lane, (cover, why) in sorted(SUBSET_LANES.items()):

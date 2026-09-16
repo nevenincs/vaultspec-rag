@@ -55,6 +55,7 @@ __all__ = [
     "FALSE",
     "MAYBE",
     "MEASURING_GROUPS",
+    "MERGE_BOX",
     "TRUE",
     "Job",
     "Tri",
@@ -90,6 +91,11 @@ _RECIPE_GROUP = re.compile(r"^\[group\('([a-z]+)'\)\]")
 
 #: A ``runs-on`` that defers to the matrix, which is what hides a runner.
 _MATRIX_REFERENCE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
+
+#: The workflows that measure the tree: the cheap lane every push runs, and
+#: the gate a change must pass before it merges. Release-plane workflows
+#: build and publish instead, and answer different questions.
+MERGE_BOX = ("ci.yml", "merge-gate.yml")
 
 #: Recipe groups that measure the tree, as opposed to provisioning it.
 MEASURING_GROUPS = frozenset({"check", "audit", "test"})
