@@ -75,6 +75,36 @@ def _retry_policy(
         reset_config()
 
 
+class _BudgetClock:
+    """A budget that moves only when the retry loop waits on it.
+
+    The retry admits an attempt on whole seconds of remaining budget and
+    clamps each backoff to the remainder, so both contracts are decided by
+    fractions of a second. Reading those fractions off the wall clock makes
+    the assertion a race against the test's own setup - installing the
+    policy re-reads the environment and rebuilds the settings, and on a
+    loaded CI host that alone can spend the tenth of a second that decides
+    whether the first attempt is admitted at all. Here the only thing that
+    consumes budget is the loop's own wait, which is the quantity under
+    test.
+    """
+
+    def __init__(self, budget: float) -> None:
+        self.remaining = budget
+        self.waits: list[float] = []
+
+    @property
+    def policy(self) -> StoreWritePolicy:
+        return StoreWritePolicy(
+            remaining_seconds=lambda: self.remaining,
+            wait=self._wait,
+        )
+
+    def _wait(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.remaining -= seconds
+
+
 class TestFailureOutranksPendingControl:
     """A store failure must survive a cancel that lands during backoff.
 
@@ -461,37 +491,31 @@ class TestRunWriteWithRetry:
 
     def test_remaining_budget_clamps_the_admitted_operation_timeout(self) -> None:
         admitted_timeouts: list[int] = []
-        deadline = time.monotonic() + 2.2
+        clock = _BudgetClock(2.2)
 
         def op(attempt_timeout: int) -> str:
             admitted_timeouts.append(attempt_timeout)
             return "stored"
 
-        policy = StoreWritePolicy(
-            remaining_seconds=lambda: deadline - time.monotonic(),
-            wait=time.sleep,
-        )
         with _retry_policy(operation_timeout=120.0):
             result = run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
-                policy=policy,
+                policy=clock.policy,
             )
 
         assert result == "stored"
+        # The configured 120s ceiling loses to the 2.2s budget, floored to
+        # whole seconds so the admitted timeout cannot outlive it.
         assert admitted_timeouts == [2]
 
     def test_subsecond_budget_refuses_attempt_with_typed_outcome(self) -> None:
         calls: list[int] = []
-        deadline = time.monotonic() + 0.25
+        clock = _BudgetClock(0.25)
 
         def op(attempt_timeout: int) -> None:
             calls.append(attempt_timeout)
 
-        policy = StoreWritePolicy(
-            remaining_seconds=lambda: deadline - time.monotonic(),
-            wait=time.sleep,
-        )
         with (
             _retry_policy(operation_timeout=120.0),
             pytest.raises(JobError) as caught,
@@ -499,7 +523,7 @@ class TestRunWriteWithRetry:
             run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
-                policy=policy,
+                policy=clock.policy,
             )
 
         assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
@@ -507,17 +531,12 @@ class TestRunWriteWithRetry:
 
     def test_retry_wait_is_clamped_to_remaining_budget(self) -> None:
         calls: list[int] = []
-        deadline = time.monotonic() + 1.1
+        clock = _BudgetClock(1.1)
 
         def op(attempt_timeout: int) -> None:
             calls.append(attempt_timeout)
             raise ConnectionError("refused")
 
-        policy = StoreWritePolicy(
-            remaining_seconds=lambda: deadline - time.monotonic(),
-            wait=time.sleep,
-        )
-        started = time.monotonic()
         with (
             _retry_policy(
                 attempts=5,
@@ -530,16 +549,16 @@ class TestRunWriteWithRetry:
             run_store_operation_with_retry(
                 op,
                 description="bounded upsert",
-                policy=policy,
+                policy=clock.policy,
             )
-        elapsed = time.monotonic() - started
 
         assert caught.value.error_kind is JobErrorKind.NO_PROGRESS_TIMEOUT
         assert calls == [1]
-        # An unclamped wait sleeps the full ten-second delay; the clamped one
-        # ends near the 1.1s budget, far enough below the ceiling that a
-        # loaded host cannot close the gap.
-        assert 1.0 <= elapsed < 5.0
+        # The configured backoff is ten seconds; an unclamped wait would ask
+        # the policy for all ten and overrun the budget it is meant to
+        # respect. Clamped, it asks for exactly what is left, which spends
+        # the budget and turns the next attempt into the typed expiry.
+        assert clock.waits == [pytest.approx(1.1)]
 
     def test_expired_budget_refuses_first_attempt(self) -> None:
         calls: list[int] = []
