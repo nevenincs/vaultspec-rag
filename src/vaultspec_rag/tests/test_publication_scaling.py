@@ -219,22 +219,22 @@ def test_large_parent_single_path_read_meets_elapsed_budget(tmp_path: Path) -> N
 
     VM instructions above are the deterministic regression guard. This companion
     benchmark records the user-visible elapsed claim over warmed production reads:
-    the 25,000-path parent must stay within a generous absolute ceiling and may not
-    grow materially relative to a ten-path parent.
+    the 25,000-path parent may not grow materially relative to a ten-path
+    parent. It carries no absolute ceiling, because a fixed number of
+    milliseconds measures the host rather than the query.
 
     The two parents are sampled alternately and each is judged by its fastest
     read, so a transient stall slows some samples of both without deciding
     either verdict, whereas a scan is slow on every sample. Medians taken over
     two separate blocks measured whatever else the host was doing during each
-    block. The ratio holds under any load; the absolute ceiling still measures
-    the host, and sustained saturation well beyond a normal parallel suite can
-    lift even the fastest read past it, because each read opens and closes its
-    own ledger connection and that lifecycle dominates the cost.
+    block. Both parents pay the same per-read connection lifecycle on the same
+    host, so the ratio holds on any machine and under any load.
 
     Proven able to fail: widening the production exact-path predicate to
     ``(evidence.rel_path IN (...) OR 1 = 1)`` - a full scan that still returns
-    the right rows - failed this at the absolute ceiling with a 485.474ms
-    fastest read. Restoring the production predicate passed.
+    the right rows - failed the ratio with a 307.181ms large-parent fastest
+    read against 2.081ms for the small parent. Restoring the production
+    predicate passed.
     """
     small_ledger, small_key = _seed(tmp_path / "small-elapsed", 10)
     large_ledger, large_key = _seed(tmp_path / "large-elapsed", 25_000)
@@ -262,9 +262,6 @@ def test_large_parent_single_path_read_meets_elapsed_budget(tmp_path: Path) -> N
     small_ns = min(small_samples)
     large_ns = min(large_samples)
 
-    assert large_ns < 5_000_000, (
-        f"one exact-path read over 25,000 parents took {large_ns / 1_000_000:.3f}ms"
-    )
     assert large_ns <= small_ns * 5, (
         f"large-parent fastest read {large_ns / 1_000_000:.3f}ms exceeded five "
         f"times the small-parent fastest read {small_ns / 1_000_000:.3f}ms"

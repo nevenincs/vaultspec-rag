@@ -95,8 +95,8 @@ class ScrollOptions(TypedDict, total=False):
     scroll_filter: Filter | None
     limit: int
     offset: PointId | None
-    with_payload: bool | Sequence[str]
-    with_vectors: bool | Sequence[str]
+    with_payload: bool | list[str]
+    with_vectors: bool | list[str]
 
 
 def _typed_setting[T](value: object, expected_type: type[T], name: str) -> T:
@@ -585,8 +585,8 @@ class VaultStore(
         *,
         collection_name: str,
         ids: Sequence[PointId],
-        with_payload: bool | Sequence[str] = True,
-        with_vectors: bool | Sequence[str] = False,
+        with_payload: bool | list[str] = True,
+        with_vectors: bool | list[str] = False,
     ) -> list[Record]:
         """Fetch points by id under the bounded retry (a query, replay-safe)."""
         return self._retried(
