@@ -429,7 +429,7 @@ class TestAnUnachievedTransitionNamesItsConsequence:
         That is what shipped. The sentence was accurate and an operator acting
         on it would have left a service serving nothing.
         """
-        from ..server._routes import _quiesce_reason
+        from ..server._routes_quiesce import _quiesce_reason
 
         snapshot = held_quiesce_snapshot()
         message = _quiesce_reason("drain_timed_out", snapshot)
@@ -447,7 +447,7 @@ class TestAnUnachievedTransitionNamesItsConsequence:
         A transition refused while the service is still serving must not tell
         an operator that searches are being turned away.
         """
-        from ..server._routes import _quiesce_reason
+        from ..server._routes_quiesce import _quiesce_reason
 
         message = _quiesce_reason("pause_unavailable", running_quiesce_snapshot())
 
@@ -460,7 +460,7 @@ class TestAnUnachievedTransitionNamesItsConsequence:
         Operator-facing text is read under pressure; a sentence that does not
         parse costs attention exactly when there is none to spare.
         """
-        from ..server._routes import _quiesce_reason
+        from ..server._routes_quiesce import _quiesce_reason
 
         message = _quiesce_reason("drain_timed_out", held_quiesce_snapshot())
 
@@ -486,7 +486,7 @@ class TestThePauseDrainBudgetFitsItsCaller:
         gets a transport timeout with no envelope, no status, and no remedy -
         strictly less than the refusal it replaced.
         """
-        from ..server._routes import _PAUSE_DRAIN_TIMEOUT_SECONDS
+        from ..server._routes_quiesce import _PAUSE_DRAIN_TIMEOUT_SECONDS
         from ..serviceclient._transport import DEFAULT_ADMIN_TIMEOUT_SECONDS
 
         assert _PAUSE_DRAIN_TIMEOUT_SECONDS > 10.0
