@@ -21,13 +21,10 @@ hardware.yml:Put Homebrew and user binaries on PATH
 # vault check became `just check-vault` and joined `check-all`, which is what
 # retired the job that existed only to run it.
 
-# The GPU tier's environment: warm the model cache (one 15-line Python
-# heredoc, twice), provision the pinned Qdrant binary, start and stop the
-# resident service behind a 25-line pwsh poll loop. Recipes needed:
-# `rag-warmup`, `rag-service-start`, `rag-service-stop` - which vaultspec-a2a
-# already has by those exact names, over the same service.
-hardware.yml:Warm the model cache the MPS guard reads
-hardware.yml:Warm the model cache the resident service loads
+# The GPU tier's environment: provision the pinned Qdrant binary, start and
+# stop the resident service behind a 25-line pwsh poll loop. Recipes needed:
+# `rag-service-start`, `rag-service-stop` - which vaultspec-a2a already has by
+# those exact names, over the same service.
 hardware.yml:Provision the pinned Qdrant binary the GPU tier requires
 hardware.yml:Start the resident service the GPU tier borrows from
 hardware.yml:Stop the resident service

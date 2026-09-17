@@ -23,13 +23,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
 HARDWARE_WORKFLOW = "hardware.yml"
 
+#: The step that fills the model cache.
+WARM = "just warm-models"
+
 #: The recipes that need an accelerator, and the steps that must precede them
 #: in the same job, each identified by a fragment of its ``run:``.
 PRECONDITIONS = {
-    "test-mps": ("snapshot_download",),
+    "test-mps": (WARM,),
     "test-gpu": (
         "server qdrant install",
-        "snapshot_download",
+        WARM,
         "server start",
     ),
 }
@@ -109,8 +112,7 @@ def test_every_tier_provisions_its_preconditions_first() -> None:
                     if not any(fragment in text for text in runs[:index])
                 )
                 if not any(
-                    "snapshot_download" in _run(prior) and _reads_token(prior)
-                    for prior in earlier
+                    WARM in _run(prior) and _reads_token(prior) for prior in earlier
                 ):
                     findings.append(
                         f"{job.job_id}: the cache warm-up before `just {recipe}` "
@@ -194,3 +196,26 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
                 missing.append(f"{workflow}:{job_id}")
     assert callers, f"nothing calls {HARDWARE_WORKFLOW}"
     assert not missing, f"callers that do not pass {TOKEN}: {missing}"
+
+
+def test_no_windows_step_hands_powershell_a_heredoc() -> None:
+    """A Windows step never carries bash-only syntax into PowerShell.
+
+    A Windows runner's default step shell is PowerShell, which rejects a
+    ``<<`` heredoc as a parse error before anything runs.
+
+    Mutation proof: replacing the CUDA job's ``just warm-models`` with a
+    ``uv run --no-sync python - <<'PY'`` block makes this fail naming that
+    step; restoring the recipe makes this pass.
+    """
+    offenders = [
+        f"{workflow}:{job.job_id}:{step.get('name', '<unnamed>')}"
+        for workflow in _workflow_names()
+        for job in workflows.load_jobs(workflow)
+        if "windows" in job.platforms
+        for step in job.steps
+        if "<<" in _run(step) and step.get("shell") != "bash"
+    ]
+    assert not offenders, (
+        f"Windows steps pass a heredoc to PowerShell: {offenders}. Use a recipe."
+    )
