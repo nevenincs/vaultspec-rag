@@ -33,7 +33,7 @@ jobs:
     steps:
       - name: Run release-please
         id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
@@ -44,7 +44,7 @@ jobs:
       # the release branch out. Each step is named for what it DOES.
       - name: Check out the release branch
         if: steps.release.outputs.pr && !steps.release.outputs.release_created
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2  # zizmor: ignore[artipacked] -- the next step pushes the refreshed lock with it
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
 

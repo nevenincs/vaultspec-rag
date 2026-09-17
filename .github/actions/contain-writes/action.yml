@@ -35,7 +35,9 @@ runs:
     - name: Contain writes (POSIX)
       if: runner.os != 'Windows'
       shell: bash
-      run: |
+      # Fixed variable names, set to runner-owned paths and hashes of committed
+      # files: no event or input data reaches them.
+      run: |  # zizmor: ignore[github-env]
         set -euo pipefail
         temp="${RUNNER_TEMP}"
         tools="${RUNNER_TOOL_CACHE}"
@@ -89,7 +91,9 @@ runs:
     - name: Contain writes (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      run: |
+      # Fixed variable names, set to runner-owned paths and hashes of committed
+      # files: no event or input data reaches them.
+      run: |  # zizmor: ignore[github-env]
         $temp = $env:RUNNER_TEMP
         $tools = $env:RUNNER_TOOL_CACHE
         if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {

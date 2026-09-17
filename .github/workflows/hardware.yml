@@ -78,6 +78,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
           ref: ${{ inputs.target_sha }}
 
       - name: Require the exact commit
@@ -178,6 +179,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
           ref: ${{ inputs.target_sha }}
           # The ranking-quality gates read `.vault/` at a pinned historical
           # commit, which a shallow clone does not contain.

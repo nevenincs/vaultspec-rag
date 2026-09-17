@@ -102,7 +102,9 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -110,7 +112,7 @@ jobs:
       - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           # Derived from the pin, never repeated: a literal here drifts the
           # first time the pin is bumped alone.
