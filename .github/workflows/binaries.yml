@@ -101,8 +101,13 @@ jobs:
           # mutable tag is not an acceptable input. Same image and digest
           # vaultspec-core uses, so the two products share one baseline rather
           # than each discovering their own.
+          #
+          # HOSTED, because a job container needs a container runtime and the
+          # fleet's Linux host has none. On a self-hosted Linux runner this leg
+          # dies in `Initialize containers` before checkout, which is how an
+          # earlier release published no Linux binary at all.
           - name: linux-x86_64
-            runner: [self-hosted, Linux, X64, build]
+            runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             container: quay.io/pypa/manylinux_2_28_x86_64@sha256:4dc41da7df20400310c80d162a2fe2d2c2f3d9734d8dec20f6b9843711618deb
           - name: windows-x86_64
@@ -255,6 +260,13 @@ jobs:
 
       - name: Install Python
         run: uv python install 3.13
+
+      # `just release-channels` below runs in this job, and a job only has the
+      # tools it installs itself: the build legs' installs live on other hosts.
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
 
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
