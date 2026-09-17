@@ -19,6 +19,15 @@ description: >-
 # the variable it is supposed to read it from. The assertion runs before the
 # first build step, because the cost of finding out late is measured in
 # gigabytes inside the OS install.
+#
+# CACHE KEYS. Package caches are keyed by trust tier, platform, interpreter
+# and a fingerprint of `uv.lock` and `pyproject.toml`, because what they hold
+# depends on all four. The model cache (`HF_HOME`) is keyed by trust tier and
+# platform only: which weights exist does not depend on the lockfile or the
+# interpreter, and every release rewrites both files, so a fingerprinted
+# model cache starts empty on every release and downloads gigabytes again.
+# The trust tier stays in both keys, so a pull request never writes a cache
+# that a release reads.
 
 runs:
   using: composite
@@ -43,20 +52,22 @@ runs:
         cache_base=""
         [ "${CI_CACHE_MODE:-normal}" = "isolated" ] && cache_base="${temp}/vaultspec-rag-cache/isolated"
         fingerprint=$(sha256sum uv.lock pyproject.toml 2>/dev/null | sha256sum | cut -c1-16)
-        compat="vr/${trust_key}/${RUNNER_OS:0:1}${RUNNER_ARCH}/${UV_PYTHON:-d}/${fingerprint}"
+        platform="${RUNNER_OS:0:1}${RUNNER_ARCH}"
+        compat="vr/${trust_key}/${platform}/${UV_PYTHON:-d}/${fingerprint}"
+        model_compat="vr/${trust_key}/${platform}"
         # Defer to a value the runner's own `.env` already set. That file is
         # host-level and covers every repo on the runner, so it is the source of
         # truth; setting a second value here would win by running later and
         # quietly split one shared cache into a per-repo copy of itself.
         pin() {
-          local current=""
+          local current="" key="${3:-$compat}"
           eval "current=\${$1:-}"
           if [ -n "$cache_base" ]; then
             current="$cache_base/$2"
           elif [ -n "$current" ]; then
-            current="$current/$compat"
+            current="$current/$key"
           else
-            current="$tools/$2/$compat"
+            current="$tools/$2/$key"
           fi
           mkdir -p "$current"
           printf '%s=%s\n' "$1" "$current" >> "$GITHUB_ENV"
@@ -66,7 +77,7 @@ runs:
         echo "pinning writable paths to runner-owned storage"
         printf 'TMPDIR=%s\n' "$temp" >> "$GITHUB_ENV"
         pin XDG_CACHE_HOME                   "xdg-cache"
-        pin HF_HOME                          "huggingface"
+        pin HF_HOME                          "huggingface" "$model_compat"
         pin UV_CACHE_DIR                     "uv-cache"
         pin UV_PYTHON_INSTALL_DIR            "uv-python"
         pin CARGO_HOME                       "cargo"
@@ -99,6 +110,7 @@ runs:
         $platformKey = "$($env:RUNNER_OS.Substring(0, 1))$env:RUNNER_ARCH"
         $pythonKey = ($env:UV_PYTHON ?? 'd').Replace('.', '')
         $compat = "vr/$trustKey/$platformKey/$pythonKey/$fingerprint"
+        $modelCompat = "vr/$trustKey/$platformKey"
         $pinned = [ordered]@{
           TMP                              = $temp
           TEMP                             = $temp
@@ -116,14 +128,15 @@ runs:
           # runner, so a value already set there wins. Overriding it here would
           # split one shared cache into a per-repo copy of itself.
           $current = [Environment]::GetEnvironmentVariable($name)
+          $key = if ($name -eq 'HF_HOME') { $modelCompat } else { $compat }
           if ($name -in @('TMP', 'TEMP', 'VAULTSPEC_RAG_STATUS_DIR', 'VAULTSPEC_RAG_QDRANT_STORAGE_DIR')) {
             $value = $pinned[$name]
           } elseif ($cacheBase) {
             $value = Join-Path $cacheBase $pinned[$name]
           } elseif (-not [string]::IsNullOrWhiteSpace($current)) {
-            $value = Join-Path $current $compat
+            $value = Join-Path $current $key
           } else {
-            $value = Join-Path (Join-Path $tools $pinned[$name]) $compat
+            $value = Join-Path (Join-Path $tools $pinned[$name]) $key
           }
           New-Item -ItemType Directory -Force -Path $value | Out-Null
           Write-Host ("  {0,-34} -> {1} ({2})" -f $name, $value, $trust)
