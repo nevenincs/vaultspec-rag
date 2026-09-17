@@ -89,8 +89,11 @@ def test_racy_evidence_is_never_trusted(tmp_path: Path) -> None:
     """A file hashed inside the racy window of its own mtime is rehashed."""
     source = tmp_path / "mod.py"
     source.write_bytes(b"x = 1\n")
-    # No backdating: the recorded mtime sits within _RACY_WINDOW_NS of the
-    # hashing instant, so the entry must never satisfy the gate.
+    # The mtime is pinned ahead of the clock rather than left at the write
+    # instant, so the hashing instant lands inside _RACY_WINDOW_NS of it no
+    # matter how long a loaded host takes between the write and the hash.
+    ahead = time.time_ns() + 30 * _RACY_WINDOW_NS
+    os.utime(source, ns=(ahead, ahead))
     sidecar = tmp_path / "gate.json"
 
     first = StatEvidenceGate.load(sidecar)

@@ -7,8 +7,8 @@
 
 # --- runner-plane -----------------------------------------------------------
 # Acts on the MACHINE, not the product, so there is no local recipe it could
-# be hiding. These belong in ci-fleet, which already owns the job hooks, the
-# fleet operations.
+# be hiding. These belong with the runner fleet's own job hooks and
+# operations.
 binaries.yml:Return the workspace to the runner's user
 acquisition.yml:Return the workspace to the runner's user
 acquisition.yml:Install what acquisition itself needs
