@@ -219,3 +219,31 @@ def test_no_windows_step_hands_powershell_a_heredoc() -> None:
     assert not offenders, (
         f"Windows steps pass a heredoc to PowerShell: {offenders}. Use a recipe."
     )
+
+
+def test_the_cuda_tier_checks_out_full_history() -> None:
+    """The CUDA tier can read the frozen ranking corpus.
+
+    The ranking-quality gates extract ``.vault/`` at a pinned historical
+    commit with ``git archive``. A shallow checkout lacks that commit, and
+    every one of those gates errors before measuring anything.
+
+    Mutation proof: deleting ``fetch-depth: 0`` from the CUDA job's checkout
+    makes this fail; restoring it makes this pass.
+    """
+    checkouts = [
+        step
+        for job in workflows.load_jobs(HARDWARE_WORKFLOW)
+        if any("just test-gpu" in _run(step) for step in job.steps)
+        for step in job.steps
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert checkouts, f"the CUDA tier in {HARDWARE_WORKFLOW} checks nothing out"
+    depths = [
+        cast("dict[object, object]", step.get("with") or {}).get("fetch-depth")
+        for step in checkouts
+    ]
+    assert depths == [0] * len(checkouts), (
+        f"the CUDA tier checks out with fetch-depth {depths}; the frozen "
+        "ranking corpus needs full history"
+    )
