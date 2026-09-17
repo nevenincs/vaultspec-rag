@@ -207,9 +207,85 @@ def test_release_please_holds_then_publish_dispatches_binaries(
     dispatch_section = downstream[dispatch:]
     assert "needs: hold-release" in downstream
     assert "--prerelease" in downstream[hold:dispatch]
-    assert "needs: [publish-pypi, github-release]" in downstream
-    assert "gh workflow run Binaries \\" in dispatch_section
+    assert "needs: [resolve-target, publish-pypi, github-release]" in downstream
+    assert "gh workflow run binaries.yml \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
+
+
+def _load(repo_root: Path, workflow: str) -> dict:
+    """Return *workflow* parsed as YAML."""
+    return yaml.safe_load(
+        (repo_root / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    )
+
+
+def _upstream(jobs: dict, job_id: str) -> set[str]:
+    """Return every job *job_id* transitively needs."""
+    seen: set[str] = set()
+    pending = [job_id]
+    while pending:
+        needs = jobs[pending.pop()].get("needs") or []
+        for name in [needs] if isinstance(needs, str) else needs:
+            if name not in seen:
+                seen.add(name)
+                pending.append(name)
+    return seen
+
+
+def _release_request_findings(document: dict, resolver: str) -> list[str]:
+    """Name every way *document* lets an unproven release request reach the fleet."""
+    jobs = document["jobs"]
+    findings: list[str] = []
+    resolving = jobs[resolver]
+    if resolving.get("runs-on") != "ubuntu-24.04":
+        findings.append(f"{resolver} does not run on a hosted runner")
+    if any("uses" in step for step in resolving.get("steps") or []):
+        findings.append(f"{resolver} runs an action before the request is proven")
+    for job_id, body in jobs.items():
+        if job_id == resolver:
+            continue
+        if "uses" not in body and resolver not in _upstream(jobs, job_id):
+            findings.append(f"{job_id} does not wait for {resolver}")
+    if "github.ref_name" in yaml.safe_dump(jobs):
+        findings.append("a job still falls back to github.ref_name")
+    return findings
+
+
+@pytest.mark.parametrize(
+    ("workflow", "resolver"),
+    [("publish.yml", "resolve-target"), ("binaries.yml", "validate")],
+)
+def test_a_release_request_is_proven_on_a_hosted_runner_first(
+    repo_root: Path, workflow: str, resolver: str
+) -> None:
+    """The dispatched tag is validated before any fleet job can see it.
+
+    Mutation proof: pointing the binaries ``wheel`` job's ``needs`` away from
+    ``validate`` made this fail naming ``wheel``; restoring it made it pass.
+    """
+    assert _release_request_findings(_load(repo_root, workflow), resolver) == []
+
+
+def test_the_release_request_resolvers_check_format_and_existence(
+    repo_root: Path,
+) -> None:
+    """Both resolvers pin the tag format and read the tag off the remote."""
+    for workflow, resolver in (
+        ("publish.yml", "resolve-target"),
+        ("binaries.yml", "validate"),
+    ):
+        script = "\n".join(
+            str(step.get("run", ""))
+            for step in _load(repo_root, workflow)["jobs"][resolver]["steps"]
+        )
+        assert "^vaultspec-rag-v[0-9]+\\.[0-9]+\\.[0-9]+" in script, workflow
+        assert "git ls-remote --tags" in script, workflow
+        assert '"^{}"' in script, workflow
+    binaries = "\n".join(
+        str(step.get("run", ""))
+        for step in _load(repo_root, "binaries.yml")["jobs"]["validate"]["steps"]
+    )
+    assert '[ "${sha}" != "${TARGET_SHA}" ]' in binaries
 
 
 def test_promotion_waits_for_checksum_verified_bundle_acquisition(

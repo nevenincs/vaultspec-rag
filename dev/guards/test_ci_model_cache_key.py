@@ -132,7 +132,7 @@ def test_a_release_keeps_the_model_cache_and_rotates_package_caches(
     ``HF_HOME`` makes this fail on the model-cache equality; restoring
     ``$model_compat`` makes this pass.
     """
-    release = {"event": "workflow_dispatch", "workflow": "Publish"}
+    release = {"event": "workflow_dispatch", "workflow": "RAG Publish"}
     before = _pinned(tmp_path / "a", lock="version = 1\n", python="3.13", **release)
     bumped = _pinned(tmp_path / "b", lock="version = 2\n", python="3.13", **release)
     other = _pinned(tmp_path / "c", lock="version = 1\n", python="3.14", **release)
@@ -165,15 +165,34 @@ def test_a_pull_request_never_shares_the_release_model_cache(tmp_path: Path) -> 
         lock=lock,
         python="3.13",
         event="workflow_dispatch",
-        workflow="Publish",
+        workflow="RAG Publish",
     )
     pull = _pinned(
         tmp_path / "p",
         lock=lock,
         python="3.13",
         event="pull_request",
-        workflow="Merge Gate",
+        workflow="RAG Merge Gate",
     )
     assert _relative(release, "HF_HOME", tmp_path / "r") != _relative(
         pull, "HF_HOME", tmp_path / "p"
     ), "a pull request and a release share one model cache"
+
+
+def test_the_release_workflows_are_keyed_as_release_trusted(tmp_path: Path) -> None:
+    """A release workflow is recognised by its name, so a rename moves its tier.
+
+    Mutation proof: matching the unprefixed ``Publish`` name again made this
+    fail with the release run keyed ``vr/b``; restoring the product-prefixed
+    pattern made it pass.
+    """
+    release = _pinned(
+        tmp_path,
+        lock="version = 1\n",
+        python="3.13",
+        event="workflow_dispatch",
+        workflow="RAG Publish",
+    )
+    assert "/vr/r/" in _relative(release, "HF_HOME", tmp_path), (
+        "a release workflow run is not keyed release-trusted"
+    )

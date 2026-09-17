@@ -29,7 +29,7 @@ GATE_WORKFLOW = "merge-gate.yml"
 
 #: The job whose check branch protection requires.
 GATE_JOB = "gate"
-GATE_NAME = "Gate: Merge Readiness"
+GATE_NAME = "Check: Merge gate (Linux)"
 
 #: Everything the cheap lane may measure.
 CHEAP_RECIPES = frozenset({"check-python", "check-type"})

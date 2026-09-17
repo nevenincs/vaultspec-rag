@@ -375,7 +375,11 @@ max-complexity-allowed = 20
 # the gate held production: the longest test module reached 3196 lines
 # against a ceiling nothing measured it by. A suite grows the same way a
 # module does, and gets just as hard to read.
-jobs = 0
+#
+# Four workers, not one per CPU: the lint job shares its host with the test
+# lane, and a worker per core ran that host out of memory until the kernel
+# killed workers and the gate reported a crashed pool instead of a verdict.
+jobs = 4
 
 [tool.pylint."messages control"]
 disable = ["all"]

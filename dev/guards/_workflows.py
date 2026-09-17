@@ -67,6 +67,7 @@ __all__ = [
     "recipe_groups",
     "repository_root",
     "workflow_events",
+    "workflow_names",
 ]
 
 #: Repository root: this file is ``<root>/dev/guards/<name>.py``.
@@ -262,6 +263,14 @@ def workflow_events(workflow: str) -> tuple[str, ...]:
         if isinstance(triggers, str):
             return (triggers,)
     return ()
+
+
+def workflow_names() -> tuple[tuple[str, str], ...]:
+    """Return ``(file name, name:)`` for every workflow, the file when unnamed."""
+    return tuple(
+        (path.name, str(_document(path).get("name") or path.name))
+        for path in _workflow_files()
+    )
 
 
 def _matrix_legs(job: dict[str, Any]) -> tuple[dict[str, Any], ...]:

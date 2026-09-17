@@ -35,14 +35,16 @@ runs:
     - name: Contain writes (POSIX)
       if: runner.os != 'Windows'
       shell: bash
-      run: |
+      # Fixed variable names, set to runner-owned paths and hashes of committed
+      # files: no event or input data reaches them.
+      run: |  # zizmor: ignore[github-env]
         set -euo pipefail
         temp="${RUNNER_TEMP}"
         tools="${RUNNER_TOOL_CACHE}"
         if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
           trust=pr-untrusted
           trust_key=p
-        elif [[ "${GITHUB_REF:-}" == refs/tags/* ]] || [[ "${GITHUB_WORKFLOW:-}" =~ ^(Publish|Binaries|Acquisition) ]]; then
+        elif [[ "${GITHUB_REF:-}" == refs/tags/* ]] || [[ "${GITHUB_WORKFLOW:-}" =~ ^RAG\ (Publish|Binaries|Acquisition)$ ]]; then
           trust=release-trusted
           trust_key=r
         else
@@ -89,13 +91,15 @@ runs:
     - name: Contain writes (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      run: |
+      # Fixed variable names, set to runner-owned paths and hashes of committed
+      # files: no event or input data reaches them.
+      run: |  # zizmor: ignore[github-env]
         $temp = $env:RUNNER_TEMP
         $tools = $env:RUNNER_TOOL_CACHE
         if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
           $trust = 'pr-untrusted'
           $trustKey = 'p'
-        } elseif ($env:GITHUB_REF -like 'refs/tags/*' -or $env:GITHUB_WORKFLOW -match '^(Publish|Binaries|Acquisition)') {
+        } elseif ($env:GITHUB_REF -like 'refs/tags/*' -or $env:GITHUB_WORKFLOW -match '^RAG (Publish|Binaries|Acquisition)$') {
           $trust = 'release-trusted'
           $trustKey = 'r'
         } else {
