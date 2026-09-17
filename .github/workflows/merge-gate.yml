@@ -29,8 +29,8 @@ name: RAG Merge Gate
 # advisories published against an unchanged lock.
 #
 # THE TRUST QUESTION. A `pull_request` run from a fork executes the fork's own
-# workflow, so every job that would land on the self-hosted fleet moves to
-# GitHub-hosted isolation for a fork instead, and still reports its check.
+# workflow, so a fork's pull request is REFUSED: no measuring job runs for it,
+# and the gate fails it. A maintainer re-opens the change from a branch here.
 on:
   pull_request:
     types: [labeled]
@@ -77,14 +77,14 @@ jobs:
     # after a failure and reports every dimension, and its membership is data
     # in `dev/toolchain.py`, so this job and the gates cannot disagree about
     # what "everything" means.
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own. It still reports this check,
-    # on GitHub-hosted isolation where it cannot reach fleet state.
+    # A fork's pull request never runs here: the workflow it would run is the
+    # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.label.name == 'ci:full'
+      (github.event.label.name == 'ci:full' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 40
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -121,14 +121,14 @@ jobs:
 
   tests:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own. It still reports this check,
-    # on GitHub-hosted isolation where it cannot reach fleet state.
+    # A fork's pull request never runs here: the workflow it would run is the
+    # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.label.name == 'ci:full'
+      (github.event.label.name == 'ci:full' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 45
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
       # failure is the whole signal, and cancelling the other hides whether
@@ -186,14 +186,14 @@ jobs:
   # which is what the suite runs under anyway.
   tests-windows:
     name: "Test: Full suite (Windows)"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own. It still reports this check,
-    # on GitHub-hosted isolation where it cannot reach fleet state.
+    # A fork's pull request never runs here: the workflow it would run is the
+    # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.label.name == 'ci:full'
+      (github.event.label.name == 'ci:full' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 60
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
+    runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
       # This runner's agent is a Windows service, so its account is SYSTEM and
@@ -255,14 +255,14 @@ jobs:
     name: "Check: Dependency advisories (Linux)"
     # Audits the lock that is about to land. The weekly run catches
     # advisories published against a lock that has not changed.
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own. It still reports this check,
-    # on GitHub-hosted isolation where it cannot reach fleet state.
+    # A fork's pull request never runs here: the workflow it would run is the
+    # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.label.name == 'ci:full'
+      (github.event.label.name == 'ci:full' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 15
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -329,11 +329,16 @@ jobs:
 
       - name: Every full check passed on this commit
         env:
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
           GH_TOKEN: ${{ github.token }}
           RESULTS: ${{ toJSON(needs) }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          if [ "${FORK}" = "true" ]; then
+            echo "::error::pull requests from forks are refused; re-open the change from a branch in this repository"
+            exit 1
+          fi
           ran=$(jq '[.[] | select(.result != "skipped")] | length' <<<"$RESULTS")
           if [ "$ran" -gt 0 ]; then
             failed=$(jq -r 'to_entries | map(select(.value.result != "success") | "\(.key)=\(.value.result)") | join(", ")' <<<"$RESULTS")

@@ -27,10 +27,10 @@ name: RAG CI
 # `test_ci_jobs_reach_a_verdict.py` holds the ceilings and the groups above.
 #
 # THE TRUST QUESTION. This repository is PUBLIC, and a `pull_request` from a
-# fork runs code the author of the pull request controls. Admitting that code
-# to the self-hosted fleet hands a stranger execution on this hardware, so a
-# fork's pull request runs on GitHub-hosted isolation instead. The hardware
-# tiers are unreachable from any pull request.
+# fork runs code the author of the pull request controls. A fork's pull
+# request is REFUSED: no job runs for it, hosted or not, and the merge gate
+# fails it, so a maintainer re-opens the change from a branch here. The
+# hardware tiers are unreachable from any pull request.
 on:
   pull_request:
   schedule:
@@ -93,13 +93,11 @@ jobs:
     # landed yet. Wait for the second commit, then run the usual gates.
     if: >-
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       (!startsWith(github.head_ref, 'release-please--') ||
        github.event.pull_request.commits > 1)
     timeout-minutes: 40
-    # Same-repository work uses the persistent fleet. A fork runs on
-    # GitHub-hosted isolation where its workflow cannot reach fleet state or
-    # credentials.
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
