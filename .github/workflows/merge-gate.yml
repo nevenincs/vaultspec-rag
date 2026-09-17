@@ -71,7 +71,7 @@ env:
 
 jobs:
   lint:
-    name: "Check: Every gating dimension (Linux)"
+    name: "Check: Full lint (Linux)"
     # Names the aggregate rather than listing its members: a dimension added
     # to the registry joins this job automatically. `check-all` keeps going
     # after a failure and reports every dimension, and its membership is data
