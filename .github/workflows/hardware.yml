@@ -130,25 +130,12 @@ jobs:
       # the cache to exist in this job's cache namespace, so it is warmed here.
       # The download is idempotent - a warm cache is a no-op - and the model
       # set is read from the shipped configuration so it cannot drift from
-      # what the guard then loads.
+      # what the guard then loads. A recipe rather than an inline script,
+      # because a step's shell is bash here and PowerShell on Windows.
       - name: Warm the model cache the MPS guard reads
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          uv run --no-sync python - <<'PY'
-          from huggingface_hub import snapshot_download
-
-          from vaultspec_rag.config._settings import get_config
-
-          config = get_config()
-          for model in (
-              config.embedding_model,
-              config.sparse_model,
-              config.reranker_model,
-          ):
-              print(f"warming {model}", flush=True)
-              snapshot_download(model)
-          PY
+        run: just warm-models
 
       # This is the support gate for Apple silicon. It runs the configured
       # dense, sparse, and reranker models together on MPS and fails if any
@@ -230,21 +217,7 @@ jobs:
       - name: Warm the model cache the resident service loads
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          uv run --no-sync python - <<'PY'
-          from huggingface_hub import snapshot_download
-
-          from vaultspec_rag.config._settings import get_config
-
-          config = get_config()
-          for model in (
-              config.embedding_model,
-              config.sparse_model,
-              config.reranker_model,
-          ):
-              print(f"warming {model}", flush=True)
-              snapshot_download(model)
-          PY
+        run: just warm-models
 
       # Waiting on `running` rather than sleeping a fixed interval is what
       # makes this reliable on a machine that loads its model stack at start:

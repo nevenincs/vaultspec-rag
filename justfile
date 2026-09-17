@@ -125,6 +125,11 @@ init-tools:
 init-check:
     uv run --no-project --python 3.13.14 -- python -m dev.init check
 
+# Download every configured model into the Hugging Face cache.
+[group('setup')]
+warm-models:
+    uv run --no-sync python -m dev.warm_models
+
 # Resolve the development environment from the lock.
 [group('setup')]
 deps-sync:
