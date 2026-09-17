@@ -6,9 +6,7 @@ on:
       - main
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+  contents: read
 
 concurrency:
   # The commit is in the group, and only on main. `cancel-in-progress: false`
@@ -26,6 +24,12 @@ jobs:
     name: "Build: Release proposal (Linux)"
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
+    # Opens the release PR, pushes its lock refresh, edits the release and
+    # dispatches Publish: the only job here, and the only one that writes.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     steps:
       - name: Run release-please
         id: release

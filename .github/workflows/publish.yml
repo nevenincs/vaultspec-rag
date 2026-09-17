@@ -24,20 +24,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The dispatch input is free text from anyone who can run a workflow, and
+  # every later job runs on the self-hosted fleet. So the tag is validated and
+  # resolved to its commit HERE, on a hosted runner, and only that validated
+  # pair reaches the fleet. The public remote is read without a checkout, so
+  # nothing from the requested ref executes before it is proven a release tag.
   resolve-target:
     name: "Check: Release commit (Linux)"
     timeout-minutes: 10
-    runs-on: [self-hosted, Linux, X64, build]
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
+      tag: ${{ steps.commit.outputs.tag }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag || github.ref }}
       - name: Resolve exact release SHA
         id: commit
         shell: bash
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          else
+            case "${REF}" in
+              refs/tags/*) tag="${REF#refs/tags/}" ;;
+              *) echo "::error::publication needs a tag ref, got ${REF}"; exit 1 ;;
+            esac
+          fi
+          if ! [[ "${tag}" =~ ^vaultspec-rag-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::not a release tag: ${tag}"
+            exit 1
+          fi
+          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "${tag}")
+          sha=$(awk -v ref="refs/tags/${tag}" '$2 == ref "^{}" { print $1; exit }' <<<"${refs}")
+          [ -n "${sha}" ] || sha=$(awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }' <<<"${refs}")
+          if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::release tag ${tag} does not exist"
+            exit 1
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "${tag} resolves to ${sha}"
 
   hardware-validation:
     name: "Test: Release hardware"
@@ -61,7 +91,7 @@ jobs:
       - name: Hold the release as a prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve-target.outputs.tag }}
         run: |
           set -euo pipefail
           if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -103,7 +133,7 @@ jobs:
           enable-cache: false
 
       - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:
           tool: just@1.38.0
 
@@ -161,7 +191,7 @@ jobs:
           enable-cache: false
 
       - name: Install Python
-        run: uv python install ${{ matrix.python-version }}
+        run: uv python install "${UV_PYTHON}"
 
       - name: Download dist artifacts
         uses: actions/download-artifact@v8.0.1
@@ -207,7 +237,7 @@ jobs:
   github-release:
     name: "Build: Release assets (Linux)"
     timeout-minutes: 15
-    needs: smoke-test
+    needs: [resolve-target, smoke-test]
     outputs:
       sha: ${{ needs.smoke-test.outputs.sha }}
     # On the fleet, like every other job in this workflow. It needs `gh` and
@@ -226,7 +256,7 @@ jobs:
         working-directory: dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve-target.outputs.tag }}
         run: |
           set -euo pipefail
           sha256sum ./* > SHA256SUMS
@@ -256,7 +286,7 @@ jobs:
       - name: Attach wheel, sdist, and checksums to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve-target.outputs.tag }}
         run: |
           gh release upload "${TAG}" dist/* \
             --repo "$GITHUB_REPOSITORY" \
@@ -265,7 +295,7 @@ jobs:
   dispatch-binaries:
     name: "Build: Binary dispatch (Linux)"
     timeout-minutes: 10
-    needs: [publish-pypi, github-release]
+    needs: [resolve-target, publish-pypi, github-release]
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
       actions: write
@@ -277,7 +307,7 @@ jobs:
       - name: Trigger Binaries workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ needs.resolve-target.outputs.tag }}
           TARGET_SHA: ${{ needs.github-release.outputs.sha }}
         run: |
           set -euo pipefail
