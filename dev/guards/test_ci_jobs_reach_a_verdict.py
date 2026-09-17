@@ -61,7 +61,14 @@ def _normalised(text: str) -> str:
 
 
 def _reaches_default_branch(workflow: str) -> bool:
-    """Whether a push to the default branch triggers *workflow*."""
+    """Whether *workflow* runs for the default branch.
+
+    The merge box counts even without a push trigger: its verdict is what
+    admits a commit to the default branch, and it runs there on schedule and
+    dispatch.
+    """
+    if workflow in workflows.MERGE_BOX:
+        return True
     path = workflows.repository_root() / ".github" / "workflows" / workflow
     loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
@@ -112,6 +119,13 @@ def _concurrency_declarations() -> list[tuple[str, str, dict[str, object]]]:
     return found
 
 
+def _merge_box_jobs() -> tuple[workflows.Job, ...]:
+    """Return every job in every merge-box workflow."""
+    return tuple(
+        job for workflow in workflows.MERGE_BOX for job in workflows.load_jobs(workflow)
+    )
+
+
 def test_every_self_hosted_job_is_bounded() -> None:
     """Every job landing on the fleet declares its own ceiling.
 
@@ -149,7 +163,7 @@ def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
     """
     setups: list[str] = []
     offenders: list[str] = []
-    for job in workflows.load_jobs("ci.yml"):
+    for job in _merge_box_jobs():
         for step in job.steps:
             if not str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
                 continue
@@ -161,9 +175,11 @@ def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
                 else None
             )
             if enabled is not False:
-                offenders.append(f"{job.job_id}: enable-cache={enabled!r}")
+                offenders.append(
+                    f"{job.workflow}:{job.job_id}: enable-cache={enabled!r}"
+                )
 
-    assert setups, "ci.yml has no setup-uv steps to verify"
+    assert setups, "the merge box has no setup-uv steps to verify"
     assert not offenders, (
         "Persistent self-hosted runners must use their local UV_CACHE_DIR "
         "without exporting it through the Actions cache.\n\n" + "\n".join(offenders)
@@ -181,10 +197,12 @@ def test_no_merge_box_job_is_advisory() -> None:
     makes this fail naming that job; removing it makes this pass again.
     """
     advisory = sorted(
-        job.job_id for job in workflows.load_jobs("ci.yml") if job.continue_on_error
+        f"{job.workflow}:{job.job_id}"
+        for job in _merge_box_jobs()
+        if job.continue_on_error
     )
     assert not advisory, (
-        f"ci.yml jobs {advisory} declare continue-on-error, so their failures "
+        f"merge-box jobs {advisory} declare continue-on-error, so their failures "
         "never fail the run. Fix what fails instead."
     )
 
@@ -236,19 +254,16 @@ def test_the_merge_box_groups_every_job_it_runs() -> None:
     times queues five copies of it on a serial fleet. Declaring the group is
     what makes the main-only exemption above meaningful.
     """
-    workflow_grouped = any(
-        workflow == "ci.yml" and where == "workflow"
+    grouped = {
+        workflow
         for workflow, where, _concurrency in _concurrency_declarations()
-    )
-    findings = (
-        []
-        if workflow_grouped
-        else [
-            f"ci.yml:{job.job_id} declares no concurrency group"
-            for job in workflows.load_jobs("ci.yml")
-            if job.concurrency is None
-        ]
-    )
+        if where == "workflow"
+    }
+    findings = [
+        f"{job.workflow}:{job.job_id} declares no concurrency group"
+        for job in _merge_box_jobs()
+        if job.workflow not in grouped and job.concurrency is None
+    ]
     assert not findings, (
         "A merge-box job is not in a concurrency group, so pushes to a branch "
         "queue one copy of it each on a serial fleet.\n\n" + "\n".join(findings)

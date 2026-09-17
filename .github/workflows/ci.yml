@@ -1,49 +1,37 @@
 name: CI
 
-# ONE SOURCE-QUALITY WORKFLOW. Pull requests and pushes to main run the gates
-# appropriate to their trust and platform constraints. Release artifacts are
-# validated by the release workflows, not by rerunning source CI after publish.
+# THE CHEAP LANE AND THE HARDWARE TIERS. Nothing here gates a merge.
 #
-# The split this replaced ran a small `pr-gate` on pull requests and a larger
-# comprehensive tier on pushes to main, which is the right shape on a hosted
-# fleet and the wrong one here: this account has ONE Linux runner and ONE
-# Windows runner, shared across every repository, and every job on them is
-# serial. Splitting work across more jobs buys parallelism where runners are
-# elastic; here it buys only latency, and a check the pull request never ran
-# is a check that first fails on main - after the merge, with nobody watching.
+# - `pull_request`: style and types only, on every push to a branch under
+#   review. It answers the cheap questions fast and nothing else.
+# - `schedule` / `workflow_dispatch`: the hardware tiers that cannot gate a
+#   merge (macOS, CUDA).
+#
+# Everything a change must pass before it lands - every gating dimension, the
+# full Linux matrix, the full Windows suite and the dependency audit - lives
+# in `merge-gate.yml` and runs when a maintainer asks for it. A push to main
+# triggers nothing here: that tree was measured before it merged.
 #
 # CONCURRENCY, AND WHY THE COMMIT IS IN THE GROUP ON MAIN. `cancel-in-progress:
 # false` governs runs that have STARTED. GitHub separately cancels a
 # previously PENDING run in the same group, and offers no switch for it. On a
-# saturated serial fleet a main run sits pending for a long time. The last
-# merge before this change is the evidence: it ran for 2h23m, and four of its
-# jobs - the workflow lint, the lint tier, the vault check and the dependency
-# audit - were cancelled after sitting 12 to 30 minutes each without ever
-# being assigned a runner. So each push to main was killing the verdict on the
-# push before it, and reporting `cancelled` rather than `failed` while it did.
+# saturated serial fleet a run sits pending for a long time, so a scheduled
+# run and a dispatch against main would otherwise cancel each other and
+# report `cancelled` rather than `failed`. Putting the commit in the group, on
+# main only, gives every main commit its own group; pull requests keep
+# superseding their own earlier runs.
 #
-# Putting the commit in the group, on main only, gives every main commit its
-# own group; pull requests keep superseding their own earlier runs, which is
-# what you want when only the tip of a branch is under review.
-#
-# The rule and its two guards live in `dev/guards/`:
+# The rule and its guards live in `dev/guards/`:
 # `test_ci_no_repeated_work.py` expands every recipe to the commands it
 # finally runs and fails when one appears in two jobs of the same run;
 # `test_ci_jobs_reach_a_verdict.py` holds the ceilings and the groups above.
 #
 # THE TRUST QUESTION. This repository is PUBLIC, and a `pull_request` from a
 # fork runs code the author of the pull request controls. Admitting that code
-# to the self-hosted fleet hands a stranger execution on this hardware, so
-# every self-hosted job carries `if: github.event_name != 'pull_request' ||
-# github.event.pull_request.head.repo.full_name == github.repository` -
-# unreachable from a fork, unaffected for every pull request this project
-# actually gets. Job placement is the boundary; the repository's own
-# fork-approval setting for workflow runs is the backstop behind it, not the
-# other way around.
+# to the self-hosted fleet hands a stranger execution on this hardware, so a
+# fork's pull request runs on GitHub-hosted isolation instead. The hardware
+# tiers are unreachable from any pull request.
 on:
-  push:
-    branches:
-      - main
   pull_request:
   schedule:
     - cron: '17 5 * * 3'
@@ -56,11 +44,10 @@ on:
       # forces the other - before this, any manual run paid for the GPU tier
       # whether or not that was the point of the run.
       tier:
-        description: "Optional tier to include in this run"
+        description: "Tier to run"
         type: choice
-        default: none
+        default: macos
         options:
-          - none
           - macos
           - gpu
           - macos-and-gpu
@@ -97,39 +84,21 @@ env:
 jobs:
   lint:
     name: "Lint: Static Validation (Linux)"
-    # ONE STEP, and that is the point. This job used to hand-list every
-    # dimension of `just check-all` except one, with that one running as a
-    # separate job of its own - which is the exact drift `dev/ci_contract.py`
-    # exists to catch, reproduced by a job that listed an aggregate's members
-    # instead of naming the aggregate. Three jobs are folded in here: the
-    # workflow lint that ran the missing dimension, the pull-request gate that
-    # ran two of these dimensions and no others, and the vault check, which
-    # became `just check-vault` and joined the aggregate rather than staying a
-    # raw command in a job. A dimension added to the registry now joins this
-    # job automatically; before, it joined nothing.
+    # Only the two cheapest dimensions, on purpose: every push pays for this
+    # job. `merge-gate.yml` runs the aggregate, which contains both.
     #
-    # `check-all` keeps going after a failure and reports every dimension, so
-    # a contributor gets all the findings from one run rather than one per
-    # push. Its membership is data in `dev/toolchain.py`, so this job and the
-    # gates cannot disagree about what "everything" means.
-    #
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own, so admitting one hands a
-    # stranger execution on this hardware. Same-repo pull requests are
-    # unaffected, which is every pull request this project actually gets.
     # release-please updates pyproject.toml before its own follow-up commit
     # refreshes uv.lock on the release branch. That one-commit head is
     # transient, and running `just init` there only proves the repair has not
     # landed yet. Wait for the second commit, then run the usual gates.
     if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name != 'pull_request' ||
-       !startsWith(github.head_ref, 'release-please--') ||
+      github.event_name == 'pull_request' &&
+      (!startsWith(github.head_ref, 'release-please--') ||
        github.event.pull_request.commits > 1)
     timeout-minutes: 40
-    # Same-repository work uses the persistent fleet. A fork must still emit
-    # the required context, but only on GitHub-hosted isolation where its
-    # workflow cannot reach fleet state or credentials.
+    # Same-repository work uses the persistent fleet. A fork runs on
+    # GitHub-hosted isolation where its workflow cannot reach fleet state or
+    # credentials.
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","build"]') }}
     steps:
       - name: Checkout
@@ -160,160 +129,20 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
-      - name: Every gating dimension
-        run: just check-all
+      - name: Style
+        run: just check-python
 
-  tests:
-    name: "Test: Python ${{ matrix.python-version }} Correctness (Linux)"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own, so admitting one hands a
-    # stranger execution on this hardware. Same-repo pull requests are
-    # unaffected, which is every pull request this project actually gets.
-    if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name != 'pull_request' ||
-       !startsWith(github.head_ref, 'release-please--') ||
-       github.event.pull_request.commits > 1)
-    timeout-minutes: 45
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
-    strategy:
-      # Both interpreters run to completion: when only one line breaks, the
-      # failure is the whole signal, and cancelling the other hides whether
-      # the break is version-specific.
-      fail-fast: false
-      matrix:
-        python-version: ["3.13", "3.14"]
-    env:
-      # `.python-version` pins the dev interpreter to the floor, and uv reads
-      # it in preference to whatever actions/setup-python put on PATH. Without
-      # this the 3.14 leg would silently sync and test 3.13 — a green matrix
-      # proving nothing.
-      UV_PYTHON: ${{ matrix.python-version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
+      - name: Types
+        run: just check-type
 
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-          # setup-python's Linux 3.13 build depends on LD_LIBRARY_PATH. The
-          # product deliberately removes loader variables from untrusted hook
-          # children, so those children cannot safely inherit that interpreter.
-          # uv's managed distributions remain executable under the same
-          # curated environment that production uses.
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
-        with:
-          tool: just@1.38.0
-
-      - name: Initialize the worktree
-        run: just init
-
-      - name: Run tests
-        run: just test-python
-
-  # THE WINDOWS AND macOS JOBS.
-  #
-  # Windows GATES. Its full suite fails the run like a Linux leg does, because
-  # a test that fails only on Windows is a defect on a supported platform, and
-  # a failure reported without consequence ships anyway.
-  #
-  # macOS is still ADVISORY, through `continue-on-error` on its test step. It
-  # has never been fully triaged, and it runs only on schedule and dispatch, so
-  # it is never a pull request's verdict. It flips to gating by deleting that
+  # macOS is ADVISORY, through `continue-on-error` on its test step. It has
+  # never been fully triaged, and it runs only on schedule and dispatch, so it
+  # is never a pull request's verdict. It flips to gating by deleting that
   # flag once its failure count reaches zero. Ratchet down, never up.
   #
   # THAT STATUS IS NOT IN THE NAME, and the omission is deliberate. A job name
-  # says what is COVERED, so that a reviewer can find the row that covers the
-  # file they changed; whether a row can fail the merge is a property of the
-  # merge rules, not of the coverage. Read it here and in the macOS test
-  # step's `continue-on-error`.
-  #
-  # The full accelerator-free suite runs on Windows for both pull requests and
-  # main. It already includes the provisioning proofs; running their subset as
-  # a separate PR step measured only those five files while letting every other
-  # Windows-specific path, lock and process behaviour reach main untested.
-  #
-  # Neither job uses actions/setup-python. The GPU job below documents why: its
-  # MSI registry cleanup fails under a runner service account. uv fetches the
-  # interpreter named by UV_PYTHON instead, which is what the suite runs under
-  # anyway.
-  tests-windows:
-    name: "Test: Full Suite (Windows)"
-    # A fork's pull request must never reach the self-hosted fleet: the
-    # workflow it would run is the fork's own, so admitting one hands a
-    # stranger execution on this hardware. Same-repo pull requests are
-    # unaffected, which is every pull request this project actually gets.
-    if: >-
-      github.event_name != 'schedule' &&
-      (github.event_name != 'pull_request' ||
-       !startsWith(github.head_ref, 'release-please--') ||
-       github.event.pull_request.commits > 1)
-    timeout-minutes: 60
-    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
-    env:
-      UV_PYTHON: "3.13"
-      # This runner's agent is a Windows service, so its account is SYSTEM and
-      # every user-scoped path resolves inside
-      # C:\WINDOWS\system32\config\systemprofile - the operating system's own
-      # directory. Left alone, the suite's temp roots, the model cache, and the
-      # managed service state are all written into the OS install by a process
-      # holding administrative rights. Each one is pinned to runner-owned
-      # storage instead. TMP and TEMP cover Python's tempfile, which is where
-      # the pytest session roots are created.
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-
-      # Same pinned, checksum-verified download the GPU job uses: this
-      # runner's service account has no bash on PATH, so the marketplace
-      # action's shell is unavailable.
-      - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
-        with:
-          tool: just@1.38.0
-
-      - name: Initialize the worktree
-        run: just init
-
-      # `init` is idempotent and stamped: the second call must be a sub-second
-      # no-op, and `init-check` must agree the worktree is initialized. On
-      # Windows that is a real assertion rather than a formality - the stamp
-      # hashes paths, and a path comparison is where a Windows no-op most
-      # often stops being one.
-      #
-      # These two used to be a job of their own, alongside this one, on the
-      # single Windows machine the whole account queues behind. A second job
-      # buys parallelism on a hosted fleet; here it bought a second place in
-      # that queue, a second checkout and a second `init` - for two assertions
-      # that cost seconds once the worktree this job already builds exists.
-      - name: Initialization is idempotent
-        run: just init
-
-      - name: The worktree reports itself initialized
-        run: just init-check
-
-      - name: Run full test suite
-        run: just test-python
-
+  # says what is COVERED; whether a row can fail a merge is a property of the
+  # merge rules, not of the coverage.
   tests-macos:
     name: "Test: Full Suite and Accelerator Backend (macOS)"
     # Scheduled diagnostics and explicit dispatches only. Exact-release-SHA
@@ -440,7 +269,7 @@ jobs:
     # GPU-less hosted runner cannot execute. This is where the real GPU tier
     # actually runs instead of being deselected.
     #
-    # Dispatch-only: this tier does NOT run on push or pull_request. On a
+    # Schedule and dispatch only, never push or pull_request. On a
     # single self-hosted GPU runner shared with the live service, auto-running
     # it on every push wedged the runner (one hung test blocks all other CI on
     # the one machine) and the shared-GPU contention made results
@@ -587,43 +416,3 @@ jobs:
         if: always()
         shell: pwsh
         run: uv run --no-sync vaultspec-rag server stop --json
-
-  dependency-audit:
-    name: "Audit: Dependency Advisories (Linux)"
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    timeout-minutes: 15
-    concurrency:
-      group: ci-dependency-audit-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          # Derived from the pin, never repeated: a literal here drifts the
-          # first time the pin is bumped alone.
-          python-version-file: .python-version
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-
-      - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
-        with:
-          tool: just@1.38.0
-
-      - name: Initialize the worktree
-        run: just init
-
-      - name: Python dependency vulnerability audit
-        run: just audit-deps

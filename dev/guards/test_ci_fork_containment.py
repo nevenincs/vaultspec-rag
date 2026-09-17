@@ -1,12 +1,9 @@
-"""What a fork's pull request may and may not reach, and what it must run.
+"""What a fork's pull request may and may not reach.
 
-Two properties hold the pull-request lane's shape together and neither is
-visible from reading one job. No self-hosted job may run for a fork's pull
-request, because the workflow it would run is the fork's own, and admitting
-one hands a stranger execution on this hardware. And the provisioning proofs
-must be among what a pull request runs, because the failure they exist to
-catch is a Windows file-locking behaviour that skips silently everywhere else
-- a regression in it would otherwise reach the default branch unseen.
+No self-hosted job may run for a fork's pull request, because the workflow it
+would run is the fork's own, and admitting one hands a stranger execution on
+this hardware. The jobs a pull request does reach must still report their
+required context for a fork, on GitHub-hosted isolation.
 
 THE GPU TIER NEEDS NO SAME-REPO CLAUSE OF ITS OWN. That job runs on a
 workstation carrying a live service and the only card in the fleet, and it
@@ -24,21 +21,28 @@ from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
+#: The workflow that carries the hardware tiers.
 WORKFLOW = "ci.yml"
 
 #: The job whose runner is a workstation with a live service and the one card.
 GPU_JOB = "gpu-tests"
-
-#: The accelerator-free lane. It contains every Windows-sensitive subset, so a
-#: pull request running it on Windows leaves none of them unmeasured there.
-FULL_LANE = "test-python"
 
 #: The clause that excludes a fork's pull request specifically. A self-hosted
 #: job reachable by `pull_request` at all must carry this in its `if:`; one
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
 
-REQUIRED_PR_JOBS = ("lint", "tests", "tests-windows")
+#: Every job a pull request reaches that lands on the fleet otherwise, by
+#: workflow, with the hosted image a fork runs it on instead.
+PULL_REQUEST_JOBS = {
+    "ci.yml": {"lint": "ubuntu-24.04"},
+    "merge-gate.yml": {
+        "lint": "ubuntu-24.04",
+        "tests": "ubuntu-24.04",
+        "tests-windows": "windows-2025",
+        "dependency-audit": "ubuntu-24.04",
+    },
+}
 
 
 def _job(job_id: str) -> workflows.Job:
@@ -62,8 +66,9 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     hardware, which is the exposure the trust boundary exists to close.
     """
     offenders = {
-        job.job_id: job.condition
-        for job in workflows.load_jobs(WORKFLOW)
+        f"{job.workflow}:{job.job_id}": job.condition
+        for workflow in workflows.MERGE_BOX
+        for job in workflows.load_jobs(workflow)
         if job.self_hosted
         and job.reaches("pull_request")
         and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
@@ -71,23 +76,31 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
 
-def test_forks_emit_every_required_context_on_hosted_isolation() -> None:
-    """Fork PRs retain required evidence without reaching persistent runners."""
+@pytest.mark.parametrize("workflow", sorted(PULL_REQUEST_JOBS))
+def test_forks_emit_every_check_on_hosted_isolation(workflow: str) -> None:
+    """Fork PRs keep their checks without reaching persistent runners.
+
+    Mutation proof: replacing ``"windows-2025"`` in the gate's Windows job
+    with a self-hosted label makes this fail naming that job; restoring it
+    makes this pass.
+    """
     source = (
-        workflows.repository_root() / ".github" / "workflows" / WORKFLOW
+        workflows.repository_root() / ".github" / "workflows" / workflow
     ).read_text(encoding="utf-8")
-    for job_id in REQUIRED_PR_JOBS:
+    for job_id, hosted in PULL_REQUEST_JOBS[workflow].items():
         match = re.search(
             rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [a-z][\w-]*:|\Z)",
             source,
         )
-        assert match is not None
-        body = match.group("body")
-        assert "head.repo.full_name != github.repository" in body
-        assert "fromJSON(" in body
-        assert "self-hosted" in body
-    assert '"ubuntu-24.04"' in source
-    assert '"windows-2025"' in source
+        assert match is not None, f"{workflow} has no job `{job_id}`"
+        runs_on = re.search(r"(?m)^    runs-on: (?P<value>.*)$", match.group("body"))
+        assert runs_on is not None, f"{workflow}:{job_id} declares no runs-on"
+        value = runs_on.group("value")
+        where = f"{workflow}:{job_id}"
+        assert "head.repo.full_name != github.repository" in value, where
+        assert "fromJSON(" in value, where
+        assert "self-hosted" in value, where
+        assert f'"{hosted}"' in value, f"{where} does not run a fork on {hosted}"
 
 
 def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
@@ -104,33 +117,4 @@ def test_the_gpu_tier_is_unreachable_from_a_pull_request() -> None:
         f"{job.condition!r}. It runs on a workstation with a live service and "
         "the fleet's only CUDA device; it stays dispatch-only, which requires "
         "write access, so a fork can never start it."
-    )
-
-
-def test_the_pull_request_lane_runs_the_full_windows_suite() -> None:
-    """A pull request runs the accelerator-free suite on Windows.
-
-    The full suite contains the provisioning proofs and every other test whose
-    path, lock, process or subprocess behaviour differs on Windows. A narrow
-    subset under a broad Windows job name gives reviewers a green result for
-    coverage that never ran.
-
-    Mutation proof: replacing the Windows job's ``test-python`` step with the
-    focused ``test-windows`` subset makes this fail on the missing full-suite
-    recipe; restoring the full-suite step makes it pass again.
-    """
-    covering = {
-        job.job_id: job.recipes_on("pull_request")
-        for job in workflows.load_jobs(WORKFLOW)
-        if "windows" in job.platforms
-    }
-    running = {job_id: recipes for job_id, recipes in covering.items() if recipes}
-    assert running, (
-        "no Windows job runs on a pull request, so the provisioning proofs "
-        "skip in the only lane that gates a merge."
-    )
-    assert any(FULL_LANE in recipes for recipes in running.values()), (
-        f"a pull request's Windows job runs {running}, which does not include "
-        f"the full `{FULL_LANE}` lane. A focused subset leaves every other "
-        "Windows-specific path, lock and process behaviour unmeasured."
     )

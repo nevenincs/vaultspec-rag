@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 __all__ = [
     "FALSE",
     "MAYBE",
+    "MEASURING_GROUPS",
+    "MERGE_BOX",
     "TRUE",
     "Job",
     "Tri",
@@ -89,6 +91,14 @@ _RECIPE_GROUP = re.compile(r"^\[group\('([a-z]+)'\)\]")
 
 #: A ``runs-on`` that defers to the matrix, which is what hides a runner.
 _MATRIX_REFERENCE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
+
+#: The workflows that measure the tree: the cheap lane every push runs, and
+#: the gate a change must pass before it merges. Release-plane workflows
+#: build and publish instead, and answer different questions.
+MERGE_BOX = ("ci.yml", "merge-gate.yml")
+
+#: Recipe groups that measure the tree, as opposed to provisioning it.
+MEASURING_GROUPS = frozenset({"check", "audit", "test"})
 
 #: The justfile's ``dev`` assignment, expanded into recipe bodies.
 _DEV_PREFIX = ("uv", "run", "--no-sync", "python", "-m", "dev")
@@ -191,6 +201,20 @@ class Job:
             recipe
             for _, recipe, condition in self._recipe_steps()
             if condition is None or evaluate(condition, event) in {TRUE, MAYBE}
+        )
+
+    def measuring_recipes_on(self, event: str) -> tuple[str, ...]:
+        """Return the recipes *event* reaches here that measure the tree.
+
+        Provisioning recipes are excluded: every job must initialise its
+        worktree, so ``init`` running everywhere is neither a repeat nor a
+        measurement.
+        """
+        groups = recipe_groups()
+        return tuple(
+            recipe
+            for recipe in self.recipes_on(event)
+            if groups.get(recipe) in MEASURING_GROUPS
         )
 
     def reaches(self, event: str) -> bool:
