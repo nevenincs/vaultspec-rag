@@ -320,7 +320,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Afull" --silent
+        # A re-run, or a second gate racing this one, finds the label already
+        # gone. That is the state this step exists to reach, so it passes; any
+        # other failure leaves the label on and still fails here.
+        run: |
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Afull" --silent \
+            || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == "ci:full") | not' | grep -qx true
 
       - name: Every full check passed on this commit
         env:
