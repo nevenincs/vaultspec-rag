@@ -1,4 +1,4 @@
-name: Code Health
+name: RAG Code Health
 
 # ADVISORY MEASUREMENT, ON A SCHEDULE, OFF THE MERGE PATH.
 #
@@ -40,12 +40,14 @@ concurrency:
 
 jobs:
   code-health:
-    name: "Audit: Code Health (Linux)"
+    name: "Check: Code health (Linux)"
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -53,7 +55,7 @@ jobs:
       - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version-file: .python-version
 
@@ -63,7 +65,7 @@ jobs:
           enable-cache: false
 
       - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:
           tool: just@1.38.0
 

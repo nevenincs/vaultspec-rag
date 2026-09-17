@@ -53,7 +53,7 @@ JUST_VERSION = "1.38.0"
 #: The one action, pinned by commit. taiki-e/install-action fetches the
 #: upstream release for every runner OS, which is what retires the bespoke
 #: Windows paths (a hand-rolled pwsh download, and an unpinned `scoop install`).
-JUST_ACTION_SHA = "d56249f532886d210664917b882ad7e152e17d68"
+JUST_ACTION_SHA = "6012bba2f8e3e666a2b212f8823c06831704ce92"
 JUST_INSTALL_USES = f"taiki-e/install-action@{JUST_ACTION_SHA}"
 JUST_INSTALL_TOOL = f"just@{JUST_VERSION}"
 

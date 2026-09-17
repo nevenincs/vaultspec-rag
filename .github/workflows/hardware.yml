@@ -1,4 +1,4 @@
-name: Hardware Tiers
+name: RAG Hardware Tiers
 
 # THE ONE DEFINITION OF THE ACCELERATOR TIERS: Apple silicon (MPS) and CUDA.
 #
@@ -60,7 +60,7 @@ env:
 
 jobs:
   mps:
-    name: "Test: Accelerator Backend (macOS)"
+    name: "Test: Accelerator backend (macOS)"
     # The macOS runner is a laptop under an AC-power policy: on battery it is
     # deliberately booted out of the fleet, so it is absent for long stretches
     # by design. A release waits for it: the machine must be plugged in before
@@ -78,6 +78,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
           ref: ${{ inputs.target_sha }}
 
       - name: Require the exact commit
@@ -108,7 +109,7 @@ jobs:
           enable-cache: false
 
       - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:
           tool: just@1.38.0
 
@@ -146,7 +147,7 @@ jobs:
         run: just test-mps
 
   cuda:
-    name: "Test: GPU Correctness (CUDA)"
+    name: "Test: GPU correctness (Windows)"
     # Generous because this tier is the ~40 minute long pole, but still
     # finite: a wedged GPU test holds the only machine carrying the cuda
     # label, so an unbounded hang blocks every future GPU run rather than just
@@ -178,6 +179,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
           ref: ${{ inputs.target_sha }}
           # The ranking-quality gates read `.vault/` at a pinned historical
           # commit, which a shallow clone does not contain.
@@ -200,7 +202,7 @@ jobs:
           enable-cache: false
 
       - name: Set up just
-        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:
           tool: just@1.38.0
 

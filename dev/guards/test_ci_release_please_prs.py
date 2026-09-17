@@ -42,6 +42,7 @@ def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None
     """
     expected = (
         "github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name == github.repository && "
         f"(!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
     )
     offenders = {

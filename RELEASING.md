@@ -52,22 +52,22 @@ The three workflows have deliberately separate responsibilities:
    commits. When the PR is merged, release-please creates the
    `vaultspec-rag-v<version>` tag and GitHub Release.
 1. The same workflow immediately marks the new Release as a prerelease and
-   explicitly dispatches `Publish` with the exact tag. `Publish` also performs
-   that prerelease hold for its tag-push and manual entrypoints, then dispatches
-   `Binaries` only after both package-publication jobs succeed. Do not dispatch
-   the two artifact workflows independently in the normal release path: their
-   ordering is the stable/latest safety boundary.
-1. `Publish` builds the wheel and source distribution, smoke-tests both across
-   the supported Python versions, publishes to PyPI through the trusted
+   explicitly dispatches `RAG Publish` with the exact tag. `RAG Publish` also
+   performs that prerelease hold for its tag-push and manual entrypoints, then
+   dispatches `RAG Binaries` only after both package-publication jobs succeed.
+   Do not dispatch the two artifact workflows independently in the normal
+   release path: their ordering is the stable/latest safety boundary.
+1. `RAG Publish` builds the wheel and source distribution, smoke-tests both
+   across the supported Python versions, publishes to PyPI through the trusted
    publisher, and attaches the Python artifacts to the GitHub Release.
-1. `Binaries` builds the exact release wheel once, passes that wheel to every
-   target leg, finalizes the target-qualified executables, and creates and
+1. `RAG Binaries` builds the exact release wheel once, passes that wheel to
+   every target leg, finalizes the target-qualified executables, and creates and
    verifies one archive per target. Its release job aggregates the archive
    checksums, passes the complete-target gate, attaches only the public
    archives and merged checksum file, then generates and validates the Scoop
    manifest and Homebrew formula in the account channel repository.
-1. `Binaries` always runs `verify-release-assets` after its release job. The
-   verifier derives the expected targets from the matrix and requires every
+1. `RAG Binaries` always runs `verify-release-assets` after its release job.
+   The verifier derives the expected targets from the matrix and requires every
    correctly named archive, the exact wheel and source distribution, no raw
    executables, exact `SHA256SUMS` coverage with valid digests, a visible
    matching PyPI version, and a successful binary release job. A failed or
@@ -75,7 +75,7 @@ The three workflows have deliberately separate responsibilities:
    promoted only after the full set passes; release tags containing `rc`,
    `alpha`, `beta`, or `dev` remain prereleases by design.
 
-`Publish` and `Binaries` share the concurrency group
+`RAG Publish` and `RAG Binaries` share the concurrency group
 `release-artifacts-<tag>` with `cancel-in-progress: false`. This serializes
 updates to the one remote `SHA256SUMS` asset while allowing a failed lane to be
 rerun for the same tag.
@@ -89,8 +89,8 @@ rerun for the same tag.
    `uv.lock` are coherent, and wait for the required checks.
 1. Merge the release PR. Do not manually create a second tag or Release for
    the same version.
-1. Watch both `Publish` and `Binaries`. The release should remain a prerelease
-   until the binary verifier has accepted all three target archives.
+1. Watch both `RAG Publish` and `RAG Binaries`. The release should remain a
+   prerelease until the binary verifier has accepted all three target archives.
 1. Confirm the GitHub Release asset list and the PyPI version. A normal,
    complete release should expose three binary archives, one wheel, one source
    distribution, and `SHA256SUMS`.
@@ -226,11 +226,12 @@ gh run list --repo "$REPO" --workflow Publish --limit 20
 
 ### Missing or incomplete binary archives
 
-Read the failed matrix leg and runner-preflight result first. Restore the
-runner or correct the build input, then rerun `Binaries` for the same tag:
+Read the failed matrix leg first. Restore the runner or correct the build
+input, then rerun `RAG Binaries` for the same tag and its release commit:
 
 ```sh
-gh workflow run Binaries --repo "$REPO" --ref main --field tag="$TAG"
+gh workflow run binaries.yml --repo "$REPO" --ref main --field tag="$TAG" \
+  --field target_sha="$(git rev-parse "$TAG^{commit}")"
 ```
 
 Do not remove a target from the matrix just to make a release green. If the
@@ -246,7 +247,7 @@ archives or `SHA256SUMS`:
 gh release delete-asset "$TAG" <raw-asset-name> --repo "$REPO" --yes
 ```
 
-Rerun `Binaries` after cleanup. If a normal release is currently stable while
+Rerun `RAG Binaries` after cleanup. If a normal release is currently stable while
 it is incomplete, demote it immediately so it cannot answer as `latest`:
 
 ```sh
@@ -258,16 +259,16 @@ The successful binary verifier will promote a repaired normal release again.
 ### Missing Python artifacts or PyPI publication
 
 If the Release exists but the wheel, source distribution, or PyPI publication
-is missing, rerun `Publish` for the same tag:
+is missing, rerun `RAG Publish` for the same tag:
 
 ```sh
-gh workflow run Publish --repo "$REPO" --ref main --field tag="$TAG"
+gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG"
 ```
 
-If no GitHub Release exists yet, run `Publish` first and wait for its
-`github-release` job to create the Release before rerunning `Binaries`. The
-manual `Publish` path verifies the tag and can create the missing Release;
-`Binaries` then attaches the validated target archives.
+If no GitHub Release exists yet, run `RAG Publish` first and wait for its
+`github-release` job to create the Release before rerunning `RAG Binaries`. The
+manual `RAG Publish` path verifies the tag and can create the missing Release;
+`RAG Binaries` then attaches the validated target archives.
 
 ### Checksum drift or a lost merge
 
@@ -280,7 +281,7 @@ final file with the `gh release view` asset list and by downloading
 
 ### Channel pointers did not advance
 
-Rerun `Binaries` after the Release has a complete archive set. Its release job
+Rerun `RAG Binaries` after the Release has a complete archive set. Its release job
 regenerates and validates the account pointers before committing them. For a
 local repair, use a fresh checkout of `nevenincs/homebrew-tap` and the Release
 checksum file:

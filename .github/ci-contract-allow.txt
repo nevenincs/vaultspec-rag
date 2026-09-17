@@ -7,8 +7,8 @@
 
 # --- runner-plane -----------------------------------------------------------
 # Acts on the MACHINE, not the product, so there is no local recipe it could
-# be hiding. These belong in ci-fleet, which already owns the job hooks, the
-# fleet operations.
+# be hiding. These belong with the runner fleet's own job hooks and
+# operations.
 binaries.yml:Return the workspace to the runner's user
 acquisition.yml:Return the workspace to the runner's user
 acquisition.yml:Install what acquisition itself needs
@@ -82,7 +82,10 @@ merge-gate.yml:Every full check passed on this commit
 
 # These steps bind release validation to the commit selected from the tag.
 # They are Git identity bookkeeping, not a reusable source validation command.
+# The two resolvers run on a hosted runner with no checkout, so no recipe
+# exists there to call: they read the public remote before anything executes.
 publish.yml:Resolve exact release SHA
+binaries.yml:Require a release tag that resolves to the requested commit
 hardware.yml:Require the exact commit
 publish.yml:Require the exact release commit
 binaries.yml:Require the exact release commit

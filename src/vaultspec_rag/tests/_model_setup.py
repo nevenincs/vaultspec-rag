@@ -21,6 +21,7 @@ _DEFAULT_SETUP_TIMEOUT_SECONDS = 600.0
 _SETUP_TIMEOUT_ENV = "VAULTSPEC_RAG_TEST_MODEL_SETUP_TIMEOUT"
 _OUTPUT_TAIL_CHARS = 12_000
 _TERMINATE_GRACE_SECONDS = 5.0
+_KILL_REAP_SECONDS = 5.0
 _DESCENDANT_EXIT_SECONDS = 0.25
 _TOKENIZER_FILENAMES = frozenset(
     {
@@ -193,9 +194,12 @@ def _terminate_kill_and_raise(
         )
     except subprocess.TimeoutExpired:
         process.kill()
+        # A hard kill is asynchronous, and by now the deadline has usually
+        # passed, so waiting only for what remains of it would report a worker
+        # that is still exiting. The reap gets its own fixed bound instead.
         try:
             trailing, _ = process.communicate(
-                timeout=max(0.001, deadline - time.monotonic())
+                timeout=max(_KILL_REAP_SECONDS, deadline - time.monotonic())
             )
         except subprocess.TimeoutExpired as kill_exc:
             output += _coerce_output(kill_exc.output)

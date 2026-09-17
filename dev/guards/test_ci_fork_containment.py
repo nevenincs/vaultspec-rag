@@ -1,9 +1,9 @@
 """What a fork's pull request may and may not reach.
 
-No self-hosted job may run for a fork's pull request, because the workflow it
-would run is the fork's own, and admitting one hands a stranger execution on
-this hardware. The jobs a pull request does reach must still report their
-required context for a fork, on GitHub-hosted isolation.
+A fork's pull request is REFUSED. The workflow it would run is the fork's own,
+so no job that measures anything may run for it - not on this hardware and not
+on a hosted runner either - and the merge gate fails it, so the change is
+re-opened from a branch in this repository before anything executes.
 
 THE ACCELERATOR TIERS NEED NO SAME-REPO CLAUSE OF THEIR OWN. They run on a
 workstation carrying a live service and the only card in the fleet, and on a
@@ -33,17 +33,11 @@ PULL_REQUEST_EVENTS = frozenset({"pull_request", "pull_request_target"})
 #: that does not runs a fork's own workflow on this hardware.
 SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
 
-#: Every job a pull request reaches that lands on the fleet otherwise, by
-#: workflow, with the hosted image a fork runs it on instead.
-PULL_REQUEST_JOBS = {
-    "ci.yml": {"lint": "ubuntu-24.04"},
-    "merge-gate.yml": {
-        "lint": "ubuntu-24.04",
-        "tests": "ubuntu-24.04",
-        "tests-windows": "windows-2025",
-        "dependency-audit": "ubuntu-24.04",
-    },
-}
+#: The job that turns the merge box into the one required verdict.
+GATE = ("merge-gate.yml", "gate")
+
+#: A runs-on expression that picks a different runner for a fork.
+_FORK_RUNNER_SWITCH = re.compile(r"head\.repo\.full_name\s*!=")
 
 
 def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
@@ -65,31 +59,65 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
 
-@pytest.mark.parametrize("workflow", sorted(PULL_REQUEST_JOBS))
-def test_forks_emit_every_check_on_hosted_isolation(workflow: str) -> None:
-    """Fork PRs keep their checks without reaching persistent runners.
+def _runner_switches(documents: dict[str, str]) -> list[str]:
+    """Name every job whose runs-on sends a fork somewhere else to run."""
+    return [
+        f"{name}:{line.strip()}"
+        for name, text in documents.items()
+        for line in text.splitlines()
+        if line.lstrip().startswith("runs-on:") and _FORK_RUNNER_SWITCH.search(line)
+    ]
 
-    Mutation proof: replacing ``"windows-2025"`` in the gate's Windows job
-    with a self-hosted label makes this fail naming that job; restoring it
-    makes this pass.
+
+def test_no_job_offers_a_fork_another_runner() -> None:
+    """A fork is refused, never rerouted to hosted isolation."""
+    directory = workflows.repository_root() / ".github" / "workflows"
+    documents = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(directory.glob("*.yml"))
+    }
+    assert _runner_switches(documents) == []
+
+
+def test_a_fork_runner_switch_is_named() -> None:
+    """Mutation proof: the hosted fallback forks used to get is caught.
+
+    Restoring ``runs-on: ${{ fromJSON(... head.repo.full_name !=
+    github.repository && '["ubuntu-24.04"]' || ...) }}`` on the merge gate's
+    lint job made ``test_no_job_offers_a_fork_another_runner`` fail naming
+    that line; restoring the fixed fleet labels made it pass.
     """
-    source = (
-        workflows.repository_root() / ".github" / "workflows" / workflow
-    ).read_text(encoding="utf-8")
-    for job_id, hosted in PULL_REQUEST_JOBS[workflow].items():
-        match = re.search(
-            rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [a-z][\w-]*:|\Z)",
-            source,
-        )
-        assert match is not None, f"{workflow} has no job `{job_id}`"
-        runs_on = re.search(r"(?m)^    runs-on: (?P<value>.*)$", match.group("body"))
-        assert runs_on is not None, f"{workflow}:{job_id} declares no runs-on"
-        value = runs_on.group("value")
-        where = f"{workflow}:{job_id}"
-        assert "head.repo.full_name != github.repository" in value, where
-        assert "fromJSON(" in value, where
-        assert "self-hosted" in value, where
-        assert f'"{hosted}"' in value, f"{where} does not run a fork on {hosted}"
+    switch = (
+        "    runs-on: ${{ fromJSON(github.event.pull_request.head.repo.full_name"
+        " != github.repository && '[\"ubuntu-24.04\"]' || '[\"self-hosted\"]') }}"
+    )
+    documents = {"w.yml": f"jobs:\n  lint:\n{switch}\n    steps: []\n"}
+    assert _runner_switches(documents) == [f"w.yml:{switch.strip()}"]
+
+
+def test_the_gate_refuses_a_forks_pull_request() -> None:
+    """The one required verdict fails a fork before it reads any result.
+
+    Mutation proof: deleting the ``FORK`` refusal from the gate's verdict step
+    made this fail on the missing refusal; restoring it made this pass.
+    """
+    workflow, job_id = GATE
+    gate = next(job for job in workflows.load_jobs(workflow) if job.job_id == job_id)
+    verdict = next(
+        step
+        for step in gate.steps
+        if step.get("name") == "Every full check passed on this commit"
+    )
+    assert verdict["env"]["FORK"] == (
+        "${{ github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name != github.repository }}"
+    )
+    script = str(verdict["run"])
+    opening = 'if [ "${FORK}" = "true" ]; then'
+    assert opening in script, "the verdict no longer refuses a fork"
+    refusal = script.index(opening)
+    assert "exit 1" in script[refusal : script.index("fi", refusal)]
+    assert refusal < script.index("ran=$(jq")
 
 
 def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:

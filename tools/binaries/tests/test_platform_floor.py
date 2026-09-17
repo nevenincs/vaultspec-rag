@@ -97,6 +97,34 @@ def test_a_pinned_manylinux_image_declares_the_floor_it_actually_provides(
     assert checked, "no leg pins a manylinux image; this guard is vacuous"
 
 
+def test_a_containerised_leg_runs_where_a_container_can_start(
+    repo_root: Path,
+) -> None:
+    """A pinned image is only a floor if the leg's runner can start it.
+
+    The fleet's self-hosted Linux runners have no container runtime, so a
+    containerised leg there dies in ``Initialize containers`` and the release
+    ships no binary for that target. Only GitHub-hosted runners start one.
+
+    Mutation proof: pointing ``linux-x86_64`` back at
+    ``[self-hosted, Linux, X64, build]`` made this test fail naming that leg;
+    restoring ``ubuntu-24.04`` made it pass again.
+    """
+    checked = 0
+    for leg in _legs(repo_root):
+        if not leg.get("container"):
+            continue
+        runner = leg["runner"]
+        labels = [runner] if isinstance(runner, str) else list(runner)
+        assert "self-hosted" not in labels, (
+            f"{leg['name']} runs {leg['container']} on self-hosted {labels}, "
+            "which cannot start a job container"
+        )
+        checked += 1
+
+    assert checked, "no leg is containerised; this guard is vacuous"
+
+
 def test_an_uncontainerised_linux_leg_is_not_silently_trusted(
     repo_root: Path,
 ) -> None:
