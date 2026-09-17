@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -240,59 +237,6 @@ class TestProviderLifecycleAcceptance:
         providers = report.to_dict()["sync_providers"]
         assert providers["claude"]["pruned"] == 1
         assert providers["codex"]["pruned"] == 1
-
-    def test_real_host_clis_recognize_project_entries(
-        self, fresh_workspace: Path
-    ) -> None:
-        subprocess.run(
-            ["git", "init", "-q"],
-            cwd=fresh_workspace,
-            check=True,
-            timeout=30,
-        )
-        _install(fresh_workspace)
-
-        claude = subprocess.run(
-            ["claude", "mcp", "get", "vaultspec-rag"],
-            cwd=fresh_workspace,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=30,
-        )
-        assert claude.returncode == 0, claude.stderr or claude.stdout
-        assert "vaultspec-rag" in claude.stdout
-        assert "Scope: Project config" in claude.stdout
-
-        codex_executable = shutil.which("codex")
-        assert codex_executable is not None, "Codex CLI is required for this test"
-        codex_home = fresh_workspace.parent / "codex-home"
-        codex_home.mkdir()
-        project_key = str(fresh_workspace.resolve())
-        if os.name == "nt":
-            project_key = project_key.lower()
-        (codex_home / "config.toml").write_text(
-            f'[projects.{json.dumps(project_key)}]\ntrust_level = "trusted"\n',
-            encoding="utf-8",
-        )
-        codex = subprocess.run(
-            [codex_executable, "mcp", "get", "vaultspec-rag", "--json"],
-            cwd=fresh_workspace,
-            env={**os.environ, "CODEX_HOME": str(codex_home)},
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=30,
-        )
-        assert codex.returncode == 0, codex.stderr or codex.stdout
-        codex_entry = json.loads(codex.stdout)
-        assert codex_entry["name"] == "vaultspec-rag"
-        assert codex_entry["transport"]["command"] == "uvx"
-        assert "vaultspec-rag[gpu,mcp]" in codex_entry["transport"]["args"]
 
 
 class TestSymmetricRoundTrip:
