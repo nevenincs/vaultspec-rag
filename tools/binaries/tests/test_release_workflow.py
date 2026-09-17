@@ -208,7 +208,7 @@ def test_release_please_holds_then_publish_dispatches_binaries(
     assert "needs: hold-release" in downstream
     assert "--prerelease" in downstream[hold:dispatch]
     assert "needs: [publish-pypi, github-release]" in downstream
-    assert "gh workflow run Binaries \\" in dispatch_section
+    assert "gh workflow run binaries.yml \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
 
 

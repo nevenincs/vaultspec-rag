@@ -1,4 +1,4 @@
-name: Claude Code
+name: RAG Assistant
 
 on:
   issue_comment:
@@ -12,6 +12,7 @@ on:
 
 jobs:
   claude:
+    name: "Build: Assistant response (Linux)"
     timeout-minutes: 30
     concurrency:
       group: claude-${{ github.event.issue.number || github.event.pull_request.number }}

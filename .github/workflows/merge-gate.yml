@@ -1,4 +1,4 @@
-name: Merge Gate
+name: RAG Merge Gate
 
 # EVERYTHING A CHANGE MUST PASS BEFORE IT REACHES MAIN, RUN ON REQUEST.
 #
@@ -9,7 +9,7 @@ name: Merge Gate
 # again, so adding it is a button that can be pressed more than once.
 #
 # WHY ONE REQUIRED CHECK HOLDS. Branch protection requires only
-# `Gate: Merge Readiness` on the pull request's head commit.
+# `Check: Merge gate (Linux)` on the pull request's head commit.
 #
 # - A push creates a new head commit and does NOT start this workflow, so the
 #   new commit has no gate result and the merge stays blocked until the label
@@ -71,7 +71,7 @@ env:
 
 jobs:
   lint:
-    name: "Lint: Every Gating Dimension (Linux)"
+    name: "Check: Every gating dimension (Linux)"
     # Names the aggregate rather than listing its members: a dimension added
     # to the registry joins this job automatically. `check-all` keeps going
     # after a failure and reports every dimension, and its membership is data
@@ -118,7 +118,7 @@ jobs:
         run: just check-all
 
   tests:
-    name: "Test: Python ${{ matrix.python-version }} Correctness (Linux)"
+    name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own. It still reports this check,
     # on GitHub-hosted isolation where it cannot reach fleet state.
@@ -181,7 +181,7 @@ jobs:
   # service account. uv fetches the interpreter named by UV_PYTHON instead,
   # which is what the suite runs under anyway.
   tests-windows:
-    name: "Test: Full Suite (Windows)"
+    name: "Test: Full suite (Windows)"
     # A fork's pull request must never reach the self-hosted fleet: the
     # workflow it would run is the fork's own. It still reports this check,
     # on GitHub-hosted isolation where it cannot reach fleet state.
@@ -246,7 +246,7 @@ jobs:
         run: just test-python
 
   dependency-audit:
-    name: "Audit: Dependency Advisories (Linux)"
+    name: "Check: Dependency advisories (Linux)"
     # Audits the lock that is about to land. The weekly run catches
     # advisories published against a lock that has not changed.
     # A fork's pull request must never reach the self-hosted fleet: the
@@ -290,7 +290,7 @@ jobs:
         run: just audit-deps
 
   gate:
-    name: "Gate: Merge Readiness"
+    name: "Check: Merge gate (Linux)"
     needs: [lint, tests, tests-windows, dependency-audit]
     # `always()`, never `!cancelled()`: see the header on why a skipped gate
     # would pass a commit nothing measured.
@@ -334,7 +334,7 @@ jobs:
           # Nothing ran, so another label started this run. It passes only on
           # the strength of an earlier gate on the same commit. `filter=all`
           # is required because this run's own gate is the latest by name.
-          earlier=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=Gate%3A%20Merge%20Readiness&filter=all&per_page=100" \
+          earlier=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=Check%3A%20Merge%20gate%20%28Linux%29&filter=all&per_page=100" \
             --jq '[.check_runs[] | select(.conclusion == "success")] | length')
           if [ "$earlier" -gt 0 ]; then
             echo "full checks already passed on $SHA"

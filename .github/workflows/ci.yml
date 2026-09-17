@@ -1,4 +1,4 @@
-name: CI
+name: RAG CI
 
 # THE CHEAP LANE AND THE HARDWARE TIERS. Nothing here gates a merge.
 #
@@ -83,7 +83,7 @@ env:
 
 jobs:
   lint:
-    name: "Lint: Static Validation (Linux)"
+    name: "Check: Lint (Linux)"
     # Only the two cheapest dimensions, on purpose: every push pays for this
     # job. `merge-gate.yml` runs the aggregate, which contains both.
     #
@@ -140,7 +140,7 @@ jobs:
   # single card with a live service, and the macOS tier needs a laptop that is
   # out of the fleet on battery, so exercising one never forces the other.
   hardware:
-    name: "Test: Accelerator Tiers"
+    name: "Test: Accelerator tiers"
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'

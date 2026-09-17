@@ -1,4 +1,4 @@
-name: Binaries
+name: RAG Binaries
 
 # WHAT STARTS THIS WORKFLOW: Publish dispatches it only after PyPI and the
 # GitHub wheel/sdist publication have both succeeded. Keeping this workflow
@@ -41,7 +41,7 @@ jobs:
   # the package index.
   wheel:
     timeout-minutes: 30
-    name: Build the wheel the binaries carry
+    name: "Build: Binary wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Checkout
@@ -85,7 +85,7 @@ jobs:
 
   build:
     needs: wheel
-    name: Build ${{ matrix.name }}
+    name: "Build: Standalone binaries (${{ matrix.name }})"
     strategy:
       fail-fast: false
       matrix:
@@ -214,7 +214,7 @@ jobs:
 
   release:
     timeout-minutes: 30
-    name: Attach to release
+    name: "Build: Release attachment (Linux)"
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
@@ -503,7 +503,7 @@ jobs:
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
     timeout-minutes: 30
-    name: Verify the release carries artifacts
+    name: "Check: Release proven (Linux)"
     needs: release
     if: ${{ always() }}
     # ON THE FLEET, and it shares the build's Linux/X64 runners, so it is only
@@ -584,7 +584,7 @@ jobs:
 
           # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
           #
-          # Its aarch64 leg failed, so `Attach to release` was skipped and no
+          # Its aarch64 leg failed, so the release attachment was skipped and no
           # binary reached the release - but `Publish` had already attached the
           # wheel, the sdist and SHA256SUMS on the tag. The old check asked only
           # whether the asset count was above zero, saw three, and passed. A
@@ -693,7 +693,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          title="Acquisition check ${TAG} @ ${TARGET_SHA}"
+          title="RAG Acquisition ${TAG} @ ${TARGET_SHA}"
           before_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
             --workflow acquisition.yml --event workflow_dispatch --limit 1 \
             --json databaseId --jq '.[0].databaseId // 0')

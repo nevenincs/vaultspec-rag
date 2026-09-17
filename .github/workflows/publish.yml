@@ -1,4 +1,4 @@
-name: Publish
+name: RAG Publish
 
 on:
   push:
@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   resolve-target:
-    name: Resolve exact release SHA
+    name: "Check: Release commit (Linux)"
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
     outputs:
@@ -34,12 +34,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - id: commit
+      - name: Resolve exact release SHA
+        id: commit
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   hardware-validation:
-    name: Validate release hardware
+    name: "Test: Release hardware"
     needs: resolve-target
     uses: ./.github/workflows/hardware.yml
     with:
@@ -48,7 +49,7 @@ jobs:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
   hold-release:
-    name: Hold release out of latest
+    name: "Build: Prerelease hold (Linux)"
     needs: [resolve-target, hardware-validation]
     outputs:
       sha: ${{ needs.resolve-target.outputs.sha }}
@@ -74,7 +75,7 @@ jobs:
           fi
 
   build:
-    name: Build
+    name: "Build: Python package (Linux)"
     timeout-minutes: 20
     needs: hold-release
     outputs:
@@ -121,7 +122,7 @@ jobs:
           retention-days: 5
 
   smoke-test:
-    name: Smoke Test (py${{ matrix.python-version }})
+    name: "Test: Package smoke (Linux, ${{ matrix.python-version }})"
     timeout-minutes: 20
     needs: build
     outputs:
@@ -175,7 +176,7 @@ jobs:
         run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_check.py
 
   publish-pypi:
-    name: Publish to PyPI
+    name: "Build: Package index release (Linux)"
     timeout-minutes: 15
     needs: smoke-test
     outputs:
@@ -204,7 +205,7 @@ jobs:
         run: uv publish --check-url https://pypi.org/simple/ dist/*
 
   github-release:
-    name: Attach Release Assets
+    name: "Build: Release assets (Linux)"
     timeout-minutes: 15
     needs: smoke-test
     outputs:
@@ -262,7 +263,7 @@ jobs:
             --clobber
 
   dispatch-binaries:
-    name: Dispatch binary publication
+    name: "Build: Binary dispatch (Linux)"
     timeout-minutes: 10
     needs: [publish-pypi, github-release]
     runs-on: [self-hosted, Linux, X64, build]
@@ -280,7 +281,7 @@ jobs:
           TARGET_SHA: ${{ needs.github-release.outputs.sha }}
         run: |
           set -euo pipefail
-          gh workflow run Binaries \
+          gh workflow run binaries.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             --field tag="${TAG}" \

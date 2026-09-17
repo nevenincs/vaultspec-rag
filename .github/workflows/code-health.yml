@@ -1,4 +1,4 @@
-name: Code Health
+name: RAG Code Health
 
 # ADVISORY MEASUREMENT, ON A SCHEDULE, OFF THE MERGE PATH.
 #
@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   code-health:
-    name: "Audit: Code Health (Linux)"
+    name: "Check: Code health (Linux)"
     timeout-minutes: 30
     runs-on: [self-hosted, Linux, X64]
     steps:

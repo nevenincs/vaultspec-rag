@@ -1,21 +1,18 @@
-"""Every merge-box job is named ``<Kind>: <Subject> [(Platform)]``.
+"""Every workflow and job is named in the fleet's check-set grammar.
 
-The job name is the whole of what a reviewer sees. A merge box listing
-``PR Gate (ruff, ty, tests)`` beside ``Lint, Type, Config, Link, and Markdown
-Checks`` and ``Tests (Windows, advisory)`` gives three different grammars for
-three jobs doing one kind of thing, and nothing in it says which of them
-covers the file the reviewer changed.
+A workflow is ``<Product> <Purpose>`` - ``RAG Merge Gate``, ``RAG Release
+Please`` - so this product's workflows group together beside its siblings'. A
+job is ``<Kind>: <Subject> [(<Platform>[, <leg>])]`` - ``Check: Merge gate
+(Linux)``, ``Test: Correctness suite (Linux, 3.14)`` - the grammar every
+repository in the fleet uses, so a reviewer reading two products' checks reads
+one vocabulary.
 
-**Kind** is a harness verb - ``dev lint``, ``dev test``, ``dev audit`` - so
-the merge box and the recipe registry share a vocabulary rather than each
-inventing one. (The justfile files these under the fleet-wide consequence
-groups ``check``/``test``/``audit``; ``check`` and ``lint`` are the same set
-of gates under two labels, and the verb is the one this guard can resolve
-mechanically.) The one addition is ``Gate``, for the single job that measures
-nothing itself and turns the other jobs' results into the merge verdict.
+**Kind** is ``Check``, ``Test`` or ``Build``: the justfile's consequence
+groups of the same names, so the checks and the recipe registry share a
+vocabulary rather than each inventing one.
 
-**Subject** says WHAT IS COVERED, never which tool covers it. Two rules follow
-from that, and both were paid for:
+**Subject** is sentence case and says WHAT IS COVERED, never which tool covers
+it. Two rules follow from that, and both were paid for:
 
 - A tool name goes stale the day the tool changes. ``Dependency Audit (uv
   audit)`` outlived the tool in its own name - the gate resolves coordinates
@@ -29,9 +26,10 @@ from that, and both were paid for:
   learns nothing, and one who does goes looking for a lane by that name. The
   forbidden set is derived from the registered markers.
 
-**Platform** is the optional trailing parenthesis, and it is the only
-parenthesis permitted: it is what distinguishes two jobs that genuinely cover
-the same subject on two runners.
+**Platform** is the operating system the job lands on, optionally followed by
+the matrix leg, and is the only parenthesis permitted. A job that only calls a
+reusable workflow names no platform: its called jobs carry their own. A matrix
+job whose legs span operating systems names the leg alone.
 """
 
 from __future__ import annotations
@@ -45,20 +43,32 @@ from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-#: The harness verbs in :mod:`dev.toolchain`, plus the merge verdict.
-#: Release-plane workflows build and publish rather than measure, so
-#: ``Build``/``Publish`` are honest Kinds there and are not checked here.
-KINDS = ("Lint", "Test", "Audit", "Gate")
+#: The justfile consequence groups a job's Kind is drawn from.
+KINDS = ("Check", "Test", "Build")
 
-#: The platforms a job may name. A runner pool, not a tool or an adjective.
-PLATFORMS = ("Linux", "Windows", "macOS", "CUDA")
+#: The operating systems a job may name.
+PLATFORMS = ("Linux", "Windows", "macOS")
 
-#: What a name must look like once interpolations are collapsed.
-NAME = re.compile(
-    rf"^(?:{'|'.join(KINDS)}): "
-    r"[A-Z][^()]*[^()\s]"
-    rf"(?: \((?:{'|'.join(PLATFORMS)})\))?$"
-)
+#: The product every workflow name starts with.
+PRODUCT = "RAG"
+
+#: What a workflow name must look like.
+WORKFLOW_NAME = re.compile(rf"^{PRODUCT}(?: [A-Z][A-Za-z]*)+$")
+
+#: The stand-in an expression collapses to before matching.
+_LEG = "Xx"
+
+#: An all-capitals acronym, the one capitalised word allowed mid-subject.
+_ACRONYM = r"[A-Z0-9]{2,}"
+
+#: A Subject: a capitalised first word, then lower-case words or acronyms.
+_SUBJECT = rf"(?:[A-Z][a-z]*|{_ACRONYM})(?: (?:[a-z0-9][a-z0-9-]*|{_ACRONYM}))*"
+
+#: The optional trailing parenthesis: a platform then legs, or legs alone.
+_PLACE = rf"(?:(?:{'|'.join(PLATFORMS)})(?:, {_LEG})*|{_LEG}(?:, {_LEG})*)"
+
+#: What a job name must look like once interpolations are collapsed.
+NAME = re.compile(rf"^(?:{'|'.join(KINDS)}): {_SUBJECT}(?: \({_PLACE}\))?$")
 
 #: An expression in a job name, replaced by a stand-in before matching so a
 #: matrix leg's name is checked for shape rather than for its resolved value.
@@ -124,10 +134,9 @@ def _tool_names() -> frozenset[str]:
     ``dependency_audit`` is never split, because its parts are ordinary words
     a subject is entitled to use.
 
-    Scoped to the measuring groups, because those are the only recipes a
-    merge-box job runs. Including the provisioning and build verbs would drag
-    in ``uv``'s own subcommands - ``sync``, ``lock``, ``build`` - which are
-    ordinary English and would forbid naming what a job covers.
+    Scoped to the measuring groups. Including the provisioning and build verbs
+    would drag in ``uv``'s own subcommands - ``sync``, ``lock``, ``build`` -
+    which are ordinary English and would forbid naming what a job covers.
     """
     groups = workflows.recipe_groups()
     return frozenset(
@@ -147,32 +156,30 @@ def _marker_names() -> frozenset[str]:
     return frozenset(str(entry).split(":", 1)[0].strip().lower() for entry in markers)
 
 
-def _names() -> tuple[tuple[str, str], ...]:
-    """Return ``(job id, name)`` for every job in the merge box."""
-    return tuple((f"{job.workflow}:{job.job_id}", job.name) for job in _jobs())
-
-
 def _jobs() -> tuple[workflows.Job, ...]:
-    """Return every job in the merge box."""
-    return tuple(
-        job for workflow in workflows.MERGE_BOX for job in workflows.load_jobs(workflow)
-    )
+    """Return every job in every workflow."""
+    return workflows.load_jobs()
+
+
+def _names() -> tuple[tuple[str, str], ...]:
+    """Return ``(job id, name)`` for every job in every workflow."""
+    return tuple((f"{job.workflow}:{job.job_id}", job.name) for job in _jobs())
 
 
 def _collapsed(name: str) -> str:
     """Return *name* with every expression replaced by a stand-in token."""
-    return _INTERPOLATION.sub("Xx", name)
+    return _INTERPOLATION.sub(_LEG, name)
 
 
 def _subject(name: str) -> str:
-    """Return the Subject alone, with the Kind and the Platform removed.
+    """Return the Subject alone, with the Kind and the parenthesis removed.
 
-    The Platform is excluded on purpose: it is a runner pool, and one of them
-    is spelled the same as a pytest marker. Scanning it would forbid naming
-    the runner a job actually lands on.
+    The parenthesis is excluded on purpose: it names a runner, and a runner
+    may be spelled the same as a pytest marker. Scanning it would forbid
+    naming the runner a job actually lands on.
     """
     body = _collapsed(name).split(": ", 1)[-1]
-    return re.sub(rf"\s*\((?:{'|'.join(PLATFORMS)})\)$", "", body)
+    return re.sub(r"\s*\([^()]*\)$", "", body)
 
 
 def _words(name: str) -> set[str]:
@@ -180,17 +187,75 @@ def _words(name: str) -> set[str]:
     return set(re.findall(r"[A-Za-z]+", _subject(name).lower()))
 
 
+def _name_findings(jobs: tuple[workflows.Job, ...]) -> list[str]:
+    """Name every job whose name breaks the grammar or omits its platform."""
+    findings: list[str] = []
+    for job in jobs:
+        collapsed = _collapsed(job.name)
+        where = f"{job.workflow}:{job.job_id}: {job.name!r}"
+        if not NAME.fullmatch(collapsed):
+            findings.append(where)
+        elif job.steps and not collapsed.endswith(")"):
+            findings.append(f"{where} names no platform")
+    return findings
+
+
 def test_every_job_name_follows_the_pattern() -> None:
-    """Every merge-box job name is ``<Kind>: <Subject> [(Platform)]``."""
+    """Every job name is ``<Kind>: <Subject> [(<Platform>[, <leg>])]``."""
+    findings = _name_findings(_jobs())
+    assert not findings, (
+        "A job is not named `<Kind>: <Subject> (<Platform>[, <leg>])`.\n"
+        f"Kind is one of {', '.join(KINDS)}; the Subject is sentence case; "
+        f"Platform is one of {', '.join(PLATFORMS)} or a matrix leg, and only a "
+        "job that calls a reusable workflow may omit it.\n\n" + "\n".join(findings)
+    )
+
+
+def test_the_pattern_rejects_the_retired_grammar() -> None:
+    """Mutation proof: every shape the previous grammar allowed is refused.
+
+    Each retired name breaks exactly one rule, so each rule is proved alone.
+    Adding ``Gate`` back to ``KINDS`` made this fail on the retired merge
+    verdict's Kind; removing it again made this pass.
+    """
+    retired = (
+        "Gate: Merge readiness (Linux)",
+        "Lint: Static validation (Linux)",
+        "Audit: Dependency advisories (Linux)",
+        "Test: GPU correctness (CUDA)",
+        "Test: Full Suite (Windows)",
+    )
+    current = (
+        "Check: Merge gate (Linux)",
+        "Test: GPU correctness (Windows)",
+        "Test: Correctness suite (Linux, ${{ matrix.python-version }})",
+        "Build: Standalone binaries (${{ matrix.name }})",
+        "Test: Release hardware",
+    )
+    assert [name for name in retired if NAME.fullmatch(_collapsed(name))] == []
+    assert [name for name in current if not NAME.fullmatch(_collapsed(name))] == []
+
+
+def test_a_job_with_steps_and_no_platform_is_named() -> None:
+    """Mutation proof: only a job calling a reusable workflow omits a platform."""
+    stepped = workflows.Job(
+        "w.yml", "lint", "Check: Lint", (("ubuntu-24.04",),), 10, None, None, ({},)
+    )
+    calling = workflows.Job("w.yml", "tiers", "Test: Tiers", (), None, None, None, ())
+    assert _name_findings((stepped, calling)) == [
+        "w.yml:lint: 'Check: Lint' names no platform"
+    ]
+
+
+def test_every_workflow_name_starts_with_the_product() -> None:
+    """Every workflow is ``<Product> <Purpose>``, so its runs group together."""
     findings = [
-        f"{job_id}: {name!r}"
-        for job_id, name in _names()
-        if not NAME.fullmatch(_collapsed(name))
+        f"{workflow}: {name!r}"
+        for workflow, name in workflows.workflow_names()
+        if not WORKFLOW_NAME.fullmatch(name)
     ]
     assert not findings, (
-        "A merge-box job is not named `<Kind>: <Subject> [(Platform)]`.\n"
-        f"Kind is one of {', '.join(KINDS)}; Platform, when present, is one of "
-        f"{', '.join(PLATFORMS)} and is the only parenthesis allowed.\n\n"
+        f"A workflow is not named `{PRODUCT} <Purpose>` in title case.\n\n"
         + "\n".join(findings)
     )
 
@@ -234,7 +299,7 @@ def test_no_job_name_states_a_pytest_marker() -> None:
 
 
 def test_job_names_are_unique() -> None:
-    """No two rows of the merge box carry the same label.
+    """No two rows of one workflow run carry the same label.
 
     Two ways that happens, and only one is visible in the YAML. Two jobs may
     simply be given the same ``name:``. Or one job with a matrix may leave its
@@ -243,12 +308,12 @@ def test_job_names_are_unique() -> None:
     required status check can only ever name one of them and a reviewer cannot
     tell which leg went red.
     """
-    seen: dict[str, list[str]] = {}
-    for job_id, name in _names():
-        seen.setdefault(name, []).append(job_id)
+    seen: dict[tuple[str, str], list[str]] = {}
+    for job in _jobs():
+        seen.setdefault((job.workflow, job.name), []).append(job.job_id)
     findings = [
-        f"{name!r} is used by {', '.join(ids)}"
-        for name, ids in sorted(seen.items())
+        f"{workflow}: {name!r} is used by {', '.join(ids)}"
+        for (workflow, name), ids in sorted(seen.items())
         if len(ids) > 1
     ]
     findings.extend(
@@ -260,7 +325,7 @@ def test_job_names_are_unique() -> None:
         and not any(f"matrix.{axis}" in job.name for axis in job.matrix_axes)
     )
     assert not findings, (
-        "Two rows of the merge box carry the same label.\n"
+        "Two rows carry the same label.\n"
         "Carry the matrix variable in the name, or fold the jobs together.\n\n"
         + "\n".join(findings)
     )

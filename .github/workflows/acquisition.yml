@@ -1,6 +1,6 @@
-name: Acquisition check
+name: RAG Acquisition
 
-run-name: Acquisition check ${{ inputs.tag || github.event.release.tag_name || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
+run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
 
 # Everything else in this repository tests what is IN the tree. This tests what
 # a user actually receives: it downloads the published target bundle onto a machine
@@ -56,7 +56,7 @@ concurrency:
 
 jobs:
   acquire:
-    name: acquire ${{ matrix.arch }} on ${{ matrix.image }}
+    name: "Test: Binary acquisition (Linux, ${{ matrix.arch }}, ${{ matrix.distro }})"
     strategy:
       fail-fast: false
       matrix:
@@ -68,11 +68,13 @@ jobs:
           # makes these the two legs that can actually fail when a container
           # pin in binaries.yml stops doing its job.
           - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
+            distro: almalinux-8
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
+            distro: almalinux-8
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
@@ -80,21 +82,25 @@ jobs:
           # Above the floor and below the build host, which is the band a user
           # is most likely to be in. bookworm is 2.36, jammy is 2.35.
           - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+            distro: debian-12
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+            distro: debian-12
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
+            distro: ubuntu-22.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
+            distro: ubuntu-22.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm

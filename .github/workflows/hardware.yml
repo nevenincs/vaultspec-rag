@@ -1,4 +1,4 @@
-name: Hardware Tiers
+name: RAG Hardware Tiers
 
 # THE ONE DEFINITION OF THE ACCELERATOR TIERS: Apple silicon (MPS) and CUDA.
 #
@@ -60,7 +60,7 @@ env:
 
 jobs:
   mps:
-    name: "Test: Accelerator Backend (macOS)"
+    name: "Test: Accelerator backend (macOS)"
     # The macOS runner is a laptop under an AC-power policy: on battery it is
     # deliberately booted out of the fleet, so it is absent for long stretches
     # by design. A release waits for it: the machine must be plugged in before
@@ -146,7 +146,7 @@ jobs:
         run: just test-mps
 
   cuda:
-    name: "Test: GPU Correctness (CUDA)"
+    name: "Test: GPU correctness (Windows)"
     # Generous because this tier is the ~40 minute long pole, but still
     # finite: a wedged GPU test holds the only machine carrying the cuda
     # label, so an unbounded hang blocks every future GPU run rather than just

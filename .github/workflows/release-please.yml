@@ -1,4 +1,4 @@
-name: Release Please
+name: RAG Release Please
 
 on:
   push:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   release-please:
-    name: Release Please
+    name: "Build: Release proposal (Linux)"
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
     steps:
@@ -99,7 +99,7 @@ jobs:
             echo "::error::release_created is true but tag_name output is empty; refusing to dispatch publication with no tag"
             exit 1
           fi
-          gh workflow run Publish \
+          gh workflow run publish.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             --field tag="${TAG}"
