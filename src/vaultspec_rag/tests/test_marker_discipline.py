@@ -504,19 +504,18 @@ def test_mps_acceptance_proves_each_model_parameter_device() -> None:
 
 def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     """MPS stays off PR/main while an exact release commit still gates publish."""
-    ci_workflow = (
-        Path(__file__).parents[3] / ".github" / "workflows" / "ci.yml"
-    ).read_text(encoding="utf-8")
-    macos_job = ci_workflow.split("  tests-macos:", 1)[1].split("  gpu-tests:", 1)[0]
-    assert "github.event_name == 'schedule'" in macos_job
-    assert "github.event_name == 'push'" not in macos_job
-    assert "github.event_name == 'pull_request'" not in macos_job
-    assert "run: just test-mps" in macos_job
-
     root = Path(__file__).parents[3] / ".github" / "workflows"
-    release_hardware = (root / "release-hardware.yml").read_text(encoding="utf-8")
+    ci_workflow = (root / "ci.yml").read_text(encoding="utf-8")
+    caller = ci_workflow.split("  hardware:", 1)[1]
+    assert "uses: ./.github/workflows/hardware.yml" in caller
+    assert "github.event_name == 'schedule'" in caller
+    assert "github.event_name == 'push'" not in caller
+    assert "github.event_name == 'pull_request'" not in caller
+
+    hardware = (root / "hardware.yml").read_text(encoding="utf-8")
     publish = (root / "publish.yml").read_text(encoding="utf-8")
-    assert "ref: ${{ inputs.target_sha }}" in release_hardware
-    assert "run: just test-mps" in release_hardware
+    assert "ref: ${{ inputs.target_sha }}" in hardware
+    assert "run: just test-mps" in hardware
+    assert "uses: ./.github/workflows/hardware.yml" in publish
     assert "target_sha: ${{ needs.resolve-target.outputs.sha }}" in publish
     assert "needs: [resolve-target, hardware-validation]" in publish
