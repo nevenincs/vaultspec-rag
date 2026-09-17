@@ -41,9 +41,11 @@ jobs:
   hardware-validation:
     name: Validate release hardware
     needs: resolve-target
-    uses: ./.github/workflows/release-hardware.yml
+    uses: ./.github/workflows/hardware.yml
     with:
       target_sha: ${{ needs.resolve-target.outputs.sha }}
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
   hold-release:
     name: Hold release out of latest

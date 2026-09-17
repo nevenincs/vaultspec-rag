@@ -1,0 +1,289 @@
+name: Hardware Tiers
+
+# THE ONE DEFINITION OF THE ACCELERATOR TIERS: Apple silicon (MPS) and CUDA.
+#
+# Two callers, one job each, so the jobs cannot drift apart:
+# - `publish.yml` requires both tiers to pass on the exact release commit
+#   before a release is published.
+# - `ci.yml` runs them on schedule and on dispatch against the commit it was
+#   started for, and adds the advisory macOS full suite.
+#
+# Every precondition the tiers read is provisioned here, inside the job that
+# reads it: the model cache (with the Hugging Face token), the pinned Qdrant
+# binary and the resident service the CUDA tier borrows. A tier that finds a
+# precondition missing refuses to run and fails, so a caller that skipped a
+# step would block every release without measuring anything.
+#
+# Neither tier is reachable from a pull request: both callers start it only
+# from a tag, a schedule or a dispatch, all of which require write access.
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        description: Immutable commit to validate
+        required: true
+        type: string
+      tier:
+        description: "Which tiers to run: macos, gpu or macos-and-gpu"
+        required: false
+        type: string
+        default: macos-and-gpu
+      macos_full_suite:
+        description: Also run the advisory accelerator-free suite on macOS
+        required: false
+        type: boolean
+        default: false
+      cache_mode:
+        description: Runner-local cache namespace
+        required: false
+        type: string
+        default: normal
+    secrets:
+      HF_TOKEN:
+        description: Hugging Face token for warming the model cache
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardware-${{ inputs.target_sha }}-${{ inputs.tier }}
+  cancel-in-progress: false
+
+env:
+  # NO_COLOR alone disables colour. A non-empty FORCE_COLOR (even "0") forces
+  # the terminal ON under the force-color spec Rich implements, making
+  # console.clear() emit escape codes into the piped CI log; without it
+  # is_terminal falls through to isatty()->False as intended.
+  NO_COLOR: "1"
+  CI_CACHE_MODE: ${{ inputs.cache_mode }}
+
+jobs:
+  mps:
+    name: "Test: Accelerator Backend (macOS)"
+    # The macOS runner is a laptop under an AC-power policy: on battery it is
+    # deliberately booted out of the fleet, so it is absent for long stretches
+    # by design. A release waits for it: the machine must be plugged in before
+    # a release may advertise MPS support for the selected commit.
+    #
+    # `timeout-minutes` bounds how long a job may RUN, not how long it waits
+    # for a runner. A job queued while the machine is on battery sits pending
+    # up to GitHub's 24h limit and then reports `cancelled`.
+    if: inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'
+    timeout-minutes: 60
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_sha }}
+
+      - name: Require the exact commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
+      # The runner's environment does not necessarily carry Homebrew's prefix:
+      # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
+      # pwsh sits under ~/.local/bin. Without this every recipe fails with
+      # "uv: command not found" on a machine where an interactive shell finds
+      # it perfectly well. `just` needs pwsh on POSIX too - the justfile's
+      # `windows-shell` is the override, not the rule.
+      - name: Put Homebrew and user binaries on PATH
+        run: |
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+
+      - name: Initialize the worktree
+        run: just init
+
+      # ADVISORY, through `continue-on-error`. The macOS suite has never been
+      # fully triaged; it flips to gating by deleting that flag once its
+      # failure count reaches zero. Ratchet down, never up. Releases do not run
+      # it: the MPS guard below is the release's Apple silicon claim.
+      - name: Run tests
+        if: inputs.macos_full_suite
+        continue-on-error: true
+        run: just test-python
+
+      # The guard below reads the machine's model cache with the Hub switched
+      # off, deliberately, so that a missing snapshot fails as a runner problem
+      # instead of quietly downloading gigabytes mid-gate. That contract needs
+      # the cache to exist in this job's cache namespace, so it is warmed here.
+      # The download is idempotent - a warm cache is a no-op - and the model
+      # set is read from the shipped configuration so it cannot drift from
+      # what the guard then loads.
+      - name: Warm the model cache the MPS guard reads
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          from huggingface_hub import snapshot_download
+
+          from vaultspec_rag.config._settings import get_config
+
+          config = get_config()
+          for model in (
+              config.embedding_model,
+              config.sparse_model,
+              config.reranker_model,
+          ):
+              print(f"warming {model}", flush=True)
+              snapshot_download(model)
+          PY
+
+      # This is the support gate for Apple silicon. It runs the configured
+      # dense, sparse, and reranker models together on MPS and fails if any
+      # operation falls back to CPU or cannot run.
+      - name: Run MPS acceptance guard
+        env:
+          PYTORCH_ENABLE_MPS_FALLBACK: "0"
+        run: just test-mps
+
+  cuda:
+    name: "Test: GPU Correctness (CUDA)"
+    # Generous because this tier is the ~40 minute long pole, but still
+    # finite: a wedged GPU test holds the only machine carrying the cuda
+    # label, so an unbounded hang blocks every future GPU run rather than just
+    # its own.
+    #
+    # The integration, quality, performance, robustness, subprocess_gpu, and
+    # cuda markers that a GPU-less runner cannot execute run here. It never
+    # runs per push: on a single GPU runner shared with the live service,
+    # auto-running it wedged the runner and made results non-deterministic.
+    #
+    # Contention is guarded by the one pytest coordinator: it borrows through
+    # the acknowledged service lease, fails closed on unavailable service,
+    # lease, or device evidence, and resumes before release.
+    if: inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu'
+    timeout-minutes: 90
+    runs-on: [self-hosted, windows, gpu, cuda]
+    env:
+      # requires-python admits a range, so uv would otherwise pick whichever
+      # interpreter it likes here and the CUDA wheel under test would drift
+      # between runs. This job exists to exercise ONE known GPU stack, so it
+      # pins the floor. Pinning here also avoids actions/setup-python, whose
+      # MSI registry cleanup fails under the runner's service account.
+      UV_PYTHON: "3.13"
+      # This lane provisions a Qdrant binary, warms a multi-gigabyte model
+      # cache, and starts a resident daemon. Under the SYSTEM account all
+      # three would land in C:\WINDOWS\system32\config\systemprofile, so
+      # `contain-writes` pins every path to runner-owned storage.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_sha }}
+
+      - name: Require the exact commit
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'commit mismatch' }
+
+      # Every job, every platform: a build never addresses a system
+      # location. Pins the writable paths and refuses to continue if any
+      # still resolves inside one.
+      - uses: ./.github/actions/contain-writes
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@d56249f532886d210664917b882ad7e152e17d68 # v2
+        with:
+          tool: just@1.38.0
+
+      - name: Initialize the worktree
+        run: just init
+
+      - name: Provision the pinned Qdrant binary the GPU tier requires
+        run: uv run --no-sync vaultspec-rag server qdrant install
+
+      # The tier does not own the card, it BORROWS it: the coordinator captures
+      # a live, health-verified, version-compatible resident service before
+      # pytest isolates its managed paths, and refuses the whole tier when
+      # there is none - every test deselected, nothing run. The service loads
+      # the configured model stack as it comes up, so it needs a warm cache in
+      # this job's cache namespace first, or the daemon dies before it can
+      # report ready.
+      - name: Warm the model cache the resident service loads
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          from huggingface_hub import snapshot_download
+
+          from vaultspec_rag.config._settings import get_config
+
+          config = get_config()
+          for model in (
+              config.embedding_model,
+              config.sparse_model,
+              config.reranker_model,
+          ):
+              print(f"warming {model}", flush=True)
+              snapshot_download(model)
+          PY
+
+      # Waiting on `running` rather than sleeping a fixed interval is what
+      # makes this reliable on a machine that loads its model stack at start:
+      # a warming daemon has no health identity for the coordinator to match.
+      - name: Start the resident service the GPU tier borrows from
+        shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run --no-sync vaultspec-rag server start --json
+          # A dead daemon says only `start_died` on stdout; the reason is in its
+          # own log, so surface that here rather than leaving the next reader to
+          # go and find a file on a machine they may not have.
+          if ($LASTEXITCODE -ne 0) {
+            uv run --no-sync vaultspec-rag server logs --limit 80
+            throw "server start failed with $LASTEXITCODE"
+          }
+          $deadline = (Get-Date).AddMinutes(10)
+          while ((Get-Date) -lt $deadline) {
+            $raw = uv run --no-sync vaultspec-rag server status --json
+            # The operator state is nested under `data`; reading it off the
+            # envelope root yields $null on every poll and times out silently.
+            $state = ($raw | ConvertFrom-Json).data.state
+            Write-Host "service state: $state"
+            if ($state -eq 'running') { exit 0 }
+            Start-Sleep -Seconds 5
+          }
+          uv run --no-sync vaultspec-rag server logs --limit 80
+          throw "the resident service never reported running; the GPU tier cannot borrow"
+
+      - name: Run GPU test tier through guarded coordinator
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: just test-gpu
+
+      # Always: a tier that failed mid-borrow still leaves a daemon holding the
+      # card, and the next run's capture would then contend with a service this
+      # one was supposed to own the lifetime of.
+      - name: Stop the resident service
+        if: always()
+        shell: pwsh
+        run: uv run --no-sync vaultspec-rag server stop --json
