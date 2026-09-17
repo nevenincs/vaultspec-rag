@@ -12,7 +12,7 @@
 binaries.yml:Return the workspace to the runner's user
 acquisition.yml:Return the workspace to the runner's user
 acquisition.yml:Install what acquisition itself needs
-ci.yml:Put Homebrew and user binaries on PATH
+hardware.yml:Put Homebrew and user binaries on PATH
 
 # --- pending ----------------------------------------------------------------
 # The three interpreter heredocs and the raw vault check that stood here are
@@ -21,16 +21,13 @@ ci.yml:Put Homebrew and user binaries on PATH
 # vault check became `just check-vault` and joined `check-all`, which is what
 # retired the job that existed only to run it.
 
-# The GPU tier's environment: warm the model cache (one 15-line Python
-# heredoc, twice), provision the pinned Qdrant binary, start and stop the
-# resident service behind a 25-line pwsh poll loop. Recipes needed:
-# `rag-warmup`, `rag-service-start`, `rag-service-stop` - which vaultspec-a2a
-# already has by those exact names, over the same service.
-ci.yml:Warm the model cache the MPS guard reads
-ci.yml:Warm the model cache the resident service loads
-ci.yml:Provision the pinned Qdrant binary the GPU tier requires
-ci.yml:Start the resident service the GPU tier borrows from
-ci.yml:Stop the resident service
+# The GPU tier's environment: provision the pinned Qdrant binary, start and
+# stop the resident service behind a 25-line pwsh poll loop. Recipes needed:
+# `rag-service-start`, `rag-service-stop` - which vaultspec-a2a already has by
+# those exact names, over the same service.
+hardware.yml:Provision the pinned Qdrant binary the GPU tier requires
+hardware.yml:Start the resident service the GPU tier borrows from
+hardware.yml:Stop the resident service
 
 # The distribution smoke check, run by path against a built wheel and sdist.
 # Recipe needed: `test-smoke` - vaultspec-core and cadrumo have the same two
@@ -86,7 +83,7 @@ merge-gate.yml:Every full check passed on this commit
 # These steps bind release validation to the commit selected from the tag.
 # They are Git identity bookkeeping, not a reusable source validation command.
 publish.yml:Resolve exact release SHA
-release-hardware.yml:Require the exact release commit
+hardware.yml:Require the exact commit
 publish.yml:Require the exact release commit
 binaries.yml:Require the exact release commit
 binaries.yml:Require the acquisition check for this release

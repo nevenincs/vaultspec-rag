@@ -620,6 +620,7 @@ TEST = Verb(
             (
                 _pytest(
                     "tools",
+                    "dev",
                     "-q",
                     "-n",
                     "auto",
