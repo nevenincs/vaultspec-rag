@@ -84,15 +84,31 @@ class _UpdatesHTTPHandler(QuietHandler):
 
 
 class _SlowUpdatesHTTPHandler(QuietHandler):
+    """A server that answers only once the test says so.
+
+    It used to sleep a fixed interval, which made every test using it a race
+    between three hardcoded durations: the client's deadline, this sleep, and
+    the wait for the recorded request. The client has to finish connecting and
+    sending before its own deadline or nothing is ever recorded, so a loaded
+    host failed the assertion while the behaviour under test was correct.
+
+    Holding the response open until released removes the server's duration
+    from that arithmetic entirely: the client's deadline is then the only
+    clock, and it always expires first because this never answers on its own.
+    """
+
     requests: ClassVar[list[dict[str, object]]] = []
-    delay_seconds: ClassVar[float] = 0.5
+    #: Cleared while a test wants the response held; set to let it complete.
+    #: The bounded wait is a hang guard, not a timing budget - the context
+    #: manager sets it before shutting the server down.
+    release: ClassVar[threading.Event] = threading.Event()
 
     def do_POST(self) -> None:
         body_length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(body_length).decode("utf-8")
         body: dict[str, object] = json.loads(raw_body) if raw_body else {}
         self.requests.append({"method": "POST", "path": self.path, "body": body})
-        time.sleep(self.delay_seconds)
+        self.release.wait(timeout=30)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -119,11 +135,10 @@ def _updates_http_server(
 
 
 @contextlib.contextmanager
-def _slow_updates_http_server(
-    delay_seconds: float = 0.5,
-) -> Generator[tuple[http.server.HTTPServer, int]]:
+def _slow_updates_http_server() -> Generator[tuple[http.server.HTTPServer, int]]:
+    """Serve requests that hang until the body has been recorded and released."""
     _SlowUpdatesHTTPHandler.requests = []
-    _SlowUpdatesHTTPHandler.delay_seconds = delay_seconds
+    _SlowUpdatesHTTPHandler.release.clear()
     server = http.server.HTTPServer(("127.0.0.1", 0), _SlowUpdatesHTTPHandler)
     port = int(server.server_address[1])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -131,6 +146,9 @@ def _slow_updates_http_server(
     try:
         yield server, port
     finally:
+        # Release first: this server handles one request at a time, so a held
+        # handler would block `shutdown()` for the whole hang-guard window.
+        _SlowUpdatesHTTPHandler.release.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -427,21 +445,23 @@ def test_updates_start_output_uses_project_block() -> None:
 def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
     project = str(tmp_path.resolve())
     previous = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
-    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "0.5"
+    # Generous on purpose. The server holds its response until the context
+    # manager releases it, so the timeout path runs no matter how long this
+    # is - which means the deadline's only job is to outlast connecting and
+    # sending the body on a loaded host. At 0.5s it did not: the client gave
+    # up mid-send, nothing was ever recorded, and the assertion below failed
+    # for the machine rather than for the behaviour.
+    os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "2.0"
     try:
-        with _slow_updates_http_server(delay_seconds=1.5) as (_server, port):
+        with _slow_updates_http_server() as (_server, port):
             result = runner.invoke(
                 app,
                 ["server", "updates", "start", project, "--port", str(port)],
             )
-            # The server records a request only after reading its whole body,
-            # so the client's deadline must outlast connecting and sending on a
-            # loaded host; a 50ms deadline let the client give up first, and no
-            # request was ever recorded. The server still answers well after
-            # the deadline, so the timeout path is what runs. Its own thread
-            # records the request, and leaving this block shuts that server
-            # down, so assert on the record only once it exists. A request that
-            # never arrives still fails the assertion below, just later.
+            # The handler records the request before it blocks, so this is a
+            # bounded hang guard rather than a timing budget: the record is
+            # already there unless the request never arrived at all, and then
+            # the assertion below names that.
             deadline = time.monotonic() + 5.0
             while not _SlowUpdatesHTTPHandler.requests:
                 if time.monotonic() >= deadline:
@@ -463,7 +483,7 @@ def test_updates_start_times_out_with_next_actions(tmp_path: Path) -> None:
     joined = " ".join(lines)
     assert (
         f"Automatic index updates: The service on port {port} "
-        "did not answer within 0.5 seconds."
+        "did not answer within 2 seconds."
     ) in joined
     assert labels["Project"] == tmp_path.name
     assert labels["Path"] == project
@@ -477,7 +497,7 @@ def test_updates_start_timeout_uses_singular_second(tmp_path: Path) -> None:
     previous = os.environ.get("VAULTSPEC_RAG_ADMIN_TIMEOUT")
     os.environ["VAULTSPEC_RAG_ADMIN_TIMEOUT"] = "1"
     try:
-        with _slow_updates_http_server(delay_seconds=1.5) as (_server, port):
+        with _slow_updates_http_server() as (_server, port):
             result = runner.invoke(
                 app,
                 ["server", "updates", "start", project, "--port", str(port)],
