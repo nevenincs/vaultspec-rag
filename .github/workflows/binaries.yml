@@ -76,8 +76,188 @@ jobs:
   # this artifact rather than resolving the version from PyPI, so a release tag
   # can be built and validated before either publication workflow wins a race to
   # the package index.
-  wheel:
+  # The selectors are DERIVED from the build matrix below, never listed again.
+  # A second list drifts, and this repository has already paid for that: the
+  # release-asset check carries the same note for the same reason. Reading the
+  # workflow at the release commit also means the check describes the matrix
+  # that run will actually schedule, not the one on the default branch.
+  derive-selectors:
+    name: "Check: Runner selectors (Linux)"
     needs: validate
+    timeout-minutes: 10
+    runs-on: [self-hosted, Linux, X64, build]
+    outputs:
+      selectors: ${{ steps.derive.outputs.selectors }}
+    steps:
+      # Its OWN directory. A sparse checkout at the workspace root leaves
+      # core.sparseCheckout set in the shared clone every later job on this
+      # runner then reads, which took a sibling project's Linux runner down for
+      # fifteen hours.
+      - name: Checkout the workflow this run will schedule
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.target_sha }}
+          path: .sparse-derive-selectors
+          sparse-checkout: .github/workflows
+          sparse-checkout-cone-mode: false
+
+      - name: Derive every selector the build matrix names
+        id: derive
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=".sparse-derive-selectors/.github/workflows/binaries.yml"
+          [ -f "${workflow}" ] || { echo "::error::${workflow} not checked out; cannot derive selectors"; exit 1; }
+          selectors=$(awk '
+            /^[[:space:]]+runner:[[:space:]]/ {
+              sub(/^[[:space:]]+runner:[[:space:]]*/, "")
+              gsub(/[][]/, "")
+              gsub(/[[:space:]]+/, "")
+              print
+            }' "${workflow}" | sort -u)
+          if [ -z "${selectors}" ]; then
+            echo "::error::derived no selector from ${workflow}; refusing to pass vacuously"
+            exit 1
+          fi
+          {
+            echo "selectors<<SELECTORS_EOF"
+            echo "${selectors}"
+            echo "SELECTORS_EOF"
+          } >> "${GITHUB_OUTPUT}"
+          echo "deriving from ${workflow}:"
+          echo "${selectors}"
+
+  # The job around the generated block is this repository's to shape: the fleet
+  # parity check compares only the BEGIN/END body, so the name follows the
+  # convention here and the ceiling is stated rather than defaulting to six
+  # hours on a shared runner.
+  preflight:
+    name: "Check: Runner availability (Linux)"
+    needs: derive-selectors
+    timeout-minutes: 15
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Every required selector has an online runner
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.FLEET_PREFLIGHT_TOKEN }}
+          TARGET_REPO: ${{ github.event.repository.name }}
+          SELECTORS: ${{ needs.derive-selectors.outputs.selectors }}
+          ALLOW_GATED: false
+        run: |
+          # BEGIN generated runner preflight - do not edit here
+          # THE canonical runner preflight. One implementation for the whole fleet.
+          #
+          # WHY THIS IS A SCRIPT AND NOT A REUSABLE WORKFLOW. It was one, and every
+          # consumer's call was rejected before a single job started: its source
+          # repository is PRIVATE and all six consuming repos are PUBLIC, and a public repository
+          # cannot call a reusable workflow from a private one. GitHub reports that as a
+          # run with zero jobs and "this run likely failed because of a workflow file
+          # issue", which is why it survived actionlint, survived review, and would have
+          # surfaced first on a release.
+          #
+          # So the sharing model is DEPLOYMENT, not runtime resolution: this file is the
+          # source, it is rendered into each consumer's workflow, and a parity check
+          # fails when a rendered copy drifts from it.
+          #
+          # Contract - the caller sets these, all required:
+          #   GH_TOKEN     PAT with Administration:read. NEVER the default GITHUB_TOKEN:
+          #                it cannot read actions/runners at any `permissions:` value.
+          #   TARGET_REPO  repository name, without the owner
+          #   SELECTORS    newline-separated, each a comma-joined label set
+          #   ALLOW_GATED  "true" tolerates registered-but-offline runners
+
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::fleet_token is empty. This check needs a PAT with Administration:read; GITHUB_TOKEN cannot read actions/runners." >&2
+            exit 1
+          fi
+
+          # GitHub-HOSTED runners are not in `actions/runners`, which lists only
+          # self-hosted ones. A hosted label is therefore indistinguishable from
+          # a self-hosted label nobody registered, so checking one would fail
+          # every run for a runner that is always available. Two legs on this
+          # fleet are hosted BY DECISION - the aarch64 Linux builds, because the
+          # ARM machine cannot host a `container:` job - and this check must not
+          # contradict that decision.
+          #
+          # The prefixes are GitHub's hosted-image vocabulary, not ours, and a
+          # hosted image label always carries a version or channel suffix
+          # (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-2022`, `macos-15`).
+          # Fleet labels carry no such suffix and are checked normally. Never
+          # name a fleet label `windows-<something>`: it would be skipped here
+          # and go unchecked.
+          checkable=""
+          while IFS= read -r selector; do
+            [ -n "${selector}" ] || continue
+            case "${selector}" in
+              ubuntu-*|windows-*|macos-*)
+                echo "hosted    [${selector}] -> GitHub-hosted, not in the self-hosted list; not checked"
+                ;;
+              *) checkable+="${selector}"$'\n' ;;
+            esac
+          done <<< "${SELECTORS}"
+
+          if [ -z "${checkable}" ]; then
+            echo "every selector is GitHub-hosted; nothing to check against the fleet."
+            exit 0
+          fi
+
+          runners=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${TARGET_REPO}/actions/runners" \
+            --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv')
+
+          if [ -z "${runners}" ]; then
+            echo "::error::${TARGET_REPO} has no registered self-hosted runners at all" >&2
+            exit 1
+          fi
+
+          failed=0
+          while IFS= read -r selector; do
+            [ -n "${selector}" ] || continue
+            # Normalise: lowercase, strip spaces. GitHub matches labels
+            # case-insensitively, and a selector written `Linux` must match a
+            # runner advertising `linux`.
+            want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+
+            online=0; registered=0
+            while IFS=$'\t' read -r status labels; do
+              missing=0
+              IFS=',' read -ra parts <<< "${want}"
+              for part in "${parts[@]}"; do
+                case ",${labels}," in
+                  *",${part},"*) ;;
+                  *) missing=1; break ;;
+                esac
+              done
+              [ "${missing}" -eq 0 ] || continue
+              registered=$((registered + 1))
+              [ "${status}" = "online" ] && online=$((online + 1))
+            done <<< "${runners}"
+
+            if [ "${online}" -gt 0 ]; then
+              echo "ok        [${want}] -> ${online} online"
+            elif [ "${registered}" -eq 0 ]; then
+              echo "::error::[${want}] is carried by NO registered runner. A job dispatched to it queues until GitHub cancels it." >&2
+              failed=1
+            elif [ "${ALLOW_GATED}" = "true" ]; then
+              echo "::warning::[${want}] matches ${registered} runner(s), all offline. Continuing because allow_gated is set."
+            else
+              echo "::error::[${want}] matches ${registered} registered runner(s) but NONE are online. On this fleet that usually means the power-gated host is on battery; a job dispatched now would queue rather than fail." >&2
+              failed=1
+            fi
+          done <<< "${checkable}"
+
+          if [ "${failed}" -ne 0 ]; then
+            echo "::error::preflight refused to start work that cannot be scheduled" >&2
+            exit 1
+          fi
+          echo "preflight passed: every required selector has an online runner"
+          # END generated runner preflight
+
+  wheel:
+    needs: [validate, preflight]
     timeout-minutes: 30
     name: "Build: Binary wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
