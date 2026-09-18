@@ -27,6 +27,7 @@ from ...cli._service_status import (
     _status_file,
     _write_service_status,
 )
+from .._model_setup import model_setup_timeout_seconds
 from .._ports import free_loopback_port
 from ._helpers import (
     _poll_health,
@@ -153,7 +154,11 @@ def test_deleted_discovery_views_self_heal_on_the_next_heartbeat(
 
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
-        health = _poll_health(port)
+        # A spawned service loads the whole configured model stack before it
+        # reports ready, so it gets the fixture model budget rather than the
+        # bare-poll default: on a cold cache the default expires mid-load and
+        # fails the test for the startup cost, not for anything it asserts.
+        health = _poll_health(port, timeout=model_setup_timeout_seconds())
         serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
@@ -225,7 +230,11 @@ def test_shutdown_cleanup_cannot_be_resurrected_by_a_late_heartbeat(
 
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
-        health = _poll_health(port)
+        # A spawned service loads the whole configured model stack before it
+        # reports ready, so it gets the fixture model budget rather than the
+        # bare-poll default: on a cold cache the default expires mid-load and
+        # fails the test for the startup cost, not for anything it asserts.
+        health = _poll_health(port, timeout=model_setup_timeout_seconds())
         serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
@@ -275,7 +284,11 @@ def test_reconcile_recovers_discovery_without_touching_the_daemon(
 
         pid = _spawn_service(port, log_path)
         request.addfinalizer(lambda: _terminate_pid(pid))
-        health = _poll_health(port)
+        # A spawned service loads the whole configured model stack before it
+        # reports ready, so it gets the fixture model budget rather than the
+        # bare-poll default: on a cold cache the default expires mid-load and
+        # fails the test for the startup cost, not for anything it asserts.
+        health = _poll_health(port, timeout=model_setup_timeout_seconds())
         serving_pid = int(str(health["pid"]))
         _write_service_status(pid, port)
 
