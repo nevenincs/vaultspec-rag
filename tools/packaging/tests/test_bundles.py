@@ -256,7 +256,10 @@ def test_build_bundle_rejects_a_missing_executable(tmp_path: Path) -> None:
 
 
 def test_build_bundle_rejects_an_unsupported_target(tmp_path: Path) -> None:
-    """A macOS archive cannot be introduced outside RAG's support contract.
+    """An Intel macOS archive cannot be introduced outside the support contract.
+
+    Apple silicon IS supported and built; Intel Macs are not, and the matrix
+    has no leg for one, so this is the target that must still be refused.
 
     Mutation proof: removing the product-support guard let a complete fixture
     build, so this assertion failed with ``DID NOT RAISE``; the guard was
@@ -265,8 +268,8 @@ def test_build_bundle_rejects_an_unsupported_target(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")
-    raw = _raw_outputs(tmp_path, products.MACOS_ARM64)
-    spec = BundleSpec(VAULTSPEC_RAG, VERSION, products.MACOS_ARM64)
+    raw = _raw_outputs(tmp_path, products.MACOS_X86_64)
+    spec = BundleSpec(VAULTSPEC_RAG, VERSION, products.MACOS_X86_64)
 
     with pytest.raises(BundleError, match="does not support target"):
         build_bundle(spec, raw, tmp_path / "bundles", repo, REVISION)

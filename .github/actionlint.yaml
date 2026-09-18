@@ -9,3 +9,8 @@ self-hosted-runner:
     # Marks the host that runs release builds, matching the sibling project's
     # Linux runner so both select their release host the same way.
     - build
+    # Declares that the host can start a job container. The Linux binary legs
+    # build inside a pinned manylinux image to fix their glibc floor, and a
+    # runner without a container runtime dies in `Initialize containers`
+    # instead - so they select on this rather than on the platform labels.
+    - docker

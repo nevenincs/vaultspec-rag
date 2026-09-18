@@ -102,13 +102,19 @@ def test_a_containerised_leg_runs_where_a_container_can_start(
 ) -> None:
     """A pinned image is only a floor if the leg's runner can start it.
 
-    The fleet's self-hosted Linux runners have no container runtime, so a
-    containerised leg there dies in ``Initialize containers`` and the release
-    ships no binary for that target. Only GitHub-hosted runners start one.
+    A containerised leg on a host with no container runtime dies in
+    ``Initialize containers`` and the release ships no binary for that target:
+    v0.4.15 pinned a manylinux image to such a runner and published no Linux
+    binary at all.
 
-    Mutation proof: pointing ``linux-x86_64`` back at
-    ``[self-hosted, Linux, X64, build]`` made this test fail naming that leg;
-    restoring ``ubuntu-24.04`` made it pass again.
+    The property is the HOST'S, not the fleet's. A hosted runner always has a
+    runtime; a self-hosted one has it only if its machine does, and the fleet
+    states that per runner with the ``docker`` label. So a containerised leg
+    must name either a hosted runner or a ``docker``-labelled one - selecting
+    a self-hosted runner without it is the v0.4.15 failure again.
+
+    Mutation proof: dropping ``docker`` from ``linux-aarch64``'s labels made
+    this fail naming that leg; restoring it made it pass.
     """
     checked = 0
     for leg in _legs(repo_root):
@@ -116,10 +122,11 @@ def test_a_containerised_leg_runs_where_a_container_can_start(
             continue
         runner = leg["runner"]
         labels = [runner] if isinstance(runner, str) else list(runner)
-        assert "self-hosted" not in labels, (
-            f"{leg['name']} runs {leg['container']} on self-hosted {labels}, "
-            "which cannot start a job container"
-        )
+        if "self-hosted" in labels:
+            assert "docker" in labels, (
+                f"{leg['name']} runs {leg['container']} on self-hosted "
+                f"{labels}, which does not declare a container runtime"
+            )
         checked += 1
 
     assert checked, "no leg is containerised; this guard is vacuous"
