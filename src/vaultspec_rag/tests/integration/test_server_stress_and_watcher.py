@@ -320,20 +320,27 @@ async def _wait_for_code_payload(
 
     deadline = asyncio.get_running_loop().time() + _WATCHER_WAIT_SECONDS
     while asyncio.get_running_loop().time() < deadline:
-        records, _offset = slot.store.client.scroll(
-            collection_name=slot.store.CODE_TABLE_NAME,
-            scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="path",
-                        match=models.MatchValue(value=path),
-                    )
-                ]
-            ),
-            limit=10,
-            with_payload=["content"],
-            with_vectors=False,
-        )
+        # Read through the store's own paging helper, under the collection
+        # lock its production callers hold. Reaching past it to the raw client
+        # races the watcher's upsert: local mode mutates the collection's
+        # arrays in place, so an unserialised reader observes a payload mask
+        # sized for a point count that has already moved and indexes off the
+        # end of it.
+        with slot.store._point_lock(slot.store.CODE_TABLE_NAME):
+            records, _offset = slot.store._scroll(
+                collection_name=slot.store.CODE_TABLE_NAME,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="path",
+                            match=models.MatchValue(value=path),
+                        )
+                    ]
+                ),
+                limit=10,
+                with_payload=["content"],
+                with_vectors=False,
+            )
         if any(
             expected_content
             in str(cast("object", (record.payload or {}).get("content", "")))

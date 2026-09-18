@@ -207,7 +207,7 @@ def _execute(verb: Verb, target: Target) -> int:
     """
     if target.gate is not None and not target.gate.open():
         print(
-            f"\nSKIPPED  {verb.name} {target.name} - {target.gate.reason}",
+            f"\nSKIPPED  {verb.name} {target.name} - {target.gate.describe()}",
             flush=True,
         )
         return SKIPPED

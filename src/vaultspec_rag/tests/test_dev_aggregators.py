@@ -90,7 +90,7 @@ def test_hardware_lanes_are_gated_rather_than_dropped() -> None:
         target = verb.find(name)
         assert target is not None
         assert target.gate is not None, f"lane '{name}' has no gate"
-        assert target.gate.reason.strip(), f"lane '{name}' skips without a reason"
+        assert target.gate.describe().strip(), f"lane '{name}' skips without a reason"
 
 
 @pytest.mark.unit

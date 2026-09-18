@@ -48,25 +48,22 @@ _PROBE_SOURCE = textwrap.dedent(
         facts["cuda"] = bool(torch.cuda.is_available())
         backend = getattr(torch.backends, "mps", None)
         facts["mps"] = bool(backend is not None and backend.is_available())
-    except Exception:
-        pass
+    except Exception as exc:
+        facts["cuda_error"] = f"{type(exc).__name__}: {exc}"
     if os.environ.get("HF_TOKEN"):
         facts["hf_token"] = True
     else:
         try:
             from huggingface_hub import get_token
             facts["hf_token"] = bool(get_token())
-        except Exception:
-            pass
+        except Exception as exc:
+            facts["hf_token_error"] = f"{type(exc).__name__}: {exc}"
     try:
         from vaultspec_rag.qdrant_runtime._constants import QDRANT_SERVER_VERSION
-        from vaultspec_rag.qdrant_runtime._resolve import resolve_binary
-        resolved = resolve_binary(QDRANT_SERVER_VERSION)
-        facts["qdrant"] = bool(
-            resolved is not None and resolved.source == "provisioned"
-        )
-    except Exception:
-        pass
+        from vaultspec_rag.qdrant_runtime._resolve import has_provisioned_binary
+        facts["qdrant"] = bool(has_provisioned_binary(QDRANT_SERVER_VERSION))
+    except Exception as exc:
+        facts["qdrant_error"] = f"{type(exc).__name__}: {exc}"
     print(json.dumps(facts))
     """
 )
@@ -79,6 +76,12 @@ _PROBE_SOURCE = textwrap.dedent(
 PERF_ENV = "VAULTSPEC_RAG_PERF_LANE"
 
 _FACTS: dict[str, bool] | None = None
+
+#: Per-fact probe errors, keyed by fact name. A fact that is false because its
+#: probe RAISED is not the same as one that is false because the capability is
+#: genuinely absent, and an operator staring at a capable machine needs to be
+#: told which of the two happened.
+_DETAIL: dict[str, str] = {}
 
 
 def facts() -> dict[str, bool]:
@@ -116,8 +119,40 @@ def facts() -> dict[str, bool]:
     except (ValueError, IndexError):
         _FACTS = blank
         return _FACTS
+    _DETAIL.update(
+        {
+            key.removesuffix("_error"): str(value)
+            for key, value in probed.items()
+            if key.endswith("_error")
+        }
+    )
     _FACTS = {key: bool(probed.get(key, False)) for key in blank}
     return _FACTS
+
+
+def missing(*names: str) -> str:
+    """Return a phrase naming which of *names* this host does not satisfy.
+
+    The gate reason is the only trace a skipped lane leaves, so it has to
+    carry the cause rather than the menu of possible causes: a lane that
+    needs three things and names all three whenever any one is absent sends
+    the reader to check the two that were fine.
+
+    Args:
+        names: The fact keys the caller requires, in reporting order.
+
+    Returns:
+        A comma-separated phrase naming each absent fact, annotating any whose
+        probe raised with that error.
+    """
+    probed = facts()
+    absent = [name for name in names if not probed[name]]
+    if not absent:
+        return "no missing capability"
+    return ", ".join(
+        f"{name} unavailable ({_DETAIL[name]})" if name in _DETAIL else f"no {name}"
+        for name in absent
+    )
 
 
 @dataclass(frozen=True)
@@ -130,22 +165,28 @@ class Gate:
         probe: Returns true when the lane can run here.
     """
 
-    reason: str
+    reason: str | Callable[[], str]
     probe: Callable[[], bool]
 
     def open(self) -> bool:
         """Return true when this lane's precondition is satisfied."""
         return self.probe()
 
+    def describe(self) -> str:
+        """Return the skip reason, resolving one computed from the probe."""
+        return self.reason if isinstance(self.reason, str) else self.reason()
+
 
 CUDA_GATE = Gate(
-    "no CUDA device, no Hugging Face token, or no manifest-verified Qdrant "
-    "binary on this host (conftest aborts the tier rather than skipping)",
+    lambda: (
+        f"{missing('cuda', 'hf_token', 'qdrant')} on this host "
+        "(conftest aborts the tier rather than skipping)"
+    ),
     lambda: facts()["cuda"] and facts()["hf_token"] and facts()["qdrant"],
 )
 
 MPS_GATE = Gate(
-    "no Apple-silicon MPS backend on this host",
+    lambda: f"{missing('mps')}: no Apple-silicon MPS backend on this host",
     lambda: facts()["mps"],
 )
 
