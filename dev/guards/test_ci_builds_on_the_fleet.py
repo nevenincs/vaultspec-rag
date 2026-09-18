@@ -38,8 +38,8 @@ _BOUNDARY: dict[tuple[str, str], str] = {
         "before the fleet sees either"
     ),
     ("binaries.yml", "validate"): (
-        "proves the fleet's runner selectors are satisfiable before "
-        "dispatching work to it"
+        "resolves a dispatch's free-text tag against the public remote and "
+        "proves it names the requested commit, before anything is checked out"
     ),
     ("merge-gate.yml", "gate"): (
         "reads check results and edits a label; never runs a pull request's "
