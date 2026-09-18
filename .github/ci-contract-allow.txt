@@ -90,3 +90,12 @@ hardware.yml:Require the exact commit
 publish.yml:Require the exact release commit
 binaries.yml:Require the exact release commit
 binaries.yml:Require the acquisition check for this release
+
+# Reads the fleet's own scheduling state before any work is dispatched to it:
+# one derives the selectors from the matrix at the release commit, the other
+# asks GitHub which runners carry them and are online. Neither describes the
+# product, and the preflight body is a generated block shared across the fleet
+# whose parity check requires it byte-identical, so neither can become a local
+# recipe without breaking what it is for.
+binaries.yml:Derive every selector the build matrix names
+binaries.yml:Every required selector has an online runner

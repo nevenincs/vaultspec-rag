@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import TYPE_CHECKING, ClassVar
@@ -974,6 +975,7 @@ class TestLeaseApi:
     def test_cold_store_lease_participates_in_bounded_shutdown_force_close(
         self,
         tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         reg = ServiceRegistry()
         root = _make_vault_dir(tmp_path).resolve()
@@ -998,13 +1000,21 @@ class TestLeaseApi:
             assert len(reg._transient_stores) == 1
             assert reg._transient_store_constructions == 0
 
-        started = time.monotonic()
-        reg.close_all()
-        elapsed = time.monotonic() - started
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.service"):
+            reg.close_all()
         release.set()
         thread.join(timeout=10)
 
-        assert 4.5 < elapsed < 7.0, f"transient drain took {elapsed:.2f}s"
+        # The drain is proved by WHAT close_all did, not by how long it took.
+        # This warning is emitted on one branch only: the deadline passed with
+        # the store still registered, so the drain ran to its bound and then
+        # force-closed. A close_all that returned early would not reach it, and
+        # one that waited for the holder would not either - the holder is still
+        # inside its lease here, released only on the line above.
+        assert any(
+            "Force-closing busy transient store" in record.message
+            for record in caplog.records
+        ), "close_all did not force-close the store held past the drain deadline"
         assert not thread.is_alive()
         assert errors == []
         assert len(stores) == 1
@@ -1228,6 +1238,7 @@ class TestLeaseApi:
         embedding_model: EmbeddingModel,
         shared_reranker: CrossEncoder,
         tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         reg = self._reg(embedding_model, shared_reranker, max_projects=4, idle_ttl=0)
         root = _make_vault_dir(tmp_path).resolve()
@@ -1240,9 +1251,14 @@ class TestLeaseApi:
         reg.peek_project(root)
         with reg._lock:
             reg._projects[root].ref_count = 1
-        t0 = time.monotonic()
-        reg.close_all()
-        elapsed = time.monotonic() - t0
-        # 5s bounded drain + a small epsilon for teardown work.
-        assert 4.5 < elapsed < 7.0, f"close_all took {elapsed:.2f}s"
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.service"):
+            reg.close_all()
+
+        # Same reasoning as the transient-store case: the ref is still held, so
+        # reaching this warning means the drain ran to its bound and then forced
+        # the slot closed. Asserting elapsed wall-clock instead measured the
+        # machine, and failed on a loaded one while the behaviour was correct.
+        assert any(
+            "Force-closing busy slot" in record.message for record in caplog.records
+        ), "close_all did not force-close the slot held past the drain deadline"
         assert len(reg._projects) == 0

@@ -12,10 +12,10 @@ project ships against:
   build this project resolves. ``pyproject.toml`` routes torch to the
   ``pytorch-cu130`` index for ``sys_platform == 'linux' or 'win32'``, and
   ``uv.lock`` pins ``2.14.0+cu130`` there.
-- On **macOS**, no wheel is correct, because no macOS binary is built. The
-  runtime is CUDA-only and raises without a CUDA device, and there is no CUDA
-  build for macOS at any version. The mapping below therefore has no darwin
-  entry, and the build matrix has no darwin leg.
+- On **macOS**, the default PyPI wheel is already the right one: it carries
+  the MPS backend, which is the accelerator Apple silicon uses. There is no
+  CUDA build for macOS at any version and none is wanted, so the mapping below
+  has no darwin entry and the darwin leg bootstraps from PyPI unmodified.
 
 ``tool.uv.sources`` is a workspace setting, not wheel metadata, so none of it
 survives into a ``uv pip install vaultspec-rag`` from PyPI. This module
@@ -52,8 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from vaultspec_rag.torch_config._lockfile import locked_torch_version
 
 #: Rust target triple -> the wheel platform tag torch publishes for it.
-#: A target absent here bootstraps from default PyPI. No such target is
-#: currently built: the matrix covers exactly the CUDA platforms.
+#: A target absent here bootstraps from default PyPI, which is correct for
+#: darwin and wrong for every CUDA platform - so each of those is named.
 TORCH_PLATFORM_TAGS = {
     "x86_64-pc-windows-msvc": "win_amd64",
     "x86_64-unknown-linux-gnu": "manylinux_2_28_x86_64",

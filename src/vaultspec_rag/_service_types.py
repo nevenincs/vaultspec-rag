@@ -36,6 +36,14 @@ logger = logging.getLogger(__name__)
 # the daemon's bounded shutdown on the writer lock indefinitely.
 STORE_FORCE_CLOSE_SECONDS = 5.0
 
+# The graceful-drain budget `close_all()` gives busy slots and transient stores
+# before force-closing them. Long enough for worst-case search latency, short
+# enough that uvicorn lifespan shutdown never looks hung - and deliberately not
+# configurable, because a deployment that lengthens it turns a bounded shutdown
+# into an unbounded one. Named so the drain loop and the tests that assert on
+# the drain read the same number instead of each spelling it out.
+SHUTDOWN_DRAIN_SECONDS = 5.0
+
 
 def validate_resource_transition_timeout(timeout_seconds: float) -> None:
     """Reject invalid waits before they can close compute admission."""

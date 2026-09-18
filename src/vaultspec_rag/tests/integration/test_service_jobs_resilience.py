@@ -316,7 +316,14 @@ def _assert_resilience_cli_human(
         assert line in cli_human.output
 
 
-@pytest.mark.unit
+# INTEGRATION, not unit: this starts a real uvicorn server on a loopback port
+# and drives it over HTTP. `unit` is defined as "fast tests with no external
+# dependencies", and marking it so put it in the accelerator-free lane, which
+# runs `-n auto --dist loadfile` across every physical core. A threaded HTTP
+# server competing with a dozen parallel workers misses httpx's default
+# five-second read deadline often enough to fail a release gate, and the
+# deadline then measures the machine rather than the parity this asserts.
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("outcome_name", "error_kind", "expected_state", "expected_error_kind"),
     [

@@ -191,17 +191,18 @@ def test_available_targets_requires_the_complete_bundle_on_a_platform() -> None:
 
 
 def test_an_unsupported_platform_is_never_offered() -> None:
-    """macOS is excluded even when assets for it exist.
+    """Intel macOS is excluded even when assets for it exist.
 
     Homebrew runs on macOS, so nothing but the product's own
-    supported_targets stops the formula offering an install there - and this
-    product raises at startup without CUDA, which macOS never has.
+    supported_targets stops the formula offering an install there. Apple
+    silicon is offered because the MPS backend runs the model stack; an Intel
+    Mac has neither that nor CUDA, and no leg builds one.
     """
-    digests = digests_for((products.MACOS_ARM64, products.LINUX_X86_64))
+    digests = digests_for((products.MACOS_X86_64, products.LINUX_X86_64))
 
     resolved = available_targets(VAULTSPEC_RAG, VERSION, digests)
 
-    assert products.MACOS_ARM64 not in resolved
+    assert products.MACOS_X86_64 not in resolved
     assert products.LINUX_X86_64 in resolved
 
 

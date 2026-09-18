@@ -152,25 +152,28 @@ VAULTSPEC_RAG = Product(
     # CUDA-ONLY. This is not a preference to soften in a channel manifest:
     # `embeddings.py`, `search/_searcher.py` and `server/_lifespan.py` each
     # raise RuntimeError when `torch.cuda.is_available()` is false, and
-    # docs/installation.md states macOS and Apple Silicon are unsupported.
-    # Homebrew runs on macOS, so without this the formula would offer an
-    # install that places a binary raising at startup - a worse outcome than
-    # not being installable, because it looks like a product defect.
-    # Windows and Linux, x86_64 and aarch64 - exactly what binaries.yml builds.
-    # Declaring a target the matrix does not build is not a promise of future
-    # coverage: the generator warns and omits it on every single release, and
-    # the formula silently lacks a platform the product claims to support.
-    supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64),
+    # Exactly what binaries.yml builds, and nothing else. Declaring a target
+    # the matrix does not build is not a promise of future coverage: the
+    # generator warns and omits it on every single release, and the formula
+    # silently lacks a platform the product claims to support.
+    #
+    # Apple silicon is here because the MPS backend runs the model stack and
+    # every release is gated on an MPS acceptance guard, so a Homebrew install
+    # on macOS places a binary that works rather than one that raises at
+    # startup.
+    supported_targets=(WINDOWS_X86_64, LINUX_X86_64, LINUX_ARM64, MACOS_ARM64),
     display_name="Vaultspec RAG",
     publisher="Vaultspec Project",
     legal_copyright="Copyright (c) 2026 Vaultspec Project",
     notes=(
         # The binaries bootstrap the SAME accelerated torch build the project
         # resolves: `tools.binaries.torch_channel` pins the cu130 wheel from
-        # uv.lock for every target built. Without it the bootstrap resolves
-        # plain PyPI torch, which on Windows carries no CUDA at all.
-        "Requires an NVIDIA GPU with a working CUDA driver; there is no CPU mode.",
-        "First launch downloads the CUDA runtime; needs network once, and space.",
+        # uv.lock for every CUDA target. Without it the bootstrap resolves
+        # plain PyPI torch, which on Windows carries no CUDA at all. Apple
+        # silicon is deliberately unpinned: default PyPI is where the wheel
+        # carrying MPS comes from.
+        "Requires an NVIDIA GPU with CUDA, or Apple silicon; there is no CPU mode.",
+        "First launch downloads the accelerator runtime; needs network and space.",
         "Same GPU torch build uv installs, pinned from this project's lock.",
         "Verify with: vaultspec-rag --version",
     ),
