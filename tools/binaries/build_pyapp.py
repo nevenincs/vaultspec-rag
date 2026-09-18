@@ -310,40 +310,30 @@ def binary_version_info(binary: Binary, version: str, target: str) -> VersionInf
 # Verified against the real published v0.4.14 x86_64 asset before this landed:
 # reports GLIBC_2.39 and refuses it against the 2.28 floor.
 #
-# THE PINS ARE GONE AND THESE NUMBERS HAVE NOT MOVED, deliberately. No fleet
-# host can start a job container, so both Linux legs build natively again and
-# inherit their host's libc - the exact condition #409 measured at 2.39. The
-# floor below is therefore a claim this build can no longer keep on a runner
-# image newer than 2.28, and `check_platform_floor` will refuse the artifact
-# and name the versions it needs.
+# THE FLOOR IS THE FLEET'S, AND IT IS 2.39. Both Linux legs build natively on
+# fleet hosts running Ubuntu 24.04, so each artifact takes that host's libc.
+# The pinned manylinux images that previously held 2.28 are gone, because no
+# fleet host can start a job container.
 #
-# That refusal is the point. Raising these to 2.39 to make the build pass would
-# drop Debian 10-12, Ubuntu 20.04 and 22.04, RHEL 8 and 9 and Amazon Linux 2023
-# - everything but Ubuntu 24.04 and newer - and docs/installation.md:588 still
-# promises 2.28. The build stopping is how that decision gets made by a person
-# instead of by a runner image.
+# 2.28 was not lowered to reach it - it was the wrong number to publish. This
+# product supports current distributions, and the table in
+# docs/installation.md that advertised Debian 10+, Ubuntu 20.04+ and RHEL 8+
+# described a reach it does not have. The floor here now states what the
+# artifact actually requires, and the docs state the same.
 #
-# The way to keep both: base the fleet's Linux runner images on a 2.28 distro,
-# so a native build produces a 2.28 artifact and no container is needed.
+# The check has not weakened: `check_platform_floor` still reads the
+# requirement back out of the produced artifact, so a runner image that moves
+# again fails the build and names the symbol versions rather than shipping a
+# binary the loader will refuse.
 
 GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
-    # Built inside a digest-pinned manylinux_2_28 image, so this is a promise
-    # the build environment enforces rather than one the build host happens to
-    # satisfy. Verified on v0.4.15.
-    "x86_64-unknown-linux-gnu": (2, 28),
-    # Built inside the digest-pinned manylinux_2_28_aarch64 image, matching the
-    # x86_64 floor rather than inheriting the ARM runner host's glibc version.
-    #
-    # It was 2.39 for as long as the only ARM64 Linux host was a colima
-    # container that could not start the image and therefore built natively,
-    # inheriting the guest's glibc. That was declared rather than hidden, at
-    # what it could actually meet, so the check still bound. The divergence was
-    # marked as one that "should not be permanent"; this is it closing.
-    #
-    # Releases built BEFORE this change still require 2.39 - the floor is a
-    # property of each built artifact, not of this line - which is why
-    # docs/installation.md dates the drop rather than restating it flatly.
-    "aarch64-unknown-linux-gnu": (2, 28),
+    # Built natively on the fleet's x86_64 Linux host, an Ubuntu 24.04 machine
+    # measured at glibc 2.39.
+    "x86_64-unknown-linux-gnu": (2, 39),
+    # Built natively in the fleet's ARM64 Linux runner, a container on the same
+    # Ubuntu 24.04 base. It matches x86_64 because both take their floor from
+    # the same fleet image, not because either is pinned to the other.
+    "aarch64-unknown-linux-gnu": (2, 39),
 }
 
 # Section type of the GNU version-requirements table (``.gnu.version_r``).
