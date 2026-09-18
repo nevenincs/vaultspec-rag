@@ -37,6 +37,7 @@ from ._service_borrower import BorrowerLeaseMixin
 from ._service_eviction import ProjectEvictionMixin
 from ._service_residency import GPUResidencyMixin
 from ._service_types import (
+    SHUTDOWN_DRAIN_SECONDS,
     STORE_FORCE_CLOSE_SECONDS,
     ComputeLease,
     GPUResidencyRecipe,
@@ -1208,8 +1209,8 @@ class ServiceRegistry(
         if readiness is not None:
             readiness.close()
 
-        # Bounded drain: 5.0 seconds is intentionally hardcoded.
-        deadline = time.monotonic() + 5.0
+        # Bounded drain; the budget is stated once, beside the force-close bound.
+        deadline = time.monotonic() + SHUTDOWN_DRAIN_SECONDS
         while time.monotonic() < deadline:
             with self._lock:
                 busy = (
