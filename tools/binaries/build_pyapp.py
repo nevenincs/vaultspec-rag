@@ -41,9 +41,10 @@ Usage::
         --tag vaultspec-rag-v0.4.6 --outdir dist-bin [--target <triple>] \
         [--wheel dist/vaultspec_rag-0.4.6-py3-none-any.whl]
 
-``--target`` cross-compiles for a Rust target triple other than the host
-(the CI matrix uses it to build the macOS x86_64 binary on an Apple Silicon
-runner); the matching ``rustup target`` must already be installed. Only the
+``--target`` names the Rust target triple to build for; the matching
+``rustup target`` must already be installed. Every leg in the CI matrix builds
+natively, so it passes its own host's triple - Apple silicon builds
+``aarch64-apple-darwin``, not an x86_64 macOS binary, which nothing builds. Only the
 Python standard library is used, so any Python 3.13 interpreter can run it.
 """
 
