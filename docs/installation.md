@@ -130,9 +130,10 @@ also runs the MCP stdio adapter.
 
 ## Install without Python
 
-**Windows and Linux only.** The release publishes x86-64 Windows, and x86-64 and
-ARM64 Linux archives. It publishes no macOS binary or formula. Use a Python route on
-macOS. The GPU requirement remains the same.
+The release publishes x86-64 Windows, x86-64 and ARM64 Linux, and Apple silicon
+macOS archives. Intel Macs are not covered; use a Python route there. The
+accelerator requirement remains the same: CUDA on Windows and Linux, MPS on Apple
+silicon.
 
 `vaultspec-rag` and `vaultspec-search-mcp` ship in one archive per target. The archive
 embeds CPython 3.13, so the host needs no Python installation. On first launch, the
@@ -150,7 +151,7 @@ scoop bucket add nevenincs https://github.com/nevenincs/homebrew-tap
 scoop install vaultspec-rag
 ```
 
-On Linux:
+On Linux or Apple silicon macOS:
 
 ```sh
 brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
