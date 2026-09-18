@@ -30,9 +30,21 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: suffix, which is what separates the two without naming every fleet label.
 _HOSTED = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.]*)(-arm)?$")
 
-#: `workflow.yml::job` pairs that MUST stay hosted, each with why. Untrusted
-#: input is resolved here, before anything it names reaches the fleet.
+#: `workflow.yml::job` pairs that MUST stay hosted, each with why. Two reasons
+#: qualify and no others: untrusted input resolved before it reaches the fleet,
+#: and a job container no fleet host can start.
 _BOUNDARY: dict[tuple[str, str], str] = {
+    ("binaries.yml", "build"): (
+        "builds Linux inside a pinned manylinux image to hold the glibc floor "
+        "at 2.28; no fleet host exposes a container runtime, and the fleet's "
+        "own image is glibc 2.39, so building there would silently raise the "
+        "floor the docs promise"
+    ),
+    ("acquisition.yml", "acquire"): (
+        "runs the published binary inside pinned distro images, including the "
+        "almalinux:8 leg that IS the glibc 2.28 check; same container "
+        "constraint as the build"
+    ),
     ("publish.yml", "resolve-target"): (
         "validates a dispatch's free-text tag and resolves it to a commit "
         "before the fleet sees either"

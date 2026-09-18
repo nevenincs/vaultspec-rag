@@ -59,77 +59,33 @@ def test_every_linux_gnu_target_built_by_ci_declares_a_floor(
         assert target in GLIBC_FLOOR, f"{target} is built but declares no floor"
 
 
-def test_a_pinned_manylinux_image_declares_the_floor_it_actually_provides(
+def test_no_build_leg_uses_a_job_container(
     repo_root: Path,
 ) -> None:
-    """A containerised leg's image and its declared floor must not drift apart.
+    """Every leg builds natively on the runner it names.
 
-    Pinning the build environment is what turns the floor from something the
-    host happens to satisfy into something the build enforces - but only while
-    the two agree. Bumping the image to ``manylinux_2_34`` without moving the
-    table would leave this project promising 2.28 and shipping an artifact that
-    needs 2.34, and every distribution between the two would fail at load time
-    with a missing symbol version rather than anything CI reported.
+    No fleet host exposes a container runtime: the x86_64 Linux host has
+    neither docker nor podman on PATH, and the ARM64 runner is itself a
+    container with no socket mounted and no client in its image. A
+    ``container:`` on any leg therefore dies in ``Initialize containers``
+    before checkout, which is how v0.4.15 published no Linux binary at all.
 
-    The reverse drift is just as wrong and reads as conservative: a floor
-    declared ABOVE what the image provides drops platforms the binary would in
-    fact have run on.
+    A runner named for a container runtime does not prove it exposes one; that
+    inference previously sat in this file and was wrong.
+
+    Mutation proof: putting the manylinux image back on ``linux-x86_64`` made
+    this fail naming that leg; removing it made it pass.
     """
-    checked = 0
-    for leg in _legs(repo_root):
-        image = leg.get("container") or ""
-        match = _MANYLINUX.search(image)
-        if match is None:
-            continue
-        provided = (int(match.group(1)), int(match.group(2)))
-        target = leg["target"]
+    offenders = [
+        f"{leg['name']} -> {leg['container']}"
+        for leg in _legs(repo_root)
+        if leg.get("container")
+    ]
 
-        assert target in GLIBC_FLOOR, (
-            f"{target} builds in {image} but declares no floor"
-        )
-        assert GLIBC_FLOOR[target] == provided, (
-            f"{target} builds in an image providing glibc "
-            f"{provided[0]}.{provided[1]} but declares "
-            f"{GLIBC_FLOOR[target][0]}.{GLIBC_FLOOR[target][1]}"
-        )
-        checked += 1
-
-    assert checked, "no leg pins a manylinux image; this guard is vacuous"
-
-
-def test_a_containerised_leg_runs_where_a_container_can_start(
-    repo_root: Path,
-) -> None:
-    """A pinned image is only a floor if the leg's runner can start it.
-
-    A containerised leg on a host with no container runtime dies in
-    ``Initialize containers`` and the release ships no binary for that target:
-    v0.4.15 pinned a manylinux image to such a runner and published no Linux
-    binary at all.
-
-    The property is the HOST'S, not the fleet's. A hosted runner always has a
-    runtime; a self-hosted one has it only if its machine does, and the fleet
-    states that per runner with the ``docker`` label. So a containerised leg
-    must name either a hosted runner or a ``docker``-labelled one - selecting
-    a self-hosted runner without it is the v0.4.15 failure again.
-
-    Mutation proof: dropping ``docker`` from ``linux-aarch64``'s labels made
-    this fail naming that leg; restoring it made it pass.
-    """
-    checked = 0
-    for leg in _legs(repo_root):
-        if not leg.get("container"):
-            continue
-        runner = leg["runner"]
-        labels = [runner] if isinstance(runner, str) else list(runner)
-        if "self-hosted" in labels:
-            assert "docker" in labels, (
-                f"{leg['name']} runs {leg['container']} on self-hosted "
-                f"{labels}, which does not declare a container runtime"
-            )
-        checked += 1
-
-    assert checked, "no leg is containerised; this guard is vacuous"
+    assert not offenders, (
+        "these legs ask for a job container, which no fleet host can start: "
+        f"{offenders}"
+    )
 
 
 def test_an_uncontainerised_linux_leg_is_not_silently_trusted(
