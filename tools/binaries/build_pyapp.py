@@ -303,12 +303,28 @@ def binary_version_info(binary: Binary, version: str, target: str) -> VersionInf
 # one either.
 #
 # The cause is that the Linux legs built directly on their runners, so each
-# artifact inherited whatever glibc its build host happened to have. The
-# container pins in binaries.yml fix that; this check is what stops it
-# returning silently the next time a runner is upgraded or an image is bumped.
+# artifact inherited whatever glibc its build host happened to have. Container
+# pins fixed that; this check is what stops it returning silently the next time
+# a runner is upgraded or an image is bumped.
 #
 # Verified against the real published v0.4.14 x86_64 asset before this landed:
 # reports GLIBC_2.39 and refuses it against the 2.28 floor.
+#
+# THE PINS ARE GONE AND THESE NUMBERS HAVE NOT MOVED, deliberately. No fleet
+# host can start a job container, so both Linux legs build natively again and
+# inherit their host's libc - the exact condition #409 measured at 2.39. The
+# floor below is therefore a claim this build can no longer keep on a runner
+# image newer than 2.28, and `check_platform_floor` will refuse the artifact
+# and name the versions it needs.
+#
+# That refusal is the point. Raising these to 2.39 to make the build pass would
+# drop Debian 10-12, Ubuntu 20.04 and 22.04, RHEL 8 and 9 and Amazon Linux 2023
+# - everything but Ubuntu 24.04 and newer - and docs/installation.md:588 still
+# promises 2.28. The build stopping is how that decision gets made by a person
+# instead of by a runner image.
+#
+# The way to keep both: base the fleet's Linux runner images on a 2.28 distro,
+# so a native build produces a 2.28 artifact and no container is needed.
 
 GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
     # Built inside a digest-pinned manylinux_2_28 image, so this is a promise
