@@ -17,8 +17,9 @@ from ..cli._gpu_lease import run_with_borrowed_gpu
 from ..cli._service_preflight import _quiesce_is_safe, _strict_quiesce
 from ..gpu_borrow_lease import acquire_gpu_borrow_lease, release_gpu_borrow_lease
 from ..serviceclient._transport import _try_http_admin
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
-from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS, production_service
+from ._production_service import production_service
 
 pytestmark = [pytest.mark.unit]
 

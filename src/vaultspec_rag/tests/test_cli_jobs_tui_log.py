@@ -72,15 +72,6 @@ _QDRANT_LINE = (
 )
 
 
-@pytest.fixture
-def control_service() -> typing.Iterator[_JobService]:
-    server = _JobService()
-    try:
-        yield server
-    finally:
-        server.close()
-
-
 class TestLogParsing:
     """Each dialect parses into its fields; nothing is ever invented."""
 

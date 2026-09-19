@@ -37,7 +37,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, Final
 
 from .._atomic_write import replace_atomically
 
@@ -46,7 +46,43 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from os import PathLike
 
-__all__ = ["ChildStderr", "await_marker", "child_stderr", "publish_marker"]
+__all__ = [
+    "CHILD_PROCESS_TIMEOUT_SECONDS",
+    "NESTED_CHILD_PROCESS_TIMEOUT_SECONDS",
+    "ChildStderr",
+    "await_marker",
+    "child_stderr",
+    "publish_marker",
+]
+
+#: Ceiling on a wait for a SPAWNED CHILD to reach the state a test needs.
+#: Distinct from any in-process wait, because the two are not the same wait: a
+#: child has to be scheduled, start an interpreter and import this package
+#: before it can reach any marker at all, and under a parallel run those
+#: precede the work by seconds. Ten was enough for an in-process wait and far
+#: too little for this one, which is how a correct borrower was reported as
+#: "never reached work", and later how a correct identity holder was reported
+#: as never having started.
+#:
+#: It lives beside :func:`await_marker` because that is the wait it bounds. It
+#: previously sat in the module that hosts the real service routes, which
+#: imports uvicorn and the whole service package - so a child wanting the
+#: documented bound had to pay for all of that or restate the number, and
+#: every restatement was the ten-second one this constant exists to replace.
+#:
+#: Mutation: set to 0.01. The borrower case fails with exactly the message CI
+#: reported, so this bound - not the code under test - is what that failure was
+#: about. Restored, and it passes.
+CHILD_PROCESS_TIMEOUT_SECONDS: Final = 120.0
+
+#: Ceiling on a wait for a child that itself spawns one and waits for it.
+#: Strictly greater than the bound the nested wait uses, because the two are
+#: nested: an outer bound that is not clear of the inner one expires first,
+#: kills the child mid-wait, and loses the inner failure - which is the only
+#: one that names what actually stalled. The outer wait then reports "the
+#: scenario did not finish" about a scenario that had already diagnosed
+#: itself.
+NESTED_CHILD_PROCESS_TIMEOUT_SECONDS: Final = CHILD_PROCESS_TIMEOUT_SECONDS * 2
 
 
 def publish_marker(path: str | PathLike[str], text: str) -> None:

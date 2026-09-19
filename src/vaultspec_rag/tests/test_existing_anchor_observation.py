@@ -28,10 +28,8 @@ from .._machine_lock import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
-from ._production_service import (
-    CHILD_PROCESS_TIMEOUT_SECONDS,
-    PROCESS_TIMEOUT_SECONDS,
-)
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._production_service import PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Generator

@@ -30,8 +30,12 @@ from ..gpu_borrow_lease import (
 from ..server import ServerRouteRuntime, create_http_app
 from ..server._lifespan import _borrower_lease_recovery_tick
 from ..service import ServiceRegistry
-from ._child_signal import await_marker, child_stderr
-from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    NESTED_CHILD_PROCESS_TIMEOUT_SECONDS,
+    await_marker,
+    child_stderr,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -40,14 +44,6 @@ pytestmark = [pytest.mark.unit]
 
 _TOKEN = "gpu-borrow-lease-test-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
-# Lifetime bound for the helper processes below, not a bound on any behaviour
-# they are asserting. Each one pays for a fresh interpreter and the import of
-# the client package before it reaches its first statement, and on a contended
-# machine that fixed cost alone has been measured well into the tens of
-# seconds - larger than the whole budget a tighter bound would allow. A bound
-# under that does not catch a wedged child sooner; it fails a correct one for
-# the machine's speed. The child's own assertions are what prove the
-# behaviour, so this only has to be clear of the startup cost.
 
 _CAPTURED_AUTHORITY_SCENARIO = """
 import os
@@ -88,7 +84,10 @@ from vaultspec_rag.gpu_borrow_lease import (
     mint_captured_borrower_lease_authority,
     release_gpu_borrow_lease,
 )
-from vaultspec_rag.tests._child_signal import await_marker
+from vaultspec_rag.tests._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    await_marker,
+)
 
 anchor = identity_lock_path.with_name("gpu-borrower.lock")
 
@@ -146,7 +145,13 @@ holder = subprocess.Popen(
     text=True,
 )
 try:
-    reported = await_marker(ready_path, holder, timeout=10.0)
+    # The holder is a spawned child like any other, so it gets the bound a
+    # spawned child gets. It had a ten-second one, which under a parallel run
+    # expires inside the holder's own interpreter startup and reports a
+    # correct holder as one that never started.
+    reported = await_marker(
+        ready_path, holder, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+    )
     if reported is None:
         raise RuntimeError("captured identity holder did not start")
     holder_pid = int(reported)
@@ -282,10 +287,10 @@ finally:
     if holder.poll() is None:
         stop_path.write_text("stop", encoding="ascii")
     try:
-        holder.wait(timeout=10.0)
+        holder.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         holder.kill()
-        holder.wait(timeout=10.0)
+        holder.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
     if holder.returncode != 0:
         raise RuntimeError(
             f"captured identity holder exited {holder.returncode}; its traceback "
@@ -571,7 +576,10 @@ def _run_captured_authority_scenario(
         capture_output=True,
         text=True,
         check=False,
-        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
+        # The nested bound: this child spawns the identity holder and waits
+        # out a child bound on it. An equal bound here would expire first and
+        # replace the scenario's own diagnosis with a killed process.
+        timeout=NESTED_CHILD_PROCESS_TIMEOUT_SECONDS,
         env=environment,
     )
 
