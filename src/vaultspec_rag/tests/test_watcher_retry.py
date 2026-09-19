@@ -34,8 +34,11 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import ObservedSource
-from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
-from ._production_service import PROCESS_TIMEOUT_SECONDS
+from ._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    PROCESS_TIMEOUT_SECONDS,
+    await_marker,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -230,6 +233,11 @@ def test_schema_two_pending_intent_migrates_to_typed_rebuild_refusal(
 #: inside it.
 _LOCK_HELD_UNTIL_RELEASED = 30.0
 
+#: What a holder publishes once it owns the lock. Read back and compared
+#: rather than merely detected, so a marker that appears without its content
+#: cannot pass for readiness.
+_LOCK_HELD_MARKER = "held"
+
 
 def _spawn_state_lock_holder(
     lock_path: Path,
@@ -242,9 +250,10 @@ def _spawn_state_lock_holder(
             "import sys, time",
             "from pathlib import Path",
             "from vaultspec_rag._store_locks import FileLock",
+            "from vaultspec_rag.tests._child_signal import publish_marker",
             "lock = FileLock(Path(sys.argv[1]))",
             "assert lock.acquire()",
-            "Path(sys.argv[2]).write_text('ready', encoding='utf-8')",
+            f"publish_marker(sys.argv[2], {_LOCK_HELD_MARKER!r})",
             "time.sleep(float(sys.argv[3]))",
             "lock.release()",
         )
@@ -259,6 +268,29 @@ def _spawn_state_lock_holder(
             str(hold_seconds),
         ],
         text=True,
+    )
+
+
+async def _await_lock_held(
+    holder: subprocess.Popen[str],
+    ready_path: Path,
+) -> None:
+    """Block until *holder* reports that it owns the state lock.
+
+    The bound is the spawned-child one and not an in-process one, because
+    that is what this wait covers: the holder has to be scheduled, start an
+    interpreter and import this package before it can take a lock at all.
+    Polling a hand-rolled span instead gave these waits 2.0s, which is
+    comfortable on an idle machine and far under the cost of a spawn on a
+    machine running the rest of the suite beside it - so a holder that was
+    merely slow to start read as a watcher that never handed off.
+    """
+    reported = await asyncio.to_thread(
+        await_marker, ready_path, holder, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+    )
+    assert reported == _LOCK_HELD_MARKER, (
+        f"the state lock holder never took {ready_path.name}: "
+        f"reported {reported!r}, exit status {holder.returncode}"
     )
 
 
@@ -544,11 +576,7 @@ async def test_cancelled_contended_admission_settles_committed_claim(
         hold_seconds=_CANCELLATION_DURABILITY_SECONDS / 4,
     )
     try:
-        for _ in range(100):
-            if ready_path.exists():
-                break
-            await asyncio.sleep(0.02)
-        assert ready_path.exists()
+        await _await_lock_held(holder, ready_path)
 
         admission = asyncio.create_task(
             admit_watcher_attempt(
@@ -627,11 +655,7 @@ async def test_detached_admission_consumes_its_fenced_handoff(
         hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
     )
     try:
-        for _ in range(100):
-            if ready_path.exists():
-                break
-            await asyncio.sleep(0.02)
-        assert ready_path.exists()
+        await _await_lock_held(holder, ready_path)
 
         admission = asyncio.create_task(
             admit_watcher_attempt(
@@ -1040,12 +1064,9 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
         ),
     ]
     try:
-        for _ in range(100):
-            if vault_ready.exists() and code_ready.exists():
-                break
-            await asyncio.sleep(0.02)
-        assert vault_ready.exists()
-        assert code_ready.exists()
+        vault_holder, code_holder = holders
+        await _await_lock_held(vault_holder, vault_ready)
+        await _await_lock_held(code_holder, code_ready)
 
         persistence = asyncio.create_task(
             persist_observed_sources(
@@ -1096,11 +1117,7 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
         hold_seconds=_LOCK_HELD_UNTIL_RELEASED,
     )
     try:
-        for _ in range(100):
-            if ready_path.exists():
-                break
-            await asyncio.sleep(0.02)
-        assert ready_path.exists()
+        await _await_lock_held(holder, ready_path)
 
         refresh = asyncio.create_task(
             run_durable_retry_transaction(
