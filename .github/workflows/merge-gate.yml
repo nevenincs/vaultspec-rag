@@ -27,6 +27,13 @@ name: RAG Merge Gate
 # environment: these runners are persistent and their caches outlive any one
 # run, so "measured" is a claim about the source, not about the machine.
 #
+# AND IT HOLDS FOR EVERYONE EXCEPT THE PERSON MERGING. The ruleset lists the
+# Admin role as a bypass actor, and the only account with write access here
+# holds that role, so the merge box offers an override on every one of these
+# conditions. This gate is a discipline a maintainer keeps, not a wall that
+# keeps them. Read every guarantee above with that clause attached; remove
+# the bypass actor and they become guarantees.
+#
 # A push to main triggers nothing: the tree that lands was measured here
 # first. The weekly schedule reruns everything on main, which is what catches
 # advisories published against an unchanged lock.
