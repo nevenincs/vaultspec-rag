@@ -34,10 +34,8 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import ObservedSource
-from ._production_service import (
-    CHILD_PROCESS_TIMEOUT_SECONDS,
-    PROCESS_TIMEOUT_SECONDS,
-)
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
+from ._production_service import PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
