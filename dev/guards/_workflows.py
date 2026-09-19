@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 
 from dev import toolchain
+from dev.ci_names import MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:
@@ -54,11 +55,10 @@ if TYPE_CHECKING:
 __all__ = [
     "FALSE",
     "MAYBE",
-    "MEASURING_GROUPS",
-    "MERGE_BOX",
     "TRUE",
     "Job",
     "Tri",
+    "document",
     "evaluate",
     "final_commands",
     "load_jobs",
@@ -92,14 +92,6 @@ _RECIPE_GROUP = re.compile(r"^\[group\('([a-z]+)'\)\]")
 
 #: A ``runs-on`` that defers to the matrix, which is what hides a runner.
 _MATRIX_REFERENCE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
-
-#: The workflows that measure the tree: the cheap lane every push runs, and
-#: the gate a change must pass before it merges. Release-plane workflows
-#: build and publish instead, and answer different questions.
-MERGE_BOX = ("ci.yml", "merge-gate.yml")
-
-#: Recipe groups that measure the tree, as opposed to provisioning it.
-MEASURING_GROUPS = frozenset({"check", "audit", "test"})
 
 #: The justfile's ``dev`` assignment, expanded into recipe bodies.
 _DEV_PREFIX = ("uv", "run", "--no-sync", "python", "-m", "dev")
@@ -245,6 +237,27 @@ def _document(path: Path) -> dict[str, Any]:
     """Parse one workflow file into a mapping."""
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     return loaded if isinstance(loaded, dict) else {}
+
+
+def document(workflow: str) -> dict[str, Any]:
+    """Return *workflow* parsed as YAML, by file name.
+
+    Args:
+        workflow: A workflow file name, e.g. ``merge-gate.yml``.
+
+    Returns:
+        The parsed mapping.
+
+    Raises:
+        AssertionError: When the file is absent or is not a mapping, which is
+            a guard reading a workflow that has moved rather than a workflow
+            that is wrong.
+    """
+    path = _ROOT / ".github" / "workflows" / workflow
+    assert path.is_file(), f"{workflow} is not in .github/workflows"
+    loaded = _document(path)
+    assert loaded, f"{workflow} is not a mapping"
+    return loaded
 
 
 def workflow_events(workflow: str) -> tuple[str, ...]:

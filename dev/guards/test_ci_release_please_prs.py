@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import pytest
 
+from dev.ci_names import SAME_REPO_CLAUSE, Workflow
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-WORKFLOW = "ci.yml"
 REQUIRED_GUARD = (
     "startsWith(github.head_ref, 'release-please--')",
     "github.event.pull_request.commits > 1",
@@ -24,12 +24,12 @@ REQUIRED_JOBS = ("lint",)
 
 def _job_condition(job_id: str) -> str:
     """Return the named job's condition, or fail loudly when it vanishes."""
-    for job in workflows.load_jobs(WORKFLOW):
+    for job in workflows.load_jobs(Workflow.CHEAP_LANE):
         if job.job_id == job_id:
             assert job.condition is not None
             return job.condition
     pytest.fail(
-        f"{WORKFLOW} has no job `{job_id}`. If it was renamed, repoint this "
+        f"{Workflow.CHEAP_LANE} has no job `{job_id}`. If it was renamed, repoint this "
         "guard; if it was deleted, the release-please race needs a new owner."
     )
 
@@ -42,7 +42,7 @@ def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None
     """
     expected = (
         "github.event_name == 'pull_request' && "
-        "github.event.pull_request.head.repo.full_name == github.repository && "
+        f"{SAME_REPO_CLAUSE} && "
         f"(!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
     )
     offenders = {

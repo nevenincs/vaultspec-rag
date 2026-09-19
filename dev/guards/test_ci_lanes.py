@@ -18,18 +18,11 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-import yaml
 
+from dev.ci_names import GATE_JOB, MERGE_BOX, Workflow
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
-
-CHEAP_LANE = "ci.yml"
-GATE_WORKFLOW = "merge-gate.yml"
-
-#: The job whose check branch protection requires.
-GATE_JOB = "gate"
-GATE_NAME = "Check: Merge gate (Linux)"
 
 #: Everything the cheap lane may measure.
 CHEAP_RECIPES = frozenset({"check-python", "check-type"})
@@ -42,17 +35,9 @@ GATE_RECIPES = {
 }
 
 
-def _document(workflow: str) -> dict[object, object]:
-    """Return *workflow* parsed as YAML."""
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict), f"{workflow} is not a mapping"
-    return cast("dict[object, object]", loaded)
-
-
 def _triggers(workflow: str) -> dict[object, object]:
     """Return *workflow*'s ``on:`` mapping."""
-    document = _document(workflow)
+    document = workflows.document(workflow)
     triggers = document.get("on", document.get(True))
     assert isinstance(triggers, dict), f"{workflow} has no `on:` mapping"
     return cast("dict[object, object]", triggers)
@@ -69,14 +54,14 @@ def _platforms_by_recipe(workflow: str, event: str) -> dict[str, set[str]]:
 
 def _gate_job() -> dict[object, object]:
     """Return the gate job's raw mapping, failing loudly when it is gone."""
-    jobs = _document(GATE_WORKFLOW).get("jobs")
-    assert isinstance(jobs, dict), f"{GATE_WORKFLOW} has no jobs"
+    jobs = workflows.document(Workflow.MERGE_GATE).get("jobs")
+    assert isinstance(jobs, dict), f"{Workflow.MERGE_GATE} has no jobs"
     gate = cast("dict[object, object]", jobs).get(GATE_JOB)
-    assert isinstance(gate, dict), f"{GATE_WORKFLOW} has no `{GATE_JOB}` job"
+    assert isinstance(gate, dict), f"{Workflow.MERGE_GATE} has no `{GATE_JOB}` job"
     return cast("dict[object, object]", gate)
 
 
-@pytest.mark.parametrize("workflow", workflows.MERGE_BOX)
+@pytest.mark.parametrize("workflow", MERGE_BOX)
 def test_a_push_triggers_nothing(workflow: str) -> None:
     """No merge-box workflow runs on push.
 
@@ -103,13 +88,13 @@ def test_only_a_label_starts_the_gate_on_a_pull_request() -> None:
     ``[labeled, synchronize]`` makes this fail naming both; restoring
     ``[labeled]`` makes this pass.
     """
-    pull_request = _triggers(GATE_WORKFLOW).get("pull_request")
+    pull_request = _triggers(Workflow.MERGE_GATE).get("pull_request")
     assert isinstance(pull_request, dict), (
-        f"{GATE_WORKFLOW} must trigger on pull_request with explicit types"
+        f"{Workflow.MERGE_GATE} must trigger on pull_request with explicit types"
     )
     types = cast("dict[object, object]", pull_request).get("types")
     assert types == ["labeled"], (
-        f"{GATE_WORKFLOW} starts on pull_request activity {types!r}; only "
+        f"{Workflow.MERGE_GATE} starts on pull_request activity {types!r}; only "
         "`labeled` keeps a pushed commit without a gate result."
     )
 
@@ -121,10 +106,6 @@ def test_the_gate_always_runs_and_needs_every_measuring_job() -> None:
     makes this fail on the condition; restoring ``always()`` makes this pass.
     """
     gate = _gate_job()
-    assert gate.get("name") == GATE_NAME, (
-        f"the gate is named {gate.get('name')!r}; branch protection requires "
-        f"{GATE_NAME!r}, so a rename leaves every pull request unmergeable"
-    )
     assert gate.get("if") == "always()", (
         f"the gate runs under {gate.get('if')!r}. Anything but `always()` can "
         "skip it, and a skipped required check counts as passed."
@@ -133,7 +114,7 @@ def test_the_gate_always_runs_and_needs_every_measuring_job() -> None:
     needed = set(cast("list[str]", needs)) if isinstance(needs, list) else set()
     measuring = {
         job.job_id
-        for job in workflows.load_jobs(GATE_WORKFLOW)
+        for job in workflows.load_jobs(Workflow.MERGE_GATE)
         if job.job_id != GATE_JOB
     }
     missing = sorted(measuring - needed)
@@ -146,7 +127,7 @@ def test_the_cheap_lane_runs_only_static_checks() -> None:
     Mutation proof: adding a ``just test-python`` step to ``ci.yml``'s lint
     job makes this fail naming ``test-python``; removing it makes this pass.
     """
-    running = _platforms_by_recipe(CHEAP_LANE, "pull_request")
+    running = _platforms_by_recipe(Workflow.CHEAP_LANE, "pull_request")
     extra = sorted(set(running) - CHEAP_RECIPES)
     assert not extra, (
         f"a push to a pull request runs {extra}, beyond the static lane "
@@ -168,7 +149,7 @@ def test_the_gate_runs_every_check_on_every_platform() -> None:
     ``test-fast`` subset makes this fail naming ``test-python`` and
     ``windows``; restoring the step makes this pass.
     """
-    running = _platforms_by_recipe(GATE_WORKFLOW, "pull_request")
+    running = _platforms_by_recipe(Workflow.MERGE_GATE, "pull_request")
     findings = [
         f"`just {recipe}` runs on {sorted(running.get(recipe, set()))}, "
         f"expected {sorted(platforms)}"

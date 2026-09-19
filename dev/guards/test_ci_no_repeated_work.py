@@ -42,6 +42,7 @@ from collections import defaultdict
 
 import pytest
 
+from dev.ci_names import MERGE_BOX
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
@@ -49,7 +50,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: Each merge-box workflow is compared with itself: a repeat is one command
 #: twice in ONE run. Release-plane workflows publish artifacts rather than
 #: measure the tree, so their jobs answer a different question.
-MERGE_BOX = pytest.mark.parametrize("workflow", workflows.MERGE_BOX)
+EACH_MERGE_BOX_WORKFLOW = pytest.mark.parametrize("workflow", MERGE_BOX)
 
 #: Recipes whose ANSWER depends on the platform, so running them on two
 #: platforms is coverage rather than repetition. Each entry states what the
@@ -103,7 +104,7 @@ def _platforms(workflow: str, job_id: str) -> frozenset[str]:
     return frozenset()
 
 
-@MERGE_BOX
+@EACH_MERGE_BOX_WORKFLOW
 def test_no_command_runs_in_two_jobs(workflow: str) -> None:
     """No event reaches two jobs running one identical command.
 
@@ -173,7 +174,7 @@ def test_every_subset_exemption_still_has_its_cover() -> None:
     )
 
 
-@MERGE_BOX
+@EACH_MERGE_BOX_WORKFLOW
 def test_no_event_runs_a_subset_lane_beside_its_cover(workflow: str) -> None:
     """One event never runs both a subset lane and the lane containing it.
 
