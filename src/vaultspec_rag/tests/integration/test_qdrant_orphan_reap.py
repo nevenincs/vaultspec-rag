@@ -24,6 +24,7 @@ from ...qdrant_runtime._resolve import (
     pid_start_time,
     reap_qdrant_orphan,
 )
+from .._child_signal import PROCESS_TIMEOUT_SECONDS
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,7 +40,10 @@ class TestReap:
         proc = subprocess.Popen([sys.executable, "-c", _SLEEP])
         try:
             assert pid_alive(proc.pid) is True
-            assert reap_qdrant_orphan(proc.pid) is True
+            assert (
+                reap_qdrant_orphan(proc.pid, wait_seconds=PROCESS_TIMEOUT_SECONDS)
+                is True
+            )
             assert pid_alive(proc.pid) is False
         finally:
             if proc.poll() is None:
