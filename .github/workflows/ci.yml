@@ -27,10 +27,17 @@ name: RAG CI
 # `test_ci_jobs_reach_a_verdict.py` holds the ceilings and the groups above.
 #
 # THE TRUST QUESTION. This repository is PUBLIC, and a `pull_request` from a
-# fork runs code the author of the pull request controls. A fork's pull
-# request is REFUSED: no job runs for it, hosted or not, and the merge gate
-# fails it, so a maintainer re-opens the change from a branch here. The
-# hardware tiers are unreachable from any pull request.
+# fork runs code the author of the pull request controls, on runners this
+# project owns. The same-repo clause on the job below refuses one - but that
+# clause is in the FORK's copy of this file when a fork's run executes, so it
+# refuses nothing the fork did not agree to. What refuses a fork is the
+# repository setting requiring approval for all external contributors, and a
+# maintainer approving a run to be helpful about someone's CI is that refusal
+# being lifted by hand. Re-open an outside change from a branch here instead.
+#
+# The clause is still worth keeping, and is what the guards assert: it stops
+# THIS copy drifting into running a pull request's head on the fleet. The
+# hardware tiers are unreachable from any pull request at all.
 on:
   pull_request:
   schedule:
