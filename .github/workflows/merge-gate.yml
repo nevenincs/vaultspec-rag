@@ -413,6 +413,6 @@ jobs:
           if [ "$previous" = "none" ]; then
             echo "::error::no full run has measured $SHA; add the $FULL_RUN_LABEL label"
           else
-            echo "::error::the last full run on $SHA was a $previous; add the $FULL_RUN_LABEL label to measure it again"
+            echo "::error::the last full run on $SHA ended in $previous; add the $FULL_RUN_LABEL label to measure it again"
           fi
           exit 1
