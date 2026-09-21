@@ -59,7 +59,7 @@ def test_release_qdrant_clients_override_the_short_transport_default() -> None:
     """
     path = _TEST_ROOT / "integration" / "test_service_storage_migration.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    real_server_clients = []
+    real_server_clients: list[ast.expr | None] = []
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
         if not isinstance(call.func, ast.Name) or call.func.id != "QdrantClient":
             continue
