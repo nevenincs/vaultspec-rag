@@ -20,6 +20,7 @@ from vaultspec_core.config import (
 )
 
 from ..._process_probe import pid_alive
+from ...config._settings import get_config
 from ...config._settings import reset_config as reset_rag_config
 from ...serviceclient._transport import _try_http_health
 from .._ports import free_loopback_port
@@ -95,7 +96,7 @@ def serve_qdrant(binary: Path, root: Path) -> Generator[QdrantSupervisor]:
         storage_dir=root / "storage",
         log_path=root / "qdrant.log",
     )
-    supervisor.start(timeout=60.0)
+    supervisor.start(timeout=get_config().qdrant_ready_timeout_seconds)
     try:
         yield supervisor
     finally:

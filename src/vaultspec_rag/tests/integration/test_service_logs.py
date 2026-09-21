@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import urllib.request
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import pytest
 import uvicorn
@@ -32,6 +32,12 @@ from ...serviceclient._transport import (
     MAX_SERVICE_RESPONSE_BYTES,
     _logs_route_path,
     _try_http_admin,
+)
+from .._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    PROCESS_TIMEOUT_SECONDS,
+    ChildStderr,
+    child_stderr,
 )
 from .._ports import free_loopback_port
 
@@ -369,7 +375,7 @@ def test_admin_transport_rejects_oversized_http_response_before_json_decode() ->
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started
@@ -381,7 +387,7 @@ def test_admin_transport_rejects_oversized_http_response_before_json_decode() ->
         )
     finally:
         server.should_exit = True
-        thread.join(timeout=5.0)
+        thread.join(timeout=PROCESS_TIMEOUT_SECONDS)
 
     assert result is not None
     assert result["ok"] is False
@@ -416,7 +422,7 @@ def test_admin_transport_preserves_live_structured_log_error(
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started
@@ -428,7 +434,7 @@ def test_admin_transport_preserves_live_structured_log_error(
         )
     finally:
         server.should_exit = True
-        thread.join(timeout=5.0)
+        thread.join(timeout=PROCESS_TIMEOUT_SECONDS)
 
     assert result == {
         "ok": False,
@@ -458,6 +464,7 @@ from vaultspec_rag.service import ServiceRegistry  # absolute-import-ok
 
 log_path = Path(sys.argv[1])
 port = int(sys.argv[2])
+hard_cutoff = float(sys.argv[3])
 server = None
 
 async def stop_handler(_request):
@@ -498,7 +505,7 @@ try:
     )
     server.run()
 finally:
-    if capture is not None and not capture.close(timeout=10.0):
+    if capture is not None and not capture.close(timeout=hard_cutoff):
         os._exit(81)
 if capture is None or capture.persistence_error is not None:
     os._exit(82)
@@ -506,7 +513,7 @@ if capture is None or capture.persistence_error is not None:
 
 
 def _start_uvicorn_access_rollover_probe(
-    log_path: Path, port: int
+    log_path: Path, port: int, *, stderr: BinaryIO
 ) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         [
@@ -515,22 +522,26 @@ def _start_uvicorn_access_rollover_probe(
             _uvicorn_access_rollover_probe_code(),
             str(log_path),
             str(port),
+            str(CHILD_PROCESS_TIMEOUT_SECONDS),
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr,
     )
 
 
 def _get_probe_response(port: int, path: str) -> int:
     with urllib.request.urlopen(
-        f"http://127.0.0.1:{port}{path}", timeout=2.0
+        f"http://127.0.0.1:{port}{path}", timeout=CHILD_PROCESS_TIMEOUT_SECONDS
     ) as response:
         return response.status
 
 
-def _wait_for_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) -> None:
-    deadline = time.monotonic() + 10.0
+def _wait_for_uvicorn_access_probe(
+    process: subprocess.Popen[bytes], port: int, *, stderr: ChildStderr
+) -> None:
+    """Wait for semantic readiness until the spawned-child hard cutoff."""
+    deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
             pytest.fail(f"Uvicorn access probe exited early with {process.returncode}")
@@ -539,7 +550,10 @@ def _wait_for_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) 
                 return
         except OSError:
             time.sleep(0.02)
-    pytest.fail("Uvicorn access probe did not become ready")
+    pytest.fail(
+        "Uvicorn access probe did not become ready before the spawned-child "
+        f"hard cutoff. Child stderr:\n{stderr.read()}"
+    )
 
 
 def _send_access_only_traffic(port: int) -> None:
@@ -549,7 +563,7 @@ def _send_access_only_traffic(port: int) -> None:
 
 def _wait_for_rotated_log(log_path: Path) -> None:
     rotated = log_path.with_name("service.log.1")
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
     while time.monotonic() < deadline and not rotated.exists():
         time.sleep(0.01)
     assert rotated.exists(), "access-only traffic never triggered rollover"
@@ -557,17 +571,17 @@ def _wait_for_rotated_log(log_path: Path) -> None:
 
 def _stop_uvicorn_access_probe(process: subprocess.Popen[bytes], port: int) -> None:
     assert _get_probe_response(port, "/stop") == 200
-    process.wait(timeout=15.0)
+    process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
 def _terminate_probe_if_needed(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is None:
         process.terminate()
         try:
-            process.wait(timeout=5.0)
+            process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5.0)
+            process.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
 
 
 def _assert_access_rollover_logs(log_path: Path, marker: str) -> None:
@@ -590,15 +604,18 @@ def test_uvicorn_access_only_traffic_drives_live_service_log_rollover(
     port = free_loopback_port()
     log_path = tmp_path / "service.log"
     marker = "ACCESS_ONLY_FINAL_MARKER_4fcb5f"
-    process = _start_uvicorn_access_rollover_probe(log_path, port)
-    try:
-        _wait_for_uvicorn_access_probe(process, port)
-        _send_access_only_traffic(port)
-        _wait_for_rotated_log(log_path)
-        assert _get_probe_response(port, f"/probe?marker={marker}") == 200
-        _stop_uvicorn_access_probe(process, port)
-    finally:
-        _terminate_probe_if_needed(process)
+    with child_stderr() as stderr:
+        process = _start_uvicorn_access_rollover_probe(
+            log_path, port, stderr=stderr.sink
+        )
+        try:
+            _wait_for_uvicorn_access_probe(process, port, stderr=stderr)
+            _send_access_only_traffic(port)
+            _wait_for_rotated_log(log_path)
+            assert _get_probe_response(port, f"/probe?marker={marker}") == 200
+            _stop_uvicorn_access_probe(process, port)
+        finally:
+            _terminate_probe_if_needed(process)
 
     assert process.returncode == 0
     _assert_access_rollover_logs(log_path, marker)

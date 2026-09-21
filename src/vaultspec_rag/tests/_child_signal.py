@@ -85,17 +85,12 @@ CHILD_PROCESS_TIMEOUT_SECONDS: Final = 120.0
 #: itself.
 NESTED_CHILD_PROCESS_TIMEOUT_SECONDS: Final = CHILD_PROCESS_TIMEOUT_SECONDS * 2
 
-#: Ceiling on a wait for an IN-PROCESS thread, or for an already-running
-#: process, to reach the state a test needs. The counterpart the bound above
-#: is defined against, and kept beside it so a reader choosing between them
-#: sees both: this one covers work that has already started, that one covers
-#: work that still has to be spawned.
-#:
-#: Generous on purpose. It costs nothing when green and only decides how long
-#: a genuinely wedged host takes to be reported - whereas sized to an idle
-#: machine it reports a loaded one as broken, which is what a 2.0s loopback
-#: probe and a 5.0s reap each did under a parallel run.
-PROCESS_TIMEOUT_SECONDS: Final = 10.0
+#: Hard safety cutoff on an in-process thread or an already-running process.
+#: This is deliberately the same generous ceiling as a spawned child. It is
+#: not a performance assertion and must never be reduced to the duration seen
+#: on one machine: green waits return as soon as their semantic condition is
+#: true, while only a genuinely non-converging wait consumes the ceiling.
+PROCESS_TIMEOUT_SECONDS: Final = CHILD_PROCESS_TIMEOUT_SECONDS
 
 
 def publish_marker(path: str | PathLike[str], text: str) -> None:
