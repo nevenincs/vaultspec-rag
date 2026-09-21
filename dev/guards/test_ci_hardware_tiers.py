@@ -12,6 +12,7 @@ preconditions before it, and every caller hands that home the token.
 
 from __future__ import annotations
 
+import ast
 from typing import cast
 
 import pytest
@@ -37,6 +38,52 @@ PRECONDITIONS = {
 
 #: The secret the model-cache warm-up reads.
 TOKEN = "HF_TOKEN"
+
+
+def test_live_service_consumers_run_outside_the_resident_model_tier() -> None:
+    """A daemon must not load beside the resident tier's session models.
+
+    Mutation proof: remove ``subprocess_gpu`` from a live-service test or its
+    containing class/module; this guard names that test. Restore it to pass.
+    """
+    directory = (
+        workflows.repository_root() / "src" / "vaultspec_rag" / "tests" / "integration"
+    )
+    unisolated: list[str] = []
+    for path in directory.glob("test_*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_marked = any(
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "pytestmark"
+                for target in statement.targets
+            )
+            and "pytest.mark.subprocess_gpu" in ast.unparse(statement.value)
+            for statement in tree.body
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            if not any(arg.arg == "live_service" for arg in node.args.args):
+                continue
+            function_marked = any(
+                "pytest.mark.subprocess_gpu" in ast.unparse(decorator)
+                for decorator in node.decorator_list
+            )
+            class_marked = any(
+                isinstance(parent, ast.ClassDef)
+                and node in parent.body
+                and any(
+                    "pytest.mark.subprocess_gpu" in ast.unparse(decorator)
+                    for decorator in parent.decorator_list
+                )
+                for parent in tree.body
+            )
+            if not (module_marked or class_marked or function_marked):
+                unisolated.append(f"{path.name}:{node.name}")
+    assert not unisolated, f"live-service GPU tests in resident tier: {unisolated}"
 
 
 def _workflow_names() -> list[str]:
