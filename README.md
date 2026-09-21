@@ -5,7 +5,8 @@
 The semantic search component for vault and code.
 
 Search code and feature records by meaning through the command line or Model Context
-Protocol (MCP). Inference runs on your GPU.
+Protocol (MCP). Search inference runs on your GPU, with optional hosted Typesafe
+query classification and result reranking.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/stars/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="GitHub Stars" src="https://www.shieldcn.dev/github/stars/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/forks/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="GitHub Forks" src="https://www.shieldcn.dev/github/forks/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
@@ -126,6 +127,21 @@ Check that the report detects your GPU and finds all three models and the Qdrant
 binary. If it reports a problem, use the [installation troubleshooting guide](docs/installation.md#when-something-goes-wrong).
 
 ## Use it
+
+### Optional Typesafe classification
+
+Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the service account's environment before
+starting the server to opt into paid Typesafe classification. A valid, funded key
+enables query interpretation and full-content result reranking, including removal
+of confidently irrelevant hits. Queries and candidate content are sent to Typesafe;
+without a usable key, search keeps its existing local ranking.
+
+`server start` and `server status` show the running server's enrollment and whether
+a recent evaluation succeeded. No separate enable flag is needed. See
+[activation, fallback and status meanings](docs/configuration.md#typesafe-enrollment)
+before enabling it. The feature does not replace the local search models or GPU.
+
+### Start and search
 
 Start the service to load the models. The command waits until it is ready:
 

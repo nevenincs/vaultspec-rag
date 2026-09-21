@@ -58,6 +58,47 @@ The two booleans among them accept the same spellings as every other boolean. Th
 | `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
 | `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. Read only from the executing server's environment, never project configuration or a CLI flag; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
 
+### Typesafe enrollment
+
+Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the environment of the account that launches
+the service. For example, in PowerShell:
+
+```powershell
+$env:VAULTSPEC_RAG_TYPESAFE_API_KEY = '<your-key>'
+vaultspec-rag server start
+vaultspec-rag server status
+```
+
+For a shell on Linux or macOS, use `export VAULTSPEC_RAG_TYPESAFE_API_KEY='<your-key>'`
+before starting the service. Keep the key out of committed files. A project `.env`
+file is not automatically loaded for this setting. If the server is already running,
+changing a client shell's environment does not change that server: restart it from
+the intended service environment. Scheduled services need the variable in their own
+launch environment.
+
+Enrollment authorizes paid external processing of search queries and full candidate
+content. Successful classification can reorder hits and drop confidently irrelevant
+results, including returning an empty page. Explicit filters still apply. Missing,
+rejected or temporarily unavailable credentials retain the existing local pipeline.
+
+Both lifecycle commands display a `Typesafe:` line from the daemon's `/health`
+snapshot; neither command tests the key or spends API credits:
+
+| State | Meaning |
+| --- | --- |
+| `off` | No dedicated key in the server environment; legacy ranking. |
+| `pending` | Enrolled, but no successful evaluation within the last 60 seconds. The next search checks usability. |
+| `active` | Enrolled; a validated provider evaluation succeeded within the last 60 seconds. This is observed success, not a live balance check or a promise that every search can be classified. |
+| `rejected` | Enrolled, but the provider rejected authentication or payment; legacy fallback until key rotation or server restart. |
+| `cooldown` | Enrolled, but a transient provider failure has temporarily suspended calls; legacy fallback. |
+
+An unreachable or older daemon is `not reported`, not assumed to be enrolled based
+on the client's key. In JSON, start returns `data.typesafe`; status returns
+`data.health.typesafe` when health is available. The snapshot contains `enrolled`,
+`state`, `model`, `last_success_age_seconds` and `retry_after_seconds`, never the key
+or its fingerprint. A pending/rejected classifier does not make the local search
+service unhealthy.
+
 ### Typesafe connection reuse, caching and diagnostics
 
 The server shares a verified TLS context and up to two exclusive HTTPS connections.

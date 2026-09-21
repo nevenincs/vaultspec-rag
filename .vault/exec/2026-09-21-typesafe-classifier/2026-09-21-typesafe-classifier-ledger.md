@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:f70d8a37d3a890b1e25f3c588ed5beaf093652ea94d1484be2518c0c608a98c5'
+body_hash: 'sha256:496e8e9f838ffb31faa767cc3a4ce38ca042009d0b6ea42ea66975f01c343812'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -89,6 +89,19 @@ related:
 - `S07` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
 - `S07` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
 - `S07` `verify:` `ruff check package and spike; ruff format --check 12 touched files; basedpyright 12 touched files; pytest classifier/search/noise/env/config 175 tests; live performance 61 provider calls; live search spike 5/5; guard mutations restored` -> `pass`
+- `S08` `M` `src/vaultspec_rag/search/_typesafe_transport.py`
+- `S08` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S08` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S08` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S08` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_typesafe_transport.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S08` `M` `README.md`
+- `S08` `M` `docs/configuration.md`
+- `S08` `M` `docs/cli.md`
+- `S08` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S08` `verify:` `ruff package; format and basedpyright 8 files; 141 lifecycle/transport/status/config tests; live pending-to-active query; no-provider-probe mutation` -> `pass`
 
 ## Notes
 

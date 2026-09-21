@@ -44,6 +44,7 @@ class _Circuit:
     fingerprint: bytes = b""
     disabled: bool = False
     retry_at: float = 0.0
+    last_success: float | None = None
 
 
 _CIRCUIT = _Circuit()
@@ -72,6 +73,7 @@ def _credential() -> tuple[str, bytes]:
             _CIRCUIT.fingerprint = fingerprint
             _CIRCUIT.disabled = False
             _CIRCUIT.retry_at = 0.0
+            _CIRCUIT.last_success = None
             _CACHE.clear()
             _POOL.close()
         if not key:
@@ -90,6 +92,42 @@ def available() -> bool:
     except TypesafeUnavailableError:
         return False
     return True
+
+
+def enrollment_status() -> dict[str, object]:
+    """Report redacted process-local evidence without making a provider call."""
+    reason = ""
+    try:
+        _credential()
+    except TypesafeUnavailableError as exc:
+        reason = exc.reason
+    with _LOCK:
+        now = time.monotonic()
+        age = (
+            None
+            if _CIRCUIT.last_success is None
+            else max(0.0, now - _CIRCUIT.last_success)
+        )
+        state = {
+            "no_key": "off",
+            "credential_disabled": "rejected",
+            "cooldown": "cooldown",
+        }.get(reason)
+        if state is None:
+            recently_verified = (
+                age is not None
+                and age < _CACHE.ttl
+                and _CIRCUIT.last_success is not None
+                and _CIRCUIT.last_success >= _CIRCUIT.retry_at
+            )
+            state = "active" if recently_verified else "pending"
+        return {
+            "enrolled": bool(_CIRCUIT.fingerprint),
+            "state": state,
+            "model": MODEL,
+            "last_success_age_seconds": round(age, 1) if age is not None else None,
+            "retry_after_seconds": round(max(0.0, _CIRCUIT.retry_at - now), 1),
+        }
 
 
 def _failed(fingerprint: bytes, permanent: bool = False) -> None:
@@ -203,6 +241,7 @@ def _run(
                 and time.monotonic() >= _CIRCUIT.retry_at
             ):
                 _CACHE.put(flight.cache_key, body, time.monotonic())
+                _CIRCUIT.last_success = time.monotonic()
         outcome.set_result((body, stats))
     except urllib.error.HTTPError as exc:
         permanent = exc.code in {401, 402, 403}

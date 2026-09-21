@@ -107,6 +107,40 @@ def test_typed_complete_response_and_rounded_probabilities() -> None:
     assert evaluated.input_tokens == 100
 
 
+def test_enrollment_status_is_redacted_and_never_probes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inserting a status-side _request failed the no-call guard; restored passed."""
+
+    def forbidden(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("status must not make a provider call")
+
+    monkeypatch.setattr(transport, "_request", forbidden)
+    pending = transport.enrollment_status()
+    assert pending["enrolled"] is True and pending["state"] == "pending"
+    assert "synthetic-credential" not in json.dumps(pending)
+    assert set(pending) == {
+        "enrolled",
+        "state",
+        "model",
+        "last_success_age_seconds",
+        "retry_after_seconds",
+    }
+    transport._CIRCUIT.last_success = time.monotonic()
+    assert transport.enrollment_status()["state"] == "active"
+    transport._CIRCUIT.last_success -= 61
+    assert transport.enrollment_status()["state"] == "pending"
+    transport._failed(transport._credential()[1])
+    assert transport.enrollment_status()["state"] == "cooldown"
+    transport._CIRCUIT.disabled = True
+    assert transport.enrollment_status()["state"] == "rejected"
+    monkeypatch.setenv(EnvVar.TYPESAFE_API_KEY, "replacement")
+    assert transport.enrollment_status()["state"] == "pending"
+    monkeypatch.delenv(EnvVar.TYPESAFE_API_KEY)
+    off = transport.enrollment_status()
+    assert off["state"] == "off" and off["enrolled"] is False
+
+
 @pytest.mark.parametrize(
     ("question", "field", "value"),
     [
@@ -407,6 +441,7 @@ def test_persistent_connection_and_exact_cache(monkeypatch: pytest.MonkeyPatch) 
     ports: list[int] = []
     with _server(monkeypatch, 200, json.dumps(_envelope()).encode(), ports) as received:
         first = transport.evaluate({"query": "one"}, QUESTIONS)
+        assert transport.enrollment_status()["state"] == "active"
         second = transport.evaluate({"query": "two"}, QUESTIONS)
         cached = transport.evaluate({"query": "one"}, QUESTIONS)
         assert first.timings["connections_reused"] == 0

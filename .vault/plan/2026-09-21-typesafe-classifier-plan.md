@@ -8,7 +8,7 @@ related:
   - '[[2026-09-21-typesafe-classifier-adr]]'
 modified: '2026-09-21'
 body_schema: body-v2
-body_hash: 'sha256:d5ad5d6b1120b76affc465a4058bfd959e4d59a6c4948fc1299035658ac63183'
+body_hash: 'sha256:60231ea7df0c915b6528ee9ee174e590a44aba06200843fdbe193cea41d4b4be'
 ---
 
 # `typesafe-classifier` plan
@@ -29,6 +29,10 @@ On 2026-09-21, after the live comparison exposed the candidate-budget integratio
 
 Approved 2026-09-22 follow-up: the user explicitly requests normal server performance and cost controls, including optimized connection instances and API caching. Reuse the accepted bounded hosted decision: process-local pooled HTTPS, short-lived exact-request answer memoization and in-flight deduplication are internal optimizations with no persistent schema or public API migration. Credential rotation/rejection invalidates reuse; opt-out and circuit checks precede cache lookup. Preserve full-content judgments, explicit constraints, request deadlines and bounded memory/concurrency. Measure cold, warm-connection, cached and concurrent identical workloads using actual provider calls; do not confuse caching savings with model inference improvements.
 
+Approved 2026-09-22 follow-up: the user explicitly requests user documentation, GitHub README and server start/status output indicating Typesafe enrollment. Reuse the accepted service-owned diagnostics and environment enrollment boundary. Report the executing daemon's redacted observed state, not the caller environment or an unverified claim about funding; status performs no paid provider probe.
+
+Approved 2026-09-22 addition: the user authorizes storing the current supplied API key as a repository GitHub Actions secret and making it available to CI integration tests. Restrict the secret to the existing trusted schedule/dispatch/release hardware lanes; preserve pull-request containment. This authorizes secret configuration and local workflow edits, not pushing branches or dispatching GPU jobs.
+
 ## Steps
 
 - [x] `S01` - Implement bounded environment-enrolled hosted transport and strict typed answer validation with fallback state tests; `new search/_typesafe_transport.py and search/_typesafe_answers.py, transport tests, config/_types.py, .env.example and docs/configuration.md`.
@@ -38,6 +42,8 @@ Approved 2026-09-22 follow-up: the user explicitly requests normal server perfor
 - [x] `S05` - Benchmark identical real indexed code searches with classifier enrollment absent and present, save raw outcomes and timings, review relevance and report measured differences; `dev/typesafe_service_benchmark.py, ignored tmp/typesafe-service-ab-cbde33a3 artifacts, feature research and audit`.
 - [x] `S06` - Repeat real-service vanilla versus Typesafe measurement after the integration correction, require confirmed candidate evaluations, and assess result contents semantically; `dev/typesafe_service_benchmark.py, ignored comparison artifacts, feature research and audit`.
 - [x] `S07` - Reuse bounded HTTPS connections, cache validated exact-request answers and coalesce in-flight duplicates; prove safety and measure live latency/cost; `search/_typesafe_transport.py, search/_typesafe_pool.py, search/_typesafe_cache.py, search/_typesafe_answers.py, search/_typesafe_policy.py, search/_typesafe_context.py, search/_searcher.py, _public_search.py, transport/cache/search timing tests, dev live performance spike, configuration documentation and feature research/audit`.
+- [x] `S08` - Expose daemon-owned Typesafe enrollment through health and lifecycle output; document activation and states; `search/_typesafe_transport.py, server/_lifespan.py, cli/_status_labels.py, cli/_status_render.py, cli/_service_start.py, focused transport/lifecycle/health tests, README.md, docs/configuration.md, docs/cli.md, feature audit`.
+- [ ] `S09` - Pass the repository Typesafe secret into trusted integration workflows and verify live classifier/service enrollment; `.github/workflows/ci.yml, hardware.yml, publish.yml, dev/guards/test_ci_hardware_tiers.py, docs/configuration.md, feature audit and GitHub Actions repository secret`.
 
 ## Parallelization
 

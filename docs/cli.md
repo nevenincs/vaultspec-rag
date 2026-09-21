@@ -392,6 +392,11 @@ None.
 
 Show the human operator summary for server readiness, work, and next checks.
 
+The `Typesafe:` line reports the running daemon's classifier enrollment and observed
+usability, not the calling shell's key. JSON includes `data.health.typesafe` when
+health is available. See [Typesafe enrollment](configuration.md#typesafe-enrollment)
+for state meanings; status never makes a paid classification call.
+
 ```bash
 vaultspec-rag server status
 ```
@@ -430,6 +435,13 @@ None.
 ## server start
 
 Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Waits until it is ready and records how the CLI can reach it.
+
+Successful starts and already-running responses include Typesafe enrollment from
+the daemon (`Typesafe:` in human output, `data.typesafe` in JSON). Set the dedicated
+key before launching the server; attaching to an existing server does not change
+its environment. Enrollment alone does not confirm a valid, funded key: the first
+search evaluation establishes usability. See
+[Typesafe enrollment](configuration.md#typesafe-enrollment).
 
 ```bash
 vaultspec-rag server start

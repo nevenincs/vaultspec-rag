@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:d39726dec52ef8e185d6a7a102f1f43a0011cb651714a4b20430c5d44f3a7a59'
+body_hash: 'sha256:28ff21cad650a1bbff4445072819f48977c115fc11579b01445a48e4b7b8da10'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -98,6 +98,10 @@ Local reranking now has a separate timer on all three surfaces; query-attempt du
 ### performance-verification-scope | low | Live production-path evidence is stage-specific
 
 The follow-up uses actual provider responses and production policy over saved candidate fixtures, with live search-orchestration checks across all surfaces. Numeric comparisons and experiment limitations reside in the feature research. It does not replace or claim a new full GPU-backed service A/B; earlier quality limitations remain. Final review result: PASS, with no unresolved high or critical findings in S07.
+
+### enrollment-visibility | low | Daemon evidence reaches lifecycle output without paid status probes
+
+S08 review: the classifier owns redacted enrollment/circuit evidence; /health publishes it and start/status render that daemon snapshot instead of reading client credentials. Configured keys remain pending until a successful provider evaluation, and old success cannot override a later cooldown/rejection. README, configuration and CLI guides explain external data transfer, credits, restart environment, pending versus verified evidence, and old/unreachable-daemon absence. Unit/loopback lifecycle and health checks pass (141 tests); a real provider query changed pending to active without revealing key material. Inserting a status-side provider request failed the no-call guard and restoration passed. Lint, format and type checks pass. S08 review result: PASS; no high/critical findings.
 
 ## Recommendations
 
