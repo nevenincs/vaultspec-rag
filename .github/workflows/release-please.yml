@@ -73,6 +73,25 @@ jobs:
             git push
           fi
 
+      # Changes pushed with GITHUB_TOKEN do not start pull-request workflows.
+      # Dispatch the one required gate after the lock refresh so its check run
+      # measures and attaches to the final release-branch head.
+      - name: Dispatch the merge gate for the release pull request
+        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ steps.release.outputs.pr && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HEAD_BRANCH}" ]; then
+            echo "::error::release-please returned a pull request without a head branch"
+            exit 1
+          fi
+          gh workflow run merge-gate.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${HEAD_BRANCH}" \
+            --field ref="${HEAD_BRANCH}"
+
       # Release Please creates the GitHub Release before either artifact
       # workflow finishes. Hold that release out of `latest` until the binary
       # workflow's complete-target gate has a chance to verify the public set.

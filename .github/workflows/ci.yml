@@ -1,16 +1,8 @@
 name: RAG CI
 
-# THE CHEAP LANE AND THE HARDWARE TIERS. Nothing here gates a merge.
-#
-# - `pull_request`: style and types only, on every push to a branch under
-#   review. It answers the cheap questions fast and nothing else.
-# - `schedule` / `workflow_dispatch`: the hardware tiers that cannot gate a
-#   merge (macOS, CUDA).
-#
-# Everything a change must pass before it lands - every gating dimension, the
-# full Linux matrix, the full Windows suite and the dependency audit - lives
-# in `merge-gate.yml` and runs when a maintainer asks for it. A push to main
-# triggers nothing here: that tree was measured before it merged.
+# Scheduled and manually dispatched accelerator coverage. Pull requests have
+# one CI owner, `merge-gate.yml`, so every required result comes from one
+# workflow and no static check is repeated in a second run.
 #
 # CONCURRENCY, AND WHY THE COMMIT IS IN THE GROUP ON MAIN. `cancel-in-progress:
 # false` governs runs that have STARTED. GitHub separately cancels a
@@ -18,21 +10,15 @@ name: RAG CI
 # saturated serial fleet a run sits pending for a long time, so a scheduled
 # run and a dispatch against main would otherwise cancel each other and
 # report `cancelled` rather than `failed`. Putting the commit in the group, on
-# main only, gives every main commit its own group; pull requests keep
-# superseding their own earlier runs.
+# main only, gives every main commit its own group.
 #
 # The rule and its guards live in `dev/guards/`:
 # `test_ci_no_repeated_work.py` expands every recipe to the commands it
 # finally runs and fails when one appears in two jobs of the same run;
 # `test_ci_jobs_reach_a_verdict.py` holds the ceilings and the groups above.
 #
-# THE TRUST QUESTION. This repository is PUBLIC, and a `pull_request` from a
-# fork runs code the author of the pull request controls. A fork's pull
-# request is REFUSED: no job runs for it, hosted or not, and the merge gate
-# fails it, so a maintainer re-opens the change from a branch here. The
-# hardware tiers are unreachable from any pull request.
+# The hardware tiers are unreachable from pull requests.
 on:
-  pull_request:
   schedule:
     - cron: '17 5 * * 3'
   workflow_dispatch:
@@ -63,7 +49,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
@@ -82,59 +68,6 @@ env:
 # disabled; uv still reads and populates the persistent runner cache normally.
 
 jobs:
-  lint:
-    name: "Check: Lint (Linux)"
-    # Only the two cheapest dimensions, on purpose: every push pays for this
-    # job. `merge-gate.yml` runs the aggregate, which contains both.
-    #
-    # release-please updates pyproject.toml before its own follow-up commit
-    # refreshes uv.lock on the release branch. That one-commit head is
-    # transient, and running `just init` there only proves the repair has not
-    # landed yet. Wait for the second commit, then run the usual gates.
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (!startsWith(github.head_ref, 'release-please--') ||
-       github.event.pull_request.commits > 1)
-    timeout-minutes: 40
-    runs-on: [self-hosted, Linux, X64, build]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          # Derived from the pin, never repeated: a literal here drifts the
-          # first time the pin is bumped alone.
-          python-version-file: .python-version
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-
-      - name: Set up just
-        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
-        with:
-          tool: just@1.38.0
-
-      - name: Initialize the worktree
-        run: just init
-
-      - name: Style
-        run: just check-python
-
-      - name: Types
-        run: just check-type
-
   # The accelerator tiers are defined once, in `hardware.yml`, and shared
   # with the release. A dispatch picks the tier: the GPU tier contends for the
   # single card with a live service, and the macOS tier needs a laptop that is
