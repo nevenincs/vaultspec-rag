@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:328164936ffa465dbd06d43c80cec2d59b9065eb127fc0ed5f16677b3637eaf3'
+body_hash: 'sha256:2382afd680b75556c063e7f7f2cc132d399669d210c117da395076a8dd30dee9'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -50,6 +50,14 @@ At dev/typesafe_search_spike.py, the requested-test assertion proves presence in
 ### final-disposition | low | Bounded implementation accepted with visible quality limitations
 
 The user delegated the quality/latency choice on 2026-09-21; the orchestrator retained the accepted bounded batched implementation without changing its deadline, thresholds or evaluation assertions. The selected path has been exercised by the live production-policy and actual search-orchestration experiments in 2026-09-21-typesafe-classifier-research. The ranking-evidence finding remains an accepted medium quality limitation, not a passing benchmark or a correctness-test waiver. The three integration boundary findings are resolved. The successful-evaluation-counters finding remains low; diagnostics are not billing totals. Final review result: PASS. No new code changes followed the independent delta review, and all required implementation checks pass.
+
+### indexed-candidate-budget | high | Common filtered searches never reach hosted candidate ranking
+
+The completed real indexed-service comparison in 2026-09-21-typesafe-classifier-research establishes that the selected top_k15 path-filtered workflow always falls back before candidate evaluation. The larger legacy retrieval window preserved by src/vaultspec_rag/search/_typesafe_policy.py:139 conflicts with the64-candidate rejection at :154; src/vaultspec_rag/search/_searcher.py:957 passes the whole surviving window. This is not a provider outage or uncertain model judgment. Existing fixture checks missed the realistic cross-boundary candidate count. Reopen S03. A correction needs a coherent bounded classification window and explicit regression coverage for path-filtered candidate expansion while preserving exact legacy fallback. No implementation correction is authorized by the current measurement-only task. Current integrated disposition: REVISION REQUIRED; this supersedes the earlier PASS for the newly exercised workflow.
+
+### comparative-capture | low | Measurement completed with explicit limits and raw evidence
+
+The two thirty-search arms preserve identical queries, source HEAD, index generation and response arrays; warmups are excluded from the reported timings. Live query calls and deterministic candidate-budget fallback are distinguished from completed candidate ranking. Original exact-name ranks remain in raw artifacts; supplemental overlap ranks are labeled and do not replace the original records. No production ranking changes were made. The benchmark client strips service tokens from status snapshots. The measurement itself is complete, but it does not demonstrate a functioning Typesafe-versus-vanilla candidate-ranking comparison.
 
 ## Recommendations
 

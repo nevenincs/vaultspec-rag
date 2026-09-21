@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:77bc261fb4d6727a08f1c7d244f03576e2bd7185d9de1831430038e20a416a8c'
+body_hash: 'sha256:e792a0ad3b81719e61038375497cb152b909bdaeff9f961da9a2450016d489dc'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -55,6 +55,10 @@ related:
 - `S02` `verify:` `package Ruff lint, three policy files format and basedpyright, 57 policy tests` -> `pass`
 - `S03` `verify:` `package Ruff lint, six integration files format and basedpyright, 103 search/noise/shaping/parser tests` -> `pass`
 - `S04` `verify:` `final package and six spike Ruff lint, spike format and basedpyright, 215 targeted tests; integrated safety review no unresolved high or critical findings` -> `pass`
+- `S05` `A` `dev/typesafe_service_benchmark.py`
+- `S05` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
+- `S05` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S05` `verify:` `.venv/Scripts/python.exe -B dev/typesafe_service_benchmark.py --mode off/on --port 18766 --output tmp/typesafe-service-ab-cbde33a3` -> `pass`
 
 ## Notes
 
@@ -66,3 +70,7 @@ related:
 - `S04` Awaiting user preference: retain bounded batched production with documented 9/10 quality miss, or pursue isolated candidate ranking with bounded parallelism and a larger latency budget. S02-S04 remain open; no failed quality target relaxed.
 - `S02` User delegated quality/latency decision; retained accepted bounded batching with unchanged authored evaluation and documented ranking miss. No assertion, threshold or deadline relaxed.
 - `S04` Closed under the user's delegated choice of bounded batching. Historical live evaluation failures remain recorded and the 9/10 benchmark remains unchanged; accepted quality limitation, not an all-green accuracy claim. No CUDA service or credential persistence.
+- `S05` Real-service benchmark setup: frozen source HEAD cbde33a35d46a24e538296c000b6d38b3c992343. Isolated managed runtime, Qdrant storage and DATA_DIR under tmp/typesafe-service-ab-cbde33a3; service port 18766 and Qdrant 18765. Verified cached Qdrant executable against provisioned manifest and committed archive pin before copying managed binary/manifest. Initial startup attempts hit ownership/port conflicts; foreign services left untouched. Incremental indexing into fresh isolated publication storage correctly required explicit rebuild. Rebuild job 41dfc628-92ff-4e96-a7dd-4c213986dccb started against 832 admitted source files. No A/B measurements captured yet; concurrent CI GPU processes observed.
+- `S05` Verification blocked before A/B captures: isolated rebuild stalled at 237/832 files inside CUDA forward while two foreign CI processes shared effectively full GPU. Cooperative pause remained pending; owned service PID58800 stopped successfully on port18766. No foreign processes stopped; no classifier-enabled arm or quality measurements captured. Await idle-GPU window; S05 remains open. Benchmark-client lint/format/type pass, actual live capture not yet exercised.
+- `S05` Completed real indexed-service comparison, 30 measurements per arm plus warmup; raw artifacts and summary retained in ignored tmp/typesafe-service-ab-cbde33a3. All paired result arrays exactly equal. All keyed requests completed live query evaluation but hit candidate-budget fallback; zero candidate ranking completions. High integration finding reopens S03; no implementation fix made. Authorized RAG runner launcher/listener stopped and resident start/stop scheduled tasks disabled; remain disabled pending user direction. Benchmark service stopped after both arms. Existing classifier/noise tests:148 passed; package lint, benchmark format/type and unchanged-source check pass.
+- `S05` User requested semantic rather than programmatic quality judgments. Added manual per-query content assessment, distinguishing direct evidence, useful context, wrong-operation near-matches, missing facets, buried counterevidence and failed no-match abstention. Exact equality is reported only as an observation of this capture; no determinism or model-quality claim.
