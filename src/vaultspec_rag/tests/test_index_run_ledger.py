@@ -65,7 +65,7 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_publication import RunLedgerPublicationMethods
 from ..indexer._run_ledger_runtime import RunLedger, _signature_from_payload
-from ._production_service import PROCESS_TIMEOUT_SECONDS
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 
 pytestmark = [pytest.mark.unit]
 

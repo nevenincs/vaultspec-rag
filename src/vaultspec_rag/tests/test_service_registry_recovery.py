@@ -24,6 +24,7 @@ from ..job_models import (
 from ..job_persistence import load_persisted_state
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceState, QuiesceTransition, QuiesceTransitionCode
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._job_roots import _TEST_PROJECT_ROOT
 
 if TYPE_CHECKING:
@@ -35,7 +36,10 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_WAIT_SECONDS = 5.0
+#: The suite-wide in-process bound, not a restatement of it. Every wait
+#: here is on a thread this test already started, and a budget sized to an
+#: idle machine reports a loaded one as a registry that never recovered.
+_WAIT_SECONDS = PROCESS_TIMEOUT_SECONDS
 
 
 def _registry_with_quiesced_job(

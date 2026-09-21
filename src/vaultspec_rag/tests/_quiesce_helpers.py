@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING
 
 from ..service import ServiceRegistry
 from ..service_quiesce import QuiesceSnapshot, QuiesceState
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     import threading
 
-QUIESCE_THREAD_TIMEOUT = 5.0
+#: The suite-wide in-process bound. These waits are for a thread that has
+#: already been started, so they take that ceiling rather than restating a
+#: smaller one: five seconds is comfortable on an idle machine and is spent
+#: on scheduling alone under a parallel run, which reports a transition that
+#: was merely late as one that never happened.
+QUIESCE_THREAD_TIMEOUT = PROCESS_TIMEOUT_SECONDS
 
 
 def wait_for_quiesce_state(
