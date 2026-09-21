@@ -13,7 +13,7 @@ standalone tool and no-install routes.
 
 - [Resolution order](#resolution-order) - which source wins when more than one sets a value
 - [Type coercion](#type-coercion) - how values are parsed, and what a rejected value does
-- [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - the four that resolve differently
+- [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - variables that resolve differently
 - [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
 - [Config-only keys](#config-only-keys) - settings with no environment variable
 - [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
@@ -29,7 +29,7 @@ Each setting resolves through a fixed precedence, highest first: CLI flag, envir
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
-Four variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
+Some variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
 
 ## Type coercion
 
@@ -42,11 +42,11 @@ The loader parses and validates every value as it builds the settings. It report
 
 An unset variable falls back to the built-in default.
 
-The four variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) resolve at their own call sites. The spellings here still apply to them; only their handling of an empty or unrecognised value differs.
+The variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) resolve at their own call sites. Their rows state any differences from these rules.
 
 ## Variables with their own parsing rules
 
-These four do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses.
+These variables do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses.
 
 The two booleans among them accept the same spellings as every other boolean. They differ only in how they resolve an empty value and a word that spells neither state. The Controls column states each one's rule and the reason for it.
 
@@ -56,6 +56,7 @@ The two booleans among them accept the same spellings as every other boolean. Th
 | `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                                                                                      | -                 |
 | `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
 | `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. Read only from the executing server's environment, never project configuration or a CLI flag; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
 
 ## Core variables
 
