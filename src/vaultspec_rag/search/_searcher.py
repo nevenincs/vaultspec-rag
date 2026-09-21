@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from .. import store_schema
@@ -68,6 +68,8 @@ from ._result_shaping import (
     record_seconds as _record_seconds,
 )
 from ._result_shaping import select_combined_results as _select_combined_results
+from ._typesafe_context import classification_scope
+from ._typesafe_transport import TypesafeUnavailableError
 
 if TYPE_CHECKING:
     import pathlib
@@ -82,6 +84,7 @@ if TYPE_CHECKING:
     from ..embeddings import EmbeddingModel, SparseResult
     from ..store_runtime import VaultStore
     from ._noise import NoisePolicy
+    from ._typesafe_policy import ClassificationSession
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +274,7 @@ class _EncodedSearchQuery:
     sparse_vector: SparseResult | None
     top_k: int
     timings: dict[str, float] | None = None
+    classifier: ClassificationSession | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,6 +640,8 @@ class VaultSearcher:
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
+        if encoded.classifier is not None:
+            fetch_limit = encoded.classifier.candidate_limit(encoded.top_k, fetch_limit)
         phase_started = time.perf_counter()
         raw_results: list[dict[str, object]] = self.store.hybrid_search(
             HybridSearchRequest(
@@ -696,6 +702,8 @@ class VaultSearcher:
         results = self._rerank(
             encoded.text, results, len(results), timings=encoded.timings
         )
+        if encoded.classifier is not None:
+            results = encoded.classifier.rank(results)
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         phase_started = time.perf_counter()
@@ -709,6 +717,8 @@ class VaultSearcher:
         # token selects the profile (the CLI surface, since a flag would breach
         # the frozen max-args lint ratchet).
         effective_intent = options.intent or encoded.parsed.filters.get("intent")
+        if effective_intent is None and encoded.classifier is not None:
+            effective_intent = encoded.classifier.vault_intent
         results = self._apply_intent_prior(results, effective_intent)
         status_spec = encoded.parsed.filters.get("status")
         if status_spec:
@@ -778,6 +788,10 @@ class VaultSearcher:
                 max(request.encoded.top_k * 4, 20)
                 if self._reranker_enabled
                 else request.encoded.top_k * 2
+            )
+        if request.encoded.classifier is not None:
+            base = request.encoded.classifier.candidate_limit(
+                request.encoded.top_k, base
             )
         cap = max(base * 4, 500)
         pushdown_exclude = sorted(request.policy.hide) or None
@@ -939,6 +953,8 @@ class VaultSearcher:
         results = self._rerank(
             encoded.text, results, len(results), timings=encoded.timings
         )
+        if encoded.classifier is not None:
+            results = encoded.classifier.rank(results)
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         # Noise demote: subtract the penalty from demoted-domain results and
@@ -949,7 +965,10 @@ class VaultSearcher:
 
         # --prefer post-rerank score nudge (opt-in, layered over demote).
         phase_started = time.perf_counter()
-        _apply_prefer_nudge_impl(results, options.prefer)
+        prefer = options.prefer
+        if prefer is None and encoded.classifier is not None:
+            prefer = encoded.classifier.prefer
+        _apply_prefer_nudge_impl(results, prefer)
         _record_seconds(encoded.timings, PHASE_PREFER, phase_started)
 
         # Locale-variant collapse (default on via config; tri-state override).
@@ -1061,13 +1080,47 @@ class VaultSearcher:
             timings=timings,
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
-        results = surface.run(
-            self,
-            _EncodedSearchQuery(
-                parsed, query_text, query_vector, sparse_vector, top_k, timings
-            ),
-            surface.options(arguments),
+        resolved_options = surface.options(arguments)
+        filters: dict[str, object] = dict(parsed.filters)
+        if isinstance(
+            resolved_options,
+            (VaultSearchOptions, CodebaseSearchOptions, DocumentSearchOptions),
+        ):
+            filters.update(
+                {
+                    item.name: value
+                    for item in fields(resolved_options)
+                    if item.name != "notes"
+                    and (value := getattr(resolved_options, item.name)) is not None
+                }
+            )
+        encoded = _EncodedSearchQuery(
+            parsed, query_text, query_vector, sparse_vector, top_k, timings
         )
+        notes = (
+            resolved_options.notes
+            if isinstance(resolved_options, CodebaseSearchOptions)
+            else None
+        )
+        original_notes = dict(notes) if notes is not None else {}
+        with classification_scope(
+            parsed.text if top_k > 0 else "", surface.name, filters
+        ) as scope:
+            session = scope.session
+            if session is not None and not session.failed and top_k > 0:
+                encoded = replace(encoded, classifier=session)
+            try:
+                results = surface.run(self, encoded, resolved_options)
+            except TypesafeUnavailableError:
+                timings["classification_fallback"] = 1.0
+                if notes is not None:
+                    notes.clear()
+                    notes.update(original_notes)
+                results = surface.run(
+                    self, replace(encoded, classifier=None), resolved_options
+                )
+            if session is not None:
+                timings.update(session.timings)
         return results, timings
 
     def search_vault_timed(
@@ -1152,6 +1205,8 @@ class VaultSearcher:
         fetch_limit = (
             max(encoded.top_k * 4, 20) if self._reranker_enabled else encoded.top_k * 2
         )
+        if encoded.classifier is not None:
+            fetch_limit = encoded.classifier.candidate_limit(encoded.top_k, fetch_limit)
         raw_results = self.store.hybrid_search_document(
             HybridSearchRequest(
                 query_vector=encoded.dense_vector,
@@ -1168,8 +1223,13 @@ class VaultSearcher:
         _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
         phase_started = time.perf_counter()
         results = self._rerank(
-            encoded.text, results, encoded.top_k, timings=encoded.timings
+            encoded.text,
+            results,
+            len(results) if encoded.classifier is not None else encoded.top_k,
+            timings=encoded.timings,
         )
+        if encoded.classifier is not None:
+            results = encoded.classifier.rank(results)[: encoded.top_k]
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
         if encoded.timings is not None:
             encoded.timings[PHASE_POSTPROCESS] = encoded.timings.get(
@@ -1201,6 +1261,43 @@ class VaultSearcher:
         top_k: int = 5,
         **options: Unpack[CombinedSearchOptionArguments],
     ) -> tuple[list[SearchResult | DocumentSearchResult], dict[str, float]]:
+        """Share hosted classification across domains and fall back as one unit."""
+        parsed = parse_query(raw_query)
+        filters: dict[str, object] = {
+            **parsed.filters,
+            **{key: value for key, value in options.items() if key != "notes"},
+        }
+        with classification_scope(
+            parsed.text if top_k > 0 else "", "combined", filters
+        ) as scope:
+            session = scope.session
+            try:
+                results, timings = self._search_combined_timed(
+                    raw_query,
+                    top_k,
+                    CombinedSearchOptions.from_arguments(options),
+                    session,
+                )
+            except TypesafeUnavailableError:
+                scope.session = None
+                results, timings = self._search_combined_timed(
+                    raw_query,
+                    top_k,
+                    CombinedSearchOptions.from_arguments(options),
+                    None,
+                )
+                timings["classification_fallback"] = 1.0
+            if session is not None:
+                timings.update(session.timings)
+            return results, timings
+
+    def _search_combined_timed(
+        self,
+        raw_query: str,
+        top_k: int,
+        combined_options: CombinedSearchOptions,
+        classifier: ClassificationSession | None,
+    ) -> tuple[list[SearchResult | DocumentSearchResult], dict[str, float]]:
         """Search all domains from one encoding and deterministically select top-k."""
         timings: dict[str, float] = {}
         phase_started = time.perf_counter()
@@ -1210,7 +1307,6 @@ class VaultSearcher:
             timings=timings,
         )
         timings[PHASE_EMBEDDING] = time.perf_counter() - phase_started
-        combined_options = CombinedSearchOptions.from_arguments(options)
         encoded = _EncodedSearchQuery(
             parsed, query_text, query_vector, sparse_vector, max(1, top_k)
         )
@@ -1227,6 +1323,7 @@ class VaultSearcher:
                 encoded.sparse_vector,
                 encoded.top_k,
                 vault_timings,
+                classifier,
             ),
             combined_options.vault,
         )
@@ -1238,6 +1335,7 @@ class VaultSearcher:
                 encoded.sparse_vector,
                 encoded.top_k,
                 code_timings,
+                classifier,
             ),
             combined_options.codebase,
         )
@@ -1249,6 +1347,7 @@ class VaultSearcher:
                 encoded.sparse_vector,
                 encoded.top_k,
                 document_timings,
+                classifier,
             ),
             combined_options.document,
         )
@@ -1258,12 +1357,13 @@ class VaultSearcher:
             *documents,
         ]
         phase_started = time.perf_counter()
-        candidates = self._rerank(
-            query_text,
-            candidates,
-            len(candidates),
-            timings=timings,
-        )
+        if classifier is None:
+            candidates = self._rerank(
+                query_text,
+                candidates,
+                len(candidates),
+                timings=timings,
+            )
         selected = _select_combined_results(candidates, top_k)
         timings["combined_selection_seconds"] = time.perf_counter() - phase_started
         for domain, values in (

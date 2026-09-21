@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .._domain import NOISE_DOMAINS, classify_domain
+from .._domain import DOMAINS, NOISE_DOMAINS, classify_domain
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -58,11 +58,13 @@ class NoisePolicy:
         return bool(self.hide or self.only)
 
 
-def _clean(domains: Iterable[str] | None) -> frozenset[str]:
-    """Normalise caller domain tokens to the known noise-domain set."""
+def _clean(
+    domains: Iterable[str] | None, *, allowed: frozenset[str] = NOISE_DOMAINS
+) -> frozenset[str]:
+    """Normalise caller domain tokens against the allowed domain set."""
     if not domains:
         return frozenset()
-    return frozenset(d.strip().lower() for d in domains) & NOISE_DOMAINS
+    return frozenset(d.strip().lower() for d in domains) & allowed
 
 
 def resolve_noise_policy(
@@ -82,7 +84,7 @@ def resolve_noise_policy(
     include = _clean(include_domains)
     hide = (frozenset(cfg.code_noise_hide_domains) | _clean(exclude_domains)) - include
     demote = frozenset(cfg.code_noise_demote_domains) - include - hide
-    only = _clean(only_domains)
+    only = _clean(only_domains, allowed=frozenset(DOMAINS))
     return NoisePolicy(
         hide=hide,
         only=only,

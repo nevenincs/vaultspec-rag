@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:42bc7b86342ee0512e77ee3c3a610e5bddd99916ffc4719325e0ca4a01a6a0ec'
+body_hash: 'sha256:231bfedd43ff0f0e1906e484abcad958acc68cb4703617d6d0fb5f59d3360631'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -53,6 +53,7 @@ related:
 - `S04` `verify:` `python -B dev/typesafe_evaluation.py after leading-whether normalization (9 of 10; formatter4 despite retained fullcontent)` -> `fail`
 - `S04` `verify:` `dev/typesafe_clause_spike.py single-candidate live mode (4 of 4 difficult cases; 44calls, no retries)` -> `pass`
 - `S02` `verify:` `package Ruff lint, three policy files format and basedpyright, 57 policy tests` -> `pass`
+- `S03` `verify:` `package Ruff lint, six integration files format and basedpyright, 103 search/noise/shaping/parser tests` -> `pass`
 
 ## Notes
 

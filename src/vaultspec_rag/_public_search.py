@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pathlib
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
 from ._source_types import PublicSourceType
@@ -382,58 +382,84 @@ def search_combined_timed(
     vault: SearchDomainOutcome | None = None
     code: SearchDomainOutcome | None = None
     document: SearchDomainOutcome | None = None
-    with active_registry.search_lease(root) as lease:
-        vault = _indexed_domain_outcome(
-            PublicSourceType.VAULT,
-            counts,
-            count_failures,
-            source_facts,
-            lambda: lease.searcher.search_vault(
-                request.query,
-                top_k=request.top_k,
-                doc_type=request.vault_filters.doc_type,
-                feature=request.vault_filters.feature,
-                date=request.vault_filters.date,
-                tag=request.vault_filters.tag,
-                intent=request.vault_filters.intent,
-            ),
+    from .search._parsing import parse_query
+    from .search._typesafe_context import classification_scope
+
+    parsed = parse_query(request.query)
+    filters: dict[str, object] = dict(parsed.filters)
+    for group in (
+        request.vault_filters,
+        request.code_filters,
+        request.document_filters,
+    ):
+        filters.update(
+            {key: value for key, value in asdict(group).items() if value is not None}
         )
-        code = _indexed_domain_outcome(
-            PublicSourceType.CODE,
-            counts,
-            count_failures,
-            source_facts,
-            lambda: lease.searcher.search_codebase(
-                request.query,
-                top_k=request.top_k,
-                language=request.code_filters.language,
-                path=request.code_filters.path,
-                node_type=request.code_filters.node_type,
-                function_name=request.code_filters.function_name,
-                class_name=request.code_filters.class_name,
-                include_paths=list(request.code_filters.include_paths) or None,
-                exclude_paths=list(request.code_filters.exclude_paths) or None,
-                dedup_locales=request.code_filters.dedup_locales,
-                prefer=request.code_filters.prefer,
-                exclude_domains=list(request.code_filters.exclude_domains) or None,
-                only_domains=list(request.code_filters.only_domains) or None,
-                include_domains=list(request.code_filters.include_domains) or None,
-            ),
-        )
-        document = _indexed_domain_outcome(
-            PublicSourceType.DOCUMENT,
-            counts,
-            count_failures,
-            source_facts,
-            lambda: lease.searcher.search_document(
-                request.query,
-                top_k=request.top_k,
-                source_path=request.document_filters.source_path,
-                extractor_id=request.document_filters.extractor_id,
-                extractor_version=request.document_filters.extractor_version,
-                locator_kind=request.document_filters.locator_kind,
-            ),
-        )
+    with (
+        active_registry.search_lease(root) as lease,
+        classification_scope(
+            parsed.text if request.top_k > 0 else "", "combined", filters
+        ) as scope,
+    ):
+        session = scope.session
+        for _attempt in range(2):
+            vault = _indexed_domain_outcome(
+                PublicSourceType.VAULT,
+                counts,
+                count_failures,
+                source_facts,
+                lambda: lease.searcher.search_vault(
+                    request.query,
+                    top_k=request.top_k,
+                    doc_type=request.vault_filters.doc_type,
+                    feature=request.vault_filters.feature,
+                    date=request.vault_filters.date,
+                    tag=request.vault_filters.tag,
+                    intent=request.vault_filters.intent,
+                ),
+            )
+            code = _indexed_domain_outcome(
+                PublicSourceType.CODE,
+                counts,
+                count_failures,
+                source_facts,
+                lambda: lease.searcher.search_codebase(
+                    request.query,
+                    top_k=request.top_k,
+                    language=request.code_filters.language,
+                    path=request.code_filters.path,
+                    node_type=request.code_filters.node_type,
+                    function_name=request.code_filters.function_name,
+                    class_name=request.code_filters.class_name,
+                    include_paths=list(request.code_filters.include_paths) or None,
+                    exclude_paths=list(request.code_filters.exclude_paths) or None,
+                    dedup_locales=request.code_filters.dedup_locales,
+                    prefer=request.code_filters.prefer,
+                    exclude_domains=list(request.code_filters.exclude_domains) or None,
+                    only_domains=list(request.code_filters.only_domains) or None,
+                    include_domains=list(request.code_filters.include_domains) or None,
+                ),
+            )
+            document = _indexed_domain_outcome(
+                PublicSourceType.DOCUMENT,
+                counts,
+                count_failures,
+                source_facts,
+                lambda: lease.searcher.search_document(
+                    request.query,
+                    top_k=request.top_k,
+                    source_path=request.document_filters.source_path,
+                    extractor_id=request.document_filters.extractor_id,
+                    extractor_version=request.document_filters.extractor_version,
+                    locator_kind=request.document_filters.locator_kind,
+                ),
+            )
+            if scope.session is None or not scope.session.failed:
+                break
+            scope.session = None
+            timings["classification_fallback"] = 1.0
+        if session is not None:
+            timings.update(session.timings)
     if vault is None or code is None or document is None:
         raise RuntimeError("combined search lease ended without domain outcomes")
     return CombinedSearchOutcome(vault, code, document, request.top_k), timings

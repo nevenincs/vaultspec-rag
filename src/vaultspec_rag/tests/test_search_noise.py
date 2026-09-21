@@ -54,6 +54,20 @@ class TestResolveNoisePolicy:
         policy = resolve_noise_policy(get_config(), only_domains=["tests"])
         assert policy.only == frozenset({"tests"})
 
+    def test_only_prod_remains_an_explicit_restriction(self) -> None:
+        # Noise-only normalization failed both only-prod cases and both direct
+        # search forms; restoring the full domain set made all four pass again.
+        policy = resolve_noise_policy(get_config(), only_domains=[" PROD "])
+        assert policy.only == frozenset({"prod"})
+        assert "prod" not in policy.hide
+        assert "prod" not in policy.demote
+
+    def test_only_prod_and_noise_domains_normalize_together(self) -> None:
+        policy = resolve_noise_policy(
+            get_config(), only_domains=[" PROD ", "TeStS", "bogus"]
+        )
+        assert policy.only == frozenset({"prod", "tests"})
+
     def test_unknown_domain_tokens_dropped(self) -> None:
         policy = resolve_noise_policy(
             get_config(), exclude_domains=["bogus", "prod", "tests"]
