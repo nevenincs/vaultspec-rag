@@ -15,7 +15,6 @@ table still had to be corrected by hand to say so.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,9 +26,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
-
-#: ``quay.io/pypa/manylinux_2_28_aarch64@sha256:...`` -> ``(2, 28)``.
-_MANYLINUX = re.compile(r"manylinux_(\d+)_(\d+)_")
 
 
 def _legs(repo_root: Path) -> list[dict[str, str]]:
@@ -86,34 +82,3 @@ def test_no_build_leg_uses_a_job_container(
         "these legs ask for a job container, which no fleet host can start: "
         f"{offenders}"
     )
-
-
-def test_an_uncontainerised_linux_leg_is_not_silently_trusted(
-    repo_root: Path,
-) -> None:
-    """A Linux leg with no image inherits its host's glibc, so say which ones.
-
-    This does not fail such a leg - building natively is a legitimate choice
-    when no host can run the image, and this project shipped aarch64 that way
-    for several releases. It fails only if one exists while claiming a floor
-    lower than the pinned legs, which is the combination that cannot be true:
-    an unpinned build cannot promise a floor below what its host provides.
-    """
-    pinned = [
-        GLIBC_FLOOR[leg["target"]]
-        for leg in _legs(repo_root)
-        if _MANYLINUX.search(leg.get("container") or "")
-        and leg["target"] in GLIBC_FLOOR
-    ]
-    if not pinned:
-        pytest.skip("no pinned leg to compare against")
-    lowest_pinned = min(pinned)
-
-    for leg in _legs(repo_root):
-        if leg.get("container") or "linux-gnu" not in leg["target"]:
-            continue
-        target = leg["target"]
-        assert GLIBC_FLOOR[target] >= lowest_pinned, (
-            f"{target} builds with no pinned image yet declares a floor below "
-            f"the pinned legs; an unpinned build cannot promise that"
-        )
