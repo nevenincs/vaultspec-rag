@@ -35,6 +35,7 @@ from dev.ci_names import (
     GATE_JOB,
     JOB_NAME,
     LABEL_ENV,
+    LINT_RUN_CONDITION,
     Workflow,
     normalise,
 )
@@ -177,8 +178,8 @@ def test_the_label_is_spelled_once_for_the_steps_that_read_it() -> None:
     )
 
 
-def test_every_measuring_job_waits_for_the_same_button() -> None:
-    """The four measuring jobs carry one condition, and it is the canon's.
+def test_every_measuring_job_uses_its_canonical_trigger_condition() -> None:
+    """Lint and full jobs carry the automatic conditions from the canon.
 
     GitHub gives a job-level ``if:`` no ``env`` context and honours no YAML
     anchor, so these four cannot share a token and each spells the condition
@@ -193,15 +194,21 @@ def test_every_measuring_job_waits_for_the_same_button() -> None:
     Mutation proof: changing the Windows job's label to ``ci:windows`` made
     this fail naming ``tests-windows``; restoring ``ci:full`` made it pass.
     """
+    expected = {
+        job.job_id: LINT_RUN_CONDITION if job.job_id == "lint" else FULL_RUN_CONDITION
+        for job in _measuring_jobs()
+    }
     offenders = {
         job.job_id: job.condition
         for job in _measuring_jobs()
-        if job.condition is None or normalise(job.condition) != FULL_RUN_CONDITION
+        if job.condition is None or normalise(job.condition) != expected[job.job_id]
     }
     assert not offenders, (
-        "A measuring job does not wait for the same button as its siblings.\n"
-        f"expected: {FULL_RUN_CONDITION}\n\n"
-        + "\n".join(f"{job_id}: {condition}" for job_id, condition in offenders.items())
+        "A measuring job does not use its canonical automatic trigger.\n\n"
+        + "\n".join(
+            f"{job_id}: expected {expected[job_id]}\nfound: {condition}"
+            for job_id, condition in offenders.items()
+        )
     )
 
 

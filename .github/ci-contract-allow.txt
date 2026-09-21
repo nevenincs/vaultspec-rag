@@ -49,6 +49,7 @@ publish.yml:Generate checksums
 publish.yml:Publish to PyPI
 publish.yml:Hold the release as a prerelease
 release-please.yml:Regenerate and push uv.lock
+release-please.yml:Dispatch the merge gate for the release pull request
 publish.yml:Trigger Binaries workflow
 
 # Downloads the published binary onto a machine with no checkout and asks

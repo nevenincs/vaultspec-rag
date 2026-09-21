@@ -103,7 +103,7 @@ def test_a_fork_runner_switch_is_named() -> None:
 def test_the_gate_refuses_a_forks_pull_request() -> None:
     """The one required verdict fails a fork before it reads any result.
 
-    Mutation proof: deleting the ``FORK`` refusal from the gate's verdict step
+    Mutation proof: deleting the ``HEAD_REPO`` refusal from the gate's verdict step
     made this fail on the missing refusal; restoring it made this pass.
     """
     workflow, job_id = Workflow.MERGE_GATE, GATE_JOB
@@ -113,16 +113,25 @@ def test_the_gate_refuses_a_forks_pull_request() -> None:
         for step in gate.steps
         if step.get("name") == "Every full check passed on this commit"
     )
-    assert verdict["env"]["FORK"] == (
-        "${{ github.event_name == 'pull_request' && "
-        "github.event.pull_request.head.repo.full_name != github.repository }}"
+    document = yaml.safe_load(
+        (workflows.repository_root() / ".github" / "workflows" / workflow).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert isinstance(document, dict)
+    raw_gate = document["jobs"][job_id]
+    assert raw_gate["env"]["HEAD_REPO"] == (
+        "${{ github.event.pull_request.head.repo.full_name }}"
     )
     script = str(verdict["run"])
-    opening = 'if [ "${FORK}" = "true" ]; then'
+    opening = (
+        'if [ "${EVENT}" = "pull_request" ] && '
+        '[ "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then'
+    )
     assert opening in script, "the verdict no longer refuses a fork"
     refusal = script.index(opening)
     assert "exit 1" in script[refusal : script.index("fi", refusal)]
-    assert refusal < script.index("ran=$(jq")
+    assert refusal < script.index('echo "lint=${LINT}')
 
 
 def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:

@@ -1,58 +1,96 @@
-"""Release-please PRs wait for the lock refresh before CI initializes them.
-
-release-please writes the version bump first and regenerates ``uv.lock`` in a
-follow-up commit on the same branch. The pull-request lane starts with
-``just init``, which runs ``uv sync --locked`` and will therefore fail on the
-transient one-commit head for no code reason at all.
-"""
+"""Release-please dispatches the required gate on its final branch head."""
 
 from __future__ import annotations
 
-import pytest
+from typing import cast
 
-from dev.ci_names import SAME_REPO_CLAUSE, Workflow
+import pytest
+import yaml
+
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-REQUIRED_GUARD = (
-    "startsWith(github.head_ref, 'release-please--')",
-    "github.event.pull_request.commits > 1",
-)
-REQUIRED_JOBS = ("lint",)
+RELEASE_WORKFLOW = "release-please.yml"
+GATE_WORKFLOW = "merge-gate.yml"
+DISPATCH_STEP = "Dispatch the merge gate for the release pull request"
+REF_EXPRESSION = "${{ inputs.ref || github.sha }}"
 
 
-def _job_condition(job_id: str) -> str:
-    """Return the named job's condition, or fail loudly when it vanishes."""
-    for job in workflows.load_jobs(Workflow.CHEAP_LANE):
-        if job.job_id == job_id:
-            assert job.condition is not None
-            return job.condition
-    pytest.fail(
-        f"{Workflow.CHEAP_LANE} has no job `{job_id}`. If it was renamed, repoint this "
-        "guard; if it was deleted, the release-please race needs a new owner."
-    )
+def _document(workflow: str) -> dict[object, object]:
+    """Return *workflow* parsed as YAML."""
+    path = workflows.repository_root() / ".github" / "workflows" / workflow
+    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict), f"{workflow} is not a mapping"
+    return cast("dict[object, object]", loaded)
 
 
-def test_release_please_pull_requests_wait_for_the_lock_refresh_commit() -> None:
-    """The pull-request lane skips the transient one-commit release-please head.
+def _triggers(workflow: str) -> dict[object, object]:
+    """Return one workflow's trigger mapping."""
+    document = _document(workflow)
+    triggers = document.get("on", document.get(True))
+    assert isinstance(triggers, dict), f"{workflow} has no `on:` mapping"
+    return cast("dict[object, object]", triggers)
 
-    Mutation proof: removing the release-please clause from any guarded job
-    makes this fail naming that job; restoring the clause makes it pass again.
+
+def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> None:
+    """The bot proves the lock-refreshed head without a label or operator.
+
+    Mutation proof: deleting ``--field ref=`` makes this fail on the dispatch
+    contract; restoring it makes this pass.
     """
-    expected = (
-        "github.event_name == 'pull_request' && "
-        f"{SAME_REPO_CLAUSE} && "
-        f"(!{REQUIRED_GUARD[0]} || {REQUIRED_GUARD[1]})"
-    )
-    offenders = {
-        job_id: condition
-        for job_id in REQUIRED_JOBS
-        if (condition := " ".join(_job_condition(job_id).split())) != expected
+    jobs = _document(RELEASE_WORKFLOW).get("jobs")
+    assert isinstance(jobs, dict)
+    release = cast("dict[object, object]", jobs).get("release-please")
+    assert isinstance(release, dict)
+    raw = cast("dict[object, object]", release)
+    permissions = raw.get("permissions")
+    assert isinstance(permissions, dict)
+    assert cast("dict[object, object]", permissions).get("actions") == "write"
+    steps = raw.get("steps")
+    assert isinstance(steps, list)
+    named = {
+        str(step.get("name")): (index, step)
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
     }
-    assert not offenders, (
-        "A release-please PR head runs merge-box jobs before the workflow's "
-        "follow-up uv.lock refresh lands, so `just init` fails on stale lock "
-        "metadata instead of on code.\n\n"
-        f"missing guard: {offenders}"
+    assert DISPATCH_STEP in named
+    dispatch_index, dispatch = named[DISPATCH_STEP]
+    lock_index, _ = named["Regenerate and push uv.lock"]
+    assert dispatch_index > lock_index
+    run = str(dispatch.get("run", ""))
+    assert "gh workflow run merge-gate.yml" in run
+    assert '--ref "${HEAD_BRANCH}"' in run
+    assert '--field ref="${HEAD_BRANCH}"' in run
+
+
+def test_every_gate_checkout_uses_the_requested_ref() -> None:
+    """A release dispatch measures its branch rather than the default branch."""
+    triggers = _triggers(GATE_WORKFLOW)
+    for event in ("workflow_call", "workflow_dispatch"):
+        body = triggers.get(event)
+        assert isinstance(body, dict)
+        inputs = cast("dict[object, object]", body).get("inputs")
+        assert isinstance(inputs, dict) and "ref" in inputs
+
+    findings: list[str] = []
+    checkouts = 0
+    for job in workflows.load_jobs(GATE_WORKFLOW):
+        if job.job_id == "gate":
+            continue
+        for step in job.steps:
+            if not str(step.get("uses", "")).startswith("actions/checkout@"):
+                continue
+            checkouts += 1
+            options = step.get("with")
+            ref = (
+                cast("dict[object, object]", options).get("ref")
+                if isinstance(options, dict)
+                else None
+            )
+            if ref != REF_EXPRESSION:
+                findings.append(f"{job.job_id}: ref={ref!r}")
+    assert checkouts, f"{GATE_WORKFLOW} has no measuring checkouts"
+    assert not findings, (
+        "Gate jobs do not all validate the dispatched ref:\n\n" + "\n".join(findings)
     )

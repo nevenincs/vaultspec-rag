@@ -44,6 +44,7 @@ __all__ = [
     "JOB_NAME",
     "LABEL_ENV",
     "LEG",
+    "LINT_RUN_CONDITION",
     "MEASURING_GROUPS",
     "MERGE_BOX",
     "PRODUCT",
@@ -109,11 +110,9 @@ class Workflow(StrEnum):
 #: group together beside its siblings' in a fleet-wide view.
 PRODUCT = "RAG"
 
-#: The workflows that MEASURE the tree: the cheap lane every push to a pull
-#: request pays for, and the gate a change must pass before it merges. The
-#: release-plane workflows build and publish instead, and answer different
-#: questions, so a guard asking "is this measured twice" must not read them.
-MERGE_BOX = (Workflow.CHEAP_LANE, Workflow.MERGE_GATE)
+#: The workflow that measures pull requests and reports merge readiness.
+#: Release and scheduled hardware workflows answer different questions.
+MERGE_BOX = (Workflow.MERGE_GATE,)
 
 #: The justfile consequence groups whose recipes measure the tree, as opposed
 #: to provisioning it. ``init`` running in every job is not a repeat; two jobs
@@ -258,6 +257,8 @@ LABEL_ENV = "FULL_RUN_LABEL"
 #: added, by someone who could add it here. Written once, and composed into
 #: the two conditions below that need it.
 FULL_RUN_PRESSED = normalise(
+    "github.event_name == 'pull_request' && "
+    "github.event.action == 'labeled' && "
     f"github.event.label.name == '{FULL_RUN_LABEL}' && {SAME_REPO_CLAUSE}"
 )
 
@@ -266,5 +267,18 @@ FULL_RUN_PRESSED = normalise(
 #: jobs cannot share a token and each spells this out; the guard asserts they
 #: spell the same thing, and that it is this.
 FULL_RUN_CONDITION = normalise(
-    f"github.event_name != 'pull_request' || ({FULL_RUN_PRESSED})"
+    "github.event_name != 'pull_request' || "
+    f"({SAME_REPO_CLAUSE} && "
+    "((github.event.action == 'labeled' && "
+    f"github.event.label.name == '{FULL_RUN_LABEL}') || "
+    "(github.event.action != 'labeled' && github.event.pull_request.draft == false)))"
+)
+
+#: Lint also measures drafts on lifecycle events, while an unrelated label
+#: preserves the prior verdict without starting another self-hosted job.
+LINT_RUN_CONDITION = normalise(
+    "github.event_name != 'pull_request' || "
+    f"({SAME_REPO_CLAUSE} && "
+    "(github.event.action != 'labeled' || "
+    f"github.event.label.name == '{FULL_RUN_LABEL}'))"
 )

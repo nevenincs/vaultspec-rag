@@ -102,6 +102,15 @@ def repository_root() -> Path:
     return _ROOT
 
 
+def document(workflow: str) -> dict[object, Any]:
+    """Return *workflow* parsed as a YAML mapping."""
+    path = repository_root() / ".github" / "workflows" / workflow
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise AssertionError(f"{workflow} is not a mapping")
+    return loaded
+
+
 @dataclass(frozen=True)
 class Job:
     """One workflow job, with the matrix and the event condition resolved.
@@ -237,27 +246,6 @@ def _document(path: Path) -> dict[str, Any]:
     """Parse one workflow file into a mapping."""
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     return loaded if isinstance(loaded, dict) else {}
-
-
-def document(workflow: str) -> dict[str, Any]:
-    """Return *workflow* parsed as YAML, by file name.
-
-    Args:
-        workflow: A workflow file name, e.g. ``merge-gate.yml``.
-
-    Returns:
-        The parsed mapping.
-
-    Raises:
-        AssertionError: When the file is absent or is not a mapping, which is
-            a guard reading a workflow that has moved rather than a workflow
-            that is wrong.
-    """
-    path = _ROOT / ".github" / "workflows" / workflow
-    assert path.is_file(), f"{workflow} is not in .github/workflows"
-    loaded = _document(path)
-    assert loaded, f"{workflow} is not a mapping"
-    return loaded
 
 
 def workflow_events(workflow: str) -> tuple[str, ...]:
