@@ -20,9 +20,13 @@ from ..serviceclient._transport import (
     DEFAULT_HEALTH_TIMEOUT_SECONDS,
     health_probe_timed_out,
 )
-from ._child_signal import await_marker, child_stderr
+from ._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    NESTED_CHILD_PROCESS_TIMEOUT_SECONDS,
+    await_marker,
+    child_stderr,
+)
 from ._ports import free_loopback_port
-from ._production_service import CHILD_PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -66,7 +70,10 @@ from vaultspec_rag.serviceclient._discovery import (
     SERVICE_DISCOVERY_SCHEMA,
     SERVICE_DISCOVERY_VERSION,
 )
-from vaultspec_rag.tests._child_signal import publish_marker
+from vaultspec_rag.tests._child_signal import (
+    CHILD_PROCESS_TIMEOUT_SECONDS,
+    publish_marker,
+)
 
 _MACHINE_LOCK_OWNER_PROBE = '''
 import json
@@ -98,7 +105,11 @@ owner_probe = subprocess.run(
     capture_output=True,
     check=False,
     text=True,
-    timeout=10.0,
+    # A spawned child inside a spawned child: a fresh interpreter that
+    # imports this package before it reaches its first statement, which is
+    # what the child bound exists for. The ten seconds this had is the bound
+    # that reports a correct child as one that never started.
+    timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
 )
 assert owner_probe.returncode == 0, owner_probe.stderr
 owner_observation = json.loads(owner_probe.stdout)
@@ -335,7 +346,7 @@ def _captured_resident_routes(
         )
         try:
             reported = await_marker(
-                ready_path, process, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+                ready_path, process, timeout=NESTED_CHILD_PROCESS_TIMEOUT_SECONDS
             )
             assert reported is not None, (
                 f"resident route host did not start: {diagnostics.read()}"

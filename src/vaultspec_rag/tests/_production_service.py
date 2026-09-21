@@ -32,6 +32,7 @@ from ..serviceclient._discovery import (
     _replace_service_status,
 )
 from ..serviceclient._transport import _try_http_admin
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -39,8 +40,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
-    "CHILD_PROCESS_TIMEOUT_SECONDS",
-    "PROCESS_TIMEOUT_SECONDS",
     "SERVICE_TOKEN",
     "ProductionService",
     "production_service",
@@ -51,23 +50,6 @@ __all__ = [
 #: agree on, so an authenticated client call resolves it the way it does
 #: against a real daemon.
 SERVICE_TOKEN: Final = "production-route-host-token"
-
-#: Ceiling on every wait for a process or thread to reach the state a test
-#: needs. Generous on purpose: it costs nothing when green and only decides how
-#: long a genuinely wedged host takes to be reported.
-PROCESS_TIMEOUT_SECONDS: Final = 10.0
-
-#: Ceiling on a wait for a SPAWNED CHILD to reach the state a test needs.
-#: Separate from the above because the two are not the same wait: a child has
-#: to be scheduled, start an interpreter and import this package before it can
-#: reach any marker at all, and under a parallel run those precede the work by
-#: seconds. Ten was enough for an in-process wait and far too little for this
-#: one, which is how a correct borrower was reported as "never reached work".
-#:
-#: Mutation: set to 0.01. The borrower case fails with exactly the message CI
-#: reported, so this bound - not the code under test - is what that failure was
-#: about. Restored, and it passes.
-CHILD_PROCESS_TIMEOUT_SECONDS: Final = 120.0
 
 
 class ProductionService(NamedTuple):

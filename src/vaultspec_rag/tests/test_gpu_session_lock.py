@@ -29,13 +29,14 @@ from ..serviceclient._discovery import (
     SERVICE_DISCOVERY_VERSION,
     _replace_service_status,
 )
-from ._child_signal import await_marker, child_stderr
-from ._import_probe import assert_fresh_import_excludes, import_probe_source
-from ._ports import free_loopback_port
-from ._production_service import (
+from ._child_signal import (
     CHILD_PROCESS_TIMEOUT_SECONDS,
     PROCESS_TIMEOUT_SECONDS,
+    await_marker,
+    child_stderr,
 )
+from ._import_probe import assert_fresh_import_excludes, import_probe_source
+from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
     from collections.abc import Generator

@@ -212,6 +212,44 @@ def _hold(gate: threading.Event | None) -> None:
         gate.wait(_HANDOFF_TIMEOUT)
 
 
+class _BurstTolerantHTTPServer(http.server.ThreadingHTTPServer):
+    """A loopback server whose accept queue holds the burst its client opens.
+
+    Threading, because the interface issues a control and a poll from separate
+    worker threads and a single-threaded server would make the slower of the
+    two look like a hang.
+
+    ``request_queue_size`` because the stdlib default of five is below what
+    this client actually opens, and a full accept queue is indistinguishable
+    from a dead port. One mount of the watch interface opens SEVENTEEN
+    connections - four lanes plus the several calls the header's service
+    status makes, each costing two, because every admin call is preceded by a
+    raw connect that decides whether anything is accepting before the request
+    is sent. Measured on an idle box, nine of those land inside one 150ms
+    window.
+
+    A connect the queue cannot take is not refused; the SYN is left to
+    retransmit, and the client's fast-connect bound - 150ms, the window in
+    which a live loopback listener always completes the handshake - then
+    classifies the silence as refused. So a live, correct service reads as
+    "not reachable" for whichever lane lost the race, and because the poll
+    interval these tests use is an hour, that verdict is permanent: the lane
+    blanks for the rest of the test and the wait on its content spends its
+    whole deadline. That is what one CI run cost, on the served-search lane.
+
+    Measured against a server of this shape answering in 20ms: bursts of six
+    lose nothing at a queue of five; nine lose 27 connects in 270; sixteen
+    lose 134 in 480. At a queue of 128 every one of those bursts loses
+    nothing. The interface sits exactly on that cliff, so the queue is set
+    past it rather than at it - it costs a ``listen`` argument and nothing
+    else. Measured again through the suite itself, one distributed run of the
+    watch files refused eight live connects at five and none at 128.
+    """
+
+    daemon_threads = True
+    request_queue_size = 128
+
+
 class _JobService:
     """A real loopback service holding the job state it publishes.
 
@@ -355,11 +393,7 @@ class _JobService:
             def do_DELETE(self) -> None:
                 self._mutate("DELETE")
 
-        # Threading, because the interface issues a control and a poll from
-        # separate worker threads and a single-threaded server would make the
-        # slower of the two look like a hang.
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-        self.server.daemon_threads = True
+        self.server = _BurstTolerantHTTPServer(("127.0.0.1", 0), _Handler)
         # ``shutdown`` blocks until the accept loop next checks its flag, so the
         # poll interval is paid in full by every teardown. The default half
         # second dominates a file that stands one of these up per test.
@@ -628,6 +662,56 @@ def _row_line(app: ServerWatchApp, *needles: str) -> str | None:
     return None
 
 
+def _lane_errors(app: ServerWatchApp) -> list[str]:
+    """Name every lane whose last fetch failed, with what it reported.
+
+    The interface runs three independent lanes and each holds its own error.
+    Only the jobs one was ever read here, so a served-search or managed-log
+    fetch that failed left the wait with nothing to say: the screen showed two
+    words in the header - "search unavailable" - and the failure message
+    talked about job markers. Reading which lane failed meant going to the
+    header renderer to find out which field those two words came from.
+    """
+    return [
+        f"{lane} reported: {error}"
+        for lane, error in (
+            ("jobs", app._last_error),
+            ("served searches", app._search.error),
+            ("managed logs", app._logs.error),
+        )
+        if error is not None
+    ]
+
+
+def _reask_failed_lanes(app: ServerWatchApp, remaining: int) -> int:
+    """Re-issue the fetches for any lane that reported an error.
+
+    A failed fetch is not a paint still on its way: the poll interval these
+    tests use is an hour, so nothing else will ask again inside the test's
+    lifetime and the wait would sit out its whole bound over one refused
+    socket - then report it as an interface that never painted. Production
+    has no such gap, because there the next poll is seconds away; this is the
+    poll the interval was turned off to suppress.
+
+    Conditioned on a lane having ERRORED, never on the wait not yet being
+    satisfied, which is what keeps it from masking the defect these waits
+    exist to catch: a control whose answer was discarded leaves the workers
+    idle, the screen unchanged and every lane error None, so nothing here
+    fires and the wait still fails. Re-asked only once per finished attempt,
+    and only a bounded number of times, so a service that is genuinely silent
+    still ends at the deadline rather than being hammered until it.
+
+    Returns:
+        The retry budget left, so a caller can thread it through its loop.
+    """
+    if remaining <= 0 or not _lane_errors(app):
+        return remaining
+    if any(worker.is_running for worker in app.workers):
+        return remaining
+    app.action_refresh_now()
+    return remaining - 1
+
+
 async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
     """Wait until the interface has completed its first real paint.
 
@@ -660,19 +744,7 @@ async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
     retries = _READY_RETRIES
     while time.monotonic() < deadline:
         await pilot.pause()
-        # A failed fetch is not a paint still on its way: nothing else will ask
-        # again inside this test's lifetime, so the wait would sit out its whole
-        # bound over one refused socket and report it as an interface that never
-        # painted. Re-asked only once per finished attempt, and only a bounded
-        # number of times, so a service that is genuinely silent still ends at
-        # the deadline rather than being hammered until it.
-        if (
-            app._last_error is not None
-            and retries > 0
-            and not any(worker.is_running for worker in app.workers)
-        ):
-            retries -= 1
-            app.action_refresh_now()
+        retries = _reask_failed_lanes(app, retries)
         unmet = _unpainted(app)
         if unmet:
             matched_at = None
@@ -685,14 +757,11 @@ async def _ready(pilot: typing.Any, app: ServerWatchApp) -> None:
         elif now - matched_at >= _SPINNER_INTERVAL * 1.5:
             return
         await asyncio.sleep(_POLL_INTERVAL)
+    failures = _lane_errors(app)
     raise AssertionError(
         "the interface never completed its first paint after "
         f"{_HANDOFF_TIMEOUT:g}s: {'; '.join(_unpainted(app)) or 'nothing outstanding'}"
-        + (
-            f"; the interface last reported: {app._last_error}"
-            if app._last_error is not None
-            else ""
-        )
+        + (f"; {'; '.join(failures)}" if failures else "")
     )
 
 
@@ -800,7 +869,10 @@ def _marker_evidence(app: ServerWatchApp) -> str:
         for job_id, marker in sorted(app._pending.items())
     ]
     held = ", ".join(markers) if markers else "none"
-    return f"pending markers=[{held}] issued={app._job_stamps.issued}"
+    failures = _lane_errors(app)
+    return f"pending markers=[{held}] issued={app._job_stamps.issued}" + (
+        f"; {'; '.join(failures)}" if failures else ""
+    )
 
 
 async def _await_painted(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
@@ -812,12 +884,14 @@ async def _await_painted(pilot: typing.Any, app: ServerWatchApp, needle: str) ->
     unchanged, which is precisely the defect being tested for.
     """
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
+    retries = _READY_RETRIES
     painted = ""
     while time.monotonic() < deadline:
         await pilot.pause()
         painted = _screen_text(app)
         if needle in painted:
             return painted
+        retries = _reask_failed_lanes(app, retries)
         await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(
         f"{needle!r} was never painted; {_marker_evidence(app)}; last frame:\n{painted}"
@@ -832,12 +906,14 @@ async def _await_painted_when(
 ) -> str:
     """Return the painted screen once *predicate* accepts it."""
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
+    retries = _READY_RETRIES
     painted = ""
     while time.monotonic() < deadline:
         await pilot.pause()
         painted = _screen_text(app)
         if predicate(painted):
             return painted
+        retries = _reask_failed_lanes(app, retries)
         await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(
         f"{described} was never painted; {_marker_evidence(app)}; "
@@ -848,12 +924,14 @@ async def _await_painted_when(
 async def _await_gone(pilot: typing.Any, app: ServerWatchApp, needle: str) -> str:
     """Return the painted screen once *needle* has left it."""
     deadline = time.monotonic() + _HANDOFF_TIMEOUT
+    retries = _READY_RETRIES
     painted = ""
     while time.monotonic() < deadline:
         await pilot.pause()
         painted = _screen_text(app)
         if needle not in painted:
             return painted
+        retries = _reask_failed_lanes(app, retries)
         await asyncio.sleep(_POLL_INTERVAL)
     raise AssertionError(
         f"{needle!r} never left the screen; {_marker_evidence(app)}; "
