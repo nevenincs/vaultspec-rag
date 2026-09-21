@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:f64c747d762e6c09d90f11a09715c993979f15f23fced1229c840f02b2dcc498'
+body_hash: 'sha256:42bc7b86342ee0512e77ee3c3a610e5bddd99916ffc4719325e0ca4a01a6a0ec'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -44,6 +44,15 @@ related:
 - `S01` `M` `docs/configuration.md`
 - `S01` `verify:` `python -B -m pytest -q test_configuration_doc.py test_env_example_coverage.py (9 passed; two documentation guards first failed for missing key row)` -> `pass`
 - `S01` `verify:` `precommit: package Ruff lint, four S01 Python files Ruff format and basedpyright, transport plus environment/documentation tests (55 passed)` -> `pass`
+- `S04` `A` `dev/typesafe_search_spike.py`
+- `S04` `A` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S04` `verify:` `dev/typesafe_evaluation.py live rerun after request-prefix normalization (9 of 10, formatter rank4)` -> `fail`
+- `S03` `verify:` `public zero-budget and notes privacy/deepcopy guard mutations: intended failures then restored passes, worker final suite pending` -> `pass`
+- `S04` `verify:` `python -B dev/typesafe_search_spike.py real hosted query and candidate calls through synthetic-retrieval VaultSearcher (5 of 5)` -> `pass`
+- `S04` `verify:` `targeted transport, policy, search, noise, document shaping, parser, environment and configuration suites (215 passed); package lint and all19touched Python format/type checks` -> `pass`
+- `S04` `verify:` `python -B dev/typesafe_evaluation.py after leading-whether normalization (9 of 10; formatter4 despite retained fullcontent)` -> `fail`
+- `S04` `verify:` `dev/typesafe_clause_spike.py single-candidate live mode (4 of 4 difficult cases; 44calls, no retries)` -> `pass`
+- `S02` `verify:` `package Ruff lint, three policy files format and basedpyright, 57 policy tests` -> `pass`
 
 ## Notes
 
@@ -52,3 +61,6 @@ related:
 - `S03` 40 tests pass. Mutation proofs: old only-prod normalization 4 fail then 4 pass; raw-query enrollment 8 fail then 8 pass; omitted notes clearing 1 fail then 1 pass; repeated combined CrossEncoder 1 fail then 1 pass. All mutations restored. Commit pending shared-hook resolution.
 - `S04` Actual hosted evaluation: 9/10; formatter retained rank4 rather than required top3 on grouping/order. 33 requests, 91348 input and 10381 output tokens, 1.952-3.285 seconds/case. Standalone method comparison evidence lives in research. Combined targeted unit/regression run 182 pass; all18 touched Python files format/type clean and package plus spikes lint clean. Real-store integration tier refused collection without a resident GPU service; none started. Final integrated review, quality resolution and commits remain open.
 - `S01` User authorized worktree-only hook adjustment. An exact gitdir conditional includes classification-only hook settings pointing to an empty directory; main and busyport retain default hooks. No shared hook was modified and no repository-wide worktreeConfig extension was enabled. Earlier commit blocker resolved; explicit gates remain required.
+- `S04` Awaiting user preference: retain bounded batched production with documented 9/10 quality miss, or pursue isolated candidate ranking with bounded parallelism and a larger latency budget. S02-S04 remain open; no failed quality target relaxed.
+- `S02` User delegated quality/latency decision; retained accepted bounded batching with unchanged authored evaluation and documented ranking miss. No assertion, threshold or deadline relaxed.
+
