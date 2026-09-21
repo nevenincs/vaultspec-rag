@@ -161,6 +161,15 @@ def _run(
         if not budget.search_limited:
             _failed(fingerprint)
         result.put_nowait(TypesafeUnavailableError("deadline"))
+    except urllib.error.URLError as exc:
+        timed_out = isinstance(exc.reason, TimeoutError)
+        if not (timed_out and budget.search_limited):
+            _failed(fingerprint)
+        result.put_nowait(
+            TypesafeUnavailableError(
+                "deadline" if timed_out else "invalid_or_unreachable"
+            )
+        )
     except (
         OSError,
         HTTPException,

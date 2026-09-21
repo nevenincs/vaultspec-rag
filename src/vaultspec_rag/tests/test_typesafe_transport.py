@@ -227,6 +227,20 @@ def test_request_size_and_expired_budget(monkeypatch: pytest.MonkeyPatch) -> Non
     assert transport.available()
 
 
+@pytest.mark.parametrize("search_limited", [True, False])
+def test_wrapped_timeout_only_cools_down_provider_budget(
+    monkeypatch: pytest.MonkeyPatch, search_limited: bool
+) -> None:
+    def request(_key: str, _payload: bytes, _deadline: float) -> bytes:
+        raise urllib.error.URLError(TimeoutError("sensitive"))
+
+    monkeypatch.setattr(transport, "_request", request)
+    deadline = time.monotonic() + (1 if search_limited else 10)
+    with pytest.raises(transport.TypesafeUnavailableError):
+        transport.evaluate({}, QUESTIONS, deadline=deadline)
+    assert transport.available() is search_limited
+
+
 def test_deadline_and_concurrency_remain_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

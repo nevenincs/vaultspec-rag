@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 _MAX_CANDIDATES = 64
 _MAX_BATCH = 8
-_REQUEST_BYTES = 24_000
+_REQUEST_BYTES = 64_000
 _SESSION_SECONDS = 10.0
 
 
@@ -36,7 +36,12 @@ def classification_window[T: (SearchResult, DocumentSearchResult)](
     return results[:limit]
 
 
-def _fits(state: dict[str, object], questions: dict[str, dict[str, object]]) -> bool:
+def _fits(
+    state: dict[str, object],
+    questions: dict[str, dict[str, object]],
+    *,
+    limit: int = _REQUEST_BYTES,
+) -> bool:
     # Reserve room for the pinned model and transport envelope; include JSON escapes.
     try:
         payload = json.dumps(
@@ -44,7 +49,7 @@ def _fits(state: dict[str, object], questions: dict[str, dict[str, object]]) -> 
         )
     except (TypeError, ValueError):
         return False
-    return len(payload.encode("utf-8")) + 256 <= _REQUEST_BYTES
+    return len(payload.encode("utf-8")) + 256 <= limit
 
 
 def _choice(evaluation: Evaluation, name: str) -> str | None:
@@ -67,7 +72,7 @@ def prepare_query(
         "constraints": dict(filters or {}),
     }
     questions = query_questions()
-    if not _fits(context, questions):
+    if not _fits(context, questions, limit=24_000):
         return None
     deadline = started + _SESSION_SECONDS
     try:
@@ -230,9 +235,10 @@ class ClassificationSession:
                             judgments[index] = _judgment(
                                 evaluation, index, len(clauses)
                             )
-        except transport.TypesafeUnavailableError:
+        except transport.TypesafeUnavailableError as exc:
             self.failed = True
             self.timings["typesafe_abstained"] = float(len(results))
+            self.timings[f"typesafe_failure_{exc.reason}"] = 1.0
             raise
         finally:
             self.timings["typesafe_rank_ms"] = (

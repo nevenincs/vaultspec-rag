@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:145ec54be66ce1bf34c8be89e89041666faed7d6e2258bfe169d880405cbcc70'
+body_hash: 'sha256:5f314b6f9b2652834e28b99d88dd9659500ac8176a79b3e0bd5531b30e9f38b9'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -62,6 +62,10 @@ The two thirty-search arms preserve identical queries, source HEAD, index genera
 ### live compound-query deadline | high | Serial batches poisoned subsequent classification availability
 
 The f4da6cdf indexed run successfully classified 32 candidates on eight measured requests, then compound-query batch work exhausted the shared ten-second budget. Two requests fell back and twenty bypassed classification during cooldown. This is not a completed quality comparison. Raw evidence is retained in tmp/typesafe-service-ab-f4da6cdf/on.jsonl. S01 and S02 were reopened and corrected: paired batches retain the two-call global transport bound and original deadlines; search-budget exhaustion no longer marks the credential/provider unavailable. Authentication/payment and genuine transport/schema failures retain their circuit behavior. The correction passes 150 targeted tests; live verification remains required under S06. Result: REVISION REQUIRED pending that verification.
+
+### compound request packing | high | Paired calls alone did not fit repeated rubrics
+
+The 0602d358 follow-up again reached genuine candidate judgments for focused cases but its four-clause request fragmented into many small batches; grouping_and_order exhausted the budget. The run was interrupted rather than presented as completion and remains under tmp/typesafe-service-ab-0602d358. Inspection and a failing unit guard also proved that URLError-wrapped timeouts still poisoned availability when search-limited; the live failure did not yet expose a reason counter, so this wrapper is a demonstrated code defect, not a proven attribution of that specific response. Correction expands only candidate JSON preflight from 24KB to64KB while retaining eight candidates, process-wide two-call capacity and all time limits; query preflight stays24KB. It handles wrapped timeout provenance and adds safe reason counters. All153 targeted tests and explicit static gates pass. Live verification remains open.
 
 ## Recommendations
 

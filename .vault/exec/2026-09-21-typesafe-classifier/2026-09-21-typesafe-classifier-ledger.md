@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#typesafe-classifier'
 date: '2026-09-21'
-modified: '2026-09-21'
+modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:c8ce280ce2c1043b21ef639cc68911540c859956266f38b6737b039fb36c2554'
+body_hash: 'sha256:d70bb5c623c05254a6f40443902d0af593a9967155a78724b845c4af152226c1'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -67,6 +67,8 @@ related:
 - `S02` `M` `src/vaultspec_rag/search/_typesafe_policy.py`
 - `S02` `M` `src/vaultspec_rag/tests/test_typesafe_policy.py`
 - `S02` `verify:` `150 targeted classifier/noise tests, package Ruff, touched formatting and basedpyright` -> `pass`
+- `S01` `verify:` `153 targeted tests, package Ruff, touched formatting and basedpyright` -> `pass`
+- `S02` `verify:` `153 targeted tests, package Ruff, touched formatting and basedpyright` -> `pass`
 
 ## Notes
 
@@ -85,3 +87,5 @@ related:
 - `S03` Authorized candidate-budget correction separates the full locally reranked retrieval pool from a hosted prefix with rejection headroom. top_k15 selects32 complete candidates after local reranking. Same selection applies to code, vault and document lanes; unclassified tail is never score-mixed back. New real-policy regression with150 path-filtered candidates failed on missing typesafe_candidates under old integration and passed after correction, proving selection occurs after local reranking. 149 targeted tests, package lint and touched-module type checks pass. Live verification continues in S06; no ranking-quality claim yet.
 - `S01` Search-deadline exhaustion no longer poisons credential availability; the occupied-slot and post-worker availability guard failed before correction and passed after.
 - `S02` Real compound searches exhausted the serial batch deadline; bounded pairs now use existing two-call transport capacity. Concurrent rendezvous test failed with serial execution and passed with paired execution.
+- `S01` Wrapped URLError(TimeoutError) search-budget guard failed before correction and passed afterward; provider-budget timeout still cools down.
+- `S02` Repeated clause rubrics fragmented eight candidates into three requests under 24KB. Candidate request preflight is now 64KB, below transport 128KiB, retaining eight candidates/two concurrent calls/ten-second search and five-second request limits. Query preflight remains 24KB. Exact batching regression failed then passed. Safe failure-reason counters added.

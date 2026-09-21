@@ -336,7 +336,7 @@ def test_request_and_session_bounds_preserve_complete_windows() -> None:
         deadline: float | None = None,
     ) -> Evaluation:
         assert (
-            len(json.dumps({"state": state, "questions": questions}).encode()) < 24_000
+            len(json.dumps({"state": state, "questions": questions}).encode()) < 64_000
         )
         assert deadline == session.deadline
         indices = sorted({int(key.split("_")[0][1:]) for key in questions})
@@ -355,6 +355,21 @@ def test_request_and_session_bounds_preserve_complete_windows() -> None:
         assert call.call_count == before
     assert session.evaluated == 192
     assert session.timings["typesafe_abstained"] == 64
+
+
+def test_compound_questions_fit_eight_complete_candidates() -> None:
+    session = _session()
+    clauses = (
+        "Find the first behavior; explain the second; verify the third.",
+        "the first behavior",
+        "the second behavior",
+        "the third behavior",
+    )
+    batches = session._batches(
+        [_result(index, "evidence " * 200) for index in range(8)], clauses
+    )
+    assert len(batches) == 1
+    assert batches[0][1] == list(range(8))
 
 
 def test_overlarge_window_never_mixes_unscored_results() -> None:
