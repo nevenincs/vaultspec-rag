@@ -24,15 +24,30 @@ name: RAG Merge Gate
 #   skipped gate there would read as a pass on a commit nothing measured.
 #
 # Branch protection also requires the branch to be up to date with main, so
-# the tree that passed is the tree that merges.
+# the tree that passed is the tree that merges. The tree, and not the
+# environment: these runners are persistent and their caches outlive any one
+# run, so "measured" is a claim about the source, not about the machine.
+#
+# AND IT HOLDS FOR EVERYONE EXCEPT THE PERSON MERGING. The ruleset lists the
+# Admin role as a bypass actor, and the only account with write access here
+# holds that role, so the merge box offers an override on every one of these
+# conditions. This gate is a discipline a maintainer keeps, not a wall that
+# keeps them. Remove the bypass actor to make these enforced guarantees.
 #
 # A push to main triggers nothing: the tree that lands was measured here
 # first. The weekly schedule reruns everything on main, which is what catches
 # advisories published against an unchanged lock.
 #
-# THE TRUST QUESTION. A `pull_request` run from a fork executes the fork's own
-# workflow, so a fork's pull request is REFUSED: no measuring job runs for it,
-# and the gate fails it. A maintainer re-opens the change from a branch here.
+# THE TRUST QUESTION, AND WHERE ITS ANSWER ACTUALLY LIVES. A `pull_request`
+# run from a fork executes the FORK's copy of this file, on this repository's
+# runners. Every refusal written below therefore sits in a file the fork can
+# rewrite before the run starts.
+#
+# Actions approval for ALL external contributors is the actual boundary. The
+# clauses below keep THIS repository's copy from drifting into running a pull
+# request head on the fleet, which is depth behind that setting. Approving a
+# fork's run lets its code execute on the fleet and report under this
+# workflow's check names; re-open an outside change from a branch here instead.
 on:
   pull_request:
     branches: [main]
@@ -81,6 +96,9 @@ env:
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
   CI_CACHE_MODE: ${{ inputs.cache_mode || 'normal' }}
+  # Job conditions cannot read env, so their literals are checked against the
+  # canon. Steps use this one value directly.
+  FULL_RUN_LABEL: "ci:full"
 
 # Every self-hosted runner is persistent, and `contain-writes` points
 # `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
@@ -335,7 +353,11 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      checks: read
+      # The draft/unrelated-label path asks this workflow for its newest
+      # completed run against the same commit. That matches how branch
+      # protection evaluates the newest required check and cannot revive an
+      # older green verdict after a newer red one.
+      actions: read
       pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
@@ -361,8 +383,8 @@ jobs:
         # gone. That is the state this step exists to reach, so it passes; any
         # other failure leaves the label on and still fails here.
         run: |
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Afull" --silent \
-            || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == "ci:full") | not' | grep -qx true
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/$FULL_RUN_LABEL" --silent \
+            || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == env.FULL_RUN_LABEL) | not' | grep -qx true
 
       - name: Every full check passed on this commit
         run: |
@@ -384,14 +406,21 @@ jobs:
             echo "::error::the full checks did not all pass (linux=${TESTS}, windows=${WINDOWS}, audit=${AUDIT})"
             exit 1
           fi
-          # A draft or unrelated label can preserve only a full verdict already
-          # earned by this exact commit. `filter=all` includes the earlier run
-          # while this job is the newest check with the required name.
-          earlier=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=Check%3A%20Merge%20gate%20%28Linux%29&filter=all&per_page=100" \
-            --jq '[.check_runs[] | select(.conclusion == "success")] | length')
-          if [ "$earlier" -gt 0 ]; then
-            echo "full checks already passed on $HEAD_SHA"
+          # A draft or unrelated label can preserve only the newest completed
+          # verdict earned by this exact commit. This run is still in progress,
+          # so filtering to completed runs excludes it without comparing ids.
+          workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
+          previous=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.status == "completed")]
+                  | sort_by(.id) | last | .conclusion // "none"')
+          if [ "$previous" = "success" ]; then
+            echo "the last full run on $HEAD_SHA passed"
             exit 0
           fi
-          echo "::error::the full checks have not run on $HEAD_SHA; mark the pull request ready for review to run them, or add ci:full to prove it while it remains a draft"
+          if [ "$previous" = "none" ]; then
+            echo "::error::the full checks have not run on $HEAD_SHA; mark the pull request ready for review to run them, or add $FULL_RUN_LABEL to prove it while it remains a draft"
+          else
+            echo "::error::the last full run on $HEAD_SHA ended in $previous; mark the pull request ready for review to run it again, or add $FULL_RUN_LABEL while it remains a draft"
+          fi
           exit 1

@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 
 from dev import toolchain
+from dev.ci_names import MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:
@@ -54,11 +55,10 @@ if TYPE_CHECKING:
 __all__ = [
     "FALSE",
     "MAYBE",
-    "MEASURING_GROUPS",
-    "MERGE_BOX",
     "TRUE",
     "Job",
     "Tri",
+    "document",
     "evaluate",
     "final_commands",
     "load_jobs",
@@ -93,13 +93,6 @@ _RECIPE_GROUP = re.compile(r"^\[group\('([a-z]+)'\)\]")
 #: A ``runs-on`` that defers to the matrix, which is what hides a runner.
 _MATRIX_REFERENCE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
 
-#: The one workflow that measures a pull request and reports merge readiness.
-#: Release and hardware workflows answer different questions.
-MERGE_BOX = ("merge-gate.yml",)
-
-#: Recipe groups that measure the tree, as opposed to provisioning it.
-MEASURING_GROUPS = frozenset({"check", "audit", "test"})
-
 #: The justfile's ``dev`` assignment, expanded into recipe bodies.
 _DEV_PREFIX = ("uv", "run", "--no-sync", "python", "-m", "dev")
 
@@ -107,6 +100,15 @@ _DEV_PREFIX = ("uv", "run", "--no-sync", "python", "-m", "dev")
 def repository_root() -> Path:
     """Return the repository root this guard suite is reading."""
     return _ROOT
+
+
+def document(workflow: str) -> dict[object, Any]:
+    """Return *workflow* parsed as a YAML mapping."""
+    path = repository_root() / ".github" / "workflows" / workflow
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise AssertionError(f"{workflow} is not a mapping")
+    return loaded
 
 
 @dataclass(frozen=True)
