@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.32](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.31...vaultspec-rag-v0.4.32) (2026-09-21)
+
+
+### Bug Fixes
+
+* make a closed hardware gate name what is actually missing ([#515](https://github.com/nevenincs/vaultspec-rag/issues/515)) ([b7a419c](https://github.com/nevenincs/vaultspec-rag/commit/b7a419cafe77150248ef4c3cb589e9a4871b60a5))
+
 ## [0.4.31](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.30...vaultspec-rag-v0.4.31) (2026-09-16)
 
 
