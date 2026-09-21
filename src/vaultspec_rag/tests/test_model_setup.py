@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..config._types import EnvVar
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from ._http_stubs import QuietHandler
 from ._model_setup import (
     configured_service_model_ids,
@@ -126,7 +127,7 @@ def test_online_repair_clears_ambient_offline_mode(tmp_path: Path) -> None:
         ):
             ensure_model_snapshots(
                 (model_id,),
-                timeout_seconds=10,
+                timeout_seconds=CHILD_PROCESS_TIMEOUT_SECONDS,
                 cache_dir=tmp_path / "hf-cache",
                 endpoint=endpoint,
             )
@@ -419,7 +420,7 @@ def test_model_setup_failure_retains_final_url_and_response(tmp_path: Path) -> N
     ):
         ensure_model_snapshots(
             ("vaultspec-regression/unavailable-model",),
-            timeout_seconds=10,
+            timeout_seconds=CHILD_PROCESS_TIMEOUT_SECONDS,
             cache_dir=tmp_path / "hf-cache",
             endpoint=endpoint,
         )

@@ -42,12 +42,16 @@ from ..serviceclient._discovery import (
     _merge_service_status,
     _status_file,
 )
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS, await_marker
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
+
+#: What the merging child publishes once it is looping on the status file.
+_MERGE_READY_MARKER = "merging"
 
 
 def _is_second_precision_offset_iso(value: str) -> bool:
@@ -233,9 +237,10 @@ class TestDiscoverySchema:
             "from pathlib import Path;"
             "from vaultspec_rag.serviceclient._discovery import "
             "_merge_service_status;"
+            "from vaultspec_rag.tests._child_signal import publish_marker;"
             "status=Path(sys.argv[1]);ready=Path(sys.argv[2]);"
             "result=Path(sys.argv[3]);"
-            "ready.write_text('ready',encoding='utf-8');"
+            f"publish_marker(ready, {_MERGE_READY_MARKER!r});"
             "i=0;"
             "\nwhile i < 10000:\n"
             " try:\n"
@@ -258,10 +263,13 @@ class TestDiscoverySchema:
             ]
         )
         try:
-            deadline = time.monotonic() + 5.0
-            while not ready_path.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert ready_path.exists()
+            reported = await_marker(
+                ready_path, proc, timeout=CHILD_PROCESS_TIMEOUT_SECONDS
+            )
+            assert reported == _MERGE_READY_MARKER, (
+                f"the merging child never started: reported {reported!r}, "
+                f"exit status {proc.returncode}"
+            )
             assert _delete_service_status(timeout=5.0) is True
             proc.wait(timeout=10.0)
             assert proc.returncode == 0

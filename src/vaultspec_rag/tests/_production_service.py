@@ -32,6 +32,7 @@ from ..serviceclient._discovery import (
     _replace_service_status,
 )
 from ..serviceclient._transport import _try_http_admin
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 from ._ports import free_loopback_port
 
 if TYPE_CHECKING:
@@ -39,7 +40,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
-    "PROCESS_TIMEOUT_SECONDS",
     "SERVICE_TOKEN",
     "ProductionService",
     "production_service",
@@ -50,11 +50,6 @@ __all__ = [
 #: agree on, so an authenticated client call resolves it the way it does
 #: against a real daemon.
 SERVICE_TOKEN: Final = "production-route-host-token"
-
-#: Ceiling on every wait for a process or thread to reach the state a test
-#: needs. Generous on purpose: it costs nothing when green and only decides how
-#: long a genuinely wedged host takes to be reported.
-PROCESS_TIMEOUT_SECONDS: Final = 10.0
 
 
 class ProductionService(NamedTuple):

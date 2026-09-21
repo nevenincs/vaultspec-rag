@@ -21,6 +21,7 @@ from ..qdrant_runtime._resolve import (
     pid_start_time,
     probe_qdrant_endpoint,
 )
+from ._child_signal import PROCESS_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -70,7 +71,11 @@ class TestEndpointProbe:
         gen = _fake_qdrant_server()
         port = next(gen)
         try:
-            probe = probe_qdrant_endpoint(port, timeout=2.0)
+            # The suite-wide in-process bound, not the production default
+            # this happens to share a value with: what is under test is the
+            # parse of a live server's answer, so a budget that a loaded host
+            # can exhaust turns a correct probe into an empty version string.
+            probe = probe_qdrant_endpoint(port, timeout=PROCESS_TIMEOUT_SECONDS)
             assert probe.listening is True
             assert probe.ready is True
             assert probe.version == "1.18.2"
