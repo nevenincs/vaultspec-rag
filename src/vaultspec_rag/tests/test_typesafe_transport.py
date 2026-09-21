@@ -247,7 +247,8 @@ def test_deadline_and_concurrency_remain_bounded(
             transport.evaluate({}, QUESTIONS, deadline=started + 0.03)
         assert time.monotonic() - started < 0.5
         assert not slots.acquire(blocking=False)
-        transport._CIRCUIT.retry_at = 0
+        # A spent search budget is not evidence that the provider is unavailable.
+        assert transport.available()
         with pytest.raises(transport.TypesafeUnavailableError, match=r"^busy$"):
             transport.evaluate({}, QUESTIONS)
     finally:
@@ -255,6 +256,7 @@ def test_deadline_and_concurrency_remain_bounded(
         assert ended.wait(1)
         assert slots.acquire(timeout=1)
         slots.release()
+    assert transport.available()
 
 
 @contextmanager

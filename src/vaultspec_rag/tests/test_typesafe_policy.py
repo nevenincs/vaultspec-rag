@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from unittest.mock import patch
 
@@ -38,6 +39,40 @@ def _session() -> policy.ClassificationSession:
         context={"query": "retry delivery", "constraints": {}},
         deadline=time.monotonic() + 10,
     )
+
+
+def test_candidate_batches_overlap_with_at_most_two_calls() -> None:
+    rendezvous = threading.Barrier(2)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def evaluate(
+        state: dict[str, object],
+        questions: dict[str, dict[str, object]],
+        *,
+        deadline: float | None = None,
+    ) -> Evaluation:
+        nonlocal active, peak
+        assert state["query"] == "retry delivery"
+        assert deadline is not None
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            try:
+                rendezvous.wait(timeout=1)
+            except threading.BrokenBarrierError:
+                pytest.fail("candidate batches must overlap within a bounded pair")
+            return _evaluation([int(name.split("_")[0][1:]) for name in questions])
+        finally:
+            with lock:
+                active -= 1
+
+    with patch.object(policy.transport, "evaluate", side_effect=evaluate):
+        ranked = _session().rank([_result(index) for index in range(32)])
+    assert len(ranked) == 32
+    assert peak == 2
 
 
 def _evaluation(

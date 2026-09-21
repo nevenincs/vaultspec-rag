@@ -47,6 +47,12 @@ class _Circuit:
 _CIRCUIT = _Circuit()
 
 
+@dataclass(frozen=True)
+class _RequestBudget:
+    deadline: float
+    search_limited: bool
+
+
 def _credential() -> tuple[str, bytes]:
     key = os.environ.get(EnvVar.TYPESAFE_API_KEY, "").strip()
     fingerprint = hashlib.sha256(key.encode()).digest() if key else b""
@@ -129,10 +135,11 @@ def _run(
     credential: tuple[str, bytes],
     payload: bytes,
     questions: dict[str, dict[str, object]],
-    deadline: float,
+    budget: _RequestBudget,
     result: queue.Queue[Evaluation | TypesafeUnavailableError],
 ) -> None:
     key, fingerprint = credential
+    deadline = budget.deadline
     try:
         body = _request(key, payload, deadline)
         raw: object = json.loads(body)
@@ -147,8 +154,13 @@ def _run(
             TypesafeUnavailableError("credential_rejected" if permanent else "http")
         )
     except TypesafeUnavailableError as exc:
-        _failed(fingerprint)
+        if exc.reason != "deadline" or not budget.search_limited:
+            _failed(fingerprint)
         result.put_nowait(TypesafeUnavailableError(exc.reason))
+    except TimeoutError:
+        if not budget.search_limited:
+            _failed(fingerprint)
+        result.put_nowait(TypesafeUnavailableError("deadline"))
     except (
         OSError,
         HTTPException,
@@ -172,6 +184,7 @@ def evaluate(
     """Evaluate once; resource, transport and schema failures request fallback."""
     credential = _credential()
     expires = time.monotonic() + REQUEST_TIMEOUT
+    search_limited = deadline is not None and deadline < expires
     if deadline is not None:
         expires = min(expires, deadline)
     _remaining(expires)
@@ -188,7 +201,15 @@ def evaluate(
         raise TypesafeUnavailableError("busy")
     result: queue.Queue[Evaluation | TypesafeUnavailableError] = queue.Queue(maxsize=1)
     worker = threading.Thread(
-        target=_run, args=(credential, payload, questions, expires, result), daemon=True
+        target=_run,
+        args=(
+            credential,
+            payload,
+            questions,
+            _RequestBudget(expires, search_limited),
+            result,
+        ),
+        daemon=True,
     )
     try:
         worker.start()
@@ -198,7 +219,8 @@ def evaluate(
     try:
         outcome = result.get(timeout=_remaining(expires))
     except queue.Empty:
-        _failed(credential[1])
+        if not search_limited:
+            _failed(credential[1])
         raise TypesafeUnavailableError("deadline") from None
     if isinstance(outcome, TypesafeUnavailableError):
         raise outcome

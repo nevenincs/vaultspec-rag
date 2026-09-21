@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:2382afd680b75556c063e7f7f2cc132d399669d210c117da395076a8dd30dee9'
+body_hash: 'sha256:145ec54be66ce1bf34c8be89e89041666faed7d6e2258bfe169d880405cbcc70'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -58,6 +58,10 @@ The completed real indexed-service comparison in 2026-09-21-typesafe-classifier-
 ### comparative-capture | low | Measurement completed with explicit limits and raw evidence
 
 The two thirty-search arms preserve identical queries, source HEAD, index generation and response arrays; warmups are excluded from the reported timings. Live query calls and deterministic candidate-budget fallback are distinguished from completed candidate ranking. Original exact-name ranks remain in raw artifacts; supplemental overlap ranks are labeled and do not replace the original records. No production ranking changes were made. The benchmark client strips service tokens from status snapshots. The measurement itself is complete, but it does not demonstrate a functioning Typesafe-versus-vanilla candidate-ranking comparison.
+
+### live compound-query deadline | high | Serial batches poisoned subsequent classification availability
+
+The f4da6cdf indexed run successfully classified 32 candidates on eight measured requests, then compound-query batch work exhausted the shared ten-second budget. Two requests fell back and twenty bypassed classification during cooldown. This is not a completed quality comparison. Raw evidence is retained in tmp/typesafe-service-ab-f4da6cdf/on.jsonl. S01 and S02 were reopened and corrected: paired batches retain the two-call global transport bound and original deadlines; search-budget exhaustion no longer marks the credential/provider unavailable. Authentication/payment and genuine transport/schema failures retain their circuit behavior. The correction passes 150 targeted tests; live verification remains required under S06. Result: REVISION REQUIRED pending that verification.
 
 ## Recommendations
 

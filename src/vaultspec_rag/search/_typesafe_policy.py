@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -197,21 +198,38 @@ class ClassificationSession:
         try:
             if self.failed:
                 raise transport.TypesafeUnavailableError("session_failed")
-            for state, indices in self._batches(results, clauses):
-                evaluation = transport.evaluate(
-                    state, candidate_questions(indices, clauses), deadline=self.deadline
-                )
-                self.evaluated += len(indices)
-                self.timings["typesafe_requests"] = (
-                    self.timings.get("typesafe_requests", 0.0) + 1
-                )
-                for name, count in (
-                    ("typesafe_input_tokens", evaluation.input_tokens),
-                    ("typesafe_output_tokens", evaluation.output_tokens),
-                ):
-                    self.timings[name] = self.timings.get(name, 0.0) + count
-                for index in indices:
-                    judgments[index] = _judgment(evaluation, index, len(clauses))
+            batches = self._batches(results, clauses)
+            # Only one pair is submitted at a time: no pending paid work after
+            # failure, and the transport still enforces its process-wide limit.
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                for offset in range(0, len(batches), 2):
+                    pending = [
+                        (
+                            indices,
+                            executor.submit(
+                                transport.evaluate,
+                                state,
+                                candidate_questions(indices, clauses),
+                                deadline=self.deadline,
+                            ),
+                        )
+                        for state, indices in batches[offset : offset + 2]
+                    ]
+                    for indices, future in pending:
+                        evaluation = future.result()
+                        self.evaluated += len(indices)
+                        self.timings["typesafe_requests"] = (
+                            self.timings.get("typesafe_requests", 0.0) + 1
+                        )
+                        for name, count in (
+                            ("typesafe_input_tokens", evaluation.input_tokens),
+                            ("typesafe_output_tokens", evaluation.output_tokens),
+                        ):
+                            self.timings[name] = self.timings.get(name, 0.0) + count
+                        for index in indices:
+                            judgments[index] = _judgment(
+                                evaluation, index, len(clauses)
+                            )
         except transport.TypesafeUnavailableError:
             self.failed = True
             self.timings["typesafe_abstained"] = float(len(results))
