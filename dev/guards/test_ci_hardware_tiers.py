@@ -73,8 +73,8 @@ def _reads_token(step: dict[str, object]) -> bool:
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
     """No workflow but the hardware one runs an accelerator tier itself.
 
-    Mutation proof: adding a ``just test-gpu`` step to ``ci.yml``'s ``lint``
-    job makes this fail naming ``ci.yml:lint``; removing it makes this pass.
+    Mutation proof: adding a ``just test-gpu`` step to the merge gate's lint
+    job makes this fail naming that job; removing it makes this pass.
     """
     elsewhere = [
         f"{workflow}:{job.job_id} runs `just {recipe}`"

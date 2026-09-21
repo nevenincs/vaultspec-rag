@@ -1,23 +1,25 @@
 name: RAG Merge Gate
 
-# EVERYTHING A CHANGE MUST PASS BEFORE IT REACHES MAIN, RUN ON REQUEST.
+# EVERYTHING A CHANGE MUST PASS BEFORE IT REACHES MAIN.
 #
-# `ci.yml` answers the cheap questions on every push to a pull request. This
-# workflow runs every gating dimension, both Linux interpreters, the full
-# Windows suite and the dependency audit - but only when a maintainer adds the
-# `ci:full` label, never because of a push. The gate job removes the label
-# again, so adding it is a button that can be pressed more than once.
+# This is the pull request's CI workflow and the only workflow whose verdict
+# main requires. Draft pull requests run lint for quick feedback. Ready pull
+# requests run every gating dimension, both Linux interpreters, the full
+# Windows suite and the dependency audit on every new head. `ci:full` is an
+# optional way to prove a draft; it is never required for the normal merge
+# path. Calls and dispatches always run the full gate, including the dispatch
+# release-please sends after its final branch mutation.
 #
 # WHY ONE REQUIRED CHECK HOLDS. Branch protection requires only
 # `Check: Merge gate (Linux)` on the pull request's head commit.
 #
-# - A push creates a new head commit and does NOT start this workflow, so the
-#   new commit has no gate result and the merge stays blocked until the label
-#   is added again.
-# - Any label starts this workflow, and a job skipped by its `if:` counts as a
-#   PASSED required check. So the gate never skips: it always runs, passes a
-#   `ci:full` run only when every job it needs succeeded, and passes any other
-#   label only when an earlier gate already passed on the same commit.
+# - Opening, reopening, synchronizing or marking a pull request ready starts
+#   this workflow. A ready head therefore receives a full verdict without
+#   operator bookkeeping.
+# - Any label also starts this workflow, and a job skipped by its `if:` counts
+#   as a PASSED required check. So the gate never skips: `ci:full` proves a
+#   draft, while another label can preserve only a full success already earned
+#   by the same commit.
 # - A cancelled run still runs the gate (`always()`), which then fails. A
 #   skipped gate there would read as a pass on a commit nothing measured.
 #
@@ -33,11 +35,27 @@ name: RAG Merge Gate
 # and the gate fails it. A maintainer re-opens the change from a branch here.
 on:
   pull_request:
-    types: [labeled]
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to validate
+        required: true
+        type: string
+      cache_mode:
+        description: Runner-local cache namespace
+        required: false
+        type: string
+        default: normal
   schedule:
     - cron: '47 5 * * 3'
   workflow_dispatch:
     inputs:
+      ref:
+        description: Git ref to validate (defaults to the dispatched ref)
+        required: false
+        type: string
       cache_mode:
         description: "Runner-local cache namespace"
         type: choice
@@ -50,9 +68,10 @@ permissions:
   contents: read
 
 concurrency:
-  # The label is in the group so that adding an unrelated label never cancels
-  # a full run in flight.
-  group: merge-gate-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  # A new push supersedes the previous pull-request run. Label events use the
+  # label in their group, so an unrelated label cannot cancel a full run.
+  # Calls, dispatches and main schedules never cancel release validation.
+  group: merge-gate-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ github.event.label.name || github.event_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
@@ -81,8 +100,8 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.label.name == 'ci:full' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))
     timeout-minutes: 40
     runs-on: [self-hosted, Linux, X64, build]
     steps:
@@ -90,6 +109,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -125,8 +145,9 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.label.name == 'ci:full' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
     timeout-minutes: 45
     runs-on: [self-hosted, Linux, X64]
     strategy:
@@ -147,6 +168,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -190,8 +212,9 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.label.name == 'ci:full' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
     timeout-minutes: 60
     runs-on: [self-hosted, Windows, X64]
     env:
@@ -209,6 +232,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -259,8 +283,9 @@ jobs:
     # fork's own. The gate refuses it instead.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.label.name == 'ci:full' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
     timeout-minutes: 15
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -268,6 +293,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
 
       # Every job, every platform: a build never addresses a system
       # location. Pins the writable paths and refuses to continue if any
@@ -308,18 +334,29 @@ jobs:
     # code, so a hosted runner serves every pull request.
     runs-on: ubuntu-24.04
     permissions:
+      contents: read
       checks: read
       pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVENT: ${{ github.event_name }}
+      DRAFT: ${{ github.event.pull_request.draft }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      LINT: ${{ needs.lint.result }}
+      TESTS: ${{ needs.tests.result }}
+      WINDOWS: ${{ needs.tests-windows.result }}
+      AUDIT: ${{ needs.dependency-audit.result }}
     steps:
       # Same-repository only: a fork's token cannot edit labels, so a
       # maintainer removes the label by hand there.
       - name: Release the ci:full label
         if: >-
+          github.event_name == 'pull_request' &&
+          github.event.action == 'labeled' &&
           github.event.label.name == 'ci:full' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
         # A re-run, or a second gate racing this one, finds the label already
         # gone. That is the state this step exists to reach, so it passes; any
         # other failure leaves the label on and still fails here.
@@ -328,35 +365,33 @@ jobs:
             || gh api "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq 'any(.[]; .name == "ci:full") | not' | grep -qx true
 
       - name: Every full check passed on this commit
-        env:
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          RESULTS: ${{ toJSON(needs) }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          if [ "${FORK}" = "true" ]; then
+          if [ "${EVENT}" = "pull_request" ] && [ "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then
             echo "::error::pull requests from forks are refused; re-open the change from a branch in this repository"
             exit 1
           fi
-          ran=$(jq '[.[] | select(.result != "skipped")] | length' <<<"$RESULTS")
-          if [ "$ran" -gt 0 ]; then
-            failed=$(jq -r 'to_entries | map(select(.value.result != "success") | "\(.key)=\(.value.result)") | join(", ")' <<<"$RESULTS")
-            if [ -n "$failed" ]; then
-              echo "::error::full checks did not pass: $failed"
-              exit 1
-            fi
+          echo "lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} draft=${DRAFT:-n/a}"
+          if [ "${LINT}" = "success" ] && [ "${TESTS}" = "success" ] && [ "${WINDOWS}" = "success" ] && [ "${AUDIT}" = "success" ]; then
             echo "every full check passed in this run"
             exit 0
           fi
-          # Nothing ran, so another label started this run. It passes only on
-          # the strength of an earlier gate on the same commit. `filter=all`
-          # is required because this run's own gate is the latest by name.
-          earlier=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?check_name=Check%3A%20Merge%20gate%20%28Linux%29&filter=all&per_page=100" \
+          case "${LINT}" in success | skipped) ;; *)
+            echo "::error::Check: Full lint (Linux) ended '${LINT}'"
+            exit 1 ;;
+          esac
+          if [ "${EVENT}" != "pull_request" ] || [ "${TESTS}" != "skipped" ] || [ "${WINDOWS}" != "skipped" ] || [ "${AUDIT}" != "skipped" ]; then
+            echo "::error::the full checks did not all pass (linux=${TESTS}, windows=${WINDOWS}, audit=${AUDIT})"
+            exit 1
+          fi
+          # A draft or unrelated label can preserve only a full verdict already
+          # earned by this exact commit. `filter=all` includes the earlier run
+          # while this job is the newest check with the required name.
+          earlier=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/check-runs?check_name=Check%3A%20Merge%20gate%20%28Linux%29&filter=all&per_page=100" \
             --jq '[.check_runs[] | select(.conclusion == "success")] | length')
           if [ "$earlier" -gt 0 ]; then
-            echo "full checks already passed on $SHA"
+            echo "full checks already passed on $HEAD_SHA"
             exit 0
           fi
-          echo "::error::full checks have not run on $SHA; add the ci:full label"
+          echo "::error::the full checks have not run on $HEAD_SHA; mark the pull request ready for review to run them, or add ci:full to prove it while it remains a draft"
           exit 1
