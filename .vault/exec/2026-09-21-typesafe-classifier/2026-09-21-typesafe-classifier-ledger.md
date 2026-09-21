@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:e792a0ad3b81719e61038375497cb152b909bdaeff9f961da9a2450016d489dc'
+body_hash: 'sha256:3723e30a72558c253f17edbcfdc80d5555933402672cc76576f5a7f8c8d2e789'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -59,6 +59,8 @@ related:
 - `S05` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
 - `S05` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
 - `S05` `verify:` `.venv/Scripts/python.exe -B dev/typesafe_service_benchmark.py --mode off/on --port 18766 --output tmp/typesafe-service-ab-cbde33a3` -> `pass`
+- `S03` `M` `src/vaultspec_rag/search/_typesafe_policy.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_typesafe_search.py`
 
 ## Notes
 
@@ -74,3 +76,4 @@ related:
 - `S05` Verification blocked before A/B captures: isolated rebuild stalled at 237/832 files inside CUDA forward while two foreign CI processes shared effectively full GPU. Cooperative pause remained pending; owned service PID58800 stopped successfully on port18766. No foreign processes stopped; no classifier-enabled arm or quality measurements captured. Await idle-GPU window; S05 remains open. Benchmark-client lint/format/type pass, actual live capture not yet exercised.
 - `S05` Completed real indexed-service comparison, 30 measurements per arm plus warmup; raw artifacts and summary retained in ignored tmp/typesafe-service-ab-cbde33a3. All paired result arrays exactly equal. All keyed requests completed live query evaluation but hit candidate-budget fallback; zero candidate ranking completions. High integration finding reopens S03; no implementation fix made. Authorized RAG runner launcher/listener stopped and resident start/stop scheduled tasks disabled; remain disabled pending user direction. Benchmark service stopped after both arms. Existing classifier/noise tests:148 passed; package lint, benchmark format/type and unchanged-source check pass.
 - `S05` User requested semantic rather than programmatic quality judgments. Added manual per-query content assessment, distinguishing direct evidence, useful context, wrong-operation near-matches, missing facets, buried counterevidence and failed no-match abstention. Exact equality is reported only as an observation of this capture; no determinism or model-quality claim.
+- `S03` Authorized candidate-budget correction separates the full locally reranked retrieval pool from a hosted prefix with rejection headroom. top_k15 selects32 complete candidates after local reranking. Same selection applies to code, vault and document lanes; unclassified tail is never score-mixed back. New real-policy regression with150 path-filtered candidates failed on missing typesafe_candidates under old integration and passed after correction, proving selection occurs after local reranking. 149 targeted tests, package lint and touched-module type checks pass. Live verification continues in S06; no ranking-quality claim yet.

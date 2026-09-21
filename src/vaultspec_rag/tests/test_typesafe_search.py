@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from types import SimpleNamespace
@@ -182,6 +183,59 @@ def test_failed_widened_classification_repeats_the_exact_legacy_budget(
         call.args[0].limit for call in store.hybrid_search_codebase.call_args_list
     ] == [32, 4]
     assert timings["classification_fallback"] == 1.0
+
+
+def test_path_filtered_pool_is_ordered_before_bounded_classification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    searcher, store = _searcher(
+        monkeypatch,
+        tmp_path,
+        [_row(i, content=f"complete evidence {i}") for i in range(150)],
+    )
+    session = _typesafe_policy.ClassificationSession(
+        query="retry delivery",
+        context={"query": "retry delivery"},
+        deadline=time.monotonic() + 10,
+    )
+    monkeypatch.setattr(_typesafe_context, "prepare_query", Mock(return_value=session))
+
+    def rerank(
+        _query: str, results: list[SearchResult], _top_k: int, **_kwargs: object
+    ) -> list[SearchResult]:
+        return list(reversed(results))
+
+    seen: list[str] = []
+
+    def evaluate(
+        state: dict[str, object], questions: dict[str, object], **_kwargs: object
+    ) -> Evaluation:
+        candidates = cast("dict[str, dict[str, str]]", state["candidates"])
+        seen.extend(candidate["content"] for candidate in candidates.values())
+        return Evaluation(
+            {
+                name: ChoiceAnswer(
+                    "useful", 0.95, {"useful": 0.9, "not_useful": 0.1, "uncertain": 0.0}
+                )
+                for name in questions
+            },
+            MODEL,
+            10,
+            10,
+        )
+
+    monkeypatch.setattr(searcher, "_rerank", rerank)
+    monkeypatch.setattr(_typesafe_transport, "evaluate", evaluate)
+    results, timings = searcher.search_codebase_timed(
+        "retry delivery", top_k=15, include_paths=["src"]
+    )
+    # Passing the entire path-filter pool to rank fails this assertion.
+    assert timings.get("typesafe_candidates") == 32
+    assert "classification_fallback" not in timings
+    assert seen == [f"complete evidence {i}" for i in range(149, 117, -1)]
+    assert [row.id for row in results] == [str(i) for i in range(149, 134, -1)]
+    assert store.hybrid_search_codebase.call_count == 1
+    assert store.hybrid_search_codebase.call_args.args[0].limit == 150
 
 
 def test_failed_widened_classification_restores_original_notes(

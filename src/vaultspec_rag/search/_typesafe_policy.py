@@ -22,6 +22,19 @@ _REQUEST_BYTES = 24_000
 _SESSION_SECONDS = 10.0
 
 
+def classification_window[T: (SearchResult, DocumentSearchResult)](
+    results: list[T], top_k: int
+) -> list[T]:
+    """Select full-content evidence after local ranking, not before retrieval.
+
+    Path filtering needs retrieval headroom independent of hosted capacity.
+    Reserve room for rejection without mixing unclassified tail scores into
+    the returned page. Requests exceeding hosted capacity still abstain.
+    """
+    limit = max(top_k, min(_MAX_CANDIDATES, max(32, top_k * 2)))
+    return results[:limit]
+
+
 def _fits(state: dict[str, object], questions: dict[str, dict[str, object]]) -> bool:
     # Reserve room for the pinned model and transport envelope; include JSON escapes.
     try:

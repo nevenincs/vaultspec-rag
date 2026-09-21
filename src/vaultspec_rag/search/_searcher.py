@@ -703,7 +703,11 @@ class VaultSearcher:
             encoded.text, results, len(results), timings=encoded.timings
         )
         if encoded.classifier is not None:
-            results = encoded.classifier.rank(results)
+            from ._typesafe_policy import classification_window
+
+            results = encoded.classifier.rank(
+                classification_window(results, encoded.top_k)
+            )
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         phase_started = time.perf_counter()
@@ -954,7 +958,11 @@ class VaultSearcher:
             encoded.text, results, len(results), timings=encoded.timings
         )
         if encoded.classifier is not None:
-            results = encoded.classifier.rank(results)
+            from ._typesafe_policy import classification_window
+
+            results = encoded.classifier.rank(
+                classification_window(results, encoded.top_k)
+            )
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
 
         # Noise demote: subtract the penalty from demoted-domain results and
@@ -1229,7 +1237,11 @@ class VaultSearcher:
             timings=encoded.timings,
         )
         if encoded.classifier is not None:
-            results = encoded.classifier.rank(results)[: encoded.top_k]
+            from ._typesafe_policy import classification_window
+
+            results = encoded.classifier.rank(
+                classification_window(results, encoded.top_k)
+            )[: encoded.top_k]
         _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
         if encoded.timings is not None:
             encoded.timings[PHASE_POSTPROCESS] = encoded.timings.get(

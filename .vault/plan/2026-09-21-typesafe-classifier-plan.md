@@ -8,7 +8,7 @@ related:
   - '[[2026-09-21-typesafe-classifier-adr]]'
 modified: '2026-09-21'
 body_schema: body-v2
-body_hash: 'sha256:be4c0bde33c6dc04e0f118d80f69f3fcf4e6e5fd8af4c712370dc5c7f213222d'
+body_hash: 'sha256:42c9b32bc4779f2ca53b4e15f640bee8ee43fa1393a9eb585222c29c8710e29d'
 ---
 
 # `typesafe-classifier` plan
@@ -25,13 +25,16 @@ On 2026-09-21 the user explicitly delegated the quality/latency choice to the or
 
 The user's subsequent request authorizes actual indexed-service A/B verification on current code HEAD, restarting the owned service without and with classifier enrollment, saving identical-query results and timings, and reporting improvements or regressions. This authorizes real GPU-backed service execution for verification, superseding the earlier GPU-free development constraint for this experiment only. No ranking implementation changes or relaxed quality expectations are part of the benchmark. Reuse the accepted hosted decision unchanged.
 
+On 2026-09-21, after the live comparison exposed the candidate-budget integration failure, the user explicitly authorized fixing the implementation and rerunning a genuine candidate-ranking comparison. This reauthorizes S03 correction and the subsequent verification step. Preserve retrieval headroom for path filtering; select a bounded locally ranked full-content window for hosted evaluation. Preserve keyless behavior, provider failure fallback and confidence thresholds. The user also explicitly authorized stopping competing RAG CI processes and preventing that runner/resident scheduling from interrupting the benchmark; unrelated project runners remain outside this action.
+
 ## Steps
 
 - [x] `S01` - Implement bounded environment-enrolled hosted transport and strict typed answer validation with fallback state tests; `new search/_typesafe_transport.py and search/_typesafe_answers.py, transport tests, config/_types.py, .env.example and docs/configuration.md`.
 - [x] `S02` - Implement atomic query and full-content candidate questions with confidence-aware routing and ranking policy; `new search/_typesafe_policy.py, search/_typesafe_questions.py and pure policy tests`.
-- [ ] `S03` - Integrate bounded classification across direct and service search with exact legacy fallback and repair production-only hard filtering; `search/_searcher.py, search/_typesafe_context.py, search/_noise.py, _public_search.py, test_typesafe_search.py and test_search_noise.py`.
+- [x] `S03` - Integrate bounded classification across direct and service search with exact legacy fallback, repair production-only hard filtering, and separate post-filter retrieval headroom from the locally ranked hosted candidate window; `search/_searcher.py, search/_typesafe_policy.py, search/_typesafe_context.py, search/_noise.py, _public_search.py, test_typesafe_search.py and test_search_noise.py`.
 - [x] `S04` - Compare independent atomic, nested, relation and literal-clause live-API spikes, then verify integrated behavior and resolve review findings; `dev/typesafe_evaluation.py, dev/typesafe_query_spike.py, dev/typesafe_chaining_spike.py, dev/typesafe_relation_spike.py, dev/typesafe_clause_spike.py, dev/typesafe_search_spike.py, classifier tests and feature audit`.
 - [x] `S05` - Benchmark identical real indexed code searches with classifier enrollment absent and present, save raw outcomes and timings, review relevance and report measured differences; `dev/typesafe_service_benchmark.py, ignored tmp/typesafe-service-ab-cbde33a3 artifacts, feature research and audit`.
+- [ ] `S06` - Repeat real-service vanilla versus Typesafe measurement after the integration correction, require confirmed candidate evaluations, and assess result contents semantically; `dev/typesafe_service_benchmark.py, ignored comparison artifacts, feature research and audit`.
 
 ## Parallelization
 
