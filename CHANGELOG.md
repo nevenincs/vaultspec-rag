@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.33](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.32...vaultspec-rag-v0.4.33) (2026-09-21)
+
+
+### Bug Fixes
+
+* **test:** make GPU release waits hardware-tolerant ([00f24c2](https://github.com/nevenincs/vaultspec-rag/commit/00f24c2516094c44166d3289263d345f28826647))
+
 ## [0.4.32](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.31...vaultspec-rag-v0.4.32) (2026-09-21)
 
 
