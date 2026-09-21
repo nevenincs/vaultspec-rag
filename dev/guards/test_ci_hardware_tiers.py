@@ -15,13 +15,11 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-import yaml
 
+from dev.ci_names import Workflow
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
-
-HARDWARE_WORKFLOW = "hardware.yml"
 
 #: The step that fills the model cache.
 WARM = "just warm-models"
@@ -39,14 +37,6 @@ PRECONDITIONS = {
 
 #: The secret the model-cache warm-up reads.
 TOKEN = "HF_TOKEN"
-
-
-def _document(workflow: str) -> dict[object, object]:
-    """Return *workflow* parsed as YAML."""
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict), f"{workflow} is not a mapping"
-    return cast("dict[object, object]", loaded)
 
 
 def _workflow_names() -> list[str]:
@@ -73,19 +63,19 @@ def _reads_token(step: dict[str, object]) -> bool:
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
     """No workflow but the hardware one runs an accelerator tier itself.
 
-    Mutation proof: adding a ``just test-gpu`` step to ``ci.yml``'s ``lint``
-    job makes this fail naming ``ci.yml:lint``; removing it makes this pass.
+    Mutation proof: adding a ``just test-gpu`` step to the merge gate's lint
+    job makes this fail naming that job; removing it makes this pass.
     """
     elsewhere = [
         f"{workflow}:{job.job_id} runs `just {recipe}`"
         for workflow in _workflow_names()
-        if workflow != HARDWARE_WORKFLOW
+        if workflow != Workflow.HARDWARE
         for job in workflows.load_jobs(workflow)
         for _, recipe in job.recipes()
         if recipe in PRECONDITIONS
     ]
     assert not elsewhere, (
-        f"An accelerator tier is defined outside {HARDWARE_WORKFLOW}; call that "
+        f"An accelerator tier is defined outside {Workflow.HARDWARE}; call that "
         "workflow instead.\n\n" + "\n".join(elsewhere)
     )
 
@@ -98,7 +88,7 @@ def test_every_tier_provisions_its_preconditions_first() -> None:
     """
     findings: list[str] = []
     seen: set[str] = set()
-    for job in workflows.load_jobs(HARDWARE_WORKFLOW):
+    for job in workflows.load_jobs(Workflow.HARDWARE):
         runs = [_run(step) for step in job.steps]
         for index, step in enumerate(job.steps):
             for recipe, needed in PRECONDITIONS.items():
@@ -119,7 +109,7 @@ def test_every_tier_provisions_its_preconditions_first() -> None:
                         f"does not read {TOKEN} from a secret"
                     )
     missing = sorted(set(PRECONDITIONS) - seen)
-    assert not missing, f"{HARDWARE_WORKFLOW} no longer runs {missing}"
+    assert not missing, f"{Workflow.HARDWARE} no longer runs {missing}"
     assert not findings, (
         "An accelerator tier runs before its preconditions exist, so it "
         "refuses and fails every caller.\n\n" + "\n".join(findings)
@@ -134,12 +124,12 @@ def test_the_cuda_tier_always_stops_the_service_it_started() -> None:
     """
     stops = [
         step
-        for job in workflows.load_jobs(HARDWARE_WORKFLOW)
+        for job in workflows.load_jobs(Workflow.HARDWARE)
         if any("just test-gpu" in _run(step) for step in job.steps)
         for step in job.steps
         if "server stop" in _run(step)
     ]
-    assert stops, f"the CUDA tier in {HARDWARE_WORKFLOW} never stops its service"
+    assert stops, f"the CUDA tier in {Workflow.HARDWARE} never stops its service"
     assert all(step.get("if") == "always()" for step in stops), (
         "the service stop does not run when the tier fails"
     )
@@ -155,7 +145,7 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
     hardware job makes this fail naming ``publish.yml``; restoring it makes
     this pass.
     """
-    document = _document(HARDWARE_WORKFLOW)
+    document = workflows.document(Workflow.HARDWARE)
     # YAML 1.1 reads a bare `on` key as the boolean True.
     triggers = document.get("on", document.get(True))
     call = (
@@ -169,14 +159,14 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
         else None
     )
     assert isinstance(declared, dict) and TOKEN in declared, (
-        f"{HARDWARE_WORKFLOW} does not declare the {TOKEN} secret"
+        f"{Workflow.HARDWARE} does not declare the {TOKEN} secret"
     )
 
-    target = f"./.github/workflows/{HARDWARE_WORKFLOW}"
+    target = f"./.github/workflows/{Workflow.HARDWARE}"
     callers: list[str] = []
     missing: list[str] = []
     for workflow in _workflow_names():
-        jobs = _document(workflow).get("jobs")
+        jobs = workflows.document(workflow).get("jobs")
         if not isinstance(jobs, dict):
             continue
         for job_id, body in cast("dict[object, object]", jobs).items():
@@ -194,7 +184,7 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
             )
             if not (passed == "inherit" or f"secrets.{TOKEN}" in str(passed)):
                 missing.append(f"{workflow}:{job_id}")
-    assert callers, f"nothing calls {HARDWARE_WORKFLOW}"
+    assert callers, f"nothing calls {Workflow.HARDWARE}"
     assert not missing, f"callers that do not pass {TOKEN}: {missing}"
 
 
@@ -233,12 +223,12 @@ def test_the_cuda_tier_checks_out_full_history() -> None:
     """
     checkouts = [
         step
-        for job in workflows.load_jobs(HARDWARE_WORKFLOW)
+        for job in workflows.load_jobs(Workflow.HARDWARE)
         if any("just test-gpu" in _run(step) for step in job.steps)
         for step in job.steps
         if str(step.get("uses", "")).startswith("actions/checkout@")
     ]
-    assert checkouts, f"the CUDA tier in {HARDWARE_WORKFLOW} checks nothing out"
+    assert checkouts, f"the CUDA tier in {Workflow.HARDWARE} checks nothing out"
     depths = [
         cast("dict[object, object]", step.get("with") or {}).get("fetch-depth")
         for step in checkouts
