@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:8c3a400d8a50225b49231457244301e71caaa6a2b472b344debdb850339838a0'
+body_hash: 'sha256:693bb541528e93c561bde82f4989ccfeb420ea44947110496c17bec2cb8f033f'
 related: []
 ---
 
@@ -74,6 +74,20 @@ These clauses were authored manually and checked as literal substrings. The expe
 ### Automatic clauses pass the original eight cases but miss one expanded top-three target
 
 The revised production path was exercised through dev/typesafe_evaluation.py, prepare_query and ClassificationSession.rank with the real provider. It passed all original eight cases and nine of ten after adding the compound grouping/order and false-premise cases. The remaining failure retains format_locator at rank 4 rather than the authored top-three target; group and merge occupy ranks 1/2 and hybrid fusion is rank 3. The false-premise formatter ranks 2. The AES-GCM no-match query drops all ten candidates. The test query now yields tests domain at confidence 0.98. No expected labels or acceptance thresholds were relaxed. Source: dev/typesafe_evaluation.py, CASES and run_case; src/vaultspec_rag/search/_typesafe_questions.py, query_clauses; observed live output. The live evaluation exits 1 for the remaining ranking failure. This is not a ready-to-claim perfect ranker or an end-to-end retrieval gain measurement; the deterministic fixture baseline is not a measured GPU reranker baseline.
+
+### Removing an indirect-question prefix outperformed broad role prompting
+
+The subsequent dev/typesafe_clause_spike.py --wording-experiment run held production query assessments, metadata, whole-query backstops and five-candidate batches fixed across three variants on four difficult cases. Production control passed 3/4; removing only the extracted leading whether passed 4/4; a broader concrete-role prompt passed 3/4 because it retained nine unrelated AES-GCM candidates. For the compound formatter clause, P(useful) was 0.17 with confidence 0.73 in control, 0.34 with confidence 0.47 after prefix removal, and 0.82 with confidence 0.73 for the role prompt. Control ranked formatter fourth and fusion third; the literal proposition variant ranked formatter third and fusion fourth. False-premise and cross-reference targets passed both control and literal variants. Total: 28 live calls including four query evaluations, 163,480 input and 27,031 output tokens, 21.32 seconds summed request time. Source: dev/typesafe_clause_spike.py, wording experiment; observed live output. This single fixed-batch development comparison favors testing the narrow contiguous-substring change, not broadening the prompt or lowering thresholds. Actual production batching must still be evaluated.
+
+### Live classification also passes GPU-free search orchestration checks
+
+The first dev/typesafe_search_spike.py run passed all five predefined checks through actual VaultSearcher entry points: a requested test is returned, only:prod prevents that test from returning, an unrelated encryption query returns no hits, a documentation query returns its guide, and combined cross-reference retains code plus vault and document evidence. Only encoding, storage retrieval and graph enrichment were fixture leaves; query and candidate answers came from real Typesafe calls. Code candidate budgets were 32 rather than the ordinary ten for top_k=5 with the fixture CrossEncoder disabled. Source: dev/typesafe_search_spike.py, main and fixture construction; observed live output. Total: 16 successful evaluations, 30,498 input and 3,037 output tokens. Synthetic guide text and fixed candidate scores test composition, not indexed-corpus recall or GPU quality. The combined page still contains a lower-ranked status-filter distractor, so passing the predefined checks does not imply noise-free results.
+
+### Isolating each candidate improves the difficult cases but does not scale within the current deadline
+
+The dev/typesafe_clause_spike.py single-candidate mode evaluated the unchanged production questions and context with real query assessments, full original-query backstops, a 24KB request preflight and each session's shared ten-second deadline. All four difficult cases passed: grouping expected positions 1/2/3, false-premise formatter 3 and merge 1, cross-reference status 1 and domain filter 2, and AES-GCM empty. Ten isolated candidate requests per case took 6.708–7.075 seconds including query evaluation. Total: 44 successful calls, 59,328 input and 6,392 output tokens, 27.414 seconds; no failures or retries. Source: dev/typesafe_clause_spike.py, single-candidate mode; observed live output. Grouping formatter scored 0.51 versus fusion 0.35. This supports batch-context sensitivity, not a scalable production fix: a linear extrapolation to 32–64 serial candidates is about 20–40 seconds, exceeding the current deadline.
+
+Offline greedy marginal-clause coverage also passed four cases, but formatter marginal gains were zero in grouping and false-premise cases; its apparent promotion came from fixture tie order, not evidence for coverage scoring. Excerpt-only maximum scoring changed no expected positions. Neither alternative justifies changing score aggregation or thresholds. Bounded production batching still passes nine of ten; source isolation needs a latency/concurrency design before adoption. These remain authored development cases rather than held-out accuracy measurements.
 
 ## Sources
 

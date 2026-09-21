@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:231bfedd43ff0f0e1906e484abcad958acc68cb4703617d6d0fb5f59d3360631'
+body_hash: 'sha256:77bc261fb4d6727a08f1c7d244f03576e2bd7185d9de1831430038e20a416a8c'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -54,6 +54,7 @@ related:
 - `S04` `verify:` `dev/typesafe_clause_spike.py single-candidate live mode (4 of 4 difficult cases; 44calls, no retries)` -> `pass`
 - `S02` `verify:` `package Ruff lint, three policy files format and basedpyright, 57 policy tests` -> `pass`
 - `S03` `verify:` `package Ruff lint, six integration files format and basedpyright, 103 search/noise/shaping/parser tests` -> `pass`
+- `S04` `verify:` `final package and six spike Ruff lint, spike format and basedpyright, 215 targeted tests; integrated safety review no unresolved high or critical findings` -> `pass`
 
 ## Notes
 
@@ -64,4 +65,4 @@ related:
 - `S01` User authorized worktree-only hook adjustment. An exact gitdir conditional includes classification-only hook settings pointing to an empty directory; main and busyport retain default hooks. No shared hook was modified and no repository-wide worktreeConfig extension was enabled. Earlier commit blocker resolved; explicit gates remain required.
 - `S04` Awaiting user preference: retain bounded batched production with documented 9/10 quality miss, or pursue isolated candidate ranking with bounded parallelism and a larger latency budget. S02-S04 remain open; no failed quality target relaxed.
 - `S02` User delegated quality/latency decision; retained accepted bounded batching with unchanged authored evaluation and documented ranking miss. No assertion, threshold or deadline relaxed.
-
+- `S04` Closed under the user's delegated choice of bounded batching. Historical live evaluation failures remain recorded and the 9/10 benchmark remains unchanged; accepted quality limitation, not an all-green accuracy claim. No CUDA service or credential persistence.
