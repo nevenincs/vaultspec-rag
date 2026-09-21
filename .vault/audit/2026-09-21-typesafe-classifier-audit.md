@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:28ff21cad650a1bbff4445072819f48977c115fc11579b01445a48e4b7b8da10'
+body_hash: 'sha256:636cbbc095e8d9819d9e694bf47e0cd4fd7a295d678abdf1c32c31a513ae3bb7'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -102,6 +102,12 @@ The follow-up uses actual provider responses and production policy over saved ca
 ### enrollment-visibility | low | Daemon evidence reaches lifecycle output without paid status probes
 
 S08 review: the classifier owns redacted enrollment/circuit evidence; /health publishes it and start/status render that daemon snapshot instead of reading client credentials. Configured keys remain pending until a successful provider evaluation, and old success cannot override a later cooldown/rejection. README, configuration and CLI guides explain external data transfer, credits, restart environment, pending versus verified evidence, and old/unreachable-daemon absence. Unit/loopback lifecycle and health checks pass (141 tests); a real provider query changed pending to active without revealing key material. Inserting a status-side provider request failed the no-call guard and restoration passed. Lint, format and type checks pass. S08 review result: PASS; no high/critical findings.
+
+### trusted-ci-enrollment | low | Repository secret reaches live preflight and integration execution
+
+S09 review: the authorized repository Actions secret VAULTSPEC_RAG_TYPESAFE_API_KEY was set through stdin, never command arguments or committed files, and its name/update metadata verified. Both existing hardware callers (scheduled/manual CI and release validation) explicitly forward it; the reusable workflow declares it required. The CUDA lane supplies it to the real classifier preflight, resident service launch and GPU integration tier. Readiness now checks daemon enrollment, preventing attachment to a keyless service from silently exercising vanilla ranking. A preflight failure before service startup cannot trigger resident shutdown; cleanup remains always-evaluated but checks whether the start step ran. No pull-request or accelerator-free job receives the key, no trigger/permission expansion was made, and existing fork containment guards remain passing.
+
+The actual workflow preflight command passed all five cases using real provider calls. Fifty local workflow/security/configuration tests pass with lint, format and types; removing the GPU-test secret mapping failed its targeted guard and restoration passed. GitHub/GPU workflows were not dispatched and branch changes were not pushed, so these are local workflow validation and live provider results, not a claimed remote CI verdict. Final S09 review result: PASS; no high/critical findings.
 
 ## Recommendations
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:496e8e9f838ffb31faa767cc3a4ce38ca042009d0b6ea42ea66975f01c343812'
+body_hash: 'sha256:151c0799eb673bef531449824c2f4675d40cd0c78e5070b61c0a819f7efeb2ef'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -102,6 +102,13 @@ related:
 - `S08` `M` `docs/cli.md`
 - `S08` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
 - `S08` `verify:` `ruff package; format and basedpyright 8 files; 141 lifecycle/transport/status/config tests; live pending-to-active query; no-provider-probe mutation` -> `pass`
+- `S09` `M` `.github/workflows/ci.yml`
+- `S09` `M` `.github/workflows/hardware.yml`
+- `S09` `M` `.github/workflows/publish.yml`
+- `S09` `M` `dev/guards/test_ci_hardware_tiers.py`
+- `S09` `M` `docs/configuration.md`
+- `S09` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S09` `verify:` `ruff package and workflow guard; format; basedpyright; 50 workflow/security/config tests; actual CI live preflight 5/5; secret-mapping mutation restored` -> `pass`
 
 ## Notes
 

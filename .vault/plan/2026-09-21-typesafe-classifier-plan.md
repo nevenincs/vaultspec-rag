@@ -8,7 +8,7 @@ related:
   - '[[2026-09-21-typesafe-classifier-adr]]'
 modified: '2026-09-21'
 body_schema: body-v2
-body_hash: 'sha256:60231ea7df0c915b6528ee9ee174e590a44aba06200843fdbe193cea41d4b4be'
+body_hash: 'sha256:06fb0a3fadc6574e122d74866a51e27fa5cb12afe52c42defd00261f74e579bf'
 ---
 
 # `typesafe-classifier` plan
@@ -43,7 +43,7 @@ Approved 2026-09-22 addition: the user authorizes storing the current supplied A
 - [x] `S06` - Repeat real-service vanilla versus Typesafe measurement after the integration correction, require confirmed candidate evaluations, and assess result contents semantically; `dev/typesafe_service_benchmark.py, ignored comparison artifacts, feature research and audit`.
 - [x] `S07` - Reuse bounded HTTPS connections, cache validated exact-request answers and coalesce in-flight duplicates; prove safety and measure live latency/cost; `search/_typesafe_transport.py, search/_typesafe_pool.py, search/_typesafe_cache.py, search/_typesafe_answers.py, search/_typesafe_policy.py, search/_typesafe_context.py, search/_searcher.py, _public_search.py, transport/cache/search timing tests, dev live performance spike, configuration documentation and feature research/audit`.
 - [x] `S08` - Expose daemon-owned Typesafe enrollment through health and lifecycle output; document activation and states; `search/_typesafe_transport.py, server/_lifespan.py, cli/_status_labels.py, cli/_status_render.py, cli/_service_start.py, focused transport/lifecycle/health tests, README.md, docs/configuration.md, docs/cli.md, feature audit`.
-- [ ] `S09` - Pass the repository Typesafe secret into trusted integration workflows and verify live classifier/service enrollment; `.github/workflows/ci.yml, hardware.yml, publish.yml, dev/guards/test_ci_hardware_tiers.py, docs/configuration.md, feature audit and GitHub Actions repository secret`.
+- [x] `S09` - Pass the repository Typesafe secret into trusted integration workflows and verify live classifier/service enrollment; `.github/workflows/ci.yml, hardware.yml, publish.yml, dev/guards/test_ci_hardware_tiers.py, docs/configuration.md, feature audit and GitHub Actions repository secret`.
 
 ## Parallelization
 

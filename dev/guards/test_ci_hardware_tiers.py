@@ -51,13 +51,13 @@ def _run(step: dict[str, object]) -> str:
     return run if isinstance(run, str) else ""
 
 
-def _reads_token(step: dict[str, object]) -> bool:
+def _reads_token(step: dict[str, object], token: str = TOKEN) -> bool:
     """Whether *step* hands the job the Hugging Face token from a secret."""
     env = step.get("env")
     if not isinstance(env, dict):
         return False
-    value = cast("dict[object, object]", env).get(TOKEN)
-    return isinstance(value, str) and f"secrets.{TOKEN}" in value
+    value = cast("dict[object, object]", env).get(token)
+    return isinstance(value, str) and f"secrets.{token}" in value
 
 
 def test_accelerator_recipes_live_only_in_the_hardware_workflow() -> None:
@@ -135,7 +135,8 @@ def test_the_cuda_tier_always_stops_the_service_it_started() -> None:
     )
 
 
-def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
+@pytest.mark.parametrize("token", [TOKEN, "VAULTSPEC_RAG_TYPESAFE_API_KEY"])
+def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     """The token is declared by the tiers and passed by every caller.
 
     A reusable workflow sees no secret its caller does not pass, so a caller
@@ -158,8 +159,8 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
         if isinstance(call, dict)
         else None
     )
-    assert isinstance(declared, dict) and TOKEN in declared, (
-        f"{Workflow.HARDWARE} does not declare the {TOKEN} secret"
+    assert isinstance(declared, dict) and token in declared, (
+        f"{Workflow.HARDWARE} does not declare the {token} secret"
     )
 
     target = f"./.github/workflows/{Workflow.HARDWARE}"
@@ -178,14 +179,41 @@ def test_every_caller_hands_the_hardware_workflow_its_token() -> None:
             callers.append(f"{workflow}:{job_id}")
             secrets = job.get("secrets")
             passed = (
-                cast("dict[object, object]", secrets).get(TOKEN)
+                cast("dict[object, object]", secrets).get(token)
                 if isinstance(secrets, dict)
                 else secrets
             )
-            if not (passed == "inherit" or f"secrets.{TOKEN}" in str(passed)):
+            if not (passed == "inherit" or f"secrets.{token}" in str(passed)):
                 missing.append(f"{workflow}:{job_id}")
     assert callers, f"nothing calls {Workflow.HARDWARE}"
-    assert not missing, f"callers that do not pass {TOKEN}: {missing}"
+    assert not missing, f"callers that do not pass {token}: {missing}"
+
+
+def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -> None:
+    """Removing the GPU test's secret failed at test-gpu; restoration passed."""
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
+    )
+    fragments = ("dev/typesafe_search_spike.py", "server start", "just test-gpu")
+    indices: list[int] = []
+    for fragment in fragments:
+        index, step = next(
+            (index, step)
+            for index, step in enumerate(job.steps)
+            if fragment in _run(step)
+        )
+        assert _reads_token(step, "VAULTSPEC_RAG_TYPESAFE_API_KEY"), fragment
+        indices.append(index)
+    assert indices == sorted(indices)
+    start = _run(job.steps[indices[1]])
+    assert "$status.health.typesafe.enrolled -ne $true" in start
+    assert job.steps[indices[1]].get("id") == "resident"
+    stop = next(step for step in job.steps if "server stop" in _run(step))
+    assert (
+        cast("dict[str, object]", stop["env"])["RESIDENT_START_OUTCOME"]
+        == "${{ steps.resident.outcome }}"
+    )
+    assert "$env:RESIDENT_START_OUTCOME -notin" in _run(stop)
 
 
 def test_no_windows_step_hands_powershell_a_heredoc() -> None:

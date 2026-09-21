@@ -42,6 +42,9 @@ on:
       HF_TOKEN:
         description: Hugging Face token for warming the model cache
         required: false
+      VAULTSPEC_RAG_TYPESAFE_API_KEY:
+        description: Funded Typesafe key for live classification integration tests
+        required: true
 
 permissions:
   contents: read
@@ -209,6 +212,11 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
+      - name: Verify live Typesafe classification before GPU provisioning
+        env:
+          VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
+        run: uv run --no-sync python -B dev/typesafe_search_spike.py
+
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install
 
@@ -228,9 +236,11 @@ jobs:
       # makes this reliable on a machine that loads its model stack at start:
       # a warming daemon has no health identity for the coordinator to match.
       - name: Start the resident service the GPU tier borrows from
+        id: resident
         shell: pwsh
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
           uv run --no-sync vaultspec-rag server start --json
           # A dead daemon says only `start_died` on stdout; the reason is in its
@@ -245,9 +255,15 @@ jobs:
             $raw = uv run --no-sync vaultspec-rag server status --json
             # The operator state is nested under `data`; reading it off the
             # envelope root yields $null on every poll and times out silently.
-            $state = ($raw | ConvertFrom-Json).data.state
+            $status = ($raw | ConvertFrom-Json).data
+            $state = $status.state
             Write-Host "service state: $state"
-            if ($state -eq 'running') { exit 0 }
+            if ($state -eq 'running') {
+              if ($status.health.typesafe.enrolled -ne $true) {
+                throw 'The resident service lacks Typesafe enrollment; restart it with the CI secret.'
+              }
+              exit 0
+            }
             Start-Sleep -Seconds 5
           }
           uv run --no-sync vaultspec-rag server logs --limit 80
@@ -256,6 +272,7 @@ jobs:
       - name: Run GPU test tier through guarded coordinator
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: just test-gpu
 
       # Always: a tier that failed mid-borrow still leaves a daemon holding the
@@ -264,4 +281,8 @@ jobs:
       - name: Stop the resident service
         if: always()
         shell: pwsh
-        run: uv run --no-sync vaultspec-rag server stop --json
+        env:
+          RESIDENT_START_OUTCOME: ${{ steps.resident.outcome }}
+        run: |
+          if ($env:RESIDENT_START_OUTCOME -notin @('success', 'failure', 'cancelled')) { exit 0 }
+          uv run --no-sync vaultspec-rag server stop --json

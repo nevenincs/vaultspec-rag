@@ -99,6 +99,15 @@ on the client's key. In JSON, start returns `data.typesafe`; status returns
 or its fingerprint. A pending/rejected classifier does not make the local search
 service unhealthy.
 
+For GitHub Actions, store the key as the repository Actions secret
+`VAULTSPEC_RAG_TYPESAFE_API_KEY`. Scheduled/manual CI and release validation pass it
+to the reusable hardware workflow. Its CUDA integration lane runs a live classifier
+check before GPU provisioning, supplies the key to the service launch and test
+processes, and refuses to proceed if the running service is not enrolled. A missing
+or unusable secret fails the live check rather than silently validating only legacy
+fallback. The secret is not passed to pull-request workflows or accelerator-free
+unit jobs.
+
 ### Typesafe connection reuse, caching and diagnostics
 
 The server shares a verified TLS context and up to two exclusive HTTPS connections.
