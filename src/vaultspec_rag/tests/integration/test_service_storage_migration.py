@@ -13,6 +13,7 @@ from ...server._routes_storage import _shape_survey_payload, _SurveyPayloadReque
 from ...storage_manifest import record_root
 from ...storage_migration import migrate_collections
 from ...storage_survey_ops import debris_surveys, gather_survey, prune_orphaned
+from .._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from ._helpers import provisioned_qdrant_binary, serve_qdrant
 
 if TYPE_CHECKING:
@@ -73,7 +74,10 @@ def test_real_local_to_service_document_migration_is_idempotent(
     from qdrant_client import QdrantClient
 
     local = QdrantClient(path=str(tmp_path / "local-qdrant"))
-    server = QdrantClient(url=migration_qdrant_server.url)
+    server = QdrantClient(
+        url=migration_qdrant_server.url,
+        timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
+    )
     try:
         _make_document_collection(local, store_schema.DOCUMENT_COLLECTION)
         name_map = _migrate_name_map(str(tmp_path), to_server=True)
@@ -111,7 +115,10 @@ def test_real_document_pruning_debris_and_maintenance_route(
     """Cover document prefix pruning, debris classification, and route counts."""
     from qdrant_client import QdrantClient
 
-    client = QdrantClient(url=migration_qdrant_server.url)
+    client = QdrantClient(
+        url=migration_qdrant_server.url,
+        timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
+    )
     try:
         orphan_root = tmp_path / "orphan"
         orphan_root.mkdir()
