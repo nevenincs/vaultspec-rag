@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:5f314b6f9b2652834e28b99d88dd9659500ac8176a79b3e0bd5531b30e9f38b9'
+body_hash: 'sha256:495378670e6f6cdbb3a17435fdbc77fce6fdedad699e41cd99016ed420b74c79'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -66,6 +66,22 @@ The f4da6cdf indexed run successfully classified 32 candidates on eight measured
 ### compound request packing | high | Paired calls alone did not fit repeated rubrics
 
 The 0602d358 follow-up again reached genuine candidate judgments for focused cases but its four-clause request fragmented into many small batches; grouping_and_order exhausted the budget. The run was interrupted rather than presented as completion and remains under tmp/typesafe-service-ab-0602d358. Inspection and a failing unit guard also proved that URLError-wrapped timeouts still poisoned availability when search-limited; the live failure did not yet expose a reason counter, so this wrapper is a demonstrated code defect, not a proven attribution of that specific response. Correction expands only candidate JSON preflight from 24KB to64KB while retaining eight candidates, process-wide two-call capacity and all time limits; query preflight stays24KB. It handles wrapped timeout provenance and adds safe reason counters. All153 targeted tests and explicit static gates pass. Live verification remains open.
+
+### live integration corrections | low | Prior activation and deadline findings resolved
+
+At source00ce3f06, all30 indexed keyed searches completed32 full-content candidate classifications, including all repeated compound cases; none fell back or bypassed classification. The complete evidence and semantic judgments reside in2026-09-21-typesafe-classifier-research, completed indexed-comparison section. This resolves the prior high candidate-budget and compound-deadline integration findings for the exercised workflow. Review confirms unchanged keyless execution, atomic fallback, explicit filter authority, no unclassified-tail score mixing, bounded network concurrency and unchanged elapsed limits.153 targeted tests and explicit static gates pass. No credential was persisted. Result: PASS, with the quality and generalization limitations below.
+
+### evidence coverage | medium | Compound pages remain incomplete and retain adjacent noise
+
+The broad grouping/order question still lacks the formatter body, and the false-premise query places direct counterevidence below the top five despite improving over vanilla. Single grouping queries still promote locale deduplication and requested-test pages retain tests of a different document. These are measured quality limitations, not activation failure. Do not advertise complete facet coverage or general accuracy from this fixed ten-query corpus. The user's delegated bounded-batching quality/latency choice remains applicable; follow-on quality work needs separate representative evidence, not relabeling these misses.
+
+### benchmark controls | low | Rebuilt generations limit strict replay claims
+
+Both completed arms use identical frozen source, corpus size, query protocol and bounded freshness; runtime readiness required separate rebuilds after restart. Retain the generation identifiers and earlier failed attempts, and report a semantic repeated-query comparison rather than an identical-generation deterministic replay. The service readiness checks were not weakened to permit empty results. Result: PASS with this disclosed limitation.
+
+### HTTPS connection reuse | medium | Search latency includes avoidable client overhead
+
+The user's latency challenge prompted a real transport probe, documented in2026-09-21-typesafe-classifier-research. Warm persistent requests took about232ms/252ms versus current fresh-connection601ms/780ms for query/eight-candidate contracts. Connection setup alone cost325-336ms. The implementation recreates its HTTPS connection per request, and five requests form three serial stages per search. Preserve the successful classification/quality result, but do not attribute its4.13-second median to Typesafe inference or present it as optimized transport latency. Connection reuse remains an unimplemented optimization; this diagnostic made no production change. Result: PASS with this performance finding, not a claim of completed latency optimization.
 
 ## Recommendations
 

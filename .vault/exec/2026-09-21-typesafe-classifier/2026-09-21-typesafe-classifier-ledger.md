@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:d70bb5c623c05254a6f40443902d0af593a9967155a78724b845c4af152226c1'
+body_hash: 'sha256:b993580c55c30fb5267f454252d4e0da46b4f8338ed169edee4cf30fc9e0b2a6'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -69,6 +69,10 @@ related:
 - `S02` `verify:` `150 targeted classifier/noise tests, package Ruff, touched formatting and basedpyright` -> `pass`
 - `S01` `verify:` `153 targeted tests, package Ruff, touched formatting and basedpyright` -> `pass`
 - `S02` `verify:` `153 targeted tests, package Ruff, touched formatting and basedpyright` -> `pass`
+- `S06` `M` `dev/typesafe_service_benchmark.py`
+- `S06` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
+- `S06` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S06` `verify:` `60 real indexed searches; all30 keyed searches completed candidate ranking; 153 targeted tests, package lint, touched format/type checks` -> `pass`
 
 ## Notes
 
@@ -89,3 +93,4 @@ related:
 - `S02` Real compound searches exhausted the serial batch deadline; bounded pairs now use existing two-call transport capacity. Concurrent rendezvous test failed with serial execution and passed with paired execution.
 - `S01` Wrapped URLError(TimeoutError) search-budget guard failed before correction and passed afterward; provider-budget timeout still cools down.
 - `S02` Repeated clause rubrics fragmented eight candidates into three requests under 24KB. Candidate request preflight is now 64KB, below transport 128KiB, retaining eight candidates/two concurrent calls/ten-second search and five-second request limits. Query preflight remains 24KB. Exact batching regression failed then passed. Safe failure-reason counters added.
+- `S06` Separate rebuilt generations disclosed. Retained all failed attempts separately. Transport latency diagnostic proves missing HTTPS reuse; not implemented or counted as optimized end-to-end performance. Owned benchmark service and GPU guard stopped; authorized RAG runner and resident tasks remain stopped/disabled.

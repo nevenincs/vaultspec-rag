@@ -57,7 +57,9 @@ def redact_credentials(value: object) -> object:
     return value
 
 
-def capture(query: str, port: int) -> tuple[dict[str, object], float]:
+def capture(
+    query: str, port: int, freshness_policy: str
+) -> tuple[dict[str, object], float]:
     started = time.perf_counter()
     payload: dict[str, object] | None = try_http_search(
         query,
@@ -66,6 +68,8 @@ def capture(query: str, port: int) -> tuple[dict[str, object], float]:
         port,
         str(ROOT),
         include_paths=["src/vaultspec_rag"],
+        freshness_policy=freshness_policy,
+        freshness_wait_seconds=30.0 if freshness_policy == "bounded" else None,
         timeout=300.0,
     )
     elapsed = time.perf_counter() - started
@@ -137,10 +141,14 @@ def main() -> int:
     parser.add_argument("--mode", choices=("off", "on"), required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--freshness-policy", choices=("immediate", "bounded"), default="immediate"
+    )
     args = parser.parse_args()
     output = cast("Path", args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     protocol = manifest()
+    protocol["freshness_policy"] = args.freshness_policy
     manifest_path = output / "manifest.json"
     serialized = json.dumps(protocol, indent=2, sort_keys=True)
     if manifest_path.exists():
@@ -175,11 +183,14 @@ def main() -> int:
             json.dumps(redact_credentials(json.loads(status.stdout)), indent=2)
         )
     with (output / f"{args.mode}.jsonl").open("x", encoding="utf-8") as stream:
-        warmup, elapsed = capture(str(protocol["warmup"]), args.port)
+        warmup, elapsed = capture(
+            str(protocol["warmup"]), args.port, args.freshness_policy
+        )
         stream.write(
             json.dumps(
                 {
                     "kind": "warmup",
+                    "freshness_policy": args.freshness_policy,
                     "wall_seconds": elapsed,
                     "response": warmup,
                 }
@@ -192,12 +203,13 @@ def main() -> int:
             return 1
         for repeat in range(3):
             for case in CASES:
-                payload, elapsed = capture(case.query, args.port)
+                payload, elapsed = capture(case.query, args.port, args.freshness_policy)
                 result_rows = rows(payload)
                 metrics = classification_metrics(payload)
                 record: dict[str, object] = {
                     "kind": "measurement",
                     "mode": args.mode,
+                    "freshness_policy": args.freshness_policy,
                     "repeat": repeat,
                     "case": case.name,
                     "query": case.query,
