@@ -57,10 +57,6 @@ _BOUNDARY: dict[tuple[str, str], str] = {
         "reads check results and edits a label; never runs a pull request's "
         "code, and must answer for a fork's pull request too"
     ),
-    ("claude.yml", "claude"): (
-        "runs an assistant on issue and comment text, which is untrusted "
-        "input by construction"
-    ),
 }
 
 

@@ -35,6 +35,7 @@ from typing import cast
 import pytest
 import yaml
 
+from dev.ci_names import MERGE_BOX
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
@@ -67,7 +68,7 @@ def _reaches_default_branch(workflow: str) -> bool:
     admits a commit to the default branch, and it runs there on schedule and
     dispatch.
     """
-    if workflow in workflows.MERGE_BOX:
+    if workflow in MERGE_BOX:
         return True
     path = workflows.repository_root() / ".github" / "workflows" / workflow
     loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -121,9 +122,7 @@ def _concurrency_declarations() -> list[tuple[str, str, dict[str, object]]]:
 
 def _merge_box_jobs() -> tuple[workflows.Job, ...]:
     """Return every job in every merge-box workflow."""
-    return tuple(
-        job for workflow in workflows.MERGE_BOX for job in workflows.load_jobs(workflow)
-    )
+    return tuple(job for workflow in MERGE_BOX for job in workflows.load_jobs(workflow))
 
 
 def test_every_self_hosted_job_is_bounded() -> None:

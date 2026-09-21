@@ -39,40 +39,19 @@ import tomllib
 
 import pytest
 
+from dev.ci_names import (
+    GATE_CHECK,
+    JOB_NAME,
+    PRODUCT,
+    WORKFLOW_NAME,
+    Kind,
+    Platform,
+    collapse,
+    listed,
+)
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
-
-#: The justfile consequence groups a job's Kind is drawn from.
-KINDS = ("Check", "Test", "Build")
-
-#: The operating systems a job may name.
-PLATFORMS = ("Linux", "Windows", "macOS")
-
-#: The product every workflow name starts with.
-PRODUCT = "RAG"
-
-#: What a workflow name must look like.
-WORKFLOW_NAME = re.compile(rf"^{PRODUCT}(?: [A-Z][A-Za-z]*)+$")
-
-#: The stand-in an expression collapses to before matching.
-_LEG = "Xx"
-
-#: An all-capitals acronym, the one capitalised word allowed mid-subject.
-_ACRONYM = r"[A-Z0-9]{2,}"
-
-#: A Subject: a capitalised first word, then lower-case words or acronyms.
-_SUBJECT = rf"(?:[A-Z][a-z]*|{_ACRONYM})(?: (?:[a-z0-9][a-z0-9-]*|{_ACRONYM}))*"
-
-#: The optional trailing parenthesis: a platform then legs, or legs alone.
-_PLACE = rf"(?:(?:{'|'.join(PLATFORMS)})(?:, {_LEG})*|{_LEG}(?:, {_LEG})*)"
-
-#: What a job name must look like once interpolations are collapsed.
-NAME = re.compile(rf"^(?:{'|'.join(KINDS)}): {_SUBJECT}(?: \({_PLACE}\))?$")
-
-#: An expression in a job name, replaced by a stand-in before matching so a
-#: matrix leg's name is checked for shape rather than for its resolved value.
-_INTERPOLATION = re.compile(r"\$\{\{[^}]*\}\}")
 
 
 def _executable(command: tuple[str, ...]) -> str | None:
@@ -166,11 +145,6 @@ def _names() -> tuple[tuple[str, str], ...]:
     return tuple((f"{job.workflow}:{job.job_id}", job.name) for job in _jobs())
 
 
-def _collapsed(name: str) -> str:
-    """Return *name* with every expression replaced by a stand-in token."""
-    return _INTERPOLATION.sub(_LEG, name)
-
-
 def _subject(name: str) -> str:
     """Return the Subject alone, with the Kind and the parenthesis removed.
 
@@ -178,7 +152,7 @@ def _subject(name: str) -> str:
     may be spelled the same as a pytest marker. Scanning it would forbid
     naming the runner a job actually lands on.
     """
-    body = _collapsed(name).split(": ", 1)[-1]
+    body = collapse(name).split(": ", 1)[-1]
     return re.sub(r"\s*\([^()]*\)$", "", body)
 
 
@@ -191,9 +165,9 @@ def _name_findings(jobs: tuple[workflows.Job, ...]) -> list[str]:
     """Name every job whose name breaks the grammar or omits its platform."""
     findings: list[str] = []
     for job in jobs:
-        collapsed = _collapsed(job.name)
+        collapsed = collapse(job.name)
         where = f"{job.workflow}:{job.job_id}: {job.name!r}"
-        if not NAME.fullmatch(collapsed):
+        if not JOB_NAME.fullmatch(collapsed):
             findings.append(where)
         elif job.steps and not collapsed.endswith(")"):
             findings.append(f"{where} names no platform")
@@ -205,8 +179,8 @@ def test_every_job_name_follows_the_pattern() -> None:
     findings = _name_findings(_jobs())
     assert not findings, (
         "A job is not named `<Kind>: <Subject> (<Platform>[, <leg>])`.\n"
-        f"Kind is one of {', '.join(KINDS)}; the Subject is sentence case; "
-        f"Platform is one of {', '.join(PLATFORMS)} or a matrix leg, and only a "
+        f"Kind is one of {listed(Kind)}; the Subject is sentence case; "
+        f"Platform is one of {listed(Platform)} or a matrix leg, and only a "
         "job that calls a reusable workflow may omit it.\n\n" + "\n".join(findings)
     )
 
@@ -215,8 +189,8 @@ def test_the_pattern_rejects_the_retired_grammar() -> None:
     """Mutation proof: every shape the previous grammar allowed is refused.
 
     Each retired name breaks exactly one rule, so each rule is proved alone.
-    Adding ``Gate`` back to ``KINDS`` made this fail on the retired merge
-    verdict's Kind; removing it again made this pass.
+    Adding ``Gate`` back to :class:`~dev.ci_names.Kind` made this fail on
+    the retired merge verdict's Kind; removing it again made this pass.
     """
     retired = (
         "Gate: Merge readiness (Linux)",
@@ -226,14 +200,14 @@ def test_the_pattern_rejects_the_retired_grammar() -> None:
         "Test: Full Suite (Windows)",
     )
     current = (
-        "Check: Merge gate (Linux)",
+        GATE_CHECK,
         "Test: GPU correctness (Windows)",
         "Test: Correctness suite (Linux, ${{ matrix.python-version }})",
         "Build: Standalone binaries (${{ matrix.name }})",
         "Test: Release hardware",
     )
-    assert [name for name in retired if NAME.fullmatch(_collapsed(name))] == []
-    assert [name for name in current if not NAME.fullmatch(_collapsed(name))] == []
+    assert [name for name in retired if JOB_NAME.fullmatch(collapse(name))] == []
+    assert [name for name in current if not JOB_NAME.fullmatch(collapse(name))] == []
 
 
 def test_a_job_with_steps_and_no_platform_is_named() -> None:

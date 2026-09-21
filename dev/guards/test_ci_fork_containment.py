@@ -1,9 +1,24 @@
-"""What a fork's pull request may and may not reach.
+"""THIS REPOSITORY'S copy of every workflow refuses a fork's pull request.
 
-A fork's pull request is REFUSED. The workflow it would run is the fork's own,
-so no job that measures anything may run for it - not on this hardware and not
-on a hosted runner either - and the merge gate fails it, so the change is
-re-opened from a branch in this repository before anything executes.
+WHAT THIS GUARD DOES NOT PROVE, FIRST, BECAUSE IT READS AS THOUGH IT DID. A
+``pull_request`` run from a fork executes the FORK's copy of the workflow
+file. Every clause asserted below therefore lives in a file the fork rewrites
+before its run starts: it can delete the same-repo clause, point ``runs-on``
+at the fleet, and name a job whatever the merge box requires. No assertion
+over the files in this repository can contain that, and reading one as though
+it could is how a public repository ends up trusting a check a stranger wrote.
+
+What contains a fork is a repository setting rather than a file: Actions
+requires approval for workflow runs from ALL external contributors, so nothing
+starts until a maintainer approves it. Approving a fork's run to be helpful
+about its CI is therefore the whole boundary being lowered, once, by hand.
+
+WHAT THIS GUARD DOES PROVE, AND WHY IT IS WORTH HAVING. That this repository's
+own copy never drifts into running a pull request's head on the fleet, and
+never reroutes a fork somewhere else instead of refusing it. That drift is the
+likely failure - a clause dropped while moving a job, a hosted fallback added
+to be accommodating - and it is the one a file can be read for. The clauses
+are depth behind the setting, and this guard is what keeps the depth.
 
 THE ACCELERATOR TIERS NEED NO SAME-REPO CLAUSE OF THEIR OWN. They run on a
 workstation carrying a live service and the only card in the fleet, and on a
@@ -18,23 +33,13 @@ from typing import cast
 import pytest
 import yaml
 
+from dev.ci_names import GATE_JOB, MERGE_BOX, SAME_REPO_CLAUSE, Workflow
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
-#: The one definition of the accelerator tiers.
-HARDWARE_WORKFLOW = "hardware.yml"
-
 #: Events that run code a pull request's author controls.
 PULL_REQUEST_EVENTS = frozenset({"pull_request", "pull_request_target"})
-
-#: The clause that excludes a fork's pull request specifically. A self-hosted
-#: job reachable by `pull_request` at all must carry this in its `if:`; one
-#: that does not runs a fork's own workflow on this hardware.
-SAME_REPO_CLAUSE = "head.repo.full_name == github.repository"
-
-#: The job that turns the merge box into the one required verdict.
-GATE = ("merge-gate.yml", "gate")
 
 #: A runs-on expression that picks a different runner for a fork.
 _FORK_RUNNER_SWITCH = re.compile(r"head\.repo\.full_name\s*!=")
@@ -50,7 +55,7 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
     """
     offenders = {
         f"{job.workflow}:{job.job_id}": job.condition
-        for workflow in workflows.MERGE_BOX
+        for workflow in MERGE_BOX
         for job in workflows.load_jobs(workflow)
         if job.self_hosted
         and job.reaches("pull_request")
@@ -101,7 +106,7 @@ def test_the_gate_refuses_a_forks_pull_request() -> None:
     Mutation proof: deleting the ``HEAD_REPO`` refusal from the gate's verdict step
     made this fail on the missing refusal; restoring it made this pass.
     """
-    workflow, job_id = GATE
+    workflow, job_id = Workflow.MERGE_GATE, GATE_JOB
     gate = next(job for job in workflows.load_jobs(workflow) if job.job_id == job_id)
     verdict = next(
         step
@@ -166,12 +171,12 @@ def test_the_hardware_tiers_are_unreachable_from_a_pull_request() -> None:
     Mutation proof: deleting the ``if:`` of the hardware caller in ``ci.yml``
     makes this fail naming ``ci.yml:hardware``; restoring it makes this pass.
     """
-    assert workflows.workflow_events(HARDWARE_WORKFLOW) == ("workflow_call",), (
-        f"{HARDWARE_WORKFLOW} must only be callable from another workflow, "
-        f"but it triggers on {workflows.workflow_events(HARDWARE_WORKFLOW)}"
+    assert workflows.workflow_events(Workflow.HARDWARE) == ("workflow_call",), (
+        f"{Workflow.HARDWARE} must only be callable from another workflow, "
+        f"but it triggers on {workflows.workflow_events(Workflow.HARDWARE)}"
     )
-    callers = _callers(HARDWARE_WORKFLOW)
-    assert callers, f"nothing calls {HARDWARE_WORKFLOW}"
+    callers = _callers(Workflow.HARDWARE)
+    assert callers, f"nothing calls {Workflow.HARDWARE}"
     reachable = [
         f"{workflow}:{job.job_id} (condition {job.condition!r})"
         for workflow, job in callers
@@ -179,7 +184,7 @@ def test_the_hardware_tiers_are_unreachable_from_a_pull_request() -> None:
         and any(job.reaches(event) for event in PULL_REQUEST_EVENTS)
     ]
     assert not reachable, (
-        f"a pull request can start {HARDWARE_WORKFLOW} through {reachable}. "
+        f"a pull request can start {Workflow.HARDWARE} through {reachable}. "
         "It would run a fork's code next to a live service and the only CUDA "
         "device."
     )

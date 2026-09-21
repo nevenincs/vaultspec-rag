@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
+from dev.ci_names import Workflow
 from dev.guards import _workflows as workflows
 
 if TYPE_CHECKING:
@@ -171,7 +172,7 @@ def test_the_test_matrix_covers_every_supported_interpreter() -> None:
     project promises and never tests.
     """
     supported = set(_supported_minors())
-    declared = set(_matrix_versions("merge-gate.yml", "tests"))
+    declared = set(_matrix_versions(Workflow.MERGE_GATE, "tests"))
     assert declared == supported, (
         "the test matrix and requires-python disagree about which "
         f"interpreters this project supports: matrix {sorted(declared)}, "
@@ -187,8 +188,8 @@ def test_the_release_smoke_matrix_matches_the_test_matrix() -> None:
     a matrix read no single job can perform, because neither workflow sees the
     other.
     """
-    tested = set(_matrix_versions("merge-gate.yml", "tests"))
-    smoked = set(_matrix_versions("publish.yml", "smoke-test"))
+    tested = set(_matrix_versions(Workflow.MERGE_GATE, "tests"))
+    smoked = set(_matrix_versions(Workflow.PUBLISH, "smoke-test"))
     assert tested == smoked, (
         "CI tests one set of interpreters and the release smoke-tests "
         f"another: CI {sorted(tested)}, publish {sorted(smoked)}."
