@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -109,6 +110,41 @@ def _query(
     }
     answers["clarity"] = ScoreAnswer(2.0, confidence, {"0": 0.0, "1": 0.0, "2": 1.0})
     return Evaluation(answers, "jev-1.13.0", 10, 10)
+
+
+def test_reused_answers_report_no_new_cost_and_keep_phase_metrics() -> None:
+    cached_query = replace(
+        _query(),
+        requests=0,
+        input_tokens=0,
+        output_tokens=0,
+        cache_hits=1,
+        timings={"cache_lookup_ms": 0.2},
+    )
+    shared_rank = replace(
+        _evaluation([0]),
+        requests=0,
+        input_tokens=0,
+        output_tokens=0,
+        coalesced=1,
+        timings={"coalesced_wait_ms": 25.0},
+    )
+    with (
+        patch.object(policy.transport, "available", return_value=True),
+        patch.object(
+            policy.transport, "evaluate", side_effect=[cached_query, shared_rank]
+        ),
+    ):
+        session = policy.prepare_query("retry delivery", "code")
+        assert session is not None
+        assert session.rank([_result(0)])
+    assert session.timings["typesafe_requests"] == 0
+    assert session.timings["typesafe_input_tokens"] == 0
+    assert session.timings["typesafe_output_tokens"] == 0
+    assert session.timings["typesafe_cache_hits"] == 1
+    assert session.timings["typesafe_coalesced"] == 1
+    assert session.timings["typesafe_query_cache_lookup_ms"] == 0.2
+    assert session.timings["typesafe_rank_coalesced_wait_ms"] == 25
 
 
 def test_unavailable_key_never_evaluates() -> None:

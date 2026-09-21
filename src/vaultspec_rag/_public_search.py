@@ -402,6 +402,7 @@ def search_combined_timed(
         ) as scope,
     ):
         session = scope.session
+        timings["typesafe_query_attempt_ms"] = scope.query_attempt_ms
         for _attempt in range(2):
             vault = _indexed_domain_outcome(
                 PublicSourceType.VAULT,

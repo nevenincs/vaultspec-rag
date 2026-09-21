@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ class ClassificationScope:
     """One query evaluation and failure state for a whole search request."""
 
     session: ClassificationSession | None
+    query_attempt_ms: float = 0.0
 
 
 _active: ContextVar[ClassificationScope | None] = ContextVar(
@@ -36,7 +38,9 @@ def classification_scope(
     if existing is not None:
         yield existing
         return
+    started = time.monotonic()
     scope = ClassificationScope(prepare_query(query, surface, filters))
+    scope.query_attempt_ms = (time.monotonic() - started) * 1000
     token = _active.set(scope)
     try:
         yield scope

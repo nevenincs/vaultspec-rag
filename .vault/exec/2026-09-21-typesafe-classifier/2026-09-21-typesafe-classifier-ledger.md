@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:b993580c55c30fb5267f454252d4e0da46b4f8338ed169edee4cf30fc9e0b2a6'
+body_hash: 'sha256:f70d8a37d3a890b1e25f3c588ed5beaf093652ea94d1484be2518c0c608a98c5'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
 ---
@@ -73,6 +73,22 @@ related:
 - `S06` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
 - `S06` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
 - `S06` `verify:` `60 real indexed searches; all30 keyed searches completed candidate ranking; 153 targeted tests, package lint, touched format/type checks` -> `pass`
+- `S07` `M` `src/vaultspec_rag/search/_typesafe_transport.py`
+- `S07` `A` `src/vaultspec_rag/search/_typesafe_pool.py`
+- `S07` `A` `src/vaultspec_rag/search/_typesafe_cache.py`
+- `S07` `M` `src/vaultspec_rag/search/_typesafe_policy.py`
+- `S07` `M` `src/vaultspec_rag/search/_typesafe_answers.py`
+- `S07` `M` `src/vaultspec_rag/search/_typesafe_context.py`
+- `S07` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S07` `M` `src/vaultspec_rag/_public_search.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_typesafe_transport.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_typesafe_policy.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_typesafe_search.py`
+- `S07` `A` `dev/typesafe_performance_spike.py`
+- `S07` `M` `docs/configuration.md`
+- `S07` `M` `.vault/research/2026-09-21-typesafe-classifier-research.md`
+- `S07` `M` `.vault/audit/2026-09-21-typesafe-classifier-audit.md`
+- `S07` `verify:` `ruff check package and spike; ruff format --check 12 touched files; basedpyright 12 touched files; pytest classifier/search/noise/env/config 175 tests; live performance 61 provider calls; live search spike 5/5; guard mutations restored` -> `pass`
 
 ## Notes
 

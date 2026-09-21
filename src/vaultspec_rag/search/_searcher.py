@@ -702,6 +702,7 @@ class VaultSearcher:
         results = self._rerank(
             encoded.text, results, len(results), timings=encoded.timings
         )
+        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
         if encoded.classifier is not None:
             from ._typesafe_policy import classification_window
 
@@ -957,6 +958,7 @@ class VaultSearcher:
         results = self._rerank(
             encoded.text, results, len(results), timings=encoded.timings
         )
+        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
         if encoded.classifier is not None:
             from ._typesafe_policy import classification_window
 
@@ -1115,17 +1117,22 @@ class VaultSearcher:
             parsed.text if top_k > 0 else "", surface.name, filters
         ) as scope:
             session = scope.session
+            timings["typesafe_query_attempt_ms"] = scope.query_attempt_ms
             if session is not None and not session.failed and top_k > 0:
                 encoded = replace(encoded, classifier=session)
             try:
                 results = surface.run(self, encoded, resolved_options)
             except TypesafeUnavailableError:
                 timings["classification_fallback"] = 1.0
+                fallback_started = time.perf_counter()
                 if notes is not None:
                     notes.clear()
                     notes.update(original_notes)
                 results = surface.run(
                     self, replace(encoded, classifier=None), resolved_options
+                )
+                _record_seconds(
+                    timings, "classification_fallback_seconds", fallback_started
                 )
             if session is not None:
                 timings.update(session.timings)
@@ -1236,6 +1243,7 @@ class VaultSearcher:
             len(results) if encoded.classifier is not None else encoded.top_k,
             timings=encoded.timings,
         )
+        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
         if encoded.classifier is not None:
             from ._typesafe_policy import classification_window
 
@@ -1292,6 +1300,7 @@ class VaultSearcher:
                 )
             except TypesafeUnavailableError:
                 scope.session = None
+                fallback_started = time.perf_counter()
                 results, timings = self._search_combined_timed(
                     raw_query,
                     top_k,
@@ -1299,6 +1308,10 @@ class VaultSearcher:
                     None,
                 )
                 timings["classification_fallback"] = 1.0
+                _record_seconds(
+                    timings, "classification_fallback_seconds", fallback_started
+                )
+            timings["typesafe_query_attempt_ms"] = scope.query_attempt_ms
             if session is not None:
                 timings.update(session.timings)
             return results, timings

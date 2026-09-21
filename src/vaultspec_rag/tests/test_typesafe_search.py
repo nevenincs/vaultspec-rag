@@ -116,6 +116,36 @@ def _enroll(monkeypatch: pytest.MonkeyPatch, session: _Session) -> Mock:
     return prepare
 
 
+@pytest.mark.parametrize("surface", ["codebase", "vault", "document"])
+def test_local_rerank_timing_excludes_hosted_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, surface: str
+) -> None:
+    searcher, _ = _searcher(monkeypatch, tmp_path, [_row(0, content="useful")])
+    clock = [100.0]
+    monkeypatch.setattr(
+        "vaultspec_rag.search._searcher.time.perf_counter", lambda: clock[0]
+    )
+
+    def rerank[T](
+        _query: str, results: list[T], _limit: int, **_kwargs: object
+    ) -> list[T]:
+        clock[0] += 0.25
+        return results
+
+    session = _Session()
+
+    def hosted[T](results: list[T]) -> list[T]:
+        clock[0] += 0.75
+        return results
+
+    monkeypatch.setattr(searcher, "_rerank", rerank)
+    monkeypatch.setattr(session, "rank", hosted)
+    _enroll(monkeypatch, session)
+    _, timings = getattr(searcher, f"search_{surface}_timed")("retry delivery", top_k=2)
+    assert timings["local_rerank_seconds"] == pytest.approx(0.25)
+    assert timings["rerank_seconds"] == pytest.approx(1.0)
+
+
 def test_keyless_search_preserves_budget_scores_and_makes_no_api_call(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -126,6 +156,22 @@ def test_keyless_search_preserves_budget_scores_and_makes_no_api_call(
     assert [(row.id, row.score) for row in results] == [("0", 0.8), ("1", 0.79)]
     assert store.hybrid_search_codebase.call_args.args[0].limit == 4
     evaluate.assert_not_called()
+
+
+def test_failed_query_attempt_remains_visible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    searcher, _ = _searcher(monkeypatch, tmp_path, [_row(0)])
+    clock = [100.0]
+    monkeypatch.setattr(_typesafe_context.time, "monotonic", lambda: clock[0])
+
+    def unavailable(*_args: object) -> None:
+        clock[0] += 1.5
+
+    monkeypatch.setattr(_typesafe_context, "prepare_query", unavailable)
+    results, timings = searcher.search_codebase_timed("retry delivery", top_k=2)
+    assert results
+    assert timings["typesafe_query_attempt_ms"] == 1500
 
 
 @pytest.mark.parametrize("surface", ["codebase", "vault", "document", "combined"])

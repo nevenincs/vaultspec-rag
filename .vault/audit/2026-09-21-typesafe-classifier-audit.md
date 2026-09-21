@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-21'
 body_schema: 'body-v2'
-body_hash: 'sha256:495378670e6f6cdbb3a17435fdbc77fce6fdedad699e41cd99016ed420b74c79'
+body_hash: 'sha256:d39726dec52ef8e185d6a7a102f1f43a0011cb651714a4b20430c5d44f3a7a59'
 related:
   - "[[2026-09-21-typesafe-classifier-plan]]"
   - "[[2026-09-21-typesafe-classifier-adr]]"
@@ -82,6 +82,22 @@ Both completed arms use identical frozen source, corpus size, query protocol and
 ### HTTPS connection reuse | medium | Search latency includes avoidable client overhead
 
 The user's latency challenge prompted a real transport probe, documented in2026-09-21-typesafe-classifier-research. Warm persistent requests took about232ms/252ms versus current fresh-connection601ms/780ms for query/eight-candidate contracts. Connection setup alone cost325-336ms. The implementation recreates its HTTPS connection per request, and five requests form three serial stages per search. Preserve the successful classification/quality result, but do not attribute its4.13-second median to Typesafe inference or present it as optimized transport latency. Connection reuse remains an unimplemented optimization; this diagnostic made no production change. Result: PASS with this performance finding, not a claim of completed latency optimization.
+
+### pooled-transport-review | low | Fresh-connection overhead resolved with bounded reuse
+
+S07 integrated review traces enrollment through connection leases, exact-response reuse, duplicate admission, provider validation, policy accounting and existing direct/service timing surfaces. TLS verification and redirect refusal remain intact; sockets are exclusively leased, failed sockets discarded, active calls remain bounded by the existing two-slot gate, and slot release precedes waiter publication. Credential/circuit checks precede cache serving, rotation clears reuse, stale success cannot populate a new credential's cache, and follower timeout cannot cancel the paid owner. Responses are independently decoded for each caller. No persistent source/key cache or new provider retry is introduced. Mutation-proven expiry, full-payload cache identity and reuse guards supplement the existing deadline/enrollment tests.
+
+### incomplete-http-frame | medium | Framing validation added before answer reuse
+
+Review found that a peer could close after syntactically valid JSON but before its declared Content-Length was complete. The new real-loopback regression failed because no error was raised, then passed after the explicit remaining-length check. The transport now rejects incomplete framing, closes response resources on every path, and neither caches the answer nor retains that connection. Resolved within S07; no authority or schema change.
+
+### timing-and-cost-scope | low | Work sums and elapsed time are explicitly distinguished
+
+Local reranking now has a separate timer on all three surfaces; query-attempt duration survives enrollment failure and direct-search fallback retries are timed. Query/candidate phase counters distinguish validated network evaluations from cache hits and coalesced callers. Parallel request subphase values are sums, not additive wall time. Documentation explicitly excludes failed/unknown provider charges from these counters; they are not a billing ledger. Detailed timing contains no submitted content or credential.
+
+### performance-verification-scope | low | Live production-path evidence is stage-specific
+
+The follow-up uses actual provider responses and production policy over saved candidate fixtures, with live search-orchestration checks across all surfaces. Numeric comparisons and experiment limitations reside in the feature research. It does not replace or claim a new full GPU-backed service A/B; earlier quality limitations remain. Final review result: PASS, with no unresolved high or critical findings in S07.
 
 ## Recommendations
 

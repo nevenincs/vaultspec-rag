@@ -58,6 +58,37 @@ The two booleans among them accept the same spellings as every other boolean. Th
 | `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
 | `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. Read only from the executing server's environment, never project configuration or a CLI flag; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
 
+### Typesafe connection reuse, caching and diagnostics
+
+The server shares a verified TLS context and up to two exclusive HTTPS connections.
+Idle sockets expire after 15 seconds. Failed requests are not automatically retried.
+Successful, validated answers are cached in memory for at most 60 seconds, capped at
+128 entries and 4 MiB of response bytes. Keys cover the credential, model, complete
+request state (including candidate content and filters), and question definitions.
+Concurrent identical requests share one in-flight call; caches never persist to disk.
+Key removal, rotation, rejection or a provider cooldown invalidates cached answers.
+A cached answer reflects the last successful credential check, not a new balance check.
+
+Search responses expose these measurements in `timing.phases`:
+
+- `local_rerank_seconds`: local reranker work, excluding hosted candidate calls.
+- `typesafe_query_attempt_ms`: query enrollment/classification elapsed time, including
+  attempts that fall back; `typesafe_query_ms` reports successful query classification.
+- `typesafe_rank_ms`: elapsed candidate-classification time. Existing `rerank_seconds`
+  includes both local and hosted candidate work; `postprocess_seconds` includes reranking.
+- `typesafe_query_*` and `typesafe_rank_*`: `encode_ms`, `cache_lookup_ms`, `pool_ms`,
+  `connect_ms`, `upload_ms`, `response_wait_ms`, `download_ms`, `validation_ms`,
+  `request_wait_ms`, `coalesced_wait_ms` and `connections_reused`, when applicable.
+  Connection time includes DNS/TCP/TLS; response wait includes network and provider
+  processing, not model inference alone. Candidate metrics sum work across overlapping
+  calls and must not be added to elapsed phase times.
+- `typesafe_requests`, `typesafe_input_tokens`, `typesafe_output_tokens`: successful
+  network evaluations and their reported usage. Cached/coalesced responses contribute
+  zero new requests or tokens, with separate `typesafe_cache_hits` and
+  `typesafe_coalesced` counters. These are not a billing ledger for failed calls.
+- `classification_fallback_seconds`: time spent repeating a direct search through
+  the legacy pipeline after candidate classification fails.
+
 ## Core variables
 
 The tables in this section list every `VAULTSPEC_RAG_*` variable resolved through the standard chain.

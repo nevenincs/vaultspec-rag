@@ -96,10 +96,15 @@ def prepare_query(
         prefer = None
     timings = {
         "typesafe_query_ms": (time.monotonic() - started) * 1000,
-        "typesafe_requests": 1.0,
+        "typesafe_requests": float(evaluation.requests),
+        "typesafe_cache_hits": float(evaluation.cache_hits),
+        "typesafe_coalesced": float(evaluation.coalesced),
         "typesafe_input_tokens": float(evaluation.input_tokens),
         "typesafe_output_tokens": float(evaluation.output_tokens),
     }
+    timings.update(
+        {f"typesafe_query_{name}": value for name, value in evaluation.timings.items()}
+    )
     for name, answer in evaluation.answers.items():
         if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
             timings[f"typesafe_{name}_confidence"] = answer.confidence
@@ -224,13 +229,19 @@ class ClassificationSession:
                         evaluation = future.result()
                         self.evaluated += len(indices)
                         self.timings["typesafe_requests"] = (
-                            self.timings.get("typesafe_requests", 0.0) + 1
+                            self.timings.get("typesafe_requests", 0.0)
+                            + evaluation.requests
                         )
                         for name, count in (
                             ("typesafe_input_tokens", evaluation.input_tokens),
                             ("typesafe_output_tokens", evaluation.output_tokens),
+                            ("typesafe_cache_hits", evaluation.cache_hits),
+                            ("typesafe_coalesced", evaluation.coalesced),
                         ):
                             self.timings[name] = self.timings.get(name, 0.0) + count
+                        for name, value in evaluation.timings.items():
+                            metric = f"typesafe_rank_{name}"
+                            self.timings[metric] = self.timings.get(metric, 0.0) + value
                         for index in indices:
                             judgments[index] = _judgment(
                                 evaluation, index, len(clauses)

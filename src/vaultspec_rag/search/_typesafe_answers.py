@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 MODEL = "jev-1.13.0"
@@ -37,6 +37,10 @@ class Evaluation:
     model: str
     input_tokens: int
     output_tokens: int
+    requests: int = 1
+    cache_hits: int = 0
+    coalesced: int = 0
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 def _mapping(value: object) -> dict[str, object]:
