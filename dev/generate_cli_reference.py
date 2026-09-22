@@ -14,6 +14,24 @@ from vaultspec_rag.cli._app import app
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs" / "cli.md"
 
+COMMAND_NOTES: dict[str, tuple[str, ...]] = {
+    "server status": (
+        "The `Typesafe:` line reports the running daemon's classifier enrollment",
+        "and observed usability, not the calling shell's key. JSON includes",
+        "`data.health.typesafe` when health is available. See",
+        "[Typesafe enrollment](configuration.md#typesafe-enrollment)",
+        "for state meanings; status never makes a paid classification call.",
+    ),
+    "server start": (
+        "Successful starts and already-running responses include Typesafe enrollment",
+        "from the daemon (`Typesafe:` in human output, `data.typesafe` in JSON).",
+        "Set the dedicated key before launching the server; attaching to an existing",
+        "server does not change its environment. Enrollment alone does not confirm a",
+        "valid, funded key: the first search evaluation establishes usability. See",
+        "[Typesafe enrollment](configuration.md#typesafe-enrollment).",
+    ),
+}
+
 
 def _commands(command: Any) -> dict[str, Any]:
     return cast("dict[str, Any]", getattr(command, "commands", None) or {})
@@ -137,6 +155,8 @@ def render() -> str:
                 "",
                 _summary(getattr(command, "help", "")),
                 "",
+                *(COMMAND_NOTES.get(label, ())),
+                *([""] if label in COMMAND_NOTES else []),
                 "```bash",
                 usage,
                 "```",

@@ -322,7 +322,7 @@ python-version = "3.13"
 # host - CI's Linux ty otherwise rejects ctypes.WinDLL and a win32 host
 # would reject signal.SIGKILL.
 python-platform = "all"
-root = [".", "src"]
+root = [".", "src", "dev"]
 
 # Strict-mode type checking — now GATING (the burndown reached zero on
 # 2026-06-10). `ty` remains the fast gate to run by hand; basedpyright gates in CI

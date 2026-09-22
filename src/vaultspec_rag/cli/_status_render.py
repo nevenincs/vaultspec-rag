@@ -101,6 +101,7 @@ from ._status_labels import (
     _status_uptime_label,
     degradation_findings,
     degradation_lines,
+    typesafe_label,
 )
 
 __all__ = [
@@ -235,6 +236,7 @@ def _render_discovery_verdict(
         _print_detail_line("Local record", "not found")
         _print_detail_line("Server", verdict.label)
         _print_detail_line("Discovery", verdict.resolution.evidence())
+        _print_detail_line("Typesafe", typesafe_label(health))
         if verdict.exit_code != 0:
             raise typer.Exit(code=verdict.exit_code)
         return
@@ -578,6 +580,7 @@ def _print_health_detail(
     port_listening: bool,
     operational: dict[str, object] | None = None,
 ) -> None:
+    _print_detail_line("Typesafe", typesafe_label(health))
     if isinstance(health, dict):
         _print_detail_line(
             "Requests",
@@ -927,6 +930,7 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         f"Busy: {_status_busy_label(jobs_dict)}",
         address_line(request.port),
         f"Service env: {_status_env_label(request.health)}",
+        f"Typesafe: {typesafe_label(request.health)}",
         f"Uptime: {_status_uptime_label(request.health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
@@ -1272,6 +1276,7 @@ def service_status(
             _cli.console.print("Service status")
             _print_detail_line("Local record", "not found")
             _print_detail_line("Server", "stopped")
+            _print_detail_line("Typesafe", typesafe_label(None))
         else:
             _render_status_summary(
                 _StatusSummaryRequest(

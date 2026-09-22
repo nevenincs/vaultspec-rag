@@ -25,6 +25,24 @@ from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
+
+def typesafe_label(health: dict[str, object] | None) -> str:
+    """Render daemon evidence only; caller credentials are not service state."""
+    snapshot = health.get("typesafe") if health else None
+    state = (
+        cast("dict[str, object]", snapshot).get("state")
+        if isinstance(snapshot, dict)
+        else None
+    )
+    return {
+        "off": "not enrolled; legacy ranking",
+        "pending": "enrolled; awaiting a successful search evaluation",
+        "active": "enrolled; recent evaluation succeeded",
+        "rejected": "enrolled but key rejected; legacy fallback",
+        "cooldown": "enrolled but cooling down; legacy fallback",
+    }.get(str(state), NOT_REPORTED)
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

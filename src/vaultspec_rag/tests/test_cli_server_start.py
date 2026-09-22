@@ -99,7 +99,12 @@ class TestStartOutcomeHelpers:
         env = json.loads(capsys.readouterr().out)
         assert env["ok"] is True
         assert env["command"] == "service.start"
-        assert env["data"] == {"status": "already_running", "pid": 7, "port": 8766}
+        assert env["data"] == {
+            "status": "already_running",
+            "pid": 7,
+            "port": 8766,
+            "typesafe": None,
+        }
 
     def test_success_human_mode_emits_no_json(
         self, capsys: pytest.CaptureFixture[str]
@@ -170,6 +175,7 @@ class TestStartReorderAndGuards:
             {
                 "status": "degraded",
                 "service_token": "tok-live",
+                "typesafe": {"enrolled": True, "state": "pending"},
                 "package_version": local_package_version(),
             }
         ).encode("utf-8")
@@ -204,6 +210,7 @@ class TestStartReorderAndGuards:
                 "degraded",
             )
             assert candidate.version.is_compatible
+            assert candidate.typesafe == {"enrolled": True, "state": "pending"}
 
             result = runner.invoke(app, ["server", "start", "--json"])
             assert result.exit_code == 0
@@ -211,6 +218,7 @@ class TestStartReorderAndGuards:
             assert env["ok"] is True
             assert env["data"]["status"] == "already_running"
             assert env["data"]["health"] == "degraded"
+            assert env["data"]["typesafe"] == candidate.typesafe
         finally:
             server.shutdown()
             server.server_close()

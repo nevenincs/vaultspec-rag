@@ -19,6 +19,7 @@ INDEXABLE_DOC_TYPES: frozenset[str] = frozenset(
 # The code-result noise domains a caller may name in --exclude-domain /
 # --only-domain / --include-domain. Mirrors ``_domain.DOMAINS``.
 SELECTABLE_DOMAINS: frozenset[str] = frozenset(DOMAINS)
+PREFER_DOMAINS: frozenset[str] = frozenset({"prod", "tests", "docs"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +109,7 @@ def _format_flags(names: list[str]) -> list[str]:
 
 
 def _validate_prefer(prefer: str | None) -> None:
-    if prefer is not None and prefer not in {"prod", "tests", "docs"}:
+    if prefer is not None and prefer not in PREFER_DOMAINS:
         raise InvalidPreferValueError(prefer)
 
 
