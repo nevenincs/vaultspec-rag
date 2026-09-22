@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.35](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.34...vaultspec-rag-v0.4.35) (2026-09-22)
+
+
+### Bug Fixes
+
+* **release:** restore staged asset publication ([#529](https://github.com/nevenincs/vaultspec-rag/issues/529)) ([aedaf62](https://github.com/nevenincs/vaultspec-rag/commit/aedaf62eea52c164f51812eab49edfc04c733db5))
+
 ## [0.4.34](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.33...vaultspec-rag-v0.4.34) (2026-09-22)
 
 
