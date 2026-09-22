@@ -28,7 +28,12 @@ if TYPE_CHECKING:
 
     from mcp.types import CallToolResult, Tool
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
+# This test starts a second model-bearing service. Keep it in the separate
+# subprocess GPU invocation so the resident tier's session models are gone.
+pytestmark = [
+    pytest.mark.subprocess_gpu,
+    pytest.mark.timeout(900),
+]
 
 
 def _command(script: Path) -> str:

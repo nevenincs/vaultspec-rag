@@ -1,4 +1,7 @@
 {
+  "hooks": {
+    "pre_commit": false
+  },
   "packages": {
     "vaultspec-core": {
       "install_mode": "dependency"

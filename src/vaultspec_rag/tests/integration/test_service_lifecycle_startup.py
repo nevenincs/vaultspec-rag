@@ -74,7 +74,10 @@ def test_poll_health_honours_subsecond_deadline() -> None:
     assert time.monotonic() - started < 1.0
 
 
-@pytest.mark.integration
+# ``_live_service_context`` starts the configured model stack even when this
+# test expects startup to fail early. Keep that startup outside the resident
+# service's model tier.
+@pytest.mark.subprocess_gpu
 def test_live_service_spawn_failure_has_shared_deadline_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -99,7 +102,7 @@ def test_live_service_spawn_failure_has_shared_deadline_diagnostics(
     assert "Service output:" in message
 
 
-@pytest.mark.integration
+@pytest.mark.subprocess_gpu
 def test_live_service_status_failure_cleans_up_inside_startup_budget(
     tmp_path: Path,
 ) -> None:

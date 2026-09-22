@@ -12,6 +12,7 @@ preconditions before it, and every caller hands that home the token.
 
 from __future__ import annotations
 
+import ast
 from typing import cast
 
 import pytest
@@ -37,6 +38,93 @@ PRECONDITIONS = {
 
 #: The secret the model-cache warm-up reads.
 TOKEN = "HF_TOKEN"
+
+_LIVE_SERVICE_FIXTURES = {"live_service", "live_service_with_watch"}
+
+
+def _uses_live_service(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether a test starts or consumes a model-bearing live service."""
+    if any(
+        argument.arg in _LIVE_SERVICE_FIXTURES
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        )
+    ):
+        return True
+    for decorator in node.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and ast.unparse(decorator.func) == "pytest.mark.usefixtures"
+        ):
+            continue
+        if any(
+            isinstance(argument, ast.Constant)
+            and argument.value in _LIVE_SERVICE_FIXTURES
+            for argument in decorator.args
+        ):
+            return True
+    return any(
+        isinstance(child, ast.Call)
+        and (
+            (
+                isinstance(child.func, ast.Name)
+                and child.func.id == "_live_service_context"
+            )
+            or (
+                isinstance(child.func, ast.Attribute)
+                and child.func.attr == "_live_service_context"
+            )
+        )
+        for child in ast.walk(node)
+    )
+
+
+def test_live_service_consumers_run_outside_the_resident_model_tier() -> None:
+    """A daemon must not load beside the resident tier's session models.
+
+    Mutation proof: remove ``subprocess_gpu`` from a live-service test or its
+    containing class/module; this guard names that test. Restore it to pass.
+    """
+    directory = (
+        workflows.repository_root() / "src" / "vaultspec_rag" / "tests" / "integration"
+    )
+    unisolated: list[str] = []
+    for path in directory.glob("test_*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        module_marked = any(
+            isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "pytestmark"
+                for target in statement.targets
+            )
+            and "pytest.mark.subprocess_gpu" in ast.unparse(statement.value)
+            for statement in tree.body
+        )
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            if not _uses_live_service(node):
+                continue
+            function_marked = any(
+                "pytest.mark.subprocess_gpu" in ast.unparse(decorator)
+                for decorator in node.decorator_list
+            )
+            class_marked = any(
+                isinstance(parent, ast.ClassDef)
+                and node in parent.body
+                and any(
+                    "pytest.mark.subprocess_gpu" in ast.unparse(decorator)
+                    for decorator in parent.decorator_list
+                )
+                for parent in tree.body
+            )
+            if not (module_marked or class_marked or function_marked):
+                unisolated.append(f"{path.name}:{node.name}")
+    assert not unisolated, f"live-service GPU tests in resident tier: {unisolated}"
 
 
 def _workflow_names() -> list[str]:
@@ -189,12 +277,12 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     assert not missing, f"callers that do not pass {token}: {missing}"
 
 
-def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -> None:
-    """Removing the GPU test's secret failed at test-gpu; restoration passed."""
+def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
+    """Removing the GPU test's secret failed here; restoration passed."""
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
     )
-    fragments = ("just test-typesafe-live", "server start", "just test-gpu")
+    fragments = ("server start", "just test-gpu")
     indices: list[int] = []
     for fragment in fragments:
         index, step = next(
@@ -205,9 +293,9 @@ def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -
         assert _reads_token(step, "VAULTSPEC_RAG_TYPESAFE_API_KEY"), fragment
         indices.append(index)
     assert indices == sorted(indices)
-    start = _run(job.steps[indices[1]])
+    start = _run(job.steps[indices[0]])
     assert "$status.health.typesafe.enrolled -ne $true" in start
-    assert job.steps[indices[1]].get("id") == "resident"
+    assert job.steps[indices[0]].get("id") == "resident"
     stop = next(step for step in job.steps if "server stop" in _run(step))
     assert (
         cast("dict[str, object]", stop["env"])["RESIDENT_START_OUTCOME"]

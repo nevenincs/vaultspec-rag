@@ -61,46 +61,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # AT the declared floor, on both architectures. Nothing else here
-          # tests 2.28 itself - the Debian and Ubuntu images below sit
-          # comfortably above it, so they would keep passing if the floor
-          # slipped a version or two. RHEL 8's glibc is 2.28 exactly, which
-          # makes these the two legs that can actually fail when a container
-          # pin in binaries.yml stops doing its job.
-          - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
-            distro: almalinux-8
+          # AT the declared floor, on both architectures. RHEL 10's glibc is
+          # 2.39 exactly - the same number the fleet's build hosts carry - so
+          # these are the legs that fail first if an artifact ever needs more
+          # than the floor claims. The Debian images below sit above it and
+          # would keep passing through a slip of a version or two.
+          - image: docker.io/library/almalinux@sha256:957738702313e6ee452cdb17bc1431542c467be9a4e2f4da3b8e551b0ebb9677
+            distro: almalinux-10
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/almalinux@sha256:9f355ae942d6a6c0561f0771dc053a2cfae9580fc45fa4252756db7c7e80c09f
-            distro: almalinux-8
+          - image: docker.io/library/almalinux@sha256:957738702313e6ee452cdb17bc1431542c467be9a4e2f4da3b8e551b0ebb9677
+            distro: almalinux-10
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
-          # Above the floor and below the build host, which is the band a user
-          # is most likely to be in. bookworm is 2.36, jammy is 2.35.
-          - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
-            distro: debian-12
+          # Above the floor, which is the band a user on a current release is
+          # most likely to be in. trixie is 2.41.
+          - image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
+            distro: debian-13
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/debian@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
-            distro: debian-12
+          - image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
+            distro: debian-13
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
-          - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
-            distro: ubuntu-22.04
+          - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
+            distro: ubuntu-24.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
             runner: ubuntu-24.04
             triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7
-            distro: ubuntu-22.04
+          - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
+            distro: ubuntu-24.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
             runner: ubuntu-24.04-arm

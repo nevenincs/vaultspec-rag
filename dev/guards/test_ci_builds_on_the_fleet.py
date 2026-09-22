@@ -34,16 +34,10 @@ _HOSTED = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.]*)(-arm)?$")
 #: qualify and no others: untrusted input resolved before it reaches the fleet,
 #: and a job container no fleet host can start.
 _BOUNDARY: dict[tuple[str, str], str] = {
-    ("binaries.yml", "build"): (
-        "builds Linux inside a pinned manylinux image to hold the glibc floor "
-        "at 2.28; no fleet host exposes a container runtime, and the fleet's "
-        "own image is glibc 2.39, so building there would silently raise the "
-        "floor the docs promise"
-    ),
     ("acquisition.yml", "acquire"): (
-        "runs the published binary inside pinned distro images, including the "
-        "almalinux:8 leg that IS the glibc 2.28 check; same container "
-        "constraint as the build"
+        "runs the published binary inside pinned distro images to prove it "
+        "starts on the distributions the docs claim; no fleet host exposes a "
+        "container runtime, so these legs cannot move"
     ),
     ("publish.yml", "resolve-target"): (
         "validates a dispatch's free-text tag and resolves it to a commit "

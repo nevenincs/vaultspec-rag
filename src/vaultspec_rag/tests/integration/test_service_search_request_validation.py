@@ -41,7 +41,8 @@ def _post_search(port: int, query: str) -> httpx.Response:
     )
 
 
-@pytest.mark.integration
+# The live-service fixture loads its own model stack on the same card.
+@pytest.mark.subprocess_gpu
 class TestEmptyQueryRejected:
     """The empty-query guard fires before the root is resolved."""
 
