@@ -39,6 +39,47 @@ PRECONDITIONS = {
 #: The secret the model-cache warm-up reads.
 TOKEN = "HF_TOKEN"
 
+_LIVE_SERVICE_FIXTURES = {"live_service", "live_service_with_watch"}
+
+
+def _uses_live_service(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether a test starts or consumes a model-bearing live service."""
+    if any(
+        argument.arg in _LIVE_SERVICE_FIXTURES
+        for argument in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+        )
+    ):
+        return True
+    for decorator in node.decorator_list:
+        if not (
+            isinstance(decorator, ast.Call)
+            and ast.unparse(decorator.func) == "pytest.mark.usefixtures"
+        ):
+            continue
+        if any(
+            isinstance(argument, ast.Constant)
+            and argument.value in _LIVE_SERVICE_FIXTURES
+            for argument in decorator.args
+        ):
+            return True
+    return any(
+        isinstance(child, ast.Call)
+        and (
+            (
+                isinstance(child.func, ast.Name)
+                and child.func.id == "_live_service_context"
+            )
+            or (
+                isinstance(child.func, ast.Attribute)
+                and child.func.attr == "_live_service_context"
+            )
+        )
+        for child in ast.walk(node)
+    )
+
 
 def test_live_service_consumers_run_outside_the_resident_model_tier() -> None:
     """A daemon must not load beside the resident tier's session models.
@@ -66,7 +107,7 @@ def test_live_service_consumers_run_outside_the_resident_model_tier() -> None:
                 continue
             if not node.name.startswith("test_"):
                 continue
-            if not any(arg.arg == "live_service" for arg in node.args.args):
+            if not _uses_live_service(node):
                 continue
             function_marked = any(
                 "pytest.mark.subprocess_gpu" in ast.unparse(decorator)
