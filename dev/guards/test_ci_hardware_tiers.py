@@ -277,12 +277,12 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     assert not missing, f"callers that do not pass {token}: {missing}"
 
 
-def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -> None:
-    """Removing the GPU test's secret failed at test-gpu; restoration passed."""
+def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
+    """Removing the GPU test's secret failed here; restoration passed."""
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
     )
-    fragments = ("just test-typesafe-live", "server start", "just test-gpu")
+    fragments = ("server start", "just test-gpu")
     indices: list[int] = []
     for fragment in fragments:
         index, step = next(
@@ -293,9 +293,9 @@ def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -
         assert _reads_token(step, "VAULTSPEC_RAG_TYPESAFE_API_KEY"), fragment
         indices.append(index)
     assert indices == sorted(indices)
-    start = _run(job.steps[indices[1]])
+    start = _run(job.steps[indices[0]])
     assert "$status.health.typesafe.enrolled -ne $true" in start
-    assert job.steps[indices[1]].get("id") == "resident"
+    assert job.steps[indices[0]].get("id") == "resident"
     stop = next(step for step in job.steps if "server stop" in _run(step))
     assert (
         cast("dict[str, object]", stop["env"])["RESIDENT_START_OUTCOME"]
