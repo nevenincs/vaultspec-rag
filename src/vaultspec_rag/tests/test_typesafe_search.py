@@ -251,13 +251,18 @@ def test_path_filtered_pool_is_ordered_before_bounded_classification(
     ) -> list[SearchResult]:
         return list(reversed(results))
 
-    seen: list[str] = []
+    seen: dict[int, str] = {}
+    seen_lock = threading.Lock()
 
     def evaluate(
         state: dict[str, object], questions: dict[str, object], **_kwargs: object
     ) -> Evaluation:
         candidates = cast("dict[str, dict[str, str]]", state["candidates"])
-        seen.extend(candidate["content"] for candidate in candidates.values())
+        with seen_lock:
+            seen.update(
+                (int(name.removeprefix("c")), candidate["content"])
+                for name, candidate in candidates.items()
+            )
         return Evaluation(
             {
                 name: ChoiceAnswer(
@@ -278,7 +283,9 @@ def test_path_filtered_pool_is_ordered_before_bounded_classification(
     # Passing the entire path-filter pool to rank fails this assertion.
     assert timings.get("typesafe_candidates") == 32
     assert "classification_fallback" not in timings
-    assert seen == [f"complete evidence {i}" for i in range(149, 117, -1)]
+    assert [seen[index] for index in sorted(seen)] == [
+        f"complete evidence {i}" for i in range(149, 117, -1)
+    ]
     assert [row.id for row in results] == [str(i) for i in range(149, 134, -1)]
     assert store.hybrid_search_codebase.call_count == 1
     assert store.hybrid_search_codebase.call_args.args[0].limit == 150
