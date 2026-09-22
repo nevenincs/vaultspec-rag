@@ -31,6 +31,20 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_typesafe_search.py": (
+        26,
+        "search routing needs fixed candidate windows and forced provider failures "
+        "to prove exact keyless fallback, ranking order, and timing boundaries. "
+        "A live GPU index cannot reproduce those branch states on demand; the "
+        "separate live spike exercises real provider answers",
+    ),
+    "test_typesafe_transport.py": (
+        23,
+        "the transport tests drive real loopback HTTP and force malformed frames, "
+        "timeouts, credential rotation, and thread admission failures. The live "
+        "provider cannot be made to emit those failures safely or repeatably; "
+        "the separate live spike checks the hosted path",
+    ),
     "test_cli_index.py": (
         9,
         "the disk floor is a per-profile compile-time constant with no config "

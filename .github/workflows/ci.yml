@@ -85,3 +85,4 @@ jobs:
       cache_mode: ${{ inputs.cache_mode || 'normal' }}
     secrets:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}

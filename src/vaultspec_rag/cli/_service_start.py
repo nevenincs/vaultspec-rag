@@ -422,6 +422,7 @@ class _AttachCandidate:
     port: int
     health_status: str
     version: ServiceVersionVerdict
+    typesafe: object = None
 
 
 def _existing_service_running() -> _AttachCandidate | None:
@@ -464,6 +465,7 @@ def _existing_service_running() -> _AttachCandidate | None:
                 port=existing_port,
                 health_status=health_status,
                 version=classify_service_version(health),
+                typesafe=health.get("typesafe"),
             )
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
@@ -486,12 +488,15 @@ def _start_success(
     Binds the start command name to the one shared lifecycle success renderer;
     the envelope-versus-human decision lives there.
     """
+    from ._status_labels import typesafe_label
+
+    data.setdefault("typesafe", None)
     _lifecycle_success(
         json_mode,
         command=_START_COMMAND,
         status=status,
         human_title=human_title,
-        human_lines=human_lines,
+        human_lines=(*human_lines, f"Typesafe: {typesafe_label(data)}"),
         **data,
     )
 
@@ -707,6 +712,7 @@ def _attach_existing_service(
         {"warnings": list(caller_warnings)} if caller_warnings else {}
     )
     existing_pid = existing.pid
+    attach_extra["typesafe"] = existing.typesafe
     existing_port = existing.port
     health_status = existing.health_status
     # A daemon from another release is not the service this verb was asked to
@@ -1119,6 +1125,7 @@ def _emit_start_succeeded(
     extra: dict[str, object] = (
         {"warnings": list(request.env_warnings)} if request.env_warnings else {}
     )
+    extra["typesafe"] = health.get("typesafe")
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()

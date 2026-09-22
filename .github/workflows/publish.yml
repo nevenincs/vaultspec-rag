@@ -77,6 +77,7 @@ jobs:
       target_sha: ${{ needs.resolve-target.outputs.sha }}
     secrets:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
 
   hold-release:
     name: "Build: Prerelease hold (Linux)"

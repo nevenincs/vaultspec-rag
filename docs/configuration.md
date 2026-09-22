@@ -13,7 +13,7 @@ standalone tool and no-install routes.
 
 - [Resolution order](#resolution-order) - which source wins when more than one sets a value
 - [Type coercion](#type-coercion) - how values are parsed, and what a rejected value does
-- [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - the four that resolve differently
+- [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - variables that resolve differently
 - [Core variables](#core-variables) - every variable resolved through the standard chain, grouped by what it affects
 - [Config-only keys](#config-only-keys) - settings with no environment variable
 - [Hugging Face cache](#hugging-face-cache) - the third-party variables that govern model downloads
@@ -29,7 +29,7 @@ Each setting resolves through a fixed precedence, highest first: CLI flag, envir
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
-Four variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
+Some variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
 
 ## Type coercion
 
@@ -42,11 +42,11 @@ The loader parses and validates every value as it builds the settings. It report
 
 An unset variable falls back to the built-in default.
 
-The four variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) resolve at their own call sites. The spellings here still apply to them; only their handling of an empty or unrecognised value differs.
+The variables in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) resolve at their own call sites. Their rows state any differences from these rules.
 
 ## Variables with their own parsing rules
 
-These four do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses.
+These variables do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses.
 
 The two booleans among them accept the same spellings as every other boolean. They differ only in how they resolve an empty value and a word that spells neither state. The Controls column states each one's rule and the reason for it.
 
@@ -56,6 +56,88 @@ The two booleans among them accept the same spellings as every other boolean. Th
 | `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                                                                                      | -                 |
 | `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
 | `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. Read only from the executing server's environment, never project configuration or a CLI flag; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
+
+### Typesafe enrollment
+
+Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the environment of the account that launches
+the service. For example, in PowerShell:
+
+```powershell
+$env:VAULTSPEC_RAG_TYPESAFE_API_KEY = '<your-key>'
+vaultspec-rag server start
+vaultspec-rag server status
+```
+
+For a shell on Linux or macOS, use `export VAULTSPEC_RAG_TYPESAFE_API_KEY='<your-key>'`
+before starting the service. Keep the key out of committed files. A project `.env`
+file is not automatically loaded for this setting. If the server is already running,
+changing a client shell's environment does not change that server: restart it from
+the intended service environment. Scheduled services need the variable in their own
+launch environment.
+
+Enrollment authorizes paid external processing of search queries and full candidate
+content. Successful classification can reorder hits and drop confidently irrelevant
+results, including returning an empty page. Explicit filters still apply. Missing,
+rejected or temporarily unavailable credentials retain the existing local pipeline.
+
+Both lifecycle commands display a `Typesafe:` line from the daemon's `/health`
+snapshot; neither command tests the key or spends API credits:
+
+| State | Meaning |
+| --- | --- |
+| `off` | No dedicated key in the server environment; legacy ranking. |
+| `pending` | Enrolled, but no successful evaluation within the last 60 seconds. The next search checks usability. |
+| `active` | Enrolled; a validated provider evaluation succeeded within the last 60 seconds. This is observed success, not a live balance check or a promise that every search can be classified. |
+| `rejected` | Enrolled, but the provider rejected authentication or payment; legacy fallback until key rotation or server restart. |
+| `cooldown` | Enrolled, but a transient provider failure has temporarily suspended calls; legacy fallback. |
+
+An unreachable or older daemon is `not reported`, not assumed to be enrolled based
+on the client's key. In JSON, start returns `data.typesafe`; status returns
+`data.health.typesafe` when health is available. The snapshot contains `enrolled`,
+`state`, `model`, `last_success_age_seconds` and `retry_after_seconds`, never the key
+or its fingerprint. A pending/rejected classifier does not make the local search
+service unhealthy.
+
+For GitHub Actions, store the key as the repository Actions secret
+`VAULTSPEC_RAG_TYPESAFE_API_KEY`. Scheduled/manual CI and release validation pass it
+to the reusable hardware workflow. Its CUDA integration lane runs a live classifier
+check before GPU provisioning, supplies the key to the service launch and test
+processes, and refuses to proceed if the running service is not enrolled. A missing
+or unusable secret fails the live check rather than silently validating only legacy
+fallback. The secret is not passed to pull-request workflows or accelerator-free
+unit jobs.
+
+### Typesafe connection reuse, caching and diagnostics
+
+The server shares a verified TLS context and up to two exclusive HTTPS connections.
+Idle sockets expire after 15 seconds. Failed requests are not automatically retried.
+Successful, validated answers are cached in memory for at most 60 seconds, capped at
+128 entries and 4 MiB of response bytes. Keys cover the credential, model, complete
+request state (including candidate content and filters), and question definitions.
+Concurrent identical requests share one in-flight call; caches never persist to disk.
+Key removal, rotation, rejection or a provider cooldown invalidates cached answers.
+A cached answer reflects the last successful credential check, not a new balance check.
+
+Search responses expose these measurements in `timing.phases`:
+
+- `local_rerank_seconds`: local reranker work, excluding hosted candidate calls.
+- `typesafe_query_attempt_ms`: query enrollment/classification elapsed time, including
+  attempts that fall back; `typesafe_query_ms` reports successful query classification.
+- `typesafe_rank_ms`: elapsed candidate-classification time. Existing `rerank_seconds`
+  includes both local and hosted candidate work; `postprocess_seconds` includes reranking.
+- `typesafe_query_*` and `typesafe_rank_*`: `encode_ms`, `cache_lookup_ms`, `pool_ms`,
+  `connect_ms`, `upload_ms`, `response_wait_ms`, `download_ms`, `validation_ms`,
+  `request_wait_ms`, `coalesced_wait_ms` and `connections_reused`, when applicable.
+  Connection time includes DNS/TCP/TLS; response wait includes network and provider
+  processing, not model inference alone. Candidate metrics sum work across overlapping
+  calls and must not be added to elapsed phase times.
+- `typesafe_requests`, `typesafe_input_tokens`, `typesafe_output_tokens`: successful
+  network evaluations and their reported usage. Cached/coalesced responses contribute
+  zero new requests or tokens, with separate `typesafe_cache_hits` and
+  `typesafe_coalesced` counters. These are not a billing ledger for failed calls.
+- `classification_fallback_seconds`: time spent repeating a direct search through
+  the legacy pipeline after candidate classification fails.
 
 ## Core variables
 

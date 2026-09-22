@@ -1250,6 +1250,7 @@ async def health_handler(request: Request) -> object:
 
     from .. import store_schema
     from .._gpu_admission import device_load_reading
+    from ..search._typesafe_transport import enrollment_status
     from ..serviceclient._compat import (
         SERVICE_VERSION_FIELD,
         local_package_version,
@@ -1288,6 +1289,7 @@ async def health_handler(request: Request) -> object:
             "cuda": reg_health["cuda"],
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
+            "typesafe": enrollment_status(),
             "project_count": reg_health["project_count"],
             "quiesce": quiesce,
             # The structured signal behind the conformance degradation reason.
