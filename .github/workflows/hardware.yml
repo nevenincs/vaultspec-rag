@@ -215,7 +215,7 @@ jobs:
       - name: Verify live Typesafe classification before GPU provisioning
         env:
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
-        run: uv run --no-sync python -B dev/typesafe_search_spike.py
+        run: just test-typesafe-live
 
       - name: Provision the pinned Qdrant binary the GPU tier requires
         run: uv run --no-sync vaultspec-rag server qdrant install

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from ._search_state import SearchSourceFact
-    from .search import DocumentSearchResult
+    from .search import DocumentSearchResult, SearchFilterOptions
     from .search._outcomes import AnySearchResult
     from .service import ServiceRegistry
 
@@ -333,38 +333,43 @@ def search_combined(
     return outcome
 
 
+def _combined_filter_options(request: CombinedSearchRequest) -> SearchFilterOptions:
+    """Build the complete validation surface for a combined request."""
+    from .search import SearchFilterOptions
+
+    return SearchFilterOptions(
+        language=request.code_filters.language,
+        path=request.code_filters.path,
+        node_type=request.code_filters.node_type,
+        function_name=request.code_filters.function_name,
+        class_name=request.code_filters.class_name,
+        doc_type=request.vault_filters.doc_type,
+        feature=request.vault_filters.feature,
+        date=request.vault_filters.date,
+        tag=request.vault_filters.tag,
+        include_paths=list(request.code_filters.include_paths) or None,
+        exclude_paths=list(request.code_filters.exclude_paths) or None,
+        dedup_locales=request.code_filters.dedup_locales,
+        prefer=request.code_filters.prefer,
+        exclude_domains=list(request.code_filters.exclude_domains) or None,
+        only_domains=list(request.code_filters.only_domains) or None,
+        include_domains=list(request.code_filters.include_domains) or None,
+        source_path=request.document_filters.source_path,
+        extractor_id=request.document_filters.extractor_id,
+        extractor_version=request.document_filters.extractor_version,
+        locator_kind=request.document_filters.locator_kind,
+    )
+
+
 def search_combined_timed(
     request: CombinedSearchRequest,
     *,
     registry: ServiceRegistry | None = None,
 ) -> tuple[CombinedSearchOutcome, dict[str, float]]:
     """Search all domains under one lease with explicit partial outcomes."""
-    from .search import SearchFilterOptions
-
     validate_search_filters(
         PublicSourceType.COMBINED,
-        SearchFilterOptions(
-            language=request.code_filters.language,
-            path=request.code_filters.path,
-            node_type=request.code_filters.node_type,
-            function_name=request.code_filters.function_name,
-            class_name=request.code_filters.class_name,
-            doc_type=request.vault_filters.doc_type,
-            feature=request.vault_filters.feature,
-            date=request.vault_filters.date,
-            tag=request.vault_filters.tag,
-            include_paths=list(request.code_filters.include_paths) or None,
-            exclude_paths=list(request.code_filters.exclude_paths) or None,
-            dedup_locales=request.code_filters.dedup_locales,
-            prefer=request.code_filters.prefer,
-            exclude_domains=list(request.code_filters.exclude_domains) or None,
-            only_domains=list(request.code_filters.only_domains) or None,
-            include_domains=list(request.code_filters.include_domains) or None,
-            source_path=request.document_filters.source_path,
-            extractor_id=request.document_filters.extractor_id,
-            extractor_version=request.document_filters.extractor_version,
-            locator_kind=request.document_filters.locator_kind,
-        ),
+        _combined_filter_options(request),
     )
     root = pathlib.Path(request.root_dir).resolve()
     active_registry = registry if registry is not None else get_registry()

@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#typesafe-classifier'
 date: '2026-09-21'
-modified: '2026-09-21'
+modified: '2026-09-22'
 body_schema: 'body-v2'
-body_hash: 'sha256:dc4c4d0f59d7c464f2d8627f1c4a1f72c0d75a6163bacefe0fd1d507f028ad4a'
+body_hash: 'sha256:0a850f83828693d8c8249f19019ba8f8ebca2ef7a4a8b564988a49557f7e4717'
 related: []
 ---
 
@@ -25,7 +25,7 @@ Reviewed the searcher, store retrieval, result shaping, noise policy and public 
 
 Vault retrieval fetches max(4k,20) candidates with reranking or 2k without. It removes index records, maps full content, reranks all fetched chunks, groups by document, applies graph and intent weighting, caps document types, filters explicit statuses and truncates. Grouping and caps can remove useful candidates before a classifier placed solely at the public return boundary (`src/vaultspec_rag/search/_searcher.py:602`).
 
-Code retrieval pushes domain filters into storage, applies path globs and missing-domain fallback, and widens on depletion. After reranking its complete surviving window, it applies domain demotion, preference nudges and locale deduplication (`src/vaultspec_rag/search/_searcher.py:748`, `src/vaultspec_rag/search/_searcher.py:828`). The cap can reach max(base*4,500); widening must not accidentally multiply this work without a separate classifier budget.
+Code retrieval pushes domain filters into storage, applies path globs and missing-domain fallback, and widens on depletion. After reranking its complete surviving window, it applies domain demotion, preference nudges and locale deduplication (`src/vaultspec_rag/search/_searcher.py:748`, `src/vaultspec_rag/search/_searcher.py:828`). The cap can reach max(base\*4,500); widening must not accidentally multiply this work without a separate classifier budget.
 
 Document retrieval uses the same ordinary fetch budget but truncates inside the reranker (`src/vaultspec_rag/search/_searcher.py:1125`). It retains native locator and document metadata.
 
@@ -43,4 +43,4 @@ Accepted `2026-06-30-search-noise-filtering-adr` and `2026-05-31-search-postproc
 
 ### Production-only filtering was erased before retrieval
 
-The same _clean helper normalized noise configuration and explicit only_domains through NOISE_DOMAINS, which deliberately excludes production. Both inline only:prod and programmatic only_domains=["prod"] therefore became an empty constraint before Qdrant and post-filtering. The minimal correction uses all DOMAINS only for the only set, preserving production-never-noise elsewhere. Evidence: src/vaultspec_rag/search/_noise.py, _clean and resolve_noise_policy; src/vaultspec_rag/search/_searcher.py, _fetch_codebase_candidates. Inline/programmatic and mixed-domain regression coverage is in src/vaultspec_rag/tests/test_typesafe_search.py and test_search_noise.py. This hard-filter defect is independent of hosted classification.
+The same \_clean helper normalized noise configuration and explicit only_domains through NOISE_DOMAINS, which deliberately excludes production. Both inline only:prod and programmatic only_domains=["prod"] therefore became an empty constraint before Qdrant and post-filtering. The minimal correction uses all DOMAINS only for the only set, preserving production-never-noise elsewhere. Evidence: src/vaultspec_rag/search/\_noise.py, \_clean and resolve_noise_policy; src/vaultspec_rag/search/\_searcher.py, \_fetch_codebase_candidates. Inline/programmatic and mixed-domain regression coverage is in src/vaultspec_rag/tests/test_typesafe_search.py and test_search_noise.py. This hard-filter defect is independent of hosted classification.

@@ -47,7 +47,7 @@ before installing. That section also covers the smaller resource profile.
 
 ## Install
 
-Choose extras for the role this environment performs. There is no `rag` extra.
+Choose extras for what you want this environment to run. There is no `rag` extra.
 
 | Role                                     | Package                  | Loads models here? | Needs an accelerator? |
 | ---------------------------------------- | ------------------------ | ------------------ | --------------------- |
@@ -63,7 +63,7 @@ a remote inference service and does not remove the host's `gpu` requirement. See
 commands and the limits of each role.
 
 Install a standalone tool for use across repositories. Choose the command for your
-platform. The commands below install the combined inference-host and MCP lane. These
+platform. The commands below install both the inference service and MCP adapter. These
 CUDA commands use Python 3.13 and pin the GPU wheel so later tool upgrades retain it.
 
 Windows x64:
@@ -90,7 +90,7 @@ instructions before continuing. For an existing tool installation, follow the
 [upgrade instructions](docs/installation.md#upgrade) before
 replacing its environment.
 
-Once installation succeeds, open the repository you want to search and run:
+Once installation succeeds, open the repository you want to search.
 
 The default setup downloads
 [`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a gated sparse model.
@@ -109,9 +109,9 @@ and provisions Qdrant, the index server. The GPU packages are already installed,
 `--no-torch-config` leaves the project's PyTorch configuration alone. The first setup
 downloads several gigabytes; subsequent projects share the models and server binary.
 
-The default installer intentionally prepares this full local topology even though a
-base or `[mcp]` package installation is lightweight. Use `install --no-provision` when
-enrolling a client-only workspace against an already-running service.
+The default installer sets up the local models and Qdrant even with the lightweight
+base or `[mcp]` package. Use `install --no-provision` to connect a client-only workspace
+to an already-running service.
 
 Check the installation:
 
@@ -132,14 +132,14 @@ binary. If it reports a problem, use the [installation troubleshooting guide](do
 
 Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the service account's environment before
 starting the server to opt into paid Typesafe classification. A valid, funded key
-enables query interpretation and full-content result reranking, including removal
-of confidently irrelevant hits. Queries and candidate content are sent to Typesafe;
-without a usable key, search keeps its existing local ranking.
+enables query interpretation and reranking using the full result content, including
+removal of confidently irrelevant hits. The server sends queries and candidate
+content to Typesafe; without a usable key, search keeps its existing local ranking.
 
 `server start` and `server status` show the running server's enrollment and whether
 a recent evaluation succeeded. No separate enable flag is needed. See
 [activation, fallback and status meanings](docs/configuration.md#typesafe-enrollment)
-before enabling it. The feature does not replace the local search models or GPU.
+before enabling it. The local search models and GPU are still required.
 
 ### Start and search
 

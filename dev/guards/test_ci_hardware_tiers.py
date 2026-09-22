@@ -194,7 +194,7 @@ def test_typesafe_secret_reaches_live_preflight_service_and_integration_tier() -
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
     )
-    fragments = ("dev/typesafe_search_spike.py", "server start", "just test-gpu")
+    fragments = ("just test-typesafe-live", "server start", "just test-gpu")
     indices: list[int] = []
     for fragment in fragments:
         index, step = next(

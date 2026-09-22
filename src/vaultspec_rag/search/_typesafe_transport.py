@@ -216,6 +216,32 @@ def _request(
         _POOL.release(lease, reusable=reusable)
 
 
+def _successful_response(
+    credential: tuple[str, bytes],
+    payload: bytes,
+    questions: dict[str, dict[str, object]],
+    deadline: float,
+    flight: _Flight,
+) -> tuple[bytes, dict[str, float]]:
+    key, fingerprint = credential
+    stats: dict[str, float] = {}
+    body = _request(key, payload, deadline, timings=stats)
+    started = time.monotonic()
+    raw: object = json.loads(body)
+    validate_evaluation(raw, questions)
+    stats["validation_ms"] = (time.monotonic() - started) * 1000
+    _remaining(deadline)
+    with _LOCK:
+        if (
+            _CIRCUIT.fingerprint == fingerprint
+            and not _CIRCUIT.disabled
+            and time.monotonic() >= _CIRCUIT.retry_at
+        ):
+            _CACHE.put(flight.cache_key, body, time.monotonic())
+            _CIRCUIT.last_success = time.monotonic()
+    return body, stats
+
+
 def _run(
     credential: tuple[str, bytes],
     payload: bytes,
@@ -223,26 +249,13 @@ def _run(
     budget: _RequestBudget,
     flight: _Flight,
 ) -> None:
-    key, fingerprint = credential
-    deadline = budget.deadline
-    stats: dict[str, float] = {}
+    _, fingerprint = credential
     outcome: Future[tuple[bytes, dict[str, float]]] = Future()
     try:
-        body = _request(key, payload, deadline, timings=stats)
-        started = time.monotonic()
-        raw: object = json.loads(body)
-        validate_evaluation(raw, questions)
-        stats["validation_ms"] = (time.monotonic() - started) * 1000
-        _remaining(deadline)
-        with _LOCK:
-            if (
-                _CIRCUIT.fingerprint == fingerprint
-                and not _CIRCUIT.disabled
-                and time.monotonic() >= _CIRCUIT.retry_at
-            ):
-                _CACHE.put(flight.cache_key, body, time.monotonic())
-                _CIRCUIT.last_success = time.monotonic()
-        outcome.set_result((body, stats))
+        response = _successful_response(
+            credential, payload, questions, budget.deadline, flight
+        )
+        outcome.set_result(response)
     except urllib.error.HTTPError as exc:
         permanent = exc.code in {401, 402, 403}
         exc.close()

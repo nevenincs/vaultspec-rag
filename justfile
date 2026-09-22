@@ -365,6 +365,11 @@ test-fast:
 test-gpu:
     {{dev}} test gpu
 
+# Check hosted classification with real provider calls and synthetic retrieval.
+[group('test')]
+test-typesafe-live:
+    uv run --no-sync python -B dev/typesafe_search_spike.py
+
 # Run the latency and footprint lane; quiet machines only.
 [group('test')]
 test-perf:

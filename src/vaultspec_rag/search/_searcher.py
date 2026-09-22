@@ -594,6 +594,60 @@ class VaultSearcher:
         cap = int(get_config().vault_intent_type_cap)
         return apply_type_cap(results, cap)
 
+    def _rerank_candidates(
+        self, encoded: _EncodedSearchQuery, results: list[SearchResult]
+    ) -> list[SearchResult]:
+        """Rerank the local window, then classify it when enrolled."""
+        phase_started = time.perf_counter()
+        results = self._rerank(
+            encoded.text, results, len(results), timings=encoded.timings
+        )
+        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
+        if encoded.classifier is not None:
+            from ._typesafe_policy import classification_window
+
+            results = encoded.classifier.rank(
+                classification_window(results, encoded.top_k)
+            )
+        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
+        return results
+
+    def _map_vault_results(
+        self, raw_results: list[dict[str, object]], encoded: _EncodedSearchQuery
+    ) -> list[SearchResult]:
+        """Map retrieved vault rows with their full content for reranking."""
+        phase_started = time.perf_counter()
+        docs_prefix = self._vault_docs_prefix()
+        results: list[SearchResult] = []
+        for row in raw_results:
+            raw_score = row.get("_relevance_score", 0.0)
+            score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
+            content = str(row.get("content", ""))
+            related_raw = row.get("related")
+            related = (
+                [str(x) for x in cast("list[object]", related_raw)]
+                if isinstance(related_raw, list)
+                else []
+            )
+            results.append(
+                SearchResult(
+                    id=str(row["id"]),
+                    path=_join_doc_path(docs_prefix, str(row["path"])),
+                    title=str(row.get("title", "")),
+                    score=score,
+                    snippet=content[:200].strip(),
+                    source="vault",
+                    doc_type=str(row.get("doc_type", "")),
+                    feature=str(row.get("feature", "")),
+                    date=str(row.get("date", "")),
+                    status=str(row.get("status", "")),
+                    related=related,
+                    rerank_text=content or None,
+                ),
+            )
+        _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
+        return results
+
     def search_vault_encoded(
         self,
         encoded: _EncodedSearchQuery,
@@ -663,53 +717,13 @@ class VaultSearcher:
         # cross-encoder otherwise scores very high on feature-name queries).
         raw_results = [r for r in raw_results if r.get("doc_type") != "index"]
 
-        phase_started = time.perf_counter()
-        docs_prefix = self._vault_docs_prefix()
-        results: list[SearchResult] = []
-        for r in raw_results:
-            raw_score = r.get("_relevance_score", 0.0)
-            score = float(raw_score) if isinstance(raw_score, (int, float)) else 0.0
-            content = str(r.get("content", ""))
-            related_raw = r.get("related")
-            related = (
-                [str(x) for x in cast("list[object]", related_raw)]
-                if isinstance(related_raw, list)
-                else []
-            )
-            results.append(
-                SearchResult(
-                    id=str(r["id"]),
-                    path=_join_doc_path(docs_prefix, str(r["path"])),
-                    title=str(r.get("title", "")),
-                    score=score,
-                    snippet=content[:200].strip(),
-                    source="vault",
-                    doc_type=str(r.get("doc_type", "")),
-                    feature=str(r.get("feature", "")),
-                    date=str(r.get("date", "")),
-                    status=str(r.get("status", "")),
-                    related=related,
-                    rerank_text=content or None,
-                ),
-            )
-        _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
+        results = self._map_vault_results(raw_results, encoded)
 
         # Rerank the FULL fetched candidate set: grouping below can
         # collapse several chunks of one document into a single row, so
         # truncating before grouping could under-fill the final page
         # whenever one document's chunks dominate the rerank window.
-        phase_started = time.perf_counter()
-        results = self._rerank(
-            encoded.text, results, len(results), timings=encoded.timings
-        )
-        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
-        if encoded.classifier is not None:
-            from ._typesafe_policy import classification_window
-
-            results = encoded.classifier.rank(
-                classification_window(results, encoded.top_k)
-            )
-        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
+        results = self._rerank_candidates(encoded, results)
 
         phase_started = time.perf_counter()
         results = _group_chunks_by_document(results)
@@ -954,18 +968,7 @@ class VaultSearcher:
         # Rerank the FULL surviving window (not a top_k slice) so the
         # post-rerank demote pass can lift a production result above noise
         # that initially out-scored it; truncation happens at return.
-        phase_started = time.perf_counter()
-        results = self._rerank(
-            encoded.text, results, len(results), timings=encoded.timings
-        )
-        _record_seconds(encoded.timings, "local_rerank_seconds", phase_started)
-        if encoded.classifier is not None:
-            from ._typesafe_policy import classification_window
-
-            results = encoded.classifier.rank(
-                classification_window(results, encoded.top_k)
-            )
-        _record_seconds(encoded.timings, PHASE_RERANK, phase_started)
+        results = self._rerank_candidates(encoded, results)
 
         # Noise demote: subtract the penalty from demoted-domain results and
         # re-sort. Runs after rerank so query-relevance is scored first.

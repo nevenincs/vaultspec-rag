@@ -13,6 +13,7 @@ from . import _typesafe_transport as transport
 from ._models import DocumentSearchResult, SearchResult
 from ._typesafe_answers import ChoiceAnswer, Evaluation, ScoreAnswer
 from ._typesafe_questions import candidate_questions, query_clauses, query_questions
+from ._validation import PREFER_DOMAINS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -91,7 +92,7 @@ def prepare_query(
     )
     if any(constraints.get(key) for key in ("intent", "doc_type", "type", "status")):
         vault_intent = None
-    prefer = domain if domain in {"prod", "tests", "docs"} else None
+    prefer = domain if domain in PREFER_DOMAINS else None
     if intent == "cross_reference" or domain == "mixed" or any(constraints.values()):
         prefer = None
     timings = {
