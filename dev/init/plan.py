@@ -7,7 +7,7 @@ change makes a phase stale and the artifacts whose absence does the same.
 
 ``vaultspec-rag`` had no bootstrap recipe at all before this: the only way to
 provision a worktree was to know that ``just deps-sync`` happened to be the
-step, and the committed `.pre-commit-config.yaml` had no installer anywhere in
+step, and the committed `prek.toml` had no installer anywhere in
 the repository, so every checkout silently bypassed its own hooks. Both are
 closed here. ``deps sync`` stays as the dependency-management verb it is;
 ``init-python`` is the worktree-provisioning path to the same environment.
@@ -73,21 +73,15 @@ NODE = Phase(
 
 TOOLS = Phase(
     name="tools",
-    summary="Enroll the Vaultspec framework and install the committed git hooks.",
+    summary="Enroll the Vaultspec framework.",
     steps=(
         Step(
             name="framework-install",
             argv=("uv", "run", "--no-sync", "vaultspec-core", "install", "--force"),
             summary="Rebuild the gitignored install manifest from tracked config.",
         ),
-        Step(
-            name="hook-runner",
-            argv=(PY, "-m", "dev.init.hooks", ".pre-commit-config.yaml"),
-            summary="Install the committed hooks, or report that none can be.",
-            advisory=True,
-        ),
     ),
-    inputs=("uv.lock", ".pre-commit-config.yaml"),
+    inputs=("uv.lock",),
     artifacts=(".vaultspec/providers.json",),
 )
 

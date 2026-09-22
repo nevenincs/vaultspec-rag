@@ -583,16 +583,14 @@ If RAG is a project dependency, prefix `vaultspec-rag` commands with `uv run`.
 
 A binary links against whatever C library built it, so a download labelled only "Linux" may not run on your distribution.
 
-| Binary                      | Requires   | Covers                                                |
-| --------------------------- | ---------- | ----------------------------------------------------- |
-| `x86_64-unknown-linux-gnu`  | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
-| `aarch64-unknown-linux-gnu` | glibc 2.28 | Debian 10+, Ubuntu 20.04+, RHEL 8+, Amazon Linux 2023 |
+| Binary                      | Requires   | Covers                                   |
+| --------------------------- | ---------- | ---------------------------------------- |
+| `x86_64-unknown-linux-gnu`  | glibc 2.39 | Ubuntu 24.04+, Debian 13+, Fedora 40+    |
+| `aarch64-unknown-linux-gnu` | glibc 2.39 | Ubuntu 24.04+, Debian 13+, Fedora 40+    |
 
 Check yours with `ldd --version`. On an older distribution the binary doesn't start, and the error names a missing symbol version rather than saying the distribution is too old.
 
-Every currently offered download meets the 2.28 floor.
-
-Installing from the package index has no such floor and works wherever the Python and GPU requirements are met.
+The binaries target current distributions. Debian 12, Ubuntu 22.04, RHEL 8 and 9, and Amazon Linux 2023 all ship a glibc below this floor, so the archives do not run there. Install from the package index on those systems instead: it has no libc floor and works wherever the Python and GPU requirements are met.
 
 ## Where to go next
 
