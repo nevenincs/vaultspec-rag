@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.34](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.33...vaultspec-rag-v0.4.34) (2026-09-22)
+
+
+### Features
+
+* add opt-in Typesafe classification and result reranking ([#525](https://github.com/nevenincs/vaultspec-rag/issues/525)) ([228dc1f](https://github.com/nevenincs/vaultspec-rag/commit/228dc1f8db27652d7c1da439ac4434595802287e))
+
+
+### Bug Fixes
+
+* reconcile release CI and platform contracts ([#527](https://github.com/nevenincs/vaultspec-rag/issues/527)) ([77b6735](https://github.com/nevenincs/vaultspec-rag/commit/77b6735a8f816e2ceee49e85b59905706f1a3801))
+
 ## [0.4.33](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.32...vaultspec-rag-v0.4.33) (2026-09-21)
 
 
