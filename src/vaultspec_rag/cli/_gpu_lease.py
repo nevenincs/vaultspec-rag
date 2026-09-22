@@ -35,6 +35,7 @@ from ..serviceclient._discovery import (
     resolve_machine_service,
     revalidate_captured_machine_pointer,
 )
+from ..serviceclient._search_transport import get_search_timeout
 from ..serviceclient._transport import (
     _get_admin_timeout,
     _try_http_admin,
@@ -298,6 +299,7 @@ def _resume_is_acknowledged(
         port,
         target=target,
         before_request=lambda: None,
+        timeout=get_search_timeout(None),
     )
     if target_verified:
         _reject_unrecognised_quiesce(result, verb="resume")
@@ -376,13 +378,14 @@ def _reject_unrecognised_quiesce(
     )
 
 
-def _try_borrower_lifecycle_call(
+def _try_borrower_lifecycle_call(  # noqa: PLR0913 - lifecycle evidence is explicit.
     tool_name: str,
     lease: GPUBorrowLease,
     port: int,
     *,
     target: BorrowerServiceTarget | None,
     before_request: Callable[[], None],
+    timeout: float | None = None,
 ) -> tuple[bool, dict[str, object] | None]:
     """Make one lifecycle call, pinning captured targets before each send.
 
@@ -393,7 +396,7 @@ def _try_borrower_lifecycle_call(
     args: dict[str, object] = {"borrower_capability": lease.capability}
     if target is None:
         before_request()
-        return True, _try_http_admin(tool_name, args, port)
+        return True, _try_http_admin(tool_name, args, port, timeout=timeout)
     token = _revalidate_captured_target(target)
     if token is None:
         return False, None
@@ -402,6 +405,7 @@ def _try_borrower_lifecycle_call(
         tool_name,
         args,
         port,
+        timeout=timeout,
         initial_bearer_token=token,
         refresh_bearer_token=lambda: _revalidate_captured_target(target) or "",
     )
