@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:1f967182d113ad2c0aea1ee0f674048790192bc6d4380743af61952fa0132565'
+body_hash: 'sha256:ac2caa3bd1cf7f98371f8530be134d1df0dd63f47f239bac7380711e2da43969'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -192,6 +192,10 @@ related:
 - `S13` `M` `docs/service-discovery.md`
 - `S13` `M` `src/vaultspec_rag/tests/test_operator_state.py`
 - `S13` `verify:` `ruff, ruff format, ty check src, docs-cli, markdown` -> `pass`
+- `S09` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S09` `verify:` `pytest environment and hardware probe tests` -> `pass`
+- `S04` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S04` `verify:` `pytest dev/guards` -> `pass`
 
 ## Notes
 
@@ -218,3 +222,5 @@ related:
 - `S17` Final review corrections: feature labels are produced once from the parsed ServiceFeatures (the preprocess label is a table keyed by mode, so no off comparison re-derives whether hooks run); project status calls the same producers; benchmark docstring corrected to the emitted keys
 - `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
 - `S13` Approved amendment (user authorization 2026-09-23) applied: ServiceLifecycle.NOT_SERVING (exit 4) via with_health for an error health verdict only; paused and degraded stay running; doctor keeps exit 0 for a starting service; DegradationReason list in the accepted decision amended to the emitted codes; proposal 2026-09-23-status-messages-exit-codes-adr retired; docs/cli.md regenerated for the verbose help text changed in 89c799ff
+- `S09` CI correction (78d7b9e4): the child-output decoding guard flagged the probe decoding under the ambient encoding; it now states utf-8 with replacement
+- `S04` CI correction (78d7b9e4): nvidia-smi output is decoded as utf-8 with replacement, not the ambient encoding
