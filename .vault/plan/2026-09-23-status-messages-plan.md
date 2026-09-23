@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:903afe573e9408b8ac3d11fb9640546644fab191768625a0104e7cb397af7948'
+body_hash: 'sha256:4eefa3645af1c3cc7006e99f31a1d7a28be08f60d96a860492ebe50296de0de8'
 ---
 
 # `status-messages` plan
@@ -70,7 +70,7 @@ Out of scope, per the ADR:
 
 Create the torch-free operator state package that owns every new enum, its labels and remediation, and the typed wire models.
 
-- [ ] `P01.S01` - create the operator state package with InstallRole, HardwarePresence and ComputeCapability enums owning labels, remediation and start-blocking, plus a fresh-interpreter torch-free import test; `src/vaultspec_rag/operator_state/`.
+- [x] `P01.S01` - create the operator state package with InstallRole, HardwarePresence and ComputeCapability enums owning labels, remediation and start-blocking, plus a fresh-interpreter torch-free import test; `src/vaultspec_rag/operator_state/`.
 - [ ] `P01.S02` - add ServiceLifecycle with exit codes, HealthVerdict, DegradationReason, TypesafeState and PreprocessHookState enums with exhaustive label tests; `src/vaultspec_rag/operator_state/`.
 - [ ] `P01.S03` - add extra-forbid pydantic wire models for health, service state, installation, compute, hardware and feature sections; `src/vaultspec_rag/operator_state/`.
 
