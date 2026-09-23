@@ -218,4 +218,3 @@ related:
 - `S17` Final review corrections: feature labels are produced once from the parsed ServiceFeatures (the preprocess label is a table keyed by mode, so no off comparison re-derives whether hooks run); project status calls the same producers; benchmark docstring corrected to the emitted keys
 - `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
 - `S13` Approved amendment (user authorization 2026-09-23) applied: ServiceLifecycle.NOT_SERVING (exit 4) via with_health for an error health verdict only; paused and degraded stay running; doctor keeps exit 0 for a starting service; DegradationReason list in the accepted decision amended to the emitted codes; proposal 2026-09-23-status-messages-exit-codes-adr retired; docs/cli.md regenerated for the verbose help text changed in 89c799ff
-
