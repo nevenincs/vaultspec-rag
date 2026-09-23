@@ -563,10 +563,13 @@ def vault_embed_input(title: str, text: str) -> str:
     Built from plain values so donor verification can rebuild the same input
     from a stored payload and compare it exactly.
 
-    The chunk's section path is deliberately left out. Measured on the frozen
-    ranking gates, adding it lowered MRR and pushed an accepted decision out of
-    the top five for an orientation query it owns: the heading words pull
-    chunks from unrelated records that share a template section name.
+    The chunk's section path is deliberately left out. In every form measured
+    - the full path, the leaf heading alone, or a different separator - it left
+    hit@1, evidence-in-snippet and section match unchanged on the frozen ranking
+    gates and on an external vault, and pushed an accepted decision out of the
+    top five for an orientation query it owns. A five-result page reranks only
+    twenty chunks, and the section words displaced that record's chunk from
+    them.
     """
     return f"{title}\n\n{text}"
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:f205ee8012acc7c4f83124b8aa4678fd6d0bd51cf8cd380c3ecb247fcb64963c'
+body_hash: 'sha256:0924936b4a3ded1e1f9ca337bf1a9ffe5b1a5f47ab3a50bb49edc69ed9eca3ea'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -59,23 +59,57 @@ Every span is verbatim at its reported lines.
   is evidence that lies outside the two chunks a result scores; the research's
   runner-up finding measured the same ceiling.
 
-### heading-path-embedding | medium | The section path in the vault embedding input regresses ranking and was not shipped
+### heading-path-embedding | medium | The section path adds nothing measurable to the vault embedding input and displaces a record from small pages; not shipped
 
-With `title :: section` prepended to the vault embedding input, measured on the frozen
-gates against the same code without it:
+**First measurement, confounded.** The first P05 run changed two things at once: it
+added the section, and it changed the join from `title` + blank line to
+`title :: section` + newline. On the frozen gates:
 
 - MRR fell from 0.665 to 0.659.
 - Section match fell from 18/36 to 17/36.
 - The testimonial gate failed: `adr/2026-06-12-service-concurrency-adr` dropped out of
   the top five for "decision on gpu lock scope".
 
-The same gates at `32bcda8a` pass 11 of 11.
+**Controlled comparison.** Each variant built fresh indexes of two corpora in one
+GPU session, with per-query ranks recorded:
 
-Per the ADR's gate condition, the input stays `title` + blank line + chunk text,
-byte-identical to before (`src/vaultspec_rag/indexer/_slicing.py`
-`vault_embed_input`). Only the single builder and full-input donor verification shipped
-(`2a2ee276`). Template section names such as "Implementation" or "Considered options"
-recur across every record, which is the likely mechanism; it was not isolated further.
+- the frozen reference vault, covering the evidence, intent-ranking and testimonial
+  gates;
+- a snapshot of the vaultspec-core vault at `1a236b8a` (869 records), for the issue's
+  dev (21) and held-out (18) sets.
+
+The shipped input reproduced every previously recorded figure. Its repeat run moved no
+query, so the harness is deterministic and every movement below comes from the
+input.
+
+| Input | Frozen MRR | Section | Intent NDCG@10 | Testimonial rank | Dev MRR | Held-out MRR |
+| --- | --- | --- | --- | --- | --- | --- |
+| Shipped: title, blank line, text | 0.665 | 18 | 0.7709 | 2 | 0.853 | 0.797 |
+| Format only: title, newline, text | 0.664 | 17 | 0.7706 | 2 | 0.853 | 0.797 |
+| Section, shipped format | 0.666 | 18 | 0.7700 | out | 0.857 | 0.797 |
+| First P05 input | 0.659 | 17 | 0.7703 | out | 0.857 | 0.798 |
+| Leaf heading only, shipped format | 0.666 | 18 | 0.7690 | out | 0.857 | 0.797 |
+
+- **No headline movement.** hit@1, evidence-in-snippet and external section match do
+  not move for any input.
+- **Section-bearing gains.** Each gains at most one rank on one query per set: dev q17
+  4→3, and held-out h06 7→6 for the first input only.
+- **Format caused the first run's losses.** The MRR and section-match drop came from the
+  join. Format alone drops case e35 from rank 10 off the page, which costs the section
+  match.
+- **The section caused the testimonial failure,** in every form. The same query at ten
+  results still ranks the ADR third. A five-result page reranks only 20 chunk
+  candidates (`src/vaultspec_rag/search/_searcher.py:768`), and the section words move
+  that record's chunk out of them. The template-name mechanism the first run guessed at
+  is not needed to explain it.
+
+The input stays `title` + blank line + chunk text (`src/vaultspec_rag/indexer/_slicing.py`
+`vault_embed_input`). The section path buys no measurable ranking and costs a
+pre-declared authority on small pages. `2026-06-12-service-concurrency-adr` D8's
+amendment states the controlled result.
+
+The same displacement bears on search-latency: a smaller candidate window makes it more
+likely.
 
 ### search-latency | medium | Median vault search time fell 38% but missed the plan's half-of-fp32 target
 
@@ -108,14 +142,18 @@ tokens instead of 1024) on the issue's query sets:
 Ranking moved in both directions and evidence fell on both sets. Latency from that run
 was discarded: it ran while another GPU consumer was active on the host.
 
-### reindex-remedy | low | The service-level latest-failure finding still points at logs for a refused index
+### reindex-remedy | low | The service-level latest-failure finding pointed at logs for a refused index; resolved
 
 - Project `status` names `vaultspec-rag index --rebuild --type <source>` under each
   source whose job was refused (`362df18c`).
-- The service-level "latest indexing job failed" finding in `server status` still
-  offers only the job log. Its health record carries no source
-  (`src/vaultspec_rag/server/_lifespan.py:1077-1085`).
-- That area belongs to the in-flight `status-messages` work and was left untouched.
+- The service-level "latest indexing job failed" finding in `server status` offered
+  only the job log, because its health record carried no source.
+- Resolved in `9ed425af`. The health rollup carries the failed job's source, read
+  through the accessor that handles both job record shapes
+  (`src/vaultspec_rag/server/_lifespan.py:1077`). One remedy function serves the
+  service finding and the per-domain one (`src/vaultspec_rag/cli/_status_labels.py:674`).
+  The resilience integration test caught managed jobs, whose source lives in the job
+  spec, before the accessor was used.
 
 ### repo-structural-guard | high | Two whole-tree guards failed on P01-P04 additions; resolved
 
@@ -191,8 +229,5 @@ After those fixes:
   make that measurable.
 - **heading-path-embedding:** Amend `2026-06-12-service-concurrency-adr` D8 with this
   finding, as the ADR's gate condition requires.
-- **reindex-remedy:** Carry the failed job's source on the service health record, so
-  the service-level finding can name the same rebuild command. Done under the
-  `status-messages` feature.
 - **evidence-gate:** Any later chunking experiment (smaller or heading-aligned chunks)
   should target the out-of-chunk misses and be judged on the evidence gate first.

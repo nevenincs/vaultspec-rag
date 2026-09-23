@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:b13456c0d83b754f2d05725844351cabd3c42a68a200e092651bfb8b36ad8a4b'
+body_hash: 'sha256:edb879bed82c1302a4e09db29311dc95d2bcf5fc45bab09143a4f4ab56f856d4'
 ---
 
 # `vault-result-evidence` plan
@@ -97,8 +97,8 @@ Delivers a branch with no known defect: the strict type gate and the child-outpu
 
 Delivers a controlled comparison that separates the embedding-input format from the section breadcrumb, on the in-repo gates and the issue's query sets, and ships or records the result on that evidence.
 
-- [ ] `P05b.S13` - measure the shipped embedding input against format-only, section-in-shipped-format and the originally tested input on the in-repo gates and the issue's query sets, per query; `src/vaultspec_rag/indexer/_slicing.py (variants measured in scratch, not committed)`.
-- [ ] `P05b.S14` - ship the input the controlled evidence favours, or revise the audit and the D8 amendment to the controlled result; `src/vaultspec_rag/indexer/_slicing.py, .vault/audit/2026-09-23-vault-result-evidence-audit.md, .vault/adr/2026-06-12-service-concurrency-adr.md`.
+- [x] `P05b.S13` - measure the shipped embedding input against format-only, section-in-shipped-format and the originally tested input on the in-repo gates and the issue's query sets, per query; `src/vaultspec_rag/indexer/_slicing.py (variants measured in scratch, not committed)`.
+- [x] `P05b.S14` - ship the input the controlled evidence favours, or revise the audit and the D8 amendment to the controlled result; `src/vaultspec_rag/indexer/_slicing.py, .vault/audit/2026-09-23-vault-result-evidence-audit.md, .vault/adr/2026-06-12-service-concurrency-adr.md`.
 
 ### Phase `P05c` - reduce vault search inference time
 

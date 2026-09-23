@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:b6b3c31b8424a8d8e62ecf9d5001cb66a4a5a779177b34892047589acbedbb3f'
+body_hash: 'sha256:75cbed2425058e3e9e94683ef4f7173fbedf3b7625554b345f5ddc1f6f5cd4fc'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -113,6 +113,12 @@ related:
 - `S11` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
 - `S11` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_resilience.py`
 - `S11` `verify:` `service-level rebuild remedy mutation (remedy removed fails the next-action assertion; restored passes)` -> `pass`
+- `S13` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S13` `verify:` `controlled variant harness, six inputs, one GPU session (6 passed); shipped input reproduced all recorded figures and its repeat moved no query` -> `pass`
+- `S14` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S14` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S14` `M` `.vault/adr/2026-06-12-service-concurrency-adr.md`
+- `S14` `verify:` `vault check modified-stamp` -> `pass`
 
 ## Notes
 
@@ -128,3 +134,5 @@ related:
 - `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
 - `S04` plan-close review correction: an underline under a list item or block quote is a thematic break, not a setext heading
 - `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
+- `S13` variants measured through a scratch harness outside the tree; no measurement code committed
+

@@ -4,7 +4,7 @@ tags:
   - '#service-concurrency'
 date: '2026-06-12'
 modified: '2026-09-23'
-body_hash: 'sha256:adfb19d668ad4b3569289435de607c90007c92df3a4727f1f88269b760444515'
+body_hash: 'sha256:d1435ff1546f29805dd8f350e8abedc5f50899adb99d211f741c7e955fa13884'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
@@ -138,10 +138,13 @@ instructions: a code-retrieval instruction for codebase search, a documentation-
 retrieval instruction for vault search.
 
 *Amended 2026-09-23:* vault chunks embed `title + chunk text`; the heading path is
-not part of the input. Measured on the frozen ranking gates, adding it lowered MRR
-and pushed an accepted decision out of the top five for its own orientation query
-(`2026-09-23-vault-result-evidence-audit`, heading-path-embedding). Results carry
-the heading path as their `section` instead
+not part of the input. A controlled comparison separated the heading path from the
+input's format, on the frozen ranking gates and an external vault
+(`2026-09-23-vault-result-evidence-audit`, heading-path-embedding). In every form
+tried, the heading path left hit@1, evidence-in-snippet and section match unchanged.
+It also pushed an accepted decision out of the top five for its own orientation
+query, by displacing that record's chunk from the reranked candidate window. Results
+carry the heading path as their `section` instead
 (`2026-09-23-vault-result-evidence-adr`).
 
 **D9 — Bounded graph nudge (O11).** The post-rerank multiplicative graph boost
