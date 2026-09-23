@@ -27,6 +27,7 @@ from ..cli._jobs_tui_status import (
     fetch_service_status,
     render_status_header,
 )
+from ..operator_state._service import HealthVerdict
 from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
@@ -555,3 +556,15 @@ class TestTheMountedWidget:
             painted = _screen_text(app)
 
         assert "projects 1/16" in painted
+
+
+@pytest.mark.parametrize("verdict", list(HealthVerdict), ids=str)
+def test_every_health_verdict_has_a_tone(verdict: HealthVerdict) -> None:
+    """A verdict with no tone renders uncoloured, hiding a paused service.
+
+    Mutation check: dropping ``PAUSED`` from the tone table fails the paused
+    case; restoring it passes.
+    """
+    from ..cli._jobs_tui_status import _STATUS_TONES
+
+    assert verdict in _STATUS_TONES

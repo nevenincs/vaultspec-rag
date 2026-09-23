@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:431c50a8875edf256547b60899ae759232b0ef6c51f0373cce791500ba89936e'
+body_hash: 'sha256:47788798287a86e0cb1a8e991dae164b2a828e61b357adb8971d54566ec34443'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -169,6 +169,10 @@ related:
 - `S17` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
 - `S13` `M` `src/vaultspec_rag/serviceclient/_transport.py`
 - `S13` `verify:` `ruff check src, ty check src` -> `pass`
+- `S14` `M` `src/vaultspec_rag/cli/_jobs_tui_status.py`
+- `S14` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_jobs_tui_status.py`
+- `S14` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
 
 ## Notes
 
@@ -190,4 +194,5 @@ related:
 - `S08` Project status is a plain-language overview: service, installation role, compute with a defect-only fix, preprocessing hooks, Typesafe, reranking and watcher when a service answers, index and next action; support profile, interpreter and generations moved behind the new --verbose; an interpreter divergence note appears when the running service's environment differs from the local daemon interpreter. Resolves the P01 client-remediation-rendering finding
 - `S17` Server status prints a stopped or crashed service as its lifecycle line, remedy and address instead of rows of not-reported; a live summary adds Reranking, Preprocessing and File watcher beside Typesafe; the summary request carries ServiceLifecycle and derives its exit code; the stopped branch spells nothing by hand; doctor labels a starting service and renders the lifecycle sentence. S14 scope widened to the TUI header and cells per the P04 review
 - `S13` P04 review high finding: the transport's synthetic timeout and HTTP-error health bodies read as a service answering, so a wedged or erroring service exited 0; health_answered now lives beside the transport that makes those bodies and rejects them
+- `S14` Service-health tones key on HealthVerdict and gain the missing paused tone; job state pills key on JobState. The header's healthy/degraded/stalled pill is job health, a separate concept from service lifecycle, and the TUI's unreachable word names a failed fetch rather than a lifecycle, so both stay
 
