@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:caf78d5573765f86ca0b72f768eba400561527edf50c1c989f64354955f9dc2a'
+body_hash: 'sha256:090325a49c014bbc202cc354c28a5efd53a62fc00cd5f5f0b22b2111c21e688d'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -156,6 +156,10 @@ related:
 - `S07` `M` `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`
 - `S07` `M` `src/vaultspec_rag/tests/test_service_quiesce_adapters.py`
 - `S07` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S08` `M` `src/vaultspec_rag/cli/_status.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S08` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
 
 ## Notes
 
@@ -174,4 +178,5 @@ related:
 - `S13` Lifecycle derives in lifecycle_from_signals and lifecycle_for_port only; JSON state tokens change (crashed becomes crashed_pid_dead or crashed_pid_reused, warming becomes starting, degraded_discovery becomes discovery_degraded, unreachable becomes crashed_port_silent); doctor treats a starting service as live with status starting; the typed parsers merged into parse_report per the structure guard
 - `S16` P03 review corrections: an unreadable service state is refused with the release verdict instead of falling back to the store the service holds; preprocess service-mode read and health lightness now covered
 - `S07` get_index_status returns ServiceStateReport as structured output and raises a ToolError when the state cannot be parsed; the stale policy promise in its docstring is gone. No dedicated test drives the ToolError branch; it shares parse_report's tested fail-closed behaviour
+- `S08` Project status is a plain-language overview: service, installation role, compute with a defect-only fix, preprocessing hooks, Typesafe, reranking and watcher when a service answers, index and next action; support profile, interpreter and generations moved behind the new --verbose; an interpreter divergence note appears when the running service's environment differs from the local daemon interpreter. Resolves the P01 client-remediation-rendering finding
 

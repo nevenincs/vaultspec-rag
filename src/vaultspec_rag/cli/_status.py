@@ -1,9 +1,10 @@
-"""``status`` command: project index counts, storage, and compute device."""
+"""``status`` command: the service, this installation, active features, and index."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import typer
 
@@ -11,7 +12,11 @@ from .._job_values import count
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._models import InstallationReport, ServiceStateReport
+from ..operator_state._models import (
+    HealthReport,
+    InstallationReport,
+    ServiceStateReport,
+)
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ..serviceclient._typed_state import parse_report
@@ -23,10 +28,12 @@ from ._render import (
     _format_local_index_busy_message,
     _plain,
     _print_next_action,
-    address_line,
     exit_with_error,
 )
 from ._status_labels import render_degradation
+
+if TYPE_CHECKING:
+    from ..operator_state._features import PreprocessHookState
 
 
 def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
@@ -176,28 +183,6 @@ def _generation_lines(generations: object) -> list[str]:
     return lines
 
 
-def _status_diagnostics(status: dict[str, object]) -> list[str]:
-    """Render optional policy, generation, and degraded-state diagnostics.
-
-    Degradation goes through the shared renderer rather than being formatted
-    here: this payload reports one structured record per index domain, and
-    interpolating that list printed a container repr at the operator instead of
-    a cause and a command.
-    """
-    lines: list[str] = []
-    lines.extend(_support_profile_lines(status))
-    policy = status.get("policy", status.get("policy_fingerprint"))
-    generations = status.get("generations", status.get("generation"))
-    if policy not in (None, "", {}):
-        lines.append(f"Policy: {policy}")
-    generation_lines = _generation_lines(generations)
-    if generation_lines:
-        lines.append("Index generations:")
-        lines.extend(generation_lines)
-    lines.extend(render_degradation(status, header="Degraded because:"))
-    return lines
-
-
 def _compute_line(installation: InstallationReport) -> str:
     """State whether the environment can run inference, and on what.
 
@@ -218,100 +203,170 @@ def _compute_line(installation: InstallationReport) -> str:
     return f"{device}; {capability.label}"
 
 
-def _render_status_text(
-    status: dict[str, object],
-    installation: InstallationReport,
-    *,
-    target: object,
-    service_port: int | None = None,
-) -> None:
-    index_data_path = _human_index_data_location(
-        status["storage_path"],
-        service_port=service_port,
-    )
-    vault_count, code_count, document_count = _status_counts(status)
+@dataclass(frozen=True, slots=True)
+class _ServiceView:
+    """What a running service reported about itself and this root."""
+
+    port: int
+    state: ServiceStateReport
+    health: HealthReport | None
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusView:
+    """Everything the status command reports, from whichever source had it."""
+
+    target: object
+    index: dict[str, object]
+    installation: InstallationReport
+    hooks: PreprocessHookState
+    hook_rules: int
+    service: _ServiceView | None = None
+
+
+def _hooks_line(view: _StatusView) -> str:
+    rules = f", {_counted_unit(view.hook_rules, 'rule')}" if view.hook_rules else ""
+    return f"{view.hooks.label}{rules}"
+
+
+def _watcher_label(service: _ServiceView) -> str:
+    features = service.health.features if service.health is not None else None
+    if features is not None and not features.watcher_enabled:
+        return "off (disabled when the service started)"
+    if service.state.root_features.watcher_running:
+        return "following this project"
+    return "not following this project"
+
+
+def _service_lines(view: _StatusView) -> list[str]:
+    service = view.service
+    if service is None:
+        return [
+            "Service: not running",
+            f"This installation: {view.installation.role.label}",
+        ]
     lines = [
-        "Project index",
-        f"Project: {target}",
-        f"Index data: {index_data_path}",
-        f"Vault documents: {vault_count}",
-        f"Source code sections: {code_count}",
-        "Document sections: "
-        f"{document_count if document_count is not None else 'not reported'}",
-        f"Compute: {_compute_line(installation)}",
-        *_status_diagnostics(status),
+        f"Service: running at http://127.0.0.1:{service.port}",
+        f"Service installation: {view.installation.role.label}",
     ]
-    if service_port is not None:
-        lines.append("Server: running")
-        lines.append(address_line(service_port))
-        lines.append("Server details:")
-    next_action = _status_next_action(vault_count, code_count, document_count)
+    local = _resolve_local_interpreter()
+    if not _same_path(view.installation.executable, local):
+        lines.append(
+            f"Note: the running service uses {view.installation.executable}; "
+            f"a service started from here would use {local}."
+        )
+    return lines
+
+
+def _feature_lines(view: _StatusView) -> list[str]:
+    lines = [f"Preprocessing hooks: {_hooks_line(view)}"]
+    service = view.service
+    if service is None:
+        return lines
+    features = service.health.features if service.health is not None else None
+    if features is not None:
+        lines.append(f"Typesafe classification: {features.typesafe.state.label}")
+        lines.append(
+            "Reranking: "
+            + (
+                "off (disabled in configuration)"
+                if not features.reranker_enabled
+                else "ready"
+                if features.reranker_loaded
+                else "not loaded yet"
+            )
+        )
+    lines.append(f"File watcher: {_watcher_label(service)}")
+    return lines
+
+
+def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
+    """Render the plain-language status overview.
+
+    Each line answers one question an operator asks - is the service up, what
+    is this installation, can it run inference, which optional features are
+    active, what is indexed - and a fix appears only for a real defect, never
+    for a client that simply has no GPU work to do.
+    """
+    service_port = view.service.port if view.service is not None else None
+    vault_count, code_count, document_count = _status_counts(view.index)
+    documents = (
+        _counted_unit(document_count, "document section")
+        if document_count is not None
+        else "document sections not reported"
+    )
+    capability = view.installation.compute.capability
+    lines = [
+        f"Project: {view.target}",
+        *_service_lines(view),
+        f"Compute: {_compute_line(view.installation)}",
+    ]
+    if capability.is_defect and capability.remediation:
+        lines.append(f"  Fix: {capability.remediation}")
+    lines.extend(_feature_lines(view))
+    lines.extend(
+        (
+            f"Index: {_counted_unit(vault_count, 'vault document')}, "
+            f"{_counted_unit(code_count, 'code section')}, {documents}",
+            "Index data: "
+            + _human_index_data_location(
+                view.index.get("storage_path", "not reported"),
+                service_port=service_port,
+            ),
+        )
+    )
+    lines.extend(render_degradation(view.index, header="Degraded because:"))
+    if verbose:
+        lines.append(f"Interpreter: {view.installation.executable}")
+        lines.extend(_support_profile_lines(view.index))
+        generation_lines = _generation_lines(view.index.get("generations"))
+        if generation_lines:
+            lines.append("Index generations:")
+            lines.extend(generation_lines)
+    # Soft-wrapped so a long path or verdict stays one line a reader (or a
+    # script reading "Label: value") can take whole; the terminal still wraps
+    # it visually.
     for line in lines:
-        _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
+        _plain(line, soft_wrap=True)
     if service_port is not None:
-        _plain(f"  {server_status_command(service_port)}")
-    _print_next_action(next_action)
+        _plain(f"Service details: {server_status_command(service_port)}")
+    _print_next_action(_status_next_action(vault_count, code_count, document_count))
 
 
-def _emit_status_json(
-    status: dict[str, object],
-    installation: InstallationReport,
-    *,
-    target: object,
-    service_port: int | None = None,
-) -> None:
-    vault_count, code_count, document_count = _status_counts(status)
+def _emit_status_json(view: _StatusView) -> None:
+    vault_count, code_count, document_count = _status_counts(view.index)
+    service = view.service
     data: dict[str, object] = {
-        "installation": installation.model_dump(mode="json"),
-        "storage_path": str(status["storage_path"]),
+        "service": {
+            "running": service is not None,
+            "port": service.port if service is not None else None,
+        },
+        "installation": view.installation.model_dump(mode="json"),
+        "features": {
+            "preprocess_hooks": view.hooks.value,
+            "preprocess_rule_count": view.hook_rules,
+            "service": (
+                service.health.features.model_dump(mode="json")
+                if service is not None and service.health is not None
+                else None
+            ),
+            "watcher_running": (
+                service.state.root_features.watcher_running
+                if service is not None
+                else None
+            ),
+        },
+        "storage_path": str(view.index.get("storage_path", "")),
         "vault_count": vault_count,
         "code_count": code_count,
         "document_count": document_count,
-        "target_dir": str(target),
-        "backend_capabilities": status.get("backend_capabilities", {}),
+        "target_dir": str(view.target),
+        "backend_capabilities": view.index.get("backend_capabilities", {}),
     }
-    for key in (
-        "policy",
-        "policy_fingerprint",
-        "generations",
-        "generation",
-        "degraded_reasons",
-        "degraded",
-        "support_profile",
-    ):
-        if key in status:
-            data[key] = status[key]
-    if service_port is not None:
-        data["service_port"] = service_port
+    for key in ("generations", "degraded_reasons", "support_profile"):
+        if key in view.index:
+            data[key] = view.index[key]
     _emit_json(True, "status", data=data)
-
-
-def _service_index_status(
-    target: object,
-    *,
-    json_mode: bool,
-) -> tuple[dict[str, object], InstallationReport, int] | None:
-    """Read a running service's index status and its own installation.
-
-    ``None`` means no compatible service answered for this root, and the
-    caller reports from this machine instead.
-    """
-    port = _default_service_port()
-    if port is None:
-        return None
-    result = _try_http_admin(
-        "get_service_state",
-        {"project_root": str(target)},
-        port,
-    )
-    report = parse_report(ServiceStateReport, result)
-    if report is None and _answered(result):
-        _refuse_incompatible_service(port, json_mode=json_mode)
-    if report is None or report.index.get("error"):
-        return None
-    installation = report.installation
-    index_dict = report.index
-    return index_dict, installation, port
 
 
 def _answered(result: object) -> bool:
@@ -345,38 +400,117 @@ def _refuse_incompatible_service(port: int, *, json_mode: bool) -> NoReturn:
     )
 
 
-def _local_installation() -> InstallationReport:
-    """Describe the environment a service started from here would run in.
+def _service_view(target: object, *, json_mode: bool) -> _StatusView | None:
+    """Read a running service's state for this root, and its health.
 
-    Read from package metadata in a child of the daemon interpreter, so this
-    command never imports torch and never claims a device it did not verify.
+    ``None`` means no service answered, and the caller reports from this
+    machine instead.
     """
+    from ..serviceclient._transport import _try_http_health
+
+    port = _default_service_port()
+    if port is None:
+        return None
+    result = _try_http_admin(
+        "get_service_state",
+        {"project_root": str(target)},
+        port,
+    )
+    state = parse_report(ServiceStateReport, result)
+    if state is None and _answered(result):
+        _refuse_incompatible_service(port, json_mode=json_mode)
+    if state is None or state.index.get("error"):
+        return None
+    return _StatusView(
+        target=target,
+        index=state.index,
+        installation=state.installation,
+        hooks=state.root_features.preprocess_hooks,
+        hook_rules=state.root_features.preprocess_rule_count,
+        service=_ServiceView(
+            port=port,
+            state=state,
+            health=parse_report(HealthReport, _try_http_health(port)),
+        ),
+    )
+
+
+def _resolve_local_interpreter() -> str:
+    from ._process import _resolve_daemon_interpreter
+
+    return _resolve_daemon_interpreter()
+
+
+def _same_path(left: str, right: str) -> bool:
+    import os
+
+    def canonical(path: str) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    return canonical(left) == canonical(right)
+
+
+def _local_view(target: object, index: dict[str, object]) -> _StatusView:
+    """Describe this machine, for when no service answers.
+
+    The installation is read from package metadata in a child of the daemon
+    interpreter, so this command never imports torch and never claims a device
+    it did not verify; the hooks are this root's own configuration.
+    """
+    from ..config._settings import get_config
+    from ..indexer._preprocess_config import root_hook_state
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
     from ..operator_state._hardware import read_hardware
-    from ._process import _resolve_daemon_interpreter
 
-    facts = probe_interpreter(_resolve_daemon_interpreter(), ProbeDepth.METADATA)
-    return InstallationReport(
-        role=facts.role,
-        mcp_adapter=facts.mcp_adapter,
-        executable=facts.executable,
-        prefix=facts.prefix,
-        hardware=read_hardware(),
-        compute=facts.compute,
-        local=True,
+    facts = probe_interpreter(_resolve_local_interpreter(), ProbeDepth.METADATA)
+    hooks, rules = root_hook_state(Path(str(target)), get_config().preprocess_mode)
+    return _StatusView(
+        target=target,
+        index=index,
+        installation=InstallationReport(
+            role=facts.role,
+            mcp_adapter=facts.mcp_adapter,
+            executable=facts.executable,
+            prefix=facts.prefix,
+            hardware=read_hardware(),
+            compute=facts.compute,
+            local=True,
+        ),
+        hooks=hooks,
+        hook_rules=rules,
     )
+
+
+def _report(view: _StatusView, *, json_mode: bool, verbose: bool) -> None:
+    if json_mode:
+        _emit_status_json(view)
+        return
+    _render_status_text(view, verbose=verbose)
 
 
 @app.command(
     "status",
-    help="Show project index counts, index data location, and compute device.",
+    help=(
+        "Show the service, this installation's compute, the project's active "
+        "features, and its index."
+    ),
 )
 def handle_status(
     ctx: typer.Context,
     json_mode: JsonMode = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help=(
+                "Also show the interpreter, the support profile limits, and the "
+                "per-domain index generations."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Show project index counts, index data location, and compute device."""
+    """Show the service, this installation's compute, features, and index."""
     state: CLIState = ctx.obj
     target = state.target
 
@@ -384,33 +518,17 @@ def handle_status(
 
     from .._store_locks import VaultStoreLockedError
 
-    service_status = _service_index_status(target, json_mode=json_mode)
-    if service_status is not None:
-        status, installation, service_port = service_status
-        if json_mode:
-            _emit_status_json(
-                status, installation, target=target, service_port=service_port
-            )
-            return
-        _render_status_text(
-            status, installation, target=target, service_port=service_port
-        )
+    view = _service_view(target, json_mode=json_mode)
+    if view is not None:
+        _report(view, json_mode=json_mode, verbose=verbose)
         return
 
     try:
-        status = vaultspec_rag.get_status(target)
+        index = vaultspec_rag.get_status(target)
     except VaultStoreLockedError as exc:
-        service_status = _service_index_status(target, json_mode=json_mode)
-        if service_status is not None:
-            status, installation, service_port = service_status
-            if json_mode:
-                _emit_status_json(
-                    status, installation, target=target, service_port=service_port
-                )
-                return
-            _render_status_text(
-                status, installation, target=target, service_port=service_port
-            )
+        view = _service_view(target, json_mode=json_mode)
+        if view is not None:
+            _report(view, json_mode=json_mode, verbose=verbose)
             return
         if json_mode:
             _emit_json_error_and_exit(
@@ -427,9 +545,4 @@ def handle_status(
         _plain(_format_local_index_busy_message("read index status"))
         raise typer.Exit(code=1) from None
 
-    installation = _local_installation()
-    if json_mode:
-        _emit_status_json(status, installation, target=target)
-        return
-
-    _render_status_text(status, installation, target=target)
+    _report(_local_view(target, index), json_mode=json_mode, verbose=verbose)

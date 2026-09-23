@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:63b35f7ae8e2c389d2b59ef38f8de0db46d2857cfea7e24cf519c1ec261afb0f'
+body_hash: 'sha256:2a04157829635584ed6ce1f8845e72fca58e780bd052ec43165af1893aefe8a6'
 ---
 
 # `status-messages` plan
@@ -104,7 +104,7 @@ Parse the typed wire models in the service client, extend the canonical lifecycl
 
 Render the typed state as plain-language overviews on status, server status, doctor and the jobs view, and close the feature with docs and a manual persona pass.
 
-- [ ] `P05.S08` - rewrite project status as a plain-language overview of service, installation, compute, features and next action with local-only facts when stopped and an interpreter divergence note; `src/vaultspec_rag/cli/_status.py`.
+- [x] `P05.S08` - rewrite project status as a plain-language overview of service, installation, compute, features and next action with local-only facts when stopped and an interpreter divergence note; `src/vaultspec_rag/cli/_status.py`.
 - [ ] `P05.S14` - rewrite server status and doctor output on the shared enums and labels, replacing not-reported rows with one stopped line; `src/vaultspec_rag/cli/_status_render.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/cli/_service_doctor.py`.
 - [ ] `P05.S17` - repoint the jobs TUI health and lifecycle pills at the shared enums; `src/vaultspec_rag/cli/_jobs_tui_status.py, src/vaultspec_rag/cli/_jobs_tui_constants.py`.
 - [ ] `P05.S18` - update user docs and changelog notes for the new status output and breaking JSON fields, and run a manual persona pass on client, host and CPU-build environments; `README.md, docs/`.

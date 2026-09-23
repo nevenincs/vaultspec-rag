@@ -173,6 +173,13 @@ def _status_against(
         return runner.invoke(app, ["server", "status", *args])
 
 
+def _index_degradation(payload: dict[str, object]) -> list[str]:
+    """Render an index payload's degradation as project status does."""
+    from ..cli._status_labels import render_degradation
+
+    return render_degradation(payload, header="Degraded because:")
+
+
 class TestDegradedStatusExplainsItself:
     """A degraded service must report its cause and a runnable remediation.
 
@@ -433,9 +440,7 @@ class TestOneRendererServesEverySurface:
     """
 
     def test_structured_index_records_render_a_cause_not_a_container(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        lines = _status_diagnostics(
+        lines = _index_degradation(
             {
                 "degraded_reasons": [
                     {
@@ -463,19 +468,15 @@ class TestOneRendererServesEverySurface:
         assert not any(("{" in line or "'" in line) for line in lines)
 
     def test_unphrasable_index_record_is_flattened_not_repred(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        lines = _status_diagnostics(
+        lines = _index_degradation(
             {"degraded_reasons": [{"source": "code", "detail": "disk full"}]}
         )
 
         assert lines == ["Degraded because:", "  - source: code, detail: disk full"]
 
     def test_index_status_without_degradation_says_nothing(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        assert _status_diagnostics({"degraded_reasons": []}) == []
-        assert _status_diagnostics({}) == []
+        assert _index_degradation({"degraded_reasons": []}) == []
+        assert _index_degradation({}) == []
 
     def test_compact_shape_lists_causes_without_remediation(self) -> None:
         from ..cli._status_labels import render_degradation
