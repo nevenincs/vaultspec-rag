@@ -34,8 +34,9 @@ class SearchResultItem(BaseModel):
         path: File path relative to the workspace root.
         title: Human-readable document or chunk title.
         score: Relevance score (0.0-1.0 after normalization).
-        snippet: Text excerpt from the matched document or
-            code chunk.
+        snippet: Text excerpt from the matched document or code chunk.
+            For a vault result, the passage that best answers the query,
+            verbatim from the file at ``line_start``-``line_end``.
         source: Origin collection, either ``"vault"`` or
             ``"codebase"``.
         doc_type: Vault document type (e.g., ``"adr"``,
@@ -46,10 +47,9 @@ class SearchResultItem(BaseModel):
             codebase results.
         language: Programming language (e.g., ``"python"``).
             Empty for vault results.
-        line_start: Starting line number in the source file.
-            None for vault results.
+        line_start: Starting line number in the source file. None for a
+            vault result from an index built before spans were stored.
         line_end: Ending line number in the source file.
-            None for vault results.
         node_type: AST node type (e.g.,
             ``"function_definition"``). None for vault results.
         function_name: Function or method name extracted by
@@ -61,6 +61,8 @@ class SearchResultItem(BaseModel):
         preprocessor_id: Id of the preprocessor that produced this result.
         anchor: Deep-link into the source's own addressing scheme.
         locator: Human-readable locator (e.g. ``"page 12"``).
+        section: Heading path above the result's text (e.g.
+            ``"Implementation > Migration"``). None when no heading applies.
     """
 
     model_config = {"from_attributes": True}
@@ -92,6 +94,11 @@ class SearchResultItem(BaseModel):
     extractor_id: str | None = None
     extractor_version: str | None = None
     rerank_text: str | None = Field(default=None, exclude=True)
+
+    @classmethod
+    def serialize(cls, result: object) -> dict[str, object]:
+        """Return one search result's wire form, as every adapter emits it."""
+        return cls.model_validate(result, from_attributes=True).model_dump(mode="json")
 
     @field_validator("document_metadata", "unit_metadata", mode="before")
     @classmethod

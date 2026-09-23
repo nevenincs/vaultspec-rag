@@ -38,14 +38,24 @@ class ScenarioResult:
     source: IndexSource
     result_id: str
     text: str
+    line_start: int | None = None
+    line_end: int | None = None
+    section: str | None = None
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "source": self.source,
             "id": self.result_id,
             "path": self.result_id,
             "snippet": self.text,
         }
+        if self.line_start is not None:
+            payload.update(
+                line_start=self.line_start,
+                line_end=self.line_end,
+                section=self.section,
+            )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +241,16 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
             "scenario-current",
             200,
             (current,),
-            (ScenarioResult("vault", "vault-1", "current result"),),
+            (
+                ScenarioResult(
+                    "vault",
+                    "vault-1",
+                    "current result",
+                    line_start=12,
+                    line_end=14,
+                    section="Considered options",
+                ),
+            ),
         ),
         "updating": SearchReadinessScenario(
             "updating",

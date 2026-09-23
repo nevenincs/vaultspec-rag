@@ -393,7 +393,10 @@ async def search_vault(  # noqa: PLR0913 - MCP exposes the stable flat tool inpu
     audits). ``doc_type`` accepts a single type or a comma-separated union
     (e.g. ``adr,plan``; ``index`` is not searchable). The inline query tokens
     ``intent:``, ``status:``, and ``type:`` are equivalent and also honored.
-    Results carry each document's status and related-document edges.
+    Results carry each document's status and related-document edges. Each
+    hit's ``snippet`` is the passage that best answers the query, verbatim
+    from the file at ``line_start``-``line_end``, under the heading path in
+    ``section``.
     """
     port = _require_port()
     result = await _delegate(
@@ -689,7 +692,7 @@ async def get_index_status(
     )
     report = parse_report(ServiceStateReport, result)
     if report is None:
-        detail = result.get("message") if isinstance(result, dict) else None
+        detail = result.get("message")
         raise ToolError(
             "the service state could not be read"
             + (f": {detail}" if isinstance(detail, str) and detail else "")

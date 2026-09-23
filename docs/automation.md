@@ -111,9 +111,23 @@ vaultspec-rag search "graph rebuild race" --json \
 `data.results` holds one object per hit. The fields you will usually want are
 `id`, `path`, `title`, `score`, `snippet`, and `source`. Each object also
 carries the retrieval metadata for its domain, such as `doc_type`, `feature`,
-and `date` for vault hits, or `language`, `line_start`, `function_name`, and
-`class_name` for code hits. Fields that do not apply to a hit are `null` rather
-than absent, so `jq` paths stay stable across domains.
+and `date` for vault hits, or `language`, `function_name`, and `class_name` for
+code hits. Fields that do not apply to a hit are `null` rather than absent, so
+`jq` paths stay stable across domains.
+
+A vault hit's `snippet` is the passage that best answers the query, up to about
+1,200 characters, and `line_start`/`line_end` give the file lines that hold it.
+`section` names the headings it sits under, such as
+`Implementation > Migration`. Read those lines, not the whole record:
+
+```bash
+vaultspec-rag search "why was an idle timeout rejected" --type vault --json \
+  | jq -r '.data.results[] | "\(.path):\(.line_start)-\(.line_end)  \(.section)"'
+```
+
+A vault index built before these fields existed reports `full_reindex_required`
+until it is rebuilt with `vaultspec-rag index --rebuild --type vault`; until
+then its hits carry `null` spans and a snippet cut from the start of the chunk.
 
 ## Detect success vs error
 

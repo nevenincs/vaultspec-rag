@@ -26,19 +26,25 @@ uv run vaultspec-rag search "how does the watcher debounce changes"
 ```
 
 ```text
-1. .vault/adr/2026-06-02-watcher-targeted-reindex-adr.md
-   adr | feature: watcher-targeted-reindex | 2026-06-02
-   # `watcher-targeted-reindex` adr: `watcher targeted reindex contract` | (**status:** `accepted`)
-2. .vault/adr/2026-06-18-watcher-targeted-reindex-adr.md
-   adr | feature: watcher-targeted-reindex | 2026-06-18
-   ## Consequences
+1. .vault/adr/2026-06-02-watcher-targeted-reindex-adr.md:16-22
+   adr | feature: watcher-targeted-reindex | status: accepted | 2026-06-02 | related: [[2026-06-02-watcher-targeted-reindex-research]] | section: Problem Statement
+   Result of investigating issue #151. The resident watcher reacts to every
+   matched filesystem change by running a full `incremental_index()` pass that
+   ...
+2. .vault/adr/2026-06-18-watcher-targeted-reindex-adr.md:113-116
+   adr | feature: watcher-targeted-reindex | status: accepted | 2026-06-18 | related: [[2026-06-18-watcher-targeted-reindex-research]], [[2026-06-02-watcher-targeted-reindex-plan]] | section: Codification candidates
+   - **Rule slug:** `watcher-flushes-pending-on-idle`.
+     **Rule:** Any application-level debounce or cooldown layered on top of the filesystem
+     ...
 ```
 
-That run is against this project's own vault. Each result is the document, then
-its type and feature, then the passage that matched; ten came back and the first
-two are shown, with each passage cut to its first line. That is the shape every
-example on this page returns, with one addition: `--scores` puts a relevance
-figure after the path, which the section on it shows.
+That run is against this project's own vault. Each result is the document and
+the lines that hold the passage shown, then its type, feature, status, date,
+related records and the section the passage sits under, then the passage itself;
+ten came back and the first two are shown, each passage cut to its first lines.
+That is the shape every example on this page returns, with one addition:
+`--scores` puts a relevance figure after the location, which the section on it
+shows.
 
 To search source code instead, add `--type code`:
 
@@ -77,27 +83,29 @@ uv run vaultspec-rag search "why the service publishes a heartbeat" --type vault
 That run, cut to the first two of its five records:
 
 ```text
-1. .vault/adr/2026-07-21-machine-discovery-recovery-adr.md (score 0.6004)
-   adr | feature: machine-discovery-recovery | 2026-07-21
-   ## Implementation
-
-   **D1 — Machine-pointer mutation is owner-only.** The machine-lock domain owns publication
-   and deletion primitives. A caller may mutate the pointer only while presenting the active
-2. .vault/adr/2026-05-30-service-lifecycle-adr.md (score 0.2748)
-   adr | feature: service-lifecycle | 2026-05-30
-   ## Rationale
-
+1. .vault/adr/2026-07-21-machine-discovery-recovery-adr.md:108-115 (score 0.6008)
+   adr | feature: machine-discovery-recovery | status: accepted | 2026-07-21 | related: ... | section: Implementation
+   **D2 — Heartbeat publication is independent and self-healing.** Each heartbeat constructs
+   one canonical snapshot from daemon-owned runtime identity and configuration rather than
+   requiring an existing storage-specific record. While ownership remains valid, it may
+   ...
+2. .vault/adr/2026-05-30-service-lifecycle-adr.md:144-149 (score 0.2749)
+   adr | feature: service-lifecycle | status: accepted | 2026-05-30 | related: [[2026-05-30-service-lifecycle-research]] | section: Rationale
    A daemon-side atexit + SIGTERM handler is the smallest cut that
    turns "the log went quiet" into "the log explicitly says I died
-   and how". The heartbeat exists for the unreachable case (
+   and how". The heartbeat exists for the unreachable case (SIGKILL,
+   ...
 ```
 
 Two things to read there. The second line of each record is the document's own
-type, feature, and date, so a vault result says what kind of decision it is
-before you open it. And the passages are cut where the chunk ends rather than at
-a sentence, which is what a chunk is: the unit the index stores and scores, not
-a summary written for you. [Writing a query](query-craft.md) covers what the gap
-between 0.6004 and 0.2748 tells you.
+type, status and date, and the section the passage sits under, so a vault
+result says what kind of decision it is and where in it the answer is before
+you open it. And the passage is the paragraph, list or block in that record that
+best answers the query - up to about 1,200 characters, verbatim from the lines
+the location names - not the opening of the record. The index scores whole
+chunks to rank records, then picks the passage to show from the best-ranked
+chunks of each. [Writing a query](query-craft.md) covers what the gap between
+0.6008 and 0.2749 tells you.
 
 If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
 

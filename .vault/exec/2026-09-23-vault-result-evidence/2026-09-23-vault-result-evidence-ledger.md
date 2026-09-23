@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:f9d00eb7e3a8980440cf0089f5ec47dd5bbea5ee3c152630f1b4d4d72ffff3b5'
+body_hash: 'sha256:6cf09c0a0b5e04e4f774ae8838ab0b71ffdf5c1fb662d91f66134374156a50e5'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -58,10 +58,26 @@ related:
 - `S05` `M` `src/vaultspec_rag/cli/_status_labels.py`
 - `S05` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
 - `S05` `verify:` `live status on the pre-bump vault index names 'vaultspec-rag index --rebuild --type vault'` -> `pass`
+- `S07` `M` `src/vaultspec_rag/server/_models.py`
+- `S07` `M` `src/vaultspec_rag/server/_routes_search.py`
+- `S07` `M` `src/vaultspec_rag/cli/_search.py`
+- `S07` `M` `src/vaultspec_rag/cli/_render.py`
+- `S07` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S07` `M` `docs/automation.md`
+- `S07` `M` `docs/indexing.md`
+- `S07` `M` `docs/search-and-index.md`
+- `S07` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S07` `M` `src/vaultspec_rag/tests/_search_readiness_scenarios.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/test_service_search_diagnostics_reporting.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/_helpers.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/test_service_metrics.py`
+- `S07` `A` `src/vaultspec_rag/tests/integration/test_vault_search_adapter_parity.py`
+- `S07` `verify:` `unit and adapter tests (384), resident GPU integration (30), project-wide ty + ruff` -> `pass`
 
 ## Notes
 
 - `S03` research and ADR speedup figure corrected from the scratch 6.6x to the in-service ~3x; the decision is unchanged
 - `S06` test_typesafe_search fixture grown past the 1,200-character passage bound so its snippet-shorter-than-content premise still holds; the assertion is unchanged
 - `S05` correction after close: a refused index job's status finding named the job log, not the rebuild the refusal asks for
+- `S07` mcp/_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
 
