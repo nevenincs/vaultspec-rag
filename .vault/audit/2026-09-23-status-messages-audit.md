@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:63f6a875791ba8e7e158cdda4e8f9bda3dd78af6ba0cac7ef942a9ff026da76d'
+body_hash: 'sha256:ac9b8044f44514fb840dd486e2292d4ec11a325e6802041a8ed5f080d7dbab64'
 related:
   - "[[2026-09-23-status-messages-plan]]"
   - "[[2026-09-23-status-messages-adr]]"
@@ -80,6 +80,29 @@ These were confirmed clean:
 - The MCP path stays torch-free.
 
 After the S13 correction and the S17 changes below, the phase gate passes.
+
+**Final integrated review (P05 close and plan close; commits `799b4dc3` to `e1d656df`):
+revision required.**
+
+- ruff, ruff format and `ty check src` pass.
+- `docs/cli.md` is current.
+- 858 of 859 tests pass.
+
+Confirmed clean:
+
+- The deleted derivations are gone from `src`: `TorchDiagnosis`, the CLI
+  `_compute_state`, the `/health` `cuda` flag, and substring degradation matching.
+- `InstallRole` has one derivation.
+- Remediation is gated on `is_defect`.
+- A stopped service renders as one plain line.
+- `health_answered` rejects both synthetic probe bodies.
+- The torch-free guards exist and name their mutations.
+- No development metadata appears in added lines.
+- The breaking-change footer covers every wire change.
+- The documentation tokens match the code.
+
+After commit `89c799ff`, 1807 tests pass across the touched modules, and the
+hooks-predicate guard passes.
 
 ## Findings
 
@@ -310,6 +333,52 @@ tool's `ToolError` branch. Recorded, not yet addressed.
 
 Owner: P05.S14. Its scope has been widened to the TUI header and cells.
 
+### hooks-predicate-guard-red | high | A committed guard test failed at HEAD
+
+`src/vaultspec_rag/cli/_status_labels.py`
+
+S17's `preprocess_mode_label` compared the reported mode against `"off"`. That
+re-derived whether hooks run, and the single-derivation guard caught it after the P04
+close.
+
+Resolved in `89c799ff`: the label is now a table keyed by mode over the parsed
+`ServiceFeatures`, and the guard passes.
+
+### adr-verbose-full-probe | high | `status --verbose` never ran the verifying probe
+
+`src/vaultspec_rag/cli/_status.py`
+
+Resolved in `89c799ff`:
+
+- `--verbose` now probes the daemon interpreter at the verify depth, and its help says
+  so.
+- A mutation-checked test asserts that the verbose view never reports the unverified
+  `build_present` state.
+
+### duplicate-feature-label-derivations | high | Feature labels were produced twice, once typed and once from raw dicts
+
+`src/vaultspec_rag/cli/_status_labels.py`, `src/vaultspec_rag/cli/_status.py`
+
+Resolved in `89c799ff`. Server status parses the health payload's feature section into
+`ServiceFeatures`, and one producer per feature renders it. Project status calls the
+same producers. A section this build cannot read renders as not reported.
+
+### tui-condition-vocabulary | medium | The jobs view's condition pill keeps its own words
+
+`src/vaultspec_rag/cli/_jobs_tui_header.py`, `src/vaultspec_rag/cli/_jobs_tui_cells.py`
+
+The header's `healthy`, `degraded` and `stalled` pill summarises the job set's
+degradation tallies, which is a different concept from the service's `HealthVerdict`.
+Its `unreachable` names a failed fetch, not a lifecycle state. Mapping it onto the
+service vocabulary would describe jobs with words about the service. S14 already moved
+the service-health tones onto `HealthVerdict`.
+
+Recorded and not changed. A later change could give job health its own enum.
+
+### benchmark-docstring-alias-key | low | A docstring named a deleted key
+
+Resolved in `89c799ff`.
+
 ## Recommendations
 
 - **P04.S06:** decide how a version-mismatched client parses a typed health payload.
@@ -332,3 +401,9 @@ Owner: P05.S14. Its scope has been widened to the TUI header and cells.
   - whether an `error` health verdict or a health-probe failure raises the broker exit
     code;
   - that `server doctor` exits 0 for a starting daemon.
+- **Plan completion:** all 18 Steps are closed, and every critical and high finding is
+  resolved. The only open items are decision-level and need authorization. They are
+  covered by the proposed amendment `2026-09-23-status-messages-exit-codes-adr`:
+  - the `DegradationReason` member list;
+  - the broker exit code for an `error` health verdict;
+  - `server doctor`'s exit code for a starting daemon.

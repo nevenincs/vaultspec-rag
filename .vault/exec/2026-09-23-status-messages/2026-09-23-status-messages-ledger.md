@@ -213,4 +213,3 @@ related:
 - `S18` Release-please builds the changelog, so the release notes travel as a BREAKING CHANGE footer; the client persona against a stopped service was exercised through the production local-report path because another session's live service holds the machine singleton and was not stopped; the doctor torch line now appends the probe detail only where it is the diagnosis; new vault records formatted with mdformat
 - `S17` Final review corrections: feature labels are produced once from the parsed ServiceFeatures (the preprocess label is a table keyed by mode, so no off comparison re-derives whether hooks run); project status calls the same producers; benchmark docstring corrected to the emitted keys
 - `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
-

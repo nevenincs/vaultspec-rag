@@ -15,6 +15,7 @@ related:
   - "[[2026-06-10-preprocess-hooks-adr]]"
   - "[[2026-09-08-search-readiness-contract-adr]]"
   - "[[2026-06-24-service-doctor-liveness-adr]]"
+  - '[[2026-09-23-status-messages-exit-codes-adr]]'
 ---
 
 # `status-messages` adr: `canonical typed operator state model` | (**status:** `accepted`)
