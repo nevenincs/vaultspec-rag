@@ -175,6 +175,46 @@ def vault_row_passages(
     return tuple(passages)
 
 
+#: Bounds the passages scored for one result: its winning chunk's come first,
+#: so the bound only ever trims the tail of its runner-up chunk's.
+MAX_PASSAGES_PER_RESULT = 12
+
+#: Bounds the (query, passage) pairs one results page scores. Scoring costs
+#: about as much per token as the chunk rerank, and a full ten-result page
+#: offers around a hundred passages; the budget is spent in rank order, where
+#: the answer almost always is, and results past it keep their first passage.
+PASSAGE_PAIRS_PER_PAGE = 48
+
+
+def passage_pairs(
+    query: str, results: list[SearchResult]
+) -> tuple[list[tuple[str, str]], list[tuple[SearchResult, ResultPassage]]]:
+    """Choose the (query, passage) pairs a page scores, and whose each one is.
+
+    Every result first shows its leading candidate. A result with several
+    candidates enters scoring whole, in rank order, while the page budget can
+    take all of them; once a result would overrun it, no later result is
+    scored, so the budget never splits one result's candidates.
+    """
+    pairs: list[tuple[str, str]] = []
+    owners: list[tuple[SearchResult, ResultPassage]] = []
+    budget = PASSAGE_PAIRS_PER_PAGE
+    for result in results:
+        candidates = result.passages[:MAX_PASSAGES_PER_RESULT]
+        if candidates:
+            show_passage(result, candidates[0])
+        if len(candidates) < 2:
+            continue
+        if len(candidates) > budget:
+            budget = 0
+            continue
+        budget -= len(candidates)
+        for passage in candidates:
+            pairs.append((query, passage.text))
+            owners.append((result, passage))
+    return pairs, owners
+
+
 def show_passage(result: SearchResult, passage: ResultPassage) -> None:
     """Make *passage* the result's snippet, span and section."""
     result.snippet = passage.text

@@ -47,6 +47,7 @@ from ._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
     PHASE_RESULT_MAPPING,
+    passage_pairs,
     show_passage,
     vault_row_passages,
 )
@@ -100,10 +101,6 @@ logger = logging.getLogger(__name__)
 # Keep the older queue keys below for wire compatibility, but do not make a
 # generic queue total the only way to recover which resource owned the wait.
 GPU_COMPUTE_WAIT_SECONDS = f"{SearchWaitCause.GPU_COMPUTE.value}_wait_seconds"
-
-#: Bounds the passages scored for one result: its winning chunk's come first,
-#: so the bound only ever trims the tail of its runner-up chunk's.
-_MAX_PASSAGES_PER_RESULT = 12
 
 
 class _Rerankable(Protocol):
@@ -685,21 +682,13 @@ class VaultSearcher:
     ) -> None:
         """Show each result the passage that best answers the query.
 
-        Every result's candidate passages are scored by the reranker in one
-        batched forward; a result with a single candidate needs no scoring.
-        With the reranker disabled each result keeps its first passage.
+        The page's candidate passages, chosen and bounded by
+        :func:`passage_pairs`, are scored by the reranker in one batched
+        forward; a result with a single candidate needs no scoring. With the
+        reranker disabled each result keeps its first passage.
         """
         phase_started = time.perf_counter()
-        pairs: list[tuple[str, str]] = []
-        owners: list[tuple[SearchResult, ResultPassage]] = []
-        for result in results:
-            candidates = result.passages[:_MAX_PASSAGES_PER_RESULT]
-            if candidates:
-                show_passage(result, candidates[0])
-            if len(candidates) > 1:
-                for passage in candidates:
-                    pairs.append((encoded.text, passage.text))
-                    owners.append((result, passage))
+        pairs, owners = passage_pairs(encoded.text, results)
         if pairs and self._reranker_enabled:
             scores = self._predict_scores(pairs, timings=encoded.timings)
             best: dict[int, tuple[float, ResultPassage]] = {}

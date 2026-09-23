@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:243325050fd71decb0cd31bd73917678afdbbe382ecf92b1cfbaa8da05aa6ec5'
+body_hash: 'sha256:327ab3553ed699ed0ac2a8a3dee184354479fc89045643a058c2720e1447de6b'
 ---
 
 # `vault-result-evidence` plan
@@ -78,7 +78,7 @@ Delivers the title, section and chunk-text vault embedding input from one functi
 
 Delivers calibrated gate floors, the cross-corpus re-run of the issue's query sets, the latency check, and the closing review.
 
-- [ ] `P06.S09` - record gate floors from the passing run, re-run the issue's query sets and the latency measurement, and file the results in the feature audit; `src/vaultspec_rag/tests/quality/evidence_baseline.json`.
+- [x] `P06.S09` - record gate floors from the passing run, re-run the issue's query sets and the latency measurement, and file the results in the feature audit; `src/vaultspec_rag/tests/quality/evidence_baseline.json`.
 
 ## Parallelization
 
