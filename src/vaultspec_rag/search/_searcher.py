@@ -682,23 +682,28 @@ class VaultSearcher:
     ) -> None:
         """Show each result the passage that best answers the query.
 
-        The page's candidate passages, chosen and bounded by
-        :func:`passage_pairs`, are scored by the reranker in one batched
-        forward; a result with a single candidate needs no scoring. With the
-        reranker disabled each result keeps its first passage, and so does
-        every result when scoring runs out of accelerator memory: the page is
-        already ranked, and a first passage is a lesser snippet, not a failure.
+        Every result first shows its leading candidate. The page's candidate
+        passages, chosen and bounded by :func:`passage_pairs`, are then scored
+        by the reranker in one batched forward; a result with a single
+        candidate needs no scoring. With the reranker disabled each result
+        keeps its first passage, and so does every result when scoring runs
+        out of accelerator memory: the page is already ranked, and a first
+        passage is a lesser snippet, not a failure.
         """
         phase_started = time.perf_counter()
+        for result in results:
+            if result.passages:
+                show_passage(result, result.passages[0])
         pairs, owners = passage_pairs(encoded.text, results)
         scores: list[float] | None = None
         if pairs and self._reranker_enabled:
             from .._gpu import load_accelerator
 
+            accelerator = load_accelerator()
             try:
                 scores = self._predict_scores(pairs, timings=encoded.timings)
-            except Exception as exc:
-                if not load_accelerator().is_out_of_memory(exc):
+            except BaseException as exc:
+                if not accelerator.is_out_of_memory(exc):
                     raise
                 logger.warning(
                     "passage selection ran out of accelerator memory; "

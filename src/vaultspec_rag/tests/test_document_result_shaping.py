@@ -150,9 +150,7 @@ def test_passage_pairs_spend_the_page_budget_in_rank_order() -> None:
     assert scored == {f"r{rank}" for rank in range(whole_results)}
     assert len(pairs) == whole_results * MAX_PASSAGES_PER_RESULT
     assert all(query == "query" for query, _ in pairs)
-    assert [result.snippet for result in page] == [
-        f"r{rank} passage 0" for rank in range(6)
-    ]
+    assert all(result.snippet == "chunk head" for result in page)
 
 
 def test_passage_pairs_never_split_a_result_across_the_budget() -> None:
@@ -169,9 +167,8 @@ def test_passage_pairs_never_split_a_result_across_the_budget() -> None:
     }
 
 
-def test_a_single_candidate_is_shown_without_being_scored() -> None:
+def test_a_single_candidate_is_not_scored() -> None:
     page = [_located("single", 1)]
     pairs, _owners = passage_pairs("query", page)
     assert pairs == []
-    assert page[0].snippet == "single passage 0"
-    assert (page[0].line_start, page[0].section) == (10, "Options")
+    assert page[0].snippet == "chunk head"

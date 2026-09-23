@@ -601,3 +601,43 @@ class TestPassageSelectionUnderMemoryExhaustion:
             12,
             "Options",
         )
+
+
+class TestPassageSelectionWithoutReranker:
+    """With reranking off, every result on the page shows its first passage."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_each_result_shows_its_leading_passage(self) -> None:
+        from ..search._models import ResultPassage
+        from ..search._searcher import VaultSearcher, _EncodedSearchQuery
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker_enabled = False
+        page: list[SearchResult] = []
+        for name, count in (("several", 3), ("single", 1), ("none", 0)):
+            result = SearchResult(
+                id=f"adr/{name}",
+                path=f".vault/adr/{name}.md",
+                title=name,
+                score=0.5,
+                snippet="chunk head",
+                source="vault",
+            )
+            result.passages = tuple(
+                ResultPassage(f"{name} passage {n}", 20 + n, 20 + n, "Options")
+                for n in range(count)
+            )
+            page.append(result)
+        encoded = _EncodedSearchQuery(
+            ParsedQuery(text="q", filters={}), "q", [1.0], None, len(page), {}
+        )
+
+        searcher._select_passages(encoded, page)
+
+        assert [result.snippet for result in page] == [
+            "several passage 0",
+            "single passage 0",
+            "chunk head",
+        ]
+        assert [result.line_start for result in page] == [20, 20, None]

@@ -191,18 +191,16 @@ def passage_pairs(
 ) -> tuple[list[tuple[str, str]], list[tuple[SearchResult, ResultPassage]]]:
     """Choose the (query, passage) pairs a page scores, and whose each one is.
 
-    Every result first shows its leading candidate. A result with several
-    candidates enters scoring whole, in rank order, while the page budget can
-    take all of them; once a result would overrun it, no later result is
-    scored, so the budget never splits one result's candidates.
+    A result with several candidates enters scoring whole, in rank order,
+    while the page budget can take all of them; once a result would overrun
+    it, no later result is scored, so the budget never splits one result's
+    candidates. The results themselves are left untouched.
     """
     pairs: list[tuple[str, str]] = []
     owners: list[tuple[SearchResult, ResultPassage]] = []
     budget = PASSAGE_PAIRS_PER_PAGE
     for result in results:
         candidates = result.passages[:MAX_PASSAGES_PER_RESULT]
-        if candidates:
-            show_passage(result, candidates[0])
         if len(candidates) < 2:
             continue
         if len(candidates) > budget:

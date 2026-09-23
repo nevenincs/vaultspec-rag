@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:474eb786212c5b4843c5d04b75f5b90882af54420f0bb7777dbf97657283c5c6'
+body_hash: 'sha256:180fa5902ae3a2a65df07c22e62725b0eb0c8361c6223132a132e3d93ffdeed6'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -94,6 +94,8 @@ related:
 - `S07` `M` `src/vaultspec_rag/tests/integration/test_vault_search_adapter_parity.py`
 - `S07` `verify:` `snippet check removed renders an edited file's current line, restored renders the snippet` -> `pass`
 - `S04` `verify:` `list-item and quote exclusion removed fails both cases, restored passes` -> `pass`
+- `S09` `M` `src/vaultspec_rag/tests/test_search_unit.py`
+- `S09` `verify:` `evidence, intent, testimonial, GPU integration (42) and CLI/MCP parity` -> `pass`
 
 ## Notes
 
@@ -108,4 +110,5 @@ related:
 - `S06` review correction: passage scoring that runs out of accelerator memory now leaves each result its first passage instead of failing a ranked page
 - `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
 - `S04` plan-close review correction: an underline under a list item or block quote is a thematic break, not a setext heading
+- `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
 
