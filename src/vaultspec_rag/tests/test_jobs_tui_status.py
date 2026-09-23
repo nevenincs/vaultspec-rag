@@ -46,7 +46,6 @@ _HEALTH: dict[str, object] = {
         "version": "1.18.2",
     },
     "pid": 58400,
-    "cuda": True,
     "models_loaded": True,
     "project_count": 1,
     "uptime_s": 8384.4,

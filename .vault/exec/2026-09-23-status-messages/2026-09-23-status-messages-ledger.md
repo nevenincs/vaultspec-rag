@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:ea91afbbacf65406a806c5d3929d69a69c6540f56e62c84a22f0e8c36b260553'
+body_hash: 'sha256:07f5b8178218a2781637b4d22ba03956fbf37c3bd38dadae055291f9488d5d72'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -135,6 +135,8 @@ related:
 - `S06` `M` `src/vaultspec_rag/tests/test_cli_status.py`
 - `S06` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
 - `S06` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S11` `M` `src/vaultspec_rag/tests/test_serving_verdict_parity.py`
+- `S11` `verify:` `pytest verdict parity and jobs TUI status` -> `pass`
 
 ## Notes
 
@@ -149,4 +151,5 @@ related:
 - `S12` Reading the running service's preprocess mode moved to S16 (plan row corrected) because the service only publishes its mode with the typed feature section; preprocess status JSON gains a hooks state value; the effect line now renders from PreprocessHookState
 - `S16` Project status Compute line now renders from the service's installation report or a labelled local metadata probe (overlapping S08, which reworks the layout); status JSON and index status lose accelerator and count alias keys; /health moves typesafe and reranker state under features; MPS working-set memory moved into ComputeReport; integration assertions updated statically, not run
 - `S06` The typed parse fails closed: a payload from another release parses to None and the caller reports the version or falls back locally, resolving the P01 forward-compatibility finding without relaxing extra=forbid; renderers still reading raw health sections move onto HealthReport in P05
+- `S11` P03 review high finding: fixtures still carried the removed cuda health key; ty check of the whole tree now runs at each Step instead of the touched subset
 
