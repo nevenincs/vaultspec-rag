@@ -74,6 +74,8 @@ def test_a_proof_from_an_older_point_schema_asks_for_a_rebuild(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An index built before the current chunk payload shape is not carried on."""
+    # Only an older build writes an older-schema proof; lowering the constant
+    # for this one rebuild lets the real ledger record it and then refuse it.
     monkeypatch.setattr(
         _vault_checkpoint,
         "VAULT_POINT_SCHEMA",

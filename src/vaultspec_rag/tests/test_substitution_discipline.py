@@ -239,6 +239,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "a real owner while every durable scope and job-history transition remains "
         "real",
     ),
+    "test_vault_checkpoint.py": (
+        1,
+        "a proof written under an older vault point schema can only come from an "
+        "older build; lowering the schema constant for the one rebuild that writes "
+        "it lets the real ledger record and then refuse that proof, with every "
+        "ledger, signature and publication step left real",
+    ),
 }
 
 
