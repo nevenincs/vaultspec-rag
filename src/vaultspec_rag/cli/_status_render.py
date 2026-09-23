@@ -32,6 +32,12 @@ from .._operator_commands import (
 from .._process_probe import pid_alive as _pid_alive
 from .._timestamps import age_seconds
 from .._units import human_bytes
+from ..operator_state._service import (
+    EXIT_FAULT,
+    EXIT_RUNNING,
+    EXIT_STARTING,
+    EXIT_STOPPED,
+)
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
@@ -43,10 +49,6 @@ from ..serviceclient._discovery import (
 )
 from ..serviceclient._search_transport import probe_unavailable
 from ..serviceclient._status import (
-    EXIT_FAULT,
-    EXIT_RUNNING,
-    EXIT_STOPPED,
-    EXIT_WARMING,
     LABEL_CRASHED_HEARTBEAT_STALE,
     LABEL_CRASHED_PORT_SILENT,
     LABEL_WARMING,
@@ -283,7 +285,7 @@ def _compute_state(
     # are expected, not crash signals. Checked before both so a warming daemon
     # never renders as crashed. An absent phase keeps the pre-phase semantics.
     if phase == SERVICE_PHASE_WARMING:
-        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING
+        return STATUS_WARMING, LABEL_WARMING, EXIT_STARTING
     if not port_listening:
         return "crashed_port_silent", LABEL_CRASHED_PORT_SILENT, EXIT_FAULT
     if heartbeat_stale:
@@ -1081,7 +1083,7 @@ def _explicit_port_state(
     # report the warmup window instead of a contradictory "stopped" (the
     # machine lock is held). A reused pid must not resurrect a stale stamp.
     if phase == SERVICE_PHASE_WARMING and pid_alive and pid_is_ours:
-        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING, False
+        return STATUS_WARMING, LABEL_WARMING, EXIT_STARTING, False
     return STATUS_STOPPED, STATUS_STOPPED, EXIT_STOPPED, False
 
 

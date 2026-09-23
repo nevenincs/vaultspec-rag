@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:e66e85324c3439857f22e3c56ac69c88e51c6f233e78f68bc9ffd1162968299f'
+body_hash: 'sha256:d5681f9481b35e3de64b06d4d1a5607cc13c7af8008bfa5ef7b485c70ba70df9'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -43,4 +43,15 @@ related:
 - `S01` `A` `src/vaultspec_rag/operator_state/_installation.py`
 - `S01` `A` `src/vaultspec_rag/tests/test_operator_state.py`
 - `S01` `verify:` `ruff check, ruff format --check, ty check` -> `pass`
+- `S02` `A` `src/vaultspec_rag/operator_state/_service.py`
+- `S02` `A` `src/vaultspec_rag/operator_state/_features.py`
+- `S02` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S02` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S02` `M` `src/vaultspec_rag/serviceclient/_status.py`
+- `S02` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S02` `verify:` `ruff, ruff format, ty on touched files` -> `pass`
 
+## Notes
+
+- `S02` DegradationReason adds JOBS_DEGRADED beyond the ADR's list because the service already emits an 'indexing jobs are degraded' reason; broker exit codes moved into operator_state._service as their single home

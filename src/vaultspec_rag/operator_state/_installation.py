@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from .._operator_commands import server_doctor_command
+
 __all__ = ["ComputeCapability", "HardwarePresence", "InstallRole"]
 
-_DOCTOR = "`vaultspec-rag server doctor` prints the exact command for this environment."
+_DOCTOR = f"`{server_doctor_command()}` prints the exact command for this environment."
 
 
 class InstallRole(StrEnum):
@@ -37,8 +39,8 @@ class InstallRole(StrEnum):
 class HardwarePresence(StrEnum):
     """Which accelerator the machine has, read without importing torch."""
 
-    NVIDIA_GPU = "nvidia-gpu"
-    APPLE_SILICON = "apple-silicon"
+    NVIDIA_GPU = "nvidia_gpu"
+    APPLE_SILICON = "apple_silicon"
     NONE = "none"
     UNKNOWN = "unknown"
 
@@ -61,15 +63,15 @@ class ComputeCapability(StrEnum):
     did not finish and must never be rendered as a failure.
     """
 
-    NOT_APPLICABLE = "not-applicable"
+    NOT_APPLICABLE = "not_applicable"
     READY = "ready"
-    BUILD_PRESENT = "build-present"
-    TORCH_MISSING = "torch-missing"
-    TORCH_IMPORT_FAILED = "torch-import-failed"
-    CPU_ONLY_BUILD = "cpu-only-build"
-    NO_DEVICE = "no-device"
-    MPS_POLICY_REFUSED = "mps-policy-refused"
-    INTERPRETER_MISSING = "interpreter-missing"
+    BUILD_PRESENT = "build_present"
+    TORCH_MISSING = "torch_missing"
+    TORCH_IMPORT_FAILED = "torch_import_failed"
+    CPU_ONLY_BUILD = "cpu_only_build"
+    NO_DEVICE = "no_device"
+    MPS_POLICY_REFUSED = "mps_policy_refused"
+    INTERPRETER_MISSING = "interpreter_missing"
     UNKNOWN = "unknown"
 
     @property
@@ -131,7 +133,7 @@ class ComputeCapability(StrEnum):
                 "is incomplete."
             ),
             ComputeCapability.UNKNOWN: (
-                "Run `vaultspec-rag server doctor` to check this environment."
+                f"Run `{server_doctor_command()}` to check this environment."
             ),
         }[self]
 

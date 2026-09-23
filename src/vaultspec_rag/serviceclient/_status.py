@@ -14,6 +14,12 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..operator_state._service import (
+    EXIT_FAULT,
+    EXIT_RUNNING,
+    EXIT_STARTING,
+    EXIT_STOPPED,
+)
 from ._discovery import (
     DISCOVERY_SOURCE_MACHINE_POINTER,
     DISCOVERY_STATE_ABSENT,
@@ -38,15 +44,6 @@ STATUS_STOPPED = "stopped"
 STATUS_CRASHED = "crashed"
 STATUS_DEGRADED = "degraded_discovery"
 
-#: Exit codes. These mirror the established broker-facing contract - 0 running,
-#: 3 stopped, 4 a service that should be serving but is not, 5 warming - so a
-#: degraded discovery verdict rides the existing 4 rather than introducing a
-#: new code that every supervising broker would have to learn.
-EXIT_RUNNING = 0
-EXIT_STOPPED = 3
-EXIT_FAULT = 4
-EXIT_WARMING = 5
-
 #: The sentences an operator reads for the conditions both the service verdict
 #: and the CLI's own signal ladder can reach. The CLI derives a finer state
 #: token than this module does - it distinguishes a dead pid from a reused one,
@@ -59,10 +56,6 @@ LABEL_CRASHED_PORT_SILENT = "crashed (port silent)"
 LABEL_CRASHED_HEARTBEAT_STALE = "crashed (heartbeat stale)"
 
 __all__ = [
-    "EXIT_FAULT",
-    "EXIT_RUNNING",
-    "EXIT_STOPPED",
-    "EXIT_WARMING",
     "LABEL_CRASHED_HEARTBEAT_STALE",
     "LABEL_CRASHED_PORT_SILENT",
     "LABEL_WARMING",
@@ -240,7 +233,7 @@ def _discovery_status_fields(
             facts.phase == SERVICE_PHASE_WARMING,
             STATUS_WARMING,
             LABEL_WARMING,
-            EXIT_WARMING,
+            EXIT_STARTING,
         ),
         (
             not facts.port_listening,
