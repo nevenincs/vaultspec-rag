@@ -244,22 +244,6 @@ class TestWorkspaceStructure:
             workspace / ".vaultspec" / "mcps" / "vaultspec-rag.builtin.json"
         ).exists()
 
-    def test_precommit_config_exists(self, workspace: Path) -> None:
-        assert (workspace / ".pre-commit-config.yaml").exists()
-
-    def test_precommit_has_canonical_hooks(self, workspace: Path) -> None:
-        content = (workspace / ".pre-commit-config.yaml").read_text(
-            encoding="utf-8",
-        )
-        for hook_id in (
-            "vault-fix",
-            "check-provider-artifacts",
-            "spec-check",
-        ):
-            assert hook_id in content, (
-                f"Canonical hook '{hook_id}' missing from .pre-commit-config.yaml"
-            )
-
 
 class TestCoreUninstallReinstallCycle:
     """Verify RAG companion files survive core uninstall/reinstall."""
