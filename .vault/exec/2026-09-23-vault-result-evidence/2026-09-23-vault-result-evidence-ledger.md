@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:b44f49cb4ecbd2c66e6b27b31dd3e7c7381cff0e0d8fbca481d8d37faff1c05c'
+body_hash: 'sha256:f9d00eb7e3a8980440cf0089f5ec47dd5bbea5ee3c152630f1b4d4d72ffff3b5'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -55,9 +55,13 @@ related:
 - `S06` `M` `src/vaultspec_rag/tests/integration/test_vault_evidence_gate.py`
 - `S06` `M` `src/vaultspec_rag/tests/quality/evidence_baseline.json`
 - `S06` `verify:` `unit and adapter tests (384) and resident GPU integration (30)` -> `pass`
+- `S05` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S05` `verify:` `live status on the pre-bump vault index names 'vaultspec-rag index --rebuild --type vault'` -> `pass`
 
 ## Notes
 
 - `S03` research and ADR speedup figure corrected from the scratch 6.6x to the in-service ~3x; the decision is unchanged
 - `S06` test_typesafe_search fixture grown past the 1,200-character passage bound so its snippet-shorter-than-content premise still holds; the assertion is unchanged
+- `S05` correction after close: a refused index job's status finding named the job log, not the rebuild the refusal asks for
 

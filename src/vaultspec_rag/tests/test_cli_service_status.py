@@ -467,6 +467,27 @@ class TestOneRendererServesEverySurface:
         # line, printing Python syntax at an operator.
         assert not any(("{" in line or "'" in line) for line in lines)
 
+    def test_a_refused_incremental_names_the_rebuild_for_its_source(self) -> None:
+        lines = _index_degradation(
+            {
+                "degraded_reasons": [
+                    {
+                        "source": "vault",
+                        "job_id": _FAILED_JOB_ID,
+                        "reason": "failed",
+                        "error_kind": "full_reindex_required",
+                    },
+                ]
+            }
+        )
+
+        assert lines == [
+            "Degraded because:",
+            "  - the vault index job failed: full_reindex_required",
+            "    job e8f8ac43",
+            "    vaultspec-rag index --rebuild --type vault",
+        ]
+
     def test_unphrasable_index_record_is_flattened_not_repred(self) -> None:
         lines = _index_degradation(
             {"degraded_reasons": [{"source": "code", "detail": "disk full"}]}

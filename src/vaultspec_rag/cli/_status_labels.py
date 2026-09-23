@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
+from .._job_errors import JobErrorKind
 from .._job_values import text
 from .._operator_commands import (
     IndexCommandOptions,
@@ -622,11 +623,27 @@ def _domain_cause(record: dict[str, object]) -> str:
     return f"{domain} {phrase}{f': {kind}' if kind else ''}"
 
 
+#: Sources a single index rebuild addresses; ``combined`` is a selection
+#: across them, never the source of one job.
+_REBUILDABLE_SOURCES = frozenset(
+    {PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT}
+)
+
+
 def _domain_degradation(record: dict[str, object]) -> DegradedFinding:
     """Turn one structured per-domain index degradation into a finding."""
     raw_job_id = record.get("job_id")
     job_id = raw_job_id.strip() if isinstance(raw_job_id, str) else ""
     _, command = _DOMAIN_REASONS.get(str(record.get("reason")), ("", ""))
+    source = record.get("source")
+    if (
+        _error_kind(record) == JobErrorKind.FULL_REINDEX_REQUIRED.value
+        and isinstance(source, str)
+        and source in _REBUILDABLE_SOURCES
+    ):
+        # The job's own logs only restate the refusal; the remedy is the
+        # rebuild it asks for, and no other command clears it.
+        command = index_command(source, IndexCommandOptions(rebuild=True))
     if not command and job_id:
         command = f"vaultspec-rag server logs --job-id {job_id}"
     return DegradedFinding(
