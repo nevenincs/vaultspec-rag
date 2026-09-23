@@ -508,7 +508,7 @@ class VaultSearcher:
         model_pairs: list[PairInput] = list(pairs)  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
         batch_size = get_config().reranker_batch_size
         raw_scores = None
-        with self._gpu_section(timings):
+        with self._gpu_section(timings), accelerator.half_accumulation():
             while True:
                 try:
                     raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete

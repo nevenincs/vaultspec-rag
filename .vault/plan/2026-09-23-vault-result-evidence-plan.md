@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:edb879bed82c1302a4e09db29311dc95d2bcf5fc45bab09143a4f4ab56f856d4'
+body_hash: 'sha256:30cfa67653113eab7d0dbec7a563a8e2318b12798005de7689347633479dc366'
 ---
 
 # `vault-result-evidence` plan
@@ -104,7 +104,7 @@ Delivers a controlled comparison that separates the embedding-input format from 
 
 Delivers a profiled vault search path and every inference lever that cuts its time while holding the quality gates; latency is measured and reported as indicative, never gated.
 
-- [ ] `P05c.S15` - profile vault search end to end and apply each inference lever that cuts time while holding the quality gates: attention kernel, compilation, tokenisation, candidate window, and score reuse; `src/vaultspec_rag/search/, src/vaultspec_rag/embeddings.py, src/vaultspec_rag/service.py`.
+- [x] `P05c.S15` - profile vault search end to end and apply each inference lever that cuts time while holding the quality gates: attention kernel, compilation, tokenisation, candidate window, and score reuse; `src/vaultspec_rag/search/, src/vaultspec_rag/embeddings.py, src/vaultspec_rag/service.py`.
 
 ### Phase `P06` - calibrate the gate and close
 

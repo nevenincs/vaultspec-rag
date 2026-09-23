@@ -248,6 +248,58 @@ def test_resolver_refuses_cpu_only_torch() -> None:
     assert str(raised.value) == ACCELERATOR_REQUIRED_MESSAGE
 
 
+def _matmul_switch(*, enabled: bool) -> SimpleNamespace:
+    return SimpleNamespace(allow_fp16_accumulation=enabled)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("previous", [False, True])
+def test_half_accumulation_holds_only_inside_its_block(previous: bool) -> None:
+    """The process-wide switch is on inside the block and restored after.
+
+    Mutation: dropped the ``finally`` restore. The raising block then left the
+    switch on and this failed on the post-block equality.
+    """
+    from .._gpu import AcceleratorContext
+
+    matmul = _matmul_switch(enabled=previous)
+    fake = SimpleNamespace(
+        backends=SimpleNamespace(cuda=SimpleNamespace(matmul=matmul))
+    )
+    accelerator = AcceleratorContext(
+        torch=cast("ModuleType", fake),
+        backend="cuda",
+        device="cuda",
+        name="test CUDA",
+        memory_kind="vram",
+    )
+    with (
+        pytest.raises(RuntimeError, match="forward failed"),
+        accelerator.half_accumulation(),
+    ):
+        assert matmul.allow_fp16_accumulation is True
+        raise RuntimeError("forward failed")
+    assert matmul.allow_fp16_accumulation is previous
+
+
+@pytest.mark.unit
+def test_half_accumulation_leaves_other_backends_alone() -> None:
+    """MPS has no such switch; the block runs without touching torch."""
+    from .._gpu import AcceleratorContext
+
+    accelerator = AcceleratorContext(
+        torch=cast("ModuleType", SimpleNamespace()),
+        backend="mps",
+        device="mps",
+        name="test MPS",
+        memory_kind="unified",
+    )
+    ran = False
+    with accelerator.half_accumulation():
+        ran = True
+    assert ran
+
+
 @pytest.mark.unit
 def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     """The gate returns a supported accelerator or fails hard, without mocks.

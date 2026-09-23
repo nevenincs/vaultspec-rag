@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:75cbed2425058e3e9e94683ef4f7173fbedf3b7625554b345f5ddc1f6f5cd4fc'
+body_hash: 'sha256:e98a73b4a0a840082fd0e6f007f78dd914dcb37157f14b3fd4f3640a3a71454e'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -119,6 +119,11 @@ related:
 - `S14` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
 - `S14` `M` `.vault/adr/2026-06-12-service-concurrency-adr.md`
 - `S14` `verify:` `vault check modified-stamp` -> `pass`
+- `S15` `M` `src/vaultspec_rag/_gpu.py`
+- `S15` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
+- `S15` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S15` `verify:` `half-accumulation restore mutation (finally removed fails the post-block equality; restored passes)` -> `pass`
 
 ## Notes
 
@@ -135,4 +140,5 @@ related:
 - `S04` plan-close review correction: an underline under a list item or block quote is a thematic break, not a setext heading
 - `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
 - `S13` variants measured through a scratch harness outside the tree; no measurement code committed
+- `S15` service latency re-measurement deferred: host CPU saturated by another session's test run
 

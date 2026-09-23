@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:0924936b4a3ded1e1f9ca337bf1a9ffe5b1a5f47ab3a50bb49edc69ed9eca3ea'
+body_hash: 'sha256:db113803af7df50a94cb8494e2fe6abc0a36d5d09eb99b052e860cba0ce79161'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -154,6 +154,46 @@ was discarded: it ran while another GPU consumer was active on the host.
   service finding and the per-domain one (`src/vaultspec_rag/cli/_status_labels.py:674`).
   The resilience integration test caught managed jobs, whose source lives in the job
   spec, before the accessor was used.
+
+### inference-levers | medium | fp16 accumulation cuts both reranker forwards by a fifth with ranking unchanged; the other levers are spent or change ranking
+
+After the user accepted the 0.712 s median and ruled the target indicative, each
+untried lever was profiled. The workload was the reranker on real vaultspec-core vault
+text: 40 chunk pairs and 48 passage pairs per query, over the 21 dev queries, with
+medians reported.
+
+| Lever | Chunk rerank | Passage scoring | Outcome |
+| --- | --- | --- | --- |
+| Current: fp16 weights, SDPA attention | 393-402 ms | 164-178 ms | baseline, exactly repeatable |
+| fp16 matrix accumulation | 313-327 ms | 135-148 ms | shipped |
+| Eager attention | 734 ms | 224 ms | SDPA is already the default |
+
+- **fp16 accumulation.** Consumer CUDA cards run fp16 products with fp16 accumulation
+  at twice the fp32-accumulation rate.
+  - *Scope.* The switch is process-wide, so `AcceleratorContext.half_accumulation`
+    holds it only around the reranker forward, under the GPU lock
+    (`src/vaultspec_rag/_gpu.py`, `src/vaultspec_rag/search/_searcher.py`
+    `_predict_scores`). Toggling it per call costs nothing measurable.
+  - *Score drift.* Scores move by at most 0.0064.
+  - *Gates.* Both corpora keep hit@1, MRR, evidence and section match identical, and
+    the testimonials pass. One intent query's NDCG@10 moved from 0.505 to 0.500.
+- **Compilation and flash attention.** Neither is available on this host: no Triton
+  build for Windows, and flash-attn is not installed.
+- **Batching.** The library already length-sorts pairs before batching, and batch size
+  changed nothing earlier.
+- **Tokenization.** 40 chunk pairs take about 48 ms. It runs inside the library's
+  predict, which the GPU rule sanctions calling under the lock. Moving it out would copy
+  the library's predict loop to shorten lock hold time, not single-search latency.
+- **Candidate window and token bound.** Both change ranking. The token bound's cost is
+  recorded under search-latency. The heading-path-embedding comparison shows how a
+  20-candidate window already displaces an authority.
+
+Chunk candidates run 443 / 867 / 1024 tokens at p10 / p50 / p90. The chunk rerank is
+compute-bound on those tokens, so the remaining large levers change what is scored.
+
+**Service measurement.** A service run on the same 18 searches as the 0.712 s figure
+was taken while another session's test run held the host CPU at 100%. It is discarded,
+and the service figure is re-measured on a quiet host.
 
 ### repo-structural-guard | high | Two whole-tree guards failed on P01-P04 additions; resolved
 
