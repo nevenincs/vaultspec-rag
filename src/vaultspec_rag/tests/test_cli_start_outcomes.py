@@ -172,7 +172,12 @@ class TestStartFailureOutcomes:
                 "status": "degraded",
                 "models_loaded": True,
                 "qdrant": {"mode": "server", "alive": True},
-                "degraded_reasons": ["the latest indexing job failed: other"],
+                "degradations": [
+                    {
+                        "reason": "job_failed",
+                        "detail": "the latest indexing job failed: other",
+                    }
+                ],
             }
         ).encode("utf-8")
 

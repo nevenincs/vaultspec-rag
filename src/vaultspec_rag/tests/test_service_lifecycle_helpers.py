@@ -192,7 +192,7 @@ def _serving_health(**overrides: object) -> dict[str, object]:
         "status": "ready",
         "models_loaded": True,
         "qdrant": {"mode": "server", "alive": True},
-        "degraded_reasons": [],
+        "degradations": [],
     }
     payload.update(overrides)
     return payload
@@ -216,7 +216,12 @@ class TestDaemonIsServing:
 
         health = _serving_health(
             status="degraded",
-            degraded_reasons=["the latest indexing job failed: other"],
+            degradations=[
+                {
+                    "reason": "job_failed",
+                    "detail": "the latest indexing job failed: other",
+                }
+            ],
         )
         assert _daemon_is_serving(health) is True
 
@@ -246,7 +251,14 @@ class TestServingWarningLines:
         from ..cli._service_start import _serving_warning_lines
 
         lines = _serving_warning_lines(
-            {"degraded_reasons": ["the latest indexing job failed: other"]}
+            {
+                "degradations": [
+                    {
+                        "reason": "job_failed",
+                        "detail": "the latest indexing job failed: other",
+                    }
+                ]
+            }
         )
         assert lines == (
             "Serving, with warnings:",
@@ -262,11 +274,20 @@ class TestServingWarningLines:
         """
         from ..cli._service_start import _serving_warning_lines
 
-        lines = _serving_warning_lines({"degraded_reasons": ["something brand new"]})
+        lines = _serving_warning_lines(
+            {
+                "degradations": [
+                    {
+                        "reason": "not_a_code_this_build_knows",
+                        "detail": "something brand new",
+                    }
+                ]
+            }
+        )
         assert "  - something brand new" in lines
 
     def test_no_reasons_render_nothing(self) -> None:
         from ..cli._service_start import _serving_warning_lines
 
-        assert _serving_warning_lines({"degraded_reasons": []}) == ()
+        assert _serving_warning_lines({"degradations": []}) == ()
         assert _serving_warning_lines({}) == ()

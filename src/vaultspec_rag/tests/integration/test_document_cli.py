@@ -168,7 +168,7 @@ def test_clean_and_status_expose_document_domain_and_support_profile(
     status = runner.invoke(app, ["--target", str(root), "status", "--json"])
     assert status.exit_code == 0, status.output
     status_data = json.loads(status.output)["data"]
-    assert status_data["document_chunks"] == 0
+    assert status_data["document_count"] == 0
     profile = status_data["support_profile"]
     assert set(profile["domains"]) == {"code", "document"}
     for source in ("code", "document"):

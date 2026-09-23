@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import pathspec
 
 from .._job_errors import JobErrorKind
+from ..operator_state._features import PreprocessHookState
 from ._content_policy import ContentKind
 
 if TYPE_CHECKING:
@@ -55,7 +56,9 @@ __all__ = [
     "PreprocessContext",
     "PreprocessPolicyError",
     "PreprocessRule",
+    "hook_state",
     "load_preprocess_rules",
+    "root_hook_state",
 ]
 
 #: The per-root config filename, a sibling of ``.vaultragignore``.
@@ -647,3 +650,31 @@ def resolve_timeout(
     if timeout_raw <= 0:
         raise reject("'timeout_s' must be positive")
     return min(float(timeout_raw), _MAX_PREPROCESS_TIMEOUT_S)
+
+
+def hook_state(rule_count: int, mode: str) -> PreprocessHookState:
+    """Whether a root's preprocessing hooks run, from its rules and the mode.
+
+    This is the only derivation of "hooks will run": rules run for any root
+    except under the ``off`` kill switch, and a root without rules runs nothing.
+    """
+    if rule_count == 0:
+        return PreprocessHookState.NONE
+    return PreprocessHookState.DISABLED if mode == "off" else PreprocessHookState.ACTIVE
+
+
+def root_hook_state(root: pathlib.Path, mode: str) -> tuple[PreprocessHookState, int]:
+    """Resolve a root's hook state and rule count for reporting.
+
+    Reads only the root's own config file - never the tree - and never raises:
+    a malformed config degrades to ``INVALID_CONFIG`` with no rules, which is
+    what indexing does with it too. The count is the config's own, not a
+    mode-gated zero, so a switched-off rule set still says how many it holds.
+    """
+    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
+        return PreprocessHookState.NONE, 0
+    try:
+        rule_count = len(load_preprocess_rules(root, strict=True).rules)
+    except PreprocessConfigError:
+        return PreprocessHookState.INVALID_CONFIG, 0
+    return hook_state(rule_count, mode), rule_count

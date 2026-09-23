@@ -205,7 +205,7 @@ if ! echo "$out" | jq -e '.ok' >/dev/null; then
   exit 1
 fi
 
-code_chunks=$(echo "$out" | jq '.data.codebase_chunks')
+code_chunks=$(echo "$out" | jq '.data.code_count')
 
 if [ "$code_chunks" -eq 0 ]; then
   echo "code index is empty; check ignore globs and source roots" >&2
@@ -213,10 +213,13 @@ if [ "$code_chunks" -eq 0 ]; then
 fi
 ```
 
-`status --json` also reports `vault_documents` and `document_chunks`, plus
-accelerator and storage details. Gate on whichever domain your project
+`status --json` also reports `vault_count` and `document_count`, the
+`installation` (role, hardware and compute capability), the project's
+`features`, and storage details. Gate on whichever domain your project
 populates. A repository with no preprocessing hooks configured has
-`document_chunks` at `0` legitimately.
+`document_count` at `0` legitimately. The compute capability is a stable token
+such as `ready`, `cpu_only_build` or `not_applicable`, so a script can tell a
+broken GPU environment from a client that needs none.
 
 ## Exit codes and error strings
 
@@ -230,7 +233,7 @@ failure.
 | `2`  | usage error, such as an option the command does not accept |
 | `3`  | service stopped                                            |
 | `4`  | service crashed or divergent                               |
-| `5`  | service warming: models loading, not yet serving           |
+| `5`  | service starting: models loading, not yet serving          |
 
 Code `5` is retryable; wait and re-run. The `error` field carries a code such
 as `port_unreachable`, `local_store_locked`, or `stopped`. The

@@ -86,15 +86,6 @@ class TorchConfigState(StrEnum):
     NO_PROJECT_FILE = "no_project_file"
 
 
-class TorchDiagnosis(StrEnum):
-    """Classification of a torch install's CUDA support."""
-
-    NO_TORCH = "no_torch"
-    CPU_ONLY = "cpu_only"
-    NO_GPU = "no_gpu"
-    WORKING = "working"
-
-
 class TorchConfigAction(StrEnum):
     """Closed set of action strings emitted on the install / uninstall
     report's ``torch_config_action`` field.

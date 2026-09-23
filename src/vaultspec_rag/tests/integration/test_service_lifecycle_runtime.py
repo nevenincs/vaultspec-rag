@@ -194,13 +194,14 @@ def test_start_health_stop(request: pytest.FixtureRequest, tmp_path: Path) -> No
         health = _poll_health(port)
 
         assert "status" in health
-        assert "cuda" in health
         assert "models_loaded" in health
-        assert "reranker_loaded" in health
+        assert "features" in health
         assert "uptime_s" in health
         assert "project_count" in health
         assert health["status"] == "ready"
-        assert health["reranker_loaded"] is True
+        features = health["features"]
+        assert isinstance(features, dict)
+        assert features["reranker_loaded"] is True
         assert health["project_count"] == 0
 
         _terminate_pid(pid)

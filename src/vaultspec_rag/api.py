@@ -8,7 +8,7 @@ direct API consumers as well as MCP tool handlers.
 
 from __future__ import annotations
 
-import contextlib
+import functools
 import logging
 import time
 from dataclasses import dataclass
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .operator_state._models import ComputeReport, InstallationReport
     from .progress import ProgressReporter
     from .search import SearchResult
     from .service import ServiceRegistry
@@ -836,61 +837,21 @@ def clean(
 
 
 def get_status(root_dir: pathlib.Path) -> dict[str, object]:
-    """Return status of the RAG engine, storage metrics, and GPU info.
+    """Return the index counts, storage location and lifecycle of one root.
 
     Args:
         root_dir: Workspace root directory.
 
     Returns:
-        Dict containing RAG status information.
+        Dict containing the root's index status. Compute capability is not
+        part of it: that describes an environment, not an index, and is
+        reported by :func:`service_installation`.
     """
     return _get_status(_resolve(root_dir), get_registry())
 
 
 def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, object]:
     """Build status for one explicit registry and resolved workspace root."""
-    torch: Any = None
-    try:
-        import torch as _torch
-
-        torch = _torch
-    except ImportError:
-        pass
-
-    accelerator = None
-    if torch is not None:
-        from ._gpu import resolve_accelerator
-
-        with contextlib.suppress(RuntimeError):
-            accelerator = resolve_accelerator(torch)
-
-    backend = accelerator.backend if accelerator is not None else None
-    accelerator_name = accelerator.name if accelerator is not None else None
-    memory_kind = accelerator.memory_kind if accelerator is not None else None
-    cuda_available = backend == "cuda"
-    memory_mib: int | None = None
-    memory_measure: str | None = None
-    if accelerator is not None:
-        from .memory_probe import accelerator_memory
-
-        reading = accelerator_memory()
-        if backend == "cuda":
-            if reading.total_mib is not None:
-                memory_mib = int(reading.total_mib)
-                memory_measure = "total"
-        elif reading.recommended_max_mib is not None:
-            memory_mib = int(reading.recommended_max_mib)
-            memory_measure = "recommended_working_set"
-
-    # Compatibility fields retain their CUDA meaning. Unified memory is never
-    # projected as zero VRAM; it is carried by the backend-neutral fields.
-    vram_mib = memory_mib if cuda_available else None
-    vram_gb = (
-        round(memory_mib * (1024**2) / 1e9, 2)
-        if cuda_available and memory_mib is not None
-        else None
-    )
-
     from .capabilities import backend_capabilities_dict
     from .config._settings import get_config
     from .index_profiles import index_support_profile_status
@@ -906,20 +867,7 @@ def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, obje
     lifecycle = index_job_status(root)
 
     return {
-        "cuda": cuda_available,
-        "accelerator_available": accelerator is not None,
-        "accelerator_backend": backend,
-        "accelerator_name": accelerator_name,
-        "memory_kind": memory_kind,
-        "memory_mib": memory_mib,
-        "memory_measure": memory_measure,
-        "gpu_name": accelerator_name,
-        "vram_mib": vram_mib,
-        "vram_gb": vram_gb,
         "storage_path": storage_path,
-        "vault_documents": vault_count,
-        "codebase_chunks": code_count,
-        "document_chunks": document_count,
         "vault_count": vault_count,
         "code_count": code_count,
         "document_count": document_count,
@@ -929,6 +877,32 @@ def _get_status(root: pathlib.Path, registry: ServiceRegistry) -> dict[str, obje
         "target_dir": str(root),
         "backend_capabilities": backend_capabilities_dict(),
     }
+
+
+@functools.cache
+def service_installation() -> InstallationReport:
+    """Describe the environment this process runs in, read once.
+
+    Called by the service about itself: its role, interpreter, the machine's
+    accelerator and whether this environment can run inference. None of it
+    changes under a running process, and the hardware read costs a driver
+    round trip, so the first answer is kept.
+    """
+    import sys
+
+    from .operator_state._compute import installed_role, local_compute
+    from .operator_state._hardware import read_hardware
+    from .operator_state._models import InstallationReport
+
+    role, mcp_adapter = installed_role()
+    return InstallationReport(
+        role=role,
+        mcp_adapter=mcp_adapter,
+        executable=sys.executable,
+        prefix=sys.prefix,
+        hardware=read_hardware(),
+        compute=local_compute(),
+    )
 
 
 def scan_codebase(
@@ -980,7 +954,8 @@ def run_benchmark(
 
     Returns:
         Dict containing benchmark results: p50, p95, p99, mean, stdev,
-        vault_count, code_count, gpu_name, vram_mib.
+        vault_count, code_count, gpu, accelerator_backend, memory_kind,
+        memory_allocated_mib, vram_mib.
     """
     import statistics
     import time
@@ -1147,7 +1122,11 @@ def run_quality_probe(
         }
 
 
-def get_readiness(*, include_holders: bool = False) -> dict[str, Any]:
+def get_readiness(
+    *,
+    include_holders: bool = False,
+    compute: ComputeReport | None = None,
+) -> dict[str, Any]:
     """Return a bounded, read-only dependency-readiness snapshot.
 
     Reports, per external dependency, whether it is provisioned and
@@ -1171,11 +1150,12 @@ def get_readiness(*, include_holders: bool = False) -> dict[str, Any]:
         ``environment_holders`` snapshot that is only populated when
         *include_holders* asks for it - the scan walks the process table
         and costs seconds, which a polled route must not pay. Designed to
-        serve both a human render and a JSON envelope.
+        serve both a human render and a JSON envelope. A torch-free caller
+        passes the *compute* verdict it probed out of process.
     """
     from ._readiness import compute_readiness
 
-    return compute_readiness(include_holders=include_holders).to_dict()
+    return compute_readiness(include_holders=include_holders, compute=compute).to_dict()
 
 
 class _WatcherState(TypedDict):
@@ -1398,7 +1378,9 @@ def get_service_state(
         watching_roots: Optional list of root paths currently watched.
 
     Returns:
-        Dict containing index, projects, and watcher sections.
+        The serialised :class:`ServiceStateReport`: this environment's
+        installation, the root's optional features, and the index, projects,
+        watcher, vector-store and quiesce sections.
     """
     from datetime import datetime
 
@@ -1408,6 +1390,7 @@ def get_service_state(
 
     root = _resolve(root_dir)
 
+    index_data: dict[str, object]
     try:
         index_data = _get_status(root, registry)
     except RegistryFullError as exc:
@@ -1466,16 +1449,27 @@ def get_service_state(
     watcher_data["controllers_truncated"] = controllers_truncated
 
     from . import store_schema
+    from .indexer._preprocess_config import root_hook_state
+    from .operator_state._models import RootFeatures, ServiceStateReport
     from .qdrant_runtime._supervise import runtime_state
 
-    return {
-        "index": index_data,
-        "projects": projects_data,
-        "watcher": watcher_data,
-        "qdrant": runtime_state().to_dict(),
-        "quiesce": registry.quiesce_snapshot().as_envelope(),
+    hooks, rule_count = root_hook_state(root, cfg.preprocess_mode)
+    report = ServiceStateReport(
+        installation=service_installation(),
+        root_features=RootFeatures(
+            root=str(root),
+            preprocess_hooks=hooks,
+            preprocess_rule_count=rule_count,
+            watcher_running=str(root) in watching,
+        ),
+        index=index_data,
+        projects=projects_data,
+        watcher=dict(watcher_data),
+        qdrant=runtime_state().to_dict(),
+        quiesce=registry.quiesce_snapshot().as_envelope(),
         # Bare storage-schema version echo: lets a consumer polling
         # /service-state for freshness also pre-check the data shape without a
         # separate /readiness round-trip. The full descriptor is on /readiness.
-        "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
-    }
+        schema_version=store_schema.STORAGE_SCHEMA_VERSION,
+    )
+    return report.model_dump(mode="json")

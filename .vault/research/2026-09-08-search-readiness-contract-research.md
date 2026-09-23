@@ -3,13 +3,14 @@ tags:
   - '#research'
   - '#search-readiness-contract'
 date: '2026-09-08'
-modified: '2026-09-08'
+modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:eb0285ad8b3803e03e9b359849c80d1b9801b7c2e47f84417aea640407336702'
 related:
   - "[[2026-06-11-search-freshness-and-empty-results-adr]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-07-21-search-index-availability-adr]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `search-readiness-contract` research: `unified readiness, freshness, bounded waits, and backpressure`

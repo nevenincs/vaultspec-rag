@@ -261,13 +261,11 @@ class TestRootPrefixFormatHasOneSpelling:
 class TestOperatorVerdictVocabularyHasOneHome:
     """The words and exit codes an operator sees are the service domain's.
 
-    The service composes a verdict; the CLI walks its own signal ladder and
-    reaches a finer state token - a dead pid told apart from a reused one,
-    where the service says ``crashed`` for both. That difference is real and
-    stays. What was duplicated is everything around it: three labels typed out
-    in both places, and the broker-facing exit codes written as bare integers
-    in the entry point while the domain module defined them as constants and
-    documented them as a contract.
+    One lifecycle enum owns every state an operator reads and its exit code.
+    What was duplicated before it existed: labels typed out in both the service
+    client and the CLI, and the broker-facing exit codes written as bare
+    integers in the entry point while the domain module defined them as
+    constants and documented them as a contract.
 
     Both costs are quiet. Two wordings for one condition means the same daemon
     is explained differently depending on which path an operator arrived
@@ -275,22 +273,27 @@ class TestOperatorVerdictVocabularyHasOneHome:
     change reaches the constant and misses every literal spelling of it.
     """
 
-    #: Verdict exit codes, and the module allowed to write them as integers.
-    _CONTRACT_OWNER = "_status.py"
+    #: The module that owns the lifecycle labels.
+    _LABEL_OWNER = "_service.py"
+    #: Verdict exit codes the status renderer must name rather than spell.
     _CONTRACT_CODES: ClassVar[frozenset[int]] = frozenset({3, 5})
 
     def test_no_entry_point_respells_a_verdict_label(self) -> None:
-        """A second spelling of a label the service already produces."""
-        from ..serviceclient import _status
+        """A second spelling of a lifecycle label the enum already owns.
 
-        owned = {
-            _status.LABEL_WARMING,
-            _status.LABEL_CRASHED_PORT_SILENT,
-            _status.LABEL_CRASHED_HEARTBEAT_STALE,
-        }
+        Mutation check: typing ``"starting (loading models, not yet serving)"``
+        into any entry point names that file here; importing the enum's label
+        instead passes.
+        """
+        from ..operator_state._service import ServiceLifecycle
+
+        # Single-word labels such as "running" are ordinary tokens every job
+        # and watcher module uses; the sentences are what a second spelling
+        # would drift from.
+        owned = {state.label for state in ServiceLifecycle if " " in state.label}
         find_offenders: list[str] = []
         for path in every_production_file():
-            if path.name == self._CONTRACT_OWNER:
+            if path.name == self._LABEL_OWNER:
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))

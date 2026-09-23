@@ -93,7 +93,6 @@ class ServiceHealth(TypedDict):
 
     model_loaded: bool
     reranker_loaded: bool
-    cuda: bool
     project_count: int
     projects: list[str]
     nonconforming: list[str]

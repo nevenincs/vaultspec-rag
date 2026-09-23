@@ -237,8 +237,8 @@ class TestHelpCleanup:
         result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0, result.output
         self._assert_clean(result)
-        assert "index counts" in result.output
-        assert "index data location" in result.output
+        assert "active features" in result.output
+        assert "compute" in result.output
         assert "storage location" not in result.output
         assert "search data location" not in result.output
         assert "Emit JSON for scripts" in result.output

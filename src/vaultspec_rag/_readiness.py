@@ -36,6 +36,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from .operator_state._compute import local_compute
+
+if TYPE_CHECKING:
+    from .operator_state._models import ComputeReport
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +235,11 @@ class ReadinessReport:
         }
 
 
-def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
+def compute_readiness(
+    *,
+    include_holders: bool = False,
+    compute: ComputeReport | None = None,
+) -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
 
     Read-only: probes torch's observable accelerator attributes, the Hugging
@@ -241,6 +251,9 @@ def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
             environment. Off by default because the walk costs seconds and
             every caller pays it; an operator diagnosing a machine wants it,
             a polled route does not.
+        compute: The compute verdict for the environment being assessed. A
+            torch-free caller supplies the one it probed out of process;
+            when omitted, this process classifies its own environment.
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
@@ -253,7 +266,7 @@ def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
 
     return ReadinessReport(
         dependencies=[
-            _torch_readiness(),
+            _torch_readiness(local_compute() if compute is None else compute),
             _models_readiness(),
             _qdrant_readiness(server_mode=server_mode),
         ],
@@ -293,89 +306,41 @@ def _environment_holders_readiness() -> EnvironmentHoldersReadiness:
     )
 
 
-def _torch_readiness() -> DependencyReadiness:
-    """Report supported accelerator availability without forcing a model load.
+#: Capabilities whose probe detail explains them: an import error's message,
+#: or why a check did not finish.
+_DETAIL_IS_DIAGNOSIS = frozenset({"torch_import_failed", "unknown"})
 
-    The guarded function-local import keeps this read-only probe valid on a
-    torch-free service client. Device resolution delegates to the canonical
-    CUDA-first, MPS-second contract and never allocates a model.
+
+def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
+    """Report supported accelerator availability from a compute verdict.
+
+    The verdict comes from the operator state compute check, which never
+    allocates a model and keeps any torch import guarded and function-local.
     """
-    try:
-        import torch
-    except ImportError:
-        return DependencyReadiness(
-            name="torch",
-            status=ReadinessStatus.NOT_READY,
-            detail=(
-                "torch is not installed; run install to provision an accelerator build"
-            ),
-            info={
-                "installed": False,
-                "accelerator_available": False,
-                "backend": None,
-                "memory_kind": None,
-                "cuda_available": False,
-                "mps_available": False,
-            },
-        )
+    from .operator_state._installation import ComputeCapability
 
-    from ._gpu import resolve_accelerator
-    from .torch_config._constants import TorchDiagnosis
-    from .torch_config._diagnose import diagnose_torch
-
-    cuda_build = getattr(torch.version, "cuda", None)
-    cuda_available = bool(torch.cuda.is_available())
-    mps_available = bool(torch.backends.mps.is_available())
-    diagnosis = diagnose_torch(cuda_build, cuda_available, mps_available)
-
-    accelerator = None
-    resolution_error: str | None = None
-    try:
-        accelerator = resolve_accelerator(torch)
-    except RuntimeError as exc:
-        resolution_error = str(exc)
-
-    info: dict[str, object] = {
-        "installed": True,
-        "accelerator_available": accelerator is not None,
-        "backend": accelerator.backend if accelerator is not None else None,
-        "memory_kind": accelerator.memory_kind if accelerator is not None else None,
-        "cuda_build": cuda_build,
-        "cuda_available": cuda_available,
-        "mps_available": mps_available,
-        "diagnosis": str(diagnosis),
-        "device_name": accelerator.name if accelerator is not None else None,
-    }
-
-    if accelerator is not None:
-        return DependencyReadiness(
-            name="torch",
-            status=ReadinessStatus.READY,
-            detail=f"{accelerator.backend.upper()} available on {accelerator.name}",
-            info=info,
-        )
-    if resolution_error is not None and diagnosis == TorchDiagnosis.WORKING:
-        return DependencyReadiness(
-            name="torch",
-            status=ReadinessStatus.NOT_READY,
-            detail=resolution_error,
-            info=info,
-        )
-    if diagnosis == TorchDiagnosis.CPU_ONLY:
-        return DependencyReadiness(
-            name="torch",
-            status=ReadinessStatus.NOT_READY,
-            detail=(
-                "torch has no usable CUDA or MPS accelerator; CPU inference is disabled"
-            ),
-            info=info,
-        )
-    # NO_GPU: a CUDA wheel is installed but no supported device is visible.
+    capability = compute.capability
+    if capability is ComputeCapability.READY:
+        status = ReadinessStatus.READY
+        detail = f"{str(compute.backend).upper()} available on {compute.device_name}"
+    else:
+        # A client never needs torch, so its absence is ready rather than a
+        # defect; a build nobody has verified is not yet known either way.
+        if capability is ComputeCapability.NOT_APPLICABLE:
+            status = ReadinessStatus.READY
+        elif capability.is_defect:
+            status = ReadinessStatus.NOT_READY
+        else:
+            status = ReadinessStatus.UNKNOWN
+        # The raw detail is the diagnosis only where the capability cannot
+        # say what went wrong on its own; elsewhere it restates the label.
+        diagnostic = compute.detail if capability in _DETAIL_IS_DIAGNOSIS else None
+        detail = capability.label + (f" ({diagnostic})" if diagnostic else "")
     return DependencyReadiness(
         name="torch",
-        status=ReadinessStatus.NOT_READY,
-        detail="CUDA torch is installed but no supported accelerator is available",
-        info=info,
+        status=status,
+        detail=detail,
+        info=compute.model_dump(mode="json"),
     )
 
 

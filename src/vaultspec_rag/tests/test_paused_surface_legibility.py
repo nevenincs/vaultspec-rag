@@ -16,6 +16,7 @@ import typer
 from ..cli._render import _display_service_error
 from ..cli._status_labels import _status_busy_label, _status_health_label
 from ..cli._status_render import _status_next_action
+from ..operator_state._service import ServiceLifecycle
 
 pytestmark = [pytest.mark.unit]
 
@@ -78,7 +79,7 @@ class TestHeldRemediation:
 
     def test_an_operator_hold_offers_resume(self) -> None:
         action = _status_next_action(
-            "running",
+            ServiceLifecycle.RUNNING,
             _held_health(borrower_bound=False),
             {},
             port=8766,
@@ -89,7 +90,7 @@ class TestHeldRemediation:
     def test_a_borrower_hold_offers_nothing(self) -> None:
         """Resume here would only ever return a refusal, so it is not offered."""
         action = _status_next_action(
-            "running",
+            ServiceLifecycle.RUNNING,
             _held_health(borrower_bound=True),
             {},
             port=8766,

@@ -204,7 +204,34 @@ from vaultspec_rag.serviceclient._discovery import (
 seen = []
 
 
+SERVICE_STATE = {
+    'installation': {
+        'role': 'host',
+        'mcp_adapter': True,
+        'executable': 'python',
+        'prefix': '/env',
+        'hardware': {'presence': 'nvidia_gpu', 'name': 'stub', 'memory_mib': 1},
+        'compute': {'capability': 'ready'},
+        'local': False,
+    },
+    'root_features': {
+        'root': '/stub',
+        'preprocess_hooks': 'none',
+        'preprocess_rule_count': 0,
+        'watcher_running': False,
+    },
+    'index': {},
+    'projects': {},
+    'watcher': {},
+    'qdrant': {},
+    'quiesce': {},
+    'schema_version': 2,
+}
+
+
 def success_envelope(handler):
+    if handler.path.startswith('/service-state'):
+        return SERVICE_STATE
     source = getattr(handler, 'request_body', {}).get('type', 'vault')
     sources = ['vault', 'code', 'document'] if source == 'combined' else [source]
     facts = [

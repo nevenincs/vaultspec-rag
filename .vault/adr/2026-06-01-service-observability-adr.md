@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-observability'
 date: '2026-06-01'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:12978262b9ec43f313722d7692090fc21d0ab5a994a2b086bf7d15ae458d03dc'
 related:
   - "[[2026-06-01-service-observability-research]]"
@@ -13,6 +13,7 @@ related:
   - "[[2026-04-12-store-eviction-log-rotation-adr]]"
   - "[[2026-04-12-index-progress-bars-adr]]"
   - "[[2026-05-30-cli-json-output-adr]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `service-observability` adr: server state surface — read-only HTTP + CLI/MCP parity (#142) | (**status:** `accepted`)

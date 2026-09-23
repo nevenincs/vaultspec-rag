@@ -55,9 +55,6 @@ from ._lifespan import health_handler, service_lifespan
 # 4. Entry point.
 from ._main import create_http_app, main
 from ._models import (
-    HealthResponse,
-    IndexResponse,
-    IndexStatus,
     SearchResponse,
     SearchResultItem,
 )
@@ -99,9 +96,6 @@ from ._watcher import (
 )
 
 __all__ = [
-    "HealthResponse",
-    "IndexResponse",
-    "IndexStatus",
     "ProjectRootRequiredError",
     "SearchResponse",
     "SearchResultItem",

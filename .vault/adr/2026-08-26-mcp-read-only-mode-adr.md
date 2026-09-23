@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#mcp-read-only-mode'
 date: '2026-08-26'
-modified: '2026-08-26'
+modified: '2026-09-23'
 body_schema: 'body-v1'
 body_hash: 'sha256:555c8b4de671f8487af5f5f3461a96a6884db072d24bb511f4ba25fd7e77e87f'
 related:
   - "[[2026-08-26-mcp-read-only-mode-research]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `mcp-read-only-mode` adr: `how the read-only tool surface is decided` | (**status:** `accepted`)

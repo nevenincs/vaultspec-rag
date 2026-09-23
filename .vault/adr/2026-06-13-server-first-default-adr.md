@@ -3,13 +3,14 @@ tags:
   - '#adr'
   - '#server-first-default'
 date: '2026-06-13'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:a16a6abc969d9528f109002a2770c41076829fea75fab3f08e188630ee429345'
 related:
   - "[[2026-06-12-serving-runtime-research]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - "[[2026-06-12-service-concurrency-adr]]"
   - '[[2026-07-27-server-first-default-grounding-research]]'
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `server-first-default` adr: `server mode is the default rag backend` | (**status:** `accepted`)

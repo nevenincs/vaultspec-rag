@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from ..index_profiles import SupportMeasurement
 from ..job_control import NO_RUN_CONTROL
+from ..operator_state._features import PreprocessHookState
 from . import _ignore_specs
 from ._chunking import _MAX_FILE_SIZE, _is_binary
 from ._content_policy import (
@@ -31,6 +32,7 @@ from ._content_policy import (
     RootContentPolicy,
     SourceProfileVersion,
 )
+from ._preprocess_config import hook_state
 from ._scan_cache import MembershipScanCache
 
 if TYPE_CHECKING:
@@ -493,7 +495,8 @@ class CodeContentDiscovery:
             preprocess_mode=policy.execution_mode,
             preprocess_rule_count=len(policy.preprocess_rules),
             hooks_will_run=(
-                policy.execution_mode != "off" and bool(policy.preprocess_rules)
+                hook_state(len(policy.preprocess_rules), policy.execution_mode)
+                is PreprocessHookState.ACTIVE
             ),
             measurement=SupportMeasurement(
                 source_files=source_files,

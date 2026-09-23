@@ -99,7 +99,9 @@ A connected server publishes twelve tools. Six read:
   across them.
 - `get_code_file` returns the full content of a source file by path.
 - `get_index_status` reports whether a content kind is indexed, so an assistant
-  can skip one that has no index.
+  can skip one that has no index. It also returns the running service's
+  installation (whether it can run inference, and on what hardware) and the
+  project's active features: preprocessing hooks and the file watcher.
 
 Six mutate:
 
