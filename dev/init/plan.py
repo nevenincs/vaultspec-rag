@@ -7,10 +7,10 @@ change makes a phase stale and the artifacts whose absence does the same.
 
 ``vaultspec-rag`` had no bootstrap recipe at all before this: the only way to
 provision a worktree was to know that ``just deps-sync`` happened to be the
-step, and the committed `prek.toml` had no installer anywhere in
-the repository, so every checkout silently bypassed its own hooks. Both are
-closed here. ``deps sync`` stays as the dependency-management verb it is;
-``init-python`` is the worktree-provisioning path to the same environment.
+step. That is closed here. ``deps sync`` stays as the dependency-management
+verb it is; ``init-python`` is the worktree-provisioning path to the same
+environment. No phase installs git hooks: gates run explicitly, and the commit
+hook runner's stash-and-restore cycle is unsafe when workers share a tree.
 
 Stdlib-only, by the constraint stated in :mod:`dev.init`.
 """
