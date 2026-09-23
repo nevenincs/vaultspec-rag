@@ -603,6 +603,44 @@ class TestPassageSelectionUnderMemoryExhaustion:
         )
 
 
+class TestRerankerForwardScope:
+    """The reranker forward runs under the GPU lock with half accumulation."""
+
+    pytestmark: ClassVar = [pytest.mark.cuda]
+
+    def test_predict_runs_locked_with_half_accumulation_and_restores_it(
+        self,
+    ) -> None:
+        import threading
+
+        from .._gpu import load_accelerator
+        from ..search._searcher import VaultSearcher
+
+        matmul = load_accelerator().torch.backends.cuda.matmul
+        previous = matmul.allow_fp16_accumulation
+        gpu_lock = threading.Lock()
+        observed: list[tuple[bool, bool]] = []
+
+        class _RecordingReranker:
+            def predict(self, pairs: list[object], **_kwargs: object) -> object:
+                observed.append((gpu_lock.locked(), matmul.allow_fp16_accumulation))
+                return [0.5 for _ in pairs]
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker = cast("CrossEncoder", _RecordingReranker())
+        searcher._reranker_enabled = True
+        searcher._gpu_lock = gpu_lock
+        searcher._reranker_lock = threading.Lock()
+
+        scores = searcher._predict_scores([("q", "a"), ("q", "b")])
+
+        assert scores == [0.5, 0.5]
+        # Held inside the forward only: locked, switched on, then restored.
+        assert observed == [(True, True)]
+        assert matmul.allow_fp16_accumulation is previous
+        assert not gpu_lock.locked()
+
+
 class TestPassageSelectionWithoutReranker:
     """With reranking off, every result on the page shows its first passage."""
 

@@ -125,6 +125,30 @@ class TestDegradedVerdictTracksCurrentState:
             f"another source's success must not answer this failure, got {reasons}"
         )
 
+    def test_a_success_in_another_project_does_not_clear_it(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """The service serves many projects; one's success says nothing of another."""
+        del isolated_status_dir
+        reset()
+        try:
+            failed = record_start(
+                JobSource.CODE, "watcher", project_root=tmp_path / "first"
+            )
+            record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
+            succeeded = record_start(
+                JobSource.CODE, "watcher", project_root=tmp_path / "second"
+            )
+            record_finish(succeeded, result="+1 /0 -0 (100ms)")
+            reasons = _degrade_reasons()
+        finally:
+            reset()
+        assert _job_failed(reasons), (
+            f"another project's success must not answer this failure, got {reasons}"
+        )
+
     def test_a_failure_after_a_success_degrades_again(
         self,
         isolated_status_dir: Path,
@@ -162,5 +186,6 @@ class TestDegradedVerdictTracksCurrentState:
         assert last_failed is not None, (
             "the failure must remain reported in the rollup, only not degrading"
         )
-        # The source is what names the rebuild when the failure is a refusal.
+        # Source and project together name the rebuild when it is a refusal.
         assert last_failed["source"] == JobSource.CODE
+        assert "project_root" in last_failed

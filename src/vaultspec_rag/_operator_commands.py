@@ -44,6 +44,8 @@ class IndexCommandOptions:
     dry_run_limit: object | None = None
     full: bool = False
     port: object | None = None
+    #: The project to act on, for a command shown outside that project.
+    target: str | None = None
 
 
 _DEFAULT_INDEX_COMMAND_OPTIONS = IndexCommandOptions()
@@ -191,6 +193,10 @@ def index_command(
     names, their order, and which source spellings exist.
     """
     command = "vaultspec-rag index"
+    if options.target:
+        target = options.target
+        quoted = f'"{target}"' if any(char.isspace() for char in target) else target
+        command = f"vaultspec-rag --target {quoted} index"
     if options.rebuild:
         command += " --rebuild"
     if source is not None:

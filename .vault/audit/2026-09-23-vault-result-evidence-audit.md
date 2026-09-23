@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:4bb6da902c98a133d7b5e965d2bbfe58c3df1a27b8c87ff39fd1e4dcf7bbc80b'
+body_hash: 'sha256:975393602f89d936bd8f4707b9cabdafa70022e68ae00e2371d10ac7ee59fc3d'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -184,6 +184,15 @@ medians reported.
 - **Tokenization.** 40 chunk pairs take about 48 ms. It runs inside the library's
   predict, which the GPU rule sanctions calling under the lock. Moving it out would copy
   the library's predict loop to shorten lock hold time, not single-search latency.
+- **Score reuse.** A score is reusable only for identical text.
+  - A result with one candidate passage already skips scoring.
+  - A chunk's rerank score covers the whole chunk, so it cannot stand in for one of its
+    passages.
+  - Only a passage whose text is its entire chunk could reuse the chunk's score, and
+    such a chunk is at most one passage bound long. That case was not counted, so its
+    frequency is unmeasured.
+  - Scores do not carry across searches, because each one is conditioned on its query.
+  - Not pursued: the 48-pair budget already bounds passage cost.
 - **Candidate window and token bound.** Both change ranking. The token bound's cost is
   recorded under search-latency. The heading-path-embedding comparison shows how a
   20-candidate window already displaces an authority.
@@ -289,6 +298,53 @@ The user barred a pull request while any known defect remains.
   product's own repository because its owned MCP-extra requirement has drifted.
 - **Who decides.** How this repository declares itself is the user's call. `P05a.S12`
   stays open for it.
+
+### p05-close-review | high | The review of the P05a-P05c commits found two highs, two mediums and three lows; resolved
+
+The review covered `d5cdd826`..`52cba9ea`.
+
+- **High: service remedy named no project.** The service serves every project, but its
+  latest-failure finding named `index --rebuild` with no project. Run elsewhere, that
+  command rebuilds the operator's own index.
+  - The health rollup now carries the failed job's `project_root`.
+  - The finding names `vaultspec-rag --target <root> index --rebuild --type <source>`,
+    and falls back to the job's logs when the project is unknown. `index_command` gains
+    a `target` option for this.
+  - The same review found that a later success in another project cleared a failure,
+    because supersession compared source only. It now compares project too.
+  - Each change has a test shown to fail without it.
+- **High: switch absent on older torch.** The half-accumulation switch does not exist
+  before torch 2.7, while the `gpu` extra admits `torch>=2.4`. The context now runs
+  unchanged when the switch is absent. Tests cover an older-torch double, the installed
+  torch's real switch, and the searcher running the forward locked, switched on, then
+  restored.
+- **Medium: score reuse unassessed.** Now recorded under inference-levers.
+- **Medium: ADR amendment splice.** The pair-budget amendment had split an accepted
+  ADR paragraph. The paragraph is restored.
+- **Lows.**
+  - The `vault_embed_input` docstring repeated a window size defined elsewhere; it now
+    states the constraint.
+  - A stale comment on the residue pill is corrected.
+  - The real-attribute test is added (see the torch high above).
+
+### ledger-open-race | high | Concurrent openers of a fresh run ledger could demand a needless rebuild; resolved
+
+The verification lane failed
+`test_concurrent_fresh_schema_openers_observe_only_empty_or_current` once. It passed
+alone. This branch had not touched the ledger code; the race is in it.
+
+- **Preflight.** `_require_current_or_empty_schema` read `user_version` and
+  `sqlite_master` as two autocommit statements. A peer committing the schema between
+  them made a fresh file read as a pre-proof database.
+- **Initializer.** `_initialize` repeated the same two-read check before taking its write
+  lock.
+- **Fix.** The preflight now reads from one snapshot inside a read transaction. The
+  initializer decides everything except the already-current fast path under its write
+  lock, which already handled every case
+  (`src/vaultspec_rag/indexer/_run_ledger_runtime.py`).
+- **Evidence.** With only the preflight fixed, the test failed three runs in six on the
+  initializer's copy of the race. With both fixed, it passed eight of eight under the
+  same saturated host.
 
 ## Recommendations
 

@@ -213,7 +213,35 @@ class TestDegradedStatusExplainsItself:
         assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
         assert "--verbose" not in result.output
 
-    def test_a_refused_incremental_names_the_rebuild_for_its_source(
+    def test_a_refused_incremental_names_the_rebuild_of_its_own_project(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "other project"
+        refused = _last_failed_record() | {
+            "source": "vault",
+            "project_root": str(project),
+            "error_kind": "full_reindex_required",
+        }
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: full_reindex_required"],
+                jobs={"last_failed": refused},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        # The job's logs only restate the refusal; the rebuild is the remedy.
+        # The service serves every project, so the command names the one the
+        # refused job belongs to rather than whichever the operator stands in.
+        next_action = lines[lines.index("Next action:") + 1]
+        assert next_action == (
+            f'vaultspec-rag --target "{project}" index --rebuild --type vault'
+        )
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" not in lines
+
+    def test_a_refusal_with_no_known_project_points_at_its_logs(
         self, tmp_path: Path
     ) -> None:
         refused = _last_failed_record() | {
@@ -230,10 +258,10 @@ class TestDegradedStatusExplainsItself:
 
         assert result.exit_code == 0, result.output
         lines = _plain_lines(result.output)
-        # The job's logs only restate the refusal; the rebuild is the remedy.
+        # An unscoped rebuild would act on the operator's own project, which
+        # need not be the one refused.
         next_action = lines[lines.index("Next action:") + 1]
-        assert next_action == "vaultspec-rag index --rebuild --type vault"
-        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" not in lines
+        assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
 
     def test_failed_job_count_carries_the_failed_jobs_view(
         self, tmp_path: Path

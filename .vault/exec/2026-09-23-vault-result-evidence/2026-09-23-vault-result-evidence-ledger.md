@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:e98a73b4a0a840082fd0e6f007f78dd914dcb37157f14b3fd4f3640a3a71454e'
+body_hash: 'sha256:7676befeaee539dfda0451d104cf575961bdf031810c221306a4d2bcf8fdf9cd'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -124,6 +124,23 @@ related:
 - `S15` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
 - `S15` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
 - `S15` `verify:` `half-accumulation restore mutation (finally removed fails the post-block equality; restored passes)` -> `pass`
+- `S16` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S16` `M` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S16` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S16` `M` `src/vaultspec_rag/_gpu.py`
+- `S16` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S16` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_search_unit.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_process_probe_ownership_guards.py`
+- `S16` `M` `.vault/adr/2026-09-23-vault-result-evidence-adr.md`
+- `S16` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S16` `verify:` `mutations: project match removed from supersession, project gate removed from service remedy, switch removed from predict, getattr replaced by direct read (each fails its assertion; restored passes)` -> `pass`
+- `S17` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
+- `S17` `verify:` `preflight-only fix still failed 3 of 6 runs on the initializer race` -> `fail`
 
 ## Notes
 
@@ -141,4 +158,3 @@ related:
 - `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
 - `S13` variants measured through a scratch harness outside the tree; no measurement code committed
 - `S15` service latency re-measurement deferred: host CPU saturated by another session's test run
-

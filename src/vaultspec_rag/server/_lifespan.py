@@ -1078,11 +1078,12 @@ def _failed_job_health(record: dict[str, object] | None) -> dict[str, object] | 
     """Project the bounded latest-failure health shape."""
     if record is None:
         return None
-    from ._routes_jobs import job_source
+    from ._routes_jobs import job_project_root, job_source
 
     return {
         "id": record.get("id"),
         "source": job_source(record),
+        "project_root": job_project_root(record),
         "error_kind": record.get("error_kind"),
         "finished_at": record.get("finished_at"),
     }
@@ -1179,15 +1180,22 @@ def _failure_was_superseded(
     after it, and the operator is told the *latest* job failed while newer
     ones are visibly finishing clean.
     """
-    from ._routes_jobs import job_source, job_state, job_updated_timestamp
+    from ._routes_jobs import (
+        job_project_root,
+        job_source,
+        job_state,
+        job_updated_timestamp,
+    )
 
     failed_at = job_updated_timestamp(failed)
     if failed_at is None:
         return False
     source = job_source(failed)
+    project_root = job_project_root(failed)
     return any(
         job_state(record) == "succeeded"
         and job_source(record) == source
+        and job_project_root(record) == project_root
         and (job_updated_timestamp(record) or float("-inf")) > failed_at
         for record in records
     )

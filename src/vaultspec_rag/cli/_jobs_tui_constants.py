@@ -134,8 +134,8 @@ STATE_PILLS: dict[JobState, tuple[str, str, str, str, bool]] = {
     JobState.FAILED: ("✖", "x", "failed", "bad", True),
     JobState.SUCCEEDED: ("✓", "v", "succeeded", "good", False),
 }
-# The residue bucket for states without a pill of their own; the label is
-# the state name the tally reported.
+# The residue bucket for states without a pill of their own, labelled
+# "other".
 OTHER_PILL_GLYPHS = ("□", "?")
 
 # Job-health tallies the service publishes beside the state counts. Shown

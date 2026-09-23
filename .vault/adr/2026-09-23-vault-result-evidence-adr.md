@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:fb1b506781715d5d1aa0fa70b4162b450533692f2144ca99fbe88608f65855a9'
+body_hash: 'sha256:1f483d30b0fe29db2cbdccc9208fbeac32b8b0eab54f9220ec39ed202c54a421'
 related:
   - "[[2026-09-23-vault-result-evidence-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -140,14 +140,14 @@ result takes its best passage:
 - `line_start`, `line_end` and `section` become the passage's.
 
 A result with one candidate passage skips scoring. With the reranker disabled, the
-first passage of the winning chunk is used.
+first passage of the winning chunk is used. A legacy point without passages yields its
+chunk text cut at the same bound, with no locator. Ranking and scores do not change.
 
 *Amended 2026-09-23:* the forward scores at most 48 pairs per page, taken in rank
 order and never splitting a result's candidates, with at most 12 passages per result.
 Results past the budget show their first passage. The budget cut passage time from
 0.33 s to 0.22 s with evidence, section and ranking identical on every measured set
-(`2026-09-23-vault-result-evidence-audit`, search-latency). A legacy point without passages yields its
-chunk text cut at the same bound, with no locator. Ranking and scores do not change.
+(`2026-09-23-vault-result-evidence-audit`, search-latency).
 
 **Result contract.**
 

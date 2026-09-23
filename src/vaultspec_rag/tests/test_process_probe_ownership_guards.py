@@ -620,6 +620,29 @@ class TestOperatorCommandsHaveOneSpelling:
             "never offered to the operator"
         )
 
+    def test_a_target_precedes_the_verb_and_survives_spaces(self) -> None:
+        """``--target`` is a global option, so it must come before ``index``.
+
+        Placed after the verb it is rejected as an unknown index option, and an
+        unquoted path with a space splits into two arguments.
+        """
+        from .._source_types import PublicSourceType
+
+        plain = index_command(
+            PublicSourceType.VAULT,
+            IndexCommandOptions(rebuild=True, target="/work/project"),
+        )
+        spaced = index_command(
+            PublicSourceType.VAULT,
+            IndexCommandOptions(rebuild=True, target="/work/my project"),
+        )
+        assert plain == (
+            "vaultspec-rag --target /work/project index --rebuild --type vault"
+        )
+        assert spaced == (
+            'vaultspec-rag --target "/work/my project" index --rebuild --type vault'
+        )
+
     def test_the_renamed_flag_is_not_reachable(self) -> None:
         """``--running`` was replaced by ``--state active`` and must stay gone.
 

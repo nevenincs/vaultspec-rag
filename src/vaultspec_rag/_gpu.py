@@ -81,13 +81,14 @@ class AcceleratorContext:
         the fp32-accumulation rate. The switch is process-wide, so it is held
         only for the calls inside this block and restored after; callers run
         it under the GPU lock, which keeps any other forward pass out of the
-        window. Other backends have no such switch and run unchanged.
+        window. Other backends, and torch builds older than the switch, run
+        unchanged.
         """
-        if self.backend != "cuda":
+        matmul = self.torch.backends.cuda.matmul if self.backend == "cuda" else None
+        previous = getattr(matmul, "allow_fp16_accumulation", None)
+        if matmul is None or previous is None:
             yield
             return
-        matmul = self.torch.backends.cuda.matmul
-        previous = bool(matmul.allow_fp16_accumulation)
         matmul.allow_fp16_accumulation = True
         try:
             yield
