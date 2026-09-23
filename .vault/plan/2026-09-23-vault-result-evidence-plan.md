@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:4bb3288b307d39981f7cb7ec607f38bf9996bcb7e8fdc5e52c132d5fa018d32a'
+body_hash: 'sha256:c05425dbe24aff53c7c62bb0ca59a349101b7d55fae34756e1023ae0e8a29a0e'
 ---
 
 # `vault-result-evidence` plan
@@ -58,7 +58,7 @@ Delivers one CrossEncoder constructor loading fp16 for the service and the searc
 
 Delivers index-time structural passages and chunk locators in the vault payload, a point-schema bump, and the typed rebuild refusal for vault indexes built before it.
 
-- [ ] `P03.S04` - add the torch-free markdown passage module (fence and heading aware, 1200-character bound, file line spans, section breadcrumbs) with unit tests; `src/vaultspec_rag/indexer/_markdown_passages.py (new), src/vaultspec_rag/tests/`.
+- [x] `P03.S04` - add the torch-free markdown passage module (fence and heading aware, 1200-character bound, file line spans, section breadcrumbs) with unit tests; `src/vaultspec_rag/_markdown_passages.py (new, package root so indexing and search share it), src/vaultspec_rag/tests/test_markdown_passages.py (new)`.
 - [ ] `P03.S05` - attach line spans, section and clipped passages to vault chunks and payloads, bump the vault point schema, and convert the vault ledger incompatibility to full_reindex_required; `src/vaultspec_rag/indexer/_vault_prep.py, src/vaultspec_rag/_store_models.py, src/vaultspec_rag/store_schema.py, src/vaultspec_rag/indexer/_index_schema.py, src/vaultspec_rag/indexer/_vault_indexer.py`.
 
 ### Phase `P04` - select snippets by query and expose the locator
