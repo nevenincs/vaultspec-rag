@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:169019ef3308c890008fead395be8e9e787e84e997ff635c376b239079bd16d3'
+body_hash: 'sha256:2321c4045654e44e72821d4908af04fa7d5794fcc59366c6279f41541e8f7215'
 related:
   - "[[2026-09-23-status-messages-plan]]"
   - "[[2026-09-23-status-messages-adr]]"
@@ -36,6 +36,18 @@ covered these checks:
     today.
   - The exit codes have one home.
   - The code carries no development metadata.
+
+**P02 review (commits `9635adca` to `b6094779`; Steps S09, S04, S10 and S15): PASS.**
+
+The review ran on a clean `git archive HEAD` copy and covered these checks:
+
+- **Gates:** ruff, ruff format and ty pass. 327 unit tests across the touched modules
+  pass.
+- **Doctor:** the doctor torch-free guard passes.
+- **Behaviour parity:** the deleted exit-code mapping is preserved. Codes 3, 4, 5, 6
+  and 7 block a start, and a timeout warns and proceeds.
+- **`repair-predicate-breadth`:** confirmed closed, because the tool-env repair gates
+  on `fixed_by_torch_reinstall`.
 
 ## Findings
 
@@ -86,6 +98,69 @@ the P02 close.
 
 Planned for deletion in P04.S13.
 
+### client-install-reads-as-not-ready | medium | The readiness torch axis called a torch-free client a defect
+
+`src/vaultspec_rag/_readiness.py`
+
+`_torch_readiness` mapped `NOT_APPLICABLE` to `NOT_READY`, so a client read as not
+ready in `server doctor --json`. Resolved in the P02 corrections commit:
+
+- a client reads ready;
+- a defect reads not ready;
+- an unverified or unknown capability reads unknown.
+
+A mutation-checked test covers it.
+
+### readiness-info-shape-break | medium | Wire shapes changed outside the ADR's declared breaking surface
+
+`src/vaultspec_rag/_readiness.py`, `src/vaultspec_rag/_gpu_admission.py`
+
+- **`/readiness` and `server doctor --json`:** the torch `info` is now the
+  `ComputeReport` fields.
+- **Device-load admission:** the reasons `no_cuda` and `torch_absent` are now
+  `no_device` and `torch_missing`.
+
+No in-repo consumer reads the old keys. Owner: P05.S18 release note.
+
+### gpu-error-classifies-in-process | medium | Two sibling paths answered the same question by different means
+
+`src/vaultspec_rag/cli/_gpu_errors.py`
+
+Resolved in the P02 corrections commit:
+
+- The error handler now classifies the torch its own failed compute path already
+  loaded.
+- It falls back to the canonical in-process classifier only when none is loaded.
+- Its docstring records why it does not ask a child interpreter.
+
+### duplicate-remediation-prose | medium | GPU error messages restated conditions the enum owns
+
+`src/vaultspec_rag/cli/_gpu_errors.py`
+
+Resolved in the P02 corrections commit. The message headlines now come from the
+`ComputeCapability` labels. The topology-specific troubleshooting body stays with
+the error handler, which is the only place that renders it.
+
+### host-dependent-mps-test | medium | The MPS error-handler test only worked where torch is installed
+
+`src/vaultspec_rag/tests/test_cli_install.py`
+
+Resolved in the P02 corrections commit. The handler classifies the loaded torch
+module directly, so the test's substituted module reaches the classifier whatever is
+installed on the host.
+
+### probe-low-followups | low | Local-tag, falsy-model, remediation and timeout gaps
+
+Resolved in the P02 corrections commit:
+
+- a `cpu`-prefixed local tag now classifies as CPU-only;
+- the compute default uses `is None`;
+- a blocking capability without remediation raises instead of rendering `"None"`;
+- the probe timeout branch has a mutation-checked test.
+
+`operator_state/_hardware.py` still has no production caller. It is owned by P03.S16
+and must not close the plan uncalled.
+
 ## Recommendations
 
 - **P04.S06:** decide how a version-mismatched client parses a typed health payload.
@@ -95,3 +170,6 @@ Planned for deletion in P04.S13.
   `2026-09-23-status-messages-adr`.
 - **P03.S11:** settle the `DegradationReason` spelling against the ADR text and log it.
 - **P05.S08:** gate remediation rendering on `is_defect`, and back it with a test.
+- **P05.S18:** the release note covers every wire change: `status --json`,
+  `/health`, `/service-state`, `get_index_status`, the `/readiness` torch `info`
+  shape, and the admission reason values.

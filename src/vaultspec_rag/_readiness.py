@@ -266,7 +266,7 @@ def compute_readiness(
 
     return ReadinessReport(
         dependencies=[
-            _torch_readiness(compute or local_compute()),
+            _torch_readiness(local_compute() if compute is None else compute),
             _models_readiness(),
             _qdrant_readiness(server_mode=server_mode),
         ],
@@ -319,11 +319,14 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
         status = ReadinessStatus.READY
         detail = f"{str(compute.backend).upper()} available on {compute.device_name}"
     else:
-        status = (
-            ReadinessStatus.UNKNOWN
-            if capability is ComputeCapability.UNKNOWN
-            else ReadinessStatus.NOT_READY
-        )
+        # A client never needs torch, so its absence is ready rather than a
+        # defect; a build nobody has verified is not yet known either way.
+        if capability is ComputeCapability.NOT_APPLICABLE:
+            status = ReadinessStatus.READY
+        elif capability.is_defect:
+            status = ReadinessStatus.NOT_READY
+        else:
+            status = ReadinessStatus.UNKNOWN
         detail = capability.label + (f" ({compute.detail})" if compute.detail else "")
     return DependencyReadiness(
         name="torch",

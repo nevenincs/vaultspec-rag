@@ -112,6 +112,7 @@ def test_a_host_that_lost_torch_is_a_defect_not_a_client() -> None:
         ("2.14.0", "win32", ComputeCapability.CPU_ONLY_BUILD),
         ("2.14.0", "linux", ComputeCapability.BUILD_PRESENT),
         ("2.14.0", "darwin", ComputeCapability.BUILD_PRESENT),
+        ("2.14.0+cpu.cxx11.abi", "linux", ComputeCapability.CPU_ONLY_BUILD),
         ("2.14.0+rocm6.2", "linux", ComputeCapability.UNKNOWN),
     ],
 )
@@ -120,6 +121,19 @@ def test_the_metadata_depth_reads_the_torch_build_from_its_version(
 ) -> None:
     """A CPU-only wheel on a GPU workstation is named without importing torch."""
     assert metadata_verdict("5.0", torch_version, platform) is expected
+
+
+def test_a_probe_that_overruns_its_bound_is_unknown_not_a_failure() -> None:
+    """A wedged interpreter must not hang a start or read as broken.
+
+    Mutation check: dropping the timeout from the probe's subprocess call lets
+    the child run to completion and answer, failing the ``UNKNOWN`` assertion;
+    restoring it passes.
+    """
+    facts = probe_interpreter(sys.executable, ProbeDepth.METADATA, timeout=0.01)
+
+    assert facts.compute.capability is ComputeCapability.UNKNOWN
+    assert not facts.compute.capability.blocks_start
 
 
 def test_unreadable_probe_output_is_unknown_not_a_failure() -> None:

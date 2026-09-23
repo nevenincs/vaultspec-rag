@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import typer
 
 from ..commands._tool_torch import tool_cuda_install_spec
+from ..operator_state._installation import ComputeCapability
 from ._render import _plain
 
 if TYPE_CHECKING:
@@ -172,8 +173,7 @@ def durable_tool_install_command() -> str:
 def _cpu_only_message() -> str:
     """Return the CPU_ONLY remediation copy as plain text."""
     return (
-        "Error: PyTorch was installed without CUDA support "
-        "(CPU-only wheel). Your GPU is fine.\n\n"
+        f"Error: {ComputeCapability.CPU_ONLY_BUILD.label}. Your GPU is fine.\n\n"
         "  Install vaultspec-rag with its [gpu] extra, then run "
         "uv run vaultspec-rag install; it patches your pyproject.toml "
         "with the cu130 torch index and adds torch>=2.4 as a direct "
@@ -200,12 +200,12 @@ def _no_torch_message() -> str:
 
     if sys.platform == "darwin":
         return (
-            "Error: PyTorch is not installed.\n\n"
+            f"Error: {ComputeCapability.TORCH_MISSING.label}.\n\n"
             "  Install vaultspec-rag in this interpreter to provision the "
             "macOS torch build with Apple MPS support."
         )
     return (
-        "Error: PyTorch is not installed.\n\n"
+        f"Error: {ComputeCapability.TORCH_MISSING.label}.\n\n"
         '  uv add "vaultspec-rag[gpu]" && uv run vaultspec-rag install '
         "configures the cu130 torch index and installs the GPU build."
     )
@@ -214,7 +214,7 @@ def _no_torch_message() -> str:
 def _no_gpu_message() -> str:
     """Return the NO_GPU remediation copy as plain text."""
     return (
-        "Error: No CUDA GPU detected.\n"
+        f"Error: {ComputeCapability.NO_DEVICE.label}.\n"
         "  PyTorch is built with CUDA support, but no CUDA device "
         "is available.\n\n"
         "  Quick checks:\n"
@@ -347,7 +347,10 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
 
     Classifies this process's environment so the remediation hint matches
     the actual problem: torch absent or unloadable, a CPU-only wheel, a CUDA
-    build with no visible device, or a refused MPS fallback policy.
+    build with no visible device, or a refused MPS fallback policy. Unlike the
+    post-install warning, which asks a child interpreter, this runs after a
+    compute path in this very process failed, so it classifies the torch that
+    failed here rather than starting another interpreter to ask.
 
     Args:
         exc: The caught exception (``ImportError`` or ``RuntimeError``).
@@ -358,11 +361,16 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     import sys
 
     from .._gpu import MPS_FALLBACK_MESSAGE
-    from ..operator_state._compute import local_compute
+    from ..operator_state._compute import classify_torch, local_compute
     from ..operator_state._installation import ComputeCapability
     from ..torch_config._mutate import manual_snippet
 
-    capability = local_compute().capability
+    loaded = sys.modules.get("torch")
+    capability = (
+        classify_torch(loaded).capability
+        if loaded is not None
+        else local_compute().capability
+    )
     if capability is ComputeCapability.MPS_POLICY_REFUSED:
         _plain(f"Error: {MPS_FALLBACK_MESSAGE}")
     elif capability in {

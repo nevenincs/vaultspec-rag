@@ -206,6 +206,23 @@ class TestTorchDimension:
         assert torch_dep.info["memory_mib"] is None
         assert "MPS available" in torch_dep.detail
 
+    def test_a_client_without_torch_is_ready_not_broken(self) -> None:
+        """A torch-free client never asked for an accelerator.
+
+        Mutation check: mapping every non-ready capability to not-ready reports
+        this client as broken and fails the status assertion; restoring the
+        client branch passes.
+        """
+        from ..operator_state._installation import ComputeCapability
+        from ..operator_state._models import ComputeReport
+
+        torch_dep = _torch_readiness(
+            ComputeReport(capability=ComputeCapability.NOT_APPLICABLE)
+        )
+
+        assert torch_dep.status is ReadinessStatus.READY
+        assert "client" in torch_dep.detail
+
     def test_torch_dimension_does_not_force_a_model_load(self) -> None:
         # Computing readiness must not allocate the embedding/reranker
         # models onto the GPU. On a CUDA host we confirm no new device

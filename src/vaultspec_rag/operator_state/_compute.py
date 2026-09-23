@@ -87,7 +87,7 @@ def _metadata_capability(torch_version: str, platform: str) -> ComputeCapability
     torch for Linux; macOS builds carry MPS.
     """
     local = torch_version.partition("+")[2].lower()
-    if local == "cpu":
+    if local.startswith("cpu"):
         return ComputeCapability.CPU_ONLY_BUILD
     if local.startswith("cu"):
         return ComputeCapability.BUILD_PRESENT

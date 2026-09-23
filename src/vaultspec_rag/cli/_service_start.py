@@ -548,7 +548,10 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     if capability.blocks_start:
         kind = classify_interpreter_env(interpreter)
         if capability is ComputeCapability.NOT_APPLICABLE:
-            next_actions: tuple[str, ...] = (str(capability.remediation),)
+            remediation = capability.remediation
+            if remediation is None:
+                raise AssertionError(f"{capability} blocks a start without a remedy")
+            next_actions: tuple[str, ...] = (remediation,)
         elif sys.platform == "darwin":
             next_actions = (
                 "Install/repair the macOS torch build in the service environment",
