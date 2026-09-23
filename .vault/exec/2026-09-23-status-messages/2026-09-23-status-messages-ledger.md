@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:1983838648fc0426967615b7ea8d558f457d801eab546d30530474b1b01c1336'
+body_hash: 'sha256:c5e42877aadfecdc0257ab8a6c56ffb291174146d2156c9805185c000d1e41fb'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -40,6 +40,10 @@ related:
 - `S09` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
 - `S09` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
 - `S09` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S04` `A` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_hardware_probe.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S04` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 

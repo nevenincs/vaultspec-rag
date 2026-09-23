@@ -128,7 +128,9 @@ def test_importing_the_state_vocabulary_never_loads_torch() -> None:
     """
     probe = (
         "import sys\n"
+        "import vaultspec_rag.operator_state._environment_probe\n"
         "import vaultspec_rag.operator_state._features\n"
+        "import vaultspec_rag.operator_state._hardware\n"
         "import vaultspec_rag.operator_state._installation\n"
         "import vaultspec_rag.operator_state._models\n"
         "import vaultspec_rag.operator_state._service\n"
