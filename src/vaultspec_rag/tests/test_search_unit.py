@@ -1,10 +1,13 @@
 """Unit tests for rag.search - query parsing and metadata extraction."""
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
 from .. import ParsedQuery, SearchResult, parse_query
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
 
 # No module-level pytestmark - each class sets its own marker
 
@@ -546,3 +549,55 @@ class TestInlinePathScopeToken:
             CodebaseSearchOptions(path="src/pkg/a.py"),
         )
         assert store_filters["path"] == "src/pkg/a.py"
+
+
+class TestPassageSelectionUnderMemoryExhaustion:
+    """A ranked page keeps usable snippets when passage scoring cannot run."""
+
+    pytestmark: ClassVar = [pytest.mark.cuda]
+
+    def test_results_keep_their_first_passage_when_scoring_runs_out_of_memory(
+        self,
+    ) -> None:
+        import threading
+
+        from .._gpu import load_accelerator
+        from ..search._models import ResultPassage
+        from ..search._searcher import VaultSearcher, _EncodedSearchQuery
+
+        torch = load_accelerator().torch
+
+        class _ExhaustedReranker:
+            def predict(self, *_args: object, **_kwargs: object) -> object:
+                raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker = cast("CrossEncoder", _ExhaustedReranker())
+        searcher._reranker_enabled = True
+        searcher._gpu_lock = None
+        searcher._reranker_lock = threading.Lock()
+        result = SearchResult(
+            id="adr/sample",
+            path=".vault/adr/sample.md",
+            title="sample",
+            score=0.9,
+            snippet="chunk head",
+            source="vault",
+        )
+        result.passages = (
+            ResultPassage("first passage", 12, 12, "Options"),
+            ResultPassage("second passage", 14, 15, "Options"),
+        )
+        encoded = _EncodedSearchQuery(
+            ParsedQuery(text="q", filters={}), "q", [1.0], None, 1, {}
+        )
+
+        # Without the fallback the exhausted forward propagates out of the
+        # search, and this call raises instead of returning.
+        searcher._select_passages(encoded, [result])
+
+        assert (result.snippet, result.line_start, result.section) == (
+            "first passage",
+            12,
+            "Options",
+        )

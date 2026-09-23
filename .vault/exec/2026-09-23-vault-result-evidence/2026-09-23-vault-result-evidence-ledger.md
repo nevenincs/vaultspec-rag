@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:1efd1e4d4765b4b3e466fda4c2d367149f82af6a0edbf3fc18faf2b4bf5c4638'
+body_hash: 'sha256:c3783b88f95d6b93cf4231d40cbe1630fcab557b771f0133b9a4c01ce0ee42af'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -88,6 +88,8 @@ related:
 - `S05` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
 - `S05` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S05` `verify:` `full no-accelerator lane: 5363 passed, 3 failed, all 3 failing identically at 799b4dc3 before this feature` -> `pass`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_unit.py`
+- `S06` `verify:` `fallback removed lets the exhausted forward escape the search, restored passes` -> `pass`
 
 ## Notes
 
@@ -99,4 +101,5 @@ related:
 - `S09` latency target missed: fp32 baseline 1.140s, final median 0.712s (rerank 0.403s, passage 0.222s). Passage scoring costs about 2.8ms per pair, not the 1-2ms the research estimated; the 48-pair page budget cut it from 0.33s with no measured quality loss. Reaching 0.57s needs a ranking-affecting change to the chunk rerank; raised to the user
 - `S04` review correction: sentence and word splitters collapsed into one pattern-taking splitter; setext headings recognised; thematic breaks separate blocks and small passages merge only across whitespace
 - `S05` review correction: the indexed-metadata builder's dict shape matches an unrelated serializer and is registered as serialisation, not shared behaviour; the checkpoint test's schema-constant substitution is declared with its reason
+- `S06` review correction: passage scoring that runs out of accelerator memory now leaves each result its first passage instead of failing a ranked page
 
