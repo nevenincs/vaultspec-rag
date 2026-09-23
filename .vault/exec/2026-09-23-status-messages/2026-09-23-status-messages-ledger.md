@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:ac2caa3bd1cf7f98371f8530be134d1df0dd63f47f239bac7380711e2da43969'
+body_hash: 'sha256:35e1dab8bcce4f0cc104b2ec9b3bafa4a2f1f7631e16bba2ac5f8a36be2c1f3b'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -196,6 +196,15 @@ related:
 - `S09` `verify:` `pytest environment and hardware probe tests` -> `pass`
 - `S04` `M` `src/vaultspec_rag/operator_state/_hardware.py`
 - `S04` `verify:` `pytest dev/guards` -> `pass`
+- `S11` `M` `src/vaultspec_rag/api.py`
+- `S11` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status.py`
+- `S11` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S11` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S11` `verify:` `pytest affected status, probe, TUI and MCP modules` -> `pass`
 
 ## Notes
 
@@ -224,3 +233,4 @@ related:
 - `S13` Approved amendment (user authorization 2026-09-23) applied: ServiceLifecycle.NOT_SERVING (exit 4) via with_health for an error health verdict only; paused and degraded stay running; doctor keeps exit 0 for a starting service; DegradationReason list in the accepted decision amended to the emitted codes; proposal 2026-09-23-status-messages-exit-codes-adr retired; docs/cli.md regenerated for the verbose help text changed in 89c799ff
 - `S09` CI correction (78d7b9e4): the child-output decoding guard flagged the probe decoding under the ambient encoding; it now states utf-8 with replacement
 - `S04` CI correction (78d7b9e4): nvidia-smi output is decoded as utf-8 with replacement, not the ambient encoding
+- `S11` CI correction: basedpyright found 14 errors the local lint lane printed but did not fail on. Two health tests asserted a string was not in a Degradation model, which iterates its fields, so they passed vacuously; they now check the detail. The rest tighten types on the probe parse, the typed report parse, the index dict and the TUI pill keys

@@ -11,6 +11,7 @@ rendering fields it cannot trust.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 import pydantic
 
@@ -26,6 +27,6 @@ def parse_report[Report: (HealthReport, ServiceStateReport)](
     if not isinstance(payload, Mapping):
         return None
     try:
-        return model.model_validate(dict(payload))
+        return model.model_validate(dict(cast("Mapping[str, object]", payload)))
     except pydantic.ValidationError:
         return None

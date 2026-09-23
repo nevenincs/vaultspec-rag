@@ -148,6 +148,14 @@ def test_unreadable_probe_output_is_unknown_not_a_failure() -> None:
     assert not facts.compute.capability.blocks_start
 
 
+def _device_name(_index: int) -> str:
+    return "NVIDIA Test GPU"
+
+
+def _device_properties(_index: int) -> SimpleNamespace:
+    return SimpleNamespace(total_memory=16 * 1024 * 1024 * 1024)
+
+
 def _torch_double(*, cuda_build: str | None, cuda: bool, mps: bool) -> ModuleType:
     """A torch module exposing only the attributes classification reads."""
     torch = ModuleType("torch")
@@ -156,10 +164,8 @@ def _torch_double(*, cuda_build: str | None, cuda: bool, mps: bool) -> ModuleTyp
         version=SimpleNamespace(cuda=cuda_build),
         cuda=SimpleNamespace(
             is_available=lambda: cuda,
-            get_device_name=lambda _index: "NVIDIA Test GPU",
-            get_device_properties=lambda _index: SimpleNamespace(
-                total_memory=16 * 1024 * 1024 * 1024
-            ),
+            get_device_name=_device_name,
+            get_device_properties=_device_properties,
         ),
         backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: mps)),
     )

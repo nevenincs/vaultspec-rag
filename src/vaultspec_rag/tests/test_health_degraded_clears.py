@@ -95,7 +95,7 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons), (
+        assert not any("latest indexing job failed" in r.detail for r in reasons), (
             f"a later success answered the failure, got {reasons}"
         )
 
@@ -150,7 +150,7 @@ class TestDegradedVerdictTracksCurrentState:
             jobs_health, reasons = _jobs_health()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons)
+        assert not any("latest indexing job failed" in r.detail for r in reasons)
         last_failed = cast("dict[str, object] | None", jobs_health["last_failed"])
         assert last_failed is not None, (
             "the failure must remain reported in the rollup, only not degrading"

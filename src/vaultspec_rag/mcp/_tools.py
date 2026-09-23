@@ -689,7 +689,7 @@ async def get_index_status(
     )
     report = parse_report(ServiceStateReport, result)
     if report is None:
-        detail = result.get("message") if isinstance(result, dict) else None
+        detail = result.get("message")
         raise ToolError(
             "the service state could not be read"
             + (f": {detail}" if isinstance(detail, str) and detail else "")

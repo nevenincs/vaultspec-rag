@@ -1390,6 +1390,7 @@ def get_service_state(
 
     root = _resolve(root_dir)
 
+    index_data: dict[str, object]
     try:
         index_data = _get_status(root, registry)
     except RegistryFullError as exc:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from enum import StrEnum
 from importlib import metadata
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ._installation import ComputeCapability, InstallRole
 from ._models import ComputeReport
@@ -129,7 +129,7 @@ def classify_torch(torch_module: ModuleType) -> ComputeReport:
             getattr(torch_module, "mps", None), "recommended_max_memory", None
         )
         if callable(recommended):
-            memory_mib = int(recommended() // _MIB)
+            memory_mib = int(cast("int", recommended()) // _MIB)
     return ComputeReport(
         capability=ComputeCapability.READY,
         torch_version=version,
