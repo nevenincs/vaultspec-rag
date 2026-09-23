@@ -106,4 +106,3 @@ related:
 - `S05` review correction: the indexed-metadata builder's dict shape matches an unrelated serializer and is registered as serialisation, not shared behaviour; the checkpoint test's schema-constant substitution is declared with its reason
 - `S06` review correction: passage scoring that runs out of accelerator memory now leaves each result its first passage instead of failing a ranked page
 - `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
-
