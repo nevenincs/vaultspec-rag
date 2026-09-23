@@ -954,7 +954,8 @@ def run_benchmark(
 
     Returns:
         Dict containing benchmark results: p50, p95, p99, mean, stdev,
-        vault_count, code_count, gpu_name, vram_mib.
+        vault_count, code_count, gpu, accelerator_backend, memory_kind,
+        memory_allocated_mib, vram_mib.
     """
     import statistics
     import time

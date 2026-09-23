@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:da7d135c835d8828dd7717ca9e001efb34dc0a958f8fd7fbc9f4c5eba619f461'
+body_hash: 'sha256:2acc9b01630885bd66af1313019c9f2602073ee5410ed15cc2781b3057743c16'
 related:
   - "[[2026-06-11-service-status-convergence-adr]]"
   - "[[2026-09-01-gpu-less-install-footprint-adr]]"
@@ -36,8 +36,7 @@ related:
 
 Question: why do `vaultspec-rag status` and `vaultspec-rag server status` report
 confusing or wrong operator state? The clearest case: on a workstation with an RTX 4080
-SUPER, the installed tool prints `Compute: Unavailable (no CUDA or MPS accelerator; CPU
-is unsupported)`. A second question is what a plain-language status redesign has to
+SUPER, the installed tool prints `Compute: Unavailable (no CUDA or MPS accelerator; CPU is unsupported)`. A second question is what a plain-language status redesign has to
 build on. The redesign must also show which optional features are active for the
 current repository, such as a preprocessing hook or Typesafe classification.
 
@@ -89,7 +88,9 @@ decision.
   list: base (CLI client), `[mcp]` (MCP client), `[gpu]` (inference host) and `[gpu,mcp]`
   (combined host). The accepted `2026-09-01-gpu-less-install-footprint-adr` refers to
   control-plane and service-client surfaces but defines no persisted role.
+
 - **"Mode" in code means three unrelated things.** None of them is the role:
+
   - placement `tool | dependency | dev`
     (`src/vaultspec_rag/commands/_mode.py:63-149`, persisted in
     `.vaultspec/workspace.json`)
@@ -100,10 +101,13 @@ decision.
     environment only)
 
   `docs/installation.md:310` states that placement does not decide torch.
+
 - **The server has no environment of its own.** It runs in whatever environment
   launched the CLI (`src/vaultspec_rag/cli/_process.py:391`). The role of the
   environment the user runs therefore silently decides whether a host is possible.
+
 - **The installer assumes provider intent.**
+
   - Torch configuration and provisioning default to on
     (`src/vaultspec_rag/cli/_install.py`).
   - In dependency mode, the torch patch adds a direct `torch>=2.4` to a consumer
@@ -113,7 +117,9 @@ decision.
     stdio adapter loads no model.
   - Prebuilt binaries always bootstrap `[gpu,mcp]` (`tools/binaries/build_pyapp.py:111`).
   - No client-only channel exists.
+
 - **The role is inferred from torch importability in at least nine places:**
+
   - `src/vaultspec_rag/cli/_process.py:452-570`: a subprocess exit-code probe,
     classified afterwards by prose equality `detail == outcome[1]`
   - `src/vaultspec_rag/commands/_tool_torch.py:378-399`
@@ -191,6 +197,7 @@ decision.
 ### State is carried as strings and dicts across the operator surface
 
 - **Service lifecycle has four derivations:**
+
   - `src/vaultspec_rag/serviceclient/_status.py:212`
   - `src/vaultspec_rag/cli/_status_render.py:256`, which has its own crashed tokens and
     labels
@@ -198,14 +205,18 @@ decision.
     on a listening port becomes `unreachable`, so paused or degraded reads as a fault.
   - `src/vaultspec_rag/cli/_service_doctor.py:152`, where warming reads as
     `needs_restart`
+
 - **"Warming" means three things:** service startup, operator verdict, and quiesce
   resume.
+
 - **Health is one undeclared string** (`src/vaultspec_rag/server/_lifespan.py:923-997`).
   The CLI tests for values the server never emits (`starting`, `unknown`,
   `src/vaultspec_rag/cli/_status_labels.py:328`). Degradation reasons are prose that the
   CLI maps back to families by substring
   (`src/vaultspec_rag/cli/_status_labels.py:574-585`).
+
 - **The wire is typed only for `/search`.**
+
   - `/health`, `/readiness`, `/service-state`, `/jobs`, `/watcher` and `/storage/survey`
     return hand-built dicts.
   - The typed models `IndexStatus` and `HealthResponse`
@@ -213,7 +224,9 @@ decision.
   - `serviceclient` returns `dict | None` throughout.
   - `api._get_status` carries duplicate alias keys: `cuda`/`accelerator_backend`,
     `gpu_name`/`accelerator_name`, `vram_*`/`memory_*`.
+
 - **Labels are scattered across modules.**
+
   - `_status_labels.py`
   - `serviceclient/_status.py`
   - the doctor, watcher, provisioning and TUI pill tables
@@ -221,6 +234,7 @@ decision.
 
   The same wording is duplicated in several places. "Not reported by service" renders
   about ten times for a stopped server (`src/vaultspec_rag/cli/_cli_format.py:49`).
+
 - **Non-actionable lines.** `Support profile`, `Accepted backends`, `Minimum RAM` and
   the Code/Document capacity lines on `status` are static ceilings from config
   (`src/vaultspec_rag/index_profiles.py:199-254`). They are not measurements, and when

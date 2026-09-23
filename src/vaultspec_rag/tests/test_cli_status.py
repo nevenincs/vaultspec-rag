@@ -744,20 +744,48 @@ class TestServiceTokenIdentity:
         service running reads a paused service as a port fault and fails the
         paused assertion; restoring the any-verdict rule passes.
         """
-        from ..cli._status_render import _health_answered
         from ..operator_state._service import ServiceLifecycle
         from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
 
         for verdict in ("ready", "paused", "degraded", "error"):
             state = lifecycle_for_port(
                 port_listening=True,
-                health_answered=_health_answered({"status": verdict}),
+                health_answered=health_answered({"status": verdict}),
             )
             assert state is ServiceLifecycle.RUNNING, verdict
         assert (
             lifecycle_for_port(port_listening=True, health_answered=False)
             is ServiceLifecycle.CRASHED_PORT_SILENT
         )
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            {"status": "error", "error": "health_probe_timeout", "message": "x"},
+            {"status": "error", "http_code": 503},
+        ],
+        ids=["probe-timeout", "http-error"],
+    )
+    def test_a_probe_that_got_no_verdict_is_a_fault_not_running(
+        self, sentinel: dict[str, object]
+    ) -> None:
+        """A wedged or erroring service must still exit 4 to a broker.
+
+        Mutation check: accepting any body with a string status as an answer
+        reads both synthetic failure bodies as running and fails this test;
+        restoring the sentinel rejection passes.
+        """
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
+
+        state = lifecycle_for_port(
+            port_listening=True, health_answered=health_answered(sentinel)
+        )
+
+        assert state is ServiceLifecycle.CRASHED_PORT_SILENT
+        assert state.exit_code == 4
 
     def test_next_action_for_a_starting_service_says_retry(self):
         from ..cli._status_render import _status_next_action
@@ -935,3 +963,50 @@ class TestDegradedDiscoveryStatus:
             assert payload["data"]["status"] == "needs_restart"
         finally:
             self._restore()
+
+
+def test_verbose_status_verifies_the_device_instead_of_reading_metadata(
+    tmp_path: Path,
+) -> None:
+    """``--verbose`` is where status settles whether the GPU really works.
+
+    The metadata read can only say a GPU build is installed; the verifying
+    probe answers ready or names the defect, so it never reports that
+    unverified middle state.
+
+    Mutation check: ignoring the verify flag probes metadata only and, on a host
+    with a GPU build of torch, reports the unverified build and fails; restoring
+    it passes.
+    """
+    from ..cli._status import _local_view
+
+    view = _local_view(tmp_path, {"storage_path": "data"}, verify=True)
+
+    assert view.installation.compute.capability is not (ComputeCapability.BUILD_PRESENT)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        ("ready", "running"),
+        ("paused", "running"),
+        ("degraded", "running"),
+        ("error", "not_serving"),
+    ],
+)
+def test_only_a_service_that_cannot_serve_lifts_the_exit_code(
+    verdict: str, expected: str
+) -> None:
+    """Health raises the broker exit code only for models that never loaded.
+
+    Mutation check: lifting every verdict other than ``ready`` reads a paused
+    service as a fault and fails the paused case; restoring the error-only rule
+    passes.
+    """
+    from ..operator_state._service import ServiceLifecycle
+    from ..serviceclient._status import with_health
+
+    state = with_health(ServiceLifecycle.RUNNING, {"status": verdict})
+
+    assert state.value == expected
+    assert state.exit_code == (4 if verdict == "error" else 0)

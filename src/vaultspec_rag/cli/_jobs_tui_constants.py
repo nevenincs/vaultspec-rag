@@ -126,13 +126,13 @@ SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
 # while the job-health tallies use an escalating warning-triangle family
 # (△ hollow for degraded, ▲ solid for stalled) that cannot be misread as a
 # state.
-STATE_PILLS: dict[str, tuple[str, str, str, str, bool]] = {
+STATE_PILLS: dict[JobState, tuple[str, str, str, str, bool]] = {
     # state -> (glyph, ASCII fallback, label, tone, bold)
-    "running": ("▶", ">", "running", "good", True),
-    "queued": ("⋯", "..", "queued", "neutral", False),
-    "paused": ("‖", "||", "paused", "neutral", False),
-    "failed": ("✖", "x", "failed", "bad", True),
-    "succeeded": ("✓", "v", "succeeded", "good", False),
+    JobState.RUNNING: ("▶", ">", "running", "good", True),
+    JobState.QUEUED: ("⋯", "..", "queued", "neutral", False),
+    JobState.PAUSED: ("‖", "||", "paused", "neutral", False),
+    JobState.FAILED: ("✖", "x", "failed", "bad", True),
+    JobState.SUCCEEDED: ("✓", "v", "succeeded", "good", False),
 }
 # The residue bucket for states without a pill of their own; the label is
 # the state name the tally reported.

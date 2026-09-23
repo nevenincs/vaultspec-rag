@@ -14,6 +14,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, cast
 
+import pydantic
+
 from .._job_errors import JobErrorKind
 from .._job_values import text
 from .._operator_commands import (
@@ -25,6 +27,7 @@ from .._operator_commands import (
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
 from ..operator_state._features import TypesafeState
+from ..operator_state._models import ServiceFeatures
 from ..operator_state._service import DegradationReason, HealthVerdict
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
@@ -49,6 +52,8 @@ def typesafe_label(snapshot: object) -> str:
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from ..config._types import PreprocessMode
 
 __all__ = [
     "DOMAIN_INDEX_FAMILY",
@@ -93,12 +98,47 @@ def _model_ready_label(value: object) -> str:
     return NOT_REPORTED
 
 
-def reranker_label(health: dict[str, object] | None) -> str:
+def service_features(health: dict[str, object] | None) -> ServiceFeatures | None:
+    """Parse the feature section a service's health reports, or ``None``.
+
+    A section this build cannot read - an older daemon, or none at all - is
+    not a set of features to render.
+    """
+    try:
+        return ServiceFeatures.model_validate(health_section(health, "features"))
+    except pydantic.ValidationError:
+        return None
+
+
+_PREPROCESS_MODE_LABELS: dict[PreprocessMode, str] = {
+    "default": "on (hooks run for projects that configure them)",
+    "off": "off (VAULTSPEC_RAG_PREPROCESS=off; no project's hooks run)",
+}
+
+
+def preprocess_mode_label(features: ServiceFeatures | None) -> str:
+    """Say whether the service runs projects' preprocessing hooks."""
+    if features is None:
+        return NOT_REPORTED
+    return _PREPROCESS_MODE_LABELS[features.preprocess_mode]
+
+
+def watcher_enabled_label(features: ServiceFeatures | None) -> str:
+    """Say whether the service follows file changes at all."""
+    if features is None:
+        return NOT_REPORTED
+    if features.watcher_enabled:
+        return "on (indexes follow file changes)"
+    return "off (indexes change only when you run index)"
+
+
+def reranker_label(features: ServiceFeatures | None) -> str:
     """Say whether reranking is off by choice, ready, or not yet loaded."""
-    features = health_section(health, "features")
-    if features.get("reranker_enabled") is False:
+    if features is None:
+        return NOT_REPORTED
+    if not features.reranker_enabled:
         return "off (disabled in configuration)"
-    return _model_ready_label(features.get("reranker_loaded"))
+    return "ready" if features.reranker_loaded else "not loaded yet"
 
 
 def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:833d52834fd9d13c2973dc1dd955fab6c345b8034d04cebdb92581b1ec09cd8f'
+body_hash: 'sha256:ac9b8044f44514fb840dd486e2292d4ec11a325e6802041a8ed5f080d7dbab64'
 related:
   - "[[2026-09-23-status-messages-plan]]"
   - "[[2026-09-23-status-messages-adr]]"
@@ -66,6 +66,43 @@ The four named risks were checked and found clean:
 - `hook_state` is the only derivation of whether hooks run.
 
 After the corrections below, the phase gate passes.
+
+**P04 review (commits `db62e1b7` to `df1a6831`; Steps S06, S13 and S07, plus the S16
+corrections): revision required.**
+
+- ruff, ruff format and `ty check src` pass on HEAD.
+- 238 tests pass across the touched modules.
+
+These were confirmed clean:
+
+- The discovery file is still deleted only on a confirmed-dead PID.
+- The release-mismatch refusal emits one envelope and exits 1 in both modes.
+- The MCP path stays torch-free.
+
+After the S13 correction and the S17 changes below, the phase gate passes.
+
+**Final integrated review (P05 close and plan close; commits `799b4dc3` to `e1d656df`):
+revision required.**
+
+- ruff, ruff format and `ty check src` pass.
+- `docs/cli.md` is current.
+- 858 of 859 tests pass.
+
+Confirmed clean:
+
+- The deleted derivations are gone from `src`: `TorchDiagnosis`, the CLI
+  `_compute_state`, the `/health` `cuda` flag, and substring degradation matching.
+- `InstallRole` has one derivation.
+- Remediation is gated on `is_defect`.
+- A stopped service renders as one plain line.
+- `health_answered` rejects both synthetic probe bodies.
+- The torch-free guards exist and name their mutations.
+- No development metadata appears in added lines.
+- The breaking-change footer covers every wire change.
+- The documentation tokens match the code.
+
+After commit `89c799ff`, 1807 tests pass across the touched modules, and the
+hooks-predicate guard passes.
 
 ## Findings
 
@@ -224,6 +261,124 @@ The service-read guard is mutation-checked.
 Resolved: a runtime guard now asserts that a `/health` request leaves the installation
 and hardware caches empty. It is mutation-checked.
 
+### port-health-sentinel-reads-running | high | A hung or 5xx service reported running and exited 0
+
+`src/vaultspec_rag/cli/_status_render.py`
+
+The port-only lifecycle accepted any health body carrying a `status` string. That
+included the transport's synthetic probe-timeout and HTTP-error bodies, so a wedged or
+erroring service read as running.
+
+Resolved: S13 was reopened, and commit `2c9bd93d` fixed it.
+`serviceclient/_transport.health_answered` now lives beside the transport that makes
+those bodies, and rejects both. Each sentinel has a mutation-checked test.
+
+### error-health-exits-zero | medium | A service whose own verdict is `error` exits 0
+
+`src/vaultspec_rag/cli/_status_render.py`
+
+A genuine `HealthVerdict.ERROR` body maps to `ServiceLifecycle.RUNNING`, so it exits 0.
+The accepted decision only requires that paused and degraded no longer read as
+unreachable.
+
+Owner: the plan-close amendment to `2026-09-23-status-messages-adr`. It decides
+whether the health verdict can raise the broker exit code, or whether lifecycle alone
+owns the exit code.
+
+### doctor-starting-exit-weight | medium | A starting daemon changed `server doctor` from exit 1 to exit 0
+
+`src/vaultspec_rag/cli/_service_doctor.py`
+
+Liveness now comes from `ServiceLifecycle.is_live`, which includes `STARTING`. The
+envelope reports `ok: false` with status `starting`, but the exit code dropped to 0.
+
+Resolved in part: S17 pinned the status and label with a mutation-checked test. The
+exit-code change is recorded for the same plan-close amendment.
+
+### residual-stopped-literals | medium | The stopped branch hand-spelled the lifecycle
+
+`src/vaultspec_rag/cli/_status_render.py`
+
+Resolved in S17 (`56201736`): the stopped branch's error, state, label and exit code now
+all come from `ServiceLifecycle.STOPPED`.
+
+### docs-state-tokens-stale | medium | Published state-token tables contradict the wire
+
+These pages still document the old tokens:
+
+- `docs/service-discovery.md` (its state and exit-code table);
+- `docs/cli.md`;
+- `docs/service-mode.md`;
+- `docs/automation.md`.
+
+Owner: P05.S18.
+
+### doctor-live-word-contradiction | low | The doctor rendered "running (starting ...)"
+
+Resolved in S17: the live-service axis prints the lifecycle's sentence, and the overall
+label names a starting service.
+
+### doctor-duplicate-import | low | ServiceLifecycle was imported twice in the doctor
+
+Resolved in S17.
+
+### toolerror-branch-untested | low | The MCP unreadable-state refusal has no test
+
+`src/vaultspec_rag/mcp/_tools.py`
+
+The refusal shares `parse_report`'s tested fail-closed behaviour, but no test drives the
+tool's `ToolError` branch. Recorded, not yet addressed.
+
+### tui-lifecycle-vocab | low | The TUI holds its own "unreachable" vocabulary
+
+Owner: P05.S14. Its scope has been widened to the TUI header and cells.
+
+### hooks-predicate-guard-red | high | A committed guard test failed at HEAD
+
+`src/vaultspec_rag/cli/_status_labels.py`
+
+S17's `preprocess_mode_label` compared the reported mode against `"off"`. That
+re-derived whether hooks run, and the single-derivation guard caught it after the P04
+close.
+
+Resolved in `89c799ff`: the label is now a table keyed by mode over the parsed
+`ServiceFeatures`, and the guard passes.
+
+### adr-verbose-full-probe | high | `status --verbose` never ran the verifying probe
+
+`src/vaultspec_rag/cli/_status.py`
+
+Resolved in `89c799ff`:
+
+- `--verbose` now probes the daemon interpreter at the verify depth, and its help says
+  so.
+- A mutation-checked test asserts that the verbose view never reports the unverified
+  `build_present` state.
+
+### duplicate-feature-label-derivations | high | Feature labels were produced twice, once typed and once from raw dicts
+
+`src/vaultspec_rag/cli/_status_labels.py`, `src/vaultspec_rag/cli/_status.py`
+
+Resolved in `89c799ff`. Server status parses the health payload's feature section into
+`ServiceFeatures`, and one producer per feature renders it. Project status calls the
+same producers. A section this build cannot read renders as not reported.
+
+### tui-condition-vocabulary | medium | The jobs view's condition pill keeps its own words
+
+`src/vaultspec_rag/cli/_jobs_tui_header.py`, `src/vaultspec_rag/cli/_jobs_tui_cells.py`
+
+The header's `healthy`, `degraded` and `stalled` pill summarises the job set's
+degradation tallies, which is a different concept from the service's `HealthVerdict`.
+Its `unreachable` names a failed fetch, not a lifecycle state. Mapping it onto the
+service vocabulary would describe jobs with words about the service. S14 already moved
+the service-health tones onto `HealthVerdict`.
+
+Recorded and not changed. A later change could give job health its own enum.
+
+### benchmark-docstring-alias-key | low | A docstring named a deleted key
+
+Resolved in `89c799ff`.
+
 ## Recommendations
 
 - **P04.S06:** decide how a version-mismatched client parses a typed health payload.
@@ -241,3 +396,14 @@ and hardware caches empty. It is mutation-checked.
   record should match the wire.
 - **P05.S18:** the release note states that the service reads its installation once
   per process lifetime. A torch or driver change shows only after a restart.
+- **Plan close:** the same amendment to `2026-09-23-status-messages-adr` should record
+  two exit-code decisions:
+  - whether an `error` health verdict or a health-probe failure raises the broker exit
+    code;
+  - that `server doctor` exits 0 for a starting daemon.
+- **Plan completion:** all 18 Steps are closed, and every critical and high finding is
+  resolved. The only open items are decision-level and need authorization. They are
+  covered by the proposed amendment `2026-09-23-status-messages-exit-codes-adr`:
+  - the `DegradationReason` member list;
+  - the broker exit code for an `error` health verdict;
+  - `server doctor`'s exit code for a starting daemon.

@@ -94,6 +94,9 @@ def test_every_down_lifecycle_tells_the_operator_what_to_do(
     lifecycle: ServiceLifecycle,
 ) -> None:
     assert (lifecycle.remediation is None) is lifecycle.is_live
+    assert lifecycle.is_live is (
+        lifecycle in {ServiceLifecycle.RUNNING, ServiceLifecycle.STARTING}
+    )
 
 
 def test_a_paused_service_is_neither_serving_nor_broken() -> None:

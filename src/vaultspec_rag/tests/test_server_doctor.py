@@ -287,3 +287,26 @@ def test_the_doctor_never_imports_torch_into_the_cli(tmp_path: Path) -> None:
     )
 
     assert proc.returncode == 0, proc.stderr
+
+
+def test_a_starting_service_reads_as_starting_not_as_needing_a_restart() -> None:
+    """A service loading its models is alive, so it must not be sent to restart.
+
+    Mutation check: judging liveness by a zero exit code, as the doctor once
+    did, reads the starting service as dead and fails the status assertion;
+    restoring the lifecycle's own liveness passes.
+    """
+    from ..cli._service_doctor import _overall_label, _overall_readiness
+    from ..operator_state._service import ServiceLifecycle
+
+    starting = ServiceLifecycle.STARTING
+    service: dict[str, object] = {
+        "present": True,
+        "live": starting.is_live,
+        "state": starting.value,
+    }
+
+    ready, status = _overall_readiness({"ready": True}, service)
+
+    assert (ready, status) == (False, "starting")
+    assert starting.label in _overall_label(ready, status)

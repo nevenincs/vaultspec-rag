@@ -306,6 +306,11 @@ def _environment_holders_readiness() -> EnvironmentHoldersReadiness:
     )
 
 
+#: Capabilities whose probe detail explains them: an import error's message,
+#: or why a check did not finish.
+_DETAIL_IS_DIAGNOSIS = frozenset({"torch_import_failed", "unknown"})
+
+
 def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
     """Report supported accelerator availability from a compute verdict.
 
@@ -327,7 +332,10 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
             status = ReadinessStatus.NOT_READY
         else:
             status = ReadinessStatus.UNKNOWN
-        detail = capability.label + (f" ({compute.detail})" if compute.detail else "")
+        # The raw detail is the diagnosis only where the capability cannot
+        # say what went wrong on its own; elsewhere it restates the label.
+        diagnostic = compute.detail if capability in _DETAIL_IS_DIAGNOSIS else None
+        detail = capability.label + (f" ({diagnostic})" if diagnostic else "")
     return DependencyReadiness(
         name="torch",
         status=status,

@@ -78,6 +78,7 @@ from .._job_values import count, flag, mapping, measurement
 from .._loopback_http import LOOPBACK_OPENER
 from .._units import human_bytes
 from ..concurrency import LIMITER_STAT_FIELDS
+from ..operator_state._service import HealthVerdict
 from ..serviceclient._compat import classify_service_version
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
@@ -118,10 +119,11 @@ _POOL_ORDER = ("encode", "index", "search")
 
 # Verdict -> (semantic tone, bold), resolved through the palette so this
 # bar and the jobs header can never disagree about what a colour means.
-_STATUS_TONES: dict[str, tuple[str, bool]] = {
-    "ready": ("good", True),
-    "degraded": ("attention", True),
-    "error": ("bad", True),
+_STATUS_TONES: dict[HealthVerdict, tuple[str, bool]] = {
+    HealthVerdict.READY: ("good", True),
+    HealthVerdict.PAUSED: ("neutral", False),
+    HealthVerdict.DEGRADED: ("attention", True),
+    HealthVerdict.ERROR: ("bad", True),
 }
 
 
@@ -401,7 +403,10 @@ def _status_segment(
     if not status.reachable:
         return "service", "unreachable", tone_style(tones, "bad", bold=True)
     verdict = status.status or _ABSENT
-    tone, bold = _STATUS_TONES.get(verdict, ("", True))
+    try:
+        tone, bold = _STATUS_TONES[HealthVerdict(verdict)]
+    except ValueError:
+        tone, bold = "", True
     if status.degraded_reasons:
         verdict = f"{verdict} ({len(status.degraded_reasons)})"
     return "service", verdict, tone_style(tones, tone, bold=bold)
