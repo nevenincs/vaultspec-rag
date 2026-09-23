@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:64885f4788a898b28b5f58e54bdcafc75cd023ddd21b0a8518a970634b4a7b3e'
+body_hash: 'sha256:41fa616150d366cdcc7425f08fbdec60d80ff5e51b975abee97e915f3806e340'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -24,6 +24,14 @@ related:
 - `S03` `M` `.vault/research/2026-09-23-vault-result-evidence-research.md`
 - `S03` `M` `.vault/adr/2026-09-23-vault-result-evidence-adr.md`
 - `S03` `verify:` `service vault search median rerank 1.089s->0.367s, total 1.140s->0.43s` -> `pass`
+- `S01` `A` `src/vaultspec_rag/tests/quality/evidence_queries.toml`
+- `S01` `verify:` `self-check: 36 gold spans present and unique at the frozen ref, offsets within 5 chars, 20 beyond 3000 chars` -> `pass`
+- `S01` `by:` `vaultspec-standard-executor`
+- `S02` `A` `src/vaultspec_rag/tests/integration/test_vault_evidence_gate.py`
+- `S02` `M` `src/vaultspec_rag/tests/integration/_frozen_corpus_evidence.py`
+- `S02` `M` `src/vaultspec_rag/tests/quality/metrics.py`
+- `S02` `A` `src/vaultspec_rag/tests/quality/evidence_baseline.json`
+- `S02` `verify:` `ruff+basedpyright on gate files` -> `pass`
 
 ## Notes
 

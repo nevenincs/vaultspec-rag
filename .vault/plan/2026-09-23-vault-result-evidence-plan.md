@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:a8489c908a11c349f8579c86008c3a748b02309afdd1b9274a4b8a68ec404bf4'
+body_hash: 'sha256:9c42bf56d1c75b1674f5d73a0936f7eb7186097a420f8e0c47284c5ffcffe445'
 ---
 
 # `vault-result-evidence` plan
@@ -45,8 +45,8 @@ passages are deferred by the ADR.
 
 Delivers a blind-labelled evidence query set over the frozen vault and a quality gate for ranking, evidence-in-snippet, section match and verbatim spans, with today's behaviour measured as the baseline.
 
-- [ ] `P01.S01` - author a blind evidence-labelled query set (query, gold record, gold section, verbatim evidence) from the frozen vault without viewing search output; `src/vaultspec_rag/tests/quality/evidence_queries.toml`.
-- [ ] `P01.S02` - add the evidence quality gate measuring hit@1, MRR, evidence-in-snippet, section match and the verbatim-span invariant, and record the pre-change measurement; `src/vaultspec_rag/tests/integration/test_vault_evidence_gate.py, src/vaultspec_rag/tests/quality/`.
+- [x] `P01.S01` - author a blind evidence-labelled query set (query, gold record, gold section, verbatim evidence) from the frozen vault without viewing search output; `src/vaultspec_rag/tests/quality/evidence_queries.toml`.
+- [x] `P01.S02` - add the evidence quality gate measuring hit@1, MRR, evidence-in-snippet, section match and the verbatim-span invariant, and record the pre-change measurement; `src/vaultspec_rag/tests/integration/test_vault_evidence_gate.py, src/vaultspec_rag/tests/quality/`.
 
 ### Phase `P02` - run the reranker in fp16 from one constructor
 

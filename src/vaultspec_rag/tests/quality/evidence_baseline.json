@@ -1,0 +1,18 @@
+{
+  "note": "Floors for the vault evidence gate over the frozen corpus and the blind evidence query set. Ranking floors sit one case (1/36) below the measurement they were taken from, to absorb run-to-run GPU nondeterminism; a floor only ever rises.",
+  "floors": {
+    "hit_at_1": 0.5,
+    "mrr": 0.63,
+    "evidence_in_snippet": 0.0
+  },
+  "measurements": {
+    "chunk_head_snippet": {
+      "note": "Snippet = first 200 characters of the winning chunk; vault hits carry no line span.",
+      "cases": 36,
+      "hit_at_1": 0.5278,
+      "mrr": 0.6651,
+      "evidence_in_snippet": 0.0,
+      "hits_with_span": 0
+    }
+  }
+}
