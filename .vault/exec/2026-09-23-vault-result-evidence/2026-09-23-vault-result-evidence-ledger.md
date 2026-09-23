@@ -111,4 +111,3 @@ related:
 - `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
 - `S04` plan-close review correction: an underline under a list item or block quote is a thematic break, not a setext heading
 - `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
-

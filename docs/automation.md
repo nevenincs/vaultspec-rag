@@ -112,8 +112,8 @@ vaultspec-rag search "graph rebuild race" --json \
 `id`, `path`, `title`, `score`, `snippet`, and `source`. Each object also
 carries the retrieval metadata for its domain, such as `doc_type`, `feature`,
 and `date` for vault hits, or `language`, `line_start`, `line_end`,
-`function_name`, and `class_name` for code hits. Fields that do not apply to a hit are `null` rather than absent, so
-`jq` paths stay stable across domains.
+`function_name`, and `class_name` for code hits. Fields that do not apply to a
+hit are `null` rather than absent, so `jq` paths stay stable across domains.
 
 A vault hit's `snippet` is the passage that best answers the query, up to about
 1,200 characters, and `line_start`/`line_end` give the file lines that hold it.

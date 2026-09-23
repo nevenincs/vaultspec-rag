@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:8f7158b5613cd8c34f704ff43a5ec841ce97a0f7e41f0770873635d5e42c41f8'
+body_hash: 'sha256:0f886db74c44c5993b8a0795cbeaab5dfde768951fb7d86a0d15eec01f10dcbe'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -16,8 +16,8 @@ related:
 ## Scope
 
 This audit covers the integrated behaviour of `2026-09-23-vault-result-evidence-plan`
-against `2026-09-23-vault-result-evidence-adr`, from commit `bd825c2f` to `28ca88da`
-on `fix/rag-results`.
+against `2026-09-23-vault-result-evidence-adr`, commits `bd825c2f`..`97f0380e` on
+`fix/rag-results`, and the corrections that follow the plan-close review.
 
 Behaviour under review:
 
