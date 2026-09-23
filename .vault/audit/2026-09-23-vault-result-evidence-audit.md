@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:0f886db74c44c5993b8a0795cbeaab5dfde768951fb7d86a0d15eec01f10dcbe'
+body_hash: 'sha256:f205ee8012acc7c4f83124b8aa4678fd6d0bd51cf8cd380c3ecb247fcb64963c'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -157,6 +157,30 @@ feature:
 Each change carries a test that fails with the fix removed. After them, the evidence,
 intent-ranking, testimonial and GPU integration suites pass (41), with the evidence
 metrics unchanged, and the CLI/MCP parity test passes.
+
+### plan-close-review | high | The plan cannot close while the latency target is unmet without authorization; open
+
+The plan-close review of `2a2ee276`..`97f0380e` found one high finding, one medium and
+four lows. The high is open; the rest are resolved.
+
+- **High, open.** `P06.S09` was closed with the plan's latency criterion recorded as
+  failed and no persisted authorization. S09 is reopened pending the user's decision
+  between restating the target and a follow-on decision on the chunk rerank (see
+  search-latency).
+- **Medium, resolved** (`9518b986`). A single list item or quoted line followed by `---`
+  was read as a setext heading, dropping its text.
+- **Lows, resolved.**
+  - The audit's commit range was too narrow; corrected (`2bc25dfb`).
+  - The out-of-memory arm loaded the accelerator inside `except`; fixed (`b6ec1b8e`).
+  - `passage_pairs` mutated results; fixed (`b6ec1b8e`).
+  - A docs line was overwrapped; rewrapped (`2bc25dfb`).
+
+After those fixes:
+
+- The no-accelerator lane: 5366 passed; the 3 failures predate this feature.
+- The evidence, intent-ranking, testimonial and GPU integration suites and the CUDA OOM
+  test: 42 passed, evidence metrics unchanged.
+- The live CLI/MCP parity test passes.
 
 ## Recommendations
 
