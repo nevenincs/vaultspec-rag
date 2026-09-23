@@ -5,13 +5,13 @@ from __future__ import annotations
 import pydantic
 import pytest
 
-from vaultspec_rag.operator_state._features import PreprocessHookState, TypesafeState
-from vaultspec_rag.operator_state._installation import (
+from ..operator_state._features import PreprocessHookState, TypesafeState
+from ..operator_state._installation import (
     ComputeCapability,
     HardwarePresence,
     InstallRole,
 )
-from vaultspec_rag.operator_state._models import (
+from ..operator_state._models import (
     ComputeReport,
     Degradation,
     HardwareReading,
@@ -22,7 +22,7 @@ from vaultspec_rag.operator_state._models import (
     ServiceStateReport,
     TypesafeReport,
 )
-from vaultspec_rag.operator_state._service import DegradationReason, HealthVerdict
+from ..operator_state._service import DegradationReason, HealthVerdict
 
 pytestmark = [pytest.mark.unit]
 

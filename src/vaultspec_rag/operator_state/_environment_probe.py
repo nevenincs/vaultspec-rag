@@ -93,13 +93,13 @@ def _parse(
 ) -> InterpreterFacts:
     lines = proc.stdout.strip().splitlines()
     try:
-        decoded: object = json.loads(lines[-1]) if lines else None
-        if not isinstance(decoded, dict):
-            raise TypeError(type(decoded).__name__)
-        report = cast("dict[str, object]", decoded)
+        parsed: object = json.loads(lines[-1]) if lines else None
+        if not isinstance(parsed, dict):
+            raise TypeError(type(parsed).__name__)
+        report = cast("dict[str, object]", parsed)
         return InterpreterFacts(
             interpreter=interpreter,
-            role=InstallRole(report["role"]),
+            role=InstallRole(str(report["role"])),
             mcp_adapter=bool(report["mcp_adapter"]),
             executable=str(report["executable"]),
             prefix=str(report["prefix"]),

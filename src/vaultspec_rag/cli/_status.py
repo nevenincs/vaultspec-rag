@@ -360,11 +360,9 @@ def _emit_status_json(view: _StatusView) -> None:
     _emit_json(True, "status", data=data)
 
 
-def _answered(result: object) -> bool:
+def _answered(result: dict[str, object] | None) -> bool:
     """Whether the service answered with a body, rather than failing to."""
-    if not isinstance(result, dict):
-        return False
-    return cast("dict[str, object]", result).get("ok") is not False
+    return result is not None and result.get("ok") is not False
 
 
 def _refuse_incompatible_service(port: int, *, json_mode: bool) -> NoReturn:

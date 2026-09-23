@@ -7,13 +7,13 @@ import sys
 
 import pytest
 
-from vaultspec_rag.operator_state._features import PreprocessHookState, TypesafeState
-from vaultspec_rag.operator_state._installation import (
+from ..operator_state._features import PreprocessHookState, TypesafeState
+from ..operator_state._installation import (
     ComputeCapability,
     HardwarePresence,
     InstallRole,
 )
-from vaultspec_rag.operator_state._service import (
+from ..operator_state._service import (
     DegradationReason,
     HealthVerdict,
     ServiceLifecycle,

@@ -6,6 +6,7 @@ date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:1f967182d113ad2c0aea1ee0f674048790192bc6d4380743af61952fa0132565'
+body_hash: 'sha256:8eb7022c1033bc71847f3aa851c7a8a4470428f766ef365aba79ea707130ee4b'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -192,6 +193,22 @@ related:
 - `S13` `M` `docs/service-discovery.md`
 - `S13` `M` `src/vaultspec_rag/tests/test_operator_state.py`
 - `S13` `verify:` `ruff, ruff format, ty check src, docs-cli, markdown` -> `pass`
+- `S09` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S09` `verify:` `pytest environment and hardware probe tests` -> `pass`
+- `S04` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S04` `verify:` `pytest dev/guards` -> `pass`
+- `S11` `M` `src/vaultspec_rag/api.py`
+- `S11` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status.py`
+- `S11` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S11` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S11` `verify:` `pytest affected status, probe, TUI and MCP modules` -> `pass`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S01` `verify:` `python -m dev lint all` -> `pass`
 
 ## Notes
 
@@ -219,3 +236,6 @@ related:
 - `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
 - `S13` Approved amendment (user authorization 2026-09-23) applied: ServiceLifecycle.NOT_SERVING (exit 4) via with_health for an error health verdict only; paused and degraded stay running; doctor keeps exit 0 for a starting service; DegradationReason list in the accepted decision amended to the emitted codes; proposal 2026-09-23-status-messages-exit-codes-adr retired; docs/cli.md regenerated for the verbose help text changed in 89c799ff
 
+- `S09` CI correction (78d7b9e4): the child-output decoding guard flagged the probe decoding under the ambient encoding; it now states utf-8 with replacement
+- `S04` CI correction (78d7b9e4): nvidia-smi output is decoded as utf-8 with replacement, not the ambient encoding
+- `S11` CI correction: basedpyright found 14 errors the local lint lane printed but did not fail on. Two health tests asserted a string was not in a Degradation model, which iterates its fields, so they passed vacuously; they now check the detail. The rest tighten types on the probe parse, the typed report parse, the index dict and the TUI pill keys
