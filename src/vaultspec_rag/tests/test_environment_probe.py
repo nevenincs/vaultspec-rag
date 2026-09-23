@@ -206,3 +206,23 @@ def test_a_ready_cuda_device_reports_its_name_and_memory() -> None:
     assert report.backend == "cuda"
     assert report.device_name == "NVIDIA Test GPU"
     assert report.memory_mib == 16 * 1024
+
+
+def test_an_apple_gpu_reports_its_working_set_not_zero_vram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unified memory is reported as the recommended working set.
+
+    Mutation check: skipping the MPS branch reports no memory figure and fails
+    the assertion; restoring it passes.
+    """
+    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
+    torch = _torch_double(cuda_build=None, cuda=False, mps=True)
+    torch.__dict__["mps"] = SimpleNamespace(
+        recommended_max_memory=lambda: 4 * 1024 * 1024 * 1024
+    )
+
+    report = classify_torch(torch)
+
+    assert report.backend == "mps"
+    assert report.memory_mib == 4096

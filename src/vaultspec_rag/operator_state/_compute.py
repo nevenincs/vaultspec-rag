@@ -122,6 +122,14 @@ def classify_torch(torch_module: ModuleType) -> ComputeReport:
     if context.backend == "cuda":
         total = torch_module.cuda.get_device_properties(0).total_memory
         memory_mib = int(total // _MIB)
+    else:
+        # Unified memory has no VRAM total; the recommended working set is the
+        # figure that bounds what inference may use.
+        recommended = getattr(
+            getattr(torch_module, "mps", None), "recommended_max_memory", None
+        )
+        if callable(recommended):
+            memory_mib = int(recommended() // _MIB)
     return ComputeReport(
         capability=ComputeCapability.READY,
         torch_version=version,

@@ -10,6 +10,8 @@ import typer
 from .._job_values import count
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import InstallationReport
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
 from ._app import CLIState, JsonMode, app
@@ -29,9 +31,9 @@ def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
     # A version-skewed daemon can publish these as something other than an
     # int; count() reads a malformed field as "not measured" rather than
     # raising out of the status command.
-    vault_count = status.get("vault_documents", status.get("vault_count", 0))
-    code_count = status.get("codebase_chunks", status.get("code_count", 0))
-    document_count = status.get("document_chunks", status.get("document_count"))
+    vault_count = status.get("vault_count", 0)
+    code_count = status.get("code_count", 0)
+    document_count = status.get("document_count")
     return (
         count(vault_count) or 0,
         count(code_count) or 0,
@@ -194,43 +196,38 @@ def _status_diagnostics(status: dict[str, object]) -> list[str]:
     return lines
 
 
+def _compute_line(installation: InstallationReport) -> str:
+    """State whether the environment can run inference, and on what.
+
+    The hardware and the environment are named separately, because a machine
+    with a capable GPU can still hold a torch build that cannot use it.
+    """
+    compute = installation.compute
+    hardware = installation.hardware
+    capability = compute.capability
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return capability.label
+    name = compute.device_name or hardware.name or hardware.presence.label
+    memory_mib = compute.memory_mib or hardware.memory_mib
+    unified = " unified memory" if compute.backend == "mps" else ""
+    device = f"{name} ({_format_mib(memory_mib)}{unified})" if memory_mib else name
+    if capability is ComputeCapability.READY:
+        return f"ready on {device}"
+    return f"{device}; {capability.label}"
+
+
 def _render_status_text(
     status: dict[str, object],
+    installation: InstallationReport,
     *,
     target: object,
     service_port: int | None = None,
 ) -> None:
-    raw_backend = status.get("accelerator_backend")
-    backend = (
-        str(raw_backend) if raw_backend else ("cuda" if status.get("cuda") else None)
-    )
-    accelerator_name = status.get("accelerator_name", status.get("gpu_name"))
-    memory_mib = count(status.get("memory_mib", status.get("vram_mib")))
-    memory_measure = status.get("memory_measure")
     index_data_path = _human_index_data_location(
         status["storage_path"],
         service_port=service_port,
     )
     vault_count, code_count, document_count = _status_counts(status)
-    if backend == "cuda":
-        memory = (
-            f"{_format_mib(memory_mib)} VRAM"
-            if memory_mib is not None
-            else "VRAM not reported"
-        )
-        device = f"CUDA - {accelerator_name} ({memory})"
-    elif backend == "mps":
-        memory = "unified memory"
-        if memory_mib is not None:
-            qualifier = (
-                " recommended working set"
-                if memory_measure == "recommended_working_set"
-                else ""
-            )
-            memory = f"{_format_mib(memory_mib)}{qualifier}, unified memory"
-        device = f"MPS - {accelerator_name} ({memory})"
-    else:
-        device = "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
     lines = [
         "Project index",
         f"Project: {target}",
@@ -239,7 +236,7 @@ def _render_status_text(
         f"Source code sections: {code_count}",
         "Document sections: "
         f"{document_count if document_count is not None else 'not reported'}",
-        f"Compute: {device}",
+        f"Compute: {_compute_line(installation)}",
         *_status_diagnostics(status),
     ]
     if service_port is not None:
@@ -256,27 +253,18 @@ def _render_status_text(
 
 def _emit_status_json(
     status: dict[str, object],
+    installation: InstallationReport,
     *,
     target: object,
     service_port: int | None = None,
 ) -> None:
     vault_count, code_count, document_count = _status_counts(status)
     data: dict[str, object] = {
-        "cuda": bool(status["cuda"]),
-        "accelerator_available": bool(
-            status.get("accelerator_available", status["cuda"])
-        ),
-        "accelerator_backend": status.get("accelerator_backend"),
-        "accelerator_name": status.get("accelerator_name", status.get("gpu_name")),
-        "memory_kind": status.get("memory_kind"),
-        "memory_mib": count(status.get("memory_mib")),
-        "memory_measure": status.get("memory_measure"),
-        "gpu_name": status.get("gpu_name"),
-        "vram_mib": count(status.get("vram_mib")),
+        "installation": installation.model_dump(mode="json"),
         "storage_path": str(status["storage_path"]),
-        "vault_documents": vault_count,
-        "codebase_chunks": code_count,
-        "document_chunks": document_count,
+        "vault_count": vault_count,
+        "code_count": code_count,
+        "document_count": document_count,
         "target_dir": str(target),
         "backend_capabilities": status.get("backend_capabilities", {}),
     }
@@ -296,7 +284,14 @@ def _emit_status_json(
     _emit_json(True, "status", data=data)
 
 
-def _service_index_status(target: object) -> tuple[dict[str, object], int] | None:
+def _service_index_status(
+    target: object,
+) -> tuple[dict[str, object], InstallationReport, int] | None:
+    """Read a running service's index status and its own installation.
+
+    ``None`` means no compatible service answered for this root, and the
+    caller reports from this machine instead.
+    """
     port = _default_service_port()
     if port is None:
         return None
@@ -313,7 +308,34 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
     index_dict = cast("dict[str, object]", raw_index)
     if index_dict.get("error"):
         return None
-    return index_dict, port
+    try:
+        installation = InstallationReport.model_validate(result.get("installation"))
+    except ValueError:
+        return None
+    return index_dict, installation, port
+
+
+def _local_installation() -> InstallationReport:
+    """Describe the environment a service started from here would run in.
+
+    Read from package metadata in a child of the daemon interpreter, so this
+    command never imports torch and never claims a device it did not verify.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._hardware import read_hardware
+    from ._process import _resolve_daemon_interpreter
+
+    facts = probe_interpreter(_resolve_daemon_interpreter(), ProbeDepth.METADATA)
+    return InstallationReport(
+        role=facts.role,
+        mcp_adapter=facts.mcp_adapter,
+        executable=facts.executable,
+        prefix=facts.prefix,
+        hardware=read_hardware(),
+        compute=facts.compute,
+        local=True,
+    )
 
 
 @app.command(
@@ -331,15 +353,18 @@ def handle_status(
     import vaultspec_rag
 
     from .._store_locks import VaultStoreLockedError
-    from ._gpu_errors import _handle_gpu_error
 
     service_status = _service_index_status(target)
     if service_status is not None:
-        status, service_port = service_status
+        status, installation, service_port = service_status
         if json_mode:
-            _emit_status_json(status, target=target, service_port=service_port)
+            _emit_status_json(
+                status, installation, target=target, service_port=service_port
+            )
             return
-        _render_status_text(status, target=target, service_port=service_port)
+        _render_status_text(
+            status, installation, target=target, service_port=service_port
+        )
         return
 
     try:
@@ -347,11 +372,15 @@ def handle_status(
     except VaultStoreLockedError as exc:
         service_status = _service_index_status(target)
         if service_status is not None:
-            status, service_port = service_status
+            status, installation, service_port = service_status
             if json_mode:
-                _emit_status_json(status, target=target, service_port=service_port)
+                _emit_status_json(
+                    status, installation, target=target, service_port=service_port
+                )
                 return
-            _render_status_text(status, target=target, service_port=service_port)
+            _render_status_text(
+                status, installation, target=target, service_port=service_port
+            )
             return
         if json_mode:
             _emit_json_error_and_exit(
@@ -367,12 +396,10 @@ def handle_status(
             )
         _plain(_format_local_index_busy_message("read index status"))
         raise typer.Exit(code=1) from None
-    except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e)
-        return
 
+    installation = _local_installation()
     if json_mode:
-        _emit_status_json(status, target=target)
+        _emit_status_json(status, installation, target=target)
         return
 
-    _render_status_text(status, target=target)
+    _render_status_text(status, installation, target=target)

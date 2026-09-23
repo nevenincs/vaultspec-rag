@@ -96,7 +96,11 @@ from ._service_status import (
     _update_service_token,
     _write_service_status,
 )
-from ._status_labels import degradation_findings, render_degradation
+from ._status_labels import (
+    degradation_findings,
+    health_typesafe,
+    render_degradation,
+)
 
 __all__ = [
     "_caller_ephemeral_warning",
@@ -464,7 +468,7 @@ def _existing_service_running() -> _AttachCandidate | None:
                 port=existing_port,
                 health_status=health_status,
                 version=classify_service_version(health),
-                typesafe=health.get("typesafe"),
+                typesafe=health_typesafe(health),
             )
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
@@ -495,7 +499,7 @@ def _start_success(
         command=_START_COMMAND,
         status=status,
         human_title=human_title,
-        human_lines=(*human_lines, f"Typesafe: {typesafe_label(data)}"),
+        human_lines=(*human_lines, f"Typesafe: {typesafe_label(data['typesafe'])}"),
         **data,
     )
 
@@ -1124,7 +1128,7 @@ def _emit_start_succeeded(
     extra: dict[str, object] = (
         {"warnings": list(request.env_warnings)} if request.env_warnings else {}
     )
-    extra["typesafe"] = health.get("typesafe")
+    extra["typesafe"] = health_typesafe(health)
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()

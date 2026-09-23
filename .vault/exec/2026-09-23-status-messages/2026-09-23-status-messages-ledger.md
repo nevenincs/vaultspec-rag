@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5c2d2e004ab052ded2345c9707958e19d61fc420582bace6bd8cf193c9eba88d'
+body_hash: 'sha256:5cffcb58a75955087e2b91468e3ddf1f0db0b37ff3a1735c712e09eb33445948'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -103,6 +103,32 @@ related:
 - `S12` `M` `src/vaultspec_rag/operator_state/_features.py`
 - `S12` `A` `src/vaultspec_rag/tests/test_preprocess_hook_state.py`
 - `S12` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S16` `M` `src/vaultspec_rag/api.py`
+- `S16` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S16` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S16` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S16` `M` `src/vaultspec_rag/server/__init__.py`
+- `S16` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S16` `M` `src/vaultspec_rag/server/_models.py`
+- `S16` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_api_integration.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_cli_integration.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_document_cli.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_api_clean_admission.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_search_quiesce_admission.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server_document_models.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S16` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -115,4 +141,5 @@ related:
 - `S10` P02 phase-review corrections (commit bae3163c): client readiness, in-process error classification of the loaded torch, enum-owned message headlines, cpu-prefixed tags, explicit None default, required remediation, timeout coverage; both new guards pass once restored
 - `S05` enrollment_status returns TypesafeReport; the derivable enrolled flag is gone from the wire; labels come from TypesafeState
 - `S12` Reading the running service's preprocess mode moved to S16 (plan row corrected) because the service only publishes its mode with the typed feature section; preprocess status JSON gains a hooks state value; the effect line now renders from PreprocessHookState
+- `S16` Project status Compute line now renders from the service's installation report or a labelled local metadata probe (overlapping S08, which reworks the layout); status JSON and index status lose accelerator and count alias keys; /health moves typesafe and reranker state under features; MPS working-set memory moved into ComputeReport; integration assertions updated statically, not run
 

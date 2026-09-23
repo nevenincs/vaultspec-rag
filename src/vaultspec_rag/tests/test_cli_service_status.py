@@ -125,7 +125,7 @@ def _health_payload(
         "status": status,
         "degradations": [_coded(reason) for reason in reasons or []],
         "models_loaded": True,
-        "reranker_loaded": True,
+        "features": {"reranker_enabled": True, "reranker_loaded": True},
         "project_count": 3,
         "uptime_s": 850.0,
         "jobs": {"running": 0, "queued": 0, "stalled": 0} | (jobs or {}),

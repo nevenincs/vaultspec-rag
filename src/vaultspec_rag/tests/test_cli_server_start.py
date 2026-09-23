@@ -175,7 +175,7 @@ class TestStartReorderAndGuards:
             {
                 "status": "degraded",
                 "service_token": "tok-live",
-                "typesafe": {"enrolled": True, "state": "pending"},
+                "features": {"typesafe": {"state": "pending"}},
                 "package_version": local_package_version(),
             }
         ).encode("utf-8")
@@ -210,7 +210,7 @@ class TestStartReorderAndGuards:
                 "degraded",
             )
             assert candidate.version.is_compatible
-            assert candidate.typesafe == {"enrolled": True, "state": "pending"}
+            assert candidate.typesafe == {"state": "pending"}
 
             result = runner.invoke(app, ["server", "start", "--json"])
             assert result.exit_code == 0

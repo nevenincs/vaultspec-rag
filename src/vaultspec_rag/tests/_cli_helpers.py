@@ -507,7 +507,7 @@ def _status_contract_health_payload() -> dict[str, object]:
     return {
         "status": "ready",
         "models_loaded": True,
-        "reranker_loaded": True,
+        "features": {"reranker_enabled": True, "reranker_loaded": True},
         "project_count": 3,
         "uptime_s": 312.0,
         "backend_capabilities": {

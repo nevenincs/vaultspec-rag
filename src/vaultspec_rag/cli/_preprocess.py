@@ -17,7 +17,7 @@ All honour the shared script-facing ``--json`` output.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
@@ -36,6 +36,9 @@ from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
 from ..operator_state._features import PreprocessHookState
 from ._app import CLIState, JsonMode, preprocess_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
+
+if TYPE_CHECKING:
+    from ..config._types import PreprocessMode
 
 
 def _root(ctx: typer.Context) -> Path:
@@ -317,6 +320,22 @@ def _gated_run_one_message(rule_count: int) -> str:
     )
 
 
+def _running_service_preprocess_mode() -> PreprocessMode | None:
+    """Return the preprocess mode of the service that would run the hooks.
+
+    Indexing runs in the service, so its mode decides whether hooks run; this
+    shell's environment only decides when no service is answering.
+    """
+    from ..serviceclient._discovery import _default_service_port
+    from ..serviceclient._transport import _try_http_health
+    from ._status_labels import health_section
+
+    port = _default_service_port()
+    health = _try_http_health(port) if port is not None else None
+    mode = health_section(health, "features").get("preprocess_mode")
+    return cast("PreprocessMode", mode) if mode in {"default", "off"} else None
+
+
 @preprocess_app.command(
     "status",
     help="Report the preprocess mode, config presence, and rule count.",
@@ -327,7 +346,8 @@ def handle_preprocess_status(
 ) -> None:
     """Report the preprocess mode and the root's rule configuration."""
     root = _root(ctx)
-    mode = get_config().preprocess_mode
+    service_mode = _running_service_preprocess_mode()
+    mode = service_mode or get_config().preprocess_mode
     config_present = (root / PREPROCESS_CONFIG_FILENAME).is_file()
 
     rule_count = 0
@@ -366,6 +386,7 @@ def handle_preprocess_status(
             "preprocess status",
             data={
                 "mode": mode,
+                "mode_source": "service" if service_mode else "local",
                 "root": str(root),
                 "config_present": config_present,
                 "config_valid": config_valid,
@@ -382,7 +403,8 @@ def handle_preprocess_status(
         )
         return
 
-    _plain(f"Preprocess mode: {mode}")
+    source = "the running service" if service_mode else "this shell"
+    _plain(f"Preprocess mode: {mode} (from {source})")
     _plain(
         f"Config: {'present' if config_present else 'absent'}"
         f"{'' if config_valid else ' (invalid)'}"

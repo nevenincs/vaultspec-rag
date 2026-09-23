@@ -11,6 +11,16 @@ import typing
 
 import pytest
 
+from ..operator_state._installation import (
+    ComputeCapability,
+    HardwarePresence,
+    InstallRole,
+)
+from ..operator_state._models import (
+    ComputeReport,
+    HardwareReading,
+    InstallationReport,
+)
 from ._cli_helpers import (
     EnvVar,
     _hold_local_index_lock,
@@ -32,6 +42,35 @@ if typing.TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+_RTX = HardwareReading(
+    presence=HardwarePresence.NVIDIA_GPU,
+    name="NVIDIA GeForce RTX 4080 SUPER",
+    memory_mib=16376,
+)
+
+
+def _installation(
+    compute: ComputeReport, hardware: HardwareReading = _RTX
+) -> InstallationReport:
+    """An installation as a service or the local probe would report it."""
+    return InstallationReport(
+        role=(
+            InstallRole.CLIENT
+            if compute.capability is ComputeCapability.NOT_APPLICABLE
+            else InstallRole.HOST
+        ),
+        mcp_adapter=True,
+        executable="python",
+        prefix="/env",
+        hardware=hardware,
+        compute=compute,
+    )
+
+
+def _compute(capability: ComputeCapability, **evidence: object) -> ComputeReport:
+    return ComputeReport.model_validate({"capability": capability, **evidence})
+
+
 class TestStatusCommand:
     """Tests for the project index status command."""
 
@@ -42,13 +81,11 @@ class TestStatusCommand:
 
         _render_status_text(
             {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 12,
-                "codebase_chunks": 34,
+                "vault_count": 12,
+                "code_count": 34,
             },
+            _installation(_compute(ComputeCapability.READY, device_name="NVIDIA RTX")),
             target=tmp_path,
             service_port=8766,
         )
@@ -59,9 +96,7 @@ class TestStatusCommand:
         assert lines[0] == "Project index"
         assert labels["Project"] == str(tmp_path)
         assert labels["Index data"] == str(tmp_path / ".vault" / "data" / "search-data")
-        assert labels["Compute"] == (
-            "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
-        )
+        assert labels["Compute"] == "ready on NVIDIA RTX (16.0 GiB)"
         assert labels["Vault documents"] == "12"
         assert labels["Source code sections"] == "34"
         assert labels["Server"] == "running"
@@ -71,33 +106,65 @@ class TestStatusCommand:
         )
         assert "Next action:" not in output
 
+    def test_a_gpu_workstation_with_a_cpu_torch_build_names_both(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The reported defect: a GPU machine was told it had no accelerator.
+
+        The GPU is named from the hardware read and the fault is named as the
+        torch build, so an operator never goes looking for a hardware problem.
+
+        Mutation check: rendering the capability alone, without the hardware,
+        drops the GPU's name and fails the first assertion; restoring passes.
+        """
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {"storage_path": tmp_path / "search-data", "vault_count": 1},
+            _installation(_compute(ComputeCapability.CPU_ONLY_BUILD)),
+            target=tmp_path,
+        )
+
+        compute = _label_values(capsys.readouterr().out)["Compute"]
+        assert compute.startswith("NVIDIA GeForce RTX 4080 SUPER (16.0 GiB)")
+        assert "CPU-only build" in compute
+        assert "Unavailable" not in compute
+
+    def test_a_client_installation_is_not_reported_as_missing_a_gpu(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            {"storage_path": tmp_path / "search-data", "vault_count": 1},
+            _installation(_compute(ComputeCapability.NOT_APPLICABLE)),
+            target=tmp_path,
+        )
+
+        compute = _label_values(capsys.readouterr().out)["Compute"]
+        assert compute == ComputeCapability.NOT_APPLICABLE.label
+
     def test_status_human_output_names_mps_unified_memory(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._status import _render_status_text
 
         _render_status_text(
-            {
-                "cuda": False,
-                "accelerator_available": True,
-                "accelerator_backend": "mps",
-                "accelerator_name": "Apple MPS",
-                "memory_kind": "unified",
-                "memory_mib": 4096,
-                "memory_measure": "recommended_working_set",
-                "gpu_name": "Apple MPS",
-                "vram_mib": None,
-                "storage_path": tmp_path / "search-data",
-                "vault_documents": 1,
-                "codebase_chunks": 2,
-            },
+            {"storage_path": tmp_path / "search-data", "vault_count": 1},
+            _installation(
+                _compute(
+                    ComputeCapability.READY,
+                    backend="mps",
+                    device_name="Apple MPS",
+                    memory_mib=4096,
+                ),
+                HardwareReading(presence=HardwarePresence.APPLE_SILICON),
+            ),
             target=tmp_path,
         )
 
         compute = _label_values(capsys.readouterr().out)["Compute"]
-        assert compute == (
-            "MPS - Apple MPS (4.0 GiB recommended working set, unified memory)"
-        )
+        assert compute == "ready on Apple MPS (4.0 GiB unified memory)"
 
     def test_status_empty_index_output_is_actionable(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -106,13 +173,11 @@ class TestStatusCommand:
 
         _render_status_text(
             {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 0,
-                "codebase_chunks": 0,
+                "vault_count": 0,
+                "code_count": 0,
             },
+            _installation(_compute(ComputeCapability.READY)),
             target=tmp_path,
             service_port=8766,
         )
@@ -129,13 +194,11 @@ class TestStatusCommand:
 
         _render_status_text(
             {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
                 "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 3,
-                "codebase_chunks": 0,
+                "vault_count": 3,
+                "code_count": 0,
             },
+            _installation(_compute(ComputeCapability.READY)),
             target=tmp_path,
         )
 
@@ -162,13 +225,13 @@ class TestStatusCommand:
                 assert query["project_root"] == [str(root)]
                 response = {
                     "ok": True,
+                    "installation": _installation(
+                        _compute(ComputeCapability.READY, device_name="NVIDIA RTX")
+                    ).model_dump(mode="json"),
                     "index": {
-                        "cuda": False,
-                        "gpu_name": "",
-                        "vram_mib": 0,
                         "storage_path": "http://127.0.0.1:8765",
-                        "vault_documents": 7,
-                        "codebase_chunks": 9,
+                        "vault_count": 7,
+                        "code_count": 9,
                         "target_dir": str(root),
                     },
                 }
@@ -207,6 +270,7 @@ class TestStatusCommand:
         assert labels["Index data"] == "running service storage"
         assert labels["Vault documents"] == "7"
         assert labels["Source code sections"] == "9"
+        assert labels["Compute"] == "ready on NVIDIA RTX (16.0 GiB)"
         assert labels["Server"] == "running"
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert lines[lines.index("Server details:") + 1] == (

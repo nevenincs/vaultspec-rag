@@ -28,9 +28,13 @@ from ..operator_state._service import DegradationReason, HealthVerdict
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 
-def typesafe_label(health: dict[str, object] | None) -> str:
+def health_typesafe(health: dict[str, object] | None) -> object:
+    """Return the Typesafe snapshot a service's health reports, if any."""
+    return health_section(health, "features").get("typesafe")
+
+
+def typesafe_label(snapshot: object) -> str:
     """Render daemon evidence only; caller credentials are not service state."""
-    snapshot = health.get("typesafe") if health else None
     state = (
         cast("dict[str, object]", snapshot).get("state")
         if isinstance(snapshot, dict)
@@ -86,6 +90,14 @@ def _model_ready_label(value: object) -> str:
     if value is False:
         return "not ready"
     return NOT_REPORTED
+
+
+def reranker_label(health: dict[str, object] | None) -> str:
+    """Say whether reranking is off by choice, ready, or not yet loaded."""
+    features = health_section(health, "features")
+    if features.get("reranker_enabled") is False:
+        return "off (disabled in configuration)"
+    return _model_ready_label(features.get("reranker_loaded"))
 
 
 def _process_identity_label(pid_alive: bool, pid_is_ours: bool) -> str:
@@ -336,7 +348,7 @@ DOMAIN_INDEX_FAMILY = "domain_index"
 _HISTORICAL_FAMILIES = frozenset({DegradationReason.JOB_FAILED})
 
 
-def _health_section(health: dict[str, object] | None, key: str) -> dict[str, object]:
+def health_section(health: dict[str, object] | None, key: str) -> dict[str, object]:
     """Return ``health[key]`` when it is a dict, else an empty one.
 
     Every caller then does ``.get(...)`` on the result, so returning ``{}``
@@ -351,7 +363,7 @@ def _health_section(health: dict[str, object] | None, key: str) -> dict[str, obj
 
 
 def _last_failed_record(health: dict[str, object] | None) -> dict[str, object]:
-    record = _health_section(health, "jobs").get("last_failed")
+    record = health_section(health, "jobs").get("last_failed")
     return cast("dict[str, object]", record) if isinstance(record, dict) else {}
 
 
@@ -437,7 +449,7 @@ def _stalled_jobs_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    stalled = _health_section(health, "jobs").get("stalled")
+    stalled = health_section(health, "jobs").get("stalled")
     if not isinstance(stalled, int) or stalled <= 0:
         return None
     return DegradedFinding(
@@ -452,7 +464,7 @@ def _vector_service_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    if _health_section(health, "qdrant").get("alive") is not False:
+    if health_section(health, "qdrant").get("alive") is not False:
         return None
     return DegradedFinding(
         cause="the vector storage service is not live",
@@ -504,7 +516,7 @@ def _quarantine_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    entries = _health_section(health, "qdrant").get("quarantined")
+    entries = health_section(health, "qdrant").get("quarantined")
     if not isinstance(entries, list) or not entries:
         return None
     return DegradedFinding(
@@ -524,7 +536,7 @@ def _store_format_finding(
     now: float,
 ) -> DegradedFinding | None:
     _ = now
-    migrated_from = _health_section(health, "qdrant").get("migrated_from")
+    migrated_from = health_section(health, "qdrant").get("migrated_from")
     if not isinstance(migrated_from, str) or not migrated_from:
         return None
     return DegradedFinding(

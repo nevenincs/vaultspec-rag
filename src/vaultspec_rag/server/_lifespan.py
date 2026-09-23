@@ -1273,32 +1273,30 @@ def _jobs_health() -> tuple[dict[str, object], list[Degradation]]:
 
 
 async def health_handler(request: Request) -> object:
-    """Return service health as JSON.
+    """Return service health as the typed health report.
 
     Args:
-        _request: The incoming Starlette request.
+        request: The incoming Starlette request.
 
     Returns:
-        A ``JSONResponse`` with status, CUDA availability,
-        model state, connected projects, and uptime.
+        A ``JSONResponse`` carrying the serialised :class:`HealthReport`: the
+        health verdict and its coded degradations, the service-wide optional
+        features, model state, identity, and uptime.
     """
     from starlette.responses import JSONResponse
 
     from .. import store_schema
     from .._gpu_admission import device_load_reading
+    from ..config._settings import get_config
+    from ..jobs import active_index_support_profiles
+    from ..operator_state._models import HealthReport, ServiceFeatures
+    from ..qdrant_runtime import _supervise
     from ..search._typesafe_transport import enrollment_status
-    from ..serviceclient._compat import (
-        SERVICE_VERSION_FIELD,
-        local_package_version,
-    )
+    from ..serviceclient._compat import local_package_version
 
     runtime = get_request_runtime(request)
     reg_health = runtime.registry.health()
     quiesce_snapshot = runtime.registry.quiesce_snapshot()
-    quiesce = quiesce_snapshot.as_envelope()
-    uptime = _uptime_seconds()
-    from ..qdrant_runtime import _supervise
-
     qdrant_state = _supervise.runtime_state()
     status, degradations = _service_health_status(
         reg_health,
@@ -1307,50 +1305,55 @@ async def health_handler(request: Request) -> object:
     )
     jobs_health, jobs_degradations = _jobs_health()
     degradations.extend(jobs_degradations)
-
-    from ..jobs import active_index_support_profiles
-
     if status is HealthVerdict.READY and degradations:
         status = HealthVerdict.DEGRADED
 
-    return JSONResponse(
-        {
-            "status": status.value,
-            "jobs": jobs_health,
-            "qdrant": qdrant_state.to_dict(),
-            "pid": os.getpid(),
-            "parent_pid": os.getppid(),
-            "port": runtime.port,
-            **interpreter_fields(),
-            "models_loaded": reg_health["model_loaded"],
-            "reranker_loaded": reg_health["reranker_loaded"],
-            "typesafe": enrollment_status().model_dump(mode="json"),
-            "project_count": reg_health["project_count"],
-            "quiesce": quiesce,
-            # The structured signal behind the conformance degradation reason.
-            # The CLI derives its remediation from this rather than parsing the
-            # prose, so rewording the reason costs its pairing, never its
-            # visibility.
-            "nonconforming": reg_health.get("nonconforming") or [],
-            "device_load": device_load_reading(),
-            "uptime_s": round(uptime, 2),
-            "backend_capabilities": backend_capabilities_dict(),
-            "degradations": [item.model_dump(mode="json") for item in degradations],
-            "support_profile": active_index_support_profiles(),
-            # Bare storage-schema version: the cheapest ungated pre-read gate a
-            # direct-Qdrant consumer can check before scrolling. The full
-            # descriptor lives on /readiness.
-            "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
-            # The release discriminator a client compares before driving this
-            # daemon. Distinct from schema_version (the storage shape) and from
-            # the discovery file's own schema pair: this is the package release,
-            # the thing that decides whether the fields a client sends are
-            # fields this daemon understands.
-            SERVICE_VERSION_FIELD: local_package_version(),
-            # Per-process identity token. Mirrors the value written
-            # to service.json. The CLI compares the two to detect
-            # PID-reuse and unrelated-HTTP-server-on-port collisions
-            # (gh #124, #125).
-            "service_token": runtime.token,
-        },
+    cfg = get_config()
+    report = HealthReport(
+        status=status,
+        degradations=tuple(degradations),
+        features=ServiceFeatures(
+            typesafe=enrollment_status(),
+            reranker_enabled=bool(cfg.reranker_enabled),
+            reranker_loaded=reg_health["reranker_loaded"],
+            sparse_enabled=bool(cfg.sparse_enabled),
+            watcher_enabled=bool(cfg.watch_enabled),
+            preprocess_mode=cfg.preprocess_mode,
+            storage_backend="server" if cfg.effective_server_mode() else "local",
+            embedding_model=cfg.embedding_model,
+            sparse_model=cfg.sparse_model if cfg.sparse_enabled else None,
+            reranker_model=cfg.reranker_model if cfg.reranker_enabled else None,
+        ),
+        models_loaded=reg_health["model_loaded"],
+        project_count=reg_health["project_count"],
+        # The structured signal behind the conformance degradation code. The
+        # CLI derives its remediation from this, so rewording the detail costs
+        # nothing.
+        nonconforming=tuple(reg_health.get("nonconforming") or ()),
+        pid=os.getpid(),
+        parent_pid=os.getppid(),
+        port=runtime.port,
+        **interpreter_fields(),
+        uptime_s=round(_uptime_seconds(), 2),
+        # Bare storage-schema version: the cheapest ungated pre-read gate a
+        # direct-Qdrant consumer can check before scrolling. The full
+        # descriptor lives on /readiness.
+        schema_version=store_schema.STORAGE_SCHEMA_VERSION,
+        # The release discriminator a client compares before driving this
+        # daemon. Distinct from schema_version (the storage shape) and from
+        # the discovery file's own schema pair: this is the package release,
+        # the thing that decides whether the fields a client sends are fields
+        # this daemon understands.
+        package_version=local_package_version(),
+        # Per-process identity token. Mirrors the value written to
+        # service.json. The CLI compares the two to detect PID reuse and an
+        # unrelated HTTP server on the port.
+        service_token=runtime.token,
+        jobs=jobs_health,
+        qdrant=qdrant_state.to_dict(),
+        quiesce=quiesce_snapshot.as_envelope(),
+        device_load=device_load_reading(),
+        backend_capabilities=backend_capabilities_dict(),
+        support_profile=active_index_support_profiles(),
     )
+    return JSONResponse(report.model_dump(mode="json"))
