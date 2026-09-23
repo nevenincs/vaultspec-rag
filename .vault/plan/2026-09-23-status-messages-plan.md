@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:bb77595f6c256ac22a0faccfd50f3281e2a43db20b35458095f6dfe5f90d68f5'
+body_hash: 'sha256:b49179d34b5a80dcf3ba527caaab3693799049af21c1a2251e143bd181d12579'
 ---
 
 # `status-messages` plan
@@ -87,7 +87,7 @@ Derive role, compute capability and hardware once, through the isolated daemon-i
 
 Make the service the only author of its health, degradation reasons, compute and feature state, served as typed models on the health and service-state routes.
 
-- [ ] `P03.S11` - emit typed HealthVerdict and DegradationReason codes from the service and drop the model-device cuda flag; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/service.py`.
+- [x] `P03.S11` - emit typed HealthVerdict and DegradationReason codes from the service and drop the model-device cuda flag; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/service.py`.
 - [ ] `P03.S05` - make the Typesafe status read pure and typed with PENDING on fingerprint change; `src/vaultspec_rag/search/_typesafe_transport.py`.
 - [ ] `P03.S12` - add the single lenient hooks-will-run predicate and repoint every derivation including preprocess status reading the daemon mode; `src/vaultspec_rag/indexer/, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/cli/_preprocess.py`.
 - [ ] `P03.S16` - serve typed health and service-state models carrying role, compute, cached hardware, per-service and per-root features, deleting the index-status alias keys and unused models; `src/vaultspec_rag/api.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_models.py`.

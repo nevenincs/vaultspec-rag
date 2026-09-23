@@ -37,6 +37,7 @@ from ..operator_state._service import (
     EXIT_RUNNING,
     EXIT_STARTING,
     EXIT_STOPPED,
+    DegradationReason,
 )
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
@@ -82,7 +83,6 @@ from ._service_lifecycle import (
 )
 from ._service_status import _service_phase
 from ._status_labels import (
-    FAILED_JOB_FAMILY,
     DegradedFinding,
     _failed_job_total,
     _format_started_label,
@@ -589,14 +589,6 @@ def _print_health_detail(
             _status_health_label(health, port_listening=port_listening),
         )
         _print_status_lines(_degraded_lines(operational, health))
-        compute = (
-            "GPU available"
-            if health.get("cuda") is True
-            else "no supported GPU detected"
-            if health.get("cuda") is False
-            else NOT_REPORTED
-        )
-        _print_detail_line("Compute", compute)
         env_exe = health.get("executable")
         if isinstance(env_exe, str) and env_exe:
             _print_detail_line("Service env", env_exe)
@@ -830,7 +822,9 @@ def _failure_followup(
     already name it, so the same job is never reported twice.
     """
     failed_total = _failed_job_total(jobs)
-    already_reported = any(finding.family == FAILED_JOB_FAMILY for finding in findings)
+    already_reported = any(
+        finding.family == DegradationReason.JOB_FAILED for finding in findings
+    )
     summary = "" if already_reported else _last_failure_label(health)
     if failed_total <= 0 and not summary:
         return None

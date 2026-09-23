@@ -50,7 +50,7 @@ _HEALTH: dict[str, object] = {
     "models_loaded": True,
     "project_count": 1,
     "uptime_s": 8384.4,
-    "degraded_reasons": [],
+    "degradations": [],
     "schema_version": 2,
     "package_version": "0.3.11",
     "service_token": _TOKEN,
@@ -356,9 +356,12 @@ class TestTheOperatorsFourQuestions:
     def test_a_degraded_service_carries_its_reason_count(self) -> None:
         degraded = dict(_HEALTH)
         degraded["status"] = "degraded"
-        degraded["degraded_reasons"] = [
-            "the configured vector service is not live",
-            "1 indexing job(s) are stalled",
+        degraded["degradations"] = [
+            {
+                "reason": "vector_service_unavailable",
+                "detail": "the configured vector service is not live",
+            },
+            {"reason": "jobs_stalled", "detail": "1 indexing job(s) are stalled"},
         ]
         server = _service(health=degraded)
         try:

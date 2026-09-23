@@ -23,6 +23,7 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
+from ..operator_state._service import DegradationReason, HealthVerdict
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
 
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DOMAIN_INDEX_FAMILY",
-    "FAILED_JOB_FAMILY",
     "DegradedFinding",
     "_failed_job_total",
     "_format_started_label",
@@ -322,18 +322,8 @@ class DegradedFinding:
         )
 
 
-#: Health statuses that describe a service with nothing to explain. Anything
-#: else - ``degraded``, ``error``, or a status this build has never seen - is
-#: treated as a service that owes the operator a reason.
-_UNDEGRADED_STATUSES = frozenset({"ready", "starting", "unknown"})
-
-FAILED_JOB_FAMILY = "failed_job"
-STALLED_JOBS_FAMILY = "stalled_jobs"
-VECTOR_SERVICE_FAMILY = "vector_service"
-MODELS_FAMILY = "models"
-CONFORMANCE_FAMILY = "conformance"
-QUARANTINE_FAMILY = "quarantine"
-STORE_FORMAT_FAMILY = "store_format"
+#: The family of a per-domain index degradation, which the index status
+#: reports as a structured record rather than a service degradation code.
 DOMAIN_INDEX_FAMILY = "domain_index"
 
 #: Families whose signal records something that HAPPENED, not something that
@@ -345,7 +335,7 @@ DOMAIN_INDEX_FAMILY = "domain_index"
 #: a previous generation under "degraded because", which is the defect the
 #: generation bound exists to prevent. Every other family reports live state,
 #: so an unclaimed one is still worth surfacing.
-_HISTORICAL_FAMILIES = frozenset({FAILED_JOB_FAMILY})
+_HISTORICAL_FAMILIES = frozenset({DegradationReason.JOB_FAILED})
 
 
 def _health_section(health: dict[str, object] | None, key: str) -> dict[str, object]:
@@ -440,7 +430,7 @@ def _failed_job_finding(
         cause=f"an indexing job failed{f': {kind}' if kind else ''}",
         detail=_failed_job_identity(record, now=now, with_kind=False),
         command=f"vaultspec-rag server logs --job-id {job_id}",
-        family=FAILED_JOB_FAMILY,
+        family=DegradationReason.JOB_FAILED,
     )
 
 
@@ -455,7 +445,7 @@ def _stalled_jobs_finding(
     return DegradedFinding(
         cause=f"{_counted_unit(stalled, 'indexing job')} stopped reporting progress",
         command=server_jobs_command(),
-        family=STALLED_JOBS_FAMILY,
+        family=DegradationReason.JOBS_STALLED,
     )
 
 
@@ -469,7 +459,7 @@ def _vector_service_finding(
     return DegradedFinding(
         cause="the vector storage service is not live",
         command="vaultspec-rag server qdrant status",
-        family=VECTOR_SERVICE_FAMILY,
+        family=DegradationReason.VECTOR_SERVICE_UNAVAILABLE,
     )
 
 
@@ -484,7 +474,7 @@ def _models_finding(
         cause="the embedding models are not loaded",
         detail="run server warmup when the model files are missing",
         command="vaultspec-rag server doctor",
-        family=MODELS_FAMILY,
+        family=DegradationReason.MODELS_NOT_LOADED,
     )
 
 
@@ -507,7 +497,7 @@ def _conformance_finding(
         command=index_command(
             PublicSourceType.COMBINED, IndexCommandOptions(rebuild=True)
         ),
-        family=CONFORMANCE_FAMILY,
+        family=DegradationReason.NONCONFORMING,
     )
 
 
@@ -527,7 +517,7 @@ def _quarantine_finding(
             "nothing was deleted"
         ),
         command="vaultspec-rag server qdrant quarantine",
-        family=QUARANTINE_FAMILY,
+        family=DegradationReason.QUARANTINED,
     )
 
 
@@ -547,58 +537,47 @@ def _store_format_finding(
             "so keep a copy before attempting to go back to the older binary"
         ),
         command=server_status_command(),
-        family=STORE_FORMAT_FAMILY,
+        family=DegradationReason.STORE_CARRIED_ACROSS,
     )
 
 
-#: Degradation families in resolution order, each pairing the distinctive stem
-#: of the prose it explains with the structured signal that proves it. Reasons
-#: are claimed on one stem rather than a whole sentence so that rewording a
-#: reason downgrades it to the unpaired sweep below - which still emits the
-#: command - instead of silently losing the remediation.
-#:
-#: Conformance precedes models because its reason contains the word "model" and
-#: the broader stem would otherwise be eligible to claim it. This is defensive
-#: rather than currently load-bearing: reasons are resolved in the order the
-#: health author emits them, and the models reason is emitted first, so it
-#: claims the "model" stem before the conformance reason is reached. The
-#: ordering here is what keeps that true if either reason is ever reworded or
-#: reordered - it is deliberately not relied upon by a test, because no
-#: reachable input distinguishes it today.
-#:
-#: Quarantine and store format both precede the vector service for the same
-#: defensive reason: their reasons name the vector store, so the broader stem
-#: would be eligible to claim either. Today it cannot, because a claimed stem is
-#: popped and the vector reason is emitted first, so they never compete for one
-#: entry.
-_DEGRADED_FAMILIES: tuple[
-    tuple[str, Callable[[dict[str, object] | None, float], DegradedFinding | None]],
-    ...,
-] = (
-    ("stall", _stalled_jobs_finding),
-    ("fail", _failed_job_finding),
-    ("quarantined", _quarantine_finding),
-    ("carried across", _store_format_finding),
-    ("vector", _vector_service_finding),
-    ("different embedding model", _conformance_finding),
-    ("model", _models_finding),
-)
+#: The structured signal that proves each degradation code and names the verb
+#: that inspects it. The service states WHAT is wrong as a code; the payload's
+#: structured sections say WHERE to look, so a reworded detail never costs the
+#: remediation. ``JOBS_DEGRADED`` has no inspecting signal of its own and is
+#: rendered from its detail alone.
+_EVIDENCE: dict[
+    DegradationReason,
+    Callable[[dict[str, object] | None, float], DegradedFinding | None],
+] = {
+    DegradationReason.JOBS_STALLED: _stalled_jobs_finding,
+    DegradationReason.JOB_FAILED: _failed_job_finding,
+    DegradationReason.QUARANTINED: _quarantine_finding,
+    DegradationReason.STORE_CARRIED_ACROSS: _store_format_finding,
+    DegradationReason.VECTOR_SERVICE_UNAVAILABLE: _vector_service_finding,
+    DegradationReason.NONCONFORMING: _conformance_finding,
+    DegradationReason.MODELS_NOT_LOADED: _models_finding,
+}
 
 
 def _reported_degradations(payload: dict[str, object]) -> list[object]:
-    """Return the reported degradation entries under either accepted key.
+    """Return a payload's reported degradation entries, whichever kind it carries.
 
-    Entry types are preserved rather than coerced to text: the index status
-    payload reports structured per-domain records, and stringifying one turns
-    an operator-facing cause into a container repr.
+    A service health payload carries coded ``degradations``; an index status
+    payload carries structured per-domain ``degraded_reasons`` records.
     """
-    reasons = payload.get("degraded_reasons", payload.get("degraded"))
+    reasons = payload.get("degradations", payload.get("degraded_reasons"))
     return cast("list[object]", reasons) if isinstance(reasons, list) else []
 
 
 def _health_is_degraded(payload: dict[str, object]) -> bool:
+    """Whether a health verdict owes the operator a reason.
+
+    Anything but ``ready`` - including a verdict this build has never seen -
+    is treated as a service with something to explain.
+    """
     status = payload.get("status")
-    return isinstance(status, str) and status not in _UNDEGRADED_STATUSES
+    return isinstance(status, str) and status != HealthVerdict.READY
 
 
 #: Operator vocabulary for a per-domain index degradation: the phrasing and the
@@ -657,17 +636,14 @@ def degradation_findings(
 
     This is the one place that turns a degradation report into operator-facing
     causes and remedies - extend it rather than adding a second renderer. It
-    accepts any payload carrying ``degraded_reasons`` (or the legacy
-    ``degraded``): the service health payload, whose entries are prose backed by
-    structured signals in the same payload, and the index status payload, whose
-    entries are structured per-domain records.
+    accepts the service health payload, whose ``degradations`` are codes backed
+    by structured signals in the same payload, and the index status payload,
+    whose ``degraded_reasons`` are structured per-domain records.
 
     The reported entries are the authority on what is wrong, so each is rendered
     whether or not it can be paired. The structured signals are the authority on
-    where to look, so the remediation is derived from them rather than parsed
-    out of the prose - a reworded reason loses its pairing, never its
-    visibility, and a proven current-state signal no entry claimed is reported
-    anyway.
+    where to look, so the remediation is derived from them by code, and a
+    proven current-state signal no entry claimed is reported anyway.
 
     A service that reports no problem gets no findings even when a failed job
     sits in its history: history is reported elsewhere and is not a verdict on
@@ -680,9 +656,9 @@ def degradation_findings(
         return []
     unclaimed = _proven_findings(payload, time.time() if now is None else now)
     findings = [_reported_finding(entry, unclaimed) for entry in reported]
-    # A reason that paired with no signal means the service named a cause in
-    # words this renderer does not recognise, and a historical signal may be
-    # precisely its explanation - so it is surfaced. When every reason found
+    # A reason that paired with no signal means the service named a cause this
+    # renderer cannot inspect, and a historical signal may be precisely its
+    # explanation - so it is surfaced. When every reason found
     # its signal, a leftover historical one explains nothing that was reported
     # and promoting it would invent a cause the service did not claim.
     unexplained = any(not finding.family for finding in findings)
@@ -696,18 +672,29 @@ def degradation_findings(
 
 def _reported_finding(
     entry: object,
-    unclaimed: dict[str, DegradedFinding],
+    unclaimed: dict[DegradationReason, DegradedFinding],
 ) -> DegradedFinding:
-    """Render one reported entry, claiming the signal that explains it."""
-    if isinstance(entry, dict):
-        return _domain_degradation(cast("dict[str, object]", entry))
-    reason = str(entry).strip()
-    stem = next((known for known in unclaimed if known in reason.lower()), None)
-    if not reason or stem is None:
-        return DegradedFinding(cause=reason)
-    evidence = unclaimed.pop(stem)
+    """Render one reported entry, claiming the signal that explains it.
+
+    A code this build does not know - a newer service's - is rendered from its
+    detail verbatim rather than dropped, because it is still the one message
+    explaining the degradation.
+    """
+    if not isinstance(entry, dict):
+        return DegradedFinding(cause=str(entry).strip())
+    record = cast("dict[str, object]", entry)
+    if "source" in record:
+        return _domain_degradation(record)
+    cause = str(record.get("detail") or "").strip()
+    try:
+        code = DegradationReason(str(record.get("reason")))
+    except ValueError:
+        return DegradedFinding(cause=cause)
+    evidence = unclaimed.pop(code, None)
+    if evidence is None:
+        return DegradedFinding(cause=cause or code.label)
     return DegradedFinding(
-        cause=reason,
+        cause=cause or code.label,
         detail=evidence.detail,
         command=evidence.command,
         family=evidence.family,
@@ -717,11 +704,11 @@ def _reported_finding(
 def _proven_findings(
     payload: dict[str, object],
     now: float,
-) -> dict[str, DegradedFinding]:
-    """Build the finding for every family whose structured signal fires."""
+) -> dict[DegradationReason, DegradedFinding]:
+    """Build the finding for every code whose structured signal fires."""
     return {
-        stem: finding
-        for stem, builder in _DEGRADED_FAMILIES
+        code: finding
+        for code, builder in _EVIDENCE.items()
         if (finding := builder(payload, now)) is not None
     }
 

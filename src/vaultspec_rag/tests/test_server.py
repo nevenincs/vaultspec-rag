@@ -935,7 +935,8 @@ class TestHealthHandler:
         assert resp.status_code == 200
         data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert "status" in data
-        assert "cuda" in data
+        assert "degradations" in data
+        assert "cuda" not in data
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data

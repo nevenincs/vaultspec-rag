@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:9b84ed8f565fd0a42bfa84b84b0681a901dcb0e4931571b8f87e4e38d264bb36'
+body_hash: 'sha256:f3ab9ef8e46fcb50c26306fb44e00de5cb177ed38d5a44f8303390a10b194697'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -70,6 +70,22 @@ related:
 - `S15` `M` `src/vaultspec_rag/tests/test_readiness.py`
 - `S15` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
 - `S15` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S11` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S11` `M` `src/vaultspec_rag/service.py`
+- `S11` `M` `src/vaultspec_rag/_service_types.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S11` `M` `src/vaultspec_rag/cli/_jobs_tui_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_conformance_surfacing.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S11` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_jobs_tui_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_cli_start_outcomes.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_server.py`
+- `S11` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -78,4 +94,5 @@ related:
 - `S09` Server start preflight repointed in this Step because deleting the prose probe left it no other path; its messaging rework remains in S15. Structural duplicate guard gained an enum-label-table allowance and the new named-subset member
 - `S10` Role and compute classification moved into operator_state._compute; the child probe script now imports it, so probing an interpreter carrying an older release answers UNKNOWN (never blocking). Admission's no_cuda/torch_absent reasons became ComputeCapability NO_DEVICE/TORCH_MISSING wire values and the NO_DEVICE label broadened to cover CPU builds seen by admission. The post-install warning moved onto the child probe here, ahead of S15, because TorchDiagnosis removal left it no in-process classifier worth keeping
 - `S15` Start preflight and post-install warning already consume the probe verdict (S09, S10); this Step moves the doctor's torch axis onto the daemon-interpreter probe. Reading the service-reported verdict when a service answers lands with the typed service-state model in P03/P04
+- `S11` DegradationReason keeps JOBS_STALLED (plural, matching the reported count) and adds JOBS_DEGRADED, differing from the ADR's JOB_STALLED listing; /health drops the model-device cuda flag and its verbose Compute row until installation compute renders in P05; the start envelope keeps its own degraded_reasons key
 

@@ -242,7 +242,6 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
         "Network": "accepting connections",
         "Server": "running",
         "Requests": "ready for requests",
-        "Compute": "GPU available",
         "Search models": "ready",
         "Reranking": "ready",
     }
@@ -507,7 +506,6 @@ def _status_contract_jobs_payload(
 def _status_contract_health_payload() -> dict[str, object]:
     return {
         "status": "ready",
-        "cuda": True,
         "models_loaded": True,
         "reranker_loaded": True,
         "project_count": 3,
