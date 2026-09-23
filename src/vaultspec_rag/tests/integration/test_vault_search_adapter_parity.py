@@ -115,6 +115,7 @@ def test_cli_and_mcp_return_the_same_located_vault_hits(
     snippet = cast("str", top["snippet"])
     assert "kills long-lived quiet sessions" in snippet
     assert "rerank_text" not in top
+    assert "passages" not in top
     line_start, line_end = cast("int", top["line_start"]), cast("int", top["line_end"])
     lines = _BODY.split("\n")
     assert "\n".join(lines[line_start - 1 : line_end]).strip() == snippet

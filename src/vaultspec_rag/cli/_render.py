@@ -318,8 +318,15 @@ def _display_text_lines(value: object) -> list[str]:
 def _search_result_text_lines(
     result: dict[str, object], *, root: Path | None
 ) -> list[str]:
+    """Show the file's own lines at the hit, while they still hold the snippet.
+
+    A file edited since it was indexed no longer says what the hit matched,
+    and printing its current lines would show different text from the JSON
+    form of the same search; the indexed snippet is shown instead.
+    """
     source_lines = _source_line_text_lines(result, root=root)
-    if source_lines:
+    snippet = _non_empty_result_string(result, "snippet")
+    if source_lines and (snippet is None or snippet.strip() in "\n".join(source_lines)):
         return source_lines
     return _display_text_lines(result.get("snippet", ""))
 

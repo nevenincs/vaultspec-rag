@@ -761,3 +761,49 @@ class TestOneUndecodableFileCannotAbortTheSearch:
         }
 
         assert _source_line_text_lines(result, root=tmp_path) == []
+
+
+class TestRenderedTextMatchesTheSnippet:
+    """The human view never shows text the search did not match."""
+
+    pytestmark: typing.ClassVar = [pytest.mark.unit]
+
+    def test_current_lines_render_while_they_hold_the_snippet(
+        self, tmp_path: Path
+    ) -> None:
+        from ..cli._render import _search_result_text_lines
+
+        (tmp_path / "notes.md").write_text(
+            "intro\nThe passage the search matched.\noutro\n", encoding="utf-8"
+        )
+        result: dict[str, object] = {
+            "path": "notes.md",
+            "line_start": 2,
+            "line_end": 2,
+            "snippet": "The passage the search matched.",
+        }
+
+        assert _search_result_text_lines(result, root=tmp_path) == [
+            "The passage the search matched."
+        ]
+
+    def test_an_edited_file_falls_back_to_the_indexed_snippet(
+        self, tmp_path: Path
+    ) -> None:
+        from ..cli._render import _search_result_text_lines
+
+        (tmp_path / "notes.md").write_text(
+            "intro\nA line written after the index was built.\noutro\n",
+            encoding="utf-8",
+        )
+        result: dict[str, object] = {
+            "path": "notes.md",
+            "line_start": 2,
+            "line_end": 2,
+            "snippet": "The passage the search matched.",
+        }
+
+        # Printing the file's current line here is the mismatch this rejects.
+        assert _search_result_text_lines(result, root=tmp_path) == [
+            "The passage the search matched."
+        ]

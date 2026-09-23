@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:c3783b88f95d6b93cf4231d40cbe1630fcab557b771f0133b9a4c01ce0ee42af'
+body_hash: 'sha256:3ad29f7aa22f0581c60b3c72e3a39a9b43eeff0f17e4c05a06e94eb33ba32147'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -90,6 +90,9 @@ related:
 - `S05` `verify:` `full no-accelerator lane: 5363 passed, 3 failed, all 3 failing identically at 799b4dc3 before this feature` -> `pass`
 - `S06` `M` `src/vaultspec_rag/tests/test_search_unit.py`
 - `S06` `verify:` `fallback removed lets the exhausted forward escape the search, restored passes` -> `pass`
+- `S07` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S07` `M` `src/vaultspec_rag/tests/integration/test_vault_search_adapter_parity.py`
+- `S07` `verify:` `snippet check removed renders an edited file's current line, restored renders the snippet` -> `pass`
 
 ## Notes
 
@@ -102,4 +105,5 @@ related:
 - `S04` review correction: sentence and word splitters collapsed into one pattern-taking splitter; setext headings recognised; thematic breaks separate blocks and small passages merge only across whitespace
 - `S05` review correction: the indexed-metadata builder's dict shape matches an unrelated serializer and is registered as serialisation, not shared behaviour; the checkpoint test's schema-constant substitution is declared with its reason
 - `S06` review correction: passage scoring that runs out of accelerator memory now leaves each result its first passage instead of failing a ranked page
+- `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
 
