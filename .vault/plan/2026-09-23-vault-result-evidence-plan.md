@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:8878333a784298332f433aea8320799ae3548309cb61f3a9f3c00d258e32b35e'
+body_hash: 'sha256:b13456c0d83b754f2d05725844351cabd3c42a68a200e092651bfb8b36ad8a4b'
 ---
 
 # `vault-result-evidence` plan
@@ -90,7 +90,7 @@ Delivers the title, section and chunk-text vault embedding input from one functi
 Delivers a branch with no known defect: the strict type gate and the child-output decoding guard green, the rebuild remedy named at the service level, and the install-mode doctor agreeing with the MCP launch shape.
 
 - [x] `P05a.S10` - clear the strict type gate and the child-output decoding guard, fold the compute probe onto the shared MiB conversion, and make the degraded-verdict guards assert the typed failed-job reason; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/api.py, src/vaultspec_rag/cli/_jobs_tui_header.py, src/vaultspec_rag/cli/_jobs_tui_constants.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/serviceclient/_typed_state.py, src/vaultspec_rag/tests/`.
-- [ ] `P05a.S11` - carry the failed job's source into service health and name the per-source rebuild command when the failure is full_reindex_required; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/tests/`.
+- [x] `P05a.S11` - carry the failed job's source into service health and name the per-source rebuild command when the failure is full_reindex_required; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/tests/`.
 - [ ] `P05a.S12` - reconcile the install-mode doctor verdict with the project's MCP launch shape; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/tests/`.
 
 ### Phase `P05b` - reassess the section in the vault embedding input

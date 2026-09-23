@@ -100,6 +100,7 @@ def _last_failed_record() -> dict[str, object]:
 #: know, which must still be rendered.
 _CODES = {
     "the latest indexing job failed: other": "job_failed",
+    "the latest indexing job failed: full_reindex_required": "job_failed",
     "2 indexing job(s) are stalled": "jobs_stalled",
     "1 indexing job(s) are stalled": "jobs_stalled",
     "embedding models are not loaded": "models_not_loaded",
@@ -211,6 +212,28 @@ class TestDegradedStatusExplainsItself:
         next_action = lines[lines.index("Next action:") + 1]
         assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
         assert "--verbose" not in result.output
+
+    def test_a_refused_incremental_names_the_rebuild_for_its_source(
+        self, tmp_path: Path
+    ) -> None:
+        refused = _last_failed_record() | {
+            "source": "vault",
+            "error_kind": "full_reindex_required",
+        }
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: full_reindex_required"],
+                jobs={"last_failed": refused},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        # The job's logs only restate the refusal; the rebuild is the remedy.
+        next_action = lines[lines.index("Next action:") + 1]
+        assert next_action == "vaultspec-rag index --rebuild --type vault"
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" not in lines
 
     def test_failed_job_count_carries_the_failed_jobs_view(
         self, tmp_path: Path

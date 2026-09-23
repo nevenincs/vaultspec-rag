@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:dffc46420dcc530529285b60b59d6dd306c6a9564cd8f02a82624417eea3af63'
+body_hash: 'sha256:b6b3c31b8424a8d8e62ecf9d5001cb66a4a5a779177b34892047589acbedbb3f'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -107,6 +107,12 @@ related:
 - `S10` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
 - `S10` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
 - `S10` `verify:` `degraded-verdict guard mutation (supersession check removed fails both no-JOB_FAILED assertions; restored passes)` -> `pass`
+- `S11` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S11` `M` `src/vaultspec_rag/tests/integration/test_service_jobs_resilience.py`
+- `S11` `verify:` `service-level rebuild remedy mutation (remedy removed fails the next-action assertion; restored passes)` -> `pass`
 
 ## Notes
 

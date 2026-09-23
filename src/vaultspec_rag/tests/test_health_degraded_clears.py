@@ -162,3 +162,5 @@ class TestDegradedVerdictTracksCurrentState:
         assert last_failed is not None, (
             "the failure must remain reported in the rollup, only not degrading"
         )
+        # The source is what names the rebuild when the failure is a refusal.
+        assert last_failed["source"] == JobSource.CODE

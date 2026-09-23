@@ -1078,8 +1078,11 @@ def _failed_job_health(record: dict[str, object] | None) -> dict[str, object] | 
     """Project the bounded latest-failure health shape."""
     if record is None:
         return None
+    from ._routes_jobs import job_source
+
     return {
         "id": record.get("id"),
+        "source": job_source(record),
         "error_kind": record.get("error_kind"),
         "finished_at": record.get("finished_at"),
     }
