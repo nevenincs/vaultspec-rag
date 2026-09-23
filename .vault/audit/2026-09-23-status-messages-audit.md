@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:2321c4045654e44e72821d4908af04fa7d5794fcc59366c6279f41541e8f7215'
+body_hash: 'sha256:833d52834fd9d13c2973dc1dd955fab6c345b8034d04cebdb92581b1ec09cd8f'
 related:
   - "[[2026-09-23-status-messages-plan]]"
   - "[[2026-09-23-status-messages-adr]]"
@@ -48,6 +48,24 @@ The review ran on a clean `git archive HEAD` copy and covered these checks:
   and 7 block a start, and a timeout warns and proceeds.
 - **`repair-predicate-breadth`:** confirmed closed, because the tool-env repair gates
   on `fixed_by_torch_reinstall`.
+
+**P03 review (commits `09404a9e` to `33f87848`; Steps S11, S05, S12 and S16):
+revision required.**
+
+The review ran on a clean `git archive HEAD` copy:
+
+- ruff and ruff format pass.
+- `ty check src` failed. This was the high finding, and it reopened S11.
+- 460 tests across the touched modules pass.
+
+The four named risks were checked and found clean:
+
+- `/health` stays lightweight, and none of its inputs can raise into a 500.
+- `service_installation` is unreachable from CLI and MCP paths.
+- `degradation_findings` behaviour is preserved.
+- `hook_state` is the only derivation of whether hooks run.
+
+After the corrections below, the phase gate passes.
 
 ## Findings
 
@@ -161,6 +179,51 @@ Resolved in the P02 corrections commit:
 `operator_state/_hardware.py` still has no production caller. It is owned by P03.S16
 and must not close the plan uncalled.
 
+### gate-type-check-fails | high | `ty check src` failed at the phase close on a stale health key
+
+`src/vaultspec_rag/tests/test_serving_verdict_parity.py:41`
+
+Test fixtures still set the `cuda` key that S11 removed from `ServiceHealth`. The tests
+passed, but the tree's type check failed, because each Step had type-checked only its
+own touched files.
+
+Resolved: S11 was reopened, and commit `db62e1b7` removed the key from both fixtures.
+From S13 onwards, `ty check src` runs over the whole tree at every Step.
+
+### client-older-daemon-skew | medium | A new CLI against an older service reported "index busy" instead of the skew
+
+`src/vaultspec_rag/cli/_status.py`
+
+When a service answers but its state does not parse, `status` fell back to the local
+store. The service holds that store, so the fallback reported the index as busy.
+
+Resolved in the S16 corrections commit:
+
+- `status` now refuses with the release-mismatch verdict and its restart remediation.
+- It exits 1 in both human and JSON mode.
+
+A mutation-checked test covers it.
+
+### preprocess-service-mode-untested | medium | The service-mode read on `preprocess status` had no test
+
+`src/vaultspec_rag/cli/_preprocess.py`
+
+Resolved in the S16 corrections commit, with tests for three cases against a real
+loopback stub:
+
+- a running service's `off` mode is read;
+- an unparseable health payload gives no mode;
+- with no service answering, the local mode applies.
+
+The service-read guard is mutation-checked.
+
+### health-lightweight-guard | low | Nothing held `/health` off the installation and hardware probes
+
+`src/vaultspec_rag/tests/test_status_service_skew.py`
+
+Resolved: a runtime guard now asserts that a `/health` request leaves the installation
+and hardware caches empty. It is mutation-checked.
+
 ## Recommendations
 
 - **P04.S06:** decide how a version-mismatched client parses a typed health payload.
@@ -173,3 +236,8 @@ and must not close the plan uncalled.
 - **P05.S18:** the release note covers every wire change: `status --json`,
   `/health`, `/service-state`, `get_index_status`, the `/readiness` torch `info`
   shape, and the admission reason values.
+- **Plan close:** amend the accepted decision's `DegradationReason` member list to the
+  emitted codes: `JOBS_STALLED` (plural) and the added `JOBS_DEGRADED`. The accepted
+  record should match the wire.
+- **P05.S18:** the release note states that the service reads its installation once
+  per process lifetime. A torch or driver change shows only after a restart.

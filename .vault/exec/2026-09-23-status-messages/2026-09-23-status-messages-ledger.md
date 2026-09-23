@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:2a5340d323ea959daff0570f7f7d95d23f472238bd4b13e33fbe1358b7bee732'
+body_hash: 'sha256:c6e1f767a29581afe2b051821ad22f353a906bbd87606f0a4bb119a952d9070c'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -150,6 +150,8 @@ related:
 - `S13` `M` `src/vaultspec_rag/tests/test_paused_surface_legibility.py`
 - `S13` `M` `src/vaultspec_rag/tests/test_process_probe_vocabulary_guards.py`
 - `S13` `verify:` `ruff, ruff format, ty check src` -> `pass`
+- `S16` `A` `src/vaultspec_rag/tests/test_status_service_skew.py`
+- `S16` `verify:` `ruff check src and ty check src` -> `pass`
 
 ## Notes
 
@@ -166,4 +168,5 @@ related:
 - `S06` The typed parse fails closed: a payload from another release parses to None and the caller reports the version or falls back locally, resolving the P01 forward-compatibility finding without relaxing extra=forbid; renderers still reading raw health sections move onto HealthReport in P05
 - `S11` P03 review high finding: fixtures still carried the removed cuda health key; ty check of the whole tree now runs at each Step instead of the touched subset
 - `S13` Lifecycle derives in lifecycle_from_signals and lifecycle_for_port only; JSON state tokens change (crashed becomes crashed_pid_dead or crashed_pid_reused, warming becomes starting, degraded_discovery becomes discovery_degraded, unreachable becomes crashed_port_silent); doctor treats a starting service as live with status starting; the typed parsers merged into parse_report per the structure guard
+- `S16` P03 review corrections: an unreadable service state is refused with the release verdict instead of falling back to the store the service holds; preprocess service-mode read and health lightness now covered
 

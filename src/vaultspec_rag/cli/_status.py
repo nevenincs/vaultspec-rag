@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 import typer
 
@@ -24,6 +24,7 @@ from ._render import (
     _plain,
     _print_next_action,
     address_line,
+    exit_with_error,
 )
 from ._status_labels import render_degradation
 
@@ -287,6 +288,8 @@ def _emit_status_json(
 
 def _service_index_status(
     target: object,
+    *,
+    json_mode: bool,
 ) -> tuple[dict[str, object], InstallationReport, int] | None:
     """Read a running service's index status and its own installation.
 
@@ -302,11 +305,44 @@ def _service_index_status(
         port,
     )
     report = parse_report(ServiceStateReport, result)
+    if report is None and _answered(result):
+        _refuse_incompatible_service(port, json_mode=json_mode)
     if report is None or report.index.get("error"):
         return None
     installation = report.installation
     index_dict = report.index
     return index_dict, installation, port
+
+
+def _answered(result: object) -> bool:
+    """Whether the service answered with a body, rather than failing to."""
+    return isinstance(result, dict) and result.get("ok") is not False
+
+
+def _refuse_incompatible_service(port: int, *, json_mode: bool) -> NoReturn:
+    """Report a service whose state this client cannot read, and stop.
+
+    Falling back to the local store would be wrong twice over: the running
+    service holds that store, so the read fails as "busy", and the operator is
+    sent looking for a lock instead of at the release mismatch.
+    """
+    from ..serviceclient._compat import classify_service_version
+    from ..serviceclient._transport import _try_http_health
+
+    verdict = classify_service_version(_try_http_health(port))
+    reason = (
+        verdict.reason()
+        if not verdict.is_compatible
+        else "the running service's state could not be read by this client"
+    )
+    remedy = " ".join(verdict.remediation()) or server_status_command(port)
+    exit_with_error(
+        "status",
+        verdict.error_code() or "service_state_unreadable",
+        f"Cannot show index status: {reason}. {remedy}",
+        1,
+        json_mode=json_mode,
+    )
 
 
 def _local_installation() -> InstallationReport:
@@ -348,7 +384,7 @@ def handle_status(
 
     from .._store_locks import VaultStoreLockedError
 
-    service_status = _service_index_status(target)
+    service_status = _service_index_status(target, json_mode=json_mode)
     if service_status is not None:
         status, installation, service_port = service_status
         if json_mode:
@@ -364,7 +400,7 @@ def handle_status(
     try:
         status = vaultspec_rag.get_status(target)
     except VaultStoreLockedError as exc:
-        service_status = _service_index_status(target)
+        service_status = _service_index_status(target, json_mode=json_mode)
         if service_status is not None:
             status, installation, service_port = service_status
             if json_mode:
