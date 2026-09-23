@@ -607,24 +607,14 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
     stays off the module import path (the CLI service-control surface stays
     torch-free).
     """
-    from ..indexer._preprocess_config import (
-        PREPROCESS_CONFIG_FILENAME,
-        PreprocessConfigError,
-        load_preprocess_rules,
-    )
+    from ..indexer._preprocess_config import root_hook_state
+    from ..operator_state._features import PreprocessHookState
 
-    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
+    state, count = root_hook_state(root, effective_mode)
+    if state not in {PreprocessHookState.ACTIVE, PreprocessHookState.DISABLED}:
         return
-    try:
-        config = load_preprocess_rules(root, strict=True)
-    except PreprocessConfigError:
-        return
-    rules = config.rules
-    if not rules:
-        return
-    count = len(rules)
     word = "rule" if count == 1 else "rules"
-    if effective_mode == "off":
+    if state is PreprocessHookState.DISABLED:
         _print_lifecycle_lines(
             f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
         )

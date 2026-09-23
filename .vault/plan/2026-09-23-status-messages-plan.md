@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:4873fe08d38ef961a0836bfef1cb624ad58e244123c5a24c8128fc97f991168b'
+body_hash: 'sha256:e20efdb87face53926aa10f3978f0d8f3bd7839e5c899a548114752bda17f086'
 ---
 
 # `status-messages` plan
@@ -89,8 +89,8 @@ Make the service the only author of its health, degradation reasons, compute and
 
 - [x] `P03.S11` - emit typed HealthVerdict and DegradationReason codes from the service and drop the model-device cuda flag; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/service.py`.
 - [x] `P03.S05` - make the Typesafe status read pure and typed with PENDING on fingerprint change; `src/vaultspec_rag/search/_typesafe_transport.py`.
-- [ ] `P03.S12` - add the single lenient hooks-will-run predicate and repoint every derivation including preprocess status reading the daemon mode; `src/vaultspec_rag/indexer/, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/cli/_preprocess.py`.
-- [ ] `P03.S16` - serve typed health and service-state models carrying role, compute, cached hardware, per-service and per-root features, deleting the index-status alias keys and unused models; `src/vaultspec_rag/api.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_models.py`.
+- [x] `P03.S12` - add the single lenient hooks-will-run predicate and repoint every derivation, including preprocess status; `src/vaultspec_rag/indexer/, src/vaultspec_rag/server/_routes_reindex.py, src/vaultspec_rag/cli/_preprocess.py`.
+- [ ] `P03.S16` - serve typed health and service-state models carrying role, compute, cached hardware, per-service and per-root features, deleting the index-status alias keys and unused models, and have preprocess status read the running service's mode; `src/vaultspec_rag/api.py, src/vaultspec_rag/server/_routes.py, src/vaultspec_rag/server/_models.py, src/vaultspec_rag/cli/_preprocess.py`.
 
 ### Phase `P04` - client lifecycle and typed transport
 

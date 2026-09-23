@@ -84,27 +84,16 @@ def _preprocess_preflight(
         }
 
     from ..config._settings import get_config
-    from ..indexer._preprocess_config import (
-        PreprocessConfigError,
-        load_preprocess_rules,
-    )
+    from ..indexer._preprocess_config import root_hook_state
+    from ..operator_state._features import PreprocessHookState
 
     mode = get_config().preprocess_mode
-    rule_count = 0
-    if config_present:
-        try:
-            # strict resolves the true rule count regardless of the kill
-            # switch, so the count reported is the config's own, not a
-            # mode-gated zero.
-            rule_count = len(load_preprocess_rules(root, strict=True).rules)
-        except PreprocessConfigError:
-            rule_count = 0
-    hooks_will_run = config_present and rule_count > 0 and mode != "off"
+    state, rule_count = root_hook_state(root, mode)
     return {
         "config_present": config_present,
         "rule_count": rule_count,
         "mode": mode,
-        "hooks_will_run": hooks_will_run,
+        "hooks_will_run": state is PreprocessHookState.ACTIVE,
     }
 
 

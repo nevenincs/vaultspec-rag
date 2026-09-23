@@ -59,7 +59,10 @@ class PreprocessHookState(StrEnum):
         """Plain-language statement of the hook state."""
         return {
             PreprocessHookState.NONE: "none configured",
-            PreprocessHookState.ACTIVE: "active (run while indexing)",
+            PreprocessHookState.ACTIVE: (
+                "active (their commands run directly while indexing, with the "
+                "privileges of whoever indexes)"
+            ),
             PreprocessHookState.DISABLED: (
                 "configured but switched off (VAULTSPEC_RAG_PREPROCESS=off)"
             ),

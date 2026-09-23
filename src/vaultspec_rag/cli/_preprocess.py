@@ -17,7 +17,7 @@ All honour the shared script-facing ``--json`` output.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import Annotated, cast
 
 import typer
 
@@ -26,17 +26,16 @@ import vaultspec_rag.cli as _cli
 from ..config._settings import get_config
 from ..indexer._preprocess_config import (
     PREPROCESS_CONFIG_FILENAME,
-    PreprocessConfig,
     PreprocessConfigError,
     PreprocessPolicyError,
+    hook_state,
     load_preprocess_rules,
+    root_hook_state,
 )
 from ..indexer._preprocess_runner import PreprocessAbortError, run_preprocessor
+from ..operator_state._features import PreprocessHookState
 from ._app import CLIState, JsonMode, preprocess_app
 from ._render import _emit_json, _emit_json_error_and_exit, _plain
-
-if TYPE_CHECKING:
-    from ..config._types import PreprocessMode
 
 
 def _root(ctx: typer.Context) -> Path:
@@ -188,7 +187,6 @@ def handle_preprocess_check(
 
 def _report_preprocess_no_match(
     root: Path,
-    config: PreprocessConfig,
     rel: str,
     *,
     json_mode: bool,
@@ -199,7 +197,7 @@ def _report_preprocess_no_match(
     off notice before considering a matching rule so this diagnostic command
     obeys the same execution gate as indexing.
     """
-    gate = _gated_rule_state(root, config)
+    gate = _gated_rule_state(root)
     if gate is not None:
         if json_mode:
             _emit_json(
@@ -245,12 +243,12 @@ def handle_preprocess_run_one(
         rel = str(abs_path.resolve().relative_to(root.resolve())).replace("\\", "/")
     except ValueError:
         rel = str(path).replace("\\", "/")
-    if _gated_rule_state(root, config) is not None:
-        _report_preprocess_no_match(root, config, rel, json_mode=json_mode)
+    if _gated_rule_state(root) is not None:
+        _report_preprocess_no_match(root, rel, json_mode=json_mode)
         return
     rule = config.match(rel)
     if rule is None:
-        _report_preprocess_no_match(root, config, rel, json_mode=json_mode)
+        _report_preprocess_no_match(root, rel, json_mode=json_mode)
         return
 
     max_bytes = int(get_config().preprocess_max_emitted_bytes)
@@ -298,36 +296,16 @@ def handle_preprocess_run_one(
         _cli.console.print(f"Output: {content}")
 
 
-def _gated_rule_state(root: Path, nonstrict_config: PreprocessConfig) -> int | None:
+def _gated_rule_state(root: Path) -> int | None:
     """Return the rule count when a root's rules are switched off, else ``None``.
 
     Policy routing stays available while the execution kill switch is off, so
-    the resolved mode is authoritative and the retained rules provide the
-    diagnostic count.
-
-    Args:
-        root: The workspace root.
-        nonstrict_config: The already-resolved non-strict config (the gated one).
-
-    Returns:
-        The strict rule count when the rules exist but are switched off, else
-        ``None`` (no config, an invalid config, or genuinely no rules).
+    the rules the root declares still give the diagnostic count.
     """
     from ..config._settings import get_config
 
-    if get_config().preprocess_mode != "off":
-        return None
-    if nonstrict_config.rules:
-        return len(nonstrict_config.rules)
-    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
-        return None
-    try:
-        strict = load_preprocess_rules(root, strict=True)
-    except PreprocessConfigError:
-        return None
-    if not strict.rules:
-        return None
-    return len(strict.rules)
+    state, rule_count = root_hook_state(root, get_config().preprocess_mode)
+    return rule_count if state is PreprocessHookState.DISABLED else None
 
 
 def _gated_run_one_message(rule_count: int) -> str:
@@ -336,29 +314,6 @@ def _gated_run_one_message(rule_count: int) -> str:
     return (
         f"Preprocessing is off; {rule_count} {word} are configured but skipped. "
         "Unset VAULTSPEC_RAG_PREPROCESS=off to run them."
-    )
-
-
-def _would_run(mode: PreprocessMode, rule_count: int) -> bool:
-    """Return whether a root's rules would run under the resolved mode.
-
-    Rules run for any root except under the ``off`` kill switch. A root with no
-    rules never runs anything.
-    """
-    return rule_count > 0 and mode != "off"
-
-
-def _status_effect_line(mode: PreprocessMode, rule_count: int) -> str:
-    """Return the human effect/remediation line for ``preprocess status``."""
-    if rule_count == 0:
-        return "No preprocess rules are configured for this root."
-    if mode == "off":
-        return (
-            "Preprocessing is off (VAULTSPEC_RAG_PREPROCESS=off); rules are "
-            "skipped. Unset it to run them."
-        )
-    return (
-        "This root's rules run directly; their commands execute with your privileges."
     )
 
 
@@ -399,7 +354,11 @@ def handle_preprocess_status(
             )
             path_independent_rules = sum(rule.path_independent for rule in config.rules)
 
-    effective = _would_run(mode, rule_count)
+    state = (
+        hook_state(rule_count, mode)
+        if config_valid
+        else PreprocessHookState.INVALID_CONFIG
+    )
 
     if json_mode:
         _emit_json(
@@ -417,7 +376,8 @@ def handle_preprocess_status(
                 "targets": targets,
                 "extractor_versions": extractor_versions,
                 "path_independent_rules": path_independent_rules,
-                "would_run": effective,
+                "would_run": state is PreprocessHookState.ACTIVE,
+                "hooks": state.value,
             },
         )
         return
@@ -436,4 +396,5 @@ def handle_preprocess_status(
             f"extractor versions: {', '.join(extractor_versions) or 'none'}; "
             f"cross-path cache rules: {path_independent_rules}"
         )
-    _plain(f"Effect: {_status_effect_line(mode, rule_count)}")
+    remedy = f" {state.remediation}" if state.remediation else ""
+    _plain(f"Hooks: {state.label}.{remedy}")

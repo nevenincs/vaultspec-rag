@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..operator_state._features import PreprocessHookState
 from ._preprocess_cache import clear_preprocess_cache, preprocess_cache_dir
 from ._preprocess_config import (
     PreprocessConfig,
     PreprocessContext,
+    hook_state,
 )
 
 if TYPE_CHECKING:
@@ -42,12 +44,11 @@ def resolve_preprocess_context(
     (the workers receive ``prep=None``), so there is zero overhead when the
     hook is unused.
     """
-    if not config:
-        return None
     from ..config._settings import get_config
 
     cfg = get_config()
-    if cfg.preprocess_mode == "off":
+    rule_count = len(config.rules) if config else 0
+    if hook_state(rule_count, cfg.preprocess_mode) is not PreprocessHookState.ACTIVE:
         return None
     return PreprocessContext(
         config=config,
@@ -65,7 +66,10 @@ def resolve_policy_preprocess_context(
     max_source_bytes: int | None = None,
 ) -> PreprocessContext | None:
     """Materialize worker execution state from one immutable policy snapshot."""
-    if policy.execution_mode == "off" or not policy.preprocess_rules:
+    if (
+        hook_state(len(policy.preprocess_rules), policy.execution_mode)
+        is not PreprocessHookState.ACTIVE
+    ):
         return None
     config = PreprocessConfig(
         [rule.materialize() for rule in policy.preprocess_rules],

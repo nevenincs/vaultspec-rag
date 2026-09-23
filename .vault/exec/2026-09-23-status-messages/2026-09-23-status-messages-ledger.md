@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:e15adfa307c832ef193e029bc26253f72c483c4bc159ff69e203c19b478d2d40'
+body_hash: 'sha256:5c2d2e004ab052ded2345c9707958e19d61fc420582bace6bd8cf193c9eba88d'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -94,6 +94,15 @@ related:
 - `S05` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
 - `S05` `M` `src/vaultspec_rag/tests/test_typesafe_transport.py`
 - `S05` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S12` `M` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S12` `M` `src/vaultspec_rag/indexer/_content_discovery.py`
+- `S12` `M` `src/vaultspec_rag/indexer/_preprocess_glue.py`
+- `S12` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S12` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S12` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S12` `M` `src/vaultspec_rag/operator_state/_features.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_preprocess_hook_state.py`
+- `S12` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -105,4 +114,5 @@ related:
 - `S11` DegradationReason keeps JOBS_STALLED (plural, matching the reported count) and adds JOBS_DEGRADED, differing from the ADR's JOB_STALLED listing; /health drops the model-device cuda flag and its verbose Compute row until installation compute renders in P05; the start envelope keeps its own degraded_reasons key
 - `S10` P02 phase-review corrections (commit bae3163c): client readiness, in-process error classification of the loaded torch, enum-owned message headlines, cpu-prefixed tags, explicit None default, required remediation, timeout coverage; both new guards pass once restored
 - `S05` enrollment_status returns TypesafeReport; the derivable enrolled flag is gone from the wire; labels come from TypesafeState
+- `S12` Reading the running service's preprocess mode moved to S16 (plan row corrected) because the service only publishes its mode with the typed feature section; preprocess status JSON gains a hooks state value; the effect line now renders from PreprocessHookState
 
