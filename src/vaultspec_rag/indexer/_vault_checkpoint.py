@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from .. import store_schema
+from .._job_errors import JobError, JobErrorKind
+from .._operator_commands import IndexCommandOptions, index_command
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ._checkpoint_common import RunCheckpointBase
@@ -17,6 +19,7 @@ from ._run_ledger_models import (
     CommitUnit,
     CommitUnitKind,
     RunAuthority,
+    RunLedgerCompatibilityError,
     RunOperation,
     RunSignature,
     index_run_ledger_path,
@@ -85,8 +88,19 @@ class VaultRunCheckpoint(RunCheckpointBase):
             backend_identity=backend_identity,
         )
         ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root.resolve())))
-        generation = cls.start_compatible_generation(ledger, signature)
-        receipt = cls.open_publication_receipt(ledger, generation, authority)
+        try:
+            generation = cls.start_compatible_generation(ledger, signature)
+            receipt = cls.open_publication_receipt(ledger, generation, authority)
+        except RunLedgerCompatibilityError as exc:
+            # An index written under an older chunk or point shape cannot be
+            # carried forward piecemeal; only an operator rebuild replaces it.
+            rebuild = index_command(
+                PublicSourceType.VAULT, IndexCommandOptions(rebuild=True)
+            )
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                f"no compatible committed vault proof ({exc}); run {rebuild}",
+            ) from exc
         return cls(
             ledger=ledger,
             generation=generation,

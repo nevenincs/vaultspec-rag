@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:41fa616150d366cdcc7425f08fbdec60d80ff5e51b975abee97e915f3806e340'
+body_hash: 'sha256:5d1c3fd931419e2c25636a332c7fcde95c98bd1372b0f49db078a8538cb6b675'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -32,6 +32,19 @@ related:
 - `S02` `M` `src/vaultspec_rag/tests/quality/metrics.py`
 - `S02` `A` `src/vaultspec_rag/tests/quality/evidence_baseline.json`
 - `S02` `verify:` `ruff+basedpyright on gate files` -> `pass`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_prep.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_chunking.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_chunk_worker.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_vault_checkpoint.py`
+- `S05` `M` `src/vaultspec_rag/indexer/_index_schema.py`
+- `S05` `M` `src/vaultspec_rag/_store_models.py`
+- `S05` `M` `src/vaultspec_rag/store_schema.py`
+- `S05` `M` `src/vaultspec_rag/store_catalog.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_store_schema_parity.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_vault_metadata_subset.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_vault_chunking_unit.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_vault_checkpoint.py`
+- `S05` `verify:` `ruff+basedpyright on touched files` -> `pass`
 
 ## Notes
 

@@ -6,7 +6,7 @@ from typing import ClassVar
 import pytest
 
 from .._store_models import VaultDocument
-from ..indexer._vault_prep import split_document
+from ..indexer._vault_prep import split_document, vault_document_from_text
 from ..search._models import SearchResult
 from ..search._rerank import (
     _FEATURE_NEIGHBOR_NUDGE,
@@ -53,6 +53,44 @@ class TestSplitDocument:
         chunks = split_document(doc, chunk_chars=1000)
         assert len(chunks) > 1
         assert all(len(c.text) <= 1000 for c in chunks)
+
+    def test_chunk_and_passage_spans_name_their_file_lines(self, tmp_path: Path):
+        """Each chunk and passage reports the file lines holding exactly its text."""
+        path = tmp_path / ".vault" / "adr" / "2026-06-12-sample-adr.md"
+        path.parent.mkdir(parents=True)
+        sections = [
+            f"## Section {i}\n\n"
+            + (f"sentence {i} body text. " * 40)
+            + "\n\n```\n# fenced comment\n```"
+            for i in range(6)
+        ]
+        text = (
+            "---\ntags:\n  - '#adr'\n  - '#sample-feature'\ndate: '2026-06-12'\n"
+            "---\n\n# Sample Doc\n\n" + "\n\n".join(sections) + "\n"
+        )
+        doc = vault_document_from_text(path, tmp_path, text)
+        assert doc is not None
+        chunks = split_document(doc, chunk_chars=600)
+        lines = text.split("\n")
+        assert len(chunks) > 1
+
+        def holds(fragment: str, start: int, end: int) -> bool:
+            span = "\n".join(lines[start - 1 : end])
+            fragment = fragment.strip()
+            return fragment in span and fragment.count("\n") == span.count("\n")
+
+        for chunk in chunks:
+            assert holds(chunk.text, chunk.line_start, chunk.line_end)
+            if not chunk.passages:
+                # A chunk cut right after a heading holds nothing but headings,
+                # which are sections, not passages.
+                content = [line for line in chunk.text.split("\n") if line.strip()]
+                assert all(line.startswith("#") for line in content)
+            for passage in chunk.passages:
+                body = chunk.text[passage.start : passage.end]
+                assert holds(body, passage.line_start, passage.line_end)
+                assert passage.section.startswith("Section ")
+                assert "fenced comment" not in passage.section
 
     def test_ordinals_and_chunk_count_are_consistent(self):
         doc = _doc("## A\n\n" + "x " * 900 + "\n\n## B\n\n" + "y " * 900)
