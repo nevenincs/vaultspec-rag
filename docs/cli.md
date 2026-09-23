@@ -253,7 +253,7 @@ None.
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
-| `--verbose` | boolean | no | off | Also show the interpreter, the support profile limits, and the per-domain index generations. |
+| `--verbose` | boolean | no | off | Also verify this installation's GPU by loading torch, and show the interpreter, the support profile limits, and the per-domain index generations. |
 
 ## server doctor
 

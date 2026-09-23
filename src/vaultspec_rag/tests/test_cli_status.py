@@ -983,3 +983,30 @@ def test_verbose_status_verifies_the_device_instead_of_reading_metadata(
     view = _local_view(tmp_path, {"storage_path": "data"}, verify=True)
 
     assert view.installation.compute.capability is not (ComputeCapability.BUILD_PRESENT)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        ("ready", "running"),
+        ("paused", "running"),
+        ("degraded", "running"),
+        ("error", "not_serving"),
+    ],
+)
+def test_only_a_service_that_cannot_serve_lifts_the_exit_code(
+    verdict: str, expected: str
+) -> None:
+    """Health raises the broker exit code only for models that never loaded.
+
+    Mutation check: lifting every verdict other than ``ready`` reads a paused
+    service as a fault and fails the paused case; restoring the error-only rule
+    passes.
+    """
+    from ..operator_state._service import ServiceLifecycle
+    from ..serviceclient._status import with_health
+
+    state = with_health(ServiceLifecycle.RUNNING, {"status": verdict})
+
+    assert state.value == expected
+    assert state.exit_code == (4 if verdict == "error" else 0)

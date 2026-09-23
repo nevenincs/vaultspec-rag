@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:4baa027568463f5698612d754844225f972f3825caea75879062d51ce3f76180'
+body_hash: 'sha256:e52f13500a5a3aae67c73de1aa37de66f5bd96d859dc00ccb2307a9a8a5b8bbe'
 related:
   - "[[2026-09-23-status-messages-research]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -146,21 +146,28 @@ duplicated: `JobState`, `QuiesceState`, `SearchAvailability`, `SearchFreshness` 
   runtime admission outcomes, not compute members.
 
 - **`ServiceLifecycle`**: `STOPPED`, `STARTING`, `RUNNING`, `CRASHED_PID_DEAD`,
-  `CRASHED_PID_REUSED`, `CRASHED_PORT_SILENT`, `CRASHED_HEARTBEAT_STALE` and
-  `DISCOVERY_DEGRADED`. Each member carries its broker exit code (0, 3, 4, 5). It is
+  `CRASHED_PID_REUSED`, `CRASHED_PORT_SILENT`, `CRASHED_HEARTBEAT_STALE`,
+  `NOT_SERVING` and `DISCOVERY_DEGRADED`. Each member carries its broker exit code
+  (0, 3, 4, 5). It is
   produced by extending the existing `compose_discovery_status` in the torch-free
   service-client package, the one place that composes discovery facts with the typed
   health model. The CLI's own `_compute_state`, the port-only ternaries and doctor's
   `live` are deleted.
 
   - `STARTING` means models loading at startup.
+  - Lifecycle alone owns the broker exit code. The one rule by which health changes
+    it: a running service whose health verdict is `ERROR` (its models never loaded)
+    is `NOT_SERVING`, exit 4. A paused or degraded service stays `RUNNING`, exit 0.
+  - `server doctor` treats a starting service as live: it reports status
+    `starting` and exits 0, because nothing needs an operator.
   - `QuiesceState.WARMING` means resuming after a pause and renders as "resuming". The
     two are never labelled alike.
 
 - **`HealthVerdict`**: `READY`, `PAUSED`, `DEGRADED` or `ERROR`. It comes with
   `DegradationReason` members:
 
-  - `JOB_STALLED`
+  - `JOBS_STALLED` (a count of stalled jobs)
+  - `JOBS_DEGRADED`
   - `JOB_FAILED`
   - `QUARANTINED`
   - `STORE_CARRIED_ACROSS`

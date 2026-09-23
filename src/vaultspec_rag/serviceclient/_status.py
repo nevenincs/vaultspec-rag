@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..operator_state._service import ServiceLifecycle
+from ..operator_state._service import HealthVerdict, ServiceLifecycle
 from ._discovery import (
     DISCOVERY_SOURCE_MACHINE_POINTER,
     DISCOVERY_STATE_ABSENT,
@@ -41,6 +41,7 @@ __all__ = [
     "lifecycle_for_port",
     "lifecycle_from_signals",
     "reconcile_discovery",
+    "with_health",
 ]
 
 
@@ -185,6 +186,24 @@ def lifecycle_for_port(
     if port_listening:
         return ServiceLifecycle.CRASHED_PORT_SILENT
     return ServiceLifecycle.STARTING if starting else ServiceLifecycle.STOPPED
+
+
+def with_health(
+    state: ServiceLifecycle, health: dict[str, object] | None
+) -> ServiceLifecycle:
+    """Lift a running service that says it cannot serve to a fault.
+
+    Lifecycle owns the broker exit code; this is the one rule by which health
+    changes it. A paused or degraded service still answers or deliberately
+    holds, so only an ``error`` verdict - models that never loaded - is a fault.
+    """
+    if (
+        state is ServiceLifecycle.RUNNING
+        and isinstance(health, dict)
+        and health.get("status") == HealthVerdict.ERROR
+    ):
+        return ServiceLifecycle.NOT_SERVING
+    return state
 
 
 def compose_discovery_status(

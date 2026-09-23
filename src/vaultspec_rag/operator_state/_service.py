@@ -46,6 +46,7 @@ class ServiceLifecycle(StrEnum):
     CRASHED_PID_REUSED = "crashed_pid_reused"
     CRASHED_PORT_SILENT = "crashed_port_silent"
     CRASHED_HEARTBEAT_STALE = "crashed_heartbeat_stale"
+    NOT_SERVING = "not_serving"
     DISCOVERY_DEGRADED = "discovery_degraded"
 
     @property
@@ -66,6 +67,9 @@ class ServiceLifecycle(StrEnum):
             ),
             ServiceLifecycle.CRASHED_HEARTBEAT_STALE: (
                 "crashed (it stopped reporting that it is alive)"
+            ),
+            ServiceLifecycle.NOT_SERVING: (
+                "running but unable to serve (its search models never loaded)"
             ),
             ServiceLifecycle.DISCOVERY_DEGRADED: (
                 "unreachable (a service holds this machine but its address "
@@ -96,6 +100,11 @@ class ServiceLifecycle(StrEnum):
             return None
         if self is ServiceLifecycle.DISCOVERY_DEGRADED:
             return f"Run `{server_doctor_command()}` to see what holds this machine."
+        if self is ServiceLifecycle.NOT_SERVING:
+            return (
+                f"Run `{server_doctor_command()}` to see why the models did not "
+                f"load, then restart it with `{server_start_command()}`."
+            )
         return f"Start it with `{server_start_command()}`."
 
 

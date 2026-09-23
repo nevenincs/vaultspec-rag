@@ -10,6 +10,7 @@ source of truth: every signal is surfaced and the verdict is derived from all.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, cast
@@ -49,6 +50,7 @@ from ..serviceclient._status import (
     compose_discovery_status,
     lifecycle_for_port,
     lifecycle_from_signals,
+    with_health,
 )
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -232,6 +234,9 @@ def _render_discovery_verdict(
     """
     port = verdict.port or 0
     health = _try_http_health(port) if verdict.signals.port_listening else None
+    served = with_health(verdict.state, health)
+    if served is not verdict.state:
+        verdict = dataclasses.replace(verdict, state=served, label=served.label)
     if json_mode:
         payload = verdict.as_dict()
         payload["service_json_present"] = False
@@ -987,9 +992,12 @@ def _render_port_only_status(
         probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS) == "accepted"
     )
     health = _try_http_health(port) if port_listening else None
-    state = lifecycle_for_port(
-        port_listening=port_listening,
-        health_answered=health_answered(health),
+    state = with_health(
+        lifecycle_for_port(
+            port_listening=port_listening,
+            health_answered=health_answered(health),
+        ),
+        health,
     )
     exit_code = state.exit_code
     operational = _status_operational_summary(
@@ -1103,6 +1111,7 @@ def _render_explicit_port_status(
             and pid_is_ours
         ),
     )
+    state = with_health(state, health)
     heartbeat_stale = False
     token_match = _status_response_token_match(expected_token, health)
     operational = _status_operational_summary(
@@ -1279,6 +1288,7 @@ def service_status(
 
     target_port = signals.port
     health = _try_http_health(target_port) if signals.port_listening else None
+    signals = dataclasses.replace(signals, state=with_health(signals.state, health))
     operational = _status_operational_summary(
         signals.state,
         target_port,

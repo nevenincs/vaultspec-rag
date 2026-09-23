@@ -5,16 +5,19 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:3a7f7bce995d46deff05dd05deb971519ae29960eae6dc14b7c2e2a60038081d'
+body_hash: 'sha256:472afbd9c439dccc6eb47d42a2fb87debe60a20d5e4fe714ab672533778354f3'
 related:
   - "[[2026-09-23-status-messages-adr]]"
   - "[[2026-09-23-status-messages-audit]]"
   - "[[2026-06-24-service-doctor-liveness-adr]]"
 ---
 
-# `status-messages` adr: `exit codes and degradation codes for the typed operator state` | (**status:** `proposed`)
+# `status-messages` adr: `exit codes and degradation codes for the typed operator state` | (**status:** `deprecated`)
 
 ## Problem Statement
+
+Authorized as recommended on 2026-09-23 and applied to
+`2026-09-23-status-messages-adr`; this proposal is retired.
 
 Implementing `2026-09-23-status-messages-adr` left three choices the accepted record
 does not settle, all recorded in `2026-09-23-status-messages-audit`:
