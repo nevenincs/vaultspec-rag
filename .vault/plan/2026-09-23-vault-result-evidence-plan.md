@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:899284bf96cda401a50d61d138846073097ecd89540e466923027e8083b5d451'
+body_hash: 'sha256:243325050fd71decb0cd31bd73917678afdbbe382ecf92b1cfbaa8da05aa6ec5'
 ---
 
 # `vault-result-evidence` plan
@@ -72,7 +72,7 @@ Delivers the query-selected passage snippet over each final vault result's top t
 
 Delivers the title, section and chunk-text vault embedding input from one function, donor verification against that input, and a gate comparison against the fp16 baseline that decides whether it ships.
 
-- [ ] `P05.S08` - build the vault embedding input in one function with the section breadcrumb, verify donors against the full input, and measure it on the gate against the fp16 baseline; `src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_reuse.py, src/vaultspec_rag/indexer/_slicing.py`.
+- [x] `P05.S08` - build the vault embedding input in one function with the section breadcrumb, verify donors against the full input, and measure it on the gate against the fp16 baseline; `src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_reuse.py, src/vaultspec_rag/indexer/_slicing.py`.
 
 ### Phase `P06` - calibrate the gate and close
 

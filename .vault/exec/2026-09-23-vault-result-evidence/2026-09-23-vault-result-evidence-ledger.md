@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:6cf09c0a0b5e04e4f774ae8838ab0b71ffdf5c1fb662d91f66134374156a50e5'
+body_hash: 'sha256:67c54c00a6d12805ffd588b7b3fcbd8912c43ec4f3bc1a9adcf61f773dd64db4'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -73,6 +73,11 @@ related:
 - `S07` `M` `src/vaultspec_rag/tests/integration/test_service_metrics.py`
 - `S07` `A` `src/vaultspec_rag/tests/integration/test_vault_search_adapter_parity.py`
 - `S07` `verify:` `unit and adapter tests (384), resident GPU integration (30), project-wide ty + ruff` -> `pass`
+- `S08` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_streaming.py`
+- `S08` `M` `src/vaultspec_rag/indexer/_reuse.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_index_reuse.py`
+- `S08` `verify:` `indexer unit tests (116), project-wide ty + ruff` -> `pass`
 
 ## Notes
 
@@ -80,4 +85,5 @@ related:
 - `S06` test_typesafe_search fixture grown past the 1,200-character passage bound so its snippet-shorter-than-content premise still holds; the assertion is unchanged
 - `S05` correction after close: a refused index job's status finding named the job log, not the rebuild the refusal asks for
 - `S07` mcp/_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
+- `S08` per the ADR's gate condition the section path does not enter the embedding input; the input stays title plus text, byte-identical to before, and only the single builder and full-input donor verification ship. The concurrency ADR's D8 is amended with this evidence at plan close
 
