@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:67c54c00a6d12805ffd588b7b3fcbd8912c43ec4f3bc1a9adcf61f773dd64db4'
+body_hash: 'sha256:a7545035d2bc0b9dd6d16b12c805447c9e5c3b9fe201329225db4a9679efab9f'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -78,6 +78,10 @@ related:
 - `S08` `M` `src/vaultspec_rag/indexer/_reuse.py`
 - `S08` `M` `src/vaultspec_rag/tests/test_index_reuse.py`
 - `S08` `verify:` `indexer unit tests (116), project-wide ty + ruff` -> `pass`
+- `S09` `M` `src/vaultspec_rag/search/_result_shaping.py`
+- `S09` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_document_result_shaping.py`
+- `S09` `verify:` `vault search 10 results 18 runs median 0.712s vs target 0.570s` -> `fail`
 
 ## Notes
 
@@ -86,4 +90,5 @@ related:
 - `S05` correction after close: a refused index job's status finding named the job log, not the rebuild the refusal asks for
 - `S07` mcp/_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
 - `S08` per the ADR's gate condition the section path does not enter the embedding input; the input stays title plus text, byte-identical to before, and only the single builder and full-input donor verification ship. The concurrency ADR's D8 is amended with this evidence at plan close
+- `S09` latency target missed: fp32 baseline 1.140s, final median 0.712s (rerank 0.403s, passage 0.222s). Passage scoring costs about 2.8ms per pair, not the 1-2ms the research estimated; the 48-pair page budget cut it from 0.33s with no measured quality loss. Reaching 0.57s needs a ranking-affecting change to the chunk rerank; raised to the user
 
