@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:07f5b8178218a2781637b4d22ba03956fbf37c3bd38dadae055291f9488d5d72'
+body_hash: 'sha256:2a5340d323ea959daff0570f7f7d95d23f472238bd4b13e33fbe1358b7bee732'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -137,6 +137,19 @@ related:
 - `S06` `verify:` `ruff, ruff format, ty` -> `pass`
 - `S11` `M` `src/vaultspec_rag/tests/test_serving_verdict_parity.py`
 - `S11` `verify:` `pytest verdict parity and jobs TUI status` -> `pass`
+- `S13` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S13` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S13` `M` `src/vaultspec_rag/operator_state/_service.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_status.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_paused_surface_legibility.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_process_probe_vocabulary_guards.py`
+- `S13` `verify:` `ruff, ruff format, ty check src` -> `pass`
 
 ## Notes
 
@@ -152,4 +165,5 @@ related:
 - `S16` Project status Compute line now renders from the service's installation report or a labelled local metadata probe (overlapping S08, which reworks the layout); status JSON and index status lose accelerator and count alias keys; /health moves typesafe and reranker state under features; MPS working-set memory moved into ComputeReport; integration assertions updated statically, not run
 - `S06` The typed parse fails closed: a payload from another release parses to None and the caller reports the version or falls back locally, resolving the P01 forward-compatibility finding without relaxing extra=forbid; renderers still reading raw health sections move onto HealthReport in P05
 - `S11` P03 review high finding: fixtures still carried the removed cuda health key; ty check of the whole tree now runs at each Step instead of the touched subset
+- `S13` Lifecycle derives in lifecycle_from_signals and lifecycle_for_port only; JSON state tokens change (crashed becomes crashed_pid_dead or crashed_pid_reused, warming becomes starting, degraded_discovery becomes discovery_degraded, unreachable becomes crashed_port_silent); doctor treats a starting service as live with status starting; the typed parsers merged into parse_report per the structure guard
 

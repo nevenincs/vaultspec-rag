@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..operator_state._service import DegradationReason
+from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
     _assert_default_status_summary,
@@ -1049,7 +1049,7 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 4, result.output
             labels = _label_values(result.output)
-            assert labels["Server"] == "unreachable"
+            assert labels["Server"] == ServiceLifecycle.CRASHED_PORT_SILENT.label
             assert labels["Requests"] == "not reported by service"
             assert "Health" not in labels
             assert labels["Uptime"] == "12 seconds"

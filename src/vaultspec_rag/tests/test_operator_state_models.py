@@ -150,13 +150,13 @@ def test_an_unknown_state_value_is_refused_rather_than_rendered() -> None:
 
 
 def test_the_client_parses_the_models_the_service_serves() -> None:
-    from ..serviceclient._typed_state import parse_health, parse_service_state
+    from ..serviceclient._typed_state import parse_report
 
     health = _health()
     state = _service_state()
 
-    assert parse_health(health.model_dump(mode="json")) == health
-    assert parse_service_state(state.model_dump(mode="json")) == state
+    assert parse_report(HealthReport, health.model_dump(mode="json")) == health
+    assert parse_report(ServiceStateReport, state.model_dump(mode="json")) == state
 
 
 @pytest.mark.parametrize(
@@ -165,10 +165,10 @@ def test_the_client_parses_the_models_the_service_serves() -> None:
     ids=["absent", "not-a-report", "transport-error"],
 )
 def test_anything_but_a_report_parses_to_nothing(payload: object) -> None:
-    from ..serviceclient._typed_state import parse_health, parse_service_state
+    from ..serviceclient._typed_state import parse_report
 
-    assert parse_health(payload) is None
-    assert parse_service_state(payload) is None
+    assert parse_report(HealthReport, payload) is None
+    assert parse_report(ServiceStateReport, payload) is None
 
 
 def test_a_report_from_another_release_parses_to_nothing() -> None:
@@ -177,8 +177,8 @@ def test_a_report_from_another_release_parses_to_nothing() -> None:
     Mutation check: parsing with a model that ignores unknown fields returns a
     report here and fails the assertion; restoring the strict parse passes.
     """
-    from ..serviceclient._typed_state import parse_health
+    from ..serviceclient._typed_state import parse_report
 
     wire = _health().model_dump(mode="json")
 
-    assert parse_health({**wire, "field_from_a_newer_release": 1}) is None
+    assert parse_report(HealthReport, {**wire, "field_from_a_newer_release": 1}) is None

@@ -14,12 +14,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..operator_state._service import (
-    EXIT_FAULT,
-    EXIT_RUNNING,
-    EXIT_STARTING,
-    EXIT_STOPPED,
-)
+from ..operator_state._service import ServiceLifecycle
 from ._discovery import (
     DISCOVERY_SOURCE_MACHINE_POINTER,
     DISCOVERY_STATE_ABSENT,
@@ -32,48 +27,19 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any, TypeGuard
 
-#: Canonical operator states. ``running`` and ``warming`` are healthy live
-#: states; ``stopped`` means nothing is running; ``crashed`` means a recorded
-#: service is not serving; ``degraded`` means the machine singleton is held but
-#: its owner has not published a trustworthy address. ``degraded`` is distinct
-#: from both ``stopped`` and ``crashed``: something owns the singleton, so a
-#: start would lose the race, and the daemon may well be serving fine.
-STATUS_RUNNING = "running"
-STATUS_WARMING = "warming"
-STATUS_STOPPED = "stopped"
-STATUS_CRASHED = "crashed"
-STATUS_DEGRADED = "degraded_discovery"
-
-#: The sentences an operator reads for the conditions both the service verdict
-#: and the CLI's own signal ladder can reach. The CLI derives a finer state
-#: token than this module does - it distinguishes a dead pid from a reused one,
-#: where the service reports ``crashed`` for both - but where the two describe
-#: the same condition they must not describe it differently. Each of these was
-#: spelled in both places, so the same daemon could be explained in two
-#: wordings depending on which path an operator arrived through.
-LABEL_WARMING = "warming (loading models, not yet serving)"
-LABEL_CRASHED_PORT_SILENT = "crashed (port silent)"
-LABEL_CRASHED_HEARTBEAT_STALE = "crashed (heartbeat stale)"
-
 __all__ = [
-    "LABEL_CRASHED_HEARTBEAT_STALE",
-    "LABEL_CRASHED_PORT_SILENT",
-    "LABEL_WARMING",
     "RECONCILE_ALREADY",
     "RECONCILE_CONVERGED",
     "RECONCILE_INTERVAL_SECONDS",
     "RECONCILE_TIMEOUT_SECONDS",
     "RECONCILE_UNRESOLVED",
-    "STATUS_CRASHED",
-    "STATUS_DEGRADED",
-    "STATUS_RUNNING",
-    "STATUS_STOPPED",
-    "STATUS_WARMING",
     "DiscoveryStatus",
     "LivenessSignals",
     "ReconcileOutcome",
     "ReconcileRequest",
     "compose_discovery_status",
+    "lifecycle_for_port",
+    "lifecycle_from_signals",
     "reconcile_discovery",
 ]
 
@@ -101,17 +67,21 @@ class LivenessSignals:
 class DiscoveryStatus:
     """One canonical operator verdict plus the evidence that produced it."""
 
-    state: str
+    state: ServiceLifecycle
     label: str
-    exit_code: int
     resolution: MachineResolution
     signals: LivenessSignals = field(default_factory=LivenessSignals)
     health: dict[str, object] | None = None
 
     @property
+    def exit_code(self) -> int:
+        """The broker-facing exit code of this verdict."""
+        return self.state.exit_code
+
+    @property
     def is_live(self) -> bool:
         """Whether a daemon is running, whether or not it is serving yet."""
-        return self.state in {STATUS_RUNNING, STATUS_WARMING}
+        return self.state.is_live
 
     @property
     def port(self) -> int | None:
@@ -121,7 +91,7 @@ class DiscoveryStatus:
     def as_dict(self) -> dict[str, Any]:
         """Render the JSON body shared by every operator adapter."""
         payload: dict[str, object] = {
-            "state": self.state,
+            "state": self.state.value,
             "label": self.label,
             "discovery": {
                 "state": self.resolution.state,
@@ -176,6 +146,47 @@ def _degraded_label(resolution: MachineResolution) -> str:
     )
 
 
+def lifecycle_from_signals(facts: LivenessSignals) -> ServiceLifecycle:
+    """Classify a recorded service's liveness facts into one lifecycle.
+
+    The only derivation of lifecycle from liveness: discovery composition and
+    the status verb both call it. A daemon that stamped ``warming`` holds the
+    singleton and is loading models, so its silent port and unstarted
+    heartbeat are expected; that is checked before either is treated as a
+    fault.
+    """
+    if not facts.pid_alive:
+        return ServiceLifecycle.CRASHED_PID_DEAD
+    if not facts.pid_matches_service:
+        return ServiceLifecycle.CRASHED_PID_REUSED
+    if facts.phase == SERVICE_PHASE_WARMING:
+        return ServiceLifecycle.STARTING
+    if not facts.port_listening:
+        return ServiceLifecycle.CRASHED_PORT_SILENT
+    if facts.heartbeat_stale:
+        return ServiceLifecycle.CRASHED_HEARTBEAT_STALE
+    return ServiceLifecycle.RUNNING
+
+
+def lifecycle_for_port(
+    *,
+    port_listening: bool,
+    health_answered: bool,
+    starting: bool = False,
+) -> ServiceLifecycle:
+    """Classify a service known only by its port, with no discovery record.
+
+    A service that answers health is running whatever its verdict: a paused
+    or degraded service is alive and says so in its health, and reading it as
+    unreachable sent operators to restart a service with nothing wrong.
+    """
+    if health_answered:
+        return ServiceLifecycle.RUNNING
+    if port_listening:
+        return ServiceLifecycle.CRASHED_PORT_SILENT
+    return ServiceLifecycle.STARTING if starting else ServiceLifecycle.STOPPED
+
+
 def compose_discovery_status(
     resolution: MachineResolution,
     signals: LivenessSignals | None = None,
@@ -190,71 +201,26 @@ def compose_discovery_status(
     operator to start a daemon that can only lose the singleton race.
     """
     facts = signals or LivenessSignals()
-
-    state, label, exit_code = _discovery_status_fields(resolution, facts)
+    if resolution.state == DISCOVERY_STATE_DEGRADED:
+        state = ServiceLifecycle.DISCOVERY_DEGRADED
+        label = _degraded_label(resolution)
+    elif resolution.state == DISCOVERY_STATE_ABSENT:
+        state = ServiceLifecycle.STOPPED
+        label = state.label
+    else:
+        state = lifecycle_from_signals(facts)
+        legacy = (
+            state is ServiceLifecycle.RUNNING
+            and resolution.source != DISCOVERY_SOURCE_MACHINE_POINTER
+        )
+        label = f"{state.label} (legacy)" if legacy else state.label
     return DiscoveryStatus(
         state=state,
         label=label,
-        exit_code=exit_code,
         resolution=resolution,
         signals=facts,
         health=health,
     )
-
-
-def _discovery_status_fields(
-    resolution: MachineResolution, facts: LivenessSignals
-) -> tuple[str, str, int]:
-    """Classify fixed resolution and liveness facts into one operator verdict."""
-    if resolution.state == DISCOVERY_STATE_DEGRADED:
-        return STATUS_DEGRADED, _degraded_label(resolution), EXIT_FAULT
-    if resolution.state == DISCOVERY_STATE_ABSENT:
-        return STATUS_STOPPED, "stopped (no service is running)", EXIT_STOPPED
-
-    # Ready: an address resolved, so the liveness facts decide whether the
-    # daemon behind it is actually serving.
-    # A daemon that stamped ``warming`` holds the singleton and is loading
-    # models: its silent port and unstarted heartbeat are expected, so this is
-    # checked before either is treated as a fault.
-    for failed, state, label, exit_code in (
-        (
-            not facts.pid_alive,
-            STATUS_CRASHED,
-            "crashed (recorded process is not running)",
-            EXIT_FAULT,
-        ),
-        (
-            not facts.pid_matches_service,
-            STATUS_CRASHED,
-            "crashed (PID reused by an unrelated process)",
-            EXIT_FAULT,
-        ),
-        (
-            facts.phase == SERVICE_PHASE_WARMING,
-            STATUS_WARMING,
-            LABEL_WARMING,
-            EXIT_STARTING,
-        ),
-        (
-            not facts.port_listening,
-            STATUS_CRASHED,
-            LABEL_CRASHED_PORT_SILENT,
-            EXIT_FAULT,
-        ),
-        (
-            facts.heartbeat_stale,
-            STATUS_CRASHED,
-            LABEL_CRASHED_HEARTBEAT_STALE,
-            EXIT_FAULT,
-        ),
-    ):
-        if failed:
-            return state, label, exit_code
-
-    source = (
-        "" if resolution.source == DISCOVERY_SOURCE_MACHINE_POINTER else " (legacy)"
-    )
-    return STATUS_RUNNING, f"running{source}", EXIT_RUNNING
 
 
 #: Reconcile outcomes. ``already_converged`` means discovery agreed on the
@@ -444,7 +410,9 @@ def reconcile_discovery(request: ReconcileRequest) -> ReconcileOutcome:
         )
         verdict = compose_discovery_status(resolution, signals, health=health)
 
-        if verdict.state == STATUS_RUNNING and _identity_confirmed(verdict, health):
+        if verdict.state is ServiceLifecycle.RUNNING and _identity_confirmed(
+            verdict, health
+        ):
             status = RECONCILE_ALREADY if attempts == 1 else RECONCILE_CONVERGED
             return ReconcileOutcome(
                 status=status,
@@ -455,7 +423,7 @@ def reconcile_discovery(request: ReconcileRequest) -> ReconcileOutcome:
             )
         # Nothing holds the singleton: there is no owner to wait for, so
         # further polling cannot change the answer.
-        if verdict.state == STATUS_STOPPED:
+        if verdict.state is ServiceLifecycle.STOPPED:
             return ReconcileOutcome(
                 status=RECONCILE_UNRESOLVED,
                 attempts=attempts,

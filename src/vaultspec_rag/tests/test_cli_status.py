@@ -598,62 +598,87 @@ class TestServiceTokenIdentity:
         assert _service_phase({"phase": ""}) is None
         assert _service_phase({"phase": 7}) is None
 
-    def test_compute_state_warming_beats_port_and_heartbeat_signals(self):
-        from ..cli._status_render import _compute_state
+    def test_a_warming_stamp_beats_port_and_heartbeat_signals(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        state, label, exit_code = _compute_state(
-            True, True, False, True, phase="warming"
+        state = lifecycle_from_signals(
+            LivenessSignals(
+                pid_alive=True,
+                pid_matches_service=True,
+                port_listening=False,
+                heartbeat_stale=True,
+                phase="warming",
+            )
         )
-        assert state == "warming"
-        assert "warming" in label
-        assert exit_code == 5
+        assert state is ServiceLifecycle.STARTING
+        assert state.exit_code == 5
 
-    def test_compute_state_absent_phase_keeps_crashed_semantics(self):
-        from ..cli._status_render import _compute_state
+    def test_an_absent_phase_keeps_crashed_semantics(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        state, _label, exit_code = _compute_state(True, True, False, True)
-        assert state == "crashed_port_silent"
-        assert exit_code == 4
-
-    def test_compute_state_dead_pid_wins_over_warming(self):
-        from ..cli._status_render import _compute_state
-
-        state, _label, exit_code = _compute_state(
-            False, False, False, True, phase="warming"
+        state = lifecycle_from_signals(
+            LivenessSignals(
+                pid_alive=True,
+                pid_matches_service=True,
+                port_listening=False,
+                heartbeat_stale=True,
+            )
         )
-        assert state == "crashed_pid_dead"
-        assert exit_code == 4
+        assert state is ServiceLifecycle.CRASHED_PORT_SILENT
+        assert state.exit_code == 4
 
-    def test_explicit_port_state_warming_needs_a_live_owned_pid(self):
-        from ..cli._status_render import _explicit_port_state
+    def test_a_dead_pid_wins_over_warming(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        warming = _explicit_port_state(
-            False, None, phase="warming", pid_alive=True, pid_is_ours=True
+        state = lifecycle_from_signals(LivenessSignals(phase="warming"))
+        assert state is ServiceLifecycle.CRASHED_PID_DEAD
+        assert state.exit_code == 4
+
+    def test_a_port_only_warmup_needs_a_live_owned_pid(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+
+        assert (
+            lifecycle_for_port(
+                port_listening=False, health_answered=False, starting=True
+            )
+            is ServiceLifecycle.STARTING
         )
-        assert warming[0] == "warming"
-        assert warming[2] == 5
-        dead = _explicit_port_state(
-            False, None, phase="warming", pid_alive=False, pid_is_ours=False
+        assert (
+            lifecycle_for_port(port_listening=False, health_answered=False)
+            is ServiceLifecycle.STOPPED
         )
-        assert dead[0] == "stopped"
-        assert dead[2] == 3
-        reused = _explicit_port_state(
-            False, None, phase="warming", pid_alive=True, pid_is_ours=False
+
+    def test_a_paused_or_degraded_service_on_its_port_is_running(self):
+        """A service that answers health is alive, whatever its verdict says.
+
+        Mutation check: requiring a ``ready`` verdict before calling the port's
+        service running reads a paused service as a port fault and fails the
+        paused assertion; restoring the any-verdict rule passes.
+        """
+        from ..cli._status_render import _health_answered
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+
+        for verdict in ("ready", "paused", "degraded", "error"):
+            state = lifecycle_for_port(
+                port_listening=True,
+                health_answered=_health_answered({"status": verdict}),
+            )
+            assert state is ServiceLifecycle.RUNNING, verdict
+        assert (
+            lifecycle_for_port(port_listening=True, health_answered=False)
+            is ServiceLifecycle.CRASHED_PORT_SILENT
         )
-        assert reused[0] == "stopped"
-        assert reused[2] == 3
 
-    def test_explicit_port_state_absent_phase_is_unchanged(self):
-        from ..cli._status_render import _explicit_port_state
-
-        assert _explicit_port_state(False, None)[0] == "stopped"
-        assert _explicit_port_state(True, None)[0] == "unreachable"
-        assert _explicit_port_state(True, {"status": "ready"})[0] == "running"
-
-    def test_next_action_for_warming_says_retry(self):
+    def test_next_action_for_a_starting_service_says_retry(self):
         from ..cli._status_render import _status_next_action
+        from ..operator_state._service import ServiceLifecycle
 
-        action = _status_next_action("warming", None, {})
+        action = _status_next_action(ServiceLifecycle.STARTING, None, {})
         assert "server status" in action
         assert "retry" in action
 
@@ -772,7 +797,7 @@ class TestDegradedDiscoveryStatus:
             assert result.exit_code == 4, result.stdout
             payload = json.loads(result.stdout)
             data = payload["data"]
-            assert data["state"] == "degraded_discovery"
+            assert data["state"] == "discovery_degraded"
             assert data["discovery"]["reason"] == "pointer_missing"
             assert data["discovery"]["holder_pid"] == os.getpid()
             # The evidence, not just a bare verdict, reaches the operator.
@@ -819,7 +844,7 @@ class TestDegradedDiscoveryStatus:
             service = payload["data"]["service"]
             assert service["present"] is True
             assert service["live"] is False
-            assert service["state"] == "degraded_discovery"
+            assert service["state"] == "discovery_degraded"
             assert "holds the machine singleton" in str(service["label"]).lower()
             # A daemon that is present but not live must not read ready.
             assert payload["data"]["status"] == "needs_restart"

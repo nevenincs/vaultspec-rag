@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:d119ccf472db242914e1922953eb53d6907a51ef5b3119ba9e667644f784d535'
+body_hash: 'sha256:1fe6ec5bb60e0f43ed1bf3645068578be684d191bf3a6d2f63cc8e0d6e33ef19'
 ---
 
 # `status-messages` plan
@@ -97,7 +97,7 @@ Make the service the only author of its health, degradation reasons, compute and
 Parse the typed wire models in the service client, extend the canonical lifecycle composer, and delete the CLI and MCP re-derivations.
 
 - [x] `P04.S06` - parse health and service-state responses into the typed models in the service client transport; `src/vaultspec_rag/serviceclient/`.
-- [ ] `P04.S13` - extend compose_discovery_status to produce ServiceLifecycle and delete the CLI state derivations and doctor liveness re-derivation; `src/vaultspec_rag/serviceclient/_status.py, src/vaultspec_rag/cli/_status_render.py, src/vaultspec_rag/cli/_service_doctor.py`.
+- [x] `P04.S13` - extend compose_discovery_status to produce ServiceLifecycle and delete the CLI state derivations and doctor liveness re-derivation; `src/vaultspec_rag/serviceclient/_status.py, src/vaultspec_rag/cli/_status_render.py, src/vaultspec_rag/cli/_service_doctor.py`.
 - [ ] `P04.S07` - return the typed service-state model from the MCP index-status tool and correct its docstring; `src/vaultspec_rag/mcp/_tools.py`.
 
 ### Phase `P05` - plain-language status rendering

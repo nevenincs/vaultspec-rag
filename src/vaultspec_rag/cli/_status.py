@@ -11,10 +11,10 @@ from .._job_values import count
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._models import InstallationReport
+from ..operator_state._models import InstallationReport, ServiceStateReport
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
-from ..serviceclient._typed_state import parse_service_state
+from ..serviceclient._typed_state import parse_report
 from ._app import CLIState, JsonMode, app
 from ._cli_format import _counted_unit, _format_mib
 from ._render import (
@@ -301,7 +301,7 @@ def _service_index_status(
         {"project_root": str(target)},
         port,
     )
-    report = parse_service_state(result)
+    report = parse_report(ServiceStateReport, result)
     if report is None or report.index.get("error"):
         return None
     installation = report.installation

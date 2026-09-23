@@ -16,24 +16,16 @@ import pydantic
 
 from ..operator_state._models import HealthReport, ServiceStateReport
 
-__all__ = ["parse_health", "parse_service_state"]
+__all__ = ["parse_report"]
 
 
-def parse_health(payload: object) -> HealthReport | None:
-    """Return the typed health report in *payload*, or ``None``."""
+def parse_report[Report: (HealthReport, ServiceStateReport)](
+    model: type[Report], payload: object
+) -> Report | None:
+    """Return the typed report of *model* in *payload*, or ``None``."""
     if not isinstance(payload, Mapping):
         return None
     try:
-        return HealthReport.model_validate(dict(payload))
-    except pydantic.ValidationError:
-        return None
-
-
-def parse_service_state(payload: object) -> ServiceStateReport | None:
-    """Return the typed service state in *payload*, or ``None``."""
-    if not isinstance(payload, Mapping):
-        return None
-    try:
-        return ServiceStateReport.model_validate(dict(payload))
+        return model.model_validate(dict(payload))
     except pydantic.ValidationError:
         return None

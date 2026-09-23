@@ -62,7 +62,7 @@ class ServiceLifecycle(StrEnum):
                 "crashed (its process ID now belongs to another program)"
             ),
             ServiceLifecycle.CRASHED_PORT_SILENT: (
-                "crashed (its process is alive but not answering on its port)"
+                "crashed (its port gives no usable answer)"
             ),
             ServiceLifecycle.CRASHED_HEARTBEAT_STALE: (
                 "crashed (it stopped reporting that it is alive)"

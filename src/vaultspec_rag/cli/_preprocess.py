@@ -326,12 +326,15 @@ def _running_service_preprocess_mode() -> PreprocessMode | None:
     Indexing runs in the service, so its mode decides whether hooks run; this
     shell's environment only decides when no service is answering.
     """
+    from ..operator_state._models import HealthReport
     from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_health
-    from ..serviceclient._typed_state import parse_health
+    from ..serviceclient._typed_state import parse_report
 
     port = _default_service_port()
-    health = parse_health(_try_http_health(port) if port is not None else None)
+    health = parse_report(
+        HealthReport, _try_http_health(port) if port is not None else None
+    )
     return health.features.preprocess_mode if health is not None else None
 
 

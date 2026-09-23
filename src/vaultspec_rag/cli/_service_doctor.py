@@ -12,7 +12,7 @@ axes that earlier conflated into one misleading ``ready`` flag:
   heartbeat fresh) so a dead daemon is never reported as ready.
 
 The doctor never duplicates the status-path liveness computation: it reuses
-``_evaluate_service_signals`` / ``_compute_state`` from the lifecycle module
+``_evaluate_service_signals`` and the service client's lifecycle composer
 (the service domain owns operability; adapters only render it). It mutates
 nothing - the dependency reporter and the live signals are both read-only.
 """
@@ -26,6 +26,7 @@ import typer
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
+from ..operator_state._service import ServiceLifecycle
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
 from ._render import _emit_json, _plain
 
@@ -132,9 +133,10 @@ def _live_service_axis() -> dict[str, object]:
     cleans a confirmed-dead stale ``service.json`` as a side effect, matching
     ``server status`` behaviour exactly.
     """
+    from ..operator_state._service import ServiceLifecycle
     from ..serviceclient._compat import classify_service_version
     from ..serviceclient._discovery import read_service_status, resolve_machine_service
-    from ..serviceclient._status import STATUS_STOPPED, compose_discovery_status
+    from ..serviceclient._status import compose_discovery_status
     from ._status_render import _evaluate_service_signals, _liveness_from_resolution
 
     status = read_service_status()
@@ -148,7 +150,7 @@ def _live_service_axis() -> dict[str, object]:
             resolution,
             _liveness_from_resolution(resolution),
         )
-        if verdict.state == STATUS_STOPPED:
+        if verdict.state is ServiceLifecycle.STOPPED:
             return {
                 "present": False,
                 "live": False,
@@ -158,8 +160,8 @@ def _live_service_axis() -> dict[str, object]:
         version = classify_service_version(resolution.payload)
         return {
             "present": True,
-            "live": verdict.exit_code == 0,
-            "state": verdict.state,
+            "live": verdict.is_live,
+            "state": verdict.state.value,
             "label": verdict.label,
             "pid": verdict.signals.pid,
             "port": verdict.port,
@@ -174,12 +176,12 @@ def _live_service_axis() -> dict[str, object]:
         }
 
     signals = _evaluate_service_signals(status)
-    live = signals.exit_code == 0
+    live = signals.state.is_live
     status_version = classify_service_version(status)
     return {
         "present": True,
         "live": live,
-        "state": signals.state,
+        "state": signals.state.value,
         "label": signals.state_label,
         "pid": signals.pid,
         "port": signals.port,
@@ -213,6 +215,8 @@ def _overall_readiness(
         return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
     if not service.get("live"):
         return False, "needs_restart"
+    if service.get("state") == ServiceLifecycle.STARTING:
+        return False, "starting"
     return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
 
 
