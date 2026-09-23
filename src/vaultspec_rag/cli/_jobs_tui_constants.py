@@ -101,16 +101,16 @@ ACTION_REASONS: dict[str, str] = {
 # not go dead just because the pane is not on screen.
 LOG_CLOSED_REASON = "The log pane is closed - press l to open it."
 
-# Header counters, as (label, the canonical state they count). The service
-# tallies these over every record matching the filter; the same names index
-# both its summary and a record's own ``state``, so the fallback tally of the
-# page on screen is the same reading of the same field.
-SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
-    ("running", "running"),
-    ("queued", "queued"),
-    ("paused", "paused"),
-    ("failed", "failed"),
-    ("succeeded", "succeeded"),
+# Header counters, as the canonical states they count. The service tallies
+# these over every record matching the filter; the same names index both its
+# summary and a record's own ``state``, so the fallback tally of the page on
+# screen is the same reading of the same field.
+SUMMARY_BUCKETS: tuple[JobState, ...] = (
+    JobState.RUNNING,
+    JobState.QUEUED,
+    JobState.PAUSED,
+    JobState.FAILED,
+    JobState.SUCCEEDED,
 )
 
 # Header pills. One anatomy for every pill - glyph, count, then (width

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:180fa5902ae3a2a65df07c22e62725b0eb0c8361c6223132a132e3d93ffdeed6'
+body_hash: 'sha256:dffc46420dcc530529285b60b59d6dd306c6a9564cd8f02a82624417eea3af63'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -96,6 +96,17 @@ related:
 - `S04` `verify:` `list-item and quote exclusion removed fails both cases, restored passes` -> `pass`
 - `S09` `M` `src/vaultspec_rag/tests/test_search_unit.py`
 - `S09` `verify:` `evidence, intent, testimonial, GPU integration (42) and CLI/MCP parity` -> `pass`
+- `S10` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S10` `M` `src/vaultspec_rag/api.py`
+- `S10` `M` `src/vaultspec_rag/cli/_jobs_tui_header.py`
+- `S10` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S10` `M` `src/vaultspec_rag/cli/_status.py`
+- `S10` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S10` `verify:` `degraded-verdict guard mutation (supersession check removed fails both no-JOB_FAILED assertions; restored passes)` -> `pass`
 
 ## Notes
 

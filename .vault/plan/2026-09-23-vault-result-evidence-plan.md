@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:243325050fd71decb0cd31bd73917678afdbbe382ecf92b1cfbaa8da05aa6ec5'
+body_hash: 'sha256:8878333a784298332f433aea8320799ae3548309cb61f3a9f3c00d258e32b35e'
 ---
 
 # `vault-result-evidence` plan
@@ -18,6 +18,17 @@ body_hash: 'sha256:243325050fd71decb0cd31bd73917678afdbbe382ecf92b1cfbaa8da05aa6
 
 Approved 2026-09-23. Basis: the user approved the ADR and this plan in full, P05
 included, after they were presented in conversation.
+
+**Added scope, 2026-09-23.** The user authorized P05a, P05b and P05c in conversation
+after the plan-close review:
+
+- Every defect the review and the full lane identified is in scope, and no pull request
+  opens while a known defect remains (P05a).
+- The P05 result, that the section breadcrumb hurt ranking, must be assessed carefully
+  before it stands, because format and section changed together (P05b).
+- The latency target is indicative. The measured 0.71 s median is acceptable, but the
+  miss points at unexplored optimization, which is in scope (P05c). Latency depends on
+  the host, so no test gates it.
 
 Make vault search results answerable and locatable, and cut vault search latency, per
 GitHub issue #531.
@@ -74,6 +85,27 @@ Delivers the title, section and chunk-text vault embedding input from one functi
 
 - [x] `P05.S08` - build the vault embedding input in one function with the section breadcrumb, verify donors against the full input, and measure it on the gate against the fp16 baseline; `src/vaultspec_rag/indexer/_streaming.py, src/vaultspec_rag/indexer/_reuse.py, src/vaultspec_rag/indexer/_slicing.py`.
 
+### Phase `P05a` - clear the known defects before review
+
+Delivers a branch with no known defect: the strict type gate and the child-output decoding guard green, the rebuild remedy named at the service level, and the install-mode doctor agreeing with the MCP launch shape.
+
+- [x] `P05a.S10` - clear the strict type gate and the child-output decoding guard, fold the compute probe onto the shared MiB conversion, and make the degraded-verdict guards assert the typed failed-job reason; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/api.py, src/vaultspec_rag/cli/_jobs_tui_header.py, src/vaultspec_rag/cli/_jobs_tui_constants.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/serviceclient/_typed_state.py, src/vaultspec_rag/tests/`.
+- [ ] `P05a.S11` - carry the failed job's source into service health and name the per-source rebuild command when the failure is full_reindex_required; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/tests/`.
+- [ ] `P05a.S12` - reconcile the install-mode doctor verdict with the project's MCP launch shape; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/tests/`.
+
+### Phase `P05b` - reassess the section in the vault embedding input
+
+Delivers a controlled comparison that separates the embedding-input format from the section breadcrumb, on the in-repo gates and the issue's query sets, and ships or records the result on that evidence.
+
+- [ ] `P05b.S13` - measure the shipped embedding input against format-only, section-in-shipped-format and the originally tested input on the in-repo gates and the issue's query sets, per query; `src/vaultspec_rag/indexer/_slicing.py (variants measured in scratch, not committed)`.
+- [ ] `P05b.S14` - ship the input the controlled evidence favours, or revise the audit and the D8 amendment to the controlled result; `src/vaultspec_rag/indexer/_slicing.py, .vault/audit/2026-09-23-vault-result-evidence-audit.md, .vault/adr/2026-06-12-service-concurrency-adr.md`.
+
+### Phase `P05c` - reduce vault search inference time
+
+Delivers a profiled vault search path and every inference lever that cuts its time while holding the quality gates; latency is measured and reported as indicative, never gated.
+
+- [ ] `P05c.S15` - profile vault search end to end and apply each inference lever that cuts time while holding the quality gates: attention kernel, compilation, tokenisation, candidate window, and score reuse; `src/vaultspec_rag/search/, src/vaultspec_rag/embeddings.py, src/vaultspec_rag/service.py`.
+
 ### Phase `P06` - calibrate the gate and close
 
 Delivers calibrated gate floors, the cross-corpus re-run of the issue's query sets, the latency check, and the closing review.
@@ -106,7 +138,9 @@ Delivers calibrated gate floors, the cross-corpus re-run of the issue's query se
   show evidence-in-snippet above 0/21 and 1/18, with no hit@1 or MRR loss. Results are
   recorded in the feature audit.
 - **Latency.** Server-side vault search time at ten results, passage scoring included,
-  is at or below half of the fp32 baseline on the same host and corpus.
+  is measured on the same host and corpus as the fp32 baseline and reported in the
+  feature audit. Half the fp32 baseline is the indicative target; it is not a test gate,
+  because the figure depends on the host.
 - **Migration.** A vault index built before the point-schema bump reports
   `full_reindex_required` with the rebuild command, and keeps serving until rebuilt.
 - **Hygiene.** Lint, format, type-check and the touched unit and integration tests pass

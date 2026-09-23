@@ -16,9 +16,12 @@ author's assumption about that instead of testing it.
 
 MUTATION PROOF, run in one uninterrupted sequence: removing the supersession
 check from the degradation condition in ``_lifespan._jobs_health`` fails
-``test_a_later_success_on_the_same_source_clears_the_verdict`` on its own
-empty-reasons assertion, and fails nothing else here. Restoring it returns the
-file to green.
+``test_a_later_success_on_the_same_source_clears_the_verdict`` and
+``test_the_failure_stays_visible_in_the_rollup_after_clearing`` on their
+no-``JOB_FAILED`` assertions, and fails nothing else here. Restoring it returns
+the file to green. The assertions read the typed reason, not the detail text:
+a substring test against the model itself iterates its fields and can never
+match, so it passes whether or not the verdict fired.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ import pytest
 
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start, reset, snapshot
+from ..operator_state._service import DegradationReason
 from ..server._lifespan import _jobs_health
 
 if TYPE_CHECKING:
@@ -42,6 +46,11 @@ pytestmark = [pytest.mark.unit]
 def _degrade_reasons() -> list[Degradation]:
     _health, reasons = _jobs_health()
     return reasons
+
+
+def _job_failed(reasons: list[Degradation]) -> bool:
+    """Whether the failed-job branch, and no other, degraded the verdict."""
+    return any(reason.reason is DegradationReason.JOB_FAILED for reason in reasons)
 
 
 def _failed(source: JobSource) -> str:
@@ -71,9 +80,9 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any(
-            "latest indexing job failed" in reason.detail for reason in reasons
-        ), f"an unanswered failure must degrade health, got {reasons}"
+        assert _job_failed(reasons), (
+            f"an unanswered failure must degrade health, got {reasons}"
+        )
 
     def test_a_later_success_on_the_same_source_clears_the_verdict(
         self,
@@ -95,7 +104,7 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons), (
+        assert not _job_failed(reasons), (
             f"a later success answered the failure, got {reasons}"
         )
 
@@ -112,9 +121,9 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any(
-            "latest indexing job failed" in reason.detail for reason in reasons
-        ), f"another source's success must not answer this failure, got {reasons}"
+        assert _job_failed(reasons), (
+            f"another source's success must not answer this failure, got {reasons}"
+        )
 
     def test_a_failure_after_a_success_degrades_again(
         self,
@@ -129,9 +138,7 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any(
-            "latest indexing job failed" in reason.detail for reason in reasons
-        ), f"the newest outcome is a failure, got {reasons}"
+        assert _job_failed(reasons), f"the newest outcome is a failure, got {reasons}"
 
     def test_the_failure_stays_visible_in_the_rollup_after_clearing(
         self,
@@ -150,7 +157,7 @@ class TestDegradedVerdictTracksCurrentState:
             jobs_health, reasons = _jobs_health()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons)
+        assert not _job_failed(reasons)
         last_failed = cast("dict[str, object] | None", jobs_health["last_failed"])
         assert last_failed is not None, (
             "the failure must remain reported in the rollup, only not degrading"

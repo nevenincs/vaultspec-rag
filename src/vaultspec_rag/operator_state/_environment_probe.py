@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
+from typing import cast
 
 from ._compute import ProbeDepth
 from ._installation import ComputeCapability, InstallRole
@@ -69,6 +70,8 @@ def probe_interpreter(
             [interpreter, "-c", _PROBE_SCRIPT, depth.value],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=bound,
             check=False,
         )
@@ -90,9 +93,10 @@ def _parse(
 ) -> InterpreterFacts:
     lines = proc.stdout.strip().splitlines()
     try:
-        report = json.loads(lines[-1]) if lines else None
-        if not isinstance(report, dict):
-            raise TypeError(type(report).__name__)
+        decoded: object = json.loads(lines[-1]) if lines else None
+        if not isinstance(decoded, dict):
+            raise TypeError(type(decoded).__name__)
+        report = cast("dict[str, object]", decoded)
         return InterpreterFacts(
             interpreter=interpreter,
             role=InstallRole(report["role"]),

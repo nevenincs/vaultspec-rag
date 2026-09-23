@@ -17,6 +17,7 @@ from enum import StrEnum
 from importlib import metadata
 from typing import TYPE_CHECKING
 
+from .._units import bytes_to_mib
 from ._installation import ComputeCapability, InstallRole
 from ._models import ComputeReport
 
@@ -32,8 +33,6 @@ __all__ = [
     "metadata_verdict",
     "role_for",
 ]
-
-_MIB = 1024 * 1024
 
 
 class ProbeDepth(StrEnum):
@@ -121,15 +120,16 @@ def classify_torch(torch_module: ModuleType) -> ComputeReport:
     memory_mib = None
     if context.backend == "cuda":
         total = torch_module.cuda.get_device_properties(0).total_memory
-        memory_mib = int(total // _MIB)
+        memory_mib = int(bytes_to_mib(total))
     else:
         # Unified memory has no VRAM total; the recommended working set is the
         # figure that bounds what inference may use.
         recommended = getattr(
             getattr(torch_module, "mps", None), "recommended_max_memory", None
         )
-        if callable(recommended):
-            memory_mib = int(recommended() // _MIB)
+        working_set: object = recommended() if callable(recommended) else None
+        if isinstance(working_set, int):
+            memory_mib = int(bytes_to_mib(working_set))
     return ComputeReport(
         capability=ComputeCapability.READY,
         torch_version=version,

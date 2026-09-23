@@ -71,6 +71,8 @@ def query_hardware(
             [*nvidia_smi, *_NVIDIA_SMI_QUERY],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
