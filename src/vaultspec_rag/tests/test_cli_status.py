@@ -963,3 +963,23 @@ class TestDegradedDiscoveryStatus:
             assert payload["data"]["status"] == "needs_restart"
         finally:
             self._restore()
+
+
+def test_verbose_status_verifies_the_device_instead_of_reading_metadata(
+    tmp_path: Path,
+) -> None:
+    """``--verbose`` is where status settles whether the GPU really works.
+
+    The metadata read can only say a GPU build is installed; the verifying
+    probe answers ready or names the defect, so it never reports that
+    unverified middle state.
+
+    Mutation check: ignoring the verify flag probes metadata only and, on a host
+    with a GPU build of torch, reports the unverified build and fails; restoring
+    it passes.
+    """
+    from ..cli._status import _local_view
+
+    view = _local_view(tmp_path, {"storage_path": "data"}, verify=True)
+
+    assert view.installation.compute.capability is not (ComputeCapability.BUILD_PRESENT)

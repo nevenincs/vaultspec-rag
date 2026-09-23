@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5e235c3ff7addedf6e28006f06931e51512b99b5c1f97e0ee0a80491479119a1'
+body_hash: 'sha256:484efc7f46babfbd4860532de309212927e9d3e4af388d70852928f4f3a2f10a'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -183,6 +183,11 @@ related:
 - `S18` `M` `src/vaultspec_rag/_readiness.py`
 - `S18` `M` `src/vaultspec_rag/cli/_status_render.py`
 - `S18` `verify:` `manual persona host server status against a live service lists Typesafe, reranking, preprocessing and watcher` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S17` `M` `src/vaultspec_rag/api.py`
+- `S17` `verify:` `ruff check src, ty check src` -> `pass`
+- `S08` `verify:` `pytest test_cli_status` -> `pass`
 
 ## Notes
 
@@ -206,4 +211,6 @@ related:
 - `S13` P04 review high finding: the transport's synthetic timeout and HTTP-error health bodies read as a service answering, so a wedged or erroring service exited 0; health_answered now lives beside the transport that makes those bodies and rejects them
 - `S14` Service-health tones key on HealthVerdict and gain the missing paused tone; job state pills key on JobState. The header's healthy/degraded/stalled pill is job health, a separate concept from service lifecycle, and the TUI's unreachable word names a failed fetch rather than a lifecycle, so both stay
 - `S18` Release-please builds the changelog, so the release notes travel as a BREAKING CHANGE footer; the client persona against a stopped service was exercised through the production local-report path because another session's live service holds the machine singleton and was not stopped; the doctor torch line now appends the probe detail only where it is the diagnosis; new vault records formatted with mdformat
+- `S17` Final review corrections: feature labels are produced once from the parsed ServiceFeatures (the preprocess label is a table keyed by mode, so no off comparison re-derives whether hooks run); project status calls the same producers; benchmark docstring corrected to the emitted keys
+- `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
 

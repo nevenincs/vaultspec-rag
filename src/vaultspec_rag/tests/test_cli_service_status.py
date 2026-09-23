@@ -17,6 +17,7 @@ from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
     _assert_default_status_summary,
     _assert_verbose_status_summary,
+    _features_payload,
     _find_free_port,
     _is_our_service,
     _isolated_status_dir,
@@ -125,7 +126,7 @@ def _health_payload(
         "status": status,
         "degradations": [_coded(reason) for reason in reasons or []],
         "models_loaded": True,
-        "features": {"reranker_enabled": True, "reranker_loaded": True},
+        "features": _features_payload(),
         "project_count": 3,
         "uptime_s": 850.0,
         "jobs": {"running": 0, "queued": 0, "stalled": 0} | (jobs or {}),

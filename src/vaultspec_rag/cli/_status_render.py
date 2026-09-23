@@ -100,6 +100,7 @@ from ._status_labels import (
     health_typesafe,
     preprocess_mode_label,
     reranker_label,
+    service_features,
     typesafe_label,
     watcher_enabled_label,
 )
@@ -583,9 +584,10 @@ def _print_health_detail(
         _print_detail_line(
             "Search models", _model_ready_label(health.get("models_loaded"))
         )
-        _print_detail_line("Reranking", reranker_label(health))
-        _print_detail_line("Preprocessing", preprocess_mode_label(health))
-        _print_detail_line("File watcher", watcher_enabled_label(health))
+        features = service_features(health)
+        _print_detail_line("Reranking", reranker_label(features))
+        _print_detail_line("Preprocessing", preprocess_mode_label(features))
+        _print_detail_line("File watcher", watcher_enabled_label(features))
         _print_detail_line(
             "Loaded projects",
             health.get("project_count", NOT_REPORTED),
@@ -920,6 +922,7 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         request.health,
         port_listening=request.port_listening,
     )
+    features = service_features(request.health)
     lines = [
         f"Server: {_plain_status_label(request.label)}",
         f"Requests: {request_status}",
@@ -928,9 +931,9 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         address_line(request.port),
         f"Service env: {_status_env_label(request.health)}",
         f"Typesafe: {typesafe_label(health_typesafe(request.health))}",
-        f"Reranking: {reranker_label(request.health)}",
-        f"Preprocessing: {preprocess_mode_label(request.health)}",
-        f"File watcher: {watcher_enabled_label(request.health)}",
+        f"Reranking: {reranker_label(features)}",
+        f"Preprocessing: {preprocess_mode_label(features)}",
+        f"File watcher: {watcher_enabled_label(features)}",
         f"Uptime: {_status_uptime_label(request.health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",

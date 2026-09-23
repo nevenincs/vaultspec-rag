@@ -30,7 +30,7 @@ from ._render import (
     _print_next_action,
     exit_with_error,
 )
-from ._status_labels import render_degradation
+from ._status_labels import render_degradation, reranker_label
 
 if TYPE_CHECKING:
     from ..operator_state._features import PreprocessHookState
@@ -266,16 +266,7 @@ def _feature_lines(view: _StatusView) -> list[str]:
     features = service.health.features if service.health is not None else None
     if features is not None:
         lines.append(f"Typesafe classification: {features.typesafe.state.label}")
-        lines.append(
-            "Reranking: "
-            + (
-                "off (disabled in configuration)"
-                if not features.reranker_enabled
-                else "ready"
-                if features.reranker_loaded
-                else "not loaded yet"
-            )
-        )
+        lines.append(f"Reranking: {reranker_label(features)}")
     lines.append(f"File watcher: {_watcher_label(service)}")
     return lines
 
@@ -450,7 +441,9 @@ def _same_path(left: str, right: str) -> bool:
     return canonical(left) == canonical(right)
 
 
-def _local_view(target: object, index: dict[str, object]) -> _StatusView:
+def _local_view(
+    target: object, index: dict[str, object], *, verify: bool = False
+) -> _StatusView:
     """Describe this machine, for when no service answers.
 
     The installation is read from package metadata in a child of the daemon
@@ -463,7 +456,8 @@ def _local_view(target: object, index: dict[str, object]) -> _StatusView:
     from ..operator_state._environment_probe import probe_interpreter
     from ..operator_state._hardware import read_hardware
 
-    facts = probe_interpreter(_resolve_local_interpreter(), ProbeDepth.METADATA)
+    depth = ProbeDepth.VERIFY if verify else ProbeDepth.METADATA
+    facts = probe_interpreter(_resolve_local_interpreter(), depth)
     hooks, rules = root_hook_state(Path(str(target)), get_config().preprocess_mode)
     return _StatusView(
         target=target,
@@ -504,8 +498,9 @@ def handle_status(
         typer.Option(
             "--verbose",
             help=(
-                "Also show the interpreter, the support profile limits, and the "
-                "per-domain index generations."
+                "Also verify this installation's GPU by loading torch, and show "
+                "the interpreter, the support profile limits, and the per-domain "
+                "index generations."
             ),
         ),
     ] = False,
@@ -545,4 +540,8 @@ def handle_status(
         _plain(_format_local_index_busy_message("read index status"))
         raise typer.Exit(code=1) from None
 
-    _report(_local_view(target, index), json_mode=json_mode, verbose=verbose)
+    _report(
+        _local_view(target, index, verify=verbose),
+        json_mode=json_mode,
+        verbose=verbose,
+    )
