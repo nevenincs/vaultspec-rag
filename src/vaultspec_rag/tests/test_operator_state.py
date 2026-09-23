@@ -123,13 +123,14 @@ def test_importing_the_state_vocabulary_never_loads_torch() -> None:
     The child interpreter matters: this one may already hold torch from another
     test, which would make the assertion pass without proving anything.
 
-    Mutation check: a module-scope ``import torch`` in any of the three modules
+    Mutation check: a module-scope ``import torch`` in any module of the package
     makes the child exit non-zero on this assertion; removing it passes.
     """
     probe = (
         "import sys\n"
         "import vaultspec_rag.operator_state._features\n"
         "import vaultspec_rag.operator_state._installation\n"
+        "import vaultspec_rag.operator_state._models\n"
         "import vaultspec_rag.operator_state._service\n"
         "assert 'torch' not in sys.modules, 'the state vocabulary loaded torch'\n"
     )

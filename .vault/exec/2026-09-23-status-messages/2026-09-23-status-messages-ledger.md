@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:d5681f9481b35e3de64b06d4d1a5607cc13c7af8008bfa5ef7b485c70ba70df9'
+body_hash: 'sha256:6b2e9f6a7af6828dce62dd20c1aca54d5957fc1b3158d536d6134d2a605d71ec'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -51,7 +51,13 @@ related:
 - `S02` `M` `src/vaultspec_rag/cli/_status_render.py`
 - `S02` `M` `src/vaultspec_rag/tests/test_operator_state.py`
 - `S02` `verify:` `ruff, ruff format, ty on touched files` -> `pass`
+- `S03` `A` `src/vaultspec_rag/operator_state/_models.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S03` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
 - `S02` DegradationReason adds JOBS_DEGRADED beyond the ADR's list because the service already emits an 'indexing jobs are degraded' reason; broker exit codes moved into operator_state._service as their single home
+- `S03` Envelopes owned by other subsystems (quiesce, qdrant runtime, jobs rollup, device load, capabilities, support profile, index, projects, watcher) travel as owner mappings inside the forbid-extra top-level models
+
