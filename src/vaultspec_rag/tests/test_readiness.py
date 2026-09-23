@@ -30,6 +30,7 @@ from .._readiness import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ..operator_state._compute import classify_torch
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -197,7 +198,7 @@ class TestTorchDimension:
         monkeypatch.setitem(sys.modules, "torch", fake_torch)
         monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
 
-        torch_dep = _torch_readiness()
+        torch_dep = _torch_readiness(classify_torch(fake_torch))
 
         assert torch_dep.status is ReadinessStatus.READY
         assert torch_dep.info["capability"] == "ready"

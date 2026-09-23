@@ -36,6 +36,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from .operator_state._compute import local_compute
+
+if TYPE_CHECKING:
+    from .operator_state._models import ComputeReport
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +235,11 @@ class ReadinessReport:
         }
 
 
-def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
+def compute_readiness(
+    *,
+    include_holders: bool = False,
+    compute: ComputeReport | None = None,
+) -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
 
     Read-only: probes torch's observable accelerator attributes, the Hugging
@@ -241,6 +251,9 @@ def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
             environment. Off by default because the walk costs seconds and
             every caller pays it; an operator diagnosing a machine wants it,
             a polled route does not.
+        compute: The compute verdict for the environment being assessed. A
+            torch-free caller supplies the one it probed out of process;
+            when omitted, this process classifies its own environment.
 
     Returns:
         A :class:`ReadinessReport` with one node per known dependency
@@ -253,7 +266,7 @@ def compute_readiness(*, include_holders: bool = False) -> ReadinessReport:
 
     return ReadinessReport(
         dependencies=[
-            _torch_readiness(),
+            _torch_readiness(compute or local_compute()),
             _models_readiness(),
             _qdrant_readiness(server_mode=server_mode),
         ],
@@ -293,17 +306,14 @@ def _environment_holders_readiness() -> EnvironmentHoldersReadiness:
     )
 
 
-def _torch_readiness() -> DependencyReadiness:
-    """Report supported accelerator availability without forcing a model load.
+def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
+    """Report supported accelerator availability from a compute verdict.
 
-    Classification belongs to the operator state compute check, which keeps
-    its torch import guarded and function-local so this read-only probe stays
-    valid on a torch-free service client, and never allocates a model.
+    The verdict comes from the operator state compute check, which never
+    allocates a model and keeps any torch import guarded and function-local.
     """
-    from .operator_state._compute import local_compute
     from .operator_state._installation import ComputeCapability
 
-    compute = local_compute()
     capability = compute.capability
     if capability is ComputeCapability.READY:
         status = ReadinessStatus.READY

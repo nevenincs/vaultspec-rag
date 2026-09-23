@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:63f8547760345607d6cd1652139fbed5f43313a3b1380a0a5baddc133d0bdc3d'
+body_hash: 'sha256:9b84ed8f565fd0a42bfa84b84b0681a901dcb0e4931571b8f87e4e38d264bb36'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -64,6 +64,12 @@ related:
 - `S10` `M` `src/vaultspec_rag/tests/gpu_admission/test_latch_and_wire.py`
 - `S10` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S10` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S15` `M` `src/vaultspec_rag/_readiness.py`
+- `S15` `M` `src/vaultspec_rag/api.py`
+- `S15` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S15` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -71,4 +77,5 @@ related:
 - `S03` Envelopes owned by other subsystems (quiesce, qdrant runtime, jobs rollup, device load, capabilities, support profile, index, projects, watcher) travel as owner mappings inside the forbid-extra top-level models
 - `S09` Server start preflight repointed in this Step because deleting the prose probe left it no other path; its messaging rework remains in S15. Structural duplicate guard gained an enum-label-table allowance and the new named-subset member
 - `S10` Role and compute classification moved into operator_state._compute; the child probe script now imports it, so probing an interpreter carrying an older release answers UNKNOWN (never blocking). Admission's no_cuda/torch_absent reasons became ComputeCapability NO_DEVICE/TORCH_MISSING wire values and the NO_DEVICE label broadened to cover CPU builds seen by admission. The post-install warning moved onto the child probe here, ahead of S15, because TorchDiagnosis removal left it no in-process classifier worth keeping
+- `S15` Start preflight and post-install warning already consume the probe verdict (S09, S10); this Step moves the doctor's torch axis onto the daemon-interpreter probe. Reading the service-reported verdict when a service answers lands with the typed service-state model in P03/P04
 

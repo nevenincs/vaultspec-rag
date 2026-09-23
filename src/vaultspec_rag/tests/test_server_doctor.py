@@ -241,3 +241,49 @@ def test_doctor_human_render_labels_mode_axis(
 
     assert "Provisioning (vaultspec-rag):" in result.output
     assert "declared mode: tool" in result.output
+
+
+def test_the_doctor_never_imports_torch_into_the_cli(tmp_path: Path) -> None:
+    """The doctor judges torch in the daemon interpreter, never in itself.
+
+    The child interpreter matters: this one may already hold torch from another
+    test, which would make the assertion pass without proving anything. The
+    first assertion names the other branch, so a CLI import that loads torch
+    fails distinctly from the doctor run doing so.
+
+    Mutation check: building the dependency axis without the probed verdict
+    classifies torch in-process and fails the second assertion; restoring the
+    probe passes.
+    """
+    import os
+    import subprocess
+    import sys
+
+    from ..config._types import EnvVar
+
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    probe = (
+        "import sys\n"
+        "from typer.testing import CliRunner\n"
+        "from vaultspec_rag.cli import app\n"
+        "assert 'torch' not in sys.modules, 'importing the CLI loaded torch'\n"
+        "CliRunner().invoke(app, ['server', 'doctor', '--json'])\n"
+        "assert 'torch' not in sys.modules, 'the doctor loaded torch'\n"
+    )
+    env = {
+        **os.environ,
+        EnvVar.STATUS_DIR.value: str(tmp_path / "status"),
+        EnvVar.QDRANT_STORAGE_DIR.value: str(tmp_path / "qdrant" / "storage"),
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=bare,
+        timeout=240,
+    )
+
+    assert proc.returncode == 0, proc.stderr

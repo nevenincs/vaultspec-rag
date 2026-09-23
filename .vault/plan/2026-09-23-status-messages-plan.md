@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:d0fed719e5e1187a6a75daeb82751603b9562ebadc65c2dcf2d4b62ed3ab4546'
+body_hash: 'sha256:bb77595f6c256ac22a0faccfd50f3281e2a43db20b35458095f6dfe5f90d68f5'
 ---
 
 # `status-messages` plan
@@ -81,7 +81,7 @@ Derive role, compute capability and hardware once, through the isolated daemon-i
 - [x] `P02.S09` - replace the probe exit-code prose contract with a typed ComputeCapability and InstallRole result, add the metadata-only probe mode, and repoint the tool-env repair consumer; `src/vaultspec_rag/cli/_process.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [x] `P02.S04` - add the bounded cached torch-free hardware probe using nvidia-smi and the Apple Silicon platform check; `src/vaultspec_rag/operator_state/`.
 - [x] `P02.S10` - retire TorchDiagnosis and the admission torch reasons in favour of ComputeCapability across torch_config, readiness, gpu errors and admission; `src/vaultspec_rag/torch_config/, src/vaultspec_rag/_readiness.py, src/vaultspec_rag/cli/_gpu_errors.py, src/vaultspec_rag/_gpu_admission.py`.
-- [ ] `P02.S15` - make server start preflight, the post-install warning and the doctor torch axis consume the probe verdict so doctor no longer imports torch in the CLI; `src/vaultspec_rag/cli/_service_start.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_service_doctor.py`.
+- [x] `P02.S15` - make server start preflight, the post-install warning and the doctor torch axis consume the probe verdict so doctor no longer imports torch in the CLI; `src/vaultspec_rag/cli/_service_start.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_service_doctor.py`.
 
 ### Phase `P03` - service-authored health and feature state
 

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         DocumentIndexPreflight,
         DocumentScopedPreflight,
     )
+    from .operator_state._models import ComputeReport
     from .progress import ProgressReporter
     from .search import SearchResult
     from .service import ServiceRegistry
@@ -1147,7 +1148,11 @@ def run_quality_probe(
         }
 
 
-def get_readiness(*, include_holders: bool = False) -> dict[str, Any]:
+def get_readiness(
+    *,
+    include_holders: bool = False,
+    compute: ComputeReport | None = None,
+) -> dict[str, Any]:
     """Return a bounded, read-only dependency-readiness snapshot.
 
     Reports, per external dependency, whether it is provisioned and
@@ -1171,11 +1176,12 @@ def get_readiness(*, include_holders: bool = False) -> dict[str, Any]:
         ``environment_holders`` snapshot that is only populated when
         *include_holders* asks for it - the scan walks the process table
         and costs seconds, which a polled route must not pay. Designed to
-        serve both a human render and a JSON envelope.
+        serve both a human render and a JSON envelope. A torch-free caller
+        passes the *compute* verdict it probed out of process.
     """
     from ._readiness import compute_readiness
 
-    return compute_readiness(include_holders=include_holders).to_dict()
+    return compute_readiness(include_holders=include_holders, compute=compute).to_dict()
 
 
 class _WatcherState(TypedDict):
