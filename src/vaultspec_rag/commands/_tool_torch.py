@@ -368,7 +368,8 @@ def repair_tool_torch(
     consequence.
     """
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
-    from ..operator_state._environment_probe import ProbeDepth, probe_interpreter
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
     from ..operator_state._installation import ComputeCapability
 
     interpreter = interpreter or sys.executable

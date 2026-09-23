@@ -69,6 +69,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .operator_state._installation import ComputeCapability
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from contextlib import AbstractContextManager
@@ -85,8 +87,6 @@ __all__ = [
     "REASON_BELOW_FLOOR",
     "REASON_DEVICE_UNREADABLE",
     "REASON_LOAD_IN_PROGRESS",
-    "REASON_NO_CUDA",
-    "REASON_TORCH_ABSENT",
     "UNREADABLE_ADMISSION_LIMIT",
     "DeviceAdmission",
     "admission_from_reading",
@@ -106,12 +106,12 @@ __all__ = [
 # than on prose, so they are spelled once here and never restated at a call
 # site: free memory sits below the floor; another process holds the load
 # window; the device answers as present but has stopped answering the memory
-# query; torch is installed but exposes no device; torch is absent entirely.
+# query. A reading that cannot be judged at all because torch is absent or
+# exposes no device carries the environment's compute capability instead, so
+# that condition has one vocabulary wherever it is reported.
 REASON_BELOW_FLOOR = "below_floor"
 REASON_DEVICE_UNREADABLE = "device_unreadable"
 REASON_LOAD_IN_PROGRESS = "load_in_progress"
-REASON_NO_CUDA = "no_cuda"
-REASON_TORCH_ABSENT = "torch_absent"
 
 #: The causes this gate refuses on. The other two are not its verdict to give:
 #: an absent torch or an absent device is the loader's own typed failure, and
@@ -173,8 +173,8 @@ _REASON_PHRASES = {
         "the device reports itself present and refuses every memory query"
     ),
     REASON_LOAD_IN_PROGRESS: "another process holds the model-load window",
-    REASON_NO_CUDA: "no CUDA device is available",
-    REASON_TORCH_ABSENT: "torch is not installed",
+    ComputeCapability.NO_DEVICE: ComputeCapability.NO_DEVICE.label,
+    ComputeCapability.TORCH_MISSING: ComputeCapability.TORCH_MISSING.label,
 }
 
 
@@ -409,7 +409,7 @@ def admission_from_reading(
             total_mib=total_mib,
             own_mib=own_mib,
             floor_mib=floor_mib,
-            reason=REASON_TORCH_ABSENT,
+            reason=ComputeCapability.TORCH_MISSING,
         )
     if not reading.cuda_present:
         return DeviceAdmission(
@@ -418,7 +418,7 @@ def admission_from_reading(
             total_mib=total_mib,
             own_mib=own_mib,
             floor_mib=floor_mib,
-            reason=REASON_NO_CUDA,
+            reason=ComputeCapability.NO_DEVICE,
         )
     if reading.free_mib is None:
         # The device answers as present but refused the memory query. One such
@@ -528,7 +528,7 @@ def evaluate_device_admission(
             total_mib=None,
             own_mib=None,
             floor_mib=0,
-            reason=REASON_NO_CUDA,
+            reason=ComputeCapability.NO_DEVICE,
         )
 
 

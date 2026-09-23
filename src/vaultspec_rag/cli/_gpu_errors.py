@@ -8,14 +8,11 @@ from typing import TYPE_CHECKING
 import typer
 
 from ..commands._tool_torch import tool_cuda_install_spec
-from ._core import logger
 from ._render import _plain
 
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import NoReturn
-
-    from ..torch_config._constants import TorchDiagnosis
 
 __all__ = [
     "RuntimeEnvKind",
@@ -247,31 +244,6 @@ def _no_mps_message() -> str:
     )
 
 
-def _active_torch_diagnosis() -> TorchDiagnosis:
-    """Diagnose torch in the *running* interpreter - the installed wheel.
-
-    Distinct from the install report's ``PyTorch configuration`` line, which
-    reflects ``pyproject.toml`` text and says nothing about the wheel actually
-    present in the interpreter that will run the service.
-    """
-    from ..torch_config._constants import TorchDiagnosis
-    from ..torch_config._diagnose import diagnose_torch
-
-    try:
-        import torch
-    except ImportError:
-        return TorchDiagnosis.NO_TORCH
-    try:
-        return diagnose_torch(
-            torch.version.cuda,
-            torch.cuda.is_available(),
-            torch.backends.mps.is_available(),
-        )
-    except Exception as exc:
-        logger.debug("active torch diagnosis failed: %s", exc, exc_info=True)
-        return TorchDiagnosis.NO_TORCH
-
-
 def warn_if_active_torch_not_accelerator() -> None:
     """Warn when the running interpreter cannot use a supported accelerator.
 
@@ -279,24 +251,25 @@ def warn_if_active_torch_not_accelerator() -> None:
     guarantee a usable accelerator in the active interpreter - a ``uv tool`` / ``pip``
     install resolves torch from PyPI (CPU), since the cu130 source pin is
     project-scoped and is not part of the published wheel metadata. This probes
-    the actual wheel and, when it is CPU-only, absent, or GPU-less, prints a
-    prominent topology-aware warning so a configured-but-CPU install never
-    passes silently.
+    the actual wheel in a child interpreter, so the CLI never imports torch,
+    and when it is CPU-only, absent, or GPU-less, prints a prominent
+    topology-aware warning so a configured-but-CPU install never passes
+    silently. A client installation never asked for torch and is not warned.
     """
     import sys
 
-    from ..torch_config._constants import TorchDiagnosis
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._installation import ComputeCapability
 
-    diag = _active_torch_diagnosis()
-    if diag == TorchDiagnosis.WORKING:
-        try:
-            import torch
+    compute = probe_interpreter(sys.executable, ProbeDepth.VERIFY).compute
+    capability = compute.capability
+    if not capability.is_defect:
+        return
+    if capability is ComputeCapability.MPS_POLICY_REFUSED:
+        from .._gpu import MPS_FALLBACK_MESSAGE
 
-            from .._gpu import resolve_accelerator
-
-            resolve_accelerator(torch)
-        except RuntimeError as exc:
-            _plain(f"\nWARNING: {exc}")
+        _plain(f"\nWARNING: {MPS_FALLBACK_MESSAGE}")
         return
 
     lines = [
@@ -313,15 +286,15 @@ def warn_if_active_torch_not_accelerator() -> None:
         ]
         _plain("\n".join(lines))
         return
-    if diag == TorchDiagnosis.NO_TORCH:
-        lines.append("  No torch is installed in the active interpreter.")
-    elif diag == TorchDiagnosis.CPU_ONLY:
+    if capability is ComputeCapability.CPU_ONLY_BUILD:
         lines.append(
             "  The installed torch is a CPU-only wheel. pyproject.toml may be "
             "configured for cu130, but the wheel actually present is CPU - "
             "vaultspec-rag is GPU-only and the service will not start."
         )
-    else:  # NO_GPU
+    elif capability.fixed_by_torch_reinstall:
+        lines.append(f"  In the active interpreter, {capability.label}.")
+    else:
         lines.append(
             "  torch is a CUDA build but no supported accelerator is visible "
             "(driver or hardware). Run nvidia-smi to check CUDA visibility."
@@ -372,14 +345,9 @@ def warn_if_active_torch_not_accelerator() -> None:
 def _handle_gpu_error(exc: Exception) -> NoReturn:
     """Print an actionable message for torch / CUDA failures and exit.
 
-    Distinguishes three failure states so the remediation hint matches
-    the actual problem:
-
-    - torch not installed at all (``ImportError``)
-    - torch installed without CUDA support - the CPU-only PyPI wheel
-      (``torch.version.cuda is None``)
-    - torch built with CUDA but no GPU visible - driver or hardware
-      issue (``torch.version.cuda`` set, ``is_available()`` False)
+    Classifies this process's environment so the remediation hint matches
+    the actual problem: torch absent or unloadable, a CPU-only wheel, a CUDA
+    build with no visible device, or a refused MPS fallback policy.
 
     Args:
         exc: The caught exception (``ImportError`` or ``RuntimeError``).
@@ -387,48 +355,28 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     Raises:
         typer.Exit: Always exits with code 1.
     """
-    from .._gpu import MPS_FALLBACK_MESSAGE
-    from ..torch_config._constants import TorchDiagnosis
-    from ..torch_config._diagnose import diagnose_torch
-    from ..torch_config._mutate import manual_snippet
-
-    diagnosis: TorchDiagnosis
-    if isinstance(exc, ImportError):
-        diagnosis = TorchDiagnosis.NO_TORCH
-    else:
-        try:
-            import torch
-
-            diagnosis = diagnose_torch(
-                torch.version.cuda,
-                torch.cuda.is_available(),
-                torch.backends.mps.is_available(),
-            )
-        except Exception as _diag_exc:
-            # Broad except: torch import succeeded but probing the
-            # CUDA state failed in an unexpected way (driver
-            # mismatch, opaque ABI error). Treat as "no torch" for
-            # diagnosis purposes; debug-log so the swallow stays
-            # observable.
-            logger.debug(
-                "torch accelerator diagnosis failed: %s",
-                _diag_exc,
-                exc_info=True,
-            )
-            diagnosis = TorchDiagnosis.NO_TORCH
-
     import sys
 
-    if MPS_FALLBACK_MESSAGE in str(exc):
+    from .._gpu import MPS_FALLBACK_MESSAGE
+    from ..operator_state._compute import local_compute
+    from ..operator_state._installation import ComputeCapability
+    from ..torch_config._mutate import manual_snippet
+
+    capability = local_compute().capability
+    if capability is ComputeCapability.MPS_POLICY_REFUSED:
         _plain(f"Error: {MPS_FALLBACK_MESSAGE}")
-    elif diagnosis == TorchDiagnosis.NO_TORCH:
+    elif capability in {
+        ComputeCapability.NOT_APPLICABLE,
+        ComputeCapability.TORCH_MISSING,
+        ComputeCapability.TORCH_IMPORT_FAILED,
+    }:
         _plain(_no_torch_message())
     elif sys.platform == "darwin":
         _plain(_no_mps_message())
-    elif diagnosis == TorchDiagnosis.CPU_ONLY:
+    elif capability is ComputeCapability.CPU_ONLY_BUILD:
         _plain(_cpu_only_message())
         _plain(manual_snippet())
-    elif diagnosis == TorchDiagnosis.NO_GPU:
+    elif capability is ComputeCapability.NO_DEVICE:
         _plain(_no_gpu_message())
     else:
         _plain(f"Error: {exc}")

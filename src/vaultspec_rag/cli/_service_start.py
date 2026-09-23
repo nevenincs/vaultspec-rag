@@ -536,7 +536,8 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     A check that could not finish is logged and allowed to proceed, leaving the
     spawn-and-detect path as the backstop.
     """
-    from ..operator_state._environment_probe import ProbeDepth, probe_interpreter
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
     from ..operator_state._installation import ComputeCapability
 
     compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute

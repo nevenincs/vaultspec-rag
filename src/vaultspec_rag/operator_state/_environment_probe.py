@@ -2,7 +2,7 @@
 
 The service runs in whichever environment launches it, and the CLI must never
 import torch itself, so the question is put to that interpreter in a child
-process. One script answers both depths:
+process, which answers with :func:`environment_report`. Two depths:
 
 - ``metadata`` reads installed distributions only. It is cheap enough for a
   default ``status`` and can tell a client, a missing torch and a CPU-only
@@ -16,25 +16,23 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Literal, cast
 
+from ._compute import ProbeDepth
 from ._installation import ComputeCapability, InstallRole
 from ._models import ComputeReport
 
-__all__ = ["InterpreterFacts", "ProbeDepth", "probe_interpreter"]
+__all__ = ["InterpreterFacts", "probe_interpreter"]
 
 #: Seconds allowed for each depth. A metadata read is an interpreter start and
 #: a few file reads; a verify pays for importing torch and waking the driver.
 METADATA_TIMEOUT_SECONDS = 15.0
 VERIFY_TIMEOUT_SECONDS = 60.0
 
-
-class ProbeDepth(StrEnum):
-    """How far the probe goes before it answers."""
-
-    METADATA = "metadata"
-    VERIFY = "verify"
+_PROBE_SCRIPT = """
+import json, sys
+from vaultspec_rag.operator_state._compute import ProbeDepth, environment_report
+print(json.dumps(environment_report(ProbeDepth(sys.argv[1]))))
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,75 +45,6 @@ class InterpreterFacts:
     executable: str
     prefix: str
     compute: ComputeReport
-
-
-# The child reports through one JSON line so every outcome, including a torch
-# that fails to import, is a named state rather than an exit code to decode.
-# Without a local version tag, PyPI ships CPU-only torch for Windows and CUDA
-# torch for Linux; macOS builds carry MPS.
-_PROBE_SCRIPT = """
-import json, sys
-from importlib import metadata
-
-def version(name):
-    try:
-        return metadata.version(name)
-    except Exception:
-        return None
-
-report = {
-    "executable": sys.executable,
-    "prefix": sys.prefix,
-    "inference_stack": version("sentence-transformers") is not None,
-    "mcp_adapter": version("mcp") is not None,
-    "torch_version": version("torch"),
-}
-
-def metadata_capability(torch_version):
-    local = torch_version.partition("+")[2].lower()
-    if local == "cpu":
-        return "cpu_only_build"
-    if local.startswith("cu"):
-        return "build_present"
-    if local:
-        return "unknown"
-    return "cpu_only_build" if sys.platform == "win32" else "build_present"
-
-def verified_capability():
-    try:
-        import torch
-    except Exception as exc:
-        report["detail"] = f"{type(exc).__name__}: {exc}"
-        return "torch_import_failed"
-    cuda_build = torch.version.cuda
-    mps = False
-    try:
-        mps = bool(torch.backends.mps.is_available())
-        from vaultspec_rag._gpu import resolve_accelerator
-        context = resolve_accelerator(torch)
-    except Exception as exc:
-        report["detail"] = str(exc)
-        if mps:
-            return "mps_policy_refused"
-        return "no_device" if cuda_build else "cpu_only_build"
-    report["backend"] = context.backend
-    report["device_name"] = context.name
-    if context.backend == "cuda":
-        total = torch.cuda.get_device_properties(0).total_memory
-        report["memory_mib"] = int(total // (1024 * 1024))
-    return "ready"
-
-if not report["inference_stack"]:
-    capability = "not_applicable"
-elif report["torch_version"] is None:
-    capability = "torch_missing"
-elif sys.argv[1] == "verify":
-    capability = verified_capability()
-else:
-    capability = metadata_capability(report["torch_version"])
-report["capability"] = capability
-print(json.dumps(report))
-"""
 
 
 def probe_interpreter(
@@ -162,31 +91,20 @@ def _parse(
     lines = proc.stdout.strip().splitlines()
     try:
         report = json.loads(lines[-1]) if lines else None
-    except json.JSONDecodeError:
-        report = None
-    if not isinstance(report, dict):
+        if not isinstance(report, dict):
+            raise TypeError(type(report).__name__)
+        return InterpreterFacts(
+            interpreter=interpreter,
+            role=InstallRole(report["role"]),
+            mcp_adapter=bool(report["mcp_adapter"]),
+            executable=str(report["executable"]),
+            prefix=str(report["prefix"]),
+            compute=ComputeReport.model_validate(report["compute"]),
+        )
+    except (TypeError, KeyError, ValueError):
         stderr = proc.stderr.strip().splitlines()
         detail = stderr[-1] if stderr else f"exit code {proc.returncode}"
         return _unanswered(interpreter, ComputeCapability.UNKNOWN, detail)
-    fields = cast("dict[str, object]", report)
-    capability = ComputeCapability(str(fields["capability"]))
-    return InterpreterFacts(
-        interpreter=interpreter,
-        role=(
-            InstallRole.HOST if fields.get("inference_stack") else InstallRole.CLIENT
-        ),
-        mcp_adapter=bool(fields.get("mcp_adapter")),
-        executable=str(fields.get("executable") or interpreter),
-        prefix=str(fields.get("prefix") or ""),
-        compute=ComputeReport(
-            capability=capability,
-            torch_version=_text(fields.get("torch_version")),
-            backend=cast("Literal['cuda', 'mps'] | None", fields.get("backend")),
-            device_name=_text(fields.get("device_name")),
-            memory_mib=_integer(fields.get("memory_mib")),
-            detail=_text(fields.get("detail")),
-        ),
-    )
 
 
 def _unanswered(
@@ -205,11 +123,3 @@ def _unanswered(
         prefix="",
         compute=ComputeReport(capability=capability, detail=detail or None),
     )
-
-
-def _text(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _integer(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None

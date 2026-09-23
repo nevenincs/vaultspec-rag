@@ -11,7 +11,8 @@ from pytest import MonkeyPatch
 from ..cli._gpu_errors import RuntimeEnvKind
 from ..commands import _tool_torch
 from ..operator_state import _environment_probe
-from ..operator_state._environment_probe import InterpreterFacts, ProbeDepth
+from ..operator_state._compute import ProbeDepth
+from ..operator_state._environment_probe import InterpreterFacts
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
 

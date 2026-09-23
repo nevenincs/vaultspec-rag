@@ -92,9 +92,7 @@ class ComputeCapability(StrEnum):
             ComputeCapability.CPU_ONLY_BUILD: (
                 "torch is a CPU-only build, so the GPU cannot be used"
             ),
-            ComputeCapability.NO_DEVICE: (
-                "torch has GPU support but no usable GPU is visible"
-            ),
+            ComputeCapability.NO_DEVICE: "no usable GPU is visible to torch",
             ComputeCapability.MPS_POLICY_REFUSED: (
                 "the Apple GPU is visible but its CPU-fallback policy is enabled"
             ),
