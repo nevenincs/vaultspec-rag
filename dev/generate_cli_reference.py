@@ -16,11 +16,24 @@ OUTPUT = ROOT / "docs" / "cli.md"
 
 COMMAND_NOTES: dict[str, tuple[str, ...]] = {
     "server status": (
-        "The `Typesafe:` line reports the running daemon's classifier enrollment",
-        "and observed usability, not the calling shell's key. JSON includes",
-        "`data.health.typesafe` when health is available. See",
+        "A running service's summary lists its optional features: the `Typesafe:`",
+        "line reports the daemon's classifier enrollment and observed usability,",
+        "not the calling shell's key, and `Reranking:`, `Preprocessing:` and",
+        "`File watcher:` say whether each is on. JSON includes",
+        "`data.health.features` when health is available. A stopped or crashed",
+        "service prints one line naming its state and how to start it. See",
         "[Typesafe enrollment](configuration.md#typesafe-enrollment)",
         "for state meanings; status never makes a paid classification call.",
+    ),
+    "status": (
+        "The overview names the service and where it is, whether this installation",
+        "is a client or an inference host, and whether it can run inference. The",
+        "`Compute:` line names the machine's GPU and the environment's torch build",
+        "separately, and a `Fix:` line appears only when the environment is broken,",
+        "never for a client that has no GPU work to do. The project's preprocessing",
+        "hooks are always shown; Typesafe, reranking and the file watcher are shown",
+        "when a service answers. A service from another release is reported as a",
+        "release mismatch rather than read around.",
     ),
     "server start": (
         "Successful starts and already-running responses include Typesafe enrollment",

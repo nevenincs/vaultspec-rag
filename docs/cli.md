@@ -229,7 +229,16 @@ None.
 
 ## status
 
-Show project index counts, index data location, and compute device.
+Show the service, this installation's compute, the project's active features, and its index.
+
+The overview names the service and where it is, whether this installation
+is a client or an inference host, and whether it can run inference. The
+`Compute:` line names the machine's GPU and the environment's torch build
+separately, and a `Fix:` line appears only when the environment is broken,
+never for a client that has no GPU work to do. The project's preprocessing
+hooks are always shown; Typesafe, reranking and the file watcher are shown
+when a service answers. A service from another release is reported as a
+release mismatch rather than read around.
 
 ```bash
 vaultspec-rag status
@@ -244,6 +253,7 @@ None.
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+| `--verbose` | boolean | no | off | Also show the interpreter, the support profile limits, and the per-domain index generations. |
 
 ## server doctor
 
@@ -392,9 +402,12 @@ None.
 
 Show the human operator summary for server readiness, work, and next checks.
 
-The `Typesafe:` line reports the running daemon's classifier enrollment
-and observed usability, not the calling shell's key. JSON includes
-`data.health.typesafe` when health is available. See
+A running service's summary lists its optional features: the `Typesafe:`
+line reports the daemon's classifier enrollment and observed usability,
+not the calling shell's key, and `Reranking:`, `Preprocessing:` and
+`File watcher:` say whether each is on. JSON includes
+`data.health.features` when health is available. A stopped or crashed
+service prints one line naming its state and how to start it. See
 [Typesafe enrollment](configuration.md#typesafe-enrollment)
 for state meanings; status never makes a paid classification call.
 
@@ -411,7 +424,7 @@ None.
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--port` | int | no | - | Service port (defaults to running service). |
-| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. Preserves exit codes 0 (running), 3 (stopped), 4 (crashed or divergent), and 5 (warming: models loading, not yet serving). |
+| `--json` | boolean | no | off | Emit JSON for scripts instead of human text. Preserves exit codes 0 (running), 3 (stopped), 4 (crashed or divergent), and 5 (starting: models loading, not yet serving). |
 | `--verbose` | boolean | no | off | Show process, heartbeat, service identity, model, and extra diagnostic details in the human output. |
 
 ## server reconcile

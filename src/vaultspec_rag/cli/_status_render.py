@@ -1171,7 +1171,7 @@ def service_status(
             help=(
                 f"{JSON_OPTION_HELP} Preserves exit "
                 "codes 0 (running), 3 (stopped), 4 (crashed or divergent), "
-                "and 5 (warming: models loading, not yet serving)."
+                "and 5 (starting: models loading, not yet serving)."
             ),
         ),
     ] = False,

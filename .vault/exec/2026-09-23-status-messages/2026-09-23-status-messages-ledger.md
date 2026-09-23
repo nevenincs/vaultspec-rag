@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:47788798287a86e0cb1a8e991dae164b2a828e61b357adb8971d54566ec34443'
+body_hash: 'sha256:5e235c3ff7addedf6e28006f06931e51512b99b5c1f97e0ee0a80491479119a1'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -173,13 +173,23 @@ related:
 - `S14` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
 - `S14` `M` `src/vaultspec_rag/tests/test_jobs_tui_status.py`
 - `S14` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S18` `M` `dev/generate_cli_reference.py`
+- `S18` `M` `docs/automation.md`
+- `S18` `M` `docs/cli.md`
+- `S18` `M` `docs/configuration.md`
+- `S18` `M` `docs/mcp.md`
+- `S18` `M` `docs/service-discovery.md`
+- `S18` `M` `docs/service-mode.md`
+- `S18` `M` `src/vaultspec_rag/_readiness.py`
+- `S18` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S18` `verify:` `manual persona host server status against a live service lists Typesafe, reranking, preprocessing and watcher` -> `pass`
 
 ## Notes
 
-- `S02` DegradationReason adds JOBS_DEGRADED beyond the ADR's list because the service already emits an 'indexing jobs are degraded' reason; broker exit codes moved into operator_state._service as their single home
+- `S02` DegradationReason adds JOBS_DEGRADED beyond the ADR's list because the service already emits an 'indexing jobs are degraded' reason; broker exit codes moved into operator_state.\_service as their single home
 - `S03` Envelopes owned by other subsystems (quiesce, qdrant runtime, jobs rollup, device load, capabilities, support profile, index, projects, watcher) travel as owner mappings inside the forbid-extra top-level models
 - `S09` Server start preflight repointed in this Step because deleting the prose probe left it no other path; its messaging rework remains in S15. Structural duplicate guard gained an enum-label-table allowance and the new named-subset member
-- `S10` Role and compute classification moved into operator_state._compute; the child probe script now imports it, so probing an interpreter carrying an older release answers UNKNOWN (never blocking). Admission's no_cuda/torch_absent reasons became ComputeCapability NO_DEVICE/TORCH_MISSING wire values and the NO_DEVICE label broadened to cover CPU builds seen by admission. The post-install warning moved onto the child probe here, ahead of S15, because TorchDiagnosis removal left it no in-process classifier worth keeping
+- `S10` Role and compute classification moved into operator_state.\_compute; the child probe script now imports it, so probing an interpreter carrying an older release answers UNKNOWN (never blocking). Admission's no_cuda/torch_absent reasons became ComputeCapability NO_DEVICE/TORCH_MISSING wire values and the NO_DEVICE label broadened to cover CPU builds seen by admission. The post-install warning moved onto the child probe here, ahead of S15, because TorchDiagnosis removal left it no in-process classifier worth keeping
 - `S15` Start preflight and post-install warning already consume the probe verdict (S09, S10); this Step moves the doctor's torch axis onto the daemon-interpreter probe. Reading the service-reported verdict when a service answers lands with the typed service-state model in P03/P04
 - `S11` DegradationReason keeps JOBS_STALLED (plural, matching the reported count) and adds JOBS_DEGRADED, differing from the ADR's JOB_STALLED listing; /health drops the model-device cuda flag and its verbose Compute row until installation compute renders in P05; the start envelope keeps its own degraded_reasons key
 - `S10` P02 phase-review corrections (commit bae3163c): client readiness, in-process error classification of the loaded torch, enum-owned message headlines, cpu-prefixed tags, explicit None default, required remediation, timeout coverage; both new guards pass once restored
@@ -195,4 +205,5 @@ related:
 - `S17` Server status prints a stopped or crashed service as its lifecycle line, remedy and address instead of rows of not-reported; a live summary adds Reranking, Preprocessing and File watcher beside Typesafe; the summary request carries ServiceLifecycle and derives its exit code; the stopped branch spells nothing by hand; doctor labels a starting service and renders the lifecycle sentence. S14 scope widened to the TUI header and cells per the P04 review
 - `S13` P04 review high finding: the transport's synthetic timeout and HTTP-error health bodies read as a service answering, so a wedged or erroring service exited 0; health_answered now lives beside the transport that makes those bodies and rejects them
 - `S14` Service-health tones key on HealthVerdict and gain the missing paused tone; job state pills key on JobState. The header's healthy/degraded/stalled pill is job health, a separate concept from service lifecycle, and the TUI's unreachable word names a failed fetch rather than a lifecycle, so both stay
+- `S18` Release-please builds the changelog, so the release notes travel as a BREAKING CHANGE footer; the client persona against a stopped service was exercised through the production local-report path because another session's live service holds the machine singleton and was not stopped; the doctor torch line now appends the probe detail only where it is the diagnosis; new vault records formatted with mdformat
 

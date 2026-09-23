@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:771233f97379cdfc8547a5fe8a6030b4261708aca5bfd17bb50aadada7cb3a44'
+body_hash: 'sha256:4baa027568463f5698612d754844225f972f3825caea75879062d51ce3f76180'
 related:
   - "[[2026-09-23-status-messages-research]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -21,8 +21,7 @@ related:
 
 ## Problem Statement
 
-Operator status output is wrong and hard to read. On a GPU workstation, `vaultspec-rag
-status` reports a hardware failure when the real cause is a CPU-only torch build in the
+Operator status output is wrong and hard to read. On a GPU workstation, `vaultspec-rag status` reports a hardware failure when the real cause is a CPU-only torch build in the
 installed tool environment. The root causes are the ones established in
 `2026-09-23-status-messages-research`:
 
@@ -122,26 +121,29 @@ duplicated: `JobState`, `QuiesceState`, `SearchAvailability`, `SearchFreshness` 
 - **`InstallRole`**: `CLIENT` or `HOST`. It is decided by one function, from whether the
   inference-stack distributions are present. The MCP extra is a separate boolean
   attribute of the installation, not a role.
+
 - **`HardwarePresence`**: `NVIDIA_GPU`, `APPLE_SILICON`, `NONE` or `UNKNOWN`. It carries
   the device name and memory when known.
+
 - **`ComputeCapability`**: one member per state below. It replaces the overlap between
   `TorchDiagnosis`, the probe exit codes and the torch reasons in GPU admission.
 
-  | Member | Meaning | Today's probe signal | Blocks `server start` |
-  | --- | --- | --- | --- |
-  | `NOT_APPLICABLE` | client install | exit 6 | yes |
-  | `READY` | full probe passed | - | no |
-  | `BUILD_PRESENT` | CUDA or MPS torch build installed, device not yet verified | metadata-only check | no |
-  | `TORCH_MISSING` | torch absent on a host | exit 3 | yes |
-  | `TORCH_IMPORT_FAILED` | torch installed but fails to import | - | yes |
-  | `CPU_ONLY_BUILD` | CPU-only torch build | exit 4 | yes |
-  | `NO_DEVICE` | CUDA build, no visible device | exit 5 | yes |
-  | `MPS_POLICY_REFUSED` | MPS visible, accelerator policy refused | exit 7 | yes |
-  | `INTERPRETER_MISSING` | daemon interpreter not found | - | yes |
-  | `UNKNOWN` | timeout or unexpected result | timeout, unexpected | no |
+  | Member                | Meaning                                                    | Today's probe signal | Blocks `server start` |
+  | --------------------- | ---------------------------------------------------------- | -------------------- | --------------------- |
+  | `NOT_APPLICABLE`      | client install                                             | exit 6               | yes                   |
+  | `READY`               | full probe passed                                          | -                    | no                    |
+  | `BUILD_PRESENT`       | CUDA or MPS torch build installed, device not yet verified | metadata-only check  | no                    |
+  | `TORCH_MISSING`       | torch absent on a host                                     | exit 3               | yes                   |
+  | `TORCH_IMPORT_FAILED` | torch installed but fails to import                        | -                    | yes                   |
+  | `CPU_ONLY_BUILD`      | CPU-only torch build                                       | exit 4               | yes                   |
+  | `NO_DEVICE`           | CUDA build, no visible device                              | exit 5               | yes                   |
+  | `MPS_POLICY_REFUSED`  | MPS visible, accelerator policy refused                    | exit 7               | yes                   |
+  | `INTERPRETER_MISSING` | daemon interpreter not found                               | -                    | yes                   |
+  | `UNKNOWN`             | timeout or unexpected result                               | timeout, unexpected  | no                    |
 
   Device-load admission states (below floor, device unreadable, load in progress) stay
   runtime admission outcomes, not compute members.
+
 - **`ServiceLifecycle`**: `STOPPED`, `STARTING`, `RUNNING`, `CRASHED_PID_DEAD`,
   `CRASHED_PID_REUSED`, `CRASHED_PORT_SILENT`, `CRASHED_HEARTBEAT_STALE` and
   `DISCOVERY_DEGRADED`. Each member carries its broker exit code (0, 3, 4, 5). It is
@@ -149,11 +151,14 @@ duplicated: `JobState`, `QuiesceState`, `SearchAvailability`, `SearchFreshness` 
   service-client package, the one place that composes discovery facts with the typed
   health model. The CLI's own `_compute_state`, the port-only ternaries and doctor's
   `live` are deleted.
+
   - `STARTING` means models loading at startup.
   - `QuiesceState.WARMING` means resuming after a pause and renders as "resuming". The
     two are never labelled alike.
+
 - **`HealthVerdict`**: `READY`, `PAUSED`, `DEGRADED` or `ERROR`. It comes with
   `DegradationReason` members:
+
   - `JOB_STALLED`
   - `JOB_FAILED`
   - `QUARANTINED`
@@ -164,7 +169,9 @@ duplicated: `JobState`, `QuiesceState`, `SearchAvailability`, `SearchFreshness` 
 
   The server emits these codes, and the CLI's substring family matching is deleted. A
   paused or degraded service on a listening port is never rendered as unreachable.
+
 - **`FeatureState`** has per-service and per-root sections.
+
   - **Per-service:**
     - `TypesafeState`: `OFF`, `PENDING`, `ACTIVE`, `REJECTED` or `COOLDOWN`;
     - reranker and sparse, each enabled and loaded;
