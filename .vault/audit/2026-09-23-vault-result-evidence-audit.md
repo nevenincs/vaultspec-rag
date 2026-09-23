@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:ff85f2fc79ed9a5cf9eb561313a532671694d0075ff9772b67fa65127f9e9811'
+body_hash: 'sha256:8f7158b5613cd8c34f704ff43a5ec841ce97a0f7e41f0770873635d5e42c41f8'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -96,6 +96,17 @@ Evidence, section and ranking stayed identical on every set.
 
 The chunk rerank alone is 0.40 s. Reaching 0.57 s needs a change to it: a smaller
 candidate window or a shorter token bound. Either one changes ranking.
+
+A service run with `VAULTSPEC_RAG_RERANKER_MAX_LENGTH=512` (chunks truncated at 512
+tokens instead of 1024) on the issue's query sets:
+
+| Set | hit@1 | MRR | Evidence in snippet |
+| --- | --- | --- | --- |
+| Dev | 0.81 → 0.762 | 0.853 → 0.829 | 15 → 12 of 21 |
+| Held-out | 0.722 → 0.778 | 0.797 → 0.824 | 11 → 9 of 18 |
+
+Ranking moved in both directions and evidence fell on both sets. Latency from that run
+was discarded: it ran while another GPU consumer was active on the host.
 
 ### reindex-remedy | low | The service-level latest-failure finding still points at logs for a refused index
 
