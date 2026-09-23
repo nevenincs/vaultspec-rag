@@ -40,6 +40,7 @@ from .._source_types import (
     parse_source_type,
 )
 from ..indexer._run_ledger_models import RunAuthority
+from ..operator_state._models import ServiceStateReport
 from ..serviceclient._search_transport import document_search_filters, try_http_search
 from ..serviceclient._transport import (
     _try_http_admin,
@@ -47,6 +48,7 @@ from ..serviceclient._transport import (
     _try_http_code_file,
     _try_http_reindex,
 )
+from ..serviceclient._typed_state import parse_report
 from ._mcp import mcp
 from ._roots import _resolve_project_root
 
@@ -667,8 +669,14 @@ async def reindex_all(
 @mcp.tool(title="Get index status", annotations=_READ_ONLY)
 async def get_index_status(
     project_root: str | None = None,
-) -> dict[str, Any]:
-    """Return count, policy, generation, and degraded-state service details."""
+) -> ServiceStateReport:
+    """Return the root's index state and the service that serves it.
+
+    The index section carries counts, generations and degraded domains. The
+    installation section says what the running service is and whether it can
+    run inference; the root features say whether preprocessing hooks run and
+    whether the file watcher follows this root.
+    """
     port = _require_port()
     args: dict[str, object] = {"project_root": _resolve_project_root(project_root)}
     result = await _delegate(
@@ -679,7 +687,14 @@ async def get_index_status(
             port,
         )
     )
-    return result
+    report = parse_report(ServiceStateReport, result)
+    if report is None:
+        detail = result.get("message") if isinstance(result, dict) else None
+        raise ToolError(
+            "the service state could not be read"
+            + (f": {detail}" if isinstance(detail, str) and detail else "")
+        )
+    return report
 
 
 async def _clean_source(
