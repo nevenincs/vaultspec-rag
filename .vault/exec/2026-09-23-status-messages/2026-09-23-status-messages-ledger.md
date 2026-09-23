@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:35e1dab8bcce4f0cc104b2ec9b3bafa4a2f1f7631e16bba2ac5f8a36be2c1f3b'
+body_hash: 'sha256:8eb7022c1033bc71847f3aa851c7a8a4470428f766ef365aba79ea707130ee4b'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -205,6 +205,9 @@ related:
 - `S11` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
 - `S11` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
 - `S11` `verify:` `pytest affected status, probe, TUI and MCP modules` -> `pass`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S01` `verify:` `python -m dev lint all` -> `pass`
 
 ## Notes
 
