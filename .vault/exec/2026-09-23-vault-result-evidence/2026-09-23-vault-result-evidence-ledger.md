@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:a7545035d2bc0b9dd6d16b12c805447c9e5c3b9fe201329225db4a9679efab9f'
+body_hash: 'sha256:a51741638955e87e48f340ee5c36535f54626cca4c18b20b14d15d74a8d5ee02'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -82,6 +82,9 @@ related:
 - `S09` `M` `src/vaultspec_rag/search/_searcher.py`
 - `S09` `M` `src/vaultspec_rag/tests/test_document_result_shaping.py`
 - `S09` `verify:` `vault search 10 results 18 runs median 0.712s vs target 0.570s` -> `fail`
+- `S04` `M` `src/vaultspec_rag/_markdown_passages.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_markdown_passages.py`
+- `S04` `verify:` `setext recognition disabled fails the underline test, restored passes` -> `pass`
 
 ## Notes
 
@@ -91,4 +94,5 @@ related:
 - `S07` mcp/_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
 - `S08` per the ADR's gate condition the section path does not enter the embedding input; the input stays title plus text, byte-identical to before, and only the single builder and full-input donor verification ship. The concurrency ADR's D8 is amended with this evidence at plan close
 - `S09` latency target missed: fp32 baseline 1.140s, final median 0.712s (rerank 0.403s, passage 0.222s). Passage scoring costs about 2.8ms per pair, not the 1-2ms the research estimated; the 48-pair page budget cut it from 0.33s with no measured quality loss. Reaching 0.57s needs a ranking-affecting change to the chunk rerank; raised to the user
+- `S04` review correction: sentence and word splitters collapsed into one pattern-taking splitter; setext headings recognised; thematic breaks separate blocks and small passages merge only across whitespace
 

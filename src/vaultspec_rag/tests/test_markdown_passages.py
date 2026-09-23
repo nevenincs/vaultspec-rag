@@ -144,3 +144,50 @@ class TestStructureQueries:
         assert lines is not None
         assert lines[0] == structure.line_of(start + 1)
         assert _BODY.split("\n")[lines[0] - 5] == "## Implementation"
+
+
+class TestSetextAndBreaks:
+    """Underlined headings open sections; thematic breaks are no passage."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    _SETEXT = (
+        "Record title\n"
+        "============\n"
+        "\n"
+        "Background\n"
+        "----------\n"
+        "\n"
+        "Why the change was needed, in one short paragraph of prose.\n"
+        "\n"
+        "---\n"
+        "\n"
+        "Trailing note after a break.\n"
+    )
+
+    def test_an_underlined_line_is_a_heading_not_passage_text(self) -> None:
+        structure = parse_markdown(self._SETEXT)
+        texts = [_text(self._SETEXT, p) for p in structure.passages]
+        # Treating the underline as ordinary text leaves this section empty and
+        # the underline inside a passage, which is what these assertions reject.
+        assert all(p.section == "Background" for p in structure.passages)
+        assert not any("====" in text or "----" in text for text in texts)
+        assert not any("Record title" in text for text in texts)
+
+    def test_a_thematic_break_separates_blocks_without_becoming_one(self) -> None:
+        structure = parse_markdown(self._SETEXT)
+        texts = [_text(self._SETEXT, p) for p in structure.passages]
+        assert "---" not in "\n".join(texts)
+        assert any(text.startswith("Trailing note") for text in texts)
+
+    def test_a_clip_inside_a_line_keeps_that_line_as_its_span(self) -> None:
+        body = "## Notes\n\nalpha beta gamma delta epsilon zeta eta theta.\n"
+        structure = parse_markdown(body, first_line=4)
+        cut = body.index("delta")
+        clipped = structure.clip(cut, len(body))
+        assert len(clipped) == 1
+        piece = clipped[0]
+        chunk = body[cut:]
+        line = body.split("\n")[piece.line_start - 4]
+        assert chunk[piece.start : piece.end] in line
+        assert piece.line_start == piece.line_end

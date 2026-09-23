@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from dataclasses import dataclass
+from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING, Final
 
@@ -47,6 +48,8 @@ _MERGE_BELOW_CHARS: Final = 200
 SECTION_SEPARATOR: Final = " > "
 
 _ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
+_SETEXT_UNDERLINE = re.compile(r"^ {0,3}(=+|-+)[ \t]*$")
+_THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _CLOSING_HASHES = re.compile(r"(?:^|[ \t]+)#+$")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 # Matched with ``pattern.match(text, pos)``, which anchors at *pos* by itself;
@@ -149,11 +152,12 @@ def parse_markdown(text: str, *, first_line: int = 1) -> MarkdownStructure:
         position += len(line) + 1
     scan = _scan_blocks(text, line_offsets)
     spans = _merge_small(
+        text,
         [
             (low, high, section)
             for start, end, section in scan.blocks
             for low, high in _bounded(text, start, end)
-        ]
+        ],
     )
     return MarkdownStructure(
         text=text,
@@ -177,8 +181,9 @@ def parse_markdown(text: str, *, first_line: int = 1) -> MarkdownStructure:
 def _scan_blocks(text: str, line_offsets: Sequence[int]) -> _Scan:
     """Find the body's blocks: runs of non-blank lines, and whole fences.
 
-    A heading line closes the block before it and belongs to no block; its
-    text instead joins the section path of every block below it.
+    A heading closes the block before it and belongs to no block; its text
+    instead joins the section path of every block below it. A thematic break
+    separates blocks and belongs to none.
     """
     lines = text.split("\n")
     scan = _Scan(blocks=[], heading_offsets=[], heading_sections=[])
@@ -203,19 +208,20 @@ def _scan_blocks(text: str, line_offsets: Sequence[int]) -> _Scan:
                 fence = None
             continue
         opener = _FENCE.match(line)
-        heading = None if opener else _ATX_HEADING.match(line)
+        heading = None if opener else _heading_at(lines, index, block_first)
         if opener is not None:
             close(index - 1)
             block_first = index
             fence = opener.group(1)
         elif heading is not None:
-            close(index - 1)
-            _enter_heading(stack, heading, is_first=not scan.heading_offsets)
-            scan.heading_offsets.append(line_offsets[index])
+            level, title, first = heading
+            close(first - 1)
+            _enter_heading(stack, level, title, is_first=not scan.heading_offsets)
+            scan.heading_offsets.append(line_offsets[first])
             scan.heading_sections.append(
-                SECTION_SEPARATOR.join(title for _, title in stack)
+                SECTION_SEPARATOR.join(entry for _, entry in stack)
             )
-        elif not line.strip():
+        elif not line.strip() or _THEMATIC_BREAK.match(line):
             close(index - 1)
         elif block_first is None:
             block_first = index
@@ -223,15 +229,33 @@ def _scan_blocks(text: str, line_offsets: Sequence[int]) -> _Scan:
     return scan
 
 
+def _heading_at(
+    lines: list[str], index: int, block_first: int | None
+) -> tuple[int, str, int] | None:
+    """Return the heading ending on line *index*: its level, text and first line.
+
+    An ATX heading is its own line. A setext heading is a single line of text
+    underlined by ``=`` (level 1) or ``-`` (level 2), so it is recognised on
+    the underline, with the open block of exactly that one line as its text.
+    """
+    atx = _ATX_HEADING.match(lines[index])
+    if atx is not None:
+        title = _CLOSING_HASHES.sub("", atx.group(2) or "").strip()
+        return len(atx.group(1)), title, index
+    underline = _SETEXT_UNDERLINE.match(lines[index])
+    if underline is not None and block_first is not None and block_first == index - 1:
+        level = 1 if underline.group(1).startswith("=") else 2
+        return level, lines[index - 1].strip(), index - 1
+    return None
+
+
 def _enter_heading(
-    stack: list[tuple[int, str]], heading: re.Match[str], *, is_first: bool
+    stack: list[tuple[int, str]], level: int, title: str, *, is_first: bool
 ) -> None:
-    level = len(heading.group(1))
     # The first heading, when it is an H1, is the document's title; results
     # carry the title on their own, so section paths start below it.
     if is_first and level == 1:
         return
-    title = _CLOSING_HASHES.sub("", heading.group(2) or "").strip()
     stack[:] = [entry for entry in stack if entry[0] < level]
     stack.append((level, title))
 
@@ -270,8 +294,8 @@ def _bounded(text: str, start: int, end: int) -> list[tuple[int, int]]:
     splitters: tuple[Callable[[str, int, int], list[tuple[int, int]]], ...] = (
         _list_items,
         _lines,
-        _sentences,
-        _words,
+        partial(_after_breaks, _SENTENCE_BREAK),
+        partial(_after_breaks, _SPACE),
     )
     for splitter in splitters:
         parts = splitter(text, start, end)
@@ -323,17 +347,23 @@ def _lines(text: str, start: int, end: int) -> list[tuple[int, int]]:
     return _pieces(text, start, _line_starts(text, start, end), end)
 
 
-def _sentences(text: str, start: int, end: int) -> list[tuple[int, int]]:
-    cuts = [match.end() for match in _SENTENCE_BREAK.finditer(text, start, end)]
+def _after_breaks(
+    pattern: re.Pattern[str], text: str, start: int, end: int
+) -> list[tuple[int, int]]:
+    """Cut ``[start, end)`` after every match of *pattern*."""
+    cuts = [match.end() for match in pattern.finditer(text, start, end)]
     return _pieces(text, start, cuts, end)
 
 
-def _words(text: str, start: int, end: int) -> list[tuple[int, int]]:
-    cuts = [match.end() for match in _SPACE.finditer(text, start, end)]
-    return _pieces(text, start, cuts, end)
+def _merge_small(
+    text: str, spans: list[tuple[int, int, str]]
+) -> list[tuple[int, int, str]]:
+    """Fold each short passage into the next one it sits beside.
 
-
-def _merge_small(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    Only whitespace may lie between the two: a merged passage is shown
+    verbatim, so anything the scan set aside between them - a thematic break,
+    a heading - would otherwise reappear inside it.
+    """
     merged: list[tuple[int, int, str]] = []
     for start, end, section in spans:
         if merged:
@@ -342,6 +372,7 @@ def _merge_small(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]
                 previous_section == section
                 and previous_end - previous_start < _MERGE_BELOW_CHARS
                 and end - previous_start <= PASSAGE_MAX_CHARS
+                and not text[previous_end:start].strip()
             ):
                 merged[-1] = (previous_start, end, section)
                 continue
