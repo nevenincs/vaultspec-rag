@@ -13,6 +13,7 @@ from ..cli._service_start import _start_success
 from ..cli._status_labels import typesafe_label
 from ..cli._status_render import _render_status_summary, _StatusSummaryRequest
 from ..config._types import EnvVar
+from ..operator_state._service import ServiceLifecycle
 from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 
@@ -26,8 +27,8 @@ def test_health_reports_daemon_enrollment(monkeypatch: pytest.MonkeyPatch) -> No
         lifespan=None,
     )
     data = cast("dict[str, object]", TestClient(app).get("/health").json())
-    snapshot = cast("dict[str, object]", data["typesafe"])
-    assert snapshot["enrolled"] is True
+    features = cast("dict[str, object]", data["features"])
+    snapshot = cast("dict[str, object]", features["typesafe"])
     assert snapshot["state"] == "pending"
     assert "status-only-secret" not in json.dumps(data)
 
@@ -38,8 +39,8 @@ def test_start_and_status_render_same_daemon_state(
 ) -> None:
     monkeypatch.setenv(EnvVar.TYPESAFE_API_KEY, "client-must-not-win")
     snapshot: dict[str, object] = {"state": state}
-    health: dict[str, object] = {"typesafe": snapshot}
-    expected = f"Typesafe: {typesafe_label(health)}"
+    health: dict[str, object] = {"features": {"typesafe": snapshot}}
+    expected = f"Typesafe: {typesafe_label(snapshot)}"
     _start_success(
         False,
         status="started",
@@ -49,7 +50,7 @@ def test_start_and_status_render_same_daemon_state(
     )
     assert expected in capsys.readouterr().out
     _render_status_summary(
-        _StatusSummaryRequest("running", 8766, True, health, None, 0)
+        _StatusSummaryRequest(ServiceLifecycle.RUNNING, 8766, True, health, None)
     )
     assert expected in capsys.readouterr().out
     _start_success(

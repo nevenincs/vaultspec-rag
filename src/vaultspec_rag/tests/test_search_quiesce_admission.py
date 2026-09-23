@@ -158,7 +158,6 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     assert registry.health() == {
         "model_loaded": False,
         "reranker_loaded": False,
-        "cuda": False,
         "project_count": 0,
         "projects": [],
         "nonconforming": [],
@@ -215,7 +214,6 @@ def test_admission_ticket_must_drain_before_registry_becomes_quiesced() -> None:
         assert registry.quiesce_snapshot().state is QuiesceState.PAUSING
         assert registry.quiesce_snapshot().active_compute_tickets == 1
         assert registry.snapshot() == []
-        assert registry.health()["cuda"] is False
     finally:
         assert ticket.release()
 
@@ -240,4 +238,3 @@ def test_quiesced_search_lease_rejects_before_project_or_compute_construction(
     assert registry.snapshot() == []
     assert registry.health()["model_loaded"] is False
     assert registry.health()["reranker_loaded"] is False
-    assert registry.health()["cuda"] is False

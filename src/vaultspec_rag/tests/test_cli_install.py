@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..operator_state import _environment_probe
+from ..operator_state._compute import ProbeDepth
+from ..operator_state._environment_probe import InterpreterFacts
+from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._models import ComputeReport
 from ._cli_helpers import (
     TorchConfigAction,
     app,
@@ -31,13 +36,38 @@ def _fake_mps_torch() -> ModuleType:
     return fake_torch
 
 
+def _probe_reporting(capability: ComputeCapability):
+    """A daemon-interpreter probe double reporting *capability*."""
+
+    def probe(
+        interpreter: str,
+        depth: ProbeDepth = ProbeDepth.METADATA,
+        *,
+        timeout: float | None = None,
+    ) -> InterpreterFacts:
+        del depth, timeout
+        return InterpreterFacts(
+            interpreter=interpreter,
+            role=InstallRole.HOST,
+            mcp_adapter=False,
+            executable=interpreter,
+            prefix="",
+            compute=ComputeReport(capability=capability),
+        )
+
+    return probe
+
+
 def test_install_warning_refuses_enabled_mps_cpu_fallback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from ..cli import _gpu_errors
 
-    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
-    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.MPS_POLICY_REFUSED),
+    )
 
     _gpu_errors.warn_if_active_torch_not_accelerator()
 
@@ -46,13 +76,38 @@ def test_install_warning_refuses_enabled_mps_cpu_fallback(
     assert "must be disabled" in rendered
 
 
+def test_a_client_install_is_never_warned_about_torch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A torch-free install is a choice, and must not read as a broken one.
+
+    Mutation check: warning on every capability that blocks a start, rather
+    than on defects only, prints the no-accelerator warning here; restoring
+    the defect gate passes.
+    """
+    from ..cli import _gpu_errors
+
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.NOT_APPLICABLE),
+    )
+
+    _gpu_errors.warn_if_active_torch_not_accelerator()
+
+    assert capsys.readouterr().out == ""
+
+
 def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
-    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     import typer
 
     from .._gpu import MPS_FALLBACK_MESSAGE
     from ..cli import _gpu_errors
+
+    monkeypatch.setitem(sys.modules, "torch", _fake_mps_torch())
+    monkeypatch.setenv("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
     with pytest.raises(typer.Exit):
         _gpu_errors._handle_gpu_error(RuntimeError(MPS_FALLBACK_MESSAGE))

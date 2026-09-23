@@ -3,10 +3,11 @@ tags:
   - '#research'
   - '#typesafe-classifier'
 date: '2026-09-21'
-modified: '2026-09-22'
+modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:c084f20a951cd1032b8b0c963912f8a97d59d5cf88e3eb2722b90be8e98fa2d3'
-related: []
+related:
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `typesafe-classifier` research: Jev search classification

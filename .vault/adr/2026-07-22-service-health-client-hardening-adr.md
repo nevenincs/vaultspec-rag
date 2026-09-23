@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#service-health-client-hardening'
 date: '2026-07-22'
-modified: '2026-07-22'
+modified: '2026-09-23'
 body_hash: 'sha256:b3590782302a968df6a650cf9de4c88b53fed06379036160cc84d75a7440d79d'
 related:
   - "[[2026-07-22-service-health-client-hardening-research]]"
   - "[[2026-07-22-codebase-dedup-centralization-audit]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `service-health-client-hardening` adr: `health call ownership, redirect policy, and error contract` | (**status:** `accepted`)

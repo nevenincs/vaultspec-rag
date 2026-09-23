@@ -64,12 +64,9 @@ __all__ = [
     "_is_our_service",
     "_may_carry_launch_witness",
     "_port_is_available",
-    "_probe_daemon_accelerator",
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
-    "accelerator_probe_is_torch_absent_by_design",
-    "accelerator_probe_is_torch_installation_defect",
 ]
 
 
@@ -447,127 +444,6 @@ def _may_carry_launch_witness(name: object) -> bool:
     if not isinstance(name, str):
         return True
     return Path(name).stem.lower().startswith(_LAUNCH_WITNESS_IMAGE_PREFIX)
-
-
-def _probe_daemon_accelerator(
-    interpreter: str, timeout: float = 60.0
-) -> tuple[bool, str] | None:
-    """Probe the resolved daemon interpreter for a supported accelerator.
-
-    The service runs in ``interpreter`` (it inherits the launcher's env and does
-    not provision its own python), and it is GPU-only, so a pre-flight here turns
-    a background model-load crash into a fast, legible refusal. Runs the probe in
-    a subprocess so the torch-free CLI never imports torch itself.
-
-    Returns ``None`` when the interpreter has a usable CUDA or MPS device (the service
-    can run). Otherwise returns ``(blocking, reason)``:
-
-    - ``blocking=True`` for definitive misconfigurations - torch absent, a
-      CPU-only environment, no visible accelerator, or the interpreter missing
-      - where spawning would only produce a doomed daemon;
-    - ``blocking=False`` for ambiguous outcomes (the probe timed out or failed
-      opaquely) where the caller should warn and proceed rather than block on an
-      inconclusive signal, leaving the spawn-and-detect path as the backstop.
-    """
-    probe = (
-        "import sys\n"
-        "try:\n"
-        "    import torch\n"
-        "except Exception:\n"
-        "    from importlib.metadata import distribution\n"
-        "    try:\n"
-        "        distribution('sentence-transformers')\n"
-        "    except Exception:\n"
-        "        sys.exit(6)\n"
-        "    sys.exit(3)\n"
-        "cuda_available = False\n"
-        "mps_available = False\n"
-        "cuda_build = None\n"
-        "try:\n"
-        "    from vaultspec_rag._gpu import resolve_accelerator\n"
-        "    cuda_available = bool(torch.cuda.is_available())\n"
-        "    mps_available = bool(torch.backends.mps.is_available())\n"
-        "    cuda_build = torch.version.cuda\n"
-        "    resolve_accelerator(torch)\n"
-        "except Exception:\n"
-        "    sys.exit(7 if mps_available else (5 if cuda_build else 4))\n"
-        "sys.exit(0)\n"
-    )
-    try:
-        proc = subprocess.run(
-            [interpreter, "-c", probe],
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError:
-        return (True, f"the service interpreter does not exist: {interpreter}")
-    except subprocess.TimeoutExpired:
-        return (
-            False,
-            f"probing torch in the service interpreter timed out ({timeout:.0f}s)",
-        )
-    except OSError as exc:
-        return (False, f"could not probe the service interpreter ({exc})")
-    return _accelerator_probe_exit_outcome(proc.returncode)
-
-
-def _accelerator_probe_exit_outcome(code: int) -> tuple[bool, str] | None:
-    """Map the isolated torch probe's documented exit contract."""
-    outcomes = {
-        0: None,
-        3: (True, "torch is not installed in the service interpreter"),
-        6: (
-            True,
-            "torch is not installed and the GPU extra was never requested "
-            "in this environment",
-        ),
-        4: (
-            True,
-            "the service interpreter has no supported accelerator "
-            "(CUDA and MPS are unavailable)",
-        ),
-        5: (
-            True,
-            "torch is a CUDA build but no supported accelerator is visible "
-            "(driver/GPU)",
-        ),
-        7: (
-            True,
-            "Apple MPS is visible but its accelerator policy was refused; "
-            "ensure PYTORCH_ENABLE_MPS_FALLBACK is unset or 0",
-        ),
-    }
-    return outcomes.get(
-        code,
-        (False, f"the torch pre-flight returned an unexpected exit code {code}"),
-    )
-
-
-def accelerator_probe_is_torch_absent_by_design(detail: str) -> bool:
-    """Whether torch is missing because this install never asked for it.
-
-    Such an environment cannot serve a search request and still refuses to
-    start, but it is not broken: an install must not fail over it, and a repair
-    has nothing to offer it. Reinstalling changes nothing here - choosing the
-    GPU extra does.
-    """
-    outcome = _accelerator_probe_exit_outcome(6)
-    return outcome is not None and detail == outcome[1]
-
-
-def accelerator_probe_is_torch_installation_defect(detail: str) -> bool:
-    """Whether one documented probe detail is fixed by reinstalling torch.
-
-    Exit 6 is deliberately absent from the set. Exit 3 remains a defect: the
-    GPU extra IS installed and torch is missing anyway, which is the shape a
-    half-completed replacement leaves behind.
-    """
-    return detail in {
-        outcome[1]
-        for code in (3, 4)
-        if (outcome := _accelerator_probe_exit_outcome(code)) is not None
-    }
 
 
 class _ServiceSpawnOptions(_ServiceChildEnvOptions, total=False):

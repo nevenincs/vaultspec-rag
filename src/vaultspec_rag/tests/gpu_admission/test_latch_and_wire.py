@@ -144,8 +144,8 @@ class TestTheAdmissionLatch:
         pass a torch-free or CPU-only reading through to the loader rather than
         answering it itself.
 
-        Mutation: added ``REASON_NO_CUDA`` to the refusing set. Observed this
-        assertion fail on ``ImportError``, the gate having pre-empted the
+        Mutation: added ``ComputeCapability.NO_DEVICE`` to the refusing set.
+        Observed this assertion fail on ``ImportError``, the gate having pre-empted the
         loader with its own ``RuntimeError``.
         """
         del floor
@@ -440,18 +440,18 @@ class TestTorchFreedom:
         Mutation: made ``cuda_device_memory`` report ``torch_present=True``
         unconditionally, collapsing the absent-torch host into the CPU-only one.
         Observed the child exit non-zero with its assertion naming
-        ``reason == REASON_TORCH_ABSENT`` over a ``no_cuda`` verdict.
+        ``reason == ComputeCapability.TORCH_MISSING`` over a ``no_device`` verdict.
         """
         probe = (
             "import sys\n"
             "sys.modules['torch'] = None\n"
-            "from vaultspec_rag._gpu_admission import (\n"
-            "    REASON_TORCH_ABSENT,\n"
-            "    evaluate_device_admission,\n"
+            "from vaultspec_rag._gpu_admission import evaluate_device_admission\n"
+            "from vaultspec_rag.operator_state._installation import (\n"
+            "    ComputeCapability,\n"
             ")\n"
             "admission = evaluate_device_admission()\n"
             "assert admission.admitted is False, admission\n"
-            "assert admission.reason == REASON_TORCH_ABSENT, admission\n"
+            "assert admission.reason == ComputeCapability.TORCH_MISSING, admission\n"
             "assert admission.free_mib is None, admission\n"
             "assert admission.floor_mib > 0, admission\n"
         )
@@ -483,7 +483,7 @@ class TestTorchFreedom:
             "sys.modules['vaultspec_rag.memory_probe'] = None\n"
             "admission = gate.evaluate_device_admission()\n"
             "assert admission.admitted is False, admission\n"
-            "assert admission.reason == gate.REASON_NO_CUDA, admission\n"
+            "assert admission.reason == gate.ComputeCapability.NO_DEVICE, admission\n"
         )
         proc = subprocess.run(
             [sys.executable, "-c", probe],

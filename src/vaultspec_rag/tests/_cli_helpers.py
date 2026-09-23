@@ -242,7 +242,6 @@ def _assert_verbose_status_summary(output: str, port: int) -> None:
         "Network": "accepting connections",
         "Server": "running",
         "Requests": "ready for requests",
-        "Compute": "GPU available",
         "Search models": "ready",
         "Reranking": "ready",
     }
@@ -504,12 +503,28 @@ def _status_contract_jobs_payload(
     }
 
 
+def _features_payload() -> dict[str, object]:
+    """A service's feature section as a live daemon reports it."""
+    from ..operator_state._features import TypesafeState
+    from ..operator_state._models import ServiceFeatures, TypesafeReport
+
+    return ServiceFeatures(
+        typesafe=TypesafeReport(state=TypesafeState.OFF, model="systemone"),
+        reranker_enabled=True,
+        reranker_loaded=True,
+        sparse_enabled=False,
+        watcher_enabled=True,
+        preprocess_mode="default",
+        storage_backend="server",
+        embedding_model="embedder",
+    ).model_dump(mode="json")
+
+
 def _status_contract_health_payload() -> dict[str, object]:
     return {
         "status": "ready",
-        "cuda": True,
         "models_loaded": True,
-        "reranker_loaded": True,
+        "features": _features_payload(),
         "project_count": 3,
         "uptime_s": 312.0,
         "backend_capabilities": {
@@ -999,6 +1014,7 @@ __all__ = [
     "_empty_logs_contract_server",
     "_empty_search_contract_server",
     "_expected_code_search_request",
+    "_features_payload",
     "_find_free_port",
     "_help_option_descriptions",
     "_hold_local_index_lock",

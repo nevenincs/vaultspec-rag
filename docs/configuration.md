@@ -94,9 +94,10 @@ snapshot; neither command tests the key or spends API credits:
 
 An unreachable or older daemon is `not reported`, not assumed to be enrolled based
 on the client's key. In JSON, start returns `data.typesafe`; status returns
-`data.health.typesafe` when health is available. The snapshot contains `enrolled`,
-`state`, `model`, `last_success_age_seconds` and `retry_after_seconds`, never the key
-or its fingerprint. A pending/rejected classifier does not make the local search
+`data.health.features.typesafe` when health is available. The snapshot contains
+`state`, `model`, `last_success_age_seconds` and `retry_after_seconds`, never the
+key or its fingerprint. A key that changed since the last search reads `pending`
+until a search evaluates it. A pending/rejected classifier does not make the local search
 service unhealthy.
 
 For GitHub Actions, store the key as the repository Actions secret

@@ -83,11 +83,12 @@ class TestCLIStatus:
     @pytest.mark.integration
     @pytest.mark.timeout(60)
     def test_status_shows_gpu_info(self, cli_vault: Path) -> None:
-        """``vaultspec-rag status`` should display CUDA GPU information."""
+        """``vaultspec-rag status`` names the compute this machine offers."""
         root = str(cli_vault)
         result = _run_cli("--target", root, "status", cwd=root)
         assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "cuda" in result.stdout.lower() or "GPU" in result.stdout
+        assert "Compute: " in result.stdout
+        assert "Unavailable" not in result.stdout
 
     @pytest.mark.integration
     @pytest.mark.timeout(60)

@@ -160,7 +160,9 @@ try:
     from vaultspec_rag.mcp._tools import get_index_status
     from vaultspec_rag.service_quiesce import QUIESCE_ENVELOPE_FIELDS
 
-    result = asyncio.run(get_index_status(project_root=str(workspace)))
+    result = asyncio.run(
+        get_index_status(project_root=str(workspace))
+    ).model_dump(mode="json")
     quiesce = result["quiesce"]
     assert isinstance(quiesce, dict), quiesce
     assert set(quiesce) == set(QUIESCE_ENVELOPE_FIELDS), quiesce

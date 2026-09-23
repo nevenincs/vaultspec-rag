@@ -195,6 +195,14 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "taken) - neither reachable through a real device on a CPU-only "
         "runner",
     ),
+    "test_cli_install.py": (
+        2,
+        "the post-install warning classifies the running interpreter in a child "
+        "process, and a client or an MPS-refused environment cannot be made on "
+        "the test host without replacing its installed torch; only the child "
+        "probe's verdict is substituted, and the real warning renderer, its "
+        "defect gate and its topology remediation run unchanged",
+    ),
     "test_server.py": (
         3,
         "asserts the stdio runner wires watcher cleanup and loads no model - "

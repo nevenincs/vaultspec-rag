@@ -30,6 +30,7 @@ from .._readiness import (
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ..operator_state._compute import classify_torch
 from ..store_schema import STORAGE_SCHEMA_VERSION as _STORAGE_SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -174,9 +175,7 @@ class TestTorchDimension:
         report = compute_readiness()
         torch_dep = report.dimension("torch")
         assert torch_dep is not None
-        assert torch_dep.info["installed"] is True
-        assert torch_dep.info["cuda_available"] is cuda_available
-        assert torch_dep.info["mps_available"] is mps_available
+        assert torch_dep.info["torch_version"] == torch.__version__
         assert torch_dep.info["backend"] == (
             "cuda" if cuda_available else "mps" if mps_available else None
         )
@@ -199,14 +198,30 @@ class TestTorchDimension:
         monkeypatch.setitem(sys.modules, "torch", fake_torch)
         monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
 
-        torch_dep = _torch_readiness()
+        torch_dep = _torch_readiness(classify_torch(fake_torch))
 
         assert torch_dep.status is ReadinessStatus.READY
+        assert torch_dep.info["capability"] == "ready"
         assert torch_dep.info["backend"] == "mps"
-        assert torch_dep.info["memory_kind"] == "unified"
-        assert torch_dep.info["cuda_available"] is False
-        assert torch_dep.info["mps_available"] is True
+        assert torch_dep.info["memory_mib"] is None
         assert "MPS available" in torch_dep.detail
+
+    def test_a_client_without_torch_is_ready_not_broken(self) -> None:
+        """A torch-free client never asked for an accelerator.
+
+        Mutation check: mapping every non-ready capability to not-ready reports
+        this client as broken and fails the status assertion; restoring the
+        client branch passes.
+        """
+        from ..operator_state._installation import ComputeCapability
+        from ..operator_state._models import ComputeReport
+
+        torch_dep = _torch_readiness(
+            ComputeReport(capability=ComputeCapability.NOT_APPLICABLE)
+        )
+
+        assert torch_dep.status is ReadinessStatus.READY
+        assert "client" in torch_dep.detail
 
     def test_torch_dimension_does_not_force_a_model_load(self) -> None:
         # Computing readiness must not allocate the embedding/reranker

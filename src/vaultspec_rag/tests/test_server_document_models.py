@@ -6,7 +6,7 @@ import pytest
 
 from .._store_models import DocumentLocator, DocumentMetadata
 from ..search._models import DocumentSearchResult
-from ..server._models import IndexStatus, SearchResultItem
+from ..server._models import SearchResultItem
 
 pytestmark = pytest.mark.unit
 
@@ -32,14 +32,3 @@ def test_document_search_result_serializes_without_losing_native_fields() -> Non
     assert payload["document_metadata"] == {"owner": "docs"}
     assert payload["unit_metadata"] == {"language": "en"}
     assert "rerank_text" not in payload
-
-
-def test_status_keeps_document_count_independent() -> None:
-    status = IndexStatus(
-        vault_count=1,
-        code_count=2,
-        document_count=3,
-        storage_path="data",
-        target_dir="project",
-    )
-    assert (status.vault_count, status.code_count, status.document_count) == (1, 2, 3)

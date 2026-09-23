@@ -76,7 +76,6 @@ from ._process import (
     _call_interruptibly,
     _is_our_service,
     _port_is_available,
-    _probe_daemon_accelerator,
     _resolve_daemon_interpreter,
     _spawn_service,
 )
@@ -97,7 +96,11 @@ from ._service_status import (
     _update_service_token,
     _write_service_status,
 )
-from ._status_labels import degradation_findings, render_degradation
+from ._status_labels import (
+    degradation_findings,
+    health_typesafe,
+    render_degradation,
+)
 
 __all__ = [
     "_caller_ephemeral_warning",
@@ -465,7 +468,7 @@ def _existing_service_running() -> _AttachCandidate | None:
                 port=existing_port,
                 health_status=health_status,
                 version=classify_service_version(health),
-                typesafe=health.get("typesafe"),
+                typesafe=health_typesafe(health),
             )
     # Identity or health did not confirm a live service we own. Remove the
     # status file only when the recorded PID is confirmed dead; leave it in
@@ -496,7 +499,7 @@ def _start_success(
         command=_START_COMMAND,
         status=status,
         human_title=human_title,
-        human_lines=(*human_lines, f"Typesafe: {typesafe_label(data)}"),
+        human_lines=(*human_lines, f"Typesafe: {typesafe_label(data['typesafe'])}"),
         **data,
     )
 
@@ -534,16 +537,26 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     The daemon inherits this interpreter and is GPU-only, so a missing /
     CPU-only / no-accelerator torch should fail legibly here rather than as a background
     model-load crash. The service does not provision its own python environment.
-    An inconclusive probe (CPU-only host, torch absent in a way we cannot
-    classify) is logged and allowed to proceed.
+    A check that could not finish is logged and allowed to proceed, leaving the
+    spawn-and-detect path as the backstop.
     """
-    accelerator_probe = _probe_daemon_accelerator(interpreter)
-    if accelerator_probe is None:
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._installation import ComputeCapability
+
+    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    capability = compute.capability
+    if capability is ComputeCapability.READY:
         return
-    blocking, reason = accelerator_probe
-    if blocking:
+    reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
+    if capability.blocks_start:
         kind = classify_interpreter_env(interpreter)
-        if sys.platform == "darwin":
+        if capability is ComputeCapability.NOT_APPLICABLE:
+            remediation = capability.remediation
+            if remediation is None:
+                raise AssertionError(f"{capability} blocks a start without a remedy")
+            next_actions: tuple[str, ...] = (remediation,)
+        elif sys.platform == "darwin":
             next_actions = (
                 "Install/repair the macOS torch build in the service environment",
                 'Confirm MPS is visible: python -c "import torch; '
@@ -598,24 +611,14 @@ def _print_preprocess_start_notice(root: Path, effective_mode: str) -> None:
     stays off the module import path (the CLI service-control surface stays
     torch-free).
     """
-    from ..indexer._preprocess_config import (
-        PREPROCESS_CONFIG_FILENAME,
-        PreprocessConfigError,
-        load_preprocess_rules,
-    )
+    from ..indexer._preprocess_config import root_hook_state
+    from ..operator_state._features import PreprocessHookState
 
-    if not (root / PREPROCESS_CONFIG_FILENAME).is_file():
+    state, count = root_hook_state(root, effective_mode)
+    if state not in {PreprocessHookState.ACTIVE, PreprocessHookState.DISABLED}:
         return
-    try:
-        config = load_preprocess_rules(root, strict=True)
-    except PreprocessConfigError:
-        return
-    rules = config.rules
-    if not rules:
-        return
-    count = len(rules)
     word = "rule" if count == 1 else "rules"
-    if effective_mode == "off":
+    if state is PreprocessHookState.DISABLED:
         _print_lifecycle_lines(
             f"Preprocess: {count} {word} at {root} will be skipped (mode is off)."
         )
@@ -1125,7 +1128,7 @@ def _emit_start_succeeded(
     extra: dict[str, object] = (
         {"warnings": list(request.env_warnings)} if request.env_warnings else {}
     )
-    extra["typesafe"] = health.get("typesafe")
+    extra["typesafe"] = health_typesafe(health)
     raw_status = health.get("status")
     health_status = raw_status if isinstance(raw_status, str) and raw_status else ""
     reason_lines: tuple[str, ...] = ()

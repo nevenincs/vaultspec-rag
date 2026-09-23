@@ -26,9 +26,6 @@ from ..config._types import EnvVar
 from ..mcp._mcp import mcp
 from ..mcp._resources import analyze_feature
 from ..server import (
-    HealthResponse,
-    IndexResponse,
-    IndexStatus,
     SearchResponse,
     SearchResultItem,
     ServerRouteRuntime,
@@ -547,40 +544,6 @@ class TestPydanticModels:
             "local_storage_process_model": "exclusive",
         }
 
-    def test_index_status(self):
-        status = IndexStatus(
-            vault_count=100,
-            code_count=500,
-            storage_path="/tmp/qdrant",
-            target_dir="/tmp/workspace",
-        )
-        assert status.vault_count == 100
-        assert status.code_count == 500
-        assert status.target_dir == "/tmp/workspace"
-        assert status.backend_capabilities.concurrent_search_supported is True
-
-    def test_index_response(self):
-        resp = IndexResponse(
-            total=50,
-            added=10,
-            updated=5,
-            removed=2,
-            duration_ms=1500,
-        )
-        assert resp.total == 50
-        assert resp.files == 0  # default
-
-    def test_index_response_with_files(self):
-        resp = IndexResponse(
-            total=200,
-            added=200,
-            updated=0,
-            removed=0,
-            duration_ms=3000,
-            files=42,
-        )
-        assert resp.files == 42
-
     def test_search_result_item_from_attributes(self):
         """Verify model_config from_attributes works with dict input."""
         data = {
@@ -593,46 +556,6 @@ class TestPydanticModels:
         }
         item = SearchResultItem.model_validate(data)
         assert item.id == "test"
-
-    def test_health_response(self):
-        resp = HealthResponse(
-            status="ready",
-            cuda=True,
-            models_loaded=True,
-            project_count=1,
-            uptime_s=42.5,
-        )
-        assert resp.status == "ready"
-        assert resp.cuda is True
-        assert resp.models_loaded is True
-        assert resp.project_count == 1
-        assert resp.uptime_s == 42.5
-        assert resp.backend_capabilities.concurrent_search_supported is True
-
-    def test_health_response_defaults(self):
-        resp = HealthResponse(
-            status="loading",
-            cuda=False,
-            models_loaded=False,
-        )
-        assert resp.project_count == 0
-        # service_token is opt-in (default empty so pre-upgrade
-        # serialisation stays identical).
-        assert resp.service_token == ""
-
-    def test_health_response_includes_service_token(self):
-        """/health round-trips the identity token."""
-        resp = HealthResponse(
-            status="ready",
-            cuda=True,
-            models_loaded=True,
-            service_token="abc123",
-        )
-        assert resp.service_token == "abc123"
-        # The token must serialise - consumers parse the JSON payload.
-        assert resp.model_dump()["service_token"] == "abc123"
-        assert resp.uptime_s == 0.0
-        assert resp.backend_capabilities.same_project_search_strategy == "serialized"
 
 
 class TestPathTraversalValidation:
@@ -935,7 +858,8 @@ class TestHealthHandler:
         assert resp.status_code == 200
         data: dict[str, object] = cast("dict[str, object]", resp.json())
         assert "status" in data
-        assert "cuda" in data
+        assert "degradations" in data
+        assert "cuda" not in data
         assert "models_loaded" in data
         assert "project_count" in data
         assert "uptime_s" in data
@@ -1032,19 +956,6 @@ class TestHealthInfoReduction:
         raw = client.get("/health").json()
         data: dict[str, object] = cast("dict[str, object]", raw)
         assert "gpu_name" not in data
-
-    def test_index_status_no_gpu_name(self):
-        """IndexStatus model must not have gpu_name field."""
-        status = IndexStatus(
-            vault_count=10,
-            code_count=50,
-            storage_path="/tmp/db",
-            target_dir="/tmp/ws",
-        )
-        assert (
-            not hasattr(status, "gpu_name")
-            or "gpu_name" not in IndexStatus.model_fields
-        )
 
 
 class TestMultiProjectWatcher:
