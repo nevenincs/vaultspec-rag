@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:3ad29f7aa22f0581c60b3c72e3a39a9b43eeff0f17e4c05a06e94eb33ba32147'
+body_hash: 'sha256:474eb786212c5b4843c5d04b75f5b90882af54420f0bb7777dbf97657283c5c6'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -93,6 +93,7 @@ related:
 - `S07` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
 - `S07` `M` `src/vaultspec_rag/tests/integration/test_vault_search_adapter_parity.py`
 - `S07` `verify:` `snippet check removed renders an edited file's current line, restored renders the snippet` -> `pass`
+- `S04` `verify:` `list-item and quote exclusion removed fails both cases, restored passes` -> `pass`
 
 ## Notes
 
@@ -106,3 +107,5 @@ related:
 - `S05` review correction: the indexed-metadata builder's dict shape matches an unrelated serializer and is registered as serialisation, not shared behaviour; the checkpoint test's schema-constant substitution is declared with its reason
 - `S06` review correction: passage scoring that runs out of accelerator memory now leaves each result its first passage instead of failing a ranked page
 - `S07` review correction: the human view shows a file's lines only while they still hold the snippet; docs keep code hits' line fields; parity test asserts passages never reach the wire
+- `S04` plan-close review correction: an underline under a list item or block quote is a thematic break, not a setext heading
+

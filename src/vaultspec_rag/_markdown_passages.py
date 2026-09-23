@@ -243,9 +243,18 @@ def _heading_at(
         title = _CLOSING_HASHES.sub("", atx.group(2) or "").strip()
         return len(atx.group(1)), title, index
     underline = _SETEXT_UNDERLINE.match(lines[index])
-    if underline is not None and block_first is not None and block_first == index - 1:
+    text = lines[index - 1] if index else ""
+    # An underline cannot turn a list item or a quoted line into a heading;
+    # under those it is a thematic break, and the line stays passage text.
+    if (
+        underline is not None
+        and block_first is not None
+        and block_first == index - 1
+        and _LIST_ITEM.match(text) is None
+        and not text.lstrip().startswith(">")
+    ):
         level = 1 if underline.group(1).startswith("=") else 2
-        return level, lines[index - 1].strip(), index - 1
+        return level, text.strip(), index - 1
     return None
 
 

@@ -191,3 +191,19 @@ class TestSetextAndBreaks:
         line = body.split("\n")[piece.line_start - 4]
         assert chunk[piece.start : piece.end] in line
         assert piece.line_start == piece.line_end
+
+    @pytest.mark.parametrize(
+        "line",
+        ["- the only bullet in this list", "> a quoted line of prose"],
+        ids=["list-item", "block-quote"],
+    )
+    def test_an_underline_under_a_list_item_or_quote_is_a_break(
+        self, line: str
+    ) -> None:
+        body = f"## Notes\n\n{line}\n---\n\nAfter the break.\n"
+        structure = parse_markdown(body)
+        texts = [_text(body, p) for p in structure.passages]
+        # Read as a setext heading, the line vanishes from the passages and
+        # replaces the real section path; these assertions reject both.
+        assert line in texts
+        assert all(p.section == "Notes" for p in structure.passages)
