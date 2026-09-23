@@ -76,7 +76,6 @@ from ._process import (
     _call_interruptibly,
     _is_our_service,
     _port_is_available,
-    _probe_daemon_accelerator,
     _resolve_daemon_interpreter,
     _spawn_service,
 )
@@ -534,16 +533,22 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
     The daemon inherits this interpreter and is GPU-only, so a missing /
     CPU-only / no-accelerator torch should fail legibly here rather than as a background
     model-load crash. The service does not provision its own python environment.
-    An inconclusive probe (CPU-only host, torch absent in a way we cannot
-    classify) is logged and allowed to proceed.
+    A check that could not finish is logged and allowed to proceed, leaving the
+    spawn-and-detect path as the backstop.
     """
-    accelerator_probe = _probe_daemon_accelerator(interpreter)
-    if accelerator_probe is None:
+    from ..operator_state._environment_probe import ProbeDepth, probe_interpreter
+    from ..operator_state._installation import ComputeCapability
+
+    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    capability = compute.capability
+    if capability is ComputeCapability.READY:
         return
-    blocking, reason = accelerator_probe
-    if blocking:
+    reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
+    if capability.blocks_start:
         kind = classify_interpreter_env(interpreter)
-        if sys.platform == "darwin":
+        if capability is ComputeCapability.NOT_APPLICABLE:
+            next_actions: tuple[str, ...] = (str(capability.remediation),)
+        elif sys.platform == "darwin":
             next_actions = (
                 "Install/repair the macOS torch build in the service environment",
                 'Confirm MPS is visible: python -c "import torch; '

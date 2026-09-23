@@ -368,11 +368,8 @@ def repair_tool_torch(
     consequence.
     """
     from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
-    from ..cli._process import (
-        _probe_daemon_accelerator,
-        accelerator_probe_is_torch_absent_by_design,
-        accelerator_probe_is_torch_installation_defect,
-    )
+    from ..operator_state._environment_probe import ProbeDepth, probe_interpreter
+    from ..operator_state._installation import ComputeCapability
 
     interpreter = interpreter or sys.executable
     if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UV_TOOL:
@@ -380,20 +377,20 @@ def repair_tool_torch(
             ToolTorchRepairAction.NOT_APPLICABLE,
             "active interpreter is not a persistent uv tool environment",
         )
-    probe = _probe_daemon_accelerator(interpreter)
-    if probe is None:
+    capability = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute.capability
+    if capability is ComputeCapability.READY:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.ALREADY_READY,
             "tool interpreter already has CUDA-ready torch",
         )
-    blocking, detail = probe
-    if accelerator_probe_is_torch_absent_by_design(detail):
+    if capability is ComputeCapability.NOT_APPLICABLE:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.NOT_APPLICABLE,
             "torch was never requested in this environment; install the GPU "
             "extra to run searches locally",
         )
-    if not blocking or not accelerator_probe_is_torch_installation_defect(detail):
+    detail = capability.label
+    if not capability.fixed_by_torch_reinstall:
         return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
 
     return _repair_defective_tool(interpreter, detail, dry_run=dry_run)

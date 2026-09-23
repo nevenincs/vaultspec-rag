@@ -13,7 +13,7 @@ related:
   - '[[2026-06-24-service-doctor-liveness-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:924038dbb1d51787ca559521e584cc0ff754bb9890cc3e35213230cd2eaa030a'
+body_hash: 'sha256:bd55cda751531d6aeedba5e9a2b22c6ce315109108223c1fb593368f5da21d62'
 ---
 
 # `status-messages` plan
@@ -78,7 +78,7 @@ Create the torch-free operator state package that owns every new enum, its label
 
 Derive role, compute capability and hardware once, through the isolated daemon-interpreter probe, and repoint every consumer at those verdicts.
 
-- [ ] `P02.S09` - replace the probe exit-code prose contract with a typed ComputeCapability and InstallRole result, add the metadata-only probe mode, and repoint the tool-env repair consumer; `src/vaultspec_rag/cli/_process.py, src/vaultspec_rag/commands/_tool_torch.py`.
+- [x] `P02.S09` - replace the probe exit-code prose contract with a typed ComputeCapability and InstallRole result, add the metadata-only probe mode, and repoint the tool-env repair consumer; `src/vaultspec_rag/cli/_process.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [ ] `P02.S04` - add the bounded cached torch-free hardware probe using nvidia-smi and the Apple Silicon platform check; `src/vaultspec_rag/operator_state/`.
 - [ ] `P02.S10` - retire TorchDiagnosis and the admission torch reasons in favour of ComputeCapability across torch_config, readiness, gpu errors and admission; `src/vaultspec_rag/torch_config/, src/vaultspec_rag/_readiness.py, src/vaultspec_rag/cli/_gpu_errors.py, src/vaultspec_rag/_gpu_admission.py`.
 - [ ] `P02.S15` - make server start preflight, the post-install warning and the doctor torch axis consume the probe verdict so doctor no longer imports torch in the CLI; `src/vaultspec_rag/cli/_service_start.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_service_doctor.py`.

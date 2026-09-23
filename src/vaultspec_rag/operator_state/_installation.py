@@ -147,6 +147,19 @@ class ComputeCapability(StrEnum):
         }
 
     @property
+    def fixed_by_torch_reinstall(self) -> bool:
+        """Whether replacing torch in the environment is the whole repair.
+
+        A missing device or a refused MPS policy survives any reinstall, and a
+        client needs the ``gpu`` extra rather than a torch wheel.
+        """
+        return self in {
+            ComputeCapability.TORCH_MISSING,
+            ComputeCapability.TORCH_IMPORT_FAILED,
+            ComputeCapability.CPU_ONLY_BUILD,
+        }
+
+    @property
     def is_defect(self) -> bool:
         """Whether this is a broken inference host rather than a choice.
 

@@ -10,6 +10,10 @@ from pytest import MonkeyPatch
 
 from ..cli._gpu_errors import RuntimeEnvKind
 from ..commands import _tool_torch
+from ..operator_state import _environment_probe
+from ..operator_state._environment_probe import InterpreterFacts, ProbeDepth
+from ..operator_state._installation import ComputeCapability, InstallRole
+from ..operator_state._models import ComputeReport
 
 pytestmark = [pytest.mark.unit]
 
@@ -21,38 +25,48 @@ def _persistent_tool_env(_interpreter: str) -> RuntimeEnvKind:
     return RuntimeEnvKind.UV_TOOL
 
 
-def _no_visible_cuda_device(
-    _interpreter: str, timeout: float = 60.0
-) -> tuple[bool, str]:
-    del timeout
-    return True, "torch is a CUDA build but no CUDA device is visible (driver/GPU)"
+def _probe_answering(capability: ComputeCapability):
+    """A probe double that reports *capability* for any interpreter."""
 
+    def probe(
+        interpreter: str,
+        depth: ProbeDepth = ProbeDepth.METADATA,
+        *,
+        timeout: float | None = None,
+    ) -> InterpreterFacts:
+        del depth, timeout
+        return InterpreterFacts(
+            interpreter=interpreter,
+            role=(
+                InstallRole.CLIENT
+                if capability is ComputeCapability.NOT_APPLICABLE
+                else InstallRole.HOST
+            ),
+            mcp_adapter=True,
+            executable=interpreter,
+            prefix="",
+            compute=ComputeReport(capability=capability),
+        )
 
-def _cuda_ready_probe(_interpreter: str, timeout: float = 60.0) -> None:
-    del timeout
-    return None
+    return probe
 
 
 @pytest.mark.parametrize(
-    ("exit_code", "is_installation_defect"),
-    [(3, True), (4, True), (5, False), (7, False)],
+    ("capability", "is_installation_defect"),
+    [
+        (ComputeCapability.TORCH_MISSING, True),
+        (ComputeCapability.TORCH_IMPORT_FAILED, True),
+        (ComputeCapability.CPU_ONLY_BUILD, True),
+        (ComputeCapability.NO_DEVICE, False),
+        (ComputeCapability.MPS_POLICY_REFUSED, False),
+        (ComputeCapability.NOT_APPLICABLE, False),
+    ],
 )
-def test_accelerator_probe_defect_classification_matches_its_exit_contract(
-    exit_code: int, *, is_installation_defect: bool
+def test_only_a_broken_torch_merits_a_reinstall(
+    capability: ComputeCapability, *, is_installation_defect: bool
 ) -> None:
-    """Only missing torch and no supported accelerator merit a reinstall."""
-    from ..cli._process import (
-        _accelerator_probe_exit_outcome,
-        accelerator_probe_is_torch_installation_defect,
-    )
-
-    outcome = _accelerator_probe_exit_outcome(exit_code)
-
-    assert outcome is not None
-    assert (
-        accelerator_probe_is_torch_installation_defect(outcome[1])
-        is is_installation_defect
-    )
+    """Only missing, unloadable or CPU-only torch is fixed by a new wheel."""
+    assert capability.fixed_by_torch_reinstall is is_installation_defect
 
 
 def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
@@ -140,7 +154,7 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """A driver/device problem is diagnostic, not a reason to rewrite the tool."""
-    from ..cli import _gpu_errors, _process
+    from ..cli import _gpu_errors
 
     monkeypatch.setattr(
         _gpu_errors,
@@ -148,9 +162,9 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
         _persistent_tool_env,
     )
     monkeypatch.setattr(
-        _process,
-        "_probe_daemon_accelerator",
-        _no_visible_cuda_device,
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.NO_DEVICE),
     )
 
     def _unexpected_repair(
@@ -301,10 +315,14 @@ def test_the_install_report_itself_carries_the_repair_section(
 
 def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
     """A CUDA-ready environment ends the transaction without a report."""
-    from ..cli import _gpu_errors, _process
+    from ..cli import _gpu_errors
 
     monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
-    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _cuda_ready_probe)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.READY),
+    )
 
     outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
 
@@ -426,13 +444,6 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
     assert outcome.blocks_install
 
 
-def _torch_absent_by_design(_interpreter: str, timeout: float = 60.0):
-    del timeout
-    from ..cli._process import _accelerator_probe_exit_outcome
-
-    return _accelerator_probe_exit_outcome(6)
-
-
 def test_an_install_without_the_gpu_extra_is_not_a_defect(
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -444,10 +455,14 @@ def test_an_install_without_the_gpu_extra_is_not_a_defect(
     impossible to complete without a terminal - a defect introduced by reading
     a choice as a fault.
     """
-    from ..cli import _gpu_errors, _process
+    from ..cli import _gpu_errors
 
     monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
-    monkeypatch.setattr(_process, "_probe_daemon_accelerator", _torch_absent_by_design)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.NOT_APPLICABLE),
+    )
 
     outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
 
@@ -459,21 +474,14 @@ def test_an_install_without_the_gpu_extra_is_not_a_defect(
 def test_torch_missing_from_a_gpu_install_is_still_a_defect() -> None:
     """The half-destroyed environment keeps its defect classification.
 
-    Exit 3 means the GPU stack is installed and torch is gone anyway, which is
-    what an interrupted replacement leaves behind - the field failure. It must
-    not be softened by the by-design branch beside it.
+    Torch missing beside the GPU stack means an install that asked for torch
+    lost it, which is what an interrupted replacement leaves behind - the field
+    failure. It must not be softened by the by-design branch beside it.
     """
-    from ..cli._process import (
-        _accelerator_probe_exit_outcome,
-        accelerator_probe_is_torch_absent_by_design,
-        accelerator_probe_is_torch_installation_defect,
-    )
+    missing = ComputeCapability.TORCH_MISSING
 
-    outcome = _accelerator_probe_exit_outcome(3)
-
-    assert outcome is not None
-    assert accelerator_probe_is_torch_installation_defect(outcome[1])
-    assert not accelerator_probe_is_torch_absent_by_design(outcome[1])
+    assert missing.fixed_by_torch_reinstall
+    assert missing.is_defect
 
 
 def test_the_tool_root_is_the_environment_not_the_link_target(tmp_path: Path) -> None:
