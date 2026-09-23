@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._operator_commands import _shell_argument
 from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
@@ -237,7 +238,8 @@ class TestDegradedStatusExplainsItself:
         # refused job belongs to rather than whichever the operator stands in.
         next_action = lines[lines.index("Next action:") + 1]
         assert next_action == (
-            f'vaultspec-rag --target "{project}" index --rebuild --type vault'
+            f"vaultspec-rag --target {_shell_argument(str(project))} "
+            "index --rebuild --type vault"
         )
         assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" not in lines
 

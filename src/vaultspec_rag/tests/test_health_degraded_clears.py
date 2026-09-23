@@ -149,6 +149,33 @@ class TestDegradedVerdictTracksCurrentState:
             f"another project's success must not answer this failure, got {reasons}"
         )
 
+    def test_a_later_success_in_the_same_project_clears_it(
+        self,
+        isolated_status_dir: Path,
+        tmp_path: Path,
+    ) -> None:
+        """The same project, spelled another way, is still the same project.
+
+        Mutation: comparing the recorded roots as raw strings. The success
+        then reads as another project's and the verdict stays degraded.
+        """
+        del isolated_status_dir
+        project = tmp_path / "project"
+        reset()
+        try:
+            failed = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
+            succeeded = record_start(
+                JobSource.CODE, "watcher", project_root=project / "nested" / ".."
+            )
+            record_finish(succeeded, result="+1 /0 -0 (100ms)")
+            reasons = _degrade_reasons()
+        finally:
+            reset()
+        assert not _job_failed(reasons), (
+            f"a success in the same project answered the failure, got {reasons}"
+        )
+
     def test_a_failure_after_a_success_degrades_again(
         self,
         isolated_status_dir: Path,
@@ -167,6 +194,7 @@ class TestDegradedVerdictTracksCurrentState:
     def test_the_failure_stays_visible_in_the_rollup_after_clearing(
         self,
         isolated_status_dir: Path,
+        tmp_path: Path,
     ) -> None:
         """Clearing the verdict must not hide the history behind it.
 
@@ -174,10 +202,13 @@ class TestDegradedVerdictTracksCurrentState:
         whether the service calls itself degraded over it.
         """
         del isolated_status_dir
+        project = tmp_path / "project"
         reset()
         try:
-            _failed(JobSource.CODE)
-            _succeeded(JobSource.CODE)
+            failed = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
+            succeeded = record_start(JobSource.CODE, "watcher", project_root=project)
+            record_finish(succeeded, result="+1 /0 -0 (100ms)")
             jobs_health, reasons = _jobs_health()
         finally:
             reset()
@@ -188,4 +219,4 @@ class TestDegradedVerdictTracksCurrentState:
         )
         # Source and project together name the rebuild when it is a refusal.
         assert last_failed["source"] == JobSource.CODE
-        assert "project_root" in last_failed
+        assert last_failed["project_root"] == str(project)

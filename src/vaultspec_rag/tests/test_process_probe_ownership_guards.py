@@ -620,28 +620,45 @@ class TestOperatorCommandsHaveOneSpelling:
             "never offered to the operator"
         )
 
-    def test_a_target_precedes_the_verb_and_survives_spaces(self) -> None:
+    def test_a_target_precedes_the_verb(self) -> None:
         """``--target`` is a global option, so it must come before ``index``.
 
-        Placed after the verb it is rejected as an unknown index option, and an
-        unquoted path with a space splits into two arguments.
+        Placed after the verb it is rejected as an unknown index option.
         """
         from .._source_types import PublicSourceType
 
-        plain = index_command(
+        rendered = index_command(
             PublicSourceType.VAULT,
             IndexCommandOptions(rebuild=True, target="/work/project"),
         )
-        spaced = index_command(
-            PublicSourceType.VAULT,
-            IndexCommandOptions(rebuild=True, target="/work/my project"),
-        )
-        assert plain == (
+        assert rendered == (
             "vaultspec-rag --target /work/project index --rebuild --type vault"
         )
-        assert spaced == (
-            'vaultspec-rag --target "/work/my project" index --rebuild --type vault'
-        )
+
+    @pytest.mark.parametrize(
+        ("path", "windows", "expected"),
+        [
+            ("C:/code/proj", True, "C:/code/proj"),
+            ("C:/my proj", True, "'C:/my proj'"),
+            ("C:/Users/O'Brien/proj", True, "'C:/Users/O''Brien/proj'"),
+            ("C:/a$b;c", True, "'C:/a$b;c'"),
+            ("/work/project", False, "/work/project"),
+            ("/work/my project", False, "'/work/my project'"),
+            ("/home/O'Brien", False, "'/home/O'\"'\"'Brien'"),
+            ("/a$b;c", False, "'/a$b;c'"),
+        ],
+    )
+    def test_a_target_path_pastes_back_as_one_literal_argument(
+        self, path: str, *, windows: bool, expected: str
+    ) -> None:
+        """A space, a quote, a ``$`` or a separator must not split or expand.
+
+        Mutation: quoting only paths that contain whitespace. The quote, ``$``
+        and separator cases then render bare and fail their equality.
+        """
+        from .._operator_commands import _shell_argument
+
+        assert _shell_argument(path, windows=windows) == expected
 
     def test_the_renamed_flag_is_not_reachable(self) -> None:
         """``--running`` was replaced by ``--state active`` and must stay gone.

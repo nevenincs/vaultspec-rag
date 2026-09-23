@@ -40,6 +40,8 @@ __all__ = [
     "_normalise_job_source_filter",
     "_parse_since_seconds",
     "_prioritise_running_jobs",
+    "job_project_root",
+    "job_source",
     "job_state",
     "job_updated_timestamp",
 ]

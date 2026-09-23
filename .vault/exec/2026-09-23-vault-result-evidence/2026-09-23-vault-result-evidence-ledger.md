@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:7676befeaee539dfda0451d104cf575961bdf031810c221306a4d2bcf8fdf9cd'
+body_hash: 'sha256:3208f934946d497c3228e78d646fa3fed48dfb1e8290ae666eda86a073cfda15'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -141,6 +141,10 @@ related:
 - `S16` `verify:` `mutations: project match removed from supersession, project gate removed from service remedy, switch removed from predict, getattr replaced by direct read (each fails its assertion; restored passes)` -> `pass`
 - `S17` `M` `src/vaultspec_rag/indexer/_run_ledger_runtime.py`
 - `S17` `verify:` `preflight-only fix still failed 3 of 6 runs on the initializer race` -> `fail`
+- `S16` `verify:` `pytest quoting, status and degraded-verdict suites (94)` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S17` `verify:` `substitution discipline and structural guards` -> `pass`
 
 ## Notes
 

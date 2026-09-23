@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:975393602f89d936bd8f4707b9cabdafa70022e68ae00e2371d10ac7ee59fc3d'
+body_hash: 'sha256:fc887c1cf0848f70674bf84cd8a7f29bf6dfbe6d67ba6c88a24f930db7438852'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -345,6 +345,37 @@ alone. This branch had not touched the ledger code; the race is in it.
 - **Evidence.** With only the preflight fixed, the test failed three runs in six on the
   initializer's copy of the race. With both fixed, it passed eight of eight under the
   same saturated host.
+
+### correction-re-review | medium | The re-review of the corrections passed, with two mediums and four lows; resolved
+
+The re-review of `64e30d8b`..`c500237d` found no critical or high. It confirmed:
+
+- the ledger's single-snapshot preflight in both journal modes, with no deadlock;
+- the global `--target` placement against the real CLI.
+
+Findings, all resolved:
+
+- **Medium: target quoting.** The target was quoted only when it held whitespace, so a
+  `'`, `$`, `;` or `&` broke the pasted command. `_shell_argument` now quotes for the
+  host shell: PowerShell single quotes with inner quotes doubled, or `shlex.quote` on
+  POSIX (`src/vaultspec_rag/_operator_commands.py`).
+- **Medium: no deterministic ledger test.** The ledger fix had only the timing-dependent
+  concurrency test. Two tests now force each interleaving: a peer commits the real
+  schema immediately after the opener's first, then second, version read. Each fails
+  on its own refusal message when its half of the fix is removed.
+- **Lows.**
+  - Project roots are compared through `normcase(normpath(...))`, like the other root
+    comparisons.
+  - The supersession docstring names the project.
+  - The rollup test asserts the recorded root's value. A positive same-project clearing
+    test uses a differently spelled path.
+  - `job_project_root` and `job_source` join `__all__`.
+
+**Environmental failures.** The verification lane after the corrections had two more
+failures: a startup-deadline test, and the job-control transport test, whose 5-second
+HTTP deadline expired. The startup test passes alone. The transport test also fails at
+`52cba9ea`, before the corrections. Both ran while another session's tests held the
+host CPU at 100% across 18 processes. The earlier lane on the same branch passed both.
 
 ## Recommendations
 

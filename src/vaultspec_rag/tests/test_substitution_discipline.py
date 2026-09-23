@@ -239,6 +239,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "a real owner while every durable scope and job-history transition remains "
         "real",
     ),
+    "test_index_run_ledger.py": (
+        1,
+        "a peer's schema commit must land between two particular reads of one "
+        "opener to prove those reads share a snapshot; the read helper is wrapped "
+        "only to run the real peer commit at that point, and it still returns the "
+        "real row, so every read, lock and refusal stays real",
+    ),
     "test_vault_checkpoint.py": (
         1,
         "a proof written under an older vault point schema can only come from an "
