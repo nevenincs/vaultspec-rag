@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:9ada7bd9f2525f49f12f2cd5e11f9f941fb68bae95a137af287eaa6502ae15dd'
+body_hash: 'sha256:da7d135c835d8828dd7717ca9e001efb34dc0a958f8fd7fbc9f4c5eba619f461'
 related:
   - "[[2026-06-11-service-status-convergence-adr]]"
   - "[[2026-09-01-gpu-less-install-footprint-adr]]"
@@ -29,6 +29,7 @@ related:
   - '[[2026-09-21-typesafe-classifier-research]]'
   - '[[2026-06-10-preprocess-hooks-research]]'
   - '[[2026-09-08-search-readiness-contract-research]]'
+  - '[[2026-09-23-status-messages-adr]]'
 ---
 
 # `status-messages` research: `Canonical installation role, compute and feature state for status reporting`
@@ -72,9 +73,11 @@ decision.
 - **One message covers every failure.** A single `else` branch
   (`src/vaultspec_rag/cli/_status.py:233`) collapses four states into one
   hardware-sounding line: torch absent by design (client), CPU-only build (broken host),
-  genuinely no accelerator, and probe not attempted. `diagnose_torch` already
-  distinguishes these (`src/vaultspec_rag/torch_config/_diagnose.py:25-29`). A test
-  locks the string (`tests/test_cli_status.py:63`).
+  genuinely no accelerator, and probe not attempted. `diagnose_torch` separates only
+  a CPU-only build, no GPU, and working (`src/vaultspec_rag/torch_config/_diagnose.py:8-29`).
+  `TorchDiagnosis.NO_TORCH` exists but is produced only by the CLI's own import checks.
+  Nothing types absent-by-design versus defect, or marks a probe that was never
+  attempted. A test locks the string (`src/vaultspec_rag/tests/test_cli_status.py:63`).
 - **Nothing reads the hardware independently of torch.** `nvidia-smi` appears only in
   remediation prose (`src/vaultspec_rag/cli/_gpu_errors.py:224,327`,
   `src/vaultspec_rag/_gpu_admission.py:141`). No surface can say "an RTX 4080 is present
@@ -150,7 +153,7 @@ decision.
     `VAULTSPEC_RAG_PREPROCESS` (`src/vaultspec_rag/config/_types.py:180`), and the
     daemon inherits it from `server start --no-preprocess`.
   - The resolved model `ResolvedIndexPolicy`
-    (`src/vaultspec_rag/indexer/_resolved_policy.py:325`) exists, but "hooks will run"
+    (`src/vaultspec_rag/indexer/_resolved_policy.py:395`, built by `resolve_index_policy` at `:596`) exists, but "hooks will run"
     is re-derived at least seven times, and the copies disagree. For example,
     `src/vaultspec_rag/server/_routes_reindex.py:102` requires the file to be present,
     while `src/vaultspec_rag/indexer/_content_discovery.py:495` does not.
@@ -223,6 +226,38 @@ decision.
   (`src/vaultspec_rag/index_profiles.py:199-254`). They are not measurements, and when
   the service is down they come from the client's config.
 
+### Probe cost and placement
+
+- **The full probe is expensive.** The isolated interpreter probe imports torch and calls
+  `torch.cuda.is_available()` with a 60 s timeout
+  (`src/vaultspec_rag/cli/_process.py:452-512`). An equivalent import plus CUDA check
+  measured about 2.0 s warm, against about 0.06 s for a bare interpreter. The package
+  `__init__` is lazy, so torch is the whole cost. Running it on every stopped-service
+  `status` would be a large regression.
+- **Cheaper signals exist.** The torch build tag (`+cpu`, `+cu130`) and the
+  inference-stack distributions are readable from package metadata without importing
+  torch. The probe already decides client-ness this way, through the
+  `sentence-transformers` distribution (exit 6).
+- **`nvidia-smi` is cheap but can hang.** It measured about 90 ms per call on this
+  host, but it can block until its timeout. That is too costly for every `/health` poll.
+- **The daemon interpreter can differ from the CLI's.**
+  `_resolve_daemon_interpreter` picks the scripts-directory python, which can differ
+  from `sys.executable` (`src/vaultspec_rag/cli/_process.py:391`). A service may also
+  already be running from another environment. On this host, a service started from the
+  dev venv (`+cu130`) would look healthy while the tool environment (`+cpu`) would fail
+  its next `server start`.
+- **Per-root policy resolution is too heavy for status.** `resolve_index_policy` walks
+  the tree for ignore files (`src/vaultspec_rag/indexer/_ignore_specs.py:35-65`) and
+  loads preprocess rules strictly, so it raises on a malformed config. The accepted
+  preprocess-hooks decision says a bad config degrades instead.
+- **Liveness is only visible from the client.** Crashed, stale-heartbeat and
+  reused-PID states come from the discovery file and port probes. A service that is
+  down cannot author them (`src/vaultspec_rag/serviceclient/_status.py:212-260`).
+- **Doctor imports torch in the CLI process.** `server doctor` calls `get_readiness`,
+  which calls `_torch_readiness`, which imports torch in-process
+  (`src/vaultspec_rag/_readiness.py:296-379`). That already breaks the torch-free
+  service-control constraint.
+
 ### Existing canonical patterns to extend
 
 The package already has correct shapes that fragmented siblings do not use:
@@ -276,7 +311,7 @@ the cost of a torch-free hardware probe on each platform.
 - `docs/installation.md:55-61`
 - `docs/installation.md:310`
 - `tools/binaries/build_pyapp.py:111`
-- `tests/test_cli_status.py:63`
+- `src/vaultspec_rag/tests/test_cli_status.py:63`
 - `src/vaultspec_rag/api.py:850-931`
 - `src/vaultspec_rag/api.py:1387-1466`
 - `src/vaultspec_rag/cli/_status.py:89-124`
@@ -316,8 +351,9 @@ the cost of a torch-free hardware probe on each platform.
 - `src/vaultspec_rag/server/_models.py:126-262`
 - `src/vaultspec_rag/server/_routes_reindex.py:102`
 - `src/vaultspec_rag/indexer/_preprocess_config.py:62`
-- `src/vaultspec_rag/indexer/_resolved_policy.py:325`
+- `src/vaultspec_rag/indexer/_resolved_policy.py:395-644`
 - `src/vaultspec_rag/indexer/_content_discovery.py:495`
+- `src/vaultspec_rag/indexer/_ignore_specs.py:35-65`
 - `src/vaultspec_rag/search/_typesafe_transport.py:69-130`
 - `src/vaultspec_rag/serviceclient/_status.py:212`
 - `src/vaultspec_rag/serviceclient/_compat.py:87`

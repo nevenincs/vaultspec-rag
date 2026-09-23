@@ -10,6 +10,7 @@ related:
   - "[[2026-07-21-search-index-availability-adr]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - '[[2026-09-23-status-messages-research]]'
+  - '[[2026-09-23-status-messages-adr]]'
 supersedes:
   - '2026-06-11-search-freshness-and-empty-results-adr'
   - '2026-07-21-search-index-availability-adr'

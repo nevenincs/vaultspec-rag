@@ -13,6 +13,7 @@ related:
   - "[[2026-06-24-torch-dependency-group-adr]]"
   - "[[2026-07-23-ci-self-hosted-gpu-runner-adr]]"
   - '[[2026-09-23-status-messages-research]]'
+  - '[[2026-09-23-status-messages-adr]]'
 ---
 
 # `cuda-provisioning` adr: `holder-safe CUDA provisioning and its isolated live proofs` | (**status:** `accepted`)

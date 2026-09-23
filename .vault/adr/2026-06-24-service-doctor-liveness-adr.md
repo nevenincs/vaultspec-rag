@@ -8,6 +8,7 @@ body_hash: 'sha256:c657c9690233127459f440589b771f3c9feb0441f76dd897888b1f973e75d
 related:
   - "[[2026-06-24-service-doctor-liveness-research]]"
   - '[[2026-09-23-status-messages-research]]'
+  - '[[2026-09-23-status-messages-adr]]'
 ---
 
 # `service-doctor-liveness` adr: `doctor reports live service truth; flapping is diagnosed before it is fixed` | (**status:** `accepted`)

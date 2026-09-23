@@ -14,6 +14,7 @@ related:
   - '[[2026-06-06-cli-tree-overhaul-adr]]'
   - '[[2026-06-09-operability-hardening-adr]]'
   - '[[2026-09-23-status-messages-research]]'
+  - '[[2026-09-23-status-messages-adr]]'
 ---
 
 # `service-status-convergence` adr: `canonical service status model` | (**status:** `accepted`)
