@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:db113803af7df50a94cb8494e2fe6abc0a36d5d09eb99b052e860cba0ce79161'
+body_hash: 'sha256:4bb6da902c98a133d7b5e965d2bbfe58c3df1a27b8c87ff39fd1e4dcf7bbc80b'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -236,15 +236,17 @@ Each change carries a test that fails with the fix removed. After them, the evid
 intent-ranking, testimonial and GPU integration suites pass (41), with the evidence
 metrics unchanged, and the CLI/MCP parity test passes.
 
-### plan-close-review | high | The plan cannot close while the latency target is unmet without authorization; open
+### plan-close-review | high | The plan cannot close while the latency target is unmet without authorization; resolved
 
 The plan-close review of `2a2ee276`..`97f0380e` found one high finding, one medium and
 four lows. The high is open; the rest are resolved.
 
-- **High, open.** `P06.S09` was closed with the plan's latency criterion recorded as
-  failed and no persisted authorization. S09 is reopened pending the user's decision
-  between restating the target and a follow-on decision on the chunk rerank (see
-  search-latency).
+- **High, resolved.** `P06.S09` was closed with the plan's latency criterion recorded
+  as failed and no persisted authorization, so S09 was reopened.
+  - The user then ruled the target indicative, accepted the 0.712 s median, and barred
+    test gating of latency. The plan's Description records that authorization.
+  - The ADR's evaluation gate is amended to match.
+  - The ruling also put further inference levers in scope (see inference-levers).
 - **Medium, resolved** (`9518b986`). A single list item or quoted line followed by `---`
   was read as a setext heading, dropping its text.
 - **Lows, resolved.**
@@ -259,6 +261,34 @@ After those fixes:
 - The evidence, intent-ranking, testimonial and GPU integration suites and the CUDA OOM
   test: 42 passed, evidence metrics unchanged.
 - The live CLI/MCP parity test passes.
+
+### known-defects | high | The strict type gate was red and two guard tests could not fail; resolved
+
+The user barred a pull request while any known defect remains.
+
+- **Type gate.** A package-wide strict basedpyright run, the check CI gates on, found
+  ten errors. Most arrived with the `fix/status-messages` merge. Each was typed at its
+  source rather than suppressed (`d5cdd826`).
+- **Child-output decoding.** The guard that predates this feature now passes: both
+  probes decode child output as UTF-8.
+- **Vacuous guards.** Two negative assertions in
+  `src/vaultspec_rag/tests/test_health_degraded_clears.py` tested a substring against
+  a pydantic model. The model iterates its fields, so the assertions passed whether or
+  not the verdict fired. They now assert the typed `JOB_FAILED` reason, and removing
+  the supersession check fails both.
+
+### install-mode-doctor | low | The doctor's install-mode mismatch is this repository's configuration, not a defect; open for the user
+
+- **What the doctor reports.** `vaultspec-rag server doctor` reports "install mode:
+  mismatch".
+  - `.vaultspec/workspace.json` declares vaultspec-rag as `tool`.
+  - `.mcp.json` runs the worktree build through `uv run --no-sync python -m
+    vaultspec_rag.server`, the dependency launch shape (`362bfebd`).
+- **Provenance.** Both files are unchanged on this branch.
+- **Why no verb fixes it.** `vaultspec-rag install --mode dev --dry-run` refuses in the
+  product's own repository because its owned MCP-extra requirement has drifted.
+- **Who decides.** How this repository declares itself is the user's call. `P05a.S12`
+  stays open for it.
 
 ## Recommendations
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:e7b363f3c92ef810ac62d2940152f314d7a9dd2fc551860f4b106d4c6e8c20fb'
+body_hash: 'sha256:fb1b506781715d5d1aa0fa70b4162b450533692f2144ca99fbe88608f65855a9'
 related:
   - "[[2026-09-23-vault-result-evidence-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -133,14 +133,20 @@ passages for each result:
 - passages from that record's next-best chunk, if one sits in the already reranked
   candidate window. No extra retrieval runs.
 
-One batched CrossEncoder forward scores every (query, passage) pair on the page. Each
+One batched CrossEncoder forward scores the page's (query, passage) pairs. Each
 result takes its best passage:
 
 - `snippet` becomes that verbatim passage;
 - `line_start`, `line_end` and `section` become the passage's.
 
 A result with one candidate passage skips scoring. With the reranker disabled, the
-first passage of the winning chunk is used. A legacy point without passages yields its
+first passage of the winning chunk is used.
+
+*Amended 2026-09-23:* the forward scores at most 48 pairs per page, taken in rank
+order and never splitting a result's candidates, with at most 12 passages per result.
+Results past the budget show their first passage. The budget cut passage time from
+0.33 s to 0.22 s with evidence, section and ranking identical on every measured set
+(`2026-09-23-vault-result-evidence-audit`, search-latency). A legacy point without passages yields its
 chunk text cut at the same bound, with no locator. Ranking and scores do not change.
 
 **Result contract.**
@@ -156,6 +162,11 @@ chunk text cut at the same bound, with no locator. Ranking and scores do not cha
 
 **fp16 reranking.** One reranker constructor loads the CrossEncoder in the same fp16
 dtype as the encoders. The service and the searcher fallback both use it.
+
+*Amended 2026-09-23:* reranker forwards also accumulate their fp16 products in half
+precision, held only around the forward and under the GPU lock. That cuts chunk
+reranking and passage scoring by about a fifth, and every quality gate keeps its
+headline figures (`2026-09-23-vault-result-evidence-audit`, inference-levers).
 
 **Heading-path embedding (completes the concurrency ADR's D8).** The vault embedding
 input becomes title, section breadcrumb and chunk text, built by one function. Donor
@@ -181,8 +192,14 @@ the operator rebuilds, the published index keeps serving through the legacy-poin
   from a passing implementation run on this set.
 - *Cross-corpus check.* The issue's external query sets are re-run once and recorded in
   the feature's audit.
-- *Latency.* Server-side vault search time at ten results must end at or below half of
-  today's fp32 figure, passage scoring included.
+- *Latency.* Server-side vault search time at ten results, passage scoring included, is
+  measured against today's fp32 figure on the same host and corpus, and recorded in the
+  feature's audit.
+
+*Amended 2026-09-23, authorized by the user:* half the fp32 figure is an indicative
+target, not a pass condition. The measured 0.712 s median was accepted, and the miss
+directed the work to further inference levers. Latency depends on the host, so no test
+gates it.
 
 ## Rationale
 
