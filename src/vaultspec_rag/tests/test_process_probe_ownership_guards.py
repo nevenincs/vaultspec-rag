@@ -640,11 +640,11 @@ class TestOperatorCommandsHaveOneSpelling:
         [
             ("C:/code/proj", True, "C:/code/proj"),
             ("C:/my proj", True, "'C:/my proj'"),
-            ("C:/Users/O'Brien/proj", True, "'C:/Users/O''Brien/proj'"),
+            ("C:/work/O'Brien/proj", True, "'C:/work/O''Brien/proj'"),
             ("C:/a$b;c", True, "'C:/a$b;c'"),
             ("/work/project", False, "/work/project"),
             ("/work/my project", False, "'/work/my project'"),
-            ("/home/O'Brien", False, "'/home/O'\"'\"'Brien'"),
+            ("/srv/O'Brien", False, "'/srv/O'\"'\"'Brien'"),
             ("/a$b;c", False, "'/a$b;c'"),
         ],
     )

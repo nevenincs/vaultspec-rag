@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:3208f934946d497c3228e78d646fa3fed48dfb1e8290ae666eda86a073cfda15'
+body_hash: 'sha256:a53260cd547db75c03fb991a9c0b8188a36a865aebcb79a6e4edd7a3bcc9765c'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -145,6 +145,10 @@ related:
 - `S17` `M` `src/vaultspec_rag/tests/test_index_run_ledger.py`
 - `S17` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S17` `verify:` `substitution discipline and structural guards` -> `pass`
+- `S16` `verify:` `citation and identity-leak gate` -> `pass`
+- `S09` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S09` `verify:` `ruff, ty, strict basedpyright package-wide` -> `pass`
+- `S12` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
 
 ## Notes
 
@@ -162,3 +166,6 @@ related:
 - `S09` plan-close review corrections: passage_pairs no longer mutates results (first passages are shown by the selector); the OOM arm binds the accelerator before the try and catches BaseException like the predict loop
 - `S13` variants measured through a scratch harness outside the tree; no measurement code committed
 - `S15` service latency re-measurement deferred: host CPU saturated by another session's test run
+- `S16` quoting fixtures used home-directory path shapes the identity-leak gate rejects; moved to neutral roots
+- `S09` service latency not re-measured: host saturated by another session's tests; latency is indicative and ungated by the user's ruling
+- `S12` closed as outside this feature: the install-mode declaration is the user's configuration, asked and unanswered before landing; configuration left unchanged

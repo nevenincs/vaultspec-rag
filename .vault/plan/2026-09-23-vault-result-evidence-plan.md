@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:316418d948447b7c4b040b1ad5bd7e50f8f9dc5a2623b9ad7a3d348b30b1b6f2'
+body_hash: 'sha256:f5e18177366437abcc13472d47312f0ada464f1f36867d8729be5fe2f35eae85'
 ---
 
 # `vault-result-evidence` plan
@@ -91,7 +91,7 @@ Delivers a branch with no known defect: the strict type gate and the child-outpu
 
 - [x] `P05a.S10` - clear the strict type gate and the child-output decoding guard, fold the compute probe onto the shared MiB conversion, and make the degraded-verdict guards assert the typed failed-job reason; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/api.py, src/vaultspec_rag/cli/_jobs_tui_header.py, src/vaultspec_rag/cli/_jobs_tui_constants.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/serviceclient/_typed_state.py, src/vaultspec_rag/tests/`.
 - [x] `P05a.S11` - carry the failed job's source into service health and name the per-source rebuild command when the failure is full_reindex_required; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/tests/`.
-- [ ] `P05a.S12` - reconcile the install-mode doctor verdict with the project's MCP launch shape; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/tests/`.
+- [x] `P05a.S12` - reconcile the install-mode doctor verdict with the project's MCP launch shape; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/tests/`.
 - [x] `P05a.S16` - resolve the close review of P05a-P05c: scope the service rebuild remedy and failure supersession to the failed job's project, make half accumulation a no-op on torch without the switch, and correct the ADR splice, docstring and comment; `src/vaultspec_rag/server/_lifespan.py, src/vaultspec_rag/server/_routes_jobs.py, src/vaultspec_rag/cli/_status_labels.py, src/vaultspec_rag/_operator_commands.py, src/vaultspec_rag/_gpu.py, src/vaultspec_rag/indexer/_slicing.py, src/vaultspec_rag/cli/_jobs_tui_constants.py, src/vaultspec_rag/tests/`.
 - [x] `P05a.S17` - read the run ledger's schema state from one snapshot so concurrent fresh openers never demand a needless rebuild; `src/vaultspec_rag/indexer/_run_ledger_runtime.py`.
 
@@ -112,7 +112,7 @@ Delivers a profiled vault search path and every inference lever that cuts its ti
 
 Delivers calibrated gate floors, the cross-corpus re-run of the issue's query sets, the latency check, and the closing review.
 
-- [ ] `P06.S09` - record gate floors from the passing run, re-run the issue's query sets and the latency measurement, and file the results in the feature audit; `src/vaultspec_rag/tests/quality/evidence_baseline.json`.
+- [x] `P06.S09` - record gate floors from the passing run, re-run the issue's query sets and the latency measurement, and file the results in the feature audit; `src/vaultspec_rag/tests/quality/evidence_baseline.json`.
 
 ## Parallelization
 

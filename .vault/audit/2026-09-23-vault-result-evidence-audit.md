@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:fc887c1cf0848f70674bf84cd8a7f29bf6dfbe6d67ba6c88a24f930db7438852'
+body_hash: 'sha256:98bda260dc089bbe846cafdfc17410966555c93413ec9f9c796156fb2d861494'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -286,7 +286,7 @@ The user barred a pull request while any known defect remains.
   not the verdict fired. They now assert the typed `JOB_FAILED` reason, and removing
   the supersession check fails both.
 
-### install-mode-doctor | low | The doctor's install-mode mismatch is this repository's configuration, not a defect; open for the user
+### install-mode-doctor | low | The doctor's install-mode mismatch is this repository's configuration, not a defect; deferred to the user
 
 - **What the doctor reports.** `vaultspec-rag server doctor` reports "install mode:
   mismatch".
@@ -296,8 +296,11 @@ The user barred a pull request while any known defect remains.
 - **Provenance.** Both files are unchanged on this branch.
 - **Why no verb fixes it.** `vaultspec-rag install --mode dev --dry-run` refuses in the
   product's own repository because its owned MCP-extra requirement has drifted.
-- **Who decides.** How this repository declares itself is the user's call. `P05a.S12`
-  stays open for it.
+- **Who decides.** How this repository declares itself is the user's call. The user was
+  asked and gave no answer before landing, so the configuration is left unchanged.
+  `P05a.S12` closes as outside this feature. Declaring rag `dependency` in
+  `.vaultspec/workspace.json` would match the worktree-build launch and clear the
+  warning.
 
 ### p05-close-review | high | The review of the P05a-P05c commits found two highs, two mediums and three lows; resolved
 
@@ -376,6 +379,25 @@ failures: a startup-deadline test, and the job-control transport test, whose 5-s
 HTTP deadline expired. The startup test passes alone. The transport test also fails at
 `52cba9ea`, before the corrections. Both ran while another session's tests held the
 host CPU at 100% across 18 processes. The earlier lane on the same branch passed both.
+
+### plan-close | low | Every Step is closed; the service latency figure could not be taken on a quiet host
+
+- **Evidence gate floors.** Unchanged and passing.
+- **Issue query sets.** Re-run with every change: dev and held-out figures are
+  identical to the recorded ones.
+- **Latency.**
+  - *Shipped figure.* The controlled in-process profile under inference-levers shows
+    fp16 accumulation cutting both reranker forwards by a fifth.
+  - *Service figure.* The host stayed saturated by another session's test runs
+    (14-22 pytest processes, CPU at 100%), so no service figure was taken.
+  - *Standing.* The user ruled latency indicative and never test-gated.
+- **Merge from `main`.** `a3639d3a` (the landed status work), `a853af30` and `8a6c5e5e`
+  were merged in `5407a599`.
+  - Where `main` fixed the same type errors, its version was kept.
+  - This branch's stronger typed-reason assertions, its shared MiB conversion and its
+    project-scoped rebuild remedy were kept.
+- **Final gates.** Ruff, ty and strict basedpyright pass package-wide on the merged
+  tree.
 
 ## Recommendations
 
