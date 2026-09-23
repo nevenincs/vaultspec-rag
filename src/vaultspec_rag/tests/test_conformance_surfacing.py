@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from ..cli._status_labels import CONFORMANCE_FAMILY, MODELS_FAMILY, degradation_findings
+from ..cli._status_labels import degradation_findings
+from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import QdrantRuntimeState
 from ..server._lifespan import _service_health_status
 from ._quiesce_helpers import held_quiesce_snapshot, running_quiesce_snapshot
@@ -31,7 +32,6 @@ def _health(**overrides: object) -> ServiceHealth:
     base: dict[str, object] = {
         "model_loaded": True,
         "reranker_loaded": True,
-        "cuda": True,
         "project_count": 1,
         "projects": ["/proj"],
         "nonconforming": [],
@@ -68,7 +68,7 @@ class TestHealthAuthorsTheVerdict:
         )
 
         assert status == "degraded"
-        assert any("different embedding model" in reason for reason in reasons)
+        assert any("different embedding model" in reason.detail for reason in reasons)
 
     def test_reason_names_the_affected_collection(self) -> None:
         """An operator must be able to tell which index to rebuild."""
@@ -77,7 +77,7 @@ class TestHealthAuthorsTheVerdict:
             _local_qdrant(),
             running_quiesce_snapshot(),
         )
-        assert any("codebase_docs" in reason for reason in reasons)
+        assert any("codebase_docs" in reason.detail for reason in reasons)
 
 
 class TestRemediationPairing:
@@ -90,14 +90,8 @@ class TestRemediationPairing:
         assertion passes even when the wrong command is attached to this cause
         - an earlier revision asserted exactly that and was proven inert.
 
-        Mutation it catches: removing the conformance family from the registry,
+        Mutation it catches: removing the conformance code from the evidence registry,
         which leaves this cause with no remedy at all.
-
-        It deliberately does NOT claim to catch the family ORDERING. Reasons
-        are resolved in emission order and the models reason is emitted first,
-        so it claims the ``model`` stem before this reason is reached; no
-        reachable input distinguishes the two orderings today. Asserting an
-        ordering no input can exercise would be a test that cannot fail.
         """
         status, reasons = _service_health_status(
             _health(model_loaded=False, nonconforming=["/proj:vault_docs"]),
@@ -108,7 +102,7 @@ class TestRemediationPairing:
         findings = degradation_findings(
             {
                 "status": status,
-                "degraded_reasons": reasons,
+                "degradations": [r.model_dump(mode="json") for r in reasons],
                 "models_loaded": False,
                 "nonconforming": ["/proj:vault_docs"],
             }
@@ -119,20 +113,15 @@ class TestRemediationPairing:
         ]
         assert len(conformance_cause) == 1
         assert "--rebuild" in conformance_cause[0].command
-        assert conformance_cause[0].family == CONFORMANCE_FAMILY
+        assert conformance_cause[0].family == DegradationReason.NONCONFORMING
 
     def test_models_reason_keeps_its_own_remedy(self) -> None:
         """Two distinct problems must keep two distinct commands.
 
         Adding a conformance reason alongside must not cost the models reason
-        its own remedy. Mutation it catches: unregistering the models family,
+        its own remedy. Mutation it catches: unregistering the models code,
         which leaves that cause with no command - the operator is told the
         models are not loaded and given nothing to run.
-
-        Note the stems share a dict keyed by stem text, so two families
-        declaring the same stem silently collapse to one. That collision
-        damages the conformance reason rather than this one, and is covered by
-        the sibling test above.
         """
         status, reasons = _service_health_status(
             _health(model_loaded=False, nonconforming=["/proj:vault_docs"]),
@@ -143,7 +132,7 @@ class TestRemediationPairing:
         findings = degradation_findings(
             {
                 "status": status,
-                "degraded_reasons": reasons,
+                "degradations": [r.model_dump(mode="json") for r in reasons],
                 "models_loaded": False,
                 "nonconforming": ["/proj:vault_docs"],
             }
@@ -151,7 +140,7 @@ class TestRemediationPairing:
 
         models_cause = [f for f in findings if "are not loaded" in f.cause]
         assert len(models_cause) == 1
-        assert models_cause[0].family == MODELS_FAMILY
+        assert models_cause[0].family == DegradationReason.MODELS_NOT_LOADED
         assert models_cause[0].command
 
     def test_no_conformance_finding_when_nothing_is_nonconforming(self) -> None:
@@ -164,7 +153,7 @@ class TestRemediationPairing:
                 "nonconforming": [],
             }
         )
-        assert all(f.family != CONFORMANCE_FAMILY for f in findings)
+        assert all(f.family != DegradationReason.NONCONFORMING for f in findings)
 
 
 class TestHeldServiceIsNotBroken:
@@ -195,7 +184,7 @@ class TestHeldServiceIsNotBroken:
         )
 
         assert status == "paused"
-        assert any("different embedding model" in reason for reason in reasons)
+        assert any("different embedding model" in reason.detail for reason in reasons)
 
     def test_absent_models_are_still_a_fault_when_nothing_asked_for_them(
         self,
@@ -208,4 +197,6 @@ class TestHeldServiceIsNotBroken:
         )
 
         assert status != "paused"
-        assert any("embedding models are not loaded" in reason for reason in reasons)
+        assert any(
+            "embedding models are not loaded" in reason.detail for reason in reasons
+        )

@@ -12,10 +12,12 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
     _assert_default_status_summary,
     _assert_verbose_status_summary,
+    _features_payload,
     _find_free_port,
     _is_our_service,
     _isolated_status_dir,
@@ -75,7 +77,6 @@ def _ready_health_payload() -> dict[str, object]:
     """A minimal healthy report, for tests whose subject is not the health."""
     return {
         "status": "ready",
-        "cuda": True,
         "models_loaded": True,
         "project_count": 1,
         "backend_capabilities": {
@@ -94,6 +95,26 @@ def _last_failed_record() -> dict[str, object]:
     }
 
 
+#: The code the service emits beside each detail these fixtures report. A
+#: detail with no entry stands for a newer service's code this build does not
+#: know, which must still be rendered.
+_CODES = {
+    "the latest indexing job failed: other": "job_failed",
+    "2 indexing job(s) are stalled": "jobs_stalled",
+    "1 indexing job(s) are stalled": "jobs_stalled",
+    "embedding models are not loaded": "models_not_loaded",
+    "the configured vector service is not live": "vector_service_unavailable",
+}
+
+
+def _coded(detail: str) -> dict[str, str]:
+    """One degradation entry as the service emits it."""
+    return {
+        "reason": _CODES.get(detail, "not_a_code_this_build_knows"),
+        "detail": detail,
+    }
+
+
 def _health_payload(
     *,
     status: str = "degraded",
@@ -103,10 +124,9 @@ def _health_payload(
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": status,
-        "degraded_reasons": [] if reasons is None else reasons,
-        "cuda": True,
+        "degradations": [_coded(reason) for reason in reasons or []],
         "models_loaded": True,
-        "reranker_loaded": True,
+        "features": _features_payload(),
         "project_count": 3,
         "uptime_s": 850.0,
         "jobs": {"running": 0, "queued": 0, "stalled": 0} | (jobs or {}),
@@ -152,6 +172,13 @@ def _status_against(
         ),
     ):
         return runner.invoke(app, ["server", "status", *args])
+
+
+def _index_degradation(payload: dict[str, object]) -> list[str]:
+    """Render an index payload's degradation as project status does."""
+    from ..cli._status_labels import render_degradation
+
+    return render_degradation(payload, header="Degraded because:")
 
 
 class TestDegradedStatusExplainsItself:
@@ -316,7 +343,7 @@ class TestDegradedStatusExplainsItself:
         assert [finding["cause"] for finding in findings] == [
             "the latest indexing job failed: other"
         ]
-        assert findings[0]["family"] == "failed_job"
+        assert findings[0]["family"] == DegradationReason.JOB_FAILED
         assert findings[0]["command"] == (
             f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
         )
@@ -345,7 +372,7 @@ class TestReasonsSurviveRewording:
         of a reason this build does not understand is a fabrication.
 
         Verified to fail for the right reason: dropping the unpaired reason
-        instead of recording it (the ``stem is None`` branch of the finding
+        instead of recording it (the unknown-code branch of the finding
         walk) fails this test on the verbatim line while every other assertion
         here still passes; restoring the branch returns it to green.
         """
@@ -414,9 +441,7 @@ class TestOneRendererServesEverySurface:
     """
 
     def test_structured_index_records_render_a_cause_not_a_container(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        lines = _status_diagnostics(
+        lines = _index_degradation(
             {
                 "degraded_reasons": [
                     {
@@ -444,19 +469,15 @@ class TestOneRendererServesEverySurface:
         assert not any(("{" in line or "'" in line) for line in lines)
 
     def test_unphrasable_index_record_is_flattened_not_repred(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        lines = _status_diagnostics(
+        lines = _index_degradation(
             {"degraded_reasons": [{"source": "code", "detail": "disk full"}]}
         )
 
         assert lines == ["Degraded because:", "  - source: code, detail: disk full"]
 
     def test_index_status_without_degradation_says_nothing(self) -> None:
-        from ..cli._status import _status_diagnostics
-
-        assert _status_diagnostics({"degraded_reasons": []}) == []
-        assert _status_diagnostics({}) == []
+        assert _index_degradation({"degraded_reasons": []}) == []
+        assert _index_degradation({}) == []
 
     def test_compact_shape_lists_causes_without_remediation(self) -> None:
         from ..cli._status_labels import render_degradation
@@ -1006,7 +1027,6 @@ class TestServiceDaemonHelpers:
             labels = _label_values(result.output)
             assert labels["Requests"] == "ready for requests"
             assert "Health" not in labels
-            assert labels["Compute"] == "not reported by service"
             assert labels["Search models"] == "not reported by service"
             assert labels["Reranking"] == "not reported by service"
             assert labels["Loaded projects"] == "not reported by service"
@@ -1031,7 +1051,7 @@ class TestServiceDaemonHelpers:
 
             assert result.exit_code == 4, result.output
             labels = _label_values(result.output)
-            assert labels["Server"] == "unreachable"
+            assert labels["Server"] == ServiceLifecycle.CRASHED_PORT_SILENT.label
             assert labels["Requests"] == "not reported by service"
             assert "Health" not in labels
             assert labels["Uptime"] == "12 seconds"
@@ -1208,51 +1228,45 @@ class TestDegradedFamilyRegistryHasOneEntryPerBehaviour:
     pointing at whichever function survived.
     """
 
-    def test_no_stem_is_claimed_twice(self) -> None:
-        """A stem resolved twice makes the second entry unreachable.
+    def test_every_degradation_code_has_a_remedy_or_is_named_remedyless(
+        self,
+    ) -> None:
+        """A code with no evidence builder reaches the operator with no command.
 
-        Mutation it catches: re-adding a duplicate stem to the registry. A
-        claimed stem is popped, so the later entry can never fire and its
-        remediation is silently unreachable.
+        Mutation it catches: removing a code's entry from the evidence registry,
+        which leaves that degradation reported with nothing to run.
         """
-        from ..cli._status_labels import (
-            _DEGRADED_FAMILIES,
-        )
+        from ..cli._status_labels import _EVIDENCE
+        from ..operator_state._service import DegradationReason
 
-        stems = [stem for stem, _ in _DEGRADED_FAMILIES]
+        remedyless = set(DegradationReason) - set(_EVIDENCE)
 
-        assert len(stems) == len(set(stems)), f"duplicate stems: {stems}"
+        assert remedyless == {DegradationReason.JOBS_DEGRADED}
 
     def test_no_finding_function_is_registered_twice(self) -> None:
-        """Two stems on one function means one behaviour grew two names.
+        """Two codes on one function means one behaviour grew two names.
 
-        Mutation it catches: registering a second stem against an existing
+        Mutation it catches: registering a second code against an existing
         finding, which is what a shadowed duplicate definition produces - both
         registry entries bind to the surviving function.
         """
-        from ..cli._status_labels import (
-            _DEGRADED_FAMILIES,
-        )
+        from ..cli._status_labels import _EVIDENCE
 
         names = [
             getattr(finding, "__name__", repr(finding))
-            for _, finding in _DEGRADED_FAMILIES
+            for finding in _EVIDENCE.values()
         ]
 
         assert len(names) == len(set(names)), f"duplicate findings: {names}"
 
-    def test_every_family_label_is_distinct(self) -> None:
-        """Two families sharing a label cannot be told apart by a caller.
+    def test_the_index_family_is_not_a_service_code(self) -> None:
+        """A per-domain index record must not be filtered as a service code.
 
-        Mutation it catches: reusing an existing family constant for a new
-        finding. Callers filter findings by family, so a shared label silently
-        merges two different problems into one bucket.
+        Mutation it catches: renaming the index family to a degradation code's
+        value, which would merge an index problem into a service problem for
+        every caller that filters findings by family.
         """
-        from ..cli import _status_labels
+        from ..cli._status_labels import DOMAIN_INDEX_FAMILY
+        from ..operator_state._service import DegradationReason
 
-        labels: list[str] = []
-        for name, value in vars(_status_labels).items():
-            if name.endswith("_FAMILY") and isinstance(value, str):
-                labels.append(value)
-
-        assert len(labels) == len(set(labels)), f"duplicate family labels: {labels}"
+        assert DOMAIN_INDEX_FAMILY not in {code.value for code in DegradationReason}

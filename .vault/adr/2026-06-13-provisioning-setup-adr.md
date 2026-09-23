@@ -3,13 +3,14 @@ tags:
   - '#adr'
   - '#provisioning-setup'
 date: '2026-06-13'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:bb7b74ecee30d45c6495606e54660f04d74b9bc9c8adeeb9bdaffbf530051df8'
 related:
   - "[[2026-06-13-server-first-default-adr]]"
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-qdrant-server-provisioning-adr]]"
   - '[[2026-07-27-provisioning-setup-grounding-research]]'
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `provisioning-setup` adr: `unified dependency provisioning with server-first defaults` | (**status:** `accepted`)

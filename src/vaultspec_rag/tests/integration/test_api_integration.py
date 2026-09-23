@@ -176,7 +176,7 @@ class TestRAGAPI:
 
         # 2. Call get_status()
         status = vaultspec_rag.get_status(tmp_path)
-        assert status["vault_documents"] == 1
+        assert status["vault_count"] == 1
         assert status["target_dir"] == str(tmp_path)
 
         # 3. Call search_vault()
@@ -195,7 +195,7 @@ class TestRAGAPI:
         assert "vault" in cleared
 
         status_after = vaultspec_rag.get_status(tmp_path)
-        assert status_after["vault_documents"] == 0
+        assert status_after["vault_count"] == 0
 
     def test_clean_rejects_an_unknown_source_before_storage_mutation(
         self,

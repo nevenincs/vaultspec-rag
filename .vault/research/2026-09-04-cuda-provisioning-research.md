@@ -3,7 +3,7 @@ tags:
   - '#research'
   - '#cuda-provisioning'
 date: '2026-09-04'
-modified: '2026-09-04'
+modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:e57692e0cce4046b1ec3888715ca13671924ea34184a74341b7ea7b15959cc6b'
 related:
@@ -12,6 +12,7 @@ related:
   - "[[2026-09-01-tool-mode-cuda-plan]]"
   - "[[2026-09-01-gpu-less-install-footprint-adr]]"
   - "[[2026-06-24-torch-dependency-group-adr]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `cuda-provisioning` research: `hostile-condition robustness of CUDA acquisition and the proof harness`

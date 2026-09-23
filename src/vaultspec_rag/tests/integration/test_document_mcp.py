@@ -183,7 +183,7 @@ async def _assert_empty_document_status(session: ClientSession, root: Path) -> N
         "dict[str, object]",
         cast("dict[str, object]", result.structured_content)["index"],
     )
-    assert index["document_chunks"] == 0
+    assert index["document_count"] == 0
     support_profile = cast("dict[str, object]", index["support_profile"])
     assert set(cast("list[object]", support_profile["domains"])) == {
         "code",

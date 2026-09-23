@@ -27,6 +27,8 @@ __all__ = [
     "index_command",
     "index_source_option",
     "port_option",
+    "preprocess_status_command",
+    "server_doctor_command",
     "server_jobs_command",
     "server_start_command",
     "server_status_command",
@@ -89,6 +91,16 @@ def server_jobs_command(
     if index is not None:
         command += f" --index {index}"
     return command + port_option(port)
+
+
+def preprocess_status_command() -> str:
+    """Return the ``preprocess status`` invocation that explains this root's hooks."""
+    return "vaultspec-rag preprocess status"
+
+
+def server_doctor_command(port: object | None = None) -> str:
+    """Return the ``server doctor`` invocation that diagnoses this environment."""
+    return f"vaultspec-rag server doctor{port_option(port)}"
 
 
 def server_status_command(

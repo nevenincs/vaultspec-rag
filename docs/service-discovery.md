@@ -178,15 +178,22 @@ Startup writers to the status file serialize through an operating-system-backed 
 
 Every adapter renders one canonical operator verdict, composed from the typed resolution plus already-probed liveness signals. The verdict is derived once and rendered per surface, never recomputed.
 
-| Operator state       | Meaning                                                                                  | Exit code |
-| -------------------- | ---------------------------------------------------------------------------------------- | --------- |
-| `running`            | Serving normally.                                                                        | 0         |
-| `warming`            | Holds the singleton, loading models, not yet serving.                                    | 5         |
-| `stopped`            | Nothing is running (resolution `absent`).                                                | 3         |
-| `crashed`            | A recorded daemon is not serving: dead PID, reused PID, silent port, or stale heartbeat. | 4         |
-| `degraded_discovery` | Live holder, untrustworthy pointer (resolution `degraded`).                              | 4         |
+| Operator state            | Meaning                                                                   | Exit code |
+| ------------------------- | ------------------------------------------------------------------------- | --------- |
+| `running`                 | The service answers. Its health verdict says whether it is serving.       | 0         |
+| `starting`                | Holds the singleton, loading models, not yet serving.                     | 5         |
+| `stopped`                 | Nothing is running (resolution `absent`).                                 | 3         |
+| `crashed_pid_dead`        | The recorded process is no longer running.                                | 4         |
+| `crashed_pid_reused`      | The recorded process ID now belongs to another program.                   | 4         |
+| `crashed_port_silent`     | The process is alive but its port gives no usable answer.                 | 4         |
+| `crashed_heartbeat_stale` | The service stopped reporting that it is alive.                           | 4         |
+| `not_serving`             | The service answers but its models never loaded, so it cannot serve.      | 4         |
+| `discovery_degraded`      | Live holder, untrustworthy pointer (resolution `degraded`).               | 4         |
 
-`degraded_discovery` reuses exit code 4, so a supervising broker needs no new code. The structured status body carries a `discovery` block with the resolution's state, source, both PIDs, port, heartbeat age, staleness window, reason, and a one-line `evidence` string.
+A paused or degraded service still answers on its port, so it is `running`; its
+health says what it is doing. Only a service whose health verdict is `error` is
+lifted to `not_serving`. Every crashed state and `discovery_degraded` reuse
+exit code 4, so a supervising broker needs no new code. The structured status body carries a `discovery` block with the resolution's state, source, both PIDs, port, heartbeat age, staleness window, reason, and a one-line `evidence` string.
 
 Operations that depend on the daemon fail fast on a degraded resolution rather than guessing an address. Read-only status returns the complete observation.
 

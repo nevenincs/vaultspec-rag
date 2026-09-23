@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, replace
 from http.client import HTTPException
 
 from ..config._types import EnvVar
+from ..operator_state._features import TypesafeState
+from ..operator_state._models import TypesafeReport
 from ._typesafe_answers import MODEL, Evaluation, validate_evaluation
 from ._typesafe_cache import ResponseCache
 from ._typesafe_pool import ConnectionPool
@@ -94,40 +96,48 @@ def available() -> bool:
     return True
 
 
-def enrollment_status() -> dict[str, object]:
-    """Report redacted process-local evidence without making a provider call."""
-    reason = ""
-    try:
-        _credential()
-    except TypesafeUnavailableError as exc:
-        reason = exc.reason
+def enrollment_status() -> TypesafeReport:
+    """Report redacted process-local evidence without changing any of it.
+
+    A status read must not reset the circuit: that belongs to the request path,
+    which resets it when it first sees a new key. Until then a changed key
+    reports ``PENDING``, because nothing has yet been evaluated under it.
+    """
+    key = os.environ.get(EnvVar.TYPESAFE_API_KEY, "").strip()
+    fingerprint = hashlib.sha256(key.encode()).digest() if key else b""
     with _LOCK:
         now = time.monotonic()
+        current = bool(key) and _CIRCUIT.fingerprint == fingerprint
         age = (
-            None
-            if _CIRCUIT.last_success is None
-            else max(0.0, now - _CIRCUIT.last_success)
+            max(0.0, now - _CIRCUIT.last_success)
+            if current and _CIRCUIT.last_success is not None
+            else None
         )
-        state = {
-            "no_key": "off",
-            "credential_disabled": "rejected",
-            "cooldown": "cooldown",
-        }.get(reason)
-        if state is None:
-            recently_verified = (
-                age is not None
-                and age < _CACHE.ttl
-                and _CIRCUIT.last_success is not None
-                and _CIRCUIT.last_success >= _CIRCUIT.retry_at
-            )
-            state = "active" if recently_verified else "pending"
-        return {
-            "enrolled": bool(_CIRCUIT.fingerprint),
-            "state": state,
-            "model": MODEL,
-            "last_success_age_seconds": round(age, 1) if age is not None else None,
-            "retry_after_seconds": round(max(0.0, _CIRCUIT.retry_at - now), 1),
-        }
+        if not key:
+            state = TypesafeState.OFF
+        elif not current:
+            state = TypesafeState.PENDING
+        elif _CIRCUIT.disabled:
+            state = TypesafeState.REJECTED
+        elif now < _CIRCUIT.retry_at:
+            state = TypesafeState.COOLDOWN
+        elif (
+            age is not None
+            and age < _CACHE.ttl
+            and _CIRCUIT.last_success is not None
+            and _CIRCUIT.last_success >= _CIRCUIT.retry_at
+        ):
+            state = TypesafeState.ACTIVE
+        else:
+            state = TypesafeState.PENDING
+        return TypesafeReport(
+            state=state,
+            model=MODEL,
+            last_success_age_seconds=round(age, 1) if age is not None else None,
+            retry_after_seconds=(
+                round(max(0.0, _CIRCUIT.retry_at - now), 1) if current else 0.0
+            ),
+        )
 
 
 def _failed(fingerprint: bytes, permanent: bool = False) -> None:

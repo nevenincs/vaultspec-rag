@@ -10,6 +10,7 @@ source of truth: every signal is surfaced and the verdict is derived from all.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, cast
@@ -32,6 +33,7 @@ from .._operator_commands import (
 from .._process_probe import pid_alive as _pid_alive
 from .._timestamps import age_seconds
 from .._units import human_bytes
+from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._discovery import (
     HEARTBEAT_STALENESS_SECONDS,
     SERVICE_PHASE_WARMING,
@@ -43,21 +45,18 @@ from ..serviceclient._discovery import (
 )
 from ..serviceclient._search_transport import probe_unavailable
 from ..serviceclient._status import (
-    EXIT_FAULT,
-    EXIT_RUNNING,
-    EXIT_STOPPED,
-    EXIT_WARMING,
-    LABEL_CRASHED_HEARTBEAT_STALE,
-    LABEL_CRASHED_PORT_SILENT,
-    LABEL_WARMING,
-    STATUS_RUNNING,
-    STATUS_STOPPED,
-    STATUS_WARMING,
     DiscoveryStatus,
     LivenessSignals,
     compose_discovery_status,
+    lifecycle_for_port,
+    lifecycle_from_signals,
+    with_health,
 )
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _try_http_admin,
+    _try_http_health,
+    health_answered,
+)
 from ._app import (
     JSON_OPTION_HELP,
     PortOption,
@@ -80,7 +79,6 @@ from ._service_lifecycle import (
 )
 from ._service_status import _service_phase
 from ._status_labels import (
-    FAILED_JOB_FAMILY,
     DegradedFinding,
     _failed_job_total,
     _format_started_label,
@@ -101,14 +99,17 @@ from ._status_labels import (
     _status_uptime_label,
     degradation_findings,
     degradation_lines,
+    health_typesafe,
+    preprocess_mode_label,
+    reranker_label,
+    service_features,
     typesafe_label,
+    watcher_enabled_label,
 )
 
 __all__ = [
-    "_compute_state",
     "_degraded_lines",
     "_evaluate_service_signals",
-    "_explicit_port_state",
     "_failure_lines",
     "_liveness_from_resolution",
     "_status_next_action",
@@ -129,21 +130,43 @@ class _StatusSignals:
     heartbeat_age: float | None
     heartbeat_stale: bool
     token_match: bool | None
-    state: str
-    state_label: str
-    exit_code: int
+    state: ServiceLifecycle
+
+    @property
+    def state_label(self) -> str:
+        """The operator sentence for this lifecycle."""
+        return self.state.label
+
+    @property
+    def exit_code(self) -> int:
+        """The broker-facing exit code for this lifecycle."""
+        return self.state.exit_code
 
 
 @dataclass(frozen=True, slots=True)
 class _StatusSummaryRequest:
-    """The status values rendered in the concise operator summary."""
+    """The status values rendered in the concise operator summary.
 
-    state_label: str
+    ``state_label`` overrides the lifecycle's own sentence when discovery has
+    a more specific account of it.
+    """
+
+    state: ServiceLifecycle
     port: int
     port_listening: bool
     health: dict[str, object] | None
     operational: dict[str, object] | None
-    exit_code: int
+    state_label: str = ""
+
+    @property
+    def label(self) -> str:
+        """The sentence that states where the service is."""
+        return self.state_label or self.state.label
+
+    @property
+    def exit_code(self) -> int:
+        """The broker-facing exit code for this lifecycle."""
+        return self.state.exit_code
 
 
 def _compute_token_match(
@@ -211,6 +234,9 @@ def _render_discovery_verdict(
     """
     port = verdict.port or 0
     health = _try_http_health(port) if verdict.signals.port_listening else None
+    served = with_health(verdict.state, health)
+    if served is not verdict.state:
+        verdict = dataclasses.replace(verdict, state=served, label=served.label)
     if json_mode:
         payload = verdict.as_dict()
         payload["service_json_present"] = False
@@ -222,7 +248,7 @@ def _render_discovery_verdict(
             "service.status",
             data=payload,
             **(
-                {"error": verdict.state, "message": verdict.label}
+                {"error": verdict.state.value, "message": verdict.label}
                 if verdict.exit_code != 0
                 else {}
             ),
@@ -236,63 +262,21 @@ def _render_discovery_verdict(
         _print_detail_line("Local record", "not found")
         _print_detail_line("Server", verdict.label)
         _print_detail_line("Discovery", verdict.resolution.evidence())
-        _print_detail_line("Typesafe", typesafe_label(health))
+        _print_detail_line("Typesafe", typesafe_label(health_typesafe(health)))
         if verdict.exit_code != 0:
             raise typer.Exit(code=verdict.exit_code)
         return
 
     _render_status_summary(
         _StatusSummaryRequest(
+            state=verdict.state,
             state_label=verdict.label,
             port=port or _default_service_port() or 8766,
             port_listening=verdict.signals.port_listening,
             health=health,
             operational=None,
-            exit_code=verdict.exit_code,
         )
     )
-
-
-def _compute_state(
-    pid_alive: bool,
-    pid_is_ours: bool,
-    port_listening: bool,
-    heartbeat_stale: bool,
-    *,
-    phase: str | None = None,
-) -> tuple[str, str, int]:
-    if not pid_alive:
-        # Confirmed dead: the only state in which the discovery file may be
-        # removed (#204). The ambiguous branches below keep the file and only
-        # report a degraded state.
-        if _should_unlink_discovery_file(pid_alive):
-            _delete_service_status()
-        return (
-            "crashed_pid_dead",
-            "crashed (PID dead, stale service.json cleaned)",
-            EXIT_FAULT,
-        )
-    if not pid_is_ours:
-        return (
-            "crashed_pid_reused",
-            "crashed (PID reused by unrelated process)",
-            EXIT_FAULT,
-        )
-    # A live daemon that stamped ``warming`` holds the machine lock but is
-    # still loading models: the silent port and the not-yet-started heartbeat
-    # are expected, not crash signals. Checked before both so a warming daemon
-    # never renders as crashed. An absent phase keeps the pre-phase semantics.
-    if phase == SERVICE_PHASE_WARMING:
-        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING
-    if not port_listening:
-        return "crashed_port_silent", LABEL_CRASHED_PORT_SILENT, EXIT_FAULT
-    if heartbeat_stale:
-        return (
-            "crashed_heartbeat_stale",
-            LABEL_CRASHED_HEARTBEAT_STALE,
-            EXIT_FAULT,
-        )
-    return STATUS_RUNNING, STATUS_RUNNING, EXIT_RUNNING
 
 
 def _evaluate_service_signals(
@@ -323,13 +307,23 @@ def _evaluate_service_signals(
     )
 
     token_match = _compute_token_match(expected_token, pid_alive, port_listening, port)
-    state, state_label, exit_code = _compute_state(
-        pid_alive,
-        pid_is_ours,
-        port_listening,
-        heartbeat_stale,
-        phase=_service_phase(status),
+    state = lifecycle_from_signals(
+        LivenessSignals(
+            pid=pid,
+            pid_alive=pid_alive,
+            pid_matches_service=pid_is_ours,
+            port_listening=port_listening,
+            heartbeat_age_s=heartbeat_age,
+            heartbeat_stale=heartbeat_stale,
+            phase=_service_phase(status),
+        )
     )
+    # Confirmed dead is the only state in which the discovery file may be
+    # removed; the ambiguous states keep it and only report.
+    if state is ServiceLifecycle.CRASHED_PID_DEAD and _should_unlink_discovery_file(
+        pid_alive
+    ):
+        _delete_service_status()
 
     return _StatusSignals(
         pid,
@@ -342,8 +336,6 @@ def _evaluate_service_signals(
         heartbeat_stale,
         token_match,
         state,
-        state_label,
-        exit_code,
     )
 
 
@@ -363,7 +355,7 @@ def _render_status_json(
         "heartbeat_age_seconds": signals.heartbeat_age,
         "heartbeat_stale": signals.heartbeat_stale,
         "service_token_match": signals.token_match,
-        "state": signals.state,
+        "state": signals.state.value,
     }
     if isinstance(health, dict):
         payload["health"] = health
@@ -374,7 +366,10 @@ def _render_status_json(
         "service.status",
         data=payload,
         **(
-            {"error": signals.state, "message": f"Service status: {signals.state}"}
+            {
+                "error": signals.state.value,
+                "message": f"Service status: {signals.state.label}",
+            }
             if signals.exit_code != 0
             else {}
         ),
@@ -580,21 +575,13 @@ def _print_health_detail(
     port_listening: bool,
     operational: dict[str, object] | None = None,
 ) -> None:
-    _print_detail_line("Typesafe", typesafe_label(health))
+    _print_detail_line("Typesafe", typesafe_label(health_typesafe(health)))
     if isinstance(health, dict):
         _print_detail_line(
             "Requests",
             _status_health_label(health, port_listening=port_listening),
         )
         _print_status_lines(_degraded_lines(operational, health))
-        compute = (
-            "GPU available"
-            if health.get("cuda") is True
-            else "no supported GPU detected"
-            if health.get("cuda") is False
-            else NOT_REPORTED
-        )
-        _print_detail_line("Compute", compute)
         env_exe = health.get("executable")
         if isinstance(env_exe, str) and env_exe:
             _print_detail_line("Service env", env_exe)
@@ -602,9 +589,10 @@ def _print_health_detail(
         _print_detail_line(
             "Search models", _model_ready_label(health.get("models_loaded"))
         )
-        _print_detail_line(
-            "Reranking", _model_ready_label(health.get("reranker_loaded"))
-        )
+        features = service_features(health)
+        _print_detail_line("Reranking", reranker_label(features))
+        _print_detail_line("Preprocessing", preprocess_mode_label(features))
+        _print_detail_line("File watcher", watcher_enabled_label(features))
         _print_detail_line(
             "Loaded projects",
             health.get("project_count", NOT_REPORTED),
@@ -752,7 +740,7 @@ _STORAGE_PROBE = _StatusProbe(
 
 
 def _status_next_action(
-    state: str,
+    state: ServiceLifecycle,
     health: dict[str, object] | None,
     jobs: dict[str, object],
     *,
@@ -760,11 +748,11 @@ def _status_next_action(
     port: int | None = None,
 ) -> str:
     port_arg = port_option(port)
-    if state == "stopped":
+    if state is ServiceLifecycle.STOPPED:
         return server_start_command(port)
-    if state == "warming":
+    if state is ServiceLifecycle.STARTING:
         return f"{server_status_command(port)}  (models loading; retry shortly)"
-    if state != "running":
+    if state is not ServiceLifecycle.RUNNING:
         return f"vaultspec-rag server logs --limit 80{port_arg}"
     if _status_is_held(health):
         return _held_next_action(health, port=port)
@@ -828,7 +816,9 @@ def _failure_followup(
     already name it, so the same job is never reported twice.
     """
     failed_total = _failed_job_total(jobs)
-    already_reported = any(finding.family == FAILED_JOB_FAMILY for finding in findings)
+    already_reported = any(
+        finding.family == DegradationReason.JOB_FAILED for finding in findings
+    )
     summary = "" if already_reported else _last_failure_label(health)
     if failed_total <= 0 and not summary:
         return None
@@ -839,7 +829,7 @@ def _failure_followup(
 
 
 def _status_operational_summary(
-    state: str,
+    state: ServiceLifecycle,
     port: int,
     port_listening: bool,
     health: dict[str, object] | None,
@@ -913,6 +903,20 @@ def _print_operational_detail(
 
 
 def _render_status_summary(request: _StatusSummaryRequest) -> None:
+    if request.health is None:
+        # Nothing answered, so there is nothing to report beyond where the
+        # service is and how to change that - rows of "not reported" would
+        # only repeat that the service is not there.
+        lines = [f"Server: {_plain_status_label(request.label)}"]
+        if request.state.remediation:
+            lines.append(request.state.remediation)
+        lines.append(address_line(request.port))
+        _print_status_lines(lines)
+        if isinstance(request.operational, dict):
+            _print_next_action(request.operational.get("next_action"))
+        if request.exit_code != 0:
+            raise typer.Exit(code=request.exit_code)
+        return
     jobs = (
         request.operational.get("jobs")
         if isinstance(request.operational, dict)
@@ -923,14 +927,18 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         request.health,
         port_listening=request.port_listening,
     )
+    features = service_features(request.health)
     lines = [
-        f"Server: {_plain_status_label(request.state_label)}",
+        f"Server: {_plain_status_label(request.label)}",
         f"Requests: {request_status}",
         *_degraded_lines(request.operational, request.health),
         f"Busy: {_status_busy_label(jobs_dict)}",
         address_line(request.port),
         f"Service env: {_status_env_label(request.health)}",
-        f"Typesafe: {typesafe_label(request.health)}",
+        f"Typesafe: {typesafe_label(health_typesafe(request.health))}",
+        f"Reranking: {reranker_label(features)}",
+        f"Preprocessing: {preprocess_mode_label(features)}",
+        f"File watcher: {watcher_enabled_label(features)}",
         f"Uptime: {_status_uptime_label(request.health)}",
         f"Queue: {_status_queue_label(jobs_dict)}",
         f"Processed jobs: {_status_jobs_label(jobs_dict)}",
@@ -984,20 +992,14 @@ def _render_port_only_status(
         probe_loopback_connect(port, timeout=FAST_CONNECT_TIMEOUT_SECONDS) == "accepted"
     )
     health = _try_http_health(port) if port_listening else None
-    state = (
-        "running"
-        if isinstance(health, dict) and health.get("status") == "ready"
-        else "stopped"
-        if not port_listening
-        else "unreachable"
+    state = with_health(
+        lifecycle_for_port(
+            port_listening=port_listening,
+            health_answered=health_answered(health),
+        ),
+        health,
     )
-    exit_code = (
-        EXIT_RUNNING
-        if state == "running"
-        else EXIT_STOPPED
-        if state == "stopped"
-        else EXIT_FAULT
-    )
+    exit_code = state.exit_code
     operational = _status_operational_summary(
         state,
         port,
@@ -1015,7 +1017,7 @@ def _render_port_only_status(
         "heartbeat_age_seconds": None,
         "heartbeat_stale": None,
         "service_token_match": None,
-        "state": state,
+        "state": state.value,
     }
     if isinstance(health, dict):
         payload["health"] = health
@@ -1027,7 +1029,7 @@ def _render_port_only_status(
             "service.status",
             data=payload,
             **(
-                {"error": state, "message": f"Service status: {state}"}
+                {"error": state.value, "message": f"Service status: {state.label}"}
                 if exit_code != 0
                 else {}
             ),
@@ -1037,15 +1039,13 @@ def _render_port_only_status(
         return
 
     if not verbose:
-        rendered_state = "running" if state == "running" else state
         _render_status_summary(
             _StatusSummaryRequest(
-                state_label=rendered_state,
+                state=state,
                 port=port,
                 port_listening=port_listening,
                 health=health,
                 operational=operational,
-                exit_code=exit_code,
             )
         )
         return
@@ -1058,31 +1058,11 @@ def _render_port_only_status(
         "Network",
         "accepting connections" if port_listening else "not accepting connections",
     )
-    _print_detail_line("Server", state)
+    _print_detail_line("Server", state.label)
     _print_health_detail(health, port_listening, operational)
     _print_operational_detail(operational)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
-
-
-def _explicit_port_state(
-    port_listening: bool,
-    health: dict[str, object] | None,
-    *,
-    phase: str | None = None,
-    pid_alive: bool = False,
-    pid_is_ours: bool = False,
-) -> tuple[str, str, int, bool]:
-    if isinstance(health, dict) and health.get("status") == "ready":
-        return STATUS_RUNNING, STATUS_RUNNING, EXIT_RUNNING, False
-    if port_listening:
-        return "unreachable", "unreachable", EXIT_FAULT, False
-    # Silent port + a live, identity-confirmed daemon that stamped ``warming``:
-    # report the warmup window instead of a contradictory "stopped" (the
-    # machine lock is held). A reused pid must not resurrect a stale stamp.
-    if phase == SERVICE_PHASE_WARMING and pid_alive and pid_is_ours:
-        return STATUS_WARMING, LABEL_WARMING, EXIT_WARMING, False
-    return STATUS_STOPPED, STATUS_STOPPED, EXIT_STOPPED, False
 
 
 def _status_response_token_match(
@@ -1119,13 +1099,20 @@ def _render_explicit_port_status(
         == "accepted"
     )
     health = _try_http_health(target_port) if port_listening else None
-    state, state_label, exit_code, heartbeat_stale = _explicit_port_state(
-        port_listening,
-        health,
-        phase=_service_phase(status),
-        pid_alive=pid_alive,
-        pid_is_ours=pid_is_ours,
+    # A silent port beside a live, identity-confirmed daemon that stamped
+    # ``warming`` is the warmup window, not a stop: the machine lock is held.
+    # A reused pid must not resurrect a stale stamp.
+    state = lifecycle_for_port(
+        port_listening=port_listening,
+        health_answered=health_answered(health),
+        starting=(
+            _service_phase(status) == SERVICE_PHASE_WARMING
+            and pid_alive
+            and pid_is_ours
+        ),
     )
+    state = with_health(state, health)
+    heartbeat_stale = False
     token_match = _status_response_token_match(expected_token, health)
     operational = _status_operational_summary(
         state,
@@ -1147,8 +1134,6 @@ def _render_explicit_port_status(
         heartbeat_stale,
         token_match,
         state,
-        state_label,
-        exit_code,
     )
 
     if json_mode:
@@ -1174,12 +1159,11 @@ def _render_explicit_port_status(
         return
     _render_status_summary(
         _StatusSummaryRequest(
-            state_label=state_label,
+            state=state,
             port=target_port,
             port_listening=port_listening,
             health=health,
             operational=operational,
-            exit_code=exit_code,
         )
     )
 
@@ -1199,7 +1183,7 @@ def service_status(
             help=(
                 f"{JSON_OPTION_HELP} Preserves exit "
                 "codes 0 (running), 3 (stopped), 4 (crashed or divergent), "
-                "and 5 (warming: models loading, not yet serving)."
+                "and 5 (starting: models loading, not yet serving)."
             ),
         ),
     ] = False,
@@ -1253,7 +1237,7 @@ def service_status(
             (resolution := resolve_machine_service()),
             _liveness_from_resolution(resolution),
         )
-        if verdict.state != STATUS_STOPPED:
+        if verdict.state is not ServiceLifecycle.STOPPED:
             _render_discovery_verdict(verdict, json_mode=json_mode, verbose=verbose)
             return
         # Nothing holds the singleton => this config's service is stopped
@@ -1264,32 +1248,32 @@ def service_status(
         # state (a multi-project false positive). `server start` keeps its own
         # port guard against double-starts.
         if json_mode:
+            stopped = ServiceLifecycle.STOPPED
             _emit_json(
                 False,
                 "service.status",
-                error="stopped",
+                error=stopped.value,
                 message="No service.json - service is not running.",
-                data={"service_json_present": False, "state": "stopped"},
+                data={"service_json_present": False, "state": stopped.value},
             )
-            raise typer.Exit(code=3)
+            raise typer.Exit(code=stopped.exit_code)
         if verbose:
             _cli.console.print("Service status")
             _print_detail_line("Local record", "not found")
-            _print_detail_line("Server", "stopped")
+            _print_detail_line("Server", ServiceLifecycle.STOPPED.label)
             _print_detail_line("Typesafe", typesafe_label(None))
         else:
             _render_status_summary(
                 _StatusSummaryRequest(
-                    state_label="stopped",
+                    state=ServiceLifecycle.STOPPED,
                     port=_default_service_port() or 8766,
                     port_listening=False,
                     health=None,
                     operational=None,
-                    exit_code=3,
                 )
             )
             return
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=ServiceLifecycle.STOPPED.exit_code)
 
     if requested_port is not None:
         _render_explicit_port_status(
@@ -1304,6 +1288,7 @@ def service_status(
 
     target_port = signals.port
     health = _try_http_health(target_port) if signals.port_listening else None
+    signals = dataclasses.replace(signals, state=with_health(signals.state, health))
     operational = _status_operational_summary(
         signals.state,
         target_port,
@@ -1329,11 +1314,10 @@ def service_status(
         return
     _render_status_summary(
         _StatusSummaryRequest(
-            state_label=signals.state_label,
+            state=signals.state,
             port=target_port,
             port_listening=signals.port_listening,
             health=health,
             operational=operational,
-            exit_code=signals.exit_code,
         )
     )

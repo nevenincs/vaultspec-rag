@@ -38,7 +38,6 @@ def _registry_health(*, model_loaded: bool) -> ServiceHealth:
     return ServiceHealth(
         model_loaded=model_loaded,
         reranker_loaded=True,
-        cuda=True,
         project_count=1,
         projects=["main"],
         nonconforming=[],
