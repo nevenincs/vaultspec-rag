@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:84702ba495ba939700ea4b92a925fb59d5a76b09aa15b580a332d17d529c3f0e'
+body_hash: 'sha256:4b508967544500bbd9497bc54705b68aa37163914fb1414526ef6f2e80de6628'
 ---
 
 # `vault-result-evidence` plan
@@ -65,8 +65,8 @@ Delivers index-time structural passages and chunk locators in the vault payload,
 
 Delivers the query-selected passage snippet over each final vault result's top two chunks, the section field, and every output surface rendering them consistently.
 
-- [ ] `P04.S06` - keep each record's runner-up chunk through grouping and select the best passage per final vault result with one batched forward; `src/vaultspec_rag/search/_searcher.py, src/vaultspec_rag/search/_result_shaping.py, src/vaultspec_rag/search/_models.py`.
-- [ ] `P04.S07` - carry section and passage spans through the result contract: in-process JSON via the service result model, CLI rendering, MCP descriptions, docs and pinned tests; `src/vaultspec_rag/server/_models.py, src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/mcp/_tools.py, docs/`.
+- [x] `P04.S06` - keep each record's runner-up chunk through grouping and select the best passage per final vault result with one batched forward; `src/vaultspec_rag/search/_searcher.py, src/vaultspec_rag/search/_result_shaping.py, src/vaultspec_rag/search/_models.py, gate section metric in src/vaultspec_rag/tests/integration/`.
+- [ ] `P04.S07` - carry section and passage spans through the result contract with CLI and MCP parity: one wire serializer for the route and in-process CLI, CLI rendering, MCP descriptions, docs, shared canonical scenarios, and a live CLI-versus-MCP parity test; `src/vaultspec_rag/server/_models.py, src/vaultspec_rag/server/_routes_search.py, src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/mcp/_tools.py, docs/, src/vaultspec_rag/tests/`.
 
 ### Phase `P05` - complete the heading-path embedding input under the gate
 

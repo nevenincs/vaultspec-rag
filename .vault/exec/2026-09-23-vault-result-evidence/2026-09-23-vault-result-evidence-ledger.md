@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5d1c3fd931419e2c25636a332c7fcde95c98bd1372b0f49db078a8538cb6b675'
+body_hash: 'sha256:b44f49cb4ecbd2c66e6b27b31dd3e7c7381cff0e0d8fbca481d8d37faff1c05c'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -45,7 +45,19 @@ related:
 - `S05` `M` `src/vaultspec_rag/tests/test_vault_chunking_unit.py`
 - `S05` `M` `src/vaultspec_rag/tests/test_vault_checkpoint.py`
 - `S05` `verify:` `ruff+basedpyright on touched files` -> `pass`
+- `S06` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S06` `M` `src/vaultspec_rag/search/_result_shaping.py`
+- `S06` `M` `src/vaultspec_rag/search/_models.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_vault_chunking_unit.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_document_result_shaping.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_typesafe_search.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/_frozen_corpus_evidence.py`
+- `S06` `M` `src/vaultspec_rag/tests/integration/test_vault_evidence_gate.py`
+- `S06` `M` `src/vaultspec_rag/tests/quality/evidence_baseline.json`
+- `S06` `verify:` `unit and adapter tests (384) and resident GPU integration (30)` -> `pass`
 
 ## Notes
 
 - `S03` research and ADR speedup figure corrected from the scratch 6.6x to the in-service ~3x; the decision is unchanged
+- `S06` test_typesafe_search fixture grown past the 1,200-character passage bound so its snippet-shorter-than-content premise still holds; the assertion is unchanged
+

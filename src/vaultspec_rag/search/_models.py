@@ -14,7 +14,7 @@ from typing import Literal
 
 from .._store_models import DocumentLocator, DocumentMetadata
 
-__all__ = ["DocumentSearchResult", "ParsedQuery", "SearchResult"]
+__all__ = ["DocumentSearchResult", "ParsedQuery", "ResultPassage", "SearchResult"]
 
 
 @dataclass
@@ -34,6 +34,24 @@ class ParsedQuery:
 
     text: str
     filters: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ResultPassage:
+    """One passage a vault result could show, with where it sits in the file.
+
+    Attributes:
+        text: The passage, verbatim from the indexed chunk.
+        line_start: 1-based file line of the passage's first line.
+        line_end: 1-based file line of the passage's last line.
+        section: Heading path above the passage, ``" > "``-joined and without
+            the document title; empty above every heading.
+    """
+
+    text: str
+    line_start: int
+    line_end: int
+    section: str
 
 
 @dataclass
@@ -65,10 +83,14 @@ class SearchResult:
             results.
         language: Programming language of the source file (codebase
             results only).  Empty string when not applicable.
-        line_start: Starting line number in the source file (codebase
-            results only).
-        line_end: Ending line number in the source file (codebase
-            results only).
+        line_start: Starting line number in the source file. For a vault
+            result, the first line of the passage in ``snippet``; ``None``
+            when the index predates stored spans.
+        line_end: Ending line number in the source file. For a vault result,
+            the last line of the passage in ``snippet``.
+        section: Heading path above a vault result's passage (e.g.
+            ``"Implementation > Migration"``), ``None`` above every heading
+            and for codebase results.
         node_type: Tree-sitter node type (e.g.
             ``"function_definition"``).  Codebase results only.
         function_name: Name of the enclosing function, if any.  Codebase
@@ -87,6 +109,9 @@ class SearchResult:
             input (the snippet is a display excerpt, not a scoring
             proxy). ``None`` when the source row carried no content;
             excluded from serialized result payloads.
+        passages: The passages a vault result's snippet is chosen from:
+            its winning chunk's, then its runner-up chunk's. Excluded from
+            serialized result payloads.
     """
 
     id: str
@@ -110,7 +135,9 @@ class SearchResult:
     preprocessor_id: str | None = None
     anchor: str | None = None
     locator: str | None = None
+    section: str | None = None
     rerank_text: str | None = None
+    passages: tuple[ResultPassage, ...] = ()
 
 
 @dataclass

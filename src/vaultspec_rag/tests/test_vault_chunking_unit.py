@@ -7,7 +7,7 @@ import pytest
 
 from .._store_models import VaultDocument
 from ..indexer._vault_prep import split_document, vault_document_from_text
-from ..search._models import SearchResult
+from ..search._models import ResultPassage, SearchResult
 from ..search._rerank import (
     _FEATURE_NEIGHBOR_NUDGE,
     _IN_LINK_NUDGE_CAP,
@@ -148,6 +148,20 @@ class TestGroupChunksByDocument:
         grouped = _group_chunks_by_document(results)
         assert [r.id for r in grouped] == ["adr/a", "adr/b"]
         assert grouped[0].score == 0.9
+
+    def test_runner_up_chunk_passages_join_the_representative(self):
+        best = _result("adr/a", 0.9)
+        best.passages = (ResultPassage("best chunk passage", 3, 3, "A"),)
+        second = _result("adr/a", 0.5)
+        second.passages = (ResultPassage("runner-up passage", 30, 31, "B"),)
+        third = _result("adr/a", 0.1)
+        third.passages = (ResultPassage("third chunk passage", 60, 60, "C"),)
+        grouped = _group_chunks_by_document([third, second, best])
+        assert [r.id for r in grouped] == ["adr/a"]
+        assert [p.text for p in grouped[0].passages] == [
+            "best chunk passage",
+            "runner-up passage",
+        ]
 
     def test_unique_documents_pass_through_sorted(self):
         results = [_result("adr/a", 0.2), _result("adr/b", 0.8)]

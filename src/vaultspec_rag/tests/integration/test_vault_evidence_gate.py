@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING, TypedDict
 
 import pytest
 
-from ..quality.metrics import contains_evidence, rank_of_first_grade
+from ..quality.metrics import (
+    contains_evidence,
+    normalize_evidence_text,
+    rank_of_first_grade,
+)
 from ._frozen_corpus_evidence import load_evidence_cases
 
 if TYPE_CHECKING:
@@ -44,26 +48,32 @@ class EvidenceSummary(TypedDict):
     hit_at_1: float
     mrr: float
     evidence_in_snippet: float
+    section_match: float
     hits_with_span: int
 
 
 def _case_outcome(
     case: EvidenceCase, observation: EvidenceObservation
-) -> tuple[int | None, bool]:
-    """Return the best gold rank and whether that hit's snippet holds its evidence."""
+) -> tuple[int | None, bool, bool]:
+    """Return the best gold rank, and whether that hit shows and names the answer.
+
+    The second flag is whether its snippet holds the evidence span; the third,
+    whether its section path ends under the heading the evidence sits under.
+    """
     ranked = [hit["doc_id"] for hit in observation["hits"]]
     rank = rank_of_first_grade(
         ranked, {gold["doc_id"]: 1 for gold in case["gold"]}, min_grade=1
     )
     if rank is None:
-        return None, False
+        return None, False, False
     hit = observation["hits"][rank - 1]
-    shows = any(
-        contains_evidence(hit["snippet"], gold["evidence"])
-        for gold in case["gold"]
-        if gold["doc_id"] == hit["doc_id"]
+    golds = [gold for gold in case["gold"] if gold["doc_id"] == hit["doc_id"]]
+    shows = any(contains_evidence(hit["snippet"], gold["evidence"]) for gold in golds)
+    section = normalize_evidence_text(hit["section"] or "")
+    names = any(
+        section.endswith(normalize_evidence_text(gold["section"])) for gold in golds
     )
-    return rank, shows
+    return rank, shows, names
 
 
 def _summarize(evidence: FrozenCorpusEvidence) -> EvidenceSummary:
@@ -73,9 +83,10 @@ def _summarize(evidence: FrozenCorpusEvidence) -> EvidenceSummary:
     count = len(cases)
     return EvidenceSummary(
         cases=count,
-        hit_at_1=sum(rank == 1 for rank, _ in outcomes) / count,
-        mrr=sum(1 / rank for rank, _ in outcomes if rank) / count,
-        evidence_in_snippet=sum(shows for _, shows in outcomes) / count,
+        hit_at_1=sum(rank == 1 for rank, _, _ in outcomes) / count,
+        mrr=sum(1 / rank for rank, _, _ in outcomes if rank) / count,
+        evidence_in_snippet=sum(shows for _, shows, _ in outcomes) / count,
+        section_match=sum(names for _, _, names in outcomes) / count,
         hits_with_span=sum(
             hit["span_text"] is not None
             for obs in evidence["evidence"]
@@ -108,7 +119,9 @@ class TestVaultEvidenceGate:
         ]
         assert not empty, f"evidence cases returned no hits: {empty}"
 
-    @pytest.mark.parametrize("metric", ["hit_at_1", "mrr", "evidence_in_snippet"])
+    @pytest.mark.parametrize(
+        "metric", ["hit_at_1", "mrr", "evidence_in_snippet", "section_match"]
+    )
     def test_metric_meets_floor(
         self,
         frozen_corpus_evidence: FrozenCorpusEvidence,
@@ -122,6 +135,7 @@ class TestVaultEvidenceGate:
             "hit_at_1": summary["hit_at_1"],
             "mrr": summary["mrr"],
             "evidence_in_snippet": summary["evidence_in_snippet"],
+            "section_match": summary["section_match"],
         }
         floor = _floors()[metric]
         value = rates[metric]
@@ -140,7 +154,8 @@ class TestVaultEvidenceGate:
                     continue
                 snippet = hit["snippet"].strip("\n")
                 # The line-count comparison is what rejects a span shifted or
-                # widened by a line: containment alone passes either.
+                # widened by a line: containment alone passes either. Reporting
+                # every passage's last line one too late fails here.
                 if snippet not in span or span.count("\n") != snippet.count("\n"):
                     offenders.append(
                         f"{obs['case_id']} {hit['doc_id']} "

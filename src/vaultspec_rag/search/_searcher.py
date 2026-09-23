@@ -19,7 +19,12 @@ from .. import store_schema
 from .._search_state import SearchWaitCause
 from .._store_search import HybridSearchRequest
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
-from ._models import DocumentSearchResult, ParsedQuery, SearchResult
+from ._models import (
+    DocumentSearchResult,
+    ParsedQuery,
+    ResultPassage,
+    SearchResult,
+)
 from ._noise import (
     apply_domain_demotion,
     partition_hard_domains,
@@ -36,11 +41,14 @@ from ._result_shaping import (
     PHASE_DEMOTE,
     PHASE_EMBEDDING,
     PHASE_GRAPH_RERANK,
+    PHASE_PASSAGE,
     PHASE_POSTPROCESS,
     PHASE_PREFER,
     PHASE_QDRANT,
     PHASE_RERANK,
     PHASE_RESULT_MAPPING,
+    show_passage,
+    vault_row_passages,
 )
 from ._result_shaping import (
     add_seconds as _add_seconds,
@@ -92,6 +100,10 @@ logger = logging.getLogger(__name__)
 # Keep the older queue keys below for wire compatibility, but do not make a
 # generic queue total the only way to recover which resource owned the wait.
 GPU_COMPUTE_WAIT_SECONDS = f"{SearchWaitCause.GPU_COMPUTE.value}_wait_seconds"
+
+#: Bounds the passages scored for one result: its winning chunk's come first,
+#: so the bound only ever trims the tail of its runner-up chunk's.
+_MAX_PASSAGES_PER_RESULT = 12
 
 
 class _Rerankable(Protocol):
@@ -620,7 +632,15 @@ class VaultSearcher:
     def _map_vault_results(
         self, raw_results: list[dict[str, object]], encoded: _EncodedSearchQuery
     ) -> list[SearchResult]:
-        """Map retrieved vault rows with their full content for reranking."""
+        """Map retrieved vault rows with their full content for reranking.
+
+        Each result starts out showing its chunk's first passage; the final
+        page later swaps in the passage that best answers the query. A row
+        stored without passages shows its chunk text, cut at the passage
+        bound, and reports whatever chunk span it carries.
+        """
+        from .._markdown_passages import PASSAGE_MAX_CHARS
+
         phase_started = time.perf_counter()
         docs_prefix = self._vault_docs_prefix()
         results: list[SearchResult] = []
@@ -634,24 +654,64 @@ class VaultSearcher:
                 if isinstance(related_raw, list)
                 else []
             )
-            results.append(
-                SearchResult(
-                    id=str(row["id"]),
-                    path=_join_doc_path(docs_prefix, str(row["path"])),
-                    title=str(row.get("title", "")),
-                    score=score,
-                    snippet=content[:200].strip(),
-                    source="vault",
-                    doc_type=str(row.get("doc_type", "")),
-                    feature=str(row.get("feature", "")),
-                    date=str(row.get("date", "")),
-                    status=str(row.get("status", "")),
-                    related=related,
-                    rerank_text=content or None,
-                ),
+            line_start, line_end = row.get("line_start"), row.get("line_end")
+            section = row.get("section")
+            result = SearchResult(
+                id=str(row["id"]),
+                path=_join_doc_path(docs_prefix, str(row["path"])),
+                title=str(row.get("title", "")),
+                score=score,
+                snippet=content[:PASSAGE_MAX_CHARS].strip(),
+                source="vault",
+                doc_type=str(row.get("doc_type", "")),
+                feature=str(row.get("feature", "")),
+                date=str(row.get("date", "")),
+                status=str(row.get("status", "")),
+                related=related,
+                line_start=line_start if isinstance(line_start, int) else None,
+                line_end=line_end if isinstance(line_end, int) else None,
+                section=section if isinstance(section, str) and section else None,
+                rerank_text=content or None,
+                passages=vault_row_passages(row, content),
             )
+            if result.passages:
+                show_passage(result, result.passages[0])
+            results.append(result)
         _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
         return results
+
+    def _select_passages(
+        self, encoded: _EncodedSearchQuery, results: list[SearchResult]
+    ) -> None:
+        """Show each result the passage that best answers the query.
+
+        Every result's candidate passages are scored by the reranker in one
+        batched forward; a result with a single candidate needs no scoring.
+        With the reranker disabled each result keeps its first passage.
+        """
+        phase_started = time.perf_counter()
+        pairs: list[tuple[str, str]] = []
+        owners: list[tuple[SearchResult, ResultPassage]] = []
+        for result in results:
+            candidates = result.passages[:_MAX_PASSAGES_PER_RESULT]
+            if candidates:
+                show_passage(result, candidates[0])
+            if len(candidates) > 1:
+                for passage in candidates:
+                    pairs.append((encoded.text, passage.text))
+                    owners.append((result, passage))
+        if pairs and self._reranker_enabled:
+            scores = self._predict_scores(pairs, timings=encoded.timings)
+            best: dict[int, tuple[float, ResultPassage]] = {}
+            for (result, passage), score in zip(owners, scores, strict=True):
+                current = best.get(id(result))
+                if current is None or score > current[0]:
+                    best[id(result)] = (score, passage)
+            for result in results:
+                chosen = best.get(id(result))
+                if chosen is not None:
+                    show_passage(result, chosen[1])
+        _record_seconds(encoded.timings, PHASE_PASSAGE, phase_started)
 
     def search_vault_encoded(
         self,
@@ -748,13 +808,16 @@ class VaultSearcher:
         if status_spec:
             results = apply_status_filter(results, status_spec)
         _record_seconds(encoded.timings, PHASE_GRAPH_RERANK, phase_started)
+        page = results[: encoded.top_k]
+        self._select_passages(encoded, page)
         if encoded.timings is not None:
             encoded.timings[PHASE_POSTPROCESS] = (
                 encoded.timings.get(PHASE_RESULT_MAPPING, 0.0)
                 + encoded.timings.get(PHASE_RERANK, 0.0)
                 + encoded.timings.get(PHASE_GRAPH_RERANK, 0.0)
+                + encoded.timings.get(PHASE_PASSAGE, 0.0)
             )
-        return results[: encoded.top_k]
+        return page
 
     @staticmethod
     def _build_codebase_store_filters(

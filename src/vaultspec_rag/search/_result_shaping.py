@@ -23,7 +23,12 @@ from ._postprocess import (
 
 if TYPE_CHECKING:
     from .._store_models import DocumentLocatorKind
-    from ._models import DocumentSearchResult, ParsedQuery, SearchResult
+    from ._models import (
+        DocumentSearchResult,
+        ParsedQuery,
+        ResultPassage,
+        SearchResult,
+    )
 
     type CombinedSearchResult = SearchResult | DocumentSearchResult
 
@@ -114,16 +119,68 @@ def group_chunks_by_document(results: list[SearchResult]) -> list[SearchResult]:
 
     The vault collection stores one point per document chunk, so a
     single document can occupy several candidate slots. The
-    best-scoring chunk represents its document (its snippet is the
-    matched passage); duplicates drop. Order follows the surviving
-    scores, descending.
+    best-scoring chunk represents its document and the rest drop, but
+    the runner-up chunk's passages join the representative's: a
+    document's answer sits in its second-best chunk often enough that
+    a snippet chosen from the best chunk alone misses it. Order follows
+    the surviving scores, descending.
     """
+    ranked = sorted(results, key=lambda r: r.score, reverse=True)
     best: dict[str, SearchResult] = {}
-    for result in results:
+    widened: set[str] = set()
+    for result in ranked:
         current = best.get(result.id)
-        if current is None or result.score > current.score:
+        if current is None:
             best[result.id] = result
+        elif result.id not in widened:
+            widened.add(result.id)
+            current.passages = (*current.passages, *result.passages)
     return sorted(best.values(), key=lambda r: r.score, reverse=True)
+
+
+def vault_row_passages(
+    row: dict[str, object], content: str
+) -> tuple[ResultPassage, ...]:
+    """Read a vault row's stored passages as text with their file lines.
+
+    Rows written before passages were stored carry none, and any entry
+    whose offsets do not fall inside *content* is skipped rather than
+    shown as the wrong text.
+    """
+    from ._models import ResultPassage
+
+    raw = row.get("passages")
+    if not isinstance(raw, list):
+        return ()
+    passages: list[ResultPassage] = []
+    for entry in cast("list[object]", raw):
+        if not isinstance(entry, dict):
+            continue
+        fields = cast("dict[str, object]", entry)
+        start, end = fields.get("start"), fields.get("end")
+        line_start, line_end = fields.get("line_start"), fields.get("line_end")
+        section = fields.get("section")
+        if not (
+            isinstance(start, int)
+            and isinstance(end, int)
+            and isinstance(line_start, int)
+            and isinstance(line_end, int)
+            and isinstance(section, str)
+            and 0 <= start < end <= len(content)
+        ):
+            continue
+        passages.append(
+            ResultPassage(content[start:end], line_start, line_end, section)
+        )
+    return tuple(passages)
+
+
+def show_passage(result: SearchResult, passage: ResultPassage) -> None:
+    """Make *passage* the result's snippet, span and section."""
+    result.snippet = passage.text
+    result.line_start = passage.line_start
+    result.line_end = passage.line_end
+    result.section = passage.section or None
 
 
 #: The phase keys a search publishes on its timings channel.
@@ -148,6 +205,7 @@ PHASE_PROJECT_LEASE = "project_lease_seconds"
 PHASE_QDRANT = "qdrant_seconds"
 PHASE_RESULT_MAPPING = "result_mapping_seconds"
 PHASE_RERANK = "rerank_seconds"
+PHASE_PASSAGE = "passage_seconds"
 PHASE_GRAPH_RERANK = "graph_rerank_seconds"
 PHASE_DEDUP = "dedup_seconds"
 PHASE_DEMOTE = "demote_seconds"

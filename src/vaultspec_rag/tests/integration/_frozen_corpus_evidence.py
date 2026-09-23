@@ -144,6 +144,7 @@ class EvidenceHit(TypedDict):
 
     doc_id: str
     snippet: str
+    section: str | None
     line_start: int | None
     line_end: int | None
     span_text: str | None
@@ -294,6 +295,7 @@ def _observe_evidence(root: Path, searcher: VaultSearcher) -> list[EvidenceObser
                     EvidenceHit(
                         doc_id=result.id,
                         snippet=result.snippet,
+                        section=result.section,
                         line_start=result.line_start,
                         line_end=result.line_end,
                         span_text=_span_text(root, result),
