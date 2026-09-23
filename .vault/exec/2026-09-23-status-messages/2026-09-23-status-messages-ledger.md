@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:5cffcb58a75955087e2b91468e3ddf1f0db0b37ff3a1735c712e09eb33445948'
+body_hash: 'sha256:ea91afbbacf65406a806c5d3929d69a69c6540f56e62c84a22f0e8c36b260553'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -129,6 +129,12 @@ related:
 - `S16` `M` `src/vaultspec_rag/tests/test_server_document_models.py`
 - `S16` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
 - `S16` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S06` `A` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S06` `M` `src/vaultspec_rag/cli/_status.py`
+- `S06` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S06` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -142,4 +148,5 @@ related:
 - `S05` enrollment_status returns TypesafeReport; the derivable enrolled flag is gone from the wire; labels come from TypesafeState
 - `S12` Reading the running service's preprocess mode moved to S16 (plan row corrected) because the service only publishes its mode with the typed feature section; preprocess status JSON gains a hooks state value; the effect line now renders from PreprocessHookState
 - `S16` Project status Compute line now renders from the service's installation report or a labelled local metadata probe (overlapping S08, which reworks the layout); status JSON and index status lose accelerator and count alias keys; /health moves typesafe and reranker state under features; MPS working-set memory moved into ComputeReport; integration assertions updated statically, not run
+- `S06` The typed parse fails closed: a payload from another release parses to None and the caller reports the version or falls back locally, resolving the P01 forward-compatibility finding without relaxing extra=forbid; renderers still reading raw health sections move onto HealthReport in P05
 

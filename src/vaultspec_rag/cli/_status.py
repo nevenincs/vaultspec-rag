@@ -14,6 +14,7 @@ from ..operator_state._installation import ComputeCapability
 from ..operator_state._models import InstallationReport
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._typed_state import parse_service_state
 from ._app import CLIState, JsonMode, app
 from ._cli_format import _counted_unit, _format_mib
 from ._render import (
@@ -300,18 +301,11 @@ def _service_index_status(
         {"project_root": str(target)},
         port,
     )
-    if not isinstance(result, dict) or result.get("ok") is False:
+    report = parse_service_state(result)
+    if report is None or report.index.get("error"):
         return None
-    raw_index = result.get("index")
-    if not isinstance(raw_index, dict):
-        return None
-    index_dict = cast("dict[str, object]", raw_index)
-    if index_dict.get("error"):
-        return None
-    try:
-        installation = InstallationReport.model_validate(result.get("installation"))
-    except ValueError:
-        return None
+    installation = report.installation
+    index_dict = report.index
     return index_dict, installation, port
 
 

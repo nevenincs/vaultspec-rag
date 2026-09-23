@@ -11,6 +11,7 @@ import typing
 
 import pytest
 
+from ..operator_state._features import PreprocessHookState
 from ..operator_state._installation import (
     ComputeCapability,
     HardwarePresence,
@@ -20,6 +21,8 @@ from ..operator_state._models import (
     ComputeReport,
     HardwareReading,
     InstallationReport,
+    RootFeatures,
+    ServiceStateReport,
 )
 from ._cli_helpers import (
     EnvVar,
@@ -223,18 +226,28 @@ class TestStatusCommand:
                 query = urllib.parse.parse_qs(parsed.query)
                 assert parsed.path == "/service-state"
                 assert query["project_root"] == [str(root)]
-                response = {
-                    "ok": True,
-                    "installation": _installation(
+                response = ServiceStateReport(
+                    installation=_installation(
                         _compute(ComputeCapability.READY, device_name="NVIDIA RTX")
-                    ).model_dump(mode="json"),
-                    "index": {
+                    ),
+                    root_features=RootFeatures(
+                        root=str(root),
+                        preprocess_hooks=PreprocessHookState.NONE,
+                        preprocess_rule_count=0,
+                        watcher_running=False,
+                    ),
+                    index={
                         "storage_path": "http://127.0.0.1:8765",
                         "vault_count": 7,
                         "code_count": 9,
                         "target_dir": str(root),
                     },
-                }
+                    projects={},
+                    watcher={},
+                    qdrant={},
+                    quiesce={},
+                    schema_version=2,
+                ).model_dump(mode="json")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()

@@ -328,12 +328,11 @@ def _running_service_preprocess_mode() -> PreprocessMode | None:
     """
     from ..serviceclient._discovery import _default_service_port
     from ..serviceclient._transport import _try_http_health
-    from ._status_labels import health_section
+    from ..serviceclient._typed_state import parse_health
 
     port = _default_service_port()
-    health = _try_http_health(port) if port is not None else None
-    mode = health_section(health, "features").get("preprocess_mode")
-    return cast("PreprocessMode", mode) if mode in {"default", "off"} else None
+    health = parse_health(_try_http_health(port) if port is not None else None)
+    return health.features.preprocess_mode if health is not None else None
 
 
 @preprocess_app.command(
