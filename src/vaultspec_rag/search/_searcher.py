@@ -397,9 +397,9 @@ class VaultSearcher:
     def _get_reranker(self) -> CrossEncoder:
         """Lazily load the CrossEncoder reranker model onto GPU.
 
-        Returns the cached CrossEncoder instance on subsequent calls.
-        The model (BAAI/bge-reranker-v2-m3 by default) is loaded with
-        ``activation_fn=Sigmoid()`` for calibrated [0, 1] scores.
+        Returns the cached CrossEncoder instance on subsequent calls. A
+        searcher the service builds is handed the shared reranker; only a
+        standalone searcher reaches the load here.
 
         Returns:
             Cached or newly loaded CrossEncoder instance.
@@ -412,13 +412,8 @@ class VaultSearcher:
         with self._reranker_lock:
             if self._reranker is not None:
                 return self._reranker
-            from sentence_transformers import CrossEncoder
+            from ..embeddings import load_reranker
 
-            from .._gpu import load_accelerator
-            from ..config._settings import get_config
-
-            accelerator = load_accelerator()
-            torch = accelerator.torch
             # Hold the shared GPU lock across the model load. Constructing the
             # CrossEncoder materialises weights on the device, and that CUDA work
             # must not run concurrently with another root's forward pass (or a
@@ -426,16 +421,10 @@ class VaultSearcher:
             # unserialised load races and crashes the process. The lock is
             # released before the forward pass in ``_rerank`` re-acquires it.
             with self._gpu_section():
-                self._reranker = CrossEncoder(
-                    self._reranker_model_name,
-                    device=accelerator.device,
-                    activation_fn=torch.nn.Sigmoid(),
-                    max_length=int(get_config().reranker_max_length),
-                    local_files_only=self._local_files_only,
-                )
+                self._reranker = load_reranker(local_files_only=self._local_files_only)
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
-                accelerator.name,
+                self._reranker.device,
                 self._reranker_model_name,
             )
             return self._reranker
@@ -469,32 +458,52 @@ class VaultSearcher:
         """
         if not self._reranker_enabled or len(results) <= 1:
             return results[:top_k]
-        from .._gpu import load_accelerator
         from ..config._settings import get_config
 
-        accelerator = load_accelerator()
-        cfg = get_config()
-        reranker = self._get_reranker()
         # Score the real candidate content, not the 200-char display
         # snippet. The character cap only bounds tokenizer work on
         # oversized rows (~6 chars per BPE token is a safe ceiling);
         # the model's own max_length does the exact token truncation.
-        char_cap = max(1, int(cfg.reranker_max_length)) * 6
-        # Declared, not inferred: `list` is invariant, so an inferred
-        # `list[tuple[str, str]]` is not assignable to the `list[PairInput]`
-        # the overloads accept.
-        pairs: list[PairInput] = [  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
-            (query, (r.rerank_text or r.snippet)[:char_cap]) for r in results
-        ]
-        batch_size = cfg.reranker_batch_size
+        char_cap = max(1, int(get_config().reranker_max_length)) * 6
+        scores = self._predict_scores(
+            [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results],
+            timings=timings,
+        )
+        for result, score in zip(results, scores, strict=True):
+            result.score = score
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+    def _predict_scores(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        timings: dict[str, float] | None = None,
+    ) -> list[float]:
+        """Score (query, text) pairs with the reranker, halving batches on OOM.
+
+        The GPU lock wraps only the model forward call; pairs arrive already
+        built and the score-to-float conversion runs after release.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If OOM persists even
+                after halving batch size down to 1.
+        """
+        from .._gpu import load_accelerator
+        from ..config._settings import get_config
+
+        accelerator = load_accelerator()
+        reranker = self._get_reranker()
+        # Declared, not inferred: `list` is invariant, so a `list[tuple[str,
+        # str]]` is not assignable to the `list[PairInput]` the overloads accept.
+        model_pairs: list[PairInput] = list(pairs)  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
+        batch_size = get_config().reranker_batch_size
         raw_scores = None
-        # The GPU lock wraps only the model forward call; the
-        # score-to-float conversion below runs after release.
         with self._gpu_section(timings):
             while True:
                 try:
                     raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
-                        pairs,
+                        model_pairs,
                         batch_size=batch_size,
                         show_progress_bar=False,
                     )
@@ -511,11 +520,7 @@ class VaultSearcher:
                         accelerator.backend.upper(),
                         batch_size,
                     )
-        scores = [float(s) for s in raw_scores]
-        for result, score in zip(results, scores, strict=True):
-            result.score = score
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results[:top_k]
+        return [float(s) for s in raw_scores]
 
     def _get_graph(self) -> VaultGraph | None:
         """Return the cached VaultGraph, rebuilding on TTL expiry.

@@ -9,7 +9,7 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:c05425dbe24aff53c7c62bb0ca59a349101b7d55fae34756e1023ae0e8a29a0e'
+body_hash: 'sha256:a8489c908a11c349f8579c86008c3a748b02309afdd1b9274a4b8a68ec404bf4'
 ---
 
 # `vault-result-evidence` plan
@@ -52,7 +52,7 @@ Delivers a blind-labelled evidence query set over the frozen vault and a quality
 
 Delivers one CrossEncoder constructor loading fp16 for the service and the searcher fallback, one shared predict path, and a measured latency drop.
 
-- [ ] `P02.S03` - collapse the two CrossEncoder construction sites into one fp16 constructor and share the out-of-memory predict backoff; `src/vaultspec_rag/service.py, src/vaultspec_rag/search/_searcher.py`.
+- [x] `P02.S03` - collapse the two CrossEncoder construction sites into one fp16 constructor and share the out-of-memory predict backoff; `src/vaultspec_rag/service.py, src/vaultspec_rag/search/_searcher.py`.
 
 ### Phase `P03` - store passages and locators on vault chunks
 

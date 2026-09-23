@@ -5,41 +5,26 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:94bc2b4563848413d3fce72dd6d077b5da003470c9ce6d41c06bc7581bd1ab24'
+body_hash: 'sha256:64885f4788a898b28b5f58e54bdcafc75cd023ddd21b0a8518a970634b4a7b3e'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
-
-<!-- Machine-owned, whole file: `vaultspec-core vault exec log` creates it
-     on first use and appends every row; never hand-edit it. Add no
-     frontmatter fields. Wiki-links belong in `related:` only.
-
-     ONE ledger per plan, the only execution artifact. Each row's first
-     column names its Step. -->
 
 # `vault-result-evidence` ledger
 
 ## Changes
 
-<!-- MECHANICAL LOG, append-only, one row per path touched per Step, written
-     by `--row`:
-       - `S##` `A` `path`   added
-       - `S##` `M` `path`   modified
-       - `S##` `D` `path`   deleted
-       - `S##` `R` `old` -> `new`   renamed
-     Paths are repo-relative, in backticks. No prose: the Step row states the
-     intent and the commit carries the diff.
-
-     Optional per-Step rows, written by `--verify` and `--by`:
-       - `S##` `verify:` `<command>` -> `pass` | `fail`
-       - `S##` `by:` `<persona>`
-
-     Rows are appended in Step order and never rewritten. Only rows in this
-     section register a Step as covered. `--note` adds a `## Notes` section
-     ONLY on exception (data loss, skipped work, a scaffold left in code, a
-     persistent failure), one `S##`-prefixed line each; it is otherwise
-     omitted. -->
 - `S04` `A` `src/vaultspec_rag/_markdown_passages.py`
 - `S04` `A` `src/vaultspec_rag/tests/test_markdown_passages.py`
 - `S04` `verify:` `fence guard mutation (fence detection disabled) fails on the section equality, restored passes` -> `pass`
+- `S03` `M` `src/vaultspec_rag/embeddings.py`
+- `S03` `M` `src/vaultspec_rag/service.py`
+- `S03` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S03` `M` `.vault/research/2026-09-23-vault-result-evidence-research.md`
+- `S03` `M` `.vault/adr/2026-09-23-vault-result-evidence-adr.md`
+- `S03` `verify:` `service vault search median rerank 1.089s->0.367s, total 1.140s->0.43s` -> `pass`
 
+## Notes
+
+- `S03` research and ADR speedup figure corrected from the scratch 6.6x to the in-service ~3x; the decision is unchanged

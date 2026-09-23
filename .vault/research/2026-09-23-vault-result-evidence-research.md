@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:ea9a1984269b392443f63dfbe435d07b484f698d054f0a810802c883e6ef45fc'
+body_hash: 'sha256:ce2af5fd8af16fd066ade93b0d86de09804b76cb4d8f75c5434ac73b75024877'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"
@@ -124,7 +124,7 @@ CrossEncoder, then selected passages within the top-N chunks by chunk score, cap
   (`src/vaultspec_rag/search/_searcher.py:694-696`). How often the evidence-bearing
   sibling falls outside that window was not measured.
 
-### The reranker runs in fp32 and dominates search latency; fp16 is 6.6x faster with identical rankings
+### The reranker runs in fp32 and dominates search latency; fp16 is about 3x faster in service with identical rankings
 
 - Service timing for a 10-result vault search: `rerank_seconds` 1.089 of
   `server_total_seconds` 1.140.
@@ -139,8 +139,12 @@ CrossEncoder, then selected passages within the top-N chunks by chunk score, cap
 | fp16 | 326 | 39/39 | 39/39 | 22/39 | 0.719 | 0.0019 |
 | bf16 | 325 | 39/39 | 39/39 | 22/39 | 0.719 | 0.0255 |
 
-- The scratch timings ran beside the live service on the same GPU. Absolute milliseconds
-  are inflated, but the ratio holds.
+- The scratch timings ran beside the live service on the same GPU, and the contention
+  inflated fp32 more than fp16, so the scratch ratio (6.6x) overstates the gain.
+- Measured in the service after loading the reranker in fp16 (commit `bd825c2f` plus the
+  constructor change), same host, corpus and three queries, nine runs:
+  - median `rerank_seconds` fell from 1.089 to 0.367 (about 3.0x);
+  - median `server_total_seconds` fell from 1.140 to 0.43.
 - Passage scoring cost about 21 ms per record in fp32 (~5 passages). At fp16 it falls to
   about 1-2 ms per passage pair.
 
@@ -201,7 +205,8 @@ CrossEncoder, then selected passages within the top-N chunks by chunk score, cap
   alone and the whole record.
 - **Bound.** Evidence sentences need a paragraph-sized window: 800-1400 characters
   performed alike, and 200 characters cannot hold most evidence sentences.
-- **Precision.** fp16 is favoured: it is 6.6x faster at no measured ranking change.
+- **Precision.** fp16 is favoured: it is about 3x faster in service at no measured
+  ranking change.
 - The ADR must settle:
   - the snippet bound;
   - index-time versus query-time passage segmentation;

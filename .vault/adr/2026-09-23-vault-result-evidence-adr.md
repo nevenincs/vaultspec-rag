@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:4364fdacc131a56027ede7fec13d0a1af8606bbdc082b36c65b94ac4e57eb613'
+body_hash: 'sha256:e7b363f3c92ef810ac62d2940152f314d7a9dd2fc551860f4b106d4c6e8c20fb'
 related:
   - "[[2026-09-23-vault-result-evidence-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -36,8 +36,9 @@ reach the new shape, and which gate keeps the behaviour from regressing.
   at that chunk's ceiling. The record's runner-up chunk recovers most of the misses,
   while whole-record selection adds distractors and does worse (research: winning-chunk
   and runner-up findings).
-- **Precision.** fp16 reranking agrees with fp32 on every measured ranking and is 6.6x
-  faster (research: reranker precision finding). That headroom pays for passage scoring.
+- **Precision.** fp16 reranking agrees with fp32 on every measured ranking and is about
+  3x faster in service (research: reranker precision finding). That headroom pays for
+  passage scoring.
 - **Recoverable locators.** Chunks are verbatim, contiguous substrings of the body, so
   line spans and heading paths can be computed at index time (research: locator
   finding).
