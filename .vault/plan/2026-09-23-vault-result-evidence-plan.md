@@ -9,19 +9,22 @@ related:
   - '[[2026-06-12-service-concurrency-adr]]'
 modified: '2026-09-23'
 body_schema: body-v2
-body_hash: 'sha256:c450da4f6d11f61dba7a4a52175e72f938075197055d80b493fb6a300c62304e'
+body_hash: 'sha256:4bb3288b307d39981f7cb7ec607f38bf9996bcb7e8fdc5e52c132d5fa018d32a'
 ---
 
 # `vault-result-evidence` plan
 
 ## Description
 
+Approved 2026-09-23. Basis: the user approved the ADR and this plan in full, P05
+included, after they were presented in conversation.
+
 Make vault search results answerable and locatable, and cut vault search latency, per
 GitHub issue #531.
 
 **Governing decisions.**
 
-- `2026-09-23-vault-result-evidence-adr` (proposed) governs every Phase and grounds in
+- `2026-09-23-vault-result-evidence-adr` (accepted) governs every Phase and grounds in
   `2026-09-23-vault-result-evidence-research`.
 - `2026-06-12-service-concurrency-adr` (accepted) is completed by this plan:
   - Its D7 (snippet from the matched passage) is delivered by P03 and P04.

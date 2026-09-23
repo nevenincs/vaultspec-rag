@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:9167ffd19054fd462e152d0ca750f70aa13be3e216810c0ffb55c23aea794f2a'
+body_hash: 'sha256:4364fdacc131a56027ede7fec13d0a1af8606bbdc082b36c65b94ac4e57eb613'
 related:
   - "[[2026-09-23-vault-result-evidence-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -13,7 +13,7 @@ related:
   - "[[2026-09-07-explicit-reindex-authority-adr]]"
 ---
 
-# `vault-result-evidence` adr: `query-selected passages, stored locators and fp16 reranking for vault results` | (**status:** `proposed`)
+# `vault-result-evidence` adr: `query-selected passages, stored locators and fp16 reranking for vault results` | (**status:** `accepted`)
 
 ## Problem Statement
 
