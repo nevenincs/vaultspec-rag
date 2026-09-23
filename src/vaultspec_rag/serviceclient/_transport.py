@@ -97,6 +97,7 @@ __all__ = [
     "_try_http_retry_job",
     "_try_http_set_job_desired_state",
     "_try_http_vault_document",
+    "health_answered",
     "health_probe_timed_out",
     "resolve_service_port",
 ]
@@ -569,6 +570,22 @@ def health_probe_timed_out(health: dict[str, object] | None) -> bool:
     string.
     """
     return health is not None and health.get("error") == _HEALTH_PROBE_TIMEOUT_ERROR
+
+
+def health_answered(health: dict[str, object] | None) -> bool:
+    """Whether a service answered its health probe with a verdict of its own.
+
+    The probe synthesises two bodies of its own when no verdict came back - an
+    accepted-but-unanswered timeout and an HTTP error status - and both carry
+    ``status: error``. They describe a failure to answer, so they must never
+    read as a service that is up.
+    """
+    return (
+        isinstance(health, dict)
+        and isinstance(health.get("status"), str)
+        and "http_code" not in health
+        and not health_probe_timed_out(health)
+    )
 
 
 def _fetch_health_token(port: int, timeout: float | None = None) -> str:

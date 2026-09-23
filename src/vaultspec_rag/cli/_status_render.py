@@ -50,7 +50,11 @@ from ..serviceclient._status import (
     lifecycle_for_port,
     lifecycle_from_signals,
 )
-from ..serviceclient._transport import _try_http_admin, _try_http_health
+from ..serviceclient._transport import (
+    _try_http_admin,
+    _try_http_health,
+    health_answered,
+)
 from ._app import (
     JSON_OPTION_HELP,
     PortOption,
@@ -982,7 +986,7 @@ def _render_port_only_status(
     health = _try_http_health(port) if port_listening else None
     state = lifecycle_for_port(
         port_listening=port_listening,
-        health_answered=_health_answered(health),
+        health_answered=health_answered(health),
     )
     exit_code = state.exit_code
     operational = _status_operational_summary(
@@ -1050,11 +1054,6 @@ def _render_port_only_status(
         raise typer.Exit(code=exit_code)
 
 
-def _health_answered(health: dict[str, object] | None) -> bool:
-    """Whether the port answered with a health verdict of any kind."""
-    return isinstance(health, dict) and isinstance(health.get("status"), str)
-
-
 def _status_response_token_match(
     expected_token: str | None,
     health: dict[str, object] | None,
@@ -1094,7 +1093,7 @@ def _render_explicit_port_status(
     # A reused pid must not resurrect a stale stamp.
     state = lifecycle_for_port(
         port_listening=port_listening,
-        health_answered=_health_answered(health),
+        health_answered=health_answered(health),
         starting=(
             _service_phase(status) == SERVICE_PHASE_WARMING
             and pid_alive

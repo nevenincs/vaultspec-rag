@@ -744,20 +744,48 @@ class TestServiceTokenIdentity:
         service running reads a paused service as a port fault and fails the
         paused assertion; restoring the any-verdict rule passes.
         """
-        from ..cli._status_render import _health_answered
         from ..operator_state._service import ServiceLifecycle
         from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
 
         for verdict in ("ready", "paused", "degraded", "error"):
             state = lifecycle_for_port(
                 port_listening=True,
-                health_answered=_health_answered({"status": verdict}),
+                health_answered=health_answered({"status": verdict}),
             )
             assert state is ServiceLifecycle.RUNNING, verdict
         assert (
             lifecycle_for_port(port_listening=True, health_answered=False)
             is ServiceLifecycle.CRASHED_PORT_SILENT
         )
+
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            {"status": "error", "error": "health_probe_timeout", "message": "x"},
+            {"status": "error", "http_code": 503},
+        ],
+        ids=["probe-timeout", "http-error"],
+    )
+    def test_a_probe_that_got_no_verdict_is_a_fault_not_running(
+        self, sentinel: dict[str, object]
+    ) -> None:
+        """A wedged or erroring service must still exit 4 to a broker.
+
+        Mutation check: accepting any body with a string status as an answer
+        reads both synthetic failure bodies as running and fails this test;
+        restoring the sentinel rejection passes.
+        """
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
+
+        state = lifecycle_for_port(
+            port_listening=True, health_answered=health_answered(sentinel)
+        )
+
+        assert state is ServiceLifecycle.CRASHED_PORT_SILENT
+        assert state.exit_code == 4
 
     def test_next_action_for_a_starting_service_says_retry(self):
         from ..cli._status_render import _status_next_action
