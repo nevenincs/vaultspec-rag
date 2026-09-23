@@ -179,6 +179,7 @@ actions-runner-*.tar.gz
 /.codex/config.toml.lock
 /.gitignore.lock
 /.mcp.json.lock
+/.pre-commit-config.yaml
 /.pre-commit-config.yaml.lock
 # <<< vaultspec-managed <<<
 
