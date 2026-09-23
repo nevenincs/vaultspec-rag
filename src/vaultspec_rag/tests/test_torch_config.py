@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 import tomlkit
 
-from ..torch_config import _constants, _diagnose, _direct_dep, _index, _inspect, _mutate
+from ..torch_config import _constants, _direct_dep, _index, _inspect, _mutate
 from ..torch_config._direct_dep import _is_torch_requirement
 
 if TYPE_CHECKING:
@@ -324,29 +324,6 @@ def test_remove_on_customised_skips(tmp_path: Path) -> None:
 def test_remove_on_no_project_file(tmp_path: Path) -> None:
     report = _mutate.remove_patch(tmp_path / "pyproject.toml")
     assert report.action == "absent"
-
-
-# ---------------------------------------------------------------------------
-# diagnose_torch
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("cuda", "cuda_available", "mps_available", "expected"),
-    [
-        (None, False, False, _constants.TorchDiagnosis.CPU_ONLY),
-        (None, False, True, _constants.TorchDiagnosis.WORKING),
-        ("13.0", False, False, _constants.TorchDiagnosis.NO_GPU),
-        ("13.0", True, False, _constants.TorchDiagnosis.WORKING),
-    ],
-)
-def test_diagnose_torch(
-    cuda: str | None,
-    cuda_available: bool,
-    mps_available: bool,
-    expected: _constants.TorchDiagnosis,
-) -> None:
-    assert _diagnose.diagnose_torch(cuda, cuda_available, mps_available) == expected
 
 
 # ---------------------------------------------------------------------------

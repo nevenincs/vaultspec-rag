@@ -1,0 +1,239 @@
+---
+tags:
+  - '#exec'
+  - '#status-messages'
+date: '2026-09-23'
+modified: '2026-09-23'
+body_schema: 'body-v2'
+body_hash: 'sha256:8eb7022c1033bc71847f3aa851c7a8a4470428f766ef365aba79ea707130ee4b'
+related:
+  - "[[2026-09-23-status-messages-plan]]"
+---
+
+# `status-messages` ledger
+
+## Changes
+
+- `S01` `A` `src/vaultspec_rag/operator_state/__init__.py`
+- `S01` `A` `src/vaultspec_rag/operator_state/_installation.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S01` `verify:` `ruff check, ruff format --check, ty check` -> `pass`
+- `S02` `A` `src/vaultspec_rag/operator_state/_service.py`
+- `S02` `A` `src/vaultspec_rag/operator_state/_features.py`
+- `S02` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S02` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S02` `M` `src/vaultspec_rag/serviceclient/_status.py`
+- `S02` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S02` `verify:` `ruff, ruff format, ty on touched files` -> `pass`
+- `S03` `A` `src/vaultspec_rag/operator_state/_models.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S03` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S09` `A` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S09` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S09` `M` `src/vaultspec_rag/cli/_process.py`
+- `S09` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S09` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S09` `A` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S09` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S04` `A` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_hardware_probe.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S04` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S10` `A` `src/vaultspec_rag/operator_state/_compute.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_installation.py`
+- `S10` `M` `src/vaultspec_rag/_readiness.py`
+- `S10` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S10` `M` `src/vaultspec_rag/_gpu_admission.py`
+- `S10` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S10` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S10` `M` `src/vaultspec_rag/torch_config/_constants.py`
+- `S10` `D` `src/vaultspec_rag/torch_config/_diagnose.py`
+- `S10` `M` `src/vaultspec_rag/torch_config/__init__.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_torch_config.py`
+- `S10` `M` `src/vaultspec_rag/tests/gpu_admission/test_floor_and_window.py`
+- `S10` `M` `src/vaultspec_rag/tests/gpu_admission/test_latch_and_wire.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S10` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S15` `M` `src/vaultspec_rag/_readiness.py`
+- `S15` `M` `src/vaultspec_rag/api.py`
+- `S15` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_readiness.py`
+- `S15` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S15` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S11` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S11` `M` `src/vaultspec_rag/service.py`
+- `S11` `M` `src/vaultspec_rag/_service_types.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S11` `M` `src/vaultspec_rag/cli/_jobs_tui_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_conformance_surfacing.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_health_degraded_clears.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_qdrant_store_format.py`
+- `S11` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_jobs_tui_status.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_cli_start_outcomes.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_service_lifecycle_helpers.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_server.py`
+- `S11` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S10` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S10` `verify:` `probe timeout guard under mutation` -> `fail`
+- `S05` `M` `src/vaultspec_rag/search/_typesafe_transport.py`
+- `S05` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S05` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_typesafe_transport.py`
+- `S05` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S12` `M` `src/vaultspec_rag/indexer/_preprocess_config.py`
+- `S12` `M` `src/vaultspec_rag/indexer/_content_discovery.py`
+- `S12` `M` `src/vaultspec_rag/indexer/_preprocess_glue.py`
+- `S12` `M` `src/vaultspec_rag/server/_routes_reindex.py`
+- `S12` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S12` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S12` `M` `src/vaultspec_rag/operator_state/_features.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_preprocess_hook_state.py`
+- `S12` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S16` `M` `src/vaultspec_rag/api.py`
+- `S16` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S16` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S16` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S16` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S16` `M` `src/vaultspec_rag/server/__init__.py`
+- `S16` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S16` `M` `src/vaultspec_rag/server/_models.py`
+- `S16` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_api_integration.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_cli_integration.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_document_cli.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_document_mcp.py`
+- `S16` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_api_clean_admission.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_server_start.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_search_quiesce_admission.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server_document_models.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S16` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S06` `A` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S06` `M` `src/vaultspec_rag/cli/_status.py`
+- `S06` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S06` `verify:` `ruff, ruff format, ty` -> `pass`
+- `S11` `M` `src/vaultspec_rag/tests/test_serving_verdict_parity.py`
+- `S11` `verify:` `pytest verdict parity and jobs TUI status` -> `pass`
+- `S13` `M` `src/vaultspec_rag/cli/_preprocess.py`
+- `S13` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S13` `M` `src/vaultspec_rag/operator_state/_service.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_status.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_paused_surface_legibility.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_process_probe_vocabulary_guards.py`
+- `S13` `verify:` `ruff, ruff format, ty check src` -> `pass`
+- `S16` `A` `src/vaultspec_rag/tests/test_status_service_skew.py`
+- `S16` `verify:` `ruff check src and ty check src` -> `pass`
+- `S07` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_mcp_no_local_fallback.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_service_quiesce_adapters.py`
+- `S07` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S08` `M` `src/vaultspec_rag/cli/_status.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S08` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S17` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S17` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S17` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S17` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_transport.py`
+- `S13` `verify:` `ruff check src, ty check src` -> `pass`
+- `S14` `M` `src/vaultspec_rag/cli/_jobs_tui_status.py`
+- `S14` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_jobs_tui_status.py`
+- `S14` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S18` `M` `dev/generate_cli_reference.py`
+- `S18` `M` `docs/automation.md`
+- `S18` `M` `docs/cli.md`
+- `S18` `M` `docs/configuration.md`
+- `S18` `M` `docs/mcp.md`
+- `S18` `M` `docs/service-discovery.md`
+- `S18` `M` `docs/service-mode.md`
+- `S18` `M` `src/vaultspec_rag/_readiness.py`
+- `S18` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S18` `verify:` `manual persona host server status against a live service lists Typesafe, reranking, preprocessing and watcher` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
+- `S17` `M` `src/vaultspec_rag/api.py`
+- `S17` `verify:` `ruff check src, ty check src` -> `pass`
+- `S08` `verify:` `pytest test_cli_status` -> `pass`
+- `S13` `M` `docs/cli.md`
+- `S13` `M` `docs/service-discovery.md`
+- `S13` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S13` `verify:` `ruff, ruff format, ty check src, docs-cli, markdown` -> `pass`
+- `S09` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S09` `verify:` `pytest environment and hardware probe tests` -> `pass`
+- `S04` `M` `src/vaultspec_rag/operator_state/_hardware.py`
+- `S04` `verify:` `pytest dev/guards` -> `pass`
+- `S11` `M` `src/vaultspec_rag/api.py`
+- `S11` `M` `src/vaultspec_rag/cli/_jobs_tui_constants.py`
+- `S11` `M` `src/vaultspec_rag/cli/_status.py`
+- `S11` `M` `src/vaultspec_rag/mcp/_tools.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_compute.py`
+- `S11` `M` `src/vaultspec_rag/operator_state/_environment_probe.py`
+- `S11` `M` `src/vaultspec_rag/serviceclient/_typed_state.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_environment_probe.py`
+- `S11` `verify:` `pytest affected status, probe, TUI and MCP modules` -> `pass`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_operator_state_models.py`
+- `S01` `verify:` `python -m dev lint all` -> `pass`
+
+## Notes
+
+- `S02` DegradationReason adds JOBS_DEGRADED beyond the ADR's list because the service already emits an 'indexing jobs are degraded' reason; broker exit codes moved into operator_state.\_service as their single home
+- `S03` Envelopes owned by other subsystems (quiesce, qdrant runtime, jobs rollup, device load, capabilities, support profile, index, projects, watcher) travel as owner mappings inside the forbid-extra top-level models
+- `S09` Server start preflight repointed in this Step because deleting the prose probe left it no other path; its messaging rework remains in S15. Structural duplicate guard gained an enum-label-table allowance and the new named-subset member
+- `S10` Role and compute classification moved into operator_state.\_compute; the child probe script now imports it, so probing an interpreter carrying an older release answers UNKNOWN (never blocking). Admission's no_cuda/torch_absent reasons became ComputeCapability NO_DEVICE/TORCH_MISSING wire values and the NO_DEVICE label broadened to cover CPU builds seen by admission. The post-install warning moved onto the child probe here, ahead of S15, because TorchDiagnosis removal left it no in-process classifier worth keeping
+- `S15` Start preflight and post-install warning already consume the probe verdict (S09, S10); this Step moves the doctor's torch axis onto the daemon-interpreter probe. Reading the service-reported verdict when a service answers lands with the typed service-state model in P03/P04
+- `S11` DegradationReason keeps JOBS_STALLED (plural, matching the reported count) and adds JOBS_DEGRADED, differing from the ADR's JOB_STALLED listing; /health drops the model-device cuda flag and its verbose Compute row until installation compute renders in P05; the start envelope keeps its own degraded_reasons key
+- `S10` P02 phase-review corrections (commit bae3163c): client readiness, in-process error classification of the loaded torch, enum-owned message headlines, cpu-prefixed tags, explicit None default, required remediation, timeout coverage; both new guards pass once restored
+- `S05` enrollment_status returns TypesafeReport; the derivable enrolled flag is gone from the wire; labels come from TypesafeState
+- `S12` Reading the running service's preprocess mode moved to S16 (plan row corrected) because the service only publishes its mode with the typed feature section; preprocess status JSON gains a hooks state value; the effect line now renders from PreprocessHookState
+- `S16` Project status Compute line now renders from the service's installation report or a labelled local metadata probe (overlapping S08, which reworks the layout); status JSON and index status lose accelerator and count alias keys; /health moves typesafe and reranker state under features; MPS working-set memory moved into ComputeReport; integration assertions updated statically, not run
+- `S06` The typed parse fails closed: a payload from another release parses to None and the caller reports the version or falls back locally, resolving the P01 forward-compatibility finding without relaxing extra=forbid; renderers still reading raw health sections move onto HealthReport in P05
+- `S11` P03 review high finding: fixtures still carried the removed cuda health key; ty check of the whole tree now runs at each Step instead of the touched subset
+- `S13` Lifecycle derives in lifecycle_from_signals and lifecycle_for_port only; JSON state tokens change (crashed becomes crashed_pid_dead or crashed_pid_reused, warming becomes starting, degraded_discovery becomes discovery_degraded, unreachable becomes crashed_port_silent); doctor treats a starting service as live with status starting; the typed parsers merged into parse_report per the structure guard
+- `S16` P03 review corrections: an unreadable service state is refused with the release verdict instead of falling back to the store the service holds; preprocess service-mode read and health lightness now covered
+- `S07` get_index_status returns ServiceStateReport as structured output and raises a ToolError when the state cannot be parsed; the stale policy promise in its docstring is gone. No dedicated test drives the ToolError branch; it shares parse_report's tested fail-closed behaviour
+- `S08` Project status is a plain-language overview: service, installation role, compute with a defect-only fix, preprocessing hooks, Typesafe, reranking and watcher when a service answers, index and next action; support profile, interpreter and generations moved behind the new --verbose; an interpreter divergence note appears when the running service's environment differs from the local daemon interpreter. Resolves the P01 client-remediation-rendering finding
+- `S17` Server status prints a stopped or crashed service as its lifecycle line, remedy and address instead of rows of not-reported; a live summary adds Reranking, Preprocessing and File watcher beside Typesafe; the summary request carries ServiceLifecycle and derives its exit code; the stopped branch spells nothing by hand; doctor labels a starting service and renders the lifecycle sentence. S14 scope widened to the TUI header and cells per the P04 review
+- `S13` P04 review high finding: the transport's synthetic timeout and HTTP-error health bodies read as a service answering, so a wedged or erroring service exited 0; health_answered now lives beside the transport that makes those bodies and rejects them
+- `S14` Service-health tones key on HealthVerdict and gain the missing paused tone; job state pills key on JobState. The header's healthy/degraded/stalled pill is job health, a separate concept from service lifecycle, and the TUI's unreachable word names a failed fetch rather than a lifecycle, so both stay
+- `S18` Release-please builds the changelog, so the release notes travel as a BREAKING CHANGE footer; the client persona against a stopped service was exercised through the production local-report path because another session's live service holds the machine singleton and was not stopped; the doctor torch line now appends the probe detail only where it is the diagnosis; new vault records formatted with mdformat
+- `S17` Final review corrections: feature labels are produced once from the parsed ServiceFeatures (the preprocess label is a table keyed by mode, so no off comparison re-derives whether hooks run); project status calls the same producers; benchmark docstring corrected to the emitted keys
+- `S08` Final review correction: status --verbose now runs the verifying probe the decision promises, and its help says so
+- `S13` Approved amendment (user authorization 2026-09-23) applied: ServiceLifecycle.NOT_SERVING (exit 4) via with_health for an error health verdict only; paused and degraded stay running; doctor keeps exit 0 for a starting service; DegradationReason list in the accepted decision amended to the emitted codes; proposal 2026-09-23-status-messages-exit-codes-adr retired; docs/cli.md regenerated for the verbose help text changed in 89c799ff
+- `S09` CI correction (78d7b9e4): the child-output decoding guard flagged the probe decoding under the ambient encoding; it now states utf-8 with replacement
+- `S04` CI correction (78d7b9e4): nvidia-smi output is decoded as utf-8 with replacement, not the ambient encoding
+- `S11` CI correction: basedpyright found 14 errors the local lint lane printed but did not fail on. Two health tests asserted a string was not in a Degradation model, which iterates its fields, so they passed vacuously; they now check the detail. The rest tighten types on the probe parse, the typed report parse, the index dict and the TUI pill keys

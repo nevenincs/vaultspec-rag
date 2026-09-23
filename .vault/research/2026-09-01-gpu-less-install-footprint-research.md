@@ -3,11 +3,12 @@ tags:
   - '#research'
   - '#gpu-less-install-footprint'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-23'
 body_schema: 'body-v1'
 body_hash: 'sha256:db85739b1146dc751d2f00a3d07fb505c5c5c202b80b95dcd58166f73d7315c4'
 related:
   - "[[2026-08-28-platform-backend-selection-research]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `gpu-less-install-footprint` research: `separate package installation from CUDA inference provisioning`

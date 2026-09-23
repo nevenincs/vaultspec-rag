@@ -23,8 +23,6 @@ from ..._gpu_admission import (
     REASON_BELOW_FLOOR,
     REASON_DEVICE_UNREADABLE,
     REASON_LOAD_IN_PROGRESS,
-    REASON_NO_CUDA,
-    REASON_TORCH_ABSENT,
     UNREADABLE_ADMISSION_LIMIT,
     DeviceAdmission,
     admission_from_reading,
@@ -39,6 +37,7 @@ from ..._units import bytes_to_mib
 from ...config._settings import rag_default
 from ...config._types import EnvVar
 from ...memory_probe import CudaDeviceMemory
+from ...operator_state._installation import ComputeCapability
 from ..conftest import managed_env
 
 if TYPE_CHECKING:
@@ -221,8 +220,8 @@ class TestTheFloorPredicate:
     def test_an_absent_torch_and_a_cpu_only_build_are_told_apart(self) -> None:
         """Two absences, two tokens - a consumer has to distinguish them.
 
-        Mutation: collapsed the two branches by reporting ``no_cuda`` for both.
-        Observed this assertion fail on ``reason == REASON_TORCH_ABSENT``.
+        Mutation: collapsed the two branches by reporting ``no_device`` for both.
+        Observed this assertion fail on ``reason == ComputeCapability.TORCH_MISSING``.
         """
         absent = admission_from_reading(
             CudaDeviceMemory(
@@ -245,8 +244,8 @@ class TestTheFloorPredicate:
             floor_mib=_FLOOR,
         )
 
-        assert absent.reason == REASON_TORCH_ABSENT
-        assert cpu_only.reason == REASON_NO_CUDA
+        assert absent.reason == ComputeCapability.TORCH_MISSING
+        assert cpu_only.reason == ComputeCapability.NO_DEVICE
         assert absent.admitted is False
         assert cpu_only.admitted is False
         assert absent.free_mib is None
@@ -331,7 +330,7 @@ class TestTheFloorPredicate:
         points the operator at the wrong thing, which is the same failure the
         torch-absent/no-CUDA split already exists to prevent.
 
-        Mutation: reused ``REASON_NO_CUDA`` for the unreadable refusal.
+        Mutation: reused ``ComputeCapability.NO_DEVICE`` for the unreadable refusal.
         Observed this assertion fail on the reason inequality.
         """
         unreadable = admission_from_reading(
@@ -352,7 +351,7 @@ class TestTheFloorPredicate:
 
         assert unreadable.reason != absent.reason
         assert unreadable.reason == REASON_DEVICE_UNREADABLE
-        assert absent.reason == REASON_NO_CUDA
+        assert absent.reason == ComputeCapability.NO_DEVICE
 
     def test_the_unreadable_refusal_names_the_driver_not_the_floor(self) -> None:
         """The remedy has to match the fault the operator actually has.

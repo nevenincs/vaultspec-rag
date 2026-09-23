@@ -27,6 +27,7 @@ from ..cli._jobs_tui_status import (
     fetch_service_status,
     render_status_header,
 )
+from ..operator_state._service import HealthVerdict
 from ._http_stubs import QuietHandler
 
 pytestmark = [pytest.mark.unit]
@@ -46,11 +47,10 @@ _HEALTH: dict[str, object] = {
         "version": "1.18.2",
     },
     "pid": 58400,
-    "cuda": True,
     "models_loaded": True,
     "project_count": 1,
     "uptime_s": 8384.4,
-    "degraded_reasons": [],
+    "degradations": [],
     "schema_version": 2,
     "package_version": "0.3.11",
     "service_token": _TOKEN,
@@ -356,9 +356,12 @@ class TestTheOperatorsFourQuestions:
     def test_a_degraded_service_carries_its_reason_count(self) -> None:
         degraded = dict(_HEALTH)
         degraded["status"] = "degraded"
-        degraded["degraded_reasons"] = [
-            "the configured vector service is not live",
-            "1 indexing job(s) are stalled",
+        degraded["degradations"] = [
+            {
+                "reason": "vector_service_unavailable",
+                "detail": "the configured vector service is not live",
+            },
+            {"reason": "jobs_stalled", "detail": "1 indexing job(s) are stalled"},
         ]
         server = _service(health=degraded)
         try:
@@ -553,3 +556,15 @@ class TestTheMountedWidget:
             painted = _screen_text(app)
 
         assert "projects 1/16" in painted
+
+
+@pytest.mark.parametrize("verdict", list(HealthVerdict), ids=str)
+def test_every_health_verdict_has_a_tone(verdict: HealthVerdict) -> None:
+    """A verdict with no tone renders uncoloured, hiding a paused service.
+
+    Mutation check: dropping ``PAUSED`` from the tone table fails the paused
+    case; restoring it passes.
+    """
+    from ..cli._jobs_tui_status import _STATUS_TONES
+
+    assert verdict in _STATUS_TONES

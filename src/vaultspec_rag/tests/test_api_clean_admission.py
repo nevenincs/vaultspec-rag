@@ -183,61 +183,6 @@ def test_clean_does_not_construct_or_import_vault_store_directly() -> None:
     assert api.clean is clean
 
 
-def test_status_reports_mps_as_unified_memory_not_zero_vram(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The public capability snapshot keeps MPS out of CUDA VRAM fields."""
-    gib = 1024**3
-    fake_torch = ModuleType("torch")
-    fake_torch.__dict__.update(
-        cuda=SimpleNamespace(is_available=lambda: False),
-        backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: True)),
-        mps=SimpleNamespace(
-            current_allocated_memory=lambda: gib,
-            driver_allocated_memory=lambda: 2 * gib,
-            recommended_max_memory=lambda: 4 * gib,
-        ),
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    monkeypatch.delenv("PYTORCH_ENABLE_MPS_FALLBACK", raising=False)
-
-    class _Store:
-        db_path = tmp_path / "search-data"
-
-        @staticmethod
-        def count() -> int:
-            return 1
-
-        @staticmethod
-        def count_code() -> int:
-            return 2
-
-        @staticmethod
-        def count_document() -> int:
-            return 3
-
-    class _Registry:
-        @contextmanager
-        def lease_store(self, root: Path):
-            assert root == tmp_path.resolve()
-            yield _Store()
-
-    status = api._get_status(
-        tmp_path.resolve(),
-        cast("ServiceRegistry", _Registry()),
-    )
-
-    assert status["accelerator_available"] is True
-    assert status["accelerator_backend"] == "mps"
-    assert status["accelerator_name"] == "Apple MPS"
-    assert status["memory_kind"] == "unified"
-    assert status["memory_mib"] == 4096
-    assert status["memory_measure"] == "recommended_working_set"
-    assert status["vram_mib"] is None
-    assert status["vram_gb"] is None
-
-
 def test_benchmark_reports_mps_as_unified_memory_not_zero_vram(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

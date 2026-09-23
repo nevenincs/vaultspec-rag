@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, cast, override
 import pytest
 
 from ..config._types import EnvVar
+from ..operator_state._features import TypesafeState
 from ..search import _typesafe_transport as transport
 from ..search._typesafe_answers import (
     MODEL,
@@ -116,29 +117,40 @@ def test_enrollment_status_is_redacted_and_never_probes(
         raise AssertionError("status must not make a provider call")
 
     monkeypatch.setattr(transport, "_request", forbidden)
+    transport._credential()
     pending = transport.enrollment_status()
-    assert pending["enrolled"] is True and pending["state"] == "pending"
-    assert "synthetic-credential" not in json.dumps(pending)
-    assert set(pending) == {
-        "enrolled",
-        "state",
-        "model",
-        "last_success_age_seconds",
-        "retry_after_seconds",
-    }
+    assert pending.state is TypesafeState.PENDING
+    assert "synthetic-credential" not in pending.model_dump_json()
     transport._CIRCUIT.last_success = time.monotonic()
-    assert transport.enrollment_status()["state"] == "active"
+    assert transport.enrollment_status().state is TypesafeState.ACTIVE
     transport._CIRCUIT.last_success -= 61
-    assert transport.enrollment_status()["state"] == "pending"
+    assert transport.enrollment_status().state is TypesafeState.PENDING
     transport._failed(transport._credential()[1])
-    assert transport.enrollment_status()["state"] == "cooldown"
+    assert transport.enrollment_status().state is TypesafeState.COOLDOWN
     transport._CIRCUIT.disabled = True
-    assert transport.enrollment_status()["state"] == "rejected"
+    assert transport.enrollment_status().state is TypesafeState.REJECTED
     monkeypatch.setenv(EnvVar.TYPESAFE_API_KEY, "replacement")
-    assert transport.enrollment_status()["state"] == "pending"
+    assert transport.enrollment_status().state is TypesafeState.PENDING
     monkeypatch.delenv(EnvVar.TYPESAFE_API_KEY)
     off = transport.enrollment_status()
-    assert off["state"] == "off" and off["enrolled"] is False
+    assert off.state is TypesafeState.OFF and not off.state.is_enabled
+
+
+def test_reading_enrollment_never_resets_the_circuit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A status poll must not clear a rejection the request path recorded.
+
+    Mutation check: resolving the credential inside the status read, as it
+    once did, resets the circuit on the key change and fails the ``disabled``
+    assertion; restoring the pure read passes.
+    """
+    transport._credential()
+    transport._CIRCUIT.disabled = True
+    monkeypatch.setenv(EnvVar.TYPESAFE_API_KEY, "replacement")
+
+    assert transport.enrollment_status().state is TypesafeState.PENDING
+    assert transport._CIRCUIT.disabled is True
 
 
 @pytest.mark.parametrize(
@@ -441,7 +453,7 @@ def test_persistent_connection_and_exact_cache(monkeypatch: pytest.MonkeyPatch) 
     ports: list[int] = []
     with _server(monkeypatch, 200, json.dumps(_envelope()).encode(), ports) as received:
         first = transport.evaluate({"query": "one"}, QUESTIONS)
-        assert transport.enrollment_status()["state"] == "active"
+        assert transport.enrollment_status().state is TypesafeState.ACTIVE
         second = transport.evaluate({"query": "two"}, QUESTIONS)
         cached = transport.evaluate({"query": "one"}, QUESTIONS)
         assert first.timings["connections_reused"] == 0

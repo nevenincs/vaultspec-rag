@@ -18,8 +18,7 @@ guaranteed by construction.
 This module was split into a package (``torch_config/``) from a former
 monolith: shared constants / enums / report
 dataclasses in ``_constants``, TOML inspection + classification in
-``_inspect``, mutation + the canonical-snippet builder in ``_mutate``,
-direct-dep management in ``_direct_dep``, and install diagnosis in
-``_diagnose``. Import each name from the module that defines it; this
-package exports nothing itself.
+``_inspect``, mutation + the canonical-snippet builder in ``_mutate``, and
+direct-dep management in ``_direct_dep``. Import each name from the module
+that defines it; this package exports nothing itself.
 """

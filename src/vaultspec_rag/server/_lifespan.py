@@ -28,6 +28,8 @@ from .._machine_lock import (
 from .._runtime_identity import interpreter_fields
 from ..capabilities import backend_capabilities_dict
 from ..logging_config import log_event
+from ..operator_state._models import Degradation
+from ..operator_state._service import DegradationReason, HealthVerdict
 from ..service_quiesce import QuiesceState
 from ._lifecycle import (
     _QDRANT_CLIENT_OP_TIMEOUT_SECONDS,
@@ -914,24 +916,24 @@ async def _shutdown_components(
         )
 
 
-def _initial_health_verdict(reg_health: ServiceHealth, *, held: bool) -> str:
+def _initial_health_verdict(reg_health: ServiceHealth, *, held: bool) -> HealthVerdict:
     """Choose the verdict before infrastructure degradation is folded in.
 
     A held service is neither ready nor broken, so it gets its own answer rather
     than the closest of three that do not fit it.
     """
     if held:
-        return "paused"
+        return HealthVerdict.PAUSED
     if reg_health["model_loaded"]:
-        return "ready"
-    return "degraded" if _m._start_time > 0 else "error"
+        return HealthVerdict.READY
+    return HealthVerdict.DEGRADED if _m._start_time > 0 else HealthVerdict.ERROR
 
 
 def _service_health_status(
     reg_health: ServiceHealth,
     qdrant_state: QdrantRuntimeState,
     quiesce: QuiesceSnapshot,
-) -> tuple[str, list[str]]:
+) -> tuple[HealthVerdict, list[Degradation]]:
     """Resolve service readiness and its infrastructure degradation reasons.
 
     A held service is reported as held rather than as broken.  Pause releases
@@ -944,14 +946,24 @@ def _service_health_status(
     """
     held = quiesce.state is not QuiesceState.RUNNING
     status = _initial_health_verdict(reg_health, held=held)
-    degraded_reasons: list[str] = []
+    degradations: list[Degradation] = []
     # Absent models are a fault only when nobody asked for them to be absent.
     if not reg_health["model_loaded"] and not held:
-        degraded_reasons.append("embedding models are not loaded")
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.MODELS_NOT_LOADED,
+                detail="embedding models are not loaded",
+            )
+        )
     if qdrant_state.mode == "server" and not qdrant_state.alive:
-        degraded_reasons.append("the configured vector service is not live")
-        if status == "ready":
-            status = "degraded"
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.VECTOR_SERVICE_UNAVAILABLE,
+                detail="the configured vector service is not live",
+            )
+        )
+        if status is HealthVerdict.READY:
+            status = HealthVerdict.DEGRADED
     # A collection whose vectors were built by a different model still answers
     # every query and still looks healthy by every other signal, which is
     # exactly why it has to be said here: this is the only place live-service
@@ -959,13 +971,16 @@ def _service_health_status(
     # status, start warnings, and the MCP surface without a second renderer.
     nonconforming = reg_health.get("nonconforming") or []
     if nonconforming:
-        degraded_reasons.append(
-            f"{len(nonconforming)} indexed collection(s) were built by a "
-            f"different embedding model than the one configured, so their "
-            f"search ranking is unreliable: {', '.join(nonconforming[:3])}"
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.NONCONFORMING,
+                detail=f"{len(nonconforming)} indexed collection(s) were built by a "
+                f"different embedding model than the one configured, so their "
+                f"search ranking is unreliable: {', '.join(nonconforming[:3])}",
+            )
         )
-        if status == "ready":
-            status = "degraded"
+        if status is HealthVerdict.READY:
+            status = HealthVerdict.DEGRADED
     # A quarantined collection was moved out of the store's active set after it
     # failed to load. The server is alive, ready, and answering - the affected
     # root just returns empty or partial results, with nothing but a log line to
@@ -973,13 +988,16 @@ def _service_health_status(
     # data must never sit behind a ready status.
     quarantined = quarantined_collections(qdrant_state)
     if quarantined:
-        degraded_reasons.append(
-            f"{len(quarantined)} collection(s) are quarantined out of the vector "
-            f"store after failing to load, so the roots that own them return "
-            f"incomplete results: {', '.join(quarantined[:3])}"
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.QUARANTINED,
+                detail=f"{len(quarantined)} collection(s) are quarantined out of "
+                "the vector store after failing to load, so the roots that own "
+                f"them return incomplete results: {', '.join(quarantined[:3])}",
+            )
         )
-        if status == "ready":
-            status = "degraded"
+        if status is HealthVerdict.READY:
+            status = HealthVerdict.DEGRADED
     # A permitted upgrade is still a one-way door. The store opened, every
     # probe is green, and nothing anywhere records that the previous binary can
     # no longer read it - which is exactly what an operator needs to know
@@ -987,14 +1005,17 @@ def _service_health_status(
     # because the open has already rewritten the stamp.
     migrated_from = store_migrated_from(qdrant_state)
     if migrated_from:
-        degraded_reasons.append(
-            f"the vector store was carried across a server version change "
-            f"(written by {migrated_from}, now opened by {qdrant_state.version}), "
-            f"so the binary that wrote it can no longer read this store"
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.STORE_CARRIED_ACROSS,
+                detail=f"the vector store was carried across a server version change "
+                f"(written by {migrated_from}, now opened by {qdrant_state.version}), "
+                f"so the binary that wrote it can no longer read this store",
+            )
         )
-        if status == "ready":
-            status = "degraded"
-    return status, degraded_reasons
+        if status is HealthVerdict.READY:
+            status = HealthVerdict.DEGRADED
+    return status, degradations
 
 
 def quarantined_collections(qdrant_state: QdrantRuntimeState) -> list[str]:
@@ -1169,7 +1190,7 @@ def _failure_was_superseded(
     )
 
 
-def _jobs_health() -> tuple[dict[str, object], list[str]]:
+def _jobs_health() -> tuple[dict[str, object], list[Degradation]]:
     """Build the bounded job rollup and its service degradation reasons."""
     from ._routes_jobs import _job_summary, job_state
 
@@ -1221,101 +1242,118 @@ def _jobs_health() -> tuple[dict[str, object], list[str]]:
         "last_failed": _failed_job_health(last_failed),
         "resilience": _resilience_job_health(latest_resilience),
     }
-    degraded_reasons: list[str] = []
+    degradations: list[Degradation] = []
     if summary["stalled"]:
-        degraded_reasons.append(f"{summary['stalled']} indexing job(s) are stalled")
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.JOBS_STALLED,
+                detail=f"{summary['stalled']} indexing job(s) are stalled",
+            )
+        )
     if summary["degraded"]:
-        degraded_reasons.append(f"{summary['degraded']} indexing job(s) are degraded")
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.JOBS_DEGRADED,
+                detail=f"{summary['degraded']} indexing job(s) are degraded",
+            )
+        )
     if (
         last_failed is not None
         and _failure_belongs_to_this_generation(last_failed)
         and not _failure_was_superseded(last_failed, job_records)
     ):
         failed_kind = last_failed.get("error_kind") or "unknown"
-        degraded_reasons.append(f"the latest indexing job failed: {failed_kind}")
-    return jobs_health, degraded_reasons
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.JOB_FAILED,
+                detail=f"the latest indexing job failed: {failed_kind}",
+            )
+        )
+    return jobs_health, degradations
 
 
 async def health_handler(request: Request) -> object:
-    """Return service health as JSON.
+    """Return service health as the typed health report.
 
     Args:
-        _request: The incoming Starlette request.
+        request: The incoming Starlette request.
 
     Returns:
-        A ``JSONResponse`` with status, CUDA availability,
-        model state, connected projects, and uptime.
+        A ``JSONResponse`` carrying the serialised :class:`HealthReport`: the
+        health verdict and its coded degradations, the service-wide optional
+        features, model state, identity, and uptime.
     """
     from starlette.responses import JSONResponse
 
     from .. import store_schema
     from .._gpu_admission import device_load_reading
+    from ..config._settings import get_config
+    from ..jobs import active_index_support_profiles
+    from ..operator_state._models import HealthReport, ServiceFeatures
+    from ..qdrant_runtime import _supervise
     from ..search._typesafe_transport import enrollment_status
-    from ..serviceclient._compat import (
-        SERVICE_VERSION_FIELD,
-        local_package_version,
-    )
+    from ..serviceclient._compat import local_package_version
 
     runtime = get_request_runtime(request)
     reg_health = runtime.registry.health()
     quiesce_snapshot = runtime.registry.quiesce_snapshot()
-    quiesce = quiesce_snapshot.as_envelope()
-    uptime = _uptime_seconds()
-    from ..qdrant_runtime import _supervise
-
     qdrant_state = _supervise.runtime_state()
-    status, degraded_reasons = _service_health_status(
+    status, degradations = _service_health_status(
         reg_health,
         qdrant_state,
         quiesce_snapshot,
     )
-    jobs_health, jobs_degraded_reasons = _jobs_health()
-    degraded_reasons.extend(jobs_degraded_reasons)
+    jobs_health, jobs_degradations = _jobs_health()
+    degradations.extend(jobs_degradations)
+    if status is HealthVerdict.READY and degradations:
+        status = HealthVerdict.DEGRADED
 
-    from ..jobs import active_index_support_profiles
-
-    if status == "ready" and degraded_reasons:
-        status = "degraded"
-
-    return JSONResponse(
-        {
-            "status": status,
-            "jobs": jobs_health,
-            "qdrant": qdrant_state.to_dict(),
-            "pid": os.getpid(),
-            "parent_pid": os.getppid(),
-            "port": runtime.port,
-            **interpreter_fields(),
-            "cuda": reg_health["cuda"],
-            "models_loaded": reg_health["model_loaded"],
-            "reranker_loaded": reg_health["reranker_loaded"],
-            "typesafe": enrollment_status(),
-            "project_count": reg_health["project_count"],
-            "quiesce": quiesce,
-            # The structured signal behind the conformance degradation reason.
-            # The CLI derives its remediation from this rather than parsing the
-            # prose, so rewording the reason costs its pairing, never its
-            # visibility.
-            "nonconforming": reg_health.get("nonconforming") or [],
-            "device_load": device_load_reading(),
-            "uptime_s": round(uptime, 2),
-            "backend_capabilities": backend_capabilities_dict(),
-            "degraded_reasons": degraded_reasons,
-            "support_profile": active_index_support_profiles(),
-            # Bare storage-schema version: the cheapest ungated pre-read gate a
-            # direct-Qdrant consumer can check before scrolling. The full
-            # descriptor lives on /readiness.
-            "schema_version": store_schema.STORAGE_SCHEMA_VERSION,
-            # The release discriminator a client compares before driving this
-            # daemon. Distinct from schema_version (the storage shape) and from
-            # the discovery file's own schema pair: this is the package release,
-            # the thing that decides whether the fields a client sends are
-            # fields this daemon understands.
-            SERVICE_VERSION_FIELD: local_package_version(),
-            # Per-process identity token. Mirrors the value written
-            # to service.json. The CLI compares the two to detect
-            # PID-reuse and unrelated-HTTP-server-on-port collisions
-            # (gh #124, #125).
-            "service_token": runtime.token,
-        },
+    cfg = get_config()
+    report = HealthReport(
+        status=status,
+        degradations=tuple(degradations),
+        features=ServiceFeatures(
+            typesafe=enrollment_status(),
+            reranker_enabled=bool(cfg.reranker_enabled),
+            reranker_loaded=reg_health["reranker_loaded"],
+            sparse_enabled=bool(cfg.sparse_enabled),
+            watcher_enabled=bool(cfg.watch_enabled),
+            preprocess_mode=cfg.preprocess_mode,
+            storage_backend="server" if cfg.effective_server_mode() else "local",
+            embedding_model=cfg.embedding_model,
+            sparse_model=cfg.sparse_model if cfg.sparse_enabled else None,
+            reranker_model=cfg.reranker_model if cfg.reranker_enabled else None,
+        ),
+        models_loaded=reg_health["model_loaded"],
+        project_count=reg_health["project_count"],
+        # The structured signal behind the conformance degradation code. The
+        # CLI derives its remediation from this, so rewording the detail costs
+        # nothing.
+        nonconforming=tuple(reg_health.get("nonconforming") or ()),
+        pid=os.getpid(),
+        parent_pid=os.getppid(),
+        port=runtime.port,
+        **interpreter_fields(),
+        uptime_s=round(_uptime_seconds(), 2),
+        # Bare storage-schema version: the cheapest ungated pre-read gate a
+        # direct-Qdrant consumer can check before scrolling. The full
+        # descriptor lives on /readiness.
+        schema_version=store_schema.STORAGE_SCHEMA_VERSION,
+        # The release discriminator a client compares before driving this
+        # daemon. Distinct from schema_version (the storage shape) and from
+        # the discovery file's own schema pair: this is the package release,
+        # the thing that decides whether the fields a client sends are fields
+        # this daemon understands.
+        package_version=local_package_version(),
+        # Per-process identity token. Mirrors the value written to
+        # service.json. The CLI compares the two to detect PID reuse and an
+        # unrelated HTTP server on the port.
+        service_token=runtime.token,
+        jobs=jobs_health,
+        qdrant=qdrant_state.to_dict(),
+        quiesce=quiesce_snapshot.as_envelope(),
+        device_load=device_load_reading(),
+        backend_capabilities=backend_capabilities_dict(),
+        support_profile=active_index_support_profiles(),
     )
+    return JSONResponse(report.model_dump(mode="json"))

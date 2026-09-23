@@ -1,17 +1,25 @@
-"""``status`` command: project index counts, storage, and compute device."""
+"""``status`` command: the service, this installation, active features, and index."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import typer
 
 from .._job_values import count
 from .._operator_commands import index_command, server_status_command
 from .._source_types import PublicSourceType
+from ..operator_state._installation import ComputeCapability
+from ..operator_state._models import (
+    HealthReport,
+    InstallationReport,
+    ServiceStateReport,
+)
 from ..serviceclient._discovery import _default_service_port
 from ..serviceclient._transport import _try_http_admin
+from ..serviceclient._typed_state import parse_report
 from ._app import CLIState, JsonMode, app
 from ._cli_format import _counted_unit, _format_mib
 from ._render import (
@@ -20,18 +28,21 @@ from ._render import (
     _format_local_index_busy_message,
     _plain,
     _print_next_action,
-    address_line,
+    exit_with_error,
 )
-from ._status_labels import render_degradation
+from ._status_labels import render_degradation, reranker_label
+
+if TYPE_CHECKING:
+    from ..operator_state._features import PreprocessHookState
 
 
 def _status_counts(status: dict[str, object]) -> tuple[int, int, int | None]:
     # A version-skewed daemon can publish these as something other than an
     # int; count() reads a malformed field as "not measured" rather than
     # raising out of the status command.
-    vault_count = status.get("vault_documents", status.get("vault_count", 0))
-    code_count = status.get("codebase_chunks", status.get("code_count", 0))
-    document_count = status.get("document_chunks", status.get("document_count"))
+    vault_count = status.get("vault_count", 0)
+    code_count = status.get("code_count", 0)
+    document_count = status.get("document_count")
     return (
         count(vault_count) or 0,
         count(code_count) or 0,
@@ -172,131 +183,222 @@ def _generation_lines(generations: object) -> list[str]:
     return lines
 
 
-def _status_diagnostics(status: dict[str, object]) -> list[str]:
-    """Render optional policy, generation, and degraded-state diagnostics.
+def _compute_line(installation: InstallationReport) -> str:
+    """State whether the environment can run inference, and on what.
 
-    Degradation goes through the shared renderer rather than being formatted
-    here: this payload reports one structured record per index domain, and
-    interpolating that list printed a container repr at the operator instead of
-    a cause and a command.
+    The hardware and the environment are named separately, because a machine
+    with a capable GPU can still hold a torch build that cannot use it.
     """
-    lines: list[str] = []
-    lines.extend(_support_profile_lines(status))
-    policy = status.get("policy", status.get("policy_fingerprint"))
-    generations = status.get("generations", status.get("generation"))
-    if policy not in (None, "", {}):
-        lines.append(f"Policy: {policy}")
-    generation_lines = _generation_lines(generations)
-    if generation_lines:
-        lines.append("Index generations:")
-        lines.extend(generation_lines)
-    lines.extend(render_degradation(status, header="Degraded because:"))
+    compute = installation.compute
+    hardware = installation.hardware
+    capability = compute.capability
+    if capability is ComputeCapability.NOT_APPLICABLE:
+        return capability.label
+    name = compute.device_name or hardware.name or hardware.presence.label
+    memory_mib = compute.memory_mib or hardware.memory_mib
+    unified = " unified memory" if compute.backend == "mps" else ""
+    device = f"{name} ({_format_mib(memory_mib)}{unified})" if memory_mib else name
+    if capability is ComputeCapability.READY:
+        return f"ready on {device}"
+    return f"{device}; {capability.label}"
+
+
+@dataclass(frozen=True, slots=True)
+class _ServiceView:
+    """What a running service reported about itself and this root."""
+
+    port: int
+    state: ServiceStateReport
+    health: HealthReport | None
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusView:
+    """Everything the status command reports, from whichever source had it."""
+
+    target: object
+    index: dict[str, object]
+    installation: InstallationReport
+    hooks: PreprocessHookState
+    hook_rules: int
+    service: _ServiceView | None = None
+
+
+def _hooks_line(view: _StatusView) -> str:
+    rules = f", {_counted_unit(view.hook_rules, 'rule')}" if view.hook_rules else ""
+    return f"{view.hooks.label}{rules}"
+
+
+def _watcher_label(service: _ServiceView) -> str:
+    features = service.health.features if service.health is not None else None
+    if features is not None and not features.watcher_enabled:
+        return "off (disabled when the service started)"
+    if service.state.root_features.watcher_running:
+        return "following this project"
+    return "not following this project"
+
+
+def _service_lines(view: _StatusView) -> list[str]:
+    service = view.service
+    if service is None:
+        return [
+            "Service: not running",
+            f"This installation: {view.installation.role.label}",
+        ]
+    lines = [
+        f"Service: running at http://127.0.0.1:{service.port}",
+        f"Service installation: {view.installation.role.label}",
+    ]
+    local = _resolve_local_interpreter()
+    if not _same_path(view.installation.executable, local):
+        lines.append(
+            f"Note: the running service uses {view.installation.executable}; "
+            f"a service started from here would use {local}."
+        )
     return lines
 
 
-def _render_status_text(
-    status: dict[str, object],
-    *,
-    target: object,
-    service_port: int | None = None,
-) -> None:
-    raw_backend = status.get("accelerator_backend")
-    backend = (
-        str(raw_backend) if raw_backend else ("cuda" if status.get("cuda") else None)
+def _feature_lines(view: _StatusView) -> list[str]:
+    lines = [f"Preprocessing hooks: {_hooks_line(view)}"]
+    service = view.service
+    if service is None:
+        return lines
+    features = service.health.features if service.health is not None else None
+    if features is not None:
+        lines.append(f"Typesafe classification: {features.typesafe.state.label}")
+        lines.append(f"Reranking: {reranker_label(features)}")
+    lines.append(f"File watcher: {_watcher_label(service)}")
+    return lines
+
+
+def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
+    """Render the plain-language status overview.
+
+    Each line answers one question an operator asks - is the service up, what
+    is this installation, can it run inference, which optional features are
+    active, what is indexed - and a fix appears only for a real defect, never
+    for a client that simply has no GPU work to do.
+    """
+    service_port = view.service.port if view.service is not None else None
+    vault_count, code_count, document_count = _status_counts(view.index)
+    documents = (
+        _counted_unit(document_count, "document section")
+        if document_count is not None
+        else "document sections not reported"
     )
-    accelerator_name = status.get("accelerator_name", status.get("gpu_name"))
-    memory_mib = count(status.get("memory_mib", status.get("vram_mib")))
-    memory_measure = status.get("memory_measure")
-    index_data_path = _human_index_data_location(
-        status["storage_path"],
-        service_port=service_port,
-    )
-    vault_count, code_count, document_count = _status_counts(status)
-    if backend == "cuda":
-        memory = (
-            f"{_format_mib(memory_mib)} VRAM"
-            if memory_mib is not None
-            else "VRAM not reported"
-        )
-        device = f"CUDA - {accelerator_name} ({memory})"
-    elif backend == "mps":
-        memory = "unified memory"
-        if memory_mib is not None:
-            qualifier = (
-                " recommended working set"
-                if memory_measure == "recommended_working_set"
-                else ""
-            )
-            memory = f"{_format_mib(memory_mib)}{qualifier}, unified memory"
-        device = f"MPS - {accelerator_name} ({memory})"
-    else:
-        device = "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
+    capability = view.installation.compute.capability
     lines = [
-        "Project index",
-        f"Project: {target}",
-        f"Index data: {index_data_path}",
-        f"Vault documents: {vault_count}",
-        f"Source code sections: {code_count}",
-        "Document sections: "
-        f"{document_count if document_count is not None else 'not reported'}",
-        f"Compute: {device}",
-        *_status_diagnostics(status),
+        f"Project: {view.target}",
+        *_service_lines(view),
+        f"Compute: {_compute_line(view.installation)}",
     ]
-    if service_port is not None:
-        lines.append("Server: running")
-        lines.append(address_line(service_port))
-        lines.append("Server details:")
-    next_action = _status_next_action(vault_count, code_count, document_count)
+    if capability.is_defect and capability.remediation:
+        lines.append(f"  Fix: {capability.remediation}")
+    lines.extend(_feature_lines(view))
+    lines.extend(
+        (
+            f"Index: {_counted_unit(vault_count, 'vault document')}, "
+            f"{_counted_unit(code_count, 'code section')}, {documents}",
+            "Index data: "
+            + _human_index_data_location(
+                view.index.get("storage_path", "not reported"),
+                service_port=service_port,
+            ),
+        )
+    )
+    lines.extend(render_degradation(view.index, header="Degraded because:"))
+    if verbose:
+        lines.append(f"Interpreter: {view.installation.executable}")
+        lines.extend(_support_profile_lines(view.index))
+        generation_lines = _generation_lines(view.index.get("generations"))
+        if generation_lines:
+            lines.append("Index generations:")
+            lines.extend(generation_lines)
+    # Soft-wrapped so a long path or verdict stays one line a reader (or a
+    # script reading "Label: value") can take whole; the terminal still wraps
+    # it visually.
     for line in lines:
-        _plain(line, soft_wrap=line.startswith(("Index data:", "Project:", "Address:")))
+        _plain(line, soft_wrap=True)
     if service_port is not None:
-        _plain(f"  {server_status_command(service_port)}")
-    _print_next_action(next_action)
+        _plain(f"Service details: {server_status_command(service_port)}")
+    _print_next_action(_status_next_action(vault_count, code_count, document_count))
 
 
-def _emit_status_json(
-    status: dict[str, object],
-    *,
-    target: object,
-    service_port: int | None = None,
-) -> None:
-    vault_count, code_count, document_count = _status_counts(status)
+def _emit_status_json(view: _StatusView) -> None:
+    vault_count, code_count, document_count = _status_counts(view.index)
+    service = view.service
     data: dict[str, object] = {
-        "cuda": bool(status["cuda"]),
-        "accelerator_available": bool(
-            status.get("accelerator_available", status["cuda"])
-        ),
-        "accelerator_backend": status.get("accelerator_backend"),
-        "accelerator_name": status.get("accelerator_name", status.get("gpu_name")),
-        "memory_kind": status.get("memory_kind"),
-        "memory_mib": count(status.get("memory_mib")),
-        "memory_measure": status.get("memory_measure"),
-        "gpu_name": status.get("gpu_name"),
-        "vram_mib": count(status.get("vram_mib")),
-        "storage_path": str(status["storage_path"]),
-        "vault_documents": vault_count,
-        "codebase_chunks": code_count,
-        "document_chunks": document_count,
-        "target_dir": str(target),
-        "backend_capabilities": status.get("backend_capabilities", {}),
+        "service": {
+            "running": service is not None,
+            "port": service.port if service is not None else None,
+        },
+        "installation": view.installation.model_dump(mode="json"),
+        "features": {
+            "preprocess_hooks": view.hooks.value,
+            "preprocess_rule_count": view.hook_rules,
+            "service": (
+                service.health.features.model_dump(mode="json")
+                if service is not None and service.health is not None
+                else None
+            ),
+            "watcher_running": (
+                service.state.root_features.watcher_running
+                if service is not None
+                else None
+            ),
+        },
+        "storage_path": str(view.index.get("storage_path", "")),
+        "vault_count": vault_count,
+        "code_count": code_count,
+        "document_count": document_count,
+        "target_dir": str(view.target),
+        "backend_capabilities": view.index.get("backend_capabilities", {}),
     }
-    for key in (
-        "policy",
-        "policy_fingerprint",
-        "generations",
-        "generation",
-        "degraded_reasons",
-        "degraded",
-        "support_profile",
-    ):
-        if key in status:
-            data[key] = status[key]
-    if service_port is not None:
-        data["service_port"] = service_port
+    for key in ("generations", "degraded_reasons", "support_profile"):
+        if key in view.index:
+            data[key] = view.index[key]
     _emit_json(True, "status", data=data)
 
 
-def _service_index_status(target: object) -> tuple[dict[str, object], int] | None:
+def _answered(result: dict[str, object] | None) -> bool:
+    """Whether the service answered with a body, rather than failing to."""
+    return result is not None and result.get("ok") is not False
+
+
+def _refuse_incompatible_service(port: int, *, json_mode: bool) -> NoReturn:
+    """Report a service whose state this client cannot read, and stop.
+
+    Falling back to the local store would be wrong twice over: the running
+    service holds that store, so the read fails as "busy", and the operator is
+    sent looking for a lock instead of at the release mismatch.
+    """
+    from ..serviceclient._compat import classify_service_version
+    from ..serviceclient._transport import _try_http_health
+
+    verdict = classify_service_version(_try_http_health(port))
+    reason = (
+        verdict.reason()
+        if not verdict.is_compatible
+        else "the running service's state could not be read by this client"
+    )
+    remedy = " ".join(verdict.remediation()) or server_status_command(port)
+    exit_with_error(
+        "status",
+        verdict.error_code() or "service_state_unreadable",
+        f"Cannot show index status: {reason}. {remedy}",
+        1,
+        json_mode=json_mode,
+    )
+
+
+def _service_view(target: object, *, json_mode: bool) -> _StatusView | None:
+    """Read a running service's state for this root, and its health.
+
+    ``None`` means no service answered, and the caller reports from this
+    machine instead.
+    """
+    from ..serviceclient._transport import _try_http_health
+
     port = _default_service_port()
     if port is None:
         return None
@@ -305,53 +407,123 @@ def _service_index_status(target: object) -> tuple[dict[str, object], int] | Non
         {"project_root": str(target)},
         port,
     )
-    if not isinstance(result, dict) or result.get("ok") is False:
+    state = parse_report(ServiceStateReport, result)
+    if state is None and _answered(result):
+        _refuse_incompatible_service(port, json_mode=json_mode)
+    if state is None or state.index.get("error"):
         return None
-    raw_index = result.get("index")
-    if not isinstance(raw_index, dict):
-        return None
-    index_dict = cast("dict[str, object]", raw_index)
-    if index_dict.get("error"):
-        return None
-    return index_dict, port
+    return _StatusView(
+        target=target,
+        index=state.index,
+        installation=state.installation,
+        hooks=state.root_features.preprocess_hooks,
+        hook_rules=state.root_features.preprocess_rule_count,
+        service=_ServiceView(
+            port=port,
+            state=state,
+            health=parse_report(HealthReport, _try_http_health(port)),
+        ),
+    )
+
+
+def _resolve_local_interpreter() -> str:
+    from ._process import _resolve_daemon_interpreter
+
+    return _resolve_daemon_interpreter()
+
+
+def _same_path(left: str, right: str) -> bool:
+    import os
+
+    def canonical(path: str) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    return canonical(left) == canonical(right)
+
+
+def _local_view(
+    target: object, index: dict[str, object], *, verify: bool = False
+) -> _StatusView:
+    """Describe this machine, for when no service answers.
+
+    The installation is read from package metadata in a child of the daemon
+    interpreter, so this command never imports torch and never claims a device
+    it did not verify; the hooks are this root's own configuration.
+    """
+    from ..config._settings import get_config
+    from ..indexer._preprocess_config import root_hook_state
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._hardware import read_hardware
+
+    depth = ProbeDepth.VERIFY if verify else ProbeDepth.METADATA
+    facts = probe_interpreter(_resolve_local_interpreter(), depth)
+    hooks, rules = root_hook_state(Path(str(target)), get_config().preprocess_mode)
+    return _StatusView(
+        target=target,
+        index=index,
+        installation=InstallationReport(
+            role=facts.role,
+            mcp_adapter=facts.mcp_adapter,
+            executable=facts.executable,
+            prefix=facts.prefix,
+            hardware=read_hardware(),
+            compute=facts.compute,
+            local=True,
+        ),
+        hooks=hooks,
+        hook_rules=rules,
+    )
+
+
+def _report(view: _StatusView, *, json_mode: bool, verbose: bool) -> None:
+    if json_mode:
+        _emit_status_json(view)
+        return
+    _render_status_text(view, verbose=verbose)
 
 
 @app.command(
     "status",
-    help="Show project index counts, index data location, and compute device.",
+    help=(
+        "Show the service, this installation's compute, the project's active "
+        "features, and its index."
+    ),
 )
 def handle_status(
     ctx: typer.Context,
     json_mode: JsonMode = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help=(
+                "Also verify this installation's GPU by loading torch, and show "
+                "the interpreter, the support profile limits, and the per-domain "
+                "index generations."
+            ),
+        ),
+    ] = False,
 ) -> None:
-    """Show project index counts, index data location, and compute device."""
+    """Show the service, this installation's compute, features, and index."""
     state: CLIState = ctx.obj
     target = state.target
 
     import vaultspec_rag
 
     from .._store_locks import VaultStoreLockedError
-    from ._gpu_errors import _handle_gpu_error
 
-    service_status = _service_index_status(target)
-    if service_status is not None:
-        status, service_port = service_status
-        if json_mode:
-            _emit_status_json(status, target=target, service_port=service_port)
-            return
-        _render_status_text(status, target=target, service_port=service_port)
+    view = _service_view(target, json_mode=json_mode)
+    if view is not None:
+        _report(view, json_mode=json_mode, verbose=verbose)
         return
 
     try:
-        status = vaultspec_rag.get_status(target)
+        index = vaultspec_rag.get_status(target)
     except VaultStoreLockedError as exc:
-        service_status = _service_index_status(target)
-        if service_status is not None:
-            status, service_port = service_status
-            if json_mode:
-                _emit_status_json(status, target=target, service_port=service_port)
-                return
-            _render_status_text(status, target=target, service_port=service_port)
+        view = _service_view(target, json_mode=json_mode)
+        if view is not None:
+            _report(view, json_mode=json_mode, verbose=verbose)
             return
         if json_mode:
             _emit_json_error_and_exit(
@@ -367,12 +539,9 @@ def handle_status(
             )
         _plain(_format_local_index_busy_message("read index status"))
         raise typer.Exit(code=1) from None
-    except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e)
-        return
 
-    if json_mode:
-        _emit_status_json(status, target=target)
-        return
-
-    _render_status_text(status, target=target)
+    _report(
+        _local_view(target, index, verify=verbose),
+        json_mode=json_mode,
+        verbose=verbose,
+    )

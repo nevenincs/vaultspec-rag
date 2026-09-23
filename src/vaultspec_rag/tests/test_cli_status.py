@@ -11,6 +11,19 @@ import typing
 
 import pytest
 
+from ..operator_state._features import PreprocessHookState
+from ..operator_state._installation import (
+    ComputeCapability,
+    HardwarePresence,
+    InstallRole,
+)
+from ..operator_state._models import (
+    ComputeReport,
+    HardwareReading,
+    InstallationReport,
+    RootFeatures,
+    ServiceStateReport,
+)
 from ._cli_helpers import (
     EnvVar,
     _hold_local_index_lock,
@@ -32,116 +45,255 @@ if typing.TYPE_CHECKING:
 pytestmark = [pytest.mark.unit]
 
 
+_RTX = HardwareReading(
+    presence=HardwarePresence.NVIDIA_GPU,
+    name="NVIDIA GeForce RTX 4080 SUPER",
+    memory_mib=16376,
+)
+
+
+def _installation(
+    compute: ComputeReport, hardware: HardwareReading = _RTX
+) -> InstallationReport:
+    """An installation as a service or the local probe would report it."""
+    return InstallationReport(
+        role=(
+            InstallRole.CLIENT
+            if compute.capability is ComputeCapability.NOT_APPLICABLE
+            else InstallRole.HOST
+        ),
+        mcp_adapter=True,
+        executable="python",
+        prefix="/env",
+        hardware=hardware,
+        compute=compute,
+    )
+
+
+def _compute(capability: ComputeCapability, **evidence: object) -> ComputeReport:
+    return ComputeReport.model_validate({"capability": capability, **evidence})
+
+
+def _state(
+    installation: InstallationReport, index: dict[str, object]
+) -> ServiceStateReport:
+    return ServiceStateReport(
+        installation=installation,
+        root_features=RootFeatures(
+            root="/repo",
+            preprocess_hooks=PreprocessHookState.ACTIVE,
+            preprocess_rule_count=2,
+            watcher_running=True,
+        ),
+        index=index,
+        projects={},
+        watcher={},
+        qdrant={},
+        quiesce={},
+        schema_version=2,
+    )
+
+
+def _view(
+    index: dict[str, object],
+    installation: InstallationReport,
+    *,
+    service_port: int | None = None,
+    target: object = "/repo",
+):
+    """A status view as a running service, or this machine, would yield it."""
+    from ..cli._status import _ServiceView, _StatusView
+
+    service = (
+        _ServiceView(port=service_port, state=_state(installation, index), health=None)
+        if service_port is not None
+        else None
+    )
+    return _StatusView(
+        target=target,
+        index=index,
+        installation=installation,
+        hooks=(
+            PreprocessHookState.ACTIVE
+            if service_port is not None
+            else PreprocessHookState.NONE
+        ),
+        hook_rules=2 if service_port is not None else 0,
+        service=service,
+    )
+
+
 class TestStatusCommand:
-    """Tests for the project index status command."""
+    """Tests for the project status overview."""
 
     def test_status_human_output_uses_operator_labels(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._status import _render_status_text
 
+        index: dict[str, object] = {
+            "storage_path": str(tmp_path / ".vault" / "data" / "search-data"),
+            "vault_count": 12,
+            "code_count": 34,
+        }
         _render_status_text(
-            {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
-                "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 12,
-                "codebase_chunks": 34,
-            },
-            target=tmp_path,
-            service_port=8766,
+            _view(
+                index,
+                _installation(
+                    _compute(ComputeCapability.READY, device_name="NVIDIA RTX")
+                ),
+                service_port=8766,
+                target=tmp_path,
+            )
         )
 
         output = capsys.readouterr().out
-        lines = _plain_lines(output)
         labels = _label_values(output)
-        assert lines[0] == "Project index"
         assert labels["Project"] == str(tmp_path)
+        assert labels["Service"] == "running at http://127.0.0.1:8766"
+        assert labels["Compute"] == "ready on NVIDIA RTX (16.0 GiB)"
+        assert labels["Preprocessing hooks"].startswith(
+            PreprocessHookState.ACTIVE.label
+        )
+        assert labels["Preprocessing hooks"].endswith("2 rules")
+        assert labels["File watcher"] == "following this project"
+        assert labels["Index"] == (
+            "12 vault documents, 34 code sections, document sections not reported"
+        )
         assert labels["Index data"] == str(tmp_path / ".vault" / "data" / "search-data")
-        assert labels["Compute"] == (
-            "Unavailable (no CUDA or MPS accelerator; CPU is unsupported)"
-        )
-        assert labels["Vault documents"] == "12"
-        assert labels["Source code sections"] == "34"
-        assert labels["Server"] == "running"
-        assert labels["Address"] == "http://127.0.0.1:8766"
-        assert lines[lines.index("Server details:") + 1] == (
-            "vaultspec-rag server status --port 8766"
-        )
+        assert labels["Service details"] == "vaultspec-rag server status --port 8766"
+        assert "Fix" not in labels
         assert "Next action:" not in output
 
+    def test_a_gpu_workstation_with_a_cpu_torch_build_names_both(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The reported defect: a GPU machine was told it had no accelerator.
+
+        The GPU is named from the hardware read and the fault is named as the
+        torch build, with its fix, so an operator never goes looking for a
+        hardware problem.
+
+        Mutation check: rendering the capability alone, without the hardware,
+        drops the GPU's name and fails the first assertion; restoring passes.
+        """
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            _view(
+                {"storage_path": "data", "vault_count": 1},
+                _installation(_compute(ComputeCapability.CPU_ONLY_BUILD)),
+            )
+        )
+
+        labels = _label_values(capsys.readouterr().out)
+        assert labels["Compute"].startswith("NVIDIA GeForce RTX 4080 SUPER (16.0 GiB)")
+        assert "CPU-only build" in labels["Compute"]
+        assert "Unavailable" not in labels["Compute"]
+        assert labels["Fix"] == ComputeCapability.CPU_ONLY_BUILD.remediation
+
+    def test_a_client_installation_is_not_offered_a_fix(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A torch-free client needs nothing, so it is shown no fault and no fix.
+
+        Mutation check: printing remediation whenever a capability carries one,
+        rather than for defects only, shows the client an install hint under
+        "Fix" and fails the last assertion; restoring the defect gate passes.
+        """
+        from ..cli._status import _render_status_text
+
+        _render_status_text(
+            _view(
+                {"storage_path": "data", "vault_count": 1},
+                _installation(_compute(ComputeCapability.NOT_APPLICABLE)),
+            )
+        )
+
+        output = capsys.readouterr().out
+        labels = _label_values(output)
+        assert labels["Service"] == "not running"
+        assert labels["This installation"] == InstallRole.CLIENT.label
+        assert labels["Compute"] == ComputeCapability.NOT_APPLICABLE.label
+        assert "Fix" not in labels
+
     def test_status_human_output_names_mps_unified_memory(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._status import _render_status_text
 
         _render_status_text(
-            {
-                "cuda": False,
-                "accelerator_available": True,
-                "accelerator_backend": "mps",
-                "accelerator_name": "Apple MPS",
-                "memory_kind": "unified",
-                "memory_mib": 4096,
-                "memory_measure": "recommended_working_set",
-                "gpu_name": "Apple MPS",
-                "vram_mib": None,
-                "storage_path": tmp_path / "search-data",
-                "vault_documents": 1,
-                "codebase_chunks": 2,
-            },
-            target=tmp_path,
+            _view(
+                {"storage_path": "data", "vault_count": 1},
+                _installation(
+                    _compute(
+                        ComputeCapability.READY,
+                        backend="mps",
+                        device_name="Apple MPS",
+                        memory_mib=4096,
+                    ),
+                    HardwareReading(presence=HardwarePresence.APPLE_SILICON),
+                ),
+            )
         )
 
         compute = _label_values(capsys.readouterr().out)["Compute"]
-        assert compute == (
-            "MPS - Apple MPS (4.0 GiB recommended working set, unified memory)"
-        )
+        assert compute == "ready on Apple MPS (4.0 GiB unified memory)"
 
     def test_status_empty_index_output_is_actionable(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._status import _render_status_text
 
         _render_status_text(
-            {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
-                "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 0,
-                "codebase_chunks": 0,
-            },
-            target=tmp_path,
-            service_port=8766,
+            _view(
+                {"storage_path": "data", "vault_count": 0, "code_count": 0},
+                _installation(_compute(ComputeCapability.READY)),
+                service_port=8766,
+            )
         )
 
         lines = _plain_lines(capsys.readouterr().out)
         next_action_index = lines.index("Next action:")
         assert lines[next_action_index + 1] == "vaultspec-rag index --type all"
-        assert all("Health:" not in line for line in lines)
 
     def test_status_partial_index_output_names_missing_index(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._status import _render_status_text
 
         _render_status_text(
-            {
-                "cuda": False,
-                "gpu_name": "",
-                "vram_mib": 0,
-                "storage_path": tmp_path / ".vault" / "data" / "search-data",
-                "vault_documents": 3,
-                "codebase_chunks": 0,
-            },
-            target=tmp_path,
+            _view(
+                {"storage_path": "data", "vault_count": 3, "code_count": 0},
+                _installation(_compute(ComputeCapability.READY)),
+            )
         )
 
         lines = _plain_lines(capsys.readouterr().out)
         next_action_index = lines.index("Next action:")
         assert lines[next_action_index + 1] == "vaultspec-rag index --type code"
+
+    def test_verbose_adds_the_detail_the_overview_leaves_out(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from ..cli._status import _render_status_text
+
+        index: dict[str, object] = {
+            "storage_path": "data",
+            "vault_count": 1,
+            "support_profile": {"name": "managed-service"},
+        }
+        view = _view(index, _installation(_compute(ComputeCapability.READY)))
+
+        _render_status_text(view)
+        overview = _label_values(capsys.readouterr().out)
+        _render_status_text(view, verbose=True)
+        detail = _label_values(capsys.readouterr().out)
+
+        assert "Support profile" not in overview
+        assert "Interpreter" not in overview
+        assert detail["Support profile"] == "managed-service"
+        assert detail["Interpreter"] == "python"
 
     def test_status_prefers_running_service_index_state(self, tmp_path: Path) -> None:
         import http.server
@@ -158,20 +310,33 @@ class TestStatusCommand:
                 requests.append(self.path)
                 parsed = urllib.parse.urlparse(self.path)
                 query = urllib.parse.parse_qs(parsed.query)
-                assert parsed.path == "/service-state"
+                if parsed.path != "/service-state":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
                 assert query["project_root"] == [str(root)]
-                response = {
-                    "ok": True,
-                    "index": {
-                        "cuda": False,
-                        "gpu_name": "",
-                        "vram_mib": 0,
+                response = ServiceStateReport(
+                    installation=_installation(
+                        _compute(ComputeCapability.READY, device_name="NVIDIA RTX")
+                    ),
+                    root_features=RootFeatures(
+                        root=str(root),
+                        preprocess_hooks=PreprocessHookState.NONE,
+                        preprocess_rule_count=0,
+                        watcher_running=False,
+                    ),
+                    index={
                         "storage_path": "http://127.0.0.1:8765",
-                        "vault_documents": 7,
-                        "codebase_chunks": 9,
+                        "vault_count": 7,
+                        "code_count": 9,
                         "target_dir": str(root),
                     },
-                }
+                    projects={},
+                    watcher={},
+                    qdrant={},
+                    quiesce={},
+                    schema_version=2,
+                ).model_dump(mode="json")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -197,19 +362,16 @@ class TestStatusCommand:
             reset_rag_config()
 
         assert result.exit_code == 0, result.output
-        assert requests == [
+        assert requests[0] == (
             "/service-state?project_root=" + urllib.parse.quote(str(root))
-        ]
+        )
         labels = _label_values(result.output)
-        lines = _plain_lines(result.output)
-        assert lines[0] == "Project index"
         assert labels["Project"] == str(root)
+        assert labels["Service"] == f"running at http://127.0.0.1:{server.server_port}"
         assert labels["Index data"] == "running service storage"
-        assert labels["Vault documents"] == "7"
-        assert labels["Source code sections"] == "9"
-        assert labels["Server"] == "running"
-        assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
-        assert lines[lines.index("Server details:") + 1] == (
+        assert labels["Index"].startswith("7 vault documents, 9 code sections")
+        assert labels["Compute"] == "ready on NVIDIA RTX (16.0 GiB)"
+        assert labels["Service details"] == (
             f"vaultspec-rag server status --port {server.server_port}"
         )
 
@@ -521,62 +683,115 @@ class TestServiceTokenIdentity:
         assert _service_phase({"phase": ""}) is None
         assert _service_phase({"phase": 7}) is None
 
-    def test_compute_state_warming_beats_port_and_heartbeat_signals(self):
-        from ..cli._status_render import _compute_state
+    def test_a_warming_stamp_beats_port_and_heartbeat_signals(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        state, label, exit_code = _compute_state(
-            True, True, False, True, phase="warming"
+        state = lifecycle_from_signals(
+            LivenessSignals(
+                pid_alive=True,
+                pid_matches_service=True,
+                port_listening=False,
+                heartbeat_stale=True,
+                phase="warming",
+            )
         )
-        assert state == "warming"
-        assert "warming" in label
-        assert exit_code == 5
+        assert state is ServiceLifecycle.STARTING
+        assert state.exit_code == 5
 
-    def test_compute_state_absent_phase_keeps_crashed_semantics(self):
-        from ..cli._status_render import _compute_state
+    def test_an_absent_phase_keeps_crashed_semantics(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        state, _label, exit_code = _compute_state(True, True, False, True)
-        assert state == "crashed_port_silent"
-        assert exit_code == 4
-
-    def test_compute_state_dead_pid_wins_over_warming(self):
-        from ..cli._status_render import _compute_state
-
-        state, _label, exit_code = _compute_state(
-            False, False, False, True, phase="warming"
+        state = lifecycle_from_signals(
+            LivenessSignals(
+                pid_alive=True,
+                pid_matches_service=True,
+                port_listening=False,
+                heartbeat_stale=True,
+            )
         )
-        assert state == "crashed_pid_dead"
-        assert exit_code == 4
+        assert state is ServiceLifecycle.CRASHED_PORT_SILENT
+        assert state.exit_code == 4
 
-    def test_explicit_port_state_warming_needs_a_live_owned_pid(self):
-        from ..cli._status_render import _explicit_port_state
+    def test_a_dead_pid_wins_over_warming(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import LivenessSignals, lifecycle_from_signals
 
-        warming = _explicit_port_state(
-            False, None, phase="warming", pid_alive=True, pid_is_ours=True
+        state = lifecycle_from_signals(LivenessSignals(phase="warming"))
+        assert state is ServiceLifecycle.CRASHED_PID_DEAD
+        assert state.exit_code == 4
+
+    def test_a_port_only_warmup_needs_a_live_owned_pid(self):
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+
+        assert (
+            lifecycle_for_port(
+                port_listening=False, health_answered=False, starting=True
+            )
+            is ServiceLifecycle.STARTING
         )
-        assert warming[0] == "warming"
-        assert warming[2] == 5
-        dead = _explicit_port_state(
-            False, None, phase="warming", pid_alive=False, pid_is_ours=False
+        assert (
+            lifecycle_for_port(port_listening=False, health_answered=False)
+            is ServiceLifecycle.STOPPED
         )
-        assert dead[0] == "stopped"
-        assert dead[2] == 3
-        reused = _explicit_port_state(
-            False, None, phase="warming", pid_alive=True, pid_is_ours=False
+
+    def test_a_paused_or_degraded_service_on_its_port_is_running(self):
+        """A service that answers health is alive, whatever its verdict says.
+
+        Mutation check: requiring a ``ready`` verdict before calling the port's
+        service running reads a paused service as a port fault and fails the
+        paused assertion; restoring the any-verdict rule passes.
+        """
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
+
+        for verdict in ("ready", "paused", "degraded", "error"):
+            state = lifecycle_for_port(
+                port_listening=True,
+                health_answered=health_answered({"status": verdict}),
+            )
+            assert state is ServiceLifecycle.RUNNING, verdict
+        assert (
+            lifecycle_for_port(port_listening=True, health_answered=False)
+            is ServiceLifecycle.CRASHED_PORT_SILENT
         )
-        assert reused[0] == "stopped"
-        assert reused[2] == 3
 
-    def test_explicit_port_state_absent_phase_is_unchanged(self):
-        from ..cli._status_render import _explicit_port_state
+    @pytest.mark.parametrize(
+        "sentinel",
+        [
+            {"status": "error", "error": "health_probe_timeout", "message": "x"},
+            {"status": "error", "http_code": 503},
+        ],
+        ids=["probe-timeout", "http-error"],
+    )
+    def test_a_probe_that_got_no_verdict_is_a_fault_not_running(
+        self, sentinel: dict[str, object]
+    ) -> None:
+        """A wedged or erroring service must still exit 4 to a broker.
 
-        assert _explicit_port_state(False, None)[0] == "stopped"
-        assert _explicit_port_state(True, None)[0] == "unreachable"
-        assert _explicit_port_state(True, {"status": "ready"})[0] == "running"
+        Mutation check: accepting any body with a string status as an answer
+        reads both synthetic failure bodies as running and fails this test;
+        restoring the sentinel rejection passes.
+        """
+        from ..operator_state._service import ServiceLifecycle
+        from ..serviceclient._status import lifecycle_for_port
+        from ..serviceclient._transport import health_answered
 
-    def test_next_action_for_warming_says_retry(self):
+        state = lifecycle_for_port(
+            port_listening=True, health_answered=health_answered(sentinel)
+        )
+
+        assert state is ServiceLifecycle.CRASHED_PORT_SILENT
+        assert state.exit_code == 4
+
+    def test_next_action_for_a_starting_service_says_retry(self):
         from ..cli._status_render import _status_next_action
+        from ..operator_state._service import ServiceLifecycle
 
-        action = _status_next_action("warming", None, {})
+        action = _status_next_action(ServiceLifecycle.STARTING, None, {})
         assert "server status" in action
         assert "retry" in action
 
@@ -695,7 +910,7 @@ class TestDegradedDiscoveryStatus:
             assert result.exit_code == 4, result.stdout
             payload = json.loads(result.stdout)
             data = payload["data"]
-            assert data["state"] == "degraded_discovery"
+            assert data["state"] == "discovery_degraded"
             assert data["discovery"]["reason"] == "pointer_missing"
             assert data["discovery"]["holder_pid"] == os.getpid()
             # The evidence, not just a bare verdict, reaches the operator.
@@ -742,9 +957,56 @@ class TestDegradedDiscoveryStatus:
             service = payload["data"]["service"]
             assert service["present"] is True
             assert service["live"] is False
-            assert service["state"] == "degraded_discovery"
+            assert service["state"] == "discovery_degraded"
             assert "holds the machine singleton" in str(service["label"]).lower()
             # A daemon that is present but not live must not read ready.
             assert payload["data"]["status"] == "needs_restart"
         finally:
             self._restore()
+
+
+def test_verbose_status_verifies_the_device_instead_of_reading_metadata(
+    tmp_path: Path,
+) -> None:
+    """``--verbose`` is where status settles whether the GPU really works.
+
+    The metadata read can only say a GPU build is installed; the verifying
+    probe answers ready or names the defect, so it never reports that
+    unverified middle state.
+
+    Mutation check: ignoring the verify flag probes metadata only and, on a host
+    with a GPU build of torch, reports the unverified build and fails; restoring
+    it passes.
+    """
+    from ..cli._status import _local_view
+
+    view = _local_view(tmp_path, {"storage_path": "data"}, verify=True)
+
+    assert view.installation.compute.capability is not (ComputeCapability.BUILD_PRESENT)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        ("ready", "running"),
+        ("paused", "running"),
+        ("degraded", "running"),
+        ("error", "not_serving"),
+    ],
+)
+def test_only_a_service_that_cannot_serve_lifts_the_exit_code(
+    verdict: str, expected: str
+) -> None:
+    """Health raises the broker exit code only for models that never loaded.
+
+    Mutation check: lifting every verdict other than ``ready`` reads a paused
+    service as a fault and fails the paused case; restoring the error-only rule
+    passes.
+    """
+    from ..operator_state._service import ServiceLifecycle
+    from ..serviceclient._status import with_health
+
+    state = with_health(ServiceLifecycle.RUNNING, {"status": verdict})
+
+    assert state.value == expected
+    assert state.exit_code == (4 if verdict == "error" else 0)

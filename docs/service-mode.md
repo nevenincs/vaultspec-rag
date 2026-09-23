@@ -63,7 +63,7 @@ Its exit codes:
 - `3` stopped
 - `4` crashed, divergent, or degraded; the label beside it says which, and
   [Troubleshooting](#troubleshooting) branches on that
-- `5` warming, meaning the daemon holds the machine lock and is loading models; retry shortly
+- `5` starting, meaning the daemon holds the machine lock and is loading models; retry shortly
 
 "Divergent" means the status file disagrees with the live process, for example naming a process ID that is no longer alive. If `status` reports crashed or divergent, see [Troubleshooting](#troubleshooting).
 

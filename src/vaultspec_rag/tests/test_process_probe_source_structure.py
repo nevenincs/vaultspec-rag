@@ -341,6 +341,13 @@ class TestNoStructurallyIdenticalFunctions:
         "which is the enumeration these properties exist to remove."
     )
 
+    _ENUM_LABEL_TABLE = (
+        "An enum's own label table: `return {member: sentence}[self]`. The "
+        "whole content is which sentence belongs to which member, so sharing "
+        "it would mean one table keyed by every enum's members - the scattered "
+        "label mapping these properties exist to replace."
+    )
+
     _INDEPENDENT_LANE = (
         "Each bumps its own generation counter and dispatches its own worker. "
         "The separate counters are the point - they are what let the lanes be "
@@ -380,7 +387,14 @@ class TestNoStructurallyIdenticalFunctions:
             "indexer/_publication_proof.py:is_open",
             "job_models.py:is_live_attempt",
             "job_models.py:is_retryable",
+            "operator_state/_installation.py:fixed_by_torch_reinstall",
         ): _NAMED_SUBSET,
+        (
+            "cli/_gpu_errors.py:label",
+            "operator_state/_features.py:label",
+            "operator_state/_installation.py:label",
+            "operator_state/_service.py:label",
+        ): _ENUM_LABEL_TABLE,
         (
             "indexer/_incremental_commit.py:__init__",
             "server/_stdio_lifetime.py:__init__",

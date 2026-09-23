@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#tool-env-gpu-continuity'
 date: '2026-07-14'
-modified: '2026-09-02'
+modified: '2026-09-23'
 body_hash: 'sha256:75b441bb4af67c597f9add10a47afd5ff9ac305a5ed7e4340c17e13bd5f00e6f'
 related:
   - '[[2026-07-14-tool-env-gpu-continuity-research]]'
   - '[[2026-09-01-tool-mode-cuda-research]]'
   - '[[2026-09-01-tool-mode-cuda-reference]]'
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `tool-env-gpu-continuity` adr: `GPU-torch continuity across uv tool upgrades and env-aware start diagnostics` | (**status:** `accepted`)

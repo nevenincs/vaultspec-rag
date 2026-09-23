@@ -23,13 +23,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from ..cli._status_labels import (
-    QUARANTINE_FAMILY,
-    STORE_FORMAT_FAMILY,
-    VECTOR_SERVICE_FAMILY,
     degradation_findings,
 )
 from ..config._settings import reset_config
 from ..config._types import EnvVar
+from ..operator_state._service import DegradationReason
 from ..qdrant_runtime._constants import QdrantRuntimeState
 from ..qdrant_runtime._resolve import QdrantIdentity
 from ..qdrant_runtime._store_format import (
@@ -398,7 +396,6 @@ class TestQuarantineReachesHealth:
         base: dict[str, object] = {
             "model_loaded": True,
             "reranker_loaded": True,
-            "cuda": True,
             "project_count": 1,
             "projects": ["/proj"],
             "nonconforming": [],
@@ -439,13 +436,13 @@ class TestQuarantineReachesHealth:
         )
 
         assert status == "degraded"
-        assert any("quarantined" in reason for reason in reasons)
+        assert any("quarantined" in reason.detail for reason in reasons)
 
     def test_quarantine_reason_is_paired_with_its_remediation(self) -> None:
         """A cause with no next move leaves the operator stuck.
 
         Mutation it catches: removing the quarantine entry from the degraded
-        family registry. The cause would still be reported by the unpaired
+        evidence registry. The cause would still be reported by the unpaired
         sweep, so this asserts the family and the command specifically - the
         parts that are actually lost.
         """
@@ -456,7 +453,7 @@ class TestQuarantineReachesHealth:
         )
         payload: dict[str, object] = {
             "status": status,
-            "degraded_reasons": reasons,
+            "degradations": [r.model_dump(mode="json") for r in reasons],
             "qdrant": {
                 "alive": True,
                 "quarantined": ["r0abc_vault_docs.20260725T101500Z"],
@@ -464,7 +461,7 @@ class TestQuarantineReachesHealth:
         }
 
         findings = degradation_findings(payload)
-        quarantine = [f for f in findings if f.family == QUARANTINE_FAMILY]
+        quarantine = [f for f in findings if f.family == DegradationReason.QUARANTINED]
 
         assert len(quarantine) == 1
         assert quarantine[0].command == "vaultspec-rag server qdrant quarantine"
@@ -472,11 +469,8 @@ class TestQuarantineReachesHealth:
     def test_a_dead_server_and_a_quarantine_are_reported_separately(self) -> None:
         """Coexistence coverage, not a guard: two problems, two findings.
 
-        The quarantine reason names the vector store, so it is eligible for the
-        broader ``vector`` stem. Claiming pops the stem and the vector reason is
-        emitted first, so the two cannot compete for one entry today - this
-        pins that outcome rather than the mechanism producing it, and no single
-        mutation distinguishes it from the pairing test above.
+        Each code claims only its own evidence, so this pins that two codes
+        reported together keep two findings.
         """
         qdrant = QdrantRuntimeState(
             mode="server",
@@ -489,7 +483,7 @@ class TestQuarantineReachesHealth:
         )
         payload: dict[str, object] = {
             "status": status,
-            "degraded_reasons": reasons,
+            "degradations": [r.model_dump(mode="json") for r in reasons],
             "qdrant": {
                 "alive": False,
                 "quarantined": ["r0abc_vault_docs.20260725T101500Z"],
@@ -498,8 +492,8 @@ class TestQuarantineReachesHealth:
 
         families = {f.family for f in degradation_findings(payload)}
 
-        assert QUARANTINE_FAMILY in families
-        assert VECTOR_SERVICE_FAMILY in families
+        assert DegradationReason.QUARANTINED in families
+        assert DegradationReason.VECTOR_SERVICE_UNAVAILABLE in families
 
 
 class TestRuntimeStateCarriesQuarantine:
@@ -632,7 +626,6 @@ class TestMigrationReachesHealth:
         base: dict[str, object] = {
             "model_loaded": True,
             "reranker_loaded": True,
-            "cuda": True,
             "project_count": 1,
             "projects": ["/proj"],
             "nonconforming": [],
@@ -676,7 +669,7 @@ class TestMigrationReachesHealth:
         )
 
         assert status == "degraded"
-        assert any("carried across" in reason for reason in reasons)
+        assert any("carried across" in reason.detail for reason in reasons)
 
     def test_reason_names_both_versions(self) -> None:
         """Naming only one version leaves the operator unable to act.
@@ -690,7 +683,7 @@ class TestMigrationReachesHealth:
             self._server_qdrant("1.15.4"),
             running_quiesce_snapshot(),
         )
-        migration = [r for r in reasons if "carried across" in r]
+        migration = [r.detail for r in reasons if "carried across" in r.detail]
 
         assert len(migration) == 1
         assert "1.15.4" in migration[0]
@@ -700,7 +693,7 @@ class TestMigrationReachesHealth:
         """A cause with no next move leaves the operator stuck.
 
         Mutation it catches: removing the store-format entry from the degraded
-        family registry. The cause would still reach the operator through the
+        evidence registry. The cause would still reach the operator through the
         unpaired sweep, so this asserts the family and the command specifically
         - the parts that are actually lost.
         """
@@ -711,12 +704,14 @@ class TestMigrationReachesHealth:
         )
         payload: dict[str, object] = {
             "status": status,
-            "degraded_reasons": reasons,
+            "degradations": [r.model_dump(mode="json") for r in reasons],
             "qdrant": {"alive": True, "quarantined": [], "migrated_from": "1.15.4"},
         }
 
         findings = degradation_findings(payload)
-        migration = [f for f in findings if f.family == STORE_FORMAT_FAMILY]
+        migration = [
+            f for f in findings if f.family == DegradationReason.STORE_CARRIED_ACROSS
+        ]
 
         assert len(migration) == 1
         assert migration[0].command == "vaultspec-rag server status"
@@ -725,10 +720,8 @@ class TestMigrationReachesHealth:
     def test_a_migration_and_a_quarantine_are_reported_separately(self) -> None:
         """Coexistence coverage, not a guard: two problems, two findings.
 
-        Both reasons name the vector store, so both are eligible for the
-        broader ``vector`` stem. This pins the outcome rather than the
-        mechanism, and no single mutation distinguishes it from the pairing
-        tests above.
+        Each code claims only its own evidence, so this pins that two codes
+        reported together keep two findings.
         """
         qdrant = QdrantRuntimeState(
             mode="server",
@@ -745,7 +738,7 @@ class TestMigrationReachesHealth:
         )
         payload: dict[str, object] = {
             "status": status,
-            "degraded_reasons": reasons,
+            "degradations": [r.model_dump(mode="json") for r in reasons],
             "qdrant": {
                 "alive": True,
                 "quarantined": ["r0abc_vault_docs.20260725T101500Z"],
@@ -755,8 +748,8 @@ class TestMigrationReachesHealth:
 
         families = {f.family for f in degradation_findings(payload)}
 
-        assert QUARANTINE_FAMILY in families
-        assert STORE_FORMAT_FAMILY in families
+        assert DegradationReason.QUARANTINED in families
+        assert DegradationReason.STORE_CARRIED_ACROSS in families
 
 
 class TestRuntimeStateCarriesTheMigration:

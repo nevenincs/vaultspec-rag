@@ -34,10 +34,12 @@ from ..server._lifespan import _jobs_health
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..operator_state._models import Degradation
+
 pytestmark = [pytest.mark.unit]
 
 
-def _degrade_reasons() -> list[str]:
+def _degrade_reasons() -> list[Degradation]:
     _health, reasons = _jobs_health()
     return reasons
 
@@ -69,9 +71,9 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any("latest indexing job failed" in reason for reason in reasons), (
-            f"an unanswered failure must degrade health, got {reasons}"
-        )
+        assert any(
+            "latest indexing job failed" in reason.detail for reason in reasons
+        ), f"an unanswered failure must degrade health, got {reasons}"
 
     def test_a_later_success_on_the_same_source_clears_the_verdict(
         self,
@@ -93,7 +95,7 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons), (
+        assert not any("latest indexing job failed" in r.detail for r in reasons), (
             f"a later success answered the failure, got {reasons}"
         )
 
@@ -110,9 +112,9 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any("latest indexing job failed" in reason for reason in reasons), (
-            f"another source's success must not answer this failure, got {reasons}"
-        )
+        assert any(
+            "latest indexing job failed" in reason.detail for reason in reasons
+        ), f"another source's success must not answer this failure, got {reasons}"
 
     def test_a_failure_after_a_success_degrades_again(
         self,
@@ -127,9 +129,9 @@ class TestDegradedVerdictTracksCurrentState:
             reasons = _degrade_reasons()
         finally:
             reset()
-        assert any("latest indexing job failed" in reason for reason in reasons), (
-            f"the newest outcome is a failure, got {reasons}"
-        )
+        assert any(
+            "latest indexing job failed" in reason.detail for reason in reasons
+        ), f"the newest outcome is a failure, got {reasons}"
 
     def test_the_failure_stays_visible_in_the_rollup_after_clearing(
         self,
@@ -148,7 +150,7 @@ class TestDegradedVerdictTracksCurrentState:
             jobs_health, reasons = _jobs_health()
         finally:
             reset()
-        assert not any("latest indexing job failed" in r for r in reasons)
+        assert not any("latest indexing job failed" in r.detail for r in reasons)
         last_failed = cast("dict[str, object] | None", jobs_health["last_failed"])
         assert last_failed is not None, (
             "the failure must remain reported in the rollup, only not degrading"
