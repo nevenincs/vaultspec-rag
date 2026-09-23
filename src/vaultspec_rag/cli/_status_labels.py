@@ -92,6 +92,26 @@ def _model_ready_label(value: object) -> str:
     return NOT_REPORTED
 
 
+def preprocess_mode_label(health: dict[str, object] | None) -> str:
+    """Say whether the service runs projects' preprocessing hooks."""
+    mode = health_section(health, "features").get("preprocess_mode")
+    if mode == "default":
+        return "on (hooks run for projects that configure them)"
+    if mode == "off":
+        return "off (VAULTSPEC_RAG_PREPROCESS=off; no project's hooks run)"
+    return NOT_REPORTED
+
+
+def watcher_enabled_label(health: dict[str, object] | None) -> str:
+    """Say whether the service follows file changes at all."""
+    enabled = health_section(health, "features").get("watcher_enabled")
+    if enabled is True:
+        return "on (indexes follow file changes)"
+    if enabled is False:
+        return "off (indexes change only when you run index)"
+    return NOT_REPORTED
+
+
 def reranker_label(health: dict[str, object] | None) -> str:
     """Say whether reranking is off by choice, ready, or not yet loaded."""
     features = health_section(health, "features")

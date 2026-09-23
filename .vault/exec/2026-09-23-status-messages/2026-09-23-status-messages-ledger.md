@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:090325a49c014bbc202cc354c28a5efd53a62fc00cd5f5f0b22b2111c21e688d'
+body_hash: 'sha256:7edace06b2fcba3ec8fd38fbcad16b9ab59fcb627dafaec6f721cf6ef65d92c2'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -160,6 +160,13 @@ related:
 - `S08` `M` `src/vaultspec_rag/tests/test_cli_status.py`
 - `S08` `M` `src/vaultspec_rag/tests/test_cli_service_status.py`
 - `S08` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
+- `S17` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S17` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S17` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S17` `verify:` `ruff check src, ruff format, ty check src` -> `pass`
 
 ## Notes
 
@@ -179,4 +186,5 @@ related:
 - `S16` P03 review corrections: an unreadable service state is refused with the release verdict instead of falling back to the store the service holds; preprocess service-mode read and health lightness now covered
 - `S07` get_index_status returns ServiceStateReport as structured output and raises a ToolError when the state cannot be parsed; the stale policy promise in its docstring is gone. No dedicated test drives the ToolError branch; it shares parse_report's tested fail-closed behaviour
 - `S08` Project status is a plain-language overview: service, installation role, compute with a defect-only fix, preprocessing hooks, Typesafe, reranking and watcher when a service answers, index and next action; support profile, interpreter and generations moved behind the new --verbose; an interpreter divergence note appears when the running service's environment differs from the local daemon interpreter. Resolves the P01 client-remediation-rendering finding
+- `S17` Server status prints a stopped or crashed service as its lifecycle line, remedy and address instead of rows of not-reported; a live summary adds Reranking, Preprocessing and File watcher beside Typesafe; the summary request carries ServiceLifecycle and derives its exit code; the stopped branch spells nothing by hand; doctor labels a starting service and renders the lifecycle sentence. S14 scope widened to the TUI header and cells per the P04 review
 

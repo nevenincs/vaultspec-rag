@@ -13,6 +13,7 @@ from ..cli._service_start import _start_success
 from ..cli._status_labels import typesafe_label
 from ..cli._status_render import _render_status_summary, _StatusSummaryRequest
 from ..config._types import EnvVar
+from ..operator_state._service import ServiceLifecycle
 from ..server import ServerRouteRuntime, create_http_app
 from ..service import ServiceRegistry
 
@@ -49,7 +50,7 @@ def test_start_and_status_render_same_daemon_state(
     )
     assert expected in capsys.readouterr().out
     _render_status_summary(
-        _StatusSummaryRequest("running", 8766, True, health, None, 0)
+        _StatusSummaryRequest(ServiceLifecycle.RUNNING, 8766, True, health, None)
     )
     assert expected in capsys.readouterr().out
     _start_success(

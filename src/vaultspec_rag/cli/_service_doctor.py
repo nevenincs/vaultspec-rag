@@ -133,7 +133,6 @@ def _live_service_axis() -> dict[str, object]:
     cleans a confirmed-dead stale ``service.json`` as a side effect, matching
     ``server status`` behaviour exactly.
     """
-    from ..operator_state._service import ServiceLifecycle
     from ..serviceclient._compat import classify_service_version
     from ..serviceclient._discovery import read_service_status, resolve_machine_service
     from ..serviceclient._status import compose_discovery_status
@@ -323,6 +322,8 @@ def _overall_label(overall_ready: bool, status: str) -> str:
         return "ready for requests"
     if status == "needs_restart":
         return "not ready - service needs restart"
+    if status == "starting":
+        return f"not ready yet - {ServiceLifecycle.STARTING.label}"
     return "not ready"
 
 
@@ -332,10 +333,7 @@ def _render_live_service_axis(service: dict[str, object]) -> None:
     if not service.get("present"):
         _plain(f"  {service.get('label', 'no service has been started')}")
         return
-    state_word = "running" if service.get("live") else "not running"
-    _plain(
-        f"  status: {state_word} ({service.get('label', service.get('state', '?'))})"
-    )
+    _plain(f"  status: {service.get('label', service.get('state', '?'))}")
     _plain(
         f"  process: pid {service.get('pid')} "
         f"({'alive' if service.get('pid_alive') else 'not alive'})"
