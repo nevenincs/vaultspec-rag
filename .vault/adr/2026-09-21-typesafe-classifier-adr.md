@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#typesafe-classifier'
 date: '2026-09-21'
-modified: '2026-09-21'
+modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:9262b500ecf041e77c08413174094b8fa0b20ef73fbbfa11e5e077e762658308'
 related:
@@ -13,6 +13,7 @@ related:
   - "[[2026-06-24-vault-pipeline-search-adr]]"
   - "[[2026-06-21-service-first-search-fallback-adr]]"
   - "[[2026-03-07-qdrant-filter-on-prefetch-adr]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `typesafe-classifier` adr: optional hosted search classification | (**status:** `accepted`)

@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#cuda-provisioning'
 date: '2026-09-04'
-modified: '2026-09-04'
+modified: '2026-09-23'
 body_schema: 'body-v2'
 body_hash: 'sha256:abf108faf968d72f80d208151315db09b8c383fff6f39b303bbff8f69c1de3a6'
 related:
@@ -12,6 +12,7 @@ related:
   - "[[2026-09-01-gpu-less-install-footprint-adr]]"
   - "[[2026-06-24-torch-dependency-group-adr]]"
   - "[[2026-07-23-ci-self-hosted-gpu-runner-adr]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `cuda-provisioning` adr: `holder-safe CUDA provisioning and its isolated live proofs` | (**status:** `accepted`)

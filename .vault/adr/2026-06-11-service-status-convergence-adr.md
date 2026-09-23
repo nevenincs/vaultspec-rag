@@ -3,7 +3,7 @@ tags:
   - '#adr'
   - '#service-status-convergence'
 date: '2026-06-11'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:9a7345badd24ebacd3ce7ab9003b540e7d13687ff07f90ff7f3f935f27789bd8'
 related:
   - '[[2026-06-11-service-status-convergence-research]]'
@@ -13,6 +13,7 @@ related:
   - '[[2026-06-07-mcp-server-deconflation-adr]]'
   - '[[2026-06-06-cli-tree-overhaul-adr]]'
   - '[[2026-06-09-operability-hardening-adr]]'
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `service-status-convergence` adr: `canonical service status model` | (**status:** `accepted`)

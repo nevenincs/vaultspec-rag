@@ -3,10 +3,11 @@ tags:
   - '#adr'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:83935d35ea5dcc0c6238b589dcd8208088e63d46513362c20eefb6145b3eddf3'
 related:
   - "[[2026-06-10-preprocess-hooks-research]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `preprocess-hooks` adr: `document preprocessing hook infrastructure` | (**status:** `accepted`)

@@ -3,9 +3,10 @@ tags:
   - '#research'
   - '#preprocess-hooks'
 date: '2026-06-10'
-modified: '2026-07-27'
+modified: '2026-09-23'
 body_hash: 'sha256:2280501e87644a943d80f562f23cf05a6a5aa677c32cd64864f7eae0e1446b06'
-related: []
+related:
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `preprocess-hooks` research: `document preprocessing hook infrastructure`

@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#gpu-less-install-footprint'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-23'
 body_schema: 'body-v1'
 body_hash: 'sha256:aee2cd1496adcbe412cfcfe7dea31b21e0f7238051605e9cf01c463e1081bc86'
 related:
   - "[[2026-09-01-gpu-less-install-footprint-research]]"
   - "[[2026-09-01-platform-backend-selection-reference]]"
+  - '[[2026-09-23-status-messages-research]]'
 ---
 
 # `gpu-less-install-footprint` adr: `publish a thin base and provision CUDA explicitly` | (**status:** `accepted`)
