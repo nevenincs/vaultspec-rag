@@ -1324,7 +1324,7 @@ async def health_handler(request: Request) -> object:
             **interpreter_fields(),
             "models_loaded": reg_health["model_loaded"],
             "reranker_loaded": reg_health["reranker_loaded"],
-            "typesafe": enrollment_status(),
+            "typesafe": enrollment_status().model_dump(mode="json"),
             "project_count": reg_health["project_count"],
             "quiesce": quiesce,
             # The structured signal behind the conformance degradation reason.

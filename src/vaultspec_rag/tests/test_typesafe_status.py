@@ -27,7 +27,6 @@ def test_health_reports_daemon_enrollment(monkeypatch: pytest.MonkeyPatch) -> No
     )
     data = cast("dict[str, object]", TestClient(app).get("/health").json())
     snapshot = cast("dict[str, object]", data["typesafe"])
-    assert snapshot["enrolled"] is True
     assert snapshot["state"] == "pending"
     assert "status-only-secret" not in json.dumps(data)
 

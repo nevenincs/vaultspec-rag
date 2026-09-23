@@ -5,7 +5,7 @@ tags:
 date: '2026-09-23'
 modified: '2026-09-23'
 body_schema: 'body-v2'
-body_hash: 'sha256:0606d21425c4c780cbb654c29580b4e763923affbe6bf4a5dfe802d548777d89'
+body_hash: 'sha256:e15adfa307c832ef193e029bc26253f72c483c4bc159ff69e203c19b478d2d40'
 related:
   - "[[2026-09-23-status-messages-plan]]"
 ---
@@ -88,6 +88,12 @@ related:
 - `S11` `verify:` `ruff, ruff format, ty` -> `pass`
 - `S10` `M` `src/vaultspec_rag/operator_state/_compute.py`
 - `S10` `verify:` `probe timeout guard under mutation` -> `fail`
+- `S05` `M` `src/vaultspec_rag/search/_typesafe_transport.py`
+- `S05` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S05` `M` `src/vaultspec_rag/cli/_status_labels.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_typesafe_status.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_typesafe_transport.py`
+- `S05` `verify:` `ruff, ruff format, ty` -> `pass`
 
 ## Notes
 
@@ -98,4 +104,5 @@ related:
 - `S15` Start preflight and post-install warning already consume the probe verdict (S09, S10); this Step moves the doctor's torch axis onto the daemon-interpreter probe. Reading the service-reported verdict when a service answers lands with the typed service-state model in P03/P04
 - `S11` DegradationReason keeps JOBS_STALLED (plural, matching the reported count) and adds JOBS_DEGRADED, differing from the ADR's JOB_STALLED listing; /health drops the model-device cuda flag and its verbose Compute row until installation compute renders in P05; the start envelope keeps its own degraded_reasons key
 - `S10` P02 phase-review corrections (commit bae3163c): client readiness, in-process error classification of the loaded torch, enum-owned message headlines, cpu-prefixed tags, explicit None default, required remediation, timeout coverage; both new guards pass once restored
+- `S05` enrollment_status returns TypesafeReport; the derivable enrolled flag is gone from the wire; labels come from TypesafeState
 

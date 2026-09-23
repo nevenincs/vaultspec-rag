@@ -23,6 +23,7 @@ from .._operator_commands import (
 )
 from .._source_types import PublicSourceType
 from .._timestamps import parse_iso_timestamp
+from ..operator_state._features import TypesafeState
 from ..operator_state._service import DegradationReason, HealthVerdict
 from ._cli_format import NOT_REPORTED, _counted_unit, _duration_phrase
 
@@ -35,13 +36,10 @@ def typesafe_label(health: dict[str, object] | None) -> str:
         if isinstance(snapshot, dict)
         else None
     )
-    return {
-        "off": "not enrolled; legacy ranking",
-        "pending": "enrolled; awaiting a successful search evaluation",
-        "active": "enrolled; recent evaluation succeeded",
-        "rejected": "enrolled but key rejected; legacy fallback",
-        "cooldown": "enrolled but cooling down; legacy fallback",
-    }.get(str(state), NOT_REPORTED)
+    try:
+        return TypesafeState(str(state)).label
+    except ValueError:
+        return NOT_REPORTED
 
 
 if TYPE_CHECKING:
