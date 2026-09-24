@@ -18,9 +18,11 @@ At search time vaultspec-rag encodes your query the same two ways, fuses the two
 
 ## Why results are ranked, not exhaustive
 
-A query returns its closest matches. No relevance threshold filters results out, so a weak answer arrives as poor results rather than as the empty response a keyword search would give. Two things do still empty a result list, and neither is a threshold: a hard filter such as `--include-path` or `only:` that no indexed file satisfies, and an index with nothing in it yet.
+A query returns its closest matches. The local ranking applies no relevance threshold, so a weak answer arrives as poor results rather than as the empty response a keyword search would give. Two things do still empty a result list, and neither is a threshold: a hard filter such as `--include-path` or `only:` that no indexed file satisfies, and an index with nothing in it yet.
 
-Two consequences follow. An exact string can rank below a looser conceptual hit, because the ranking weighs meaning alongside wording. And a query with nothing genuinely relevant to match still returns its ten closest chunks, which look like poor results rather than an empty answer. [Writing a query](query-craft.md) covers how to tell the two apart.
+The optional hosted Typesafe ranking is the exception. When it is enabled and judges a search, it removes candidates it is confident are irrelevant, so a page can come back shorter or empty. When it cannot judge a search, the local ranking applies unchanged. See [Typesafe enrollment](configuration.md#typesafe-enrollment).
+
+Under the local ranking, two consequences follow. An exact string can rank below a looser conceptual hit, because the ranking weighs meaning alongside wording. And a query with nothing genuinely relevant to match still returns its ten closest chunks, which look like poor results rather than an empty answer. [Writing a query](query-craft.md) covers how to tell the two apart.
 
 ## Why vaultspec-rag needs a GPU
 

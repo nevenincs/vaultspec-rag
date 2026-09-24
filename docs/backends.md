@@ -19,6 +19,8 @@ Managed storage separates projects by namespaces based on each project's resolve
 
 Both backends need the [GPU runtime and models](installation.md). Local-only storage avoids the Qdrant binary download; packages and models still need downloading if they are not cached.
 
+Local-only storage requires the `embedded-local` resource profile: the default `managed-service` profile accepts only the managed Qdrant backend. Set `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the environment that starts the service. See [what you need before you start](installation.md#what-you-need-before-you-start) for each profile's minimums.
+
 ## Change the backend
 
 Switching backends does not transfer indexes. To keep an existing index, follow [index migration](storage-maintenance.md#migrate-a-root-between-backends). Otherwise, build an index after switching.

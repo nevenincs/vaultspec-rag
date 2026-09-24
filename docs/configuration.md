@@ -70,8 +70,12 @@ vaultspec-rag server status
 ```
 
 For a shell on Linux or macOS, use `export VAULTSPEC_RAG_TYPESAFE_API_KEY='<your-key>'`
-before starting the service. Keep the key out of committed files. A project `.env`
-file is not automatically loaded for this setting. If the server is already running,
+before starting the service. Keep the key out of committed files. The command line
+loads the first `.env` file it finds searching upward from the directory vaultspec-rag
+is installed in, and a service it starts inherits those values. For a project
+dependency installed in the project's virtual environment, that search reaches the
+project's own `.env`. Variables already set in the environment take precedence over the
+file. Never put the key in a committed `.env`. If the server is already running,
 changing a client shell's environment does not change that server: restart it from
 the intended service environment. Scheduled services need the variable in their own
 launch environment.

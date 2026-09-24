@@ -355,7 +355,7 @@ If a service is running, the command hands the job to it. The work runs in the b
 uv run vaultspec-rag server jobs
 ```
 
-If no service is running, the command indexes in the current process and returns when it's done.
+If no compatible service is running, the command exits with `borrow_gpu_required` and indexes nothing; start the service first. To run the work in the current process instead, pass `--borrow-gpu`: it pauses the running service, indexes locally, and resumes the service when it's done.
 
 To scope the run, name `vault`, `code`, `document`, or `combined`:
 

@@ -45,6 +45,8 @@ macOS supplies the driver; no CUDA installation is needed. PyTorch must report M
 
 vaultspec-rag refuses to start when neither CUDA nor MPS is available, and it refuses MPS when `PYTORCH_ENABLE_MPS_FALLBACK` enables processor execution. Neither platform falls back.
 
+On x86-64 Linux, the default backend's Qdrant server needs glibc 2.38 or newer. Check yours with `ldd --version`; see [which Linux binary your distribution can run](#which-linux-binary-your-distribution-can-run) for older distributions.
+
 ## Choose an install route
 
 ### Choose what this environment runs
@@ -590,7 +592,9 @@ A binary links against whatever C library built it, so a download labelled only 
 
 Check yours with `ldd --version`. On an older distribution the binary doesn't start, and the error names a missing symbol version rather than saying the distribution is too old.
 
-The binaries target current distributions. Debian 12, Ubuntu 22.04, RHEL 8 and 9, and Amazon Linux 2023 all ship a glibc below this floor, so the archives do not run there. Install from the package index on those systems instead: it has no libc floor and works wherever the Python and GPU requirements are met.
+The binaries target current distributions. Debian 12, Ubuntu 22.04, RHEL 8 and 9, and Amazon Linux 2023 all ship a glibc below this floor, so the archives do not run there. Install from the package index on those systems instead; the CUDA PyTorch wheel needs glibc 2.28 or newer.
+
+The Qdrant server that the default backend downloads for x86-64 Linux needs glibc 2.38 or newer, whichever route installed vaultspec-rag. On an older distribution, use [local-only storage](backends.md), which needs no Qdrant binary, or register your own Qdrant build with `vaultspec-rag server qdrant install --binary PATH`.
 
 ## Where to go next
 
