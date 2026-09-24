@@ -99,7 +99,9 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
 
     Mutation proof: changing the publish workflow back to its private
     ``publish-*`` concurrency group made the shared-lock assertion fail; the
-    common per-tag group was restored before the passing run.
+    common per-tag group was restored before the passing run. Reverting the
+    checksum producer to ``sha256sum ./*`` made the bare-name assertion fail;
+    the bare-name producer was restored before the passing run.
     """
     binaries = _workflow(repo_root)
     publish = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
@@ -112,7 +114,9 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     assert "cancel-in-progress: false" in binaries
     assert "cancel-in-progress: false" in publish
 
-    assert "sha256sum ./* > SHA256SUMS" in publish
+    # A `./*` glob writes `./name` entries that never equal the release asset
+    # names, so the final exact-coverage gate demotes every release.
+    assert "sha256sum -- * > SHA256SUMS" in publish
     assert 'gh release download "${TAG}" --repo "$GITHUB_REPOSITORY"' in publish
     assert "--pattern SHA256SUMS --output inherited.txt" in publish
     assert "cat inherited.txt >> SHA256SUMS" in publish
