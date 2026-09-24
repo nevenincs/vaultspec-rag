@@ -115,8 +115,10 @@ async def test_get_service_state_consolidated_shape(
 
     assert set(state) == {
         "index",
+        "installation",
         "projects",
         "qdrant",
+        "root_features",
         "schema_version",
         "watcher",
         "quiesce",
