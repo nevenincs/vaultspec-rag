@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.1...vaultspec-rag-v0.5.2) (2026-09-24)
+
+
+### Tests
+
+* match the service state shape test to the typed status model ([#544](https://github.com/nevenincs/vaultspec-rag/issues/544)) ([18b7560](https://github.com/nevenincs/vaultspec-rag/commit/18b75609612d53b5571d2ed41ab89026c04a46f5))
+
 ## [0.5.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.0...vaultspec-rag-v0.5.1) (2026-09-24)
 
 
