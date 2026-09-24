@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.35...vaultspec-rag-v0.5.0) (2026-09-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* report status from one typed model, in plain language ([#536](https://github.com/nevenincs/vaultspec-rag/issues/536))
+
+### Features
+
+* report status from one typed model, in plain language ([#536](https://github.com/nevenincs/vaultspec-rag/issues/536)) ([a3639d3](https://github.com/nevenincs/vaultspec-rag/commit/a3639d3a37f0423af47d90de202fcbfd2267fb55))
+
+
+### Bug Fixes
+
+* **ci:** adopt the fleet's canonical workflow checkers ([#533](https://github.com/nevenincs/vaultspec-rag/issues/533)) ([a853af3](https://github.com/nevenincs/vaultspec-rag/commit/a853af30c6125d58524ad84c50c0823136d4ac42))
+* **release:** write bare asset names into SHA256SUMS ([#538](https://github.com/nevenincs/vaultspec-rag/issues/538)) ([0981cc2](https://github.com/nevenincs/vaultspec-rag/commit/0981cc2f4d4376ebdfe75a9fb88535049cd9b7fe))
+* remove the commit hook that stashed shared-worktree changes ([#534](https://github.com/nevenincs/vaultspec-rag/issues/534)) ([8a6c5e5](https://github.com/nevenincs/vaultspec-rag/commit/8a6c5e5e502680a2f3e3f1fbfe6d903c2da1e2b8))
+
 ## [0.4.35](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.34...vaultspec-rag-v0.4.35) (2026-09-22)
 
 
