@@ -157,7 +157,7 @@ def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
     """
     msg = str(exc)
     if "401" in msg or "403" in msg or "GatedRepo" in msg:
-        return f"{repo_id} auth required; run huggingface-cli login"
+        return f"{repo_id} auth required; set HF_TOKEN or run hf auth login"
     cache = get_config().hf_cache_location
     return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
 
@@ -244,7 +244,7 @@ def service_warmup() -> None:
         else:
             _print_detail_line(
                 "HuggingFace auth",
-                "missing; run huggingface-cli login if downloads fail",
+                "missing; set HF_TOKEN or run hf auth login if downloads fail",
             )
 
         for position, (label, repo_id) in enumerate(models, start=1):

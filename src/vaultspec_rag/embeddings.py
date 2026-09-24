@@ -420,7 +420,7 @@ def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
     kind = "gated" if isinstance(exc, GatedRepoError) else "inaccessible or not found"
     raise RuntimeError(
         f"Model '{model_id}' is {kind} on HuggingFace Hub. "
-        f"Set the HF_TOKEN environment variable or run `huggingface-cli login` "
+        f"Set the HF_TOKEN environment variable or run `hf auth login` "
         f"to authenticate. Model URL: https://huggingface.co/{model_id}",
     ) from exc
 
