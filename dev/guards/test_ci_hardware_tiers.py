@@ -278,7 +278,11 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
 
 
 def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
-    """Removing the GPU test's secret failed here; restoration passed."""
+    """Removing the GPU test's secret failed here; restoration passed.
+
+    Restoring the retired ``$status.health.typesafe.enrolled`` check failed on
+    the Typesafe state assertion; the state check was restored before passing.
+    """
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
     )
@@ -294,7 +298,9 @@ def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
         indices.append(index)
     assert indices == sorted(indices)
     start = _run(job.steps[indices[0]])
-    assert "$status.health.typesafe.enrolled -ne $true" in start
+    # The service reports enrollment only as a Typesafe state; `off` is the
+    # one unenrolled state, and a missing field must refuse, not pass.
+    assert "$status.health.features.typesafe.state -in @($null, 'off')" in start, start
     assert job.steps[indices[0]].get("id") == "resident"
     stop = next(step for step in job.steps if "server stop" in _run(step))
     assert (

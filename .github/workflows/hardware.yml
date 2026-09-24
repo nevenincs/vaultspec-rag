@@ -263,7 +263,9 @@ jobs:
             $state = $status.state
             Write-Host "service state: $state"
             if ($state -eq 'running') {
-              if ($status.health.typesafe.enrolled -ne $true) {
+              # Every Typesafe state but `off` means the key enrolled; an absent
+              # state means the payload moved, which must fail rather than pass.
+              if ($status.health.features.typesafe.state -in @($null, 'off')) {
                 throw 'The resident service lacks Typesafe enrollment; restart it with the CI secret.'
               }
               exit 0
