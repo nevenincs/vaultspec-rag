@@ -262,7 +262,10 @@ jobs:
           TAG: ${{ needs.resolve-target.outputs.tag }}
         run: |
           set -euo pipefail
-          sha256sum ./* > SHA256SUMS
+          # Bare names, never `./*`: each manifest name must equal its release
+          # asset name exactly, or the binaries workflow's final gate refuses to
+          # promote the release. `--` keeps a leading dash from reading as a flag.
+          sha256sum -- * > SHA256SUMS
           # MERGE into whatever the release already carries rather than
           # replacing it. binaries.yml and publish.yml both publish a file named
           # SHA256SUMS to the same release with --clobber, and neither knows
