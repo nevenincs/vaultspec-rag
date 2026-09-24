@@ -94,7 +94,7 @@ def test_doctor_reports_dead_daemon_not_ready(
 def test_doctor_dead_daemon_human_render_labels_both_axes(
     isolated_status_dir: Path,
 ) -> None:
-    """Human render names the not-running live service and the dependency axis."""
+    """Human render names the crashed live service and the dependency axis."""
     _write_discovery_file(
         isolated_status_dir,
         pid=_DEAD_PID,
@@ -105,7 +105,9 @@ def test_doctor_dead_daemon_human_render_labels_both_axes(
 
     assert result.exit_code != 0
     assert "Live service:" in result.output
-    assert "not running" in result.output
+    # A discovery file naming a dead PID is a crash, not a clean stop; the
+    # dead-PID label distinguishes it from a reused PID or a silent port.
+    assert "crashed (its process is no longer running)" in result.output
     assert "needs restart" in result.output
     assert "Installed dependencies:" in result.output
 
