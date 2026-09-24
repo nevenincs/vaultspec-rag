@@ -47,8 +47,8 @@ generation (RAG).
 
 Source code shows where something happens. Decision records show why: architecture decision records (ADRs), plans, research notes, and
 audits kept as Markdown in a `.vault/` folder. Its companion project,
-[vaultspec-core](https://github.com/nevenincs/vaultspec-core), creates that folder.
-Repositories without one still get full code search.
+[vaultspec-core](https://github.com/nevenincs/vaultspec-core), writes those records.
+Repositories without any still get full code search.
 
 By default, indexing and search run on your machine, so your code stays private and
 queries cost nothing. The [glossary](docs/glossary.md) defines unfamiliar terms.
@@ -58,13 +58,15 @@ queries cost nothing. The [glossary](docs/glossary.md) defines unfamiliar terms.
 - **Hybrid retrieval.** Each search combines meaning and exact keywords, then a
   reranking model reorders the top results.
 - **Code, decisions, and documents.** Search source code, decision records, or documents
-  converted from PDFs and other formats, one at a time or all together.
+  such as PDFs converted by extraction commands you configure, one at a time or all
+  together.
 - **One service for every repository.** A single background search service serves all
-  your repositories and re-indexes files as they change.
+  your repositories and re-indexes files as they change in the ones you're using.
 - **Built for AI assistants.** Model Context Protocol (MCP) tools let coding assistants
   run searches themselves.
-- **Production code first.** Code results rank production code above tests, docs, and
-  vendored code, and hide generated files. Inline filters change that per query.
+- **Production code first.** Code results favor production code. Tests, docs, locale
+  files, and vendored code rank lower, and generated files and worktree copies are
+  hidden. Inline filters change that per query.
 - **Optional TypeSafe ranking.** A hosted service judges each result's relevance and
   removes the ones it's confident are irrelevant.
 
@@ -76,7 +78,7 @@ vector database, which runs as its own process on your machine. A search encodes
 query the same two ways and fuses the two rankings. A third model, the reranker, then
 reorders the top results.
 
-The search service keeps all three models loaded on the GPU, so searches return
+The search service keeps its models loaded on the GPU, so searches return
 quickly. That's also why there's no CPU mode: on a CPU, the models are too slow to be
 useful. The command line and the MCP adapter are thin clients of the service. See the
 [architecture overview](docs/architecture.md) for the full picture.
@@ -95,6 +97,9 @@ You need:
   several more gigabytes for the models. A
   [smaller resource profile](docs/installation.md#what-you-need-before-you-start) fits
   machines with 8 GiB of RAM or unified memory.
+- **On Linux, glibc 2.38 or newer**, such as Ubuntu 24.04 or Debian 13, for the default
+  Qdrant server. Check with `ldd --version`. On older distributions, use
+  [local-only mode](#run-without-a-separate-qdrant-process) instead.
 - **uv.** The [uv package manager](https://docs.astral.sh/uv/getting-started/installation/)
   fetches Python for you. The commands in this guide use Python 3.13; 3.14 also works.
   To skip Python entirely, use a [prebuilt binary](#other-ways-to-install).
@@ -122,7 +127,7 @@ Windows x64:
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
 ```
 
-Linux x86_64 (glibc 2.28 or newer):
+Linux x86_64:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl"
@@ -134,8 +139,9 @@ Apple silicon macOS:
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-For other Python versions or Linux architectures, see
-[GPU wheel selection](docs/installation.md#pin-the-gpu-build). If uv reports that its
+For Python 3.14, replace both `cp313` tags in the wheel URL with `cp314`. For Linux
+ARM64, replace `x86_64` with `aarch64`. [Pin the GPU build](docs/installation.md#pin-the-gpu-build)
+shows how to have vaultspec-rag print the exact command. If uv reports that its
 executables directory is missing from `PATH`, follow its instructions before
 continuing. To upgrade an existing installation, follow the
 [upgrade guide](docs/installation.md#upgrade) instead.
@@ -147,7 +153,7 @@ If you set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for the meaning-only setup, skip thi
 Otherwise, sign in to Hugging Face and accept the access conditions on the
 [`naver/splade-v3` model page](https://huggingface.co/naver/splade-v3). Then
 authenticate the account that runs vaultspec-rag: set `HF_TOKEN` in its environment,
-or log in once with the Hugging Face CLI (`hf auth login`). A token alone isn't enough
+or log in once with the Hugging Face CLI (`uvx --from huggingface_hub hf auth login`). A token alone isn't enough
 until its account accepts the conditions.
 
 ### Step 3: Set up each repository
@@ -160,13 +166,16 @@ it. Run each command from the repository root.
 vaultspec-rag install --no-torch-config
 ```
 
-This adds agent rules, a search skill, and MCP adapter entries for Claude Code and Codex
-to the repository. `--no-torch-config` leaves the project's PyTorch settings alone,
+This adds agent rules, a search skill, and MCP adapter entries to the repository. The
+entries target Claude Code and Codex, or the assistants vaultspec-core already set up
+there. `--no-torch-config` leaves the project's PyTorch settings alone,
 because Step 1 already installed the GPU build. Add `--dry-run` to preview the changes.
 
-The first time you run it, it also downloads the three models and the Qdrant binary,
-several gigabytes in total, so expect a long first run. Later repositories reuse both.
-Before running Qdrant, vaultspec-rag checks it against a pinned SHA-256 digest.
+The first time you run it, it also downloads the models (three by default, two in the
+meaning-only setup) and the Qdrant binary. That's several gigabytes, so expect a long
+first run; later repositories reuse both. vaultspec-rag checks the Qdrant download
+against a SHA-256 digest pinned in its code before unpacking it, and re-checks the
+binary before every launch.
 
 <p id="where-it-puts-things-and-how-to-remove-it"></p>
 <p id="remove-rag"></p>
@@ -175,7 +184,7 @@ To undo these changes later, follow the [removal guide](docs/installation.md#rem
 
 ### Other ways to install
 
-- [Prebuilt Windows and Linux binaries](docs/installation.md#install-without-python),
+- [Prebuilt Windows, Linux, and Apple silicon binaries](docs/installation.md#install-without-python),
   with no Python toolchain.
 - [Scoop or Homebrew](docs/installation.md#install-with-scoop-or-homebrew).
 - [A project dependency](docs/installation.md#adding-it-to-a-project), to share one
@@ -198,7 +207,8 @@ service over the machine's loopback interface and load no models.
 | Search service host with MCP adapter | `vaultspec-rag[gpu,mcp]` | Yes          |
 
 There is no `rag` extra. In a client-only environment, run Step 3 as
-`vaultspec-rag install --no-provision` to skip the model and Qdrant downloads. See the
+`vaultspec-rag install --no-provision --no-torch-config` to skip the model and Qdrant
+downloads. Add `--no-mcp` for a command-line-only environment. See the
 [installation lanes](docs/installation.md#choose-what-this-environment-runs) for each
 role's commands and limits.
 
@@ -228,8 +238,9 @@ vaultspec-rag server doctor
 <img src="assets/term-doctor.svg" alt="vaultspec-rag server doctor output reporting the service running, CUDA available on the GPU, all three models present, and the Qdrant binary resolved" width="880" />
 </p>
 
-A healthy report shows the service running, detects your GPU, and finds all three
-models and the Qdrant binary. If it reports a problem, follow the
+A healthy report shows the service running, detects your GPU, and reports the models
+ready: three, or two in the meaning-only setup. In the default server mode, it also
+reports the Qdrant binary ready. If it reports a problem, follow the
 [installation troubleshooting guide](docs/installation.md#when-something-goes-wrong).
 
 <p id="check-on-the-index"></p>
@@ -252,9 +263,13 @@ Indexing runs in the background. Follow the jobs until they finish:
 vaultspec-rag server jobs --watch
 ```
 
-After that, the service re-indexes changed files while it runs. One service handles all
-your repositories, so run `index` once in each. To rebuild or remove indexed content,
-see [index maintenance](docs/search-and-index.md#build-and-refresh-the-index).
+After that, the service re-indexes changed files while the repository stays loaded:
+from its first search or `index` after the service starts, until it sits idle for 30
+minutes. If results look stale, run `index` again; it processes only changed files.
+
+One service handles all your repositories, so run `index` once in each. To start over
+or remove indexed content, see [rebuilding](docs/search-and-index.md#rebuild-from-scratch)
+and [cleaning index data](docs/search-and-index.md#clean-index-data).
 
 <p id="refine-searches"></p>
 <p id="write-a-query-that-finds-it"></p>
@@ -277,10 +292,6 @@ architecture decisions:
 vaultspec-rag search "why the GPU lock covers only the forward pass" --type vault --doc-type adr
 ```
 
-<p align="center">
-<img src="assets/term-search-vault.svg" alt="Example decision-record search: a numbered result naming an ADR file with its type, feature, and date, followed by the matching passage" width="880" />
-</p>
-
 Steer code results with filter tokens inside the query. This one hides tests:
 
 ```bash
@@ -289,7 +300,8 @@ vaultspec-rag search "retry backoff for failed uploads exclude:tests" --type cod
 
 If results are missing or weak, [diagnose missing results](docs/verification.md) and
 [write a better query](docs/query-craft.md). The
-[filter reference](docs/query-craft.md#the-filter-surface) lists every filter.
+[filter reference](docs/query-craft.md#the-filter-surface) covers the common filters,
+and [commands and flags](docs/cli.md#search) lists every one.
 
 <p id="use-it-from-an-ai-assistant"></p>
 
@@ -341,8 +353,9 @@ relevance:
 If TypeSafe can't judge a search or can't be reached, search uses the normal local
 ranking.
 
-**Data and cost.** TypeSafe ranking sends your queries and candidate content, including
-source code, to TypeSafe, and uses paid API credits. It adds to local search rather
+**Data and cost.** TypeSafe ranking sends your queries, any filters you set, and
+candidate content with its file paths, including source code, to TypeSafe. It also uses
+paid API credits. It adds to local search rather
 than replacing it, so you still need the GPU and models.
 
 To turn it on:
@@ -351,8 +364,8 @@ To turn it on:
 
 1. Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the environment that starts the search
    service, then start the service from there. If it's already running, stop it first.
-   Keep the key out of committed files; the service doesn't read it from a project
-   `.env` file.
+   Set the key in your shell or service environment, and keep it out of committed files,
+   including a project `.env` file.
 
    ```bash
    export VAULTSPEC_RAG_TYPESAFE_API_KEY='<your-key>'
@@ -366,11 +379,15 @@ To turn it on:
    vaultspec-rag server start
    ```
 
-1. Run a search, then run `vaultspec-rag server status`. Its `Typesafe:` line reads
-   `on (recent searches were classified)` once ranking works.
+1. Run a search, then run `vaultspec-rag server status` within a minute. Its
+   `Typesafe:` line reads `on (recent searches were classified)` when TypeSafe answered
+   a recent search. After a quiet minute, it reads
+   `on (API key set; waiting for its first successful search)`.
 
-See [TypeSafe enrollment](docs/configuration.md#typesafe-enrollment) for fallback
-rules, every status, and per-search timings.
+See [TypeSafe enrollment](docs/configuration.md#typesafe-enrollment) for fallback rules
+and every status, and
+[TypeSafe diagnostics](docs/configuration.md#typesafe-connection-reuse-caching-and-diagnostics)
+for per-search timings.
 
 <p id="use-an-on-disk-index"></p>
 <p id="run-without-the-search-server"></p>
@@ -378,9 +395,11 @@ rules, every status, and per-search timings.
 ### Run without a separate Qdrant process
 
 By default, Qdrant runs as its own process next to the search service: this is server
-mode. For a small or offline project, local-only mode keeps an embedded on-disk index
-inside the search service instead. Both run entirely on your machine, and both need a
-GPU and the models.
+mode. For a small or offline project, local-only mode runs an embedded store inside the
+search service instead, and keeps each repository's index on disk in that repository.
+Both run entirely on your machine, and both need a GPU and the models. Local-only mode
+also needs the smaller resource profile: set
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the service's environment.
 
 Switching modes doesn't move existing indexes, so re-index each repository afterwards
 or migrate it. Follow [backend setup](docs/backends.md).
@@ -401,8 +420,8 @@ files and reach the network. They run during explicit indexing, watched file cha
 and assistant-triggered re-indexing.
 
 Before indexing a repository you didn't write, read its `.vaultragpreprocess.toml`.
-`vaultspec-rag preprocess status` reports the configuration without running any
-converter. See [security and disable options](docs/preprocessing-hooks.md#security-posture).
+`vaultspec-rag preprocess status` reports whether converters would run, and
+`vaultspec-rag preprocess list` shows each declared command. Neither runs a converter. See [security and disable options](docs/preprocessing-hooks.md#security-posture).
 
 ## Documentation
 
