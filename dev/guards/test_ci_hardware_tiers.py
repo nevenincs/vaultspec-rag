@@ -304,6 +304,27 @@ def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
     assert "$env:RESIDENT_START_OUTCOME -notin" in _run(stop)
 
 
+def test_resident_service_binds_a_free_port_not_the_default() -> None:
+    """The CUDA tier's resident never claims the fixed default service port.
+
+    The GPU runner is a workstation whose own service and Qdrant can hold the
+    default port, and a start that loses that race fails the whole release.
+
+    Mutation proof: deleting the ``VAULTSPEC_RAG_PORT`` assignment from the
+    resident step made this fail on the port assertion; restoring it passed.
+    """
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
+    )
+    resident = next(step for step in job.steps if step.get("id") == "resident")
+    start = _run(resident)
+    probe = start.find("TcpListener]::new([System.Net.IPAddress]::Loopback, 0)")
+    assign = start.find("$env:VAULTSPEC_RAG_PORT = ")
+    launch = start.find("vaultspec-rag server start")
+    assert -1 < probe < assign < launch, (probe, assign, launch)
+    assert "--port" not in start
+
+
 def test_no_windows_step_hands_powershell_a_heredoc() -> None:
     """A Windows step never carries bash-only syntax into PowerShell.
 
