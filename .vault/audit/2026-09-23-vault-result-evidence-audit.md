@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-24'
 body_schema: 'body-v2'
-body_hash: 'sha256:98bda260dc089bbe846cafdfc17410966555c93413ec9f9c796156fb2d861494'
+body_hash: 'sha256:f9ba70733251ef88f7b4400d5a2135c7522ab7ee1a166235dcdf4cc30b3afcf1'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
   - "[[2026-09-23-vault-result-evidence-adr]]"
@@ -37,22 +37,22 @@ code, and the phase-close review findings for P01-P04.
 
 **Frozen reference vault, 36 blind cases** (`src/vaultspec_rag/tests/quality/evidence_baseline.json`):
 
-| Measure | Before | After |
-| --- | --- | --- |
-| hit@1 | 0.528 | 0.528 |
-| MRR | 0.665 | 0.665 |
-| Evidence in snippet | 0/36 | 15/36 |
-| Section match | not reported | 18/36 |
-| Hits with a line span | 0 of 360 | 360 of 360 |
+| Measure               | Before       | After      |
+| --------------------- | ------------ | ---------- |
+| hit@1                 | 0.528        | 0.528      |
+| MRR                   | 0.665        | 0.665      |
+| Evidence in snippet   | 0/36         | 15/36      |
+| Section match         | not reported | 18/36      |
+| Hits with a line span | 0 of 360     | 360 of 360 |
 
 Every span is verbatim at its reported lines.
 
 **The issue's query sets, re-run on the vaultspec-core vault:**
 
-| Set | hit@1 | MRR | Evidence in snippet | Section |
-| --- | --- | --- | --- | --- |
-| Dev (21) | 0.81 (unchanged) | 0.853 (unchanged) | 15 (was 0) | 15 (was 0) |
-| Held-out (18) | 0.722 (unchanged) | 0.797 (unchanged) | 11 (was 1) | 11 (was 0) |
+| Set           | hit@1             | MRR               | Evidence in snippet | Section    |
+| ------------- | ----------------- | ----------------- | ------------------- | ---------- |
+| Dev (21)      | 0.81 (unchanged)  | 0.853 (unchanged) | 15 (was 0)          | 15 (was 0) |
+| Held-out (18) | 0.722 (unchanged) | 0.797 (unchanged) | 11 (was 1)          | 11 (was 0) |
 
 - The existing intent-ranking and testimonial gates pass on the final code.
 - The issue's paragraph-level reference engine scored 18/21 and 13/18. The remaining gap
@@ -82,13 +82,13 @@ The shipped input reproduced every previously recorded figure. Its repeat run mo
 query, so the harness is deterministic and every movement below comes from the
 input.
 
-| Input | Frozen MRR | Section | Intent NDCG@10 | Testimonial rank | Dev MRR | Held-out MRR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Shipped: title, blank line, text | 0.665 | 18 | 0.7709 | 2 | 0.853 | 0.797 |
-| Format only: title, newline, text | 0.664 | 17 | 0.7706 | 2 | 0.853 | 0.797 |
-| Section, shipped format | 0.666 | 18 | 0.7700 | out | 0.857 | 0.797 |
-| First P05 input | 0.659 | 17 | 0.7703 | out | 0.857 | 0.798 |
-| Leaf heading only, shipped format | 0.666 | 18 | 0.7690 | out | 0.857 | 0.797 |
+| Input                             | Frozen MRR | Section | Intent NDCG@10 | Testimonial rank | Dev MRR | Held-out MRR |
+| --------------------------------- | ---------- | ------- | -------------- | ---------------- | ------- | ------------ |
+| Shipped: title, blank line, text  | 0.665      | 18      | 0.7709         | 2                | 0.853   | 0.797        |
+| Format only: title, newline, text | 0.664      | 17      | 0.7706         | 2                | 0.853   | 0.797        |
+| Section, shipped format           | 0.666      | 18      | 0.7700         | out              | 0.857   | 0.797        |
+| First P05 input                   | 0.659      | 17      | 0.7703         | out              | 0.857   | 0.798        |
+| Leaf heading only, shipped format | 0.666      | 18      | 0.7690         | out              | 0.857   | 0.797        |
 
 - **No headline movement.** hit@1, evidence-in-snippet and external section match do
   not move for any input.
@@ -134,10 +134,10 @@ candidate window or a shorter token bound. Either one changes ranking.
 A service run with `VAULTSPEC_RAG_RERANKER_MAX_LENGTH=512` (chunks truncated at 512
 tokens instead of 1024) on the issue's query sets:
 
-| Set | hit@1 | MRR | Evidence in snippet |
-| --- | --- | --- | --- |
-| Dev | 0.81 → 0.762 | 0.853 → 0.829 | 15 → 12 of 21 |
-| Held-out | 0.722 → 0.778 | 0.797 → 0.824 | 11 → 9 of 18 |
+| Set      | hit@1         | MRR           | Evidence in snippet |
+| -------- | ------------- | ------------- | ------------------- |
+| Dev      | 0.81 → 0.762  | 0.853 → 0.829 | 15 → 12 of 21       |
+| Held-out | 0.722 → 0.778 | 0.797 → 0.824 | 11 → 9 of 18        |
 
 Ranking moved in both directions and evidence fell on both sets. Latency from that run
 was discarded: it ran while another GPU consumer was active on the host.
@@ -162,11 +162,11 @@ untried lever was profiled. The workload was the reranker on real vaultspec-core
 text: 40 chunk pairs and 48 passage pairs per query, over the 21 dev queries, with
 medians reported.
 
-| Lever | Chunk rerank | Passage scoring | Outcome |
-| --- | --- | --- | --- |
-| Current: fp16 weights, SDPA attention | 393-402 ms | 164-178 ms | baseline, exactly repeatable |
-| fp16 matrix accumulation | 313-327 ms | 135-148 ms | shipped |
-| Eager attention | 734 ms | 224 ms | SDPA is already the default |
+| Lever                                 | Chunk rerank | Passage scoring | Outcome                      |
+| ------------------------------------- | ------------ | --------------- | ---------------------------- |
+| Current: fp16 weights, SDPA attention | 393-402 ms   | 164-178 ms      | baseline, exactly repeatable |
+| fp16 matrix accumulation              | 313-327 ms   | 135-148 ms      | shipped                      |
+| Eager attention                       | 734 ms       | 224 ms          | SDPA is already the default  |
 
 - **fp16 accumulation.** Consumer CUDA cards run fp16 products with fp16 accumulation
   at twice the fp32-accumulation rate.
@@ -291,8 +291,7 @@ The user barred a pull request while any known defect remains.
 - **What the doctor reports.** `vaultspec-rag server doctor` reports "install mode:
   mismatch".
   - `.vaultspec/workspace.json` declares vaultspec-rag as `tool`.
-  - `.mcp.json` runs the worktree build through `uv run --no-sync python -m
-    vaultspec_rag.server`, the dependency launch shape (`362bfebd`).
+  - `.mcp.json` runs the worktree build through `uv run --no-sync python -m vaultspec_rag.server`, the dependency launch shape (`362bfebd`).
 - **Provenance.** Both files are unchanged on this branch.
 - **Why no verb fixes it.** `vaultspec-rag install --mode dev --dry-run` refuses in the
   product's own repository because its owned MCP-extra requirement has drifted.
@@ -398,6 +397,35 @@ host CPU at 100% across 18 processes. The earlier lane on the same branch passed
     project-scoped rebuild remedy were kept.
 - **Final gates.** Ruff, ty and strict basedpyright pass package-wide on the merged
   tree.
+
+### ci-lint | high | The first CI run found three full-lint failures in this feature; resolved
+
+The branch's `Check: Full lint (Linux)` failed, and local verification had not run
+every dimension it gates on:
+
+- **Complexity:**
+  - `_scan_blocks` scored 27 and `VaultSearcher._select_passages` 22, against an
+    allowed 20.
+  - The block scan is now a small scanner with one method per line kind.
+  - Passage selection moved beside its pure helpers as
+    `_result_shaping.select_passages`, which takes a scorer. The searcher keeps the
+    scorer.
+  - Out-of-memory tolerance moved to `AcceleratorContext.unless_out_of_memory`.
+- **Module length:** `search/_searcher.py` grew past pylint's 1,500-line limit, to
+  1,516 lines. The moves above bring it to 1,499.
+- **Markdown formatting:** four of this feature's records failed `mdformat --check`.
+  Formatting collapsed the breadcrumb separator in a code span, which is now written
+  as `" > "`.
+
+**Verification.** Every lint dimension now passes when each is run alone. The passage,
+search and accelerator suites pass (175). The out-of-memory fallback test fails with
+the fallback removed.
+
+**Environment.** The resident service had died overnight with no error line.
+
+- A process from another project held its vector-store port, 8765.
+- The service's refusal named the dead child's pid instead of that holder.
+- It was restarted on ports 8776 and 8767 for the CUDA tier.
 
 ## Recommendations
 

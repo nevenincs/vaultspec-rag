@@ -22,6 +22,8 @@ from ._postprocess import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .._store_models import DocumentLocatorKind
     from ._models import (
         DocumentSearchResult,
@@ -219,6 +221,37 @@ def show_passage(result: SearchResult, passage: ResultPassage) -> None:
     result.line_start = passage.line_start
     result.line_end = passage.line_end
     result.section = passage.section or None
+
+
+def select_passages(
+    query: str,
+    results: list[SearchResult],
+    score: Callable[[list[tuple[str, str]]], list[float] | None] | None,
+) -> None:
+    """Show each result the passage that best answers *query*.
+
+    Every result first shows its leading candidate. The page's candidate
+    passages, chosen and bounded by :func:`passage_pairs`, are then scored by
+    *score* in one batched forward; a result with a single candidate needs no
+    scoring. With no scorer (the reranker is disabled) each result keeps its
+    first passage, and so does every result when the scorer returns ``None``
+    because it could not run: the page is already ranked, and a first passage
+    is a lesser snippet, not a failure.
+    """
+    for result in results:
+        if result.passages:
+            show_passage(result, result.passages[0])
+    pairs, owners = passage_pairs(query, results)
+    scores = score(pairs) if pairs and score is not None else None
+    if scores is None:
+        return
+    best: dict[int, tuple[float, SearchResult, ResultPassage]] = {}
+    for (result, passage), passage_score in zip(owners, scores, strict=True):
+        current = best.get(id(result))
+        if current is None or passage_score > current[0]:
+            best[id(result)] = (passage_score, result, passage)
+    for _score, result, passage in best.values():
+        show_passage(result, passage)
 
 
 #: The phase keys a search publishes on its timings channel.

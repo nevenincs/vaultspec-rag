@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING, Final
@@ -186,47 +186,66 @@ def _scan_blocks(text: str, line_offsets: Sequence[int]) -> _Scan:
     separates blocks and belongs to none.
     """
     lines = text.split("\n")
-    scan = _Scan(blocks=[], heading_offsets=[], heading_sections=[])
-    stack: list[tuple[int, str]] = []
+    scanner = _BlockScanner(text, lines, line_offsets)
+    for index, line in enumerate(lines):
+        scanner.feed(index, line)
+    scanner.close(len(lines) - 1)
+    return scanner.scan
+
+
+@dataclass(slots=True)
+class _BlockScanner:
+    """One pass over a body's lines, carrying the open block, fence and headings."""
+
+    text: str
+    lines: list[str]
+    line_offsets: Sequence[int]
+    scan: _Scan = field(default_factory=lambda: _Scan([], [], []))
+    stack: list[tuple[int, str]] = field(default_factory=list[tuple[int, str]])
     block_first: int | None = None
     fence: str | None = None
 
-    def close(last: int) -> None:
-        nonlocal block_first
-        if block_first is not None and last >= block_first:
-            end = line_offsets[last] + len(lines[last])
-            trimmed = _trim(text, line_offsets[block_first], end)
-            if trimmed is not None:
-                section = SECTION_SEPARATOR.join(title for _, title in stack)
-                scan.blocks.append((trimmed[0], trimmed[1], section))
-        block_first = None
-
-    for index, line in enumerate(lines):
-        if fence is not None:
-            if _closes_fence(line, fence):
-                close(index)
-                fence = None
-            continue
+    def feed(self, index: int, line: str) -> None:
+        """Advance over one line."""
+        if self.fence is not None:
+            if _closes_fence(line, self.fence):
+                self.close(index)
+                self.fence = None
+            return
         opener = _FENCE.match(line)
-        heading = None if opener else _heading_at(lines, index, block_first)
         if opener is not None:
-            close(index - 1)
-            block_first = index
-            fence = opener.group(1)
-        elif heading is not None:
-            level, title, first = heading
-            close(first - 1)
-            _enter_heading(stack, level, title, is_first=not scan.heading_offsets)
-            scan.heading_offsets.append(line_offsets[first])
-            scan.heading_sections.append(
-                SECTION_SEPARATOR.join(entry for _, entry in stack)
-            )
+            self.close(index - 1)
+            self.block_first = index
+            self.fence = opener.group(1)
+            return
+        heading = _heading_at(self.lines, index, self.block_first)
+        if heading is not None:
+            self._enter(heading)
         elif not line.strip() or _THEMATIC_BREAK.match(line):
-            close(index - 1)
-        elif block_first is None:
-            block_first = index
-    close(len(lines) - 1)
-    return scan
+            self.close(index - 1)
+        elif self.block_first is None:
+            self.block_first = index
+
+    def close(self, last: int) -> None:
+        """End the open block on line *last*, recording it if it holds text."""
+        first = self.block_first
+        self.block_first = None
+        if first is None or last < first:
+            return
+        end = self.line_offsets[last] + len(self.lines[last])
+        trimmed = _trim(self.text, self.line_offsets[first], end)
+        if trimmed is not None:
+            section = SECTION_SEPARATOR.join(title for _, title in self.stack)
+            self.scan.blocks.append((trimmed[0], trimmed[1], section))
+
+    def _enter(self, heading: tuple[int, str, int]) -> None:
+        level, title, first = heading
+        self.close(first - 1)
+        _enter_heading(self.stack, level, title, is_first=not self.scan.heading_offsets)
+        self.scan.heading_offsets.append(self.line_offsets[first])
+        self.scan.heading_sections.append(
+            SECTION_SEPARATOR.join(entry for _, entry in self.stack)
+        )
 
 
 def _heading_at(

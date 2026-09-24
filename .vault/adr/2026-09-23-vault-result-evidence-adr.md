@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-24'
 body_schema: 'body-v2'
-body_hash: 'sha256:1f483d30b0fe29db2cbdccc9208fbeac32b8b0eab54f9220ec39ed202c54a421'
+body_hash: 'sha256:e53edcf9c138cb21594309e4a29304701a4abda679fb06fbc5156e5460af3a56'
 related:
   - "[[2026-09-23-vault-result-evidence-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -114,7 +114,7 @@ vault body:
 - It merges tiny neighbours under the same heading.
 - Each passage carries its body offsets, its 1-based file line span (frontmatter
   included), and its `section` breadcrumb. The breadcrumb is headings below the H1
-  joined with ` > `, the format document hits already use.
+  joined with `" > "`, the format document hits already use.
 
 `split_document` keeps its current chunk boundaries and attaches, per chunk:
 

@@ -7,9 +7,9 @@ tier: L2
 related:
   - '[[2026-09-23-vault-result-evidence-adr]]'
   - '[[2026-06-12-service-concurrency-adr]]'
-modified: '2026-09-23'
+modified: '2026-09-24'
 body_schema: body-v2
-body_hash: 'sha256:f5e18177366437abcc13472d47312f0ada464f1f36867d8729be5fe2f35eae85'
+body_hash: 'sha256:fa6a6fb259e5029054944c046c745e77418e42fc63a438b6e619e362c64fd7ae'
 ---
 
 # `vault-result-evidence` plan
@@ -113,6 +113,7 @@ Delivers a profiled vault search path and every inference lever that cuts its ti
 Delivers calibrated gate floors, the cross-corpus re-run of the issue's query sets, the latency check, and the closing review.
 
 - [x] `P06.S09` - record gate floors from the passing run, re-run the issue's query sets and the latency measurement, and file the results in the feature audit; `src/vaultspec_rag/tests/quality/evidence_baseline.json`.
+- [x] `P06.S18` - clear the full-lint findings from the first CI run: complexity of the block scan and passage selection, the searcher's module length, and markdown formatting of the feature's records; `src/vaultspec_rag/_markdown_passages.py, src/vaultspec_rag/search/_searcher.py, src/vaultspec_rag/search/_result_shaping.py, src/vaultspec_rag/_gpu.py, .vault/`.
 
 ## Parallelization
 

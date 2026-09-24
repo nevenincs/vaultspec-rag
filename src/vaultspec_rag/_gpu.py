@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from types import ModuleType
 
 AcceleratorBackend = Literal["cuda", "mps"]
@@ -72,6 +72,19 @@ class AcceleratorContext:
     def release_cache(self) -> None:
         """Return unused allocator blocks to the selected backend."""
         getattr(self.torch, self.backend).empty_cache()
+
+    def unless_out_of_memory[T](self, call: Callable[[], T]) -> T | None:
+        """Return *call*'s result, or ``None`` if it exhausts accelerator memory.
+
+        Any other failure propagates: only allocator exhaustion is a result a
+        caller can degrade around.
+        """
+        try:
+            return call()
+        except BaseException as exc:
+            if not self.is_out_of_memory(exc):
+                raise
+            return None
 
     @contextmanager
     def half_accumulation(self) -> Generator[None]:

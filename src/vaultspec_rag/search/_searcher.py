@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, fields, replace
+from functools import partial
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from .. import store_schema
@@ -22,7 +23,6 @@ from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_ca
 from ._models import (
     DocumentSearchResult,
     ParsedQuery,
-    ResultPassage,
     SearchResult,
 )
 from ._noise import (
@@ -47,7 +47,7 @@ from ._result_shaping import (
     PHASE_QDRANT,
     PHASE_RERANK,
     PHASE_RESULT_MAPPING,
-    passage_pairs,
+    select_passages,
     show_passage,
     vault_row_passages,
 )
@@ -680,46 +680,30 @@ class VaultSearcher:
     def _select_passages(
         self, encoded: _EncodedSearchQuery, results: list[SearchResult]
     ) -> None:
-        """Show each result the passage that best answers the query.
-
-        Every result first shows its leading candidate. The page's candidate
-        passages, chosen and bounded by :func:`passage_pairs`, are then scored
-        by the reranker in one batched forward; a result with a single
-        candidate needs no scoring. With the reranker disabled each result
-        keeps its first passage, and so does every result when scoring runs
-        out of accelerator memory: the page is already ranked, and a first
-        passage is a lesser snippet, not a failure.
-        """
+        """Show each result the passage that best answers the query."""
         phase_started = time.perf_counter()
-        for result in results:
-            if result.passages:
-                show_passage(result, result.passages[0])
-        pairs, owners = passage_pairs(encoded.text, results)
-        scores: list[float] | None = None
-        if pairs and self._reranker_enabled:
-            from .._gpu import load_accelerator
-
-            accelerator = load_accelerator()
-            try:
-                scores = self._predict_scores(pairs, timings=encoded.timings)
-            except BaseException as exc:
-                if not accelerator.is_out_of_memory(exc):
-                    raise
-                logger.warning(
-                    "passage selection ran out of accelerator memory; "
-                    "results keep their first passage"
-                )
-        if scores is not None:
-            best: dict[int, tuple[float, ResultPassage]] = {}
-            for (result, passage), score in zip(owners, scores, strict=True):
-                current = best.get(id(result))
-                if current is None or score > current[0]:
-                    best[id(result)] = (score, passage)
-            for result in results:
-                chosen = best.get(id(result))
-                if chosen is not None:
-                    show_passage(result, chosen[1])
+        scorer = (
+            partial(self._score_passages, timings=encoded.timings)
+            if self._reranker_enabled
+            else None
+        )
+        select_passages(encoded.text, results, scorer)
         _record_seconds(encoded.timings, PHASE_PASSAGE, phase_started)
+
+    def _score_passages(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        timings: dict[str, float] | None,
+    ) -> list[float] | None:
+        """Score passage pairs, or ``None`` when the accelerator runs out of memory."""
+        from .._gpu import load_accelerator
+
+        predict = partial(self._predict_scores, pairs, timings=timings)
+        scores = load_accelerator().unless_out_of_memory(predict)
+        if scores is None:
+            logger.warning("passage scoring ran out of memory; first passages kept")
+        return scores
 
     def search_vault_encoded(
         self,

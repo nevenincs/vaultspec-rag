@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-24'
 body_schema: 'body-v2'
-body_hash: 'sha256:a53260cd547db75c03fb991a9c0b8188a36a865aebcb79a6e4edd7a3bcc9765c'
+body_hash: 'sha256:afdf6cafd5de02ac6a7cb933da6580219b76b593b0f791135ccfaf4fa7983918'
 related:
   - "[[2026-09-23-vault-result-evidence-plan]]"
 ---
@@ -149,13 +149,22 @@ related:
 - `S09` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
 - `S09` `verify:` `ruff, ty, strict basedpyright package-wide` -> `pass`
 - `S12` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S18` `M` `src/vaultspec_rag/_markdown_passages.py`
+- `S18` `M` `src/vaultspec_rag/search/_searcher.py`
+- `S18` `M` `src/vaultspec_rag/search/_result_shaping.py`
+- `S18` `M` `src/vaultspec_rag/_gpu.py`
+- `S18` `M` `.vault/adr/2026-09-23-vault-result-evidence-adr.md`
+- `S18` `M` `.vault/audit/2026-09-23-vault-result-evidence-audit.md`
+- `S18` `M` `.vault/research/2026-09-23-vault-result-evidence-research.md`
+- `S18` `M` `.vault/exec/2026-09-23-vault-result-evidence/2026-09-23-vault-result-evidence-ledger.md`
+- `S18` `verify:` `OOM fallback guard mutation (fallback removed fails; restored passes)` -> `pass`
 
 ## Notes
 
 - `S03` research and ADR speedup figure corrected from the scratch 6.6x to the in-service ~3x; the decision is unchanged
 - `S06` test_typesafe_search fixture grown past the 1,200-character passage bound so its snippet-shorter-than-content premise still holds; the assertion is unchanged
 - `S05` correction after close: a refused index job's status finding named the job log, not the rebuild the refusal asks for
-- `S07` mcp/_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
+- `S07` mcp/\_tools.py also carries a one-line fix to a pre-existing unnecessary isinstance the type checker flagged; the CLI stub service stopped sending rerank_text, which the real service never sends
 - `S08` per the ADR's gate condition the section path does not enter the embedding input; the input stays title plus text, byte-identical to before, and only the single builder and full-input donor verification ship. The concurrency ADR's D8 is amended with this evidence at plan close
 - `S09` latency target missed: fp32 baseline 1.140s, final median 0.712s (rerank 0.403s, passage 0.222s). Passage scoring costs about 2.8ms per pair, not the 1-2ms the research estimated; the 48-pair page budget cut it from 0.33s with no measured quality loss. Reaching 0.57s needs a ranking-affecting change to the chunk rerank; raised to the user
 - `S04` review correction: sentence and word splitters collapsed into one pattern-taking splitter; setext headings recognised; thematic breaks separate blocks and small passages merge only across whitespace

@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-24'
 body_schema: 'body-v2'
-body_hash: 'sha256:ce2af5fd8af16fd066ade93b0d86de09804b76cb4d8f75c5434ac73b75024877'
+body_hash: 'sha256:c577bdc03781e3bb900648ec1ce77195543c35c63da93963587d7234427a8337'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"
@@ -87,15 +87,15 @@ Method (`proto_passages.py`, scratch):
 - Split the chunk into fence-aware, heading-tracked paragraph passages: list items split
   out when oversized, small neighbours merged.
 
-| Strategy (gold evidence in chosen passage) | dev (n=20) | held-out (n=17) |
-| --- | --- | --- |
-| Current snippet | 0 | 1 |
-| Winning chunk contains the evidence (ceiling) | 14 | 11 |
-| CrossEncoder, passage alone, cap 800 / 1400 | 13 / 13 | 8 / 9 |
-| CrossEncoder, heading path + passage, cap 800 / 1400 | 13 / 13 | 8 / 9 |
-| CrossEncoder, best two passages, cap 1400 | 14 | 11 |
-| BM25 over the chunk's passages, cap 1400 | 13 | 8 |
-| Section of the chosen passage matches gold, cap 1400 | 13 | 10 |
+| Strategy (gold evidence in chosen passage)           | dev (n=20) | held-out (n=17) |
+| ---------------------------------------------------- | ---------- | --------------- |
+| Current snippet                                      | 0          | 1               |
+| Winning chunk contains the evidence (ceiling)        | 14         | 11              |
+| CrossEncoder, passage alone, cap 800 / 1400          | 13 / 13    | 8 / 9           |
+| CrossEncoder, heading path + passage, cap 800 / 1400 | 13 / 13    | 8 / 9           |
+| CrossEncoder, best two passages, cap 1400            | 14         | 11              |
+| BM25 over the chunk's passages, cap 1400             | 13         | 8               |
+| Section of the chosen passage matches gold, cap 1400 | 13         | 10              |
 
 - Prefixing the heading path to the passage changed no pick.
 - The cap mattered on one held-out case.
@@ -106,14 +106,14 @@ Method (`proto_passages.py`, scratch):
 Method (`proto_doc.py`, scratch): scored every chunk of the gold record with the
 CrossEncoder, then selected passages within the top-N chunks by chunk score, cap 1200.
 
-| Measure | dev (n=20) | held-out (n=17) |
-| --- | --- | --- |
-| Evidence anywhere in the record | 20 | 17 |
-| Evidence in the top-1 chunk / top-2 chunks | 14 / 19 | 11 / 14 |
-| Chosen passage holds evidence: within top-1 chunk | 13 | 9 |
-| Chosen passage holds evidence: within top-2 chunks | 15 | 11 |
-| Chosen passage holds evidence: within top-3 chunks | 15 | 11 |
-| Chosen passage holds evidence: whole record | 14 | 10 |
+| Measure                                            | dev (n=20) | held-out (n=17) |
+| -------------------------------------------------- | ---------- | --------------- |
+| Evidence anywhere in the record                    | 20         | 17              |
+| Evidence in the top-1 chunk / top-2 chunks         | 14 / 19    | 11 / 14         |
+| Chosen passage holds evidence: within top-1 chunk  | 13         | 9               |
+| Chosen passage holds evidence: within top-2 chunks | 15         | 11              |
+| Chosen passage holds evidence: within top-3 chunks | 15         | 11              |
+| Chosen passage holds evidence: whole record        | 14         | 10              |
 
 - Whole-record selection is worse than top-2. More passages add distractors, and the
   chunk-level score is an informative prior.
@@ -134,10 +134,10 @@ CrossEncoder, then selected passages within the top-N chunks by chunk score, cap
 - `proto_fp16.py` (scratch): 39 cases, 40 real chunk pairs each, batch 32.
 
 | Precision | mean ms / 40 pairs | top-1 doc agrees with fp32 | top-1 chunk agrees | gold hit@1 | gold MRR | max abs score delta |
-| --- | --- | --- | --- | --- | --- | --- |
-| fp32 | 2166 | - | - | 22/39 | 0.719 | - |
-| fp16 | 326 | 39/39 | 39/39 | 22/39 | 0.719 | 0.0019 |
-| bf16 | 325 | 39/39 | 39/39 | 22/39 | 0.719 | 0.0255 |
+| --------- | ------------------ | -------------------------- | ------------------ | ---------- | -------- | ------------------- |
+| fp32      | 2166               | -                          | -                  | 22/39      | 0.719    | -                   |
+| fp16      | 326                | 39/39                      | 39/39              | 22/39      | 0.719    | 0.0019              |
+| bf16      | 325                | 39/39                      | 39/39              | 22/39      | 0.719    | 0.0255              |
 
 - The scratch timings ran beside the live service on the same GPU, and the contention
   inflated fp32 more than fp16, so the scratch ratio (6.6x) overstates the gain.
