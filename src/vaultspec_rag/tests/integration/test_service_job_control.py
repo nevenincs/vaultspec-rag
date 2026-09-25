@@ -40,6 +40,7 @@ from ...serviceclient._transport import (
     _try_http_retry_job,
     _try_http_set_job_desired_state,
 )
+from .._import_probe import assert_fresh_import_excludes, import_probe_source
 from .._ports import free_loopback_port
 from .._scaffold import make_workspace
 
@@ -171,7 +172,7 @@ def _create_paused_transport_job(port: int, project_root: Path) -> tuple[str, in
         timeout=5.0,
     )
     assert created is not None
-    assert created["ok"] is True
+    assert created["ok"] is True, created
     assert created["status"] == "accepted"
     assert created["code"] == "job_created"
     created_job = cast("dict[str, object]", created["job"])
@@ -250,6 +251,31 @@ def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
         job_id, revision = _create_paused_transport_job(port, project_root)
         _assert_transport_conflicts(port, job_id)
         _complete_transport_lifecycle(port, job_id, revision)
+
+
+def test_job_admission_resource_snapshots_never_load_torch() -> None:
+    """Admitting a job must not be what first imports torch.
+
+    Both snapshots run on the job-create request path. A cold torch import
+    there takes seconds, long enough for a client timeout to report the create
+    as failed while the server is still importing.
+
+    Mutation check: removing the not-yet-loaded short-circuit from
+    ``current_cuda_mib`` makes the child fail on the forbidden-module
+    assertion, listing ``torch``; restoring it passes.
+    """
+    assert_fresh_import_excludes(
+        import_probe_source(
+            setup=(
+                "from vaultspec_rag.jobs import resource_snapshot\n"
+                "from vaultspec_rag.job_manager.manager import JobManager\n"
+                "legacy = resource_snapshot()\n"
+                "assert legacy['cuda_allocated_mib'] == 0.0, legacy\n"
+                "managed = JobManager._process_resource_snapshot()\n"
+                "assert managed.cuda_reserved_mib == 0.0, managed\n"
+            )
+        )
+    )
 
 
 def _assert_human_lookup(port_arg: str, first_id: str) -> None:
