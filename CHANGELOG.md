@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.1...vaultspec-rag-v0.5.2) (2026-09-24)
+
+
+### Tests
+
+* match the service state shape test to the typed status model ([#544](https://github.com/nevenincs/vaultspec-rag/issues/544)) ([18b7560](https://github.com/nevenincs/vaultspec-rag/commit/18b75609612d53b5571d2ed41ab89026c04a46f5))
+
+## [0.5.1](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.0...vaultspec-rag-v0.5.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **release:** read Typesafe enrollment from the reported feature state ([#542](https://github.com/nevenincs/vaultspec-rag/issues/542)) ([3c4fbe4](https://github.com/nevenincs/vaultspec-rag/commit/3c4fbe46f07930b1e41918eb379e98b967af1ec6))
+* **release:** start the GPU tier's resident service on a free port ([#540](https://github.com/nevenincs/vaultspec-rag/issues/540)) ([3d56cce](https://github.com/nevenincs/vaultspec-rag/commit/3d56cce72cfa565af40b0bec52fe0635d3da1d62))
+
 ## [0.5.0](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.4.35...vaultspec-rag-v0.5.0) (2026-09-24)
 
 

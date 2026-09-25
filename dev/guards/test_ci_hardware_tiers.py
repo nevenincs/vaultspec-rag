@@ -278,7 +278,11 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
 
 
 def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
-    """Removing the GPU test's secret failed here; restoration passed."""
+    """Removing the GPU test's secret failed here; restoration passed.
+
+    Restoring the retired ``$status.health.typesafe.enrolled`` check failed on
+    the Typesafe state assertion; the state check was restored before passing.
+    """
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
     )
@@ -294,7 +298,9 @@ def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
         indices.append(index)
     assert indices == sorted(indices)
     start = _run(job.steps[indices[0]])
-    assert "$status.health.typesafe.enrolled -ne $true" in start
+    # The service reports enrollment only as a Typesafe state; `off` is the
+    # one unenrolled state, and a missing field must refuse, not pass.
+    assert "$status.health.features.typesafe.state -in @($null, 'off')" in start, start
     assert job.steps[indices[0]].get("id") == "resident"
     stop = next(step for step in job.steps if "server stop" in _run(step))
     assert (
@@ -302,6 +308,27 @@ def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
         == "${{ steps.resident.outcome }}"
     )
     assert "$env:RESIDENT_START_OUTCOME -notin" in _run(stop)
+
+
+def test_resident_service_binds_a_free_port_not_the_default() -> None:
+    """The CUDA tier's resident never claims the fixed default service port.
+
+    The GPU runner is a workstation whose own service and Qdrant can hold the
+    default port, and a start that loses that race fails the whole release.
+
+    Mutation proof: deleting the ``VAULTSPEC_RAG_PORT`` assignment from the
+    resident step made this fail on the port assertion; restoring it passed.
+    """
+    job = next(
+        job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
+    )
+    resident = next(step for step in job.steps if step.get("id") == "resident")
+    start = _run(resident)
+    probe = start.find("TcpListener]::new([System.Net.IPAddress]::Loopback, 0)")
+    assign = start.find("$env:VAULTSPEC_RAG_PORT = ")
+    launch = start.find("vaultspec-rag server start")
+    assert -1 < probe < assign < launch, (probe, assign, launch)
+    assert "--port" not in start
 
 
 def test_no_windows_step_hands_powershell_a_heredoc() -> None:
