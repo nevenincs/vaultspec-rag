@@ -59,8 +59,16 @@ def _assert_index_state(index: object, root: Path) -> None:
     state = cast("dict[str, object]", index)
     assert "vault_count" in state
     assert "code_count" in state
-    assert "vram_gb" in state
+    assert "document_count" in state
     assert state["target_dir"] == str(root)
+
+
+def _assert_installation_state(installation: object) -> None:
+    """Assert the accelerator facts the index section no longer carries."""
+    assert isinstance(installation, dict)
+    state = cast("dict[str, object]", installation)
+    assert isinstance(state["compute"], dict)
+    assert isinstance(state["hardware"], dict)
 
 
 def _assert_projects_state(projects: object) -> None:
@@ -115,8 +123,10 @@ async def test_get_service_state_consolidated_shape(
 
     assert set(state) == {
         "index",
+        "installation",
         "projects",
         "qdrant",
+        "root_features",
         "schema_version",
         "watcher",
         "quiesce",
@@ -124,6 +134,7 @@ async def test_get_service_state_consolidated_shape(
     assert state["schema_version"] == store_schema.STORAGE_SCHEMA_VERSION
     _assert_managed_qdrant_state(state["qdrant"])
     _assert_index_state(state["index"], root)
+    _assert_installation_state(state["installation"])
     _assert_projects_state(state["projects"])
     _assert_watcher_state(state["watcher"])
     _assert_quiesce_state(state["quiesce"])

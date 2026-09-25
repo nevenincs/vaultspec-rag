@@ -237,13 +237,22 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
+          # The GPU runner is a workstation that also runs an operator's own
+          # service and Qdrant, either of which can hold the default service
+          # port. The coordinator and the stop step find this daemon through
+          # its status file, so it binds whatever loopback port is free.
+          $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $probe.Start()
+          $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
+          $probe.Stop()
           uv run --no-sync vaultspec-rag server start --json
+          $startExit = $LASTEXITCODE
           # A dead daemon says only `start_died` on stdout; the reason is in its
           # own log, so surface that here rather than leaving the next reader to
           # go and find a file on a machine they may not have.
-          if ($LASTEXITCODE -ne 0) {
+          if ($startExit -ne 0) {
             uv run --no-sync vaultspec-rag server logs --limit 80
-            throw "server start failed with $LASTEXITCODE"
+            throw "server start failed with $startExit"
           }
           $deadline = (Get-Date).AddMinutes(10)
           while ((Get-Date) -lt $deadline) {
@@ -254,7 +263,9 @@ jobs:
             $state = $status.state
             Write-Host "service state: $state"
             if ($state -eq 'running') {
-              if ($status.health.typesafe.enrolled -ne $true) {
+              # Every Typesafe state but `off` means the key enrolled; an absent
+              # state means the payload moved, which must fail rather than pass.
+              if ($status.health.features.typesafe.state -in @($null, 'off')) {
                 throw 'The resident service lacks Typesafe enrollment; restart it with the CI secret.'
               }
               exit 0
