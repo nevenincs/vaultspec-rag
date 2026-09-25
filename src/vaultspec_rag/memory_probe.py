@@ -16,6 +16,7 @@ import contextlib
 import logging
 import math
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -477,7 +478,14 @@ def current_cuda_mib() -> tuple[float, float]:
     the probe must never crash host code. The torch module reference
     and the CUDA availability flag are cached on first call so the
     background sampler does not pay repeated import / probe costs.
+
+    Also returns zeros, without importing torch, when this process has not
+    loaded torch yet: an allocator that was never loaded holds nothing. Job
+    admission snapshots resources on the request path, and a cold torch import
+    there takes seconds, so the probe must not be what first loads it.
     """
+    if "torch" not in sys.modules:
+        return (0.0, 0.0)
     measured = _measure_cuda_mib()
     return measured if measured is not None else (0.0, 0.0)
 
