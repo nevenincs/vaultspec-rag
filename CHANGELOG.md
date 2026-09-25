@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.2...vaultspec-rag-v0.5.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **jobs:** keep job admission from cold-importing torch ([#539](https://github.com/nevenincs/vaultspec-rag/issues/539)) ([ee062f4](https://github.com/nevenincs/vaultspec-rag/commit/ee062f427a955c58e4419ba62a930087cf9a97fe))
+
 ## [0.5.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.1...vaultspec-rag-v0.5.2) (2026-09-24)
 
 
