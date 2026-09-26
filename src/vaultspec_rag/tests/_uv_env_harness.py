@@ -44,11 +44,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "HOLD_MARKER_ENV",
+    "HOLD_SECONDS_ENV",
     "UvSandbox",
     "WheelContents",
     "WheelTags",
     "build_wheel",
     "hold_environment",
+    "hold_launcher",
     "index_arguments",
     "installed_distributions",
     "publish_index",
@@ -140,6 +143,29 @@ class WheelTags:
         return f"{self.python}-{self.abi}-{self.platform}"
 
 
+#: Environment variables the stand-in console script reads. A launcher that
+#: exits immediately locks nothing, so the script is asked to announce itself
+#: and then wait; the marker is what a caller waits on rather than a sleep.
+HOLD_SECONDS_ENV = "VAULTSPEC_TEST_HOLD_SECONDS"
+HOLD_MARKER_ENV = "VAULTSPEC_TEST_HOLD_MARKER"
+
+_CONSOLE_SCRIPT = (
+    "import os\n"
+    "import pathlib\n"
+    "import time\n"
+    "\n"
+    "\n"
+    "def main() -> int:\n"
+    f"    seconds = float(os.environ.get({HOLD_SECONDS_ENV!r}, '0'))\n"
+    f"    marker = os.environ.get({HOLD_MARKER_ENV!r})\n"
+    "    if marker:\n"
+    "        pathlib.Path(marker).write_text('held', encoding='utf-8')\n"
+    "    if seconds:\n"
+    "        time.sleep(seconds)\n"
+    "    return 0\n"
+).encode()
+
+
 def wheel_filename(name: str, version: str, tags: WheelTags | None = None) -> str:
     """Render a wheel filename, including a deliberately wrong tag when asked."""
     return f"{name}-{version}-{(tags or WheelTags()).suffix}.whl"
@@ -174,7 +200,7 @@ def build_wheel(
 
     members: dict[str, bytes] = {
         f"{module}/__init__.py": f'__version__ = "{version}"\n'.encode(),
-        f"{module}/__main__.py": b"def main() -> int:\n    return 0\n",
+        f"{module}/__main__.py": _CONSOLE_SCRIPT,
         f"{dist_info}/METADATA": (
             "Metadata-Version: 2.1\n"
             f"Name: {name}\n"
@@ -278,6 +304,48 @@ def hold_environment(
     finally:
         process.terminate()
         process.wait(timeout=30)
+
+
+@contextlib.contextmanager
+def hold_launcher(
+    sandbox: UvSandbox, name: str, *, timeout: float = 60.0
+) -> Generator[subprocess.Popen[bytes]]:
+    """Run one of the tool's own bin launchers, and release it on the way out.
+
+    This is the process that matters: uv re-installs every entry-point
+    launcher after any package change, and a running launcher cannot be
+    replaced on Windows. Holding the environment's interpreter is a different
+    and weaker condition, which is why the harness offers both.
+
+    The launcher announces itself by writing a marker before it waits, so a
+    caller never races a starting process.
+    """
+    executable = sandbox.bin_dir / f"{name}.exe"
+    if not executable.exists():
+        executable = sandbox.bin_dir / name
+    marker = sandbox.bin_dir.parent / f"{name}.held"
+    environment = sandbox.env | {
+        HOLD_SECONDS_ENV: str(timeout + 60.0),
+        HOLD_MARKER_ENV: str(marker),
+    }
+    process = subprocess.Popen([str(executable)], env=environment)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if marker.exists():
+                break
+            if process.poll() is not None:
+                raise AssertionError(
+                    f"the launcher {executable} exited before it took hold"
+                )
+            time.sleep(0.2)
+        else:
+            raise TimeoutError(f"the launcher {executable} never announced itself")
+        yield process
+    finally:
+        process.terminate()
+        process.wait(timeout=30)
+        marker.unlink(missing_ok=True)
 
 
 def _await_hold(root: Path, pid: int, *, timeout: float) -> None:

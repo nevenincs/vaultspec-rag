@@ -36,7 +36,8 @@ from ..operator_state._provisioning import (
     CU130_INDEX_STRATEGY,
     ToolReceiptVerdict,
     classify_tool_receipt,
-    tool_repair_arguments,
+    environment_python_request,
+    tool_repair_steps,
 )
 from ._uv_env_harness import (
     UvSandbox,
@@ -44,6 +45,7 @@ from ._uv_env_harness import (
     WheelTags,
     build_wheel,
     hold_environment,
+    hold_launcher,
     index_arguments,
     installed_distributions,
     publish_index,
@@ -61,6 +63,8 @@ pytestmark = [pytest.mark.unit]
 #: The stand-in tool carries this product's own name, because the repair
 #: builds its request from that name and reads the entry uv keeps under it.
 _TOOL = "vaultspec-rag"
+#: The console script the stand-in installs, and the launcher a test holds.
+_MODULE = "vaultspec_rag"
 _TOOL_VERSION = "1.0.0"
 _NEWER_TOOL_VERSION = "1.1.0"
 
@@ -203,9 +207,9 @@ def test_the_repair_applies_in_place_to_a_held_environment(
     interpreter = _interpreter(sandbox)
 
     with hold_environment(sandbox.tool_root(_TOOL), by_image=True) as holder:
-        completed = sandbox.run(*tool_repair_arguments(interpreter)[1:])
-
-        assert completed.returncode == 0, completed.stderr
+        for step in tool_repair_steps(interpreter):
+            completed = sandbox.run(*step[1:])
+            assert completed.returncode == 0, completed.stderr
         assert holder.poll() is None, "the repair must not end a running process"
 
     assert _installed_version(sandbox, _TORCH) == _CUDA_TORCH
@@ -225,8 +229,9 @@ def test_a_plain_upgrade_after_the_repair_keeps_the_cuda_build(
     """
     _install_without_the_cuda_source(sandbox, wheel_index)
     interpreter = _interpreter(sandbox)
-    repaired = sandbox.run(*tool_repair_arguments(interpreter)[1:])
-    assert repaired.returncode == 0, repaired.stderr
+    for step in tool_repair_steps(interpreter):
+        repaired = sandbox.run(*step[1:])
+        assert repaired.returncode == 0, repaired.stderr
 
     upgraded = sandbox.run("tool", "upgrade", _TOOL)
 
@@ -249,13 +254,16 @@ def test_the_builder_asks_for_the_environments_own_interpreter(
     _install_without_the_cuda_source(sandbox, wheel_index)
     interpreter = _interpreter(sandbox)
 
-    arguments = tool_repair_arguments(interpreter)
+    swap, receipt = tool_repair_steps(interpreter)
 
-    request = _provisioning.environment_python_request(interpreter)
+    request = environment_python_request(interpreter)
     assert request is not None
-    assert "--python" in arguments
-    assert arguments[arguments.index("--python") + 1] == request
-    assert "--force" not in arguments
+    # The receipt step names the version uv recorded for the environment;
+    # the swap names the interpreter itself, which uv's pip interface takes.
+    assert receipt[receipt.index("--python") + 1] == request
+    assert swap[swap.index("--python") + 1] == interpreter
+    assert "--force" not in swap
+    assert "--force" not in receipt
 
 
 @pytest.mark.skipif(
@@ -385,12 +393,14 @@ def test_an_offline_run_without_a_cache_fails_rather_than_reaching_out(
 def test_the_runner_refuses_an_entry_that_is_another_environment(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
-    """The product's launcher asks uv where it would install, and compares.
+    """The launcher refuses a target that is not its own environment.
 
-    Guard assertion: uv acts on its own entry for the package. The incident
-    that destroyed a live installation was exactly this - the interpreter in
-    hand belonged to one environment and uv's entry was another - so the
-    comparison happens before anything that mutates is launched.
+    Guard assertion: the incident that destroyed a live installation aimed
+    the repair at an environment this process was not running out of, and uv
+    then acted on its own entry for the package rather than on the path it
+    was given. Both comparisons happen before anything that mutates is
+    launched; this run trips the first, because a test process never runs
+    out of a sandbox tool environment.
     """
     _install_without_the_cuda_source(sandbox, wheel_index)
     elsewhere = sandbox.tool_root("another-tool")
@@ -401,4 +411,121 @@ def test_the_runner_refuses_an_entry_that_is_another_environment(
     )
 
     assert not ran
-    assert "which is not the environment being repaired" in detail
+    assert "is not the environment this command is running in" in detail
+
+
+def _environment_is_whole(sandbox: UvSandbox) -> bool:
+    """Whether the tool environment still has everything it needs to run."""
+    root = sandbox.tool_root(_TOOL)
+    site = sandbox.site_packages(_TOOL)
+    launcher = sandbox.bin_dir / f"{_MODULE}.exe"
+    if not launcher.exists():
+        launcher = sandbox.bin_dir / _MODULE
+    return (
+        site.is_dir()
+        and bool(installed_distributions(sandbox, _TOOL))
+        and launcher.exists()
+        and (root / "uv-receipt.toml").is_file()
+    )
+
+
+@pytest.mark.usefixtures("cuda_index")
+def test_the_repair_leaves_a_held_launchers_environment_whole(
+    sandbox: UvSandbox, wheel_index: str
+) -> None:
+    """The product's own repair, run while one of the tool's launchers runs.
+
+    This is the condition that destroyed a live installation: uv re-installs
+    every entry-point launcher after any package change, cannot replace one
+    that is running, and then removes the whole environment. The repair is
+    two steps precisely so that neither of them re-installs a launcher, and
+    what that has to leave behind is everything - the installed
+    distributions, the launcher itself, and a receipt that keeps the GPU
+    build across the next upgrade.
+
+    The commands are the product's own, taken from the builder rather than
+    written here; the runner's guards around them are proved by unit tests,
+    because the runner refuses any target that is not the environment it is
+    itself running out of.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    assert _installed_version(sandbox, _TORCH) == _CPU_TORCH
+    interpreter = _interpreter(sandbox)
+
+    with hold_launcher(sandbox, _MODULE) as launcher:
+        outcomes = [sandbox.run(*step[1:]) for step in tool_repair_steps(interpreter)]
+        # Asked first, and before the exit codes: the failure this guards
+        # against is an environment that no longer exists, which a
+        # command reporting failure has already caused by the time it says so.
+        assert _environment_is_whole(sandbox), "the repair emptied the environment"
+        assert launcher.poll() is None, "the repair must not end a running launcher"
+
+    for completed in outcomes:
+        assert completed.returncode == 0, completed.stderr
+    assert _installed_version(sandbox, _TORCH) == _CUDA_TORCH
+    assert _installed_version(sandbox, _TOOL) == _TOOL_VERSION
+    assert classify_tool_receipt(interpreter) is ToolReceiptVerdict.DURABLE
+
+
+@pytest.mark.usefixtures("cuda_index")
+def test_an_upgrade_across_a_release_leaves_a_held_launchers_environment_whole(
+    sandbox: UvSandbox, wheel_index: str
+) -> None:
+    """uv's own upgrade verb, with a launcher running, moves the release.
+
+    It reports the launcher it could not replace and leaves everything else
+    in place at the new release, which is why the cycle ends in this verb
+    rather than in an install.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    interpreter = _interpreter(sandbox)
+    for step in tool_repair_steps(interpreter):
+        assert sandbox.run(*step[1:]).returncode == 0
+
+    with hold_launcher(sandbox, _MODULE) as launcher:
+        sandbox.run("tool", "upgrade", _TOOL)
+
+        assert launcher.poll() is None
+
+    assert _environment_is_whole(sandbox)
+    assert _installed_version(sandbox, _TOOL) == _NEWER_TOOL_VERSION
+    assert _installed_version(sandbox, _TORCH) == _CUDA_TORCH
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="a blocked launcher replacement is what makes a package-changing "
+    "tool install destructive, and POSIX unlink semantics do not produce one",
+)
+def test_a_package_changing_tool_install_removes_the_environment(
+    sandbox: UvSandbox, cuda_index: str, wheel_index: str
+) -> None:
+    """The shape the repair is split to avoid, reproduced beside it.
+
+    One ``uv tool install`` that changes a package, with a launcher running:
+    uv applies the package, fails to replace the launcher, and removes the
+    environment it just wrote. This is the command the repair used to be.
+
+    Mutation check: pointing the repair back at this single install makes
+    the preceding proof fail on its whole-environment assertion, with the
+    installed distributions gone.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    interpreter = _interpreter(sandbox)
+    python = environment_python_request(interpreter)
+    assert python is not None
+
+    with hold_launcher(sandbox, _MODULE):
+        completed = sandbox.run(
+            "tool",
+            "install",
+            "--python",
+            python,
+            _TOOL,
+            *_cuda_options(cuda_index),
+            "--upgrade-package",
+            _TORCH,
+        )
+
+        assert completed.returncode != 0
+        assert installed_distributions(sandbox, _TOOL) == set()

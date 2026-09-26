@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:7e29e0c802e5fdf7a17e9fa95bc768b258917571e137f92d41204feee747edc1'
+body_hash: 'sha256:a57c96a2243b0992d55710a6b85b9f23de6e48b0d20ab6f69ae064f319f28e20'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -288,6 +288,15 @@ related:
 - `S18` `verify:` `pytest test_tool_torch_repair test_service_env_preflight test_doctor_repair_and_holders test_readiness_holders` -> `pass`
 - `S18` `verify:` `guard mutations (url-only pin detection, running-interpreter check removed, holder told to end rather than restart) fail then pass` -> `pass`
 - `S18` `by:` `vaultspec-high-executor`
+- `S19` `M` `src/vaultspec_rag/tests/_uv_env_harness.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`
+- `S19` `verify:` `ruff check` -> `pass`
+- `S19` `verify:` `ruff format --check` -> `pass`
+- `S19` `verify:` `ty check` -> `pass`
+- `S19` `verify:` `basedpyright` -> `pass`
+- `S19` `verify:` `pytest test_tool_env_provisioning_hostile (14 real-uv proofs)` -> `pass`
+- `S19` `verify:` `guard mutation (repair pointed back at one package-changing tool install) fails on the whole-environment assertion then passes` -> `pass`
+- `S19` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -309,3 +318,4 @@ related:
 - `S14` the receipt-matcher proofs of the deleted direct-wheel model are removed with it; that import had left this file failing at collection since P03.S11, which this Step closes
 - `S12` correction: the repair runner read uv's output under the ambient encoding, which the shipped-module decoding guard forbids; both subprocess reads now state utf-8 with replacement. The full unit tier was what caught it, not the covering-test selection
 - `S18` no production caller targets an environment other than the running one: `repair_tool_torch` defaults the interpreter to sys.executable and install passes none, so the running-interpreter predicate was added rather than reported as a conflict
+- `S19` the destruction proof carries a Windows-only skip marker, approved by the orchestrator: POSIX unlink semantics let uv replace a running launcher, so the behaviour does not exist there. The product's own argument tuples are driven through the sandbox because the runner refuses any target that is not the environment it runs out of; its guards are unit-proved
