@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:bbcb29f87cd8b7fd9d2e3672ef32445fa20ee8e208b4e2eedec2b4ec5818f29a'
+body_hash: 'sha256:09a56e68855ac0ff59c71a5961c30cd68e977a89215d18e609abd86081b2f967'
 ---
 
 # `gpu-single-owner` plan
@@ -139,6 +139,13 @@ serially.
   uv keeps the CUDA build while moving the release.
 - The repair applies in place while a process holds the environment, and no path
   replaces an environment wholesale.
+- With a process running through one of the tool's launchers, the two-step repair
+  and a bare upgrade against real uv leave the environment whole, and a
+  package-changing `uv tool install` in the same setup removes it; no command the
+  product runs or hands over for an existing environment is such an install.
+- End to end on Windows, the consented repair run through the product's own
+  launcher, beside a running adapter, leaves a whole environment on the CUDA
+  build with a durable receipt.
 - Lint, format, type-check and the tests covering every touched path pass at each
-  Step; the P01, P02 and P03 Phase closes each pass an integrated review recorded
-  in the audit.
+  Step; the P01, P02, P03 and P04 Phase closes each pass an integrated review
+  recorded in the audit.

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:fb1c5ce592f5e3debc85cba04af7c32ec757c7c4e9f88d43942fdd51c0b601be'
+body_hash: 'sha256:ab314e9776cdd3599724ed3cb4e455bff8467b9ef5c8cd14e69c7d37537a9c89'
 related: []
 ---
 
@@ -390,7 +390,57 @@ line, so `is_server_launch` (`src/vaultspec_rag/_process_probe.py:672`) does
 not match it. The remedy printed, restart once the repair is done, is still
 right; the label is less specific than the product can be. The
 `HolderRelation` docstring (`src/vaultspec_rag/_process_probe.py:625-633`)
-still says image and launch-path holders are processes to end.
+still says image and launch-path holders are processes to end. Confirmed at
+low by the plan-close review.
+
+### p04-review-verdict | info | P04 close and plan close: PASS
+
+Reviewed `f66706d2..30f58b76` and the plan's integrated behaviour. The P03
+critical and all three P03 highs are resolved; no critical or high finding
+remains. Verified clean: no command the product runs or hands over for an
+existing environment is a package-changing `uv tool install`, and the
+structural guard covers every builder output; each P03 finding is resolved as
+recorded; the list-valued `mode.upgrade_commands` and
+`tool_torch_repair.commands` have no consumer on the old keys and cross no
+service boundary; the S19 proofs assert wholeness before exit codes; the
+documentation matches the builder.
+
+### p04-review-upgrade-advice-names-a-command-that-does-not-upgrade | medium | the repair block offers the receipt install as the way to take a newer release
+
+`src/vaultspec_rag/operator_state/_provisioning.py:691` renders the first
+element of `tool_upgrade_commands`, which for a non-durable receipt is the
+options-only install; it changes no package and takes no release. `fc40e93a`
+fixed the same defect on the version-floor axis only.
+
+### p04-review-receipt-fix-is-a-newline-blob | medium | doctor and status print the two-step repair as one unlabelled run-on
+
+`ToolReceiptVerdict.fix` (`src/vaultspec_rag/operator_state/_provisioning.py:126-133`)
+joins the two commands with a newline; `src/vaultspec_rag/cli/_service_doctor.py:347`
+and `src/vaultspec_rag/cli/_status.py:298` embed it after a label, so the second
+step lands at column zero with nothing saying the order matters, and the JSON
+`receipt.fix` is a newline string beside list-valued command fields. Running
+only the visible pip step leaves a receipt that the next upgrade resolves back
+to CPU.
+
+### p04-review-repair-command-property-is-test-only | medium | a joined-string property only tests still read
+
+`CudaRemediation.repair_command` (`src/vaultspec_rag/operator_state/_provisioning.py:171-174`)
+has no production reader; `tests/test_service_env_preflight.py:191,537` are its
+only callers.
+
+### p04-review-lows | low | damaged-metadata release, holder command lines in detail, stale fixtures, README wrap
+
+- The swap omits the release pin when the installed release cannot be read
+  (`src/vaultspec_rag/operator_state/_provisioning.py:457-478`), so a damaged
+  environment resolves the newest release against D3 of
+  `2026-09-04-cuda-provisioning-adr`.
+- `holder_wire` omits command lines for the HTTP route while the repair
+  report's `detail` still carries them through `holder_summary`
+  (`src/vaultspec_rag/operator_state/_holders.py:81-150`).
+- Two renderer fixtures in `tests/test_tool_torch_repair.py:477-484` spell the
+  pre-S18 holder wording.
+- `README.md:104-105` breaks a paragraph's wrapping.
+- The plan's Verification list did not cover P04; extended at close.
 
 ## Recommendations
 
