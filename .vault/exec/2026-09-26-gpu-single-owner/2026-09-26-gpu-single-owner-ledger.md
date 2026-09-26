@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#gpu-single-owner'
 date: '2026-09-26'
-modified: '2026-09-26'
+modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:0da5fc13dc541f829957175daa0c8a47bd3615f54a2f7aa6f9f6b3e4adf91cd7'
+body_hash: 'sha256:537789780c777c3ee1e35366ae917a13412850af8c76167b010e29edcd2d28be'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -354,6 +354,15 @@ related:
 - `S03` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
 - `S03` `verify:` `uv run --no-sync pytest -m 'unit and not torch' -n 8` -> `pass`
 - `S03` `by:` `vaultspec-high-executor`
+- `S02` `M` `src/vaultspec_rag/cli/_gpu_lease.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S02` `verify:` `uv run --no-sync python -m dev lint all` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_hardware_anchor.py src/vaultspec_rag/tests/test_gpu_borrow_lease.py` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S09` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_tool_torch_repair.py` -> `pass`
 
 ## Notes
 
@@ -387,3 +396,5 @@ related:
 - `S19` merge correction: main tightened the substitution guard to count per-file sites against an allowance, so the five files this plan added tests to carry raised counts and the reason each new site exists. The red `test_storage_maintenance_tick` entry is gone with main's own fix for that file
 - `S17` Correction: the module size gate failed in CI. The GPU-ownership refusal moved beside `refuse_gpu_owned` and the uv-sync tests to a module named for the launcher they drive. The unit tier reports 5511 passed with two pre-existing environmental failures in `test_cli_index.py` TestDiskPreflightRefusal: the resident daemon owns this machine's GPU, so the borrow never reaches the preflight.
 - `S03` Correction: a unit test lending the GPU claimed the machine's real owner anchor and held it for its worker's life, refusing every other worker's borrow test. The redirect is now unconditional for the suite and a teardown guard fails any test that leaves a claim on a real hardware anchor.
+- `S02` Correction: a shared anchor created on Windows was writable only by its creator, so another account held the lock but could not publish its owner record or a loan. The created file now carries an access list admitting every authenticated account, and a refusal the service named reaches the operator instead of a generic unacknowledged pause.
+- `S09` Correction: a holder line was cut at its head, so an environment under a long directory showed only interpreter paths and no arguments. The elision now takes the middle and keeps the arguments.

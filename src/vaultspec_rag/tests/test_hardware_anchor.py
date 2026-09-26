@@ -11,6 +11,7 @@ still claimed and still contended.
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -198,3 +199,110 @@ def test_an_unresolvable_load_window_degrades_rather_than_refusing_every_load(
 
     assert claim.outcome is AnchorOutcome.UNAVAILABLE
     assert isinstance(claim.fault, OSError)
+
+
+#: ``FILE_WRITE_DATA``, and the SDDL right mnemonics that include it
+#: (``winnt.h``, ``sddl.h``).
+_FILE_WRITE_DATA = 0x0002
+_WRITING_MNEMONICS = ("FA", "FW", "GA", "GW")
+
+#: ``S-1-5-11``, every account that authenticated to this machine, as SDDL
+#: abbreviates it.
+_AUTHENTICATED_USERS = "AU"
+
+
+def _dacl_sddl(path: Path) -> str:
+    """Return *path*'s discretionary access list as the OS renders it."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32")
+    advapi32.GetNamedSecurityInfoW.argtypes = (
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = (
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_wchar_p),
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = (
+        wintypes.BOOL
+    )
+    descriptor = ctypes.c_void_p()
+    status = advapi32.GetNamedSecurityInfoW(
+        str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor)
+    )
+    assert status == 0, f"could not read the access list of {path}: {status}"
+    rendered = ctypes.c_wchar_p()
+    assert advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+        descriptor, 1, 4, ctypes.byref(rendered), None
+    )
+    return rendered.value or ""
+
+
+def _authenticated_users_may_write(path: Path) -> bool:
+    """Whether *path*'s access list lets any authenticated account write it."""
+    for ace in re.findall(r"\(([^)]*)\)", _dacl_sddl(path)):
+        fields = ace.split(";")
+        if len(fields) < 6 or fields[0] != "A" or fields[5] != _AUTHENTICATED_USERS:
+            continue
+        rights = fields[2]
+        if rights.startswith("0x"):
+            return bool(int(rights, 16) & _FILE_WRITE_DATA)
+        return any(mnemonic in rights for mnemonic in _WRITING_MNEMONICS)
+    return False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
+def test_a_created_shared_anchor_admits_every_account_on_windows(
+    tmp_path: Path,
+) -> None:
+    """Windows has no mode bits, so the widening is an access list.
+
+    Without it the anchor carries only what it inherits - full control for
+    whoever created it, read-only for everyone else - and the next account to
+    claim it holds the lock but cannot publish its owner record or write a
+    loan, which reaches an operator as a borrower refused for no stated reason.
+
+    Mutation: returned from the creation path before the grant, the shape this
+    had on Windows. Observed this assertion fail on the anchor admitting no
+    authenticated account; restoring the grant passed.
+    """
+    anchor = tmp_path / "gpu-owner.lock"
+
+    held = claim_anchor(anchor, pid_record=True, create_parent=True, shared=True)
+    assert held.descriptor is not None
+    release_anchor_claim(held.descriptor, pid_record=True)
+
+    assert _authenticated_users_may_write(anchor)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
+def test_an_anchor_this_process_did_not_create_keeps_its_access_list(
+    tmp_path: Path,
+) -> None:
+    """Only a file this call created is widened.
+
+    A service's own lock, observed through the shared path, must not become
+    writable by every account on the machine because a peer looked at it.
+    """
+    private = tmp_path / "service.lock"
+    private.write_bytes(b"")
+    before = _dacl_sddl(private)
+
+    held = claim_anchor(private, pid_record=True, shared=True)
+    if held.descriptor is not None:
+        release_anchor_claim(held.descriptor, pid_record=True)
+
+    assert _dacl_sddl(private) == before
+    assert not _authenticated_users_may_write(private)

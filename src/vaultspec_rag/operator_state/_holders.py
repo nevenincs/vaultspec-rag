@@ -36,6 +36,15 @@ __all__ = [
 #: short enough that ten holders stay readable.
 _CMDLINE_LIMIT = 160
 
+#: How much of the head survives the elision. The head carries the
+#: interpreter, which is the same for every holder in one environment; the
+#: arguments are what tell them apart, so a line too long to show keeps its
+#: tail and loses the middle of the path. A cut from the end instead reads as
+#: a list of identical interpreters, and did: an environment under a long
+#: directory pushed every argument past the limit.
+_CMDLINE_HEAD = 40
+_ELISION = "..."
+
 
 class HolderRole(StrEnum):
     """What a process holding this product's environment is."""
@@ -152,12 +161,15 @@ def holder_line(
 
 
 def _shortened(cmdline: str) -> str:
-    """Trim a command line to something an operator can read in a list."""
-    return (
-        cmdline
-        if len(cmdline) <= _CMDLINE_LIMIT
-        else f"{cmdline[:_CMDLINE_LIMIT].rstrip()}..."
-    )
+    """Trim a command line to something an operator can read in a list.
+
+    The middle goes, not the end: what identifies a process to an operator is
+    what it was asked to do, and that is at the end of the line.
+    """
+    if len(cmdline) <= _CMDLINE_LIMIT:
+        return cmdline
+    tail = _CMDLINE_LIMIT - _CMDLINE_HEAD - len(_ELISION)
+    return f"{cmdline[:_CMDLINE_HEAD].rstrip()}{_ELISION}{cmdline[-tail:].lstrip()}"
 
 
 def holder_summary(holder: EnvironmentHolder) -> str:

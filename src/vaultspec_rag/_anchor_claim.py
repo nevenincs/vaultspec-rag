@@ -205,14 +205,26 @@ def _create_shared_anchor(anchor: Path) -> int | None:
     writable by other accounts merely because someone looked at it. ``None``
     also covers a directory this account cannot create in, which the ordinary
     open then reports.
+
+    Windows carries the same widening as an access list rather than a mode:
+    the file otherwise inherits full control for its creator and read-only for
+    everyone else, and the next account to claim it holds the lock but cannot
+    publish a record. The directory needs no such treatment, because the
+    shared root it is created under already lets every account create beneath
+    it, and widening a directory would let one account delete another's
+    anchor out from under its holder.
     """
     try:
         fd = os.open(anchor, os.O_RDWR | os.O_CREAT | os.O_EXCL, _SHARED_ANCHOR_MODE)
     except (FileExistsError, PermissionError):
         return None
-    if sys.platform != "win32":
-        with contextlib.suppress(OSError):
-            os.fchmod(fd, _SHARED_ANCHOR_MODE)
+    if sys.platform == "win32":
+        from ._win32 import grant_every_account_access
+
+        grant_every_account_access(str(anchor))
+        return fd
+    with contextlib.suppress(OSError):
+        os.fchmod(fd, _SHARED_ANCHOR_MODE)
     return fd
 
 
