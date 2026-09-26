@@ -128,7 +128,9 @@ def _no_mps_message() -> str:
     )
 
 
-def warn_if_active_torch_not_accelerator() -> None:
+def warn_if_active_torch_not_accelerator(
+    *, capability: ComputeCapability | None = None
+) -> None:
     """Warn when the running interpreter cannot use a supported accelerator.
 
     vaultspec-rag is GPU-only. A configured ``pyproject.toml`` does not
@@ -139,15 +141,21 @@ def warn_if_active_torch_not_accelerator() -> None:
     and when it is CPU-only, absent, or GPU-less, prints a prominent
     topology-aware warning so a configured-but-CPU install never passes
     silently. A client installation never asked for torch and is not warned.
+
+    ``capability`` is a verdict about this same interpreter that the caller
+    already obtained. The probe starts a child interpreter and imports torch
+    in it, so asking twice in one command doubles the wait and can answer
+    differently; a caller holding the answer passes it instead.
     """
     import sys
 
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ..operator_state._installation import ComputeCapability
 
-    compute = probe_interpreter(sys.executable, ProbeDepth.VERIFY).compute
-    capability = compute.capability
+    if capability is None:
+        capability = probe_interpreter(
+            sys.executable, ProbeDepth.VERIFY
+        ).compute.capability
     if not capability.is_defect:
         return
     if capability is ComputeCapability.MPS_POLICY_REFUSED:

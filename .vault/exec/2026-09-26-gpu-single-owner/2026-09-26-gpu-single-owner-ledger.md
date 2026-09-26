@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:0e6b7f1de47d032c208d69c2e4637b0b1bef8f3a412d2cdb2fd6b0dc460c0767'
+body_hash: 'sha256:8fb07bba40a9c7e180a1c7253a06933309ecb68f2bbd5a630de3ce2899b7b515'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -107,6 +107,21 @@ related:
 - `S05` `verify:` `pytest -m unit test_gpu_owner test_cli_search_safety test_cli_search test_search_service_first test_service_version_compatibility test_cli_install test_qdrant_identity test_service_preflight_cli` -> `pass`
 - `S05` `verify:` `guard mutations (local search beside an owner, mandate exempting a foreign release, load refusal without next actions) fail then pass` -> `pass`
 - `S05` `by:` `orchestrator`
+- `S08` `M` `src/vaultspec_rag/commands/_install.py`
+- `S08` `M` `src/vaultspec_rag/commands/_models.py`
+- `S08` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S08` `M` `src/vaultspec_rag/cli/_install.py`
+- `S08` `M` `src/vaultspec_rag/cli/_render.py`
+- `S08` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S08` `verify:` `ruff check` -> `pass`
+- `S08` `verify:` `ruff format --check` -> `pass`
+- `S08` `verify:` `ty check` -> `pass`
+- `S08` `verify:` `basedpyright` -> `pass`
+- `S08` `verify:` `pytest test_cli_install test_tool_torch_repair test_install_mode test_install_provision test_install_client_role test_install_mcp_extra test_install_torch_config test_service_env_preflight` -> `pass`
+- `S08` `verify:` `guard mutations (hard-coded install action, warnings copies restored, refusal rendered as a full report, second post-install probe) fail then pass` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`
 
 ## Notes
 

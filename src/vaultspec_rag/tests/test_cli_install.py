@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from ..commands._tool_torch import ToolTorchRepairAction, ToolTorchRepairOutcome
 from ..operator_state import _environment_probe
 from ..operator_state._compute import ProbeDepth
 from ..operator_state._environment_probe import InterpreterFacts
@@ -677,3 +678,135 @@ class TestInstallTargetValidation:
             app, ["install", "--target", str(d), "--no-torch-config"]
         )
         assert result.exit_code == 0, result.output
+
+
+_REFUSAL_COMMAND = "uv tool install --force --python 3.13 sentinel"
+
+
+def _blocking_repair(**_kwargs: object) -> ToolTorchRepairOutcome:
+    """A repair outcome that stops the install, as a held tool env yields."""
+    return ToolTorchRepairOutcome(
+        ToolTorchRepairAction.HOLDER_DETECTED,
+        "tool CUDA repair must run from outside C:/tools/vaultspec-rag\n"
+        "  holders to clear first:",
+        _REFUSAL_COMMAND,
+        steps=(f"Make upgrades keep the GPU wheel: {_REFUSAL_COMMAND}",),
+        capability=ComputeCapability.CPU_ONLY_BUILD,
+    )
+
+
+class TestRefusedInstall:
+    """A run that stopped before its first step says so, once.
+
+    The blocked path reported ``action="install"``, so the report opened with
+    "vaultspec-rag installed" over a run that wrote nothing, printed the
+    default of provisioning steps that never ran, copied the refusal into the
+    warnings so it appeared twice, and then diagnosed the same interpreter a
+    second time in different words.
+    """
+
+    @staticmethod
+    def _workspace(tmp_path: Path) -> Path:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag", "torch>=2.4"]\n',
+            encoding="utf-8",
+            newline="",
+        )
+        return ws
+
+    def test_a_blocked_install_renders_as_refused_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        assert result.exit_code == 2, result.output
+        assert "vaultspec-rag installed" not in result.output
+        assert "refused" in result.output
+        assert ComputeCapability.CPU_ONLY_BUILD.label in result.output
+        # A step that never ran has no outcome to report.
+        assert "PyTorch configuration" not in result.output
+        # One refusal, one command: the detail and the command used to be
+        # copied into the warnings and printed a second time underneath.
+        assert result.output.count(_REFUSAL_COMMAND) == 1
+        assert result.output.count("must run from outside") == 1
+
+    def test_a_blocked_upgrade_is_named_an_upgrade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal names the run that was asked for, not always install."""
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(
+            app, ["install", "--target", str(ws), "--yes", "--upgrade"]
+        )
+
+        assert "upgrade refused" in result.output
+        assert result.exit_code == 2
+
+    def test_the_refusal_is_one_stable_json_envelope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes", "--json"])
+
+        payload = json.loads(result.stdout)
+        assert payload["action"] == "install"
+        assert payload["refused"]
+        assert payload["warnings"] == []
+        assert payload["tool_torch_repair"]["command"] == _REFUSAL_COMMAND
+        assert result.exit_code == 2
+
+    def test_an_install_run_probes_an_interpreter_at_most_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two verify probes of one interpreter is two diagnoses of one fault.
+
+        Guard assertion: the repair probed the interpreter and the
+        post-install warning probed it again, which cost a second child
+        interpreter and let one run print two verdicts that need not agree.
+        """
+        from ..commands import _tool_torch
+        from ..operator_state._topology import RuntimeEnvKind
+
+        calls: list[str] = []
+        probe = _probe_reporting(ComputeCapability.READY)
+
+        def counting_probe(
+            interpreter: str,
+            depth: ProbeDepth = ProbeDepth.METADATA,
+            *,
+            timeout: float | None = None,
+        ) -> InterpreterFacts:
+            if depth is ProbeDepth.VERIFY:
+                calls.append(interpreter)
+            return probe(interpreter, depth, timeout=timeout)
+
+        monkeypatch.setattr(_environment_probe, "probe_interpreter", counting_probe)
+
+        def _tool_env(_root: object) -> RuntimeEnvKind:
+            return RuntimeEnvKind.UV_TOOL
+
+        monkeypatch.setattr(_tool_torch, "classify_environment", _tool_env)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1, calls

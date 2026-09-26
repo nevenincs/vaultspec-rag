@@ -171,10 +171,14 @@ class InstallReport:
         sync_results: ``SyncResult`` objects returned by core's
             ``sync_provider`` (one per sync pass).
         warnings: Non-fatal warnings collected during the run.
+        refused: Why the run changed nothing, empty when it ran. A refusal is
+            not a failed install and not a completed one: no step executed,
+            so nothing may be reported as its outcome.
     """
 
     action: str
     target: Path
+    refused: str = ""
     created_dirs: list[str] = field(default_factory=list)
     seeded: list[tuple[str, str]] = field(default_factory=list)
     sync_results: list[SyncResult] = field(default_factory=list)
@@ -205,6 +209,7 @@ class InstallReport:
         return {
             "action": self.action,
             "target": str(self.target),
+            "refused": self.refused,
             "created_dirs": list(self.created_dirs),
             "seeded": [[rel, action] for rel, action in self.seeded],
             "sync_added": sum(getattr(r, "added", 0) for r in self.sync_results),

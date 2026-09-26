@@ -102,7 +102,7 @@ def test_a_non_interactive_run_reports_the_handoff_instead_of_stopping(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), "CPU-only torch", dry_run=False
+        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=False
     )
 
     assert outcome.action in {
@@ -126,7 +126,7 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), "CPU-only torch", dry_run=False
+        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=False
     )
 
     assert outcome.action in {
@@ -355,11 +355,11 @@ def test_a_dry_run_previews_the_command_without_inspecting_holders(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), "CPU-only torch", dry_run=True
+        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=True
     )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.DRY_RUN
-    assert "CPU-only torch" in outcome.detail
+    assert ComputeCapability.CPU_ONLY_BUILD.label in outcome.detail
     assert "uv tool install" in outcome.command
     assert outcome.holders == ()
 

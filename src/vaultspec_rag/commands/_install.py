@@ -871,13 +871,35 @@ def _install_with_tool_repair(request: _InstallRunRequest) -> InstallReport:
                 tool_torch_repair_outcome=outcome,
             )
         )
-    target = _resolve_target(request.path, bootstrap=False)
-    action = "dry_run" if request.dry_run else "install"
-    report = InstallReport(action=action, target=target, tool_torch_repair=outcome)
-    report.warnings.append(outcome.detail)
-    if outcome.command:
-        report.warnings.append(f"tool CUDA repair command: {outcome.command}")
-    return report
+    return _refused_report(request, outcome)
+
+
+def _refused_report(
+    request: _InstallRunRequest, outcome: ToolTorchRepairOutcome
+) -> InstallReport:
+    """Report a run that stopped before its first step, as exactly that.
+
+    No step executed, so the report carries the outcome of none of them: a
+    default "not changed" on a step that never ran reads as a decision the
+    install made. The refusal itself is the whole content, and the repair
+    outcome already holds the detail and the commands, so nothing is copied
+    into the warnings beside it.
+    """
+    action = (
+        "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
+    )
+    capability = outcome.capability
+    reason = (
+        capability.label
+        if capability is not None
+        else outcome.detail.splitlines()[0].strip()
+    )
+    return InstallReport(
+        action=action,
+        target=_resolve_target(request.path, bootstrap=False),
+        refused=reason,
+        tool_torch_repair=outcome,
+    )
 
 
 def _install_run(request: _InstallRunRequest) -> InstallReport:

@@ -13,6 +13,7 @@ from .._process_probe import (
     HolderRelation,
     environment_holders,
 )
+from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
     ToolCudaInstallSpec,
     cuda_remediation,
@@ -74,6 +75,13 @@ class ToolTorchRepairOutcome:
     should be read, built where every other surface builds it, so a refusal
     here and a warning elsewhere cannot describe the same environment
     differently.
+
+    ``capability`` is the verdict this transaction obtained about the
+    interpreter, carried so that nothing downstream asks a second time. The
+    probe starts a child interpreter and imports torch in it; running it twice
+    in one command doubles the wait and can answer differently, which is how
+    one run came to print two disagreeing diagnoses of one environment. It is
+    ``None`` only where no probe ran.
     """
 
     action: ToolTorchRepairAction
@@ -81,6 +89,7 @@ class ToolTorchRepairOutcome:
     command: str = ""
     holders: tuple[EnvironmentHolder, ...] = ()
     steps: tuple[str, ...] = field(default_factory=tuple)
+    capability: ComputeCapability | None = None
 
     @property
     def blocks_install(self) -> bool:
@@ -98,6 +107,9 @@ class ToolTorchRepairOutcome:
             "detail": self.detail,
             "command": self.command,
             "steps": list(self.steps),
+            "capability": (
+                self.capability.value if self.capability is not None else None
+            ),
             "holders": [
                 {
                     "pid": holder.pid,
@@ -137,7 +149,11 @@ def _holder_summary(holder: EnvironmentHolder) -> str:
 
 
 def _handoff_outcome(
-    interpreter: str, spec: ToolCudaInstallSpec, steps: tuple[str, ...]
+    interpreter: str,
+    spec: ToolCudaInstallSpec,
+    steps: tuple[str, ...],
+    *,
+    capability: ComputeCapability | None = None,
 ) -> ToolTorchRepairOutcome:
     """Refuse to replace this environment, and say what has to happen instead.
 
@@ -175,7 +191,7 @@ def _handoff_outcome(
         else ToolTorchRepairAction.HANDOFF_REQUIRED
     )
     return ToolTorchRepairOutcome(
-        action, "\n".join(lines), spec.command, found.holders, steps
+        action, "\n".join(lines), spec.command, found.holders, steps, capability
     )
 
 
@@ -194,7 +210,6 @@ def repair_tool_torch(
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ..operator_state._installation import ComputeCapability
 
     interpreter = interpreter or sys.executable
     kind = classify_environment(environment_root(interpreter))
@@ -208,22 +223,27 @@ def repair_tool_torch(
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.ALREADY_READY,
             "tool interpreter already has CUDA-ready torch",
+            capability=capability,
         )
     if capability is ComputeCapability.NOT_APPLICABLE:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.NOT_APPLICABLE,
             "torch was never requested in this environment; install the GPU "
             "extra to run searches locally",
+            capability=capability,
         )
-    detail = capability.label
     if not capability.fixed_by_torch_reinstall:
-        return ToolTorchRepairOutcome(ToolTorchRepairAction.CUDA_UNVERIFIED, detail)
+        return ToolTorchRepairOutcome(
+            ToolTorchRepairAction.CUDA_UNVERIFIED,
+            capability.label,
+            capability=capability,
+        )
 
-    return _repair_defective_tool(interpreter, detail, dry_run=dry_run)
+    return _repair_defective_tool(interpreter, capability, dry_run=dry_run)
 
 
 def _repair_defective_tool(
-    interpreter: str, detail: str, *, dry_run: bool
+    interpreter: str, capability: ComputeCapability, *, dry_run: bool
 ) -> ToolTorchRepairOutcome:
     """Ask the one remediation builder what this environment needs.
 
@@ -235,14 +255,18 @@ def _repair_defective_tool(
     if remediation.spec is None:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.CUDA_UNVERIFIED,
-            detail,
+            capability.label,
             steps=remediation.steps,
+            capability=capability,
         )
     if dry_run:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
-            f"tool CUDA repair is needed because {detail}",
+            f"tool CUDA repair is needed because {capability.label}",
             remediation.durable_command,
             steps=remediation.steps,
+            capability=capability,
         )
-    return _handoff_outcome(interpreter, remediation.spec, remediation.steps)
+    return _handoff_outcome(
+        interpreter, remediation.spec, remediation.steps, capability=capability
+    )

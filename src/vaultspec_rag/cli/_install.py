@@ -423,10 +423,19 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         # provisioned (not an explicit opt-out), probe the real wheel and warn
         # loudly if it is CPU-only or absent - a GPU-only project must never
         # report success over a CPU torch. An explicit opt-out is respected.
-        if options.configure_torch:
+        #
+        # A refused run has already described that interpreter, in the repair
+        # section, from the same verdict: saying it again in different words
+        # is what made one run print two diagnoses and three commands. Where
+        # the run did proceed, the repair's verdict is handed over so the
+        # child-interpreter probe runs at most once per command.
+        if options.configure_torch and not report.refused:
             from ._gpu_errors import warn_if_active_torch_not_accelerator
 
-            warn_if_active_torch_not_accelerator()
+            repair = report.tool_torch_repair
+            warn_if_active_torch_not_accelerator(
+                capability=repair.capability if repair is not None else None
+            )
 
     # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
     # wanted but couldn't be applied"). The configure_torch=True path
