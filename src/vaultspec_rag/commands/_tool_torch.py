@@ -377,6 +377,8 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
             arguments,
             capture_output=not stream,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=REPAIR_TIMEOUT_SECONDS,
             check=False,
         )
@@ -411,6 +413,8 @@ def _target_mismatch(uv: str, interpreter: str) -> str | None:
             (uv, "tool", "dir"),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_TOOL_DIR_TIMEOUT_SECONDS,
             check=False,
         )

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:862ef2f09869d38c1c0d0549d9bef0d625349079092dcf2f0b0297b2e665d9f4'
+body_hash: 'sha256:6445c705dc66e5bfe31c4ec915fa27b5be9af66349270dd2fbf5d6f8ad92dafb'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -246,6 +246,7 @@ related:
 - `S15` `verify:` `tools/check_docs_version.py` -> `pass`
 - `S15` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
 - `S15` `by:` `vaultspec-high-executor`
+- `S12` `verify:` `pytest dev/guards/test_child_output_decoding.py` -> `pass`
 
 ## Notes
 
@@ -265,3 +266,4 @@ related:
 - `S12` correction: the earlier S12 note was wrong. The test that reached real uv did change the machine's tool installation - uv rebuilt it wholesale because the --python request named another interpreter, deleting Lib at 17:48 before failing on the held Scripts; another session rebuilt Lib at 17:58. The repair launcher now enforces pytest containment on the target environment, refuses when uv's tool entry is not the environment in hand, and derives --python from the target environment's own pyvenv.cfg
 - `S13` folded in the P02 review findings for the floor command in the JSON envelope and the holder total and role fallback
 - `S14` the receipt-matcher proofs of the deleted direct-wheel model are removed with it; that import had left this file failing at collection since P03.S11, which this Step closes
+- `S12` correction: the repair runner read uv's output under the ambient encoding, which the shipped-module decoding guard forbids; both subprocess reads now state utf-8 with replacement. The full unit tier was what caught it, not the covering-test selection
