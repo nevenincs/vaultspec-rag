@@ -23,11 +23,12 @@ from pathlib import Path
 from typing import Annotated, cast
 
 import typer
+from vaultspec_core.config.workspace import WorkspaceError, resolve_workspace
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ..operator_state._service import ServiceLifecycle
-from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
+from ._app import JSON_ENVELOPE_OPTION_HELP, _global_target, server_root_app
 from ._render import _emit_json, _plain
 
 
@@ -40,6 +41,7 @@ from ._render import _emit_json, _plain
     ),
 )
 def service_doctor(
+    ctx: typer.Context,
     json_output: Annotated[
         bool,
         typer.Option(
@@ -68,7 +70,7 @@ def service_doctor(
     ).compute
     report = get_readiness(include_holders=True, compute=compute)
     service = _live_service_axis()
-    mode = _mode_floor_axis(Path.cwd())
+    mode = _mode_floor_axis(_resolve_doctor_target(ctx))
     overall_ready, status = _overall_readiness(report, service)
     if json_output:
         envelope = {
@@ -217,6 +219,29 @@ def _overall_readiness(
     if service.get("state") == ServiceLifecycle.STARTING:
         return False, "starting"
     return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
+
+
+def _resolve_doctor_target(ctx: typer.Context) -> Path:
+    """Resolve the workspace root the same way the other commands do.
+
+    Root ``--target`` (or the environment variable it falls back to, already
+    stashed on ``ctx.obj`` by the root callback) outranks git/structural
+    discovery, which outranks the working directory - the same chain
+    ``resolve_workspace`` applies for every non-``server``/``install``/
+    ``uninstall`` command. ``server`` short-circuits that resolution at the
+    root callback (it does not always need a workspace), so doctor - the one
+    ``server`` subcommand that reads workspace-scoped state - resolves it
+    here instead of reading ``Path.cwd()`` directly.
+
+    Falls back to the named target (or ``cwd``) rather than raising: the
+    doctor mutates nothing and never crashes on a probe, matching every
+    other axis's failure contract.
+    """
+    named_target = _global_target(ctx)
+    try:
+        return resolve_workspace(target_override=named_target).target_dir
+    except WorkspaceError:
+        return named_target or Path.cwd()
 
 
 def _mode_floor_axis(target: Path) -> dict[str, object] | None:
