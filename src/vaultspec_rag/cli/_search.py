@@ -21,6 +21,7 @@ from .._operator_commands import (
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..api import CodebaseSearchRequest, VaultSearchRequest
+from ..config._types import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._search_transport import (
     document_search_filters,
@@ -85,9 +86,9 @@ def _suppress_hf_progress() -> None:
     before model construction so the env reaches every downstream
     import.
     """
-    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
-    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault(EnvVar.HF_HUB_DISABLE_PROGRESS_BARS.value, "1")
+    os.environ.setdefault(EnvVar.TRANSFORMERS_NO_ADVISORY_WARNINGS.value, "1")
+    os.environ.setdefault(EnvVar.TRANSFORMERS_VERBOSITY.value, "error")
 
 
 def _attach_result_collapse(

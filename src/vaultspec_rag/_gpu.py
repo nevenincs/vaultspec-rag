@@ -7,9 +7,13 @@ The import remains function-local so importing this module is torch-free.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+from vaultspec_core.config import env_value
+
+from .config._registry import entry
+from .config._types import EnvVar
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -73,8 +77,14 @@ class AcceleratorContext:
 
 
 def _mps_fallback_enabled() -> bool:
-    """Whether PyTorch's documented MPS-to-CPU fallback switch is enabled."""
-    return os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "").strip() == "1"
+    """Whether PyTorch's documented MPS-to-CPU fallback switch is enabled.
+
+    Read with PyTorch's reading of it, the exact value ``1``, rather than
+    this project's boolean vocabulary: the switch belongs to PyTorch, and
+    answering a word PyTorch ignores would describe a fallback that is not
+    actually in place.
+    """
+    return env_value(entry(EnvVar.PYTORCH_ENABLE_MPS_FALLBACK)) == "1"
 
 
 def detect_accelerator_backend(

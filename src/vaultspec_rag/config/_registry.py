@@ -66,9 +66,19 @@ _EXTERNAL: Final = frozenset(
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
         EnvVar.HF_TOKEN,
+        EnvVar.HF_DEACTIVATE_ASYNC_LOAD,
+        EnvVar.HF_HUB_DISABLE_PROGRESS_BARS,
         EnvVar.TRANSFORMERS_OFFLINE,
+        EnvVar.TRANSFORMERS_NO_ADVISORY_WARNINGS,
+        EnvVar.TRANSFORMERS_VERBOSITY,
         EnvVar.DISABLE_SAFETENSORS_CONVERSION,
+        EnvVar.PYTORCH_ENABLE_MPS_FALLBACK,
+        EnvVar.UV_CACHE_DIR,
+        EnvVar.UV_TOOL_DIR,
         EnvVar.VIRTUAL_ENV,
+        EnvVar.TEMP,
+        EnvVar.TMP,
+        EnvVar.TMPDIR,
     }
 )
 
@@ -108,7 +118,13 @@ _FAIL_SAFE: Final = frozenset({EnvVar.STDIO_WATCHDOG})
 
 #: Markers this package sets on its own child processes. Documented, but not
 #: operator settings, so the collective startup check leaves them alone.
-_INTERNAL: Final[frozenset[EnvVar]] = frozenset()
+_INTERNAL: Final = frozenset(
+    {
+        EnvVar.RAG_JUNCTION_PATH,
+        EnvVar.RAG_JUNCTION_TARGET,
+        EnvVar.PREPROCESS_INVOCATION,
+    }
+)
 
 #: The settings key each override variable feeds, so a description can name it.
 _SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
@@ -184,6 +200,56 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
     EnvVar.VIRTUAL_ENV: (
         "The active virtual environment, set by the tool that activated it. "
         "Read to report which environment a command is running from."
+    ),
+    EnvVar.HF_DEACTIVATE_ASYNC_LOAD: (
+        "Transformers switch turning off the parallel weight-materialising "
+        "path. Defaulted on Windows, where the parallel path was observed "
+        "corrupting weights under concurrent loads; an operator-set value "
+        "still wins."
+    ),
+    EnvVar.HF_HUB_DISABLE_PROGRESS_BARS: (
+        "Hugging Face Hub switch suppressing download progress bars. "
+        "Defaulted on the search path, whose output is a result envelope."
+    ),
+    EnvVar.TRANSFORMERS_NO_ADVISORY_WARNINGS: (
+        "Transformers switch suppressing advisory warnings. Defaulted on the "
+        "search path for the same reason."
+    ),
+    EnvVar.TRANSFORMERS_VERBOSITY: (
+        "Transformers log verbosity. Defaulted to errors only on the search "
+        "path so library chatter cannot reach a result envelope."
+    ),
+    EnvVar.PYTORCH_ENABLE_MPS_FALLBACK: (
+        "PyTorch's documented fallback from an unimplemented Metal operator "
+        "to the processor. Read with PyTorch's own reading of it - the exact "
+        "value 1 - because the behaviour behind it is PyTorch's."
+    ),
+    EnvVar.UV_CACHE_DIR: (
+        "uv's cache location. Read to tell an ephemeral cache environment "
+        "apart from an installed tool when explaining a GPU failure."
+    ),
+    EnvVar.UV_TOOL_DIR: (
+        "uv's tool-install location, read for the same classification."
+    ),
+    EnvVar.TEMP: (
+        "The operating system's temporary directory, read to decide whether "
+        "an indexed root was throwaway."
+    ),
+    EnvVar.TMP: "A temporary-directory convention, read alongside TEMP.",
+    EnvVar.TMPDIR: "The POSIX temporary-directory convention.",
+    EnvVar.RAG_JUNCTION_PATH: (
+        "The junction to create, handed to a PowerShell child through its "
+        "environment so the path never enters the command string. Set by "
+        "this package on its own child; not an operator setting."
+    ),
+    EnvVar.RAG_JUNCTION_TARGET: (
+        "What that junction points at, carried the same way and for the same "
+        "reason. Not an operator setting."
+    ),
+    EnvVar.PREPROCESS_INVOCATION: (
+        "The execution envelope handed to a preprocessor child: the source "
+        "paths, the mode and the options, as one JSON document. A transport "
+        "channel, not an operator setting."
     ),
 }
 

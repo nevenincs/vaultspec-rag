@@ -22,6 +22,8 @@ test cannot pass by restating the table it is checking.
 from __future__ import annotations
 
 import os
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,9 +36,11 @@ from vaultspec_core.config import (
     env_value,
 )
 
+from ..commands import _mcp_topology as commands_mcp_topology
 from ..config._registry import PACKAGE, entry
 from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar
+from ..indexer._preprocess_schema import PREPROCESS_INVOCATION_ENV
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._scaffold import restore_env, set_env
 
@@ -125,6 +129,22 @@ def test_scope_follows_the_prefix_rule() -> None:
         and entry(var).scope is not VariableScope.INTERNAL
     )
     assert not misfiled
+
+
+def test_exactly_the_transport_markers_are_internal() -> None:
+    """A marker this package sets on its own children is not a knob.
+
+    Scope is what keeps the collective startup check off them: refusing to
+    start because a JSON execution envelope is not a valid setting would be
+    refusing over a value no operator wrote.
+    """
+    internal = {var for var in EnvVar if entry(var).scope is VariableScope.INTERNAL}
+
+    assert internal == {
+        EnvVar.RAG_JUNCTION_PATH,
+        EnvVar.RAG_JUNCTION_TARGET,
+        EnvVar.PREPROCESS_INVOCATION,
+    }
 
 
 def test_exactly_the_credentials_are_secret() -> None:
@@ -241,3 +261,32 @@ def test_the_registry_stays_off_the_spawn_worker_import_chain() -> None:
             forbidden=("vaultspec_core.config", "vaultspec_rag.config._registry"),
         )
     )
+
+
+def test_the_junction_child_is_handed_the_names_its_command_reads() -> None:
+    """Both sides of a two-process handshake are spelled from one enum.
+
+    The path and the target travel through the child's environment rather
+    than its command line, which is what keeps them out of a string a shell
+    would interpret. That only works while the names the parent sets and the
+    names the command reads are the same two, and they live in two different
+    languages - so a rename that reached one side and not the other would
+    silently produce a junction command with two empty arguments.
+    """
+    source = Path(commands_mcp_topology.__file__).read_text(encoding="utf-8")
+    written = re.findall(r"EnvVar\.(RAG_JUNCTION_\w+)\.value:", source)
+    read = re.findall(r"\$env:\{EnvVar\.(RAG_JUNCTION_\w+)\.value\}", source)
+
+    assert written == ["RAG_JUNCTION_PATH", "RAG_JUNCTION_TARGET"]
+    assert read == written
+
+
+def test_the_preprocessor_envelope_keeps_the_name_its_readers_know() -> None:
+    """A name user-authored code reads is not this package's to rename.
+
+    Every other marker took the package prefix; this one did not, because
+    the processes on the other side of it are extractors people wrote
+    against the documented name.
+    """
+    assert EnvVar.PREPROCESS_INVOCATION.value == "VAULTSPEC_PREPROCESS_INVOCATION"
+    assert EnvVar.PREPROCESS_INVOCATION.value == PREPROCESS_INVOCATION_ENV

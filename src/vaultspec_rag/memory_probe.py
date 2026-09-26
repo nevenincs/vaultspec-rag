@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 from ._env_values import BOOL_SHAPE, is_blank, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
 from ._units import bytes_to_mib, mib_to_bytes
+from .config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -95,7 +96,7 @@ __all__ = [
 #: guard test asserts this string still equals the settings enum member, so the
 #: copy cannot drift. Only the *name* is restated - the spellings it accepts
 #: come from the shared table, which is stdlib-only and costs a worker nothing.
-ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
+ENV_VAR = EnvVar.MEMORY_PROBE.value
 
 # Module-level caches for hot-path samplers. ``current_rss_mib`` and
 # ``current_cuda_mib`` are called once per 250 ms by the background

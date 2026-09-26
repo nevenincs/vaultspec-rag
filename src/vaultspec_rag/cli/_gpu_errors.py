@@ -6,8 +6,11 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import typer
+from vaultspec_core.config import env_value
 
 from ..commands._tool_torch import tool_cuda_install_spec
+from ..config._registry import entry
+from ..config._types import EnvVar
 from ..operator_state._installation import ComputeCapability
 from ._render import _plain
 
@@ -67,18 +70,17 @@ def classify_runtime_env(prefix: str | Path | None = None) -> RuntimeEnvKind:
     prefix is a project venv. Misclassification degrades only which remediation
     hint is printed, never correctness.
     """
-    import os
     import sys
     from pathlib import Path
 
     resolved = Path(prefix if prefix is not None else sys.prefix).resolve()
     parts = {part.lower() for part in resolved.parts}
-    cache_dir = os.environ.get("UV_CACHE_DIR", "")
+    cache_dir = env_value(entry(EnvVar.UV_CACHE_DIR)) or ""
     if "archive-v0" in parts or (
         cache_dir and resolved.is_relative_to(Path(cache_dir).resolve())
     ):
         return RuntimeEnvKind.UVX_EPHEMERAL
-    tool_dir = os.environ.get("UV_TOOL_DIR", "")
+    tool_dir = env_value(entry(EnvVar.UV_TOOL_DIR)) or ""
     if tool_dir and resolved.is_relative_to(Path(tool_dir).resolve()):
         return RuntimeEnvKind.UV_TOOL
     if resolved.parent.name.lower() == "tools":
