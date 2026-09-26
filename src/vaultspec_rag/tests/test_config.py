@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-import vaultspec_core
 
 from .._job_errors import JobError, JobErrorKind
 from ..config._settings import (
@@ -950,15 +949,16 @@ def test_cuda_ceiling_comparison_is_baseline_consistent() -> None:
 
 def test_memory_budget_fails_closed_when_real_measurements_are_unavailable() -> None:
     source_root = Path(__file__).resolve().parents[2]
-    # ``-S`` is what makes the measurement libraries unavailable, and it also
-    # drops whatever puts the framework on the path, so both source roots are
-    # named explicitly. The probe reaches the framework only for the shared
-    # value vocabulary, which imports nothing beyond the standard library.
-    framework_root = Path(vaultspec_core.__file__).resolve().parents[1]
+    # The measurement libraries are blocked by name rather than by dropping
+    # site-packages: the probe imports the framework's value vocabulary, and
+    # an installed framework shares site-packages with psutil and torch, so
+    # hiding one by path layout would hide both or neither.
     child_code = """
 import sys
 
-sys.path[:0] = sys.argv[1:3]
+sys.modules["psutil"] = None
+sys.modules["torch"] = None
+sys.path.insert(0, sys.argv[1])
 
 from vaultspec_rag._job_errors import JobError, JobErrorKind  # absolute-import-ok
 from vaultspec_rag.memory_probe import MemoryBudget  # absolute-import-ok
@@ -994,11 +994,9 @@ print(f"{rss_kind},{cuda_kind}")
     completed = subprocess.run(
         [
             sys.executable,
-            "-S",
             "-c",
             child_code,
             os.fspath(source_root),
-            os.fspath(framework_root),
         ],
         cwd=source_root,
         capture_output=True,
