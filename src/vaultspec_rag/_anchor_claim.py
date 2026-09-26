@@ -183,14 +183,34 @@ def _open_anchor(anchor: Path, *, create: bool, shared: bool) -> int:
         OSError: The anchor could not be opened at all.
         ValueError: The path is not a usable filename.
     """
+    if create and shared:
+        created = _create_shared_anchor(anchor)
+        if created is not None:
+            return created
     flags = os.O_RDWR | (os.O_CREAT if create else 0)
     try:
-        fd = os.open(anchor, flags, _SHARED_ANCHOR_MODE if shared else 0o600)
+        return os.open(anchor, flags, _SHARED_ANCHOR_MODE if shared else 0o600)
     except PermissionError:
         if not shared:
             raise
         return os.open(anchor, os.O_RDONLY)
-    if shared and sys.platform != "win32":
+
+
+def _create_shared_anchor(anchor: Path) -> int | None:
+    """Create *anchor* writable by every account, or ``None`` if it exists.
+
+    Only a file this call created is widened. An existing file keeps the mode
+    its creator gave it: a shared anchor already carries it, and a private one
+    - a service lock observed through the shared path - must not be made
+    writable by other accounts merely because someone looked at it. ``None``
+    also covers a directory this account cannot create in, which the ordinary
+    open then reports.
+    """
+    try:
+        fd = os.open(anchor, os.O_RDWR | os.O_CREAT | os.O_EXCL, _SHARED_ANCHOR_MODE)
+    except (FileExistsError, PermissionError):
+        return None
+    if sys.platform != "win32":
         with contextlib.suppress(OSError):
             os.fchmod(fd, _SHARED_ANCHOR_MODE)
     return fd

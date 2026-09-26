@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:73e7450a4dabd50b17692d8ec863be1a5afdff5accd70c119ca644dacccce7f3'
+body_hash: 'sha256:93cebe3d5787ed5f910e35783b3551cdf76267ab82de03ba439488f08ff38ab7'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -168,6 +168,10 @@ related:
 - `S10` `verify:` `pytest test_server_doctor test_doctor_repair_and_holders test_readiness test_readiness_holders test_substitution_discipline` -> `pass`
 - `S10` `verify:` `guard mutations (repair not printed, holders scanned over sys.prefix, holders absent from both outputs) fail then pass` -> `pass`
 - `S10` `by:` `vaultspec-high-executor`
+- `S02` `M` `src/vaultspec_rag/_gpu_owner.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S02` `verify:` `pytest -m unit test_hardware_anchor test_gpu_owner test_existing_anchor_observation test_gpu_borrow_lease test_machine_discovery test_lifespan_machine_lock` -> `pass`
+- `S02` `verify:` `WSL Ubuntu mode check: pre-fix widens a 0o600 lock, fix keeps it` -> `pass`
 
 ## Notes
 
@@ -179,3 +183,4 @@ related:
 - `S05` P01 phase-close review revision: borrow-lane loan, lent-path cost, citation gate, JSON refusal, envelope shape, start remediation, legacy detection, anchor directory, fixture, foreign-release reason
 - `S05` `test_substitution_discipline` fails on `test_storage_maintenance_tick.py` (base commit d18045e8) and on `test_readiness_holders.py` (P02.S10 in progress), both outside this revision
 - `S10` `test_substitution_discipline` still fails on `test_storage_maintenance_tick.py,` a base-branch entry outside this plan
+- `S02` P01 re-review: shared open widened a private lock on POSIX; widening now limited to files the call creates

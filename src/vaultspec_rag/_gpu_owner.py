@@ -39,6 +39,7 @@ machine's own anchor, which a live service may legitimately be holding.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import os
@@ -274,8 +275,14 @@ def _forget_inherited_state() -> None:
 
     A child shares its parent's open lock rather than holding one of its own,
     and its lineage is not its parent's, so both are forgotten and asked again.
+    Its copies of the parent's descriptors are closed rather than abandoned:
+    the parent's own descriptor keeps the lock, and a child that held on to the
+    copies would keep it alive past the parent for no owner at all.
     """
     global _lineage
+    for descriptor in _held.values():
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
     _held.clear()
     _lineage = None
 

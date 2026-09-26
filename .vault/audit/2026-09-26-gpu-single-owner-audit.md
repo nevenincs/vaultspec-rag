@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:019dbdd762c2853aeba867b44c33c1ba29f4e71d47d8f8effb6ae6fb6ee2e753'
+body_hash: 'sha256:f54cd18461afe6e17df883b6a0327346b50d7433855693dd19975171f77db6c0'
 related: []
 ---
 
@@ -192,6 +192,33 @@ way forward.
 Phase P01 close review. A forked child now forgets the parent's held claims and
 lineage. A descendant whose intermediate parent has exited cannot prove its loan;
 recorded only, as no caller starts one.
+
+### p01-rereview-shared-open-widened-a-private-lock | high | observing a service lock through the shared path made it world-writable on POSIX
+
+Phase P01 re-review of `c3c26626`. The default-location check observed the
+storage-scoped service lock through the shared-anchor path, and that path widened
+the mode of every file it opened, not only of one it created, so on Linux or macOS
+a peer's `0o600` service lock became `0o666` and its owner pid spoofable.
+Resolved: only a shared anchor this call created is widened
+(`src/vaultspec_rag/_anchor_claim.py`, `_create_shared_anchor`). Proven on WSL
+Ubuntu against native `/tmp`: the previous code left the private lock at `0o666`,
+the fix keeps `0o600`, and a newly created shared anchor is still `0o666`; the two
+POSIX tests in `test_hardware_anchor.py` assert both.
+
+### p01-rereview-refused-loan-stays-bound | low | a pause refused for an unlendable GPU stays quiesced and bound
+
+Phase P01 re-review. Kept deliberately: the binding is what lets the service
+resume by itself when the borrower's lease is lost; clearing it on a refused loan
+would leave an unbound quiescence that nothing resumes if the borrower then
+crashes. The refusal names the way out, and the borrower's own resume clears it.
+
+### p01-rereview-fork-and-fallback | low | inherited descriptors in a forked child, and the temporary-directory fallback
+
+Phase P01 re-review. A forked child now closes its copies of the parent's
+descriptors. The temporary-directory fallback remains weaker than the two
+preferred locations - a per-account `1777` `TMPDIR` passes the shared test, and
+`/tmp` is swept by age - and is reached only on a host with neither preferred
+directory; whether such a host should refuse instead is a follow-on decision.
 
 ## Recommendations
 

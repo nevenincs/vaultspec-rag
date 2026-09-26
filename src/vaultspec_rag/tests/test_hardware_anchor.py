@@ -147,6 +147,39 @@ def test_an_unshared_anchor_this_process_cannot_write_is_unavailable(
     assert isinstance(claim.fault, PermissionError)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_observing_a_private_anchor_through_the_shared_path_keeps_its_mode(
+    tmp_path: Path,
+) -> None:
+    private = tmp_path / "service.lock"
+    private.write_bytes(b"")
+    private.chmod(0o600)
+
+    observe_existing_anchor(private, pid_record=True, shared=True)
+    held = claim_anchor(private, pid_record=True, shared=True)
+    if held.descriptor is not None:
+        release_anchor_claim(held.descriptor, pid_record=True)
+
+    # Catches the shared path widening a file it did not create: a service's
+    # own lock, observed by a peer, would become writable by every account.
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_a_shared_anchor_this_process_creates_is_writable_by_every_account(
+    tmp_path: Path,
+) -> None:
+    anchor = tmp_path / "gpu-owner.lock"
+
+    held = claim_anchor(anchor, pid_record=True, create_parent=True, shared=True)
+    assert held.descriptor is not None
+    release_anchor_claim(held.descriptor, pid_record=True)
+
+    # Catches creation losing the widening past the umask: a second account
+    # could then lock the anchor only read-only and never publish its pid.
+    assert stat.S_IMODE(anchor.stat().st_mode) == 0o666
+
+
 def test_an_unresolvable_load_window_degrades_rather_than_refusing_every_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
