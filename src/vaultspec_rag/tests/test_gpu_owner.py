@@ -273,11 +273,11 @@ def test_observing_a_free_gpu_does_not_take_it(anchor: Path) -> None:
 
 
 def test_load_accelerator_asks_for_ownership_before_anything_else(
-    private_gpu_owner_anchor: Path, tmp_path: Path
+    gpu_owner_anchor: Path, tmp_path: Path
 ) -> None:
     from .._gpu import load_accelerator
 
-    with _owner(tmp_path, private_gpu_owner_anchor), pytest.raises(GpuOwnedError):
+    with _owner(tmp_path, gpu_owner_anchor), pytest.raises(GpuOwnedError):
         # Catches load_accelerator losing its ownership check: it would then
         # import torch and reach admission, returning an accelerator or a
         # contention refusal instead of this one.
@@ -286,7 +286,7 @@ def test_load_accelerator_asks_for_ownership_before_anything_else(
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
-    private_gpu_owner_anchor: Path, tmp_path: Path
+    gpu_owner_anchor: Path, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
 
@@ -295,7 +295,7 @@ def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         free_port = probe.getsockname()[1]
-    with _owner(tmp_path, private_gpu_owner_anchor) as owner_pid:
+    with _owner(tmp_path, gpu_owner_anchor) as owner_pid:
         # Catches the start pre-flight losing its ownership check: the start
         # would then go on to bring Qdrant up and fail only at model load.
         result = CliRunner().invoke(
@@ -320,7 +320,7 @@ def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
 
 
 def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
-    private_gpu_owner_anchor: Path, tmp_path: Path
+    gpu_owner_anchor: Path, tmp_path: Path
 ) -> None:
     from typer.testing import CliRunner
 
@@ -328,7 +328,7 @@ def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
 
     workspace = tmp_path / "workspace"
     (workspace / ".vaultspec").mkdir(parents=True)
-    with _owner(tmp_path, private_gpu_owner_anchor) as owner_pid:
+    with _owner(tmp_path, gpu_owner_anchor) as owner_pid:
         # Catches the search router running in-process on a local mandate
         # beside a live owner: it would open the store and load models
         # instead of refusing.

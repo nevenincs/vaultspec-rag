@@ -272,7 +272,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "replaced",
     ),
     "conftest.py": (
-        2,
+        3,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -280,11 +280,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "always does, and the suite can neither add nor remove the inference "
         "stack in the shared interpreter, so each lane would otherwise reach "
         "only one side of every branch. Only the role reading is substituted; "
-        "every consumer of it runs unchanged. Separately, the GPU owner anchor "
-        "is pointed at a private file for tests that drive a start or a model "
-        "load past the ownership check, because the machine's own anchor may be "
-        "held by a live service and a test must never contend for it; only its "
-        "location is substituted",
+        "every consumer of it runs unchanged. Separately, both machine "
+        "hardware anchors are pointed at private files for every test, "
+        "because the machine's own anchors may be held by a live service, a "
+        "test must never contend for them, and an ownership claim outlives "
+        "the test that took it; only their location is substituted, and "
+        "claiming, lending and refusing run unchanged",
     ),
     "test_server.py": (
         3,

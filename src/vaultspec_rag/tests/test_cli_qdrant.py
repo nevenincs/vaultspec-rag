@@ -72,7 +72,6 @@ def test_server_start_help_exposes_qdrant_options_in_operator_language() -> None
         assert old_term not in result.output
 
 
-@pytest.mark.usefixtures("private_gpu_owner_anchor")
 def test_server_start_missing_qdrant_names_local_only_escape_hatch(
     tmp_path: Path,
 ) -> None:

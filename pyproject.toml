@@ -254,6 +254,10 @@ markers = [
   # a test looks timing-sensitive. Applied for flakiness instead, the marker
   # hollows out the rule it is an exception to.
   "durable: needs the real fsync, with the evidence recorded at the mark",
+  # Tests that assert where the machine's hardware anchors resolve, and so run
+  # with the real resolvers rather than the per-test redirect. They must not
+  # claim one: reading where it lives is the whole assertion.
+  "real_hardware_anchor: resolves the machine's real hardware anchors",
 ]
 # `tools` joins the library tests so the release-path guards (the binary
 # builder and the Scoop/Homebrew generators) actually run. They are pure

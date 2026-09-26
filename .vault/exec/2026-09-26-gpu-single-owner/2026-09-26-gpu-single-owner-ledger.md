@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:3e7b46dd307139705d6ef3e30c2ce84f8ca9e77a7e14319737286d44b7ac4a34'
+body_hash: 'sha256:0da5fc13dc541f829957175daa0c8a47bd3615f54a2f7aa6f9f6b3e4adf91cd7'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -341,6 +341,19 @@ related:
 - `S17` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
 - `S17` `verify:` `uv run --no-sync python -m dev lint all` -> `pass`
 - `S17` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py` -> `pass`
+- `S03` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S03` `M` `pyproject.toml`
+- `S03` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S03` `M` `src/vaultspec_rag/tests/gpu_admission/test_floor_and_window.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_borrow_cli.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_session_lock.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
+- `S03` `verify:` `uv run --no-sync pytest -m 'unit and not torch' -n 8` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -373,3 +386,4 @@ related:
 - `S17` correction for p03-review-second-uv-launcher-unbounded: the project sync gets a named timeout sized like the tool repair's, pytest containment on the workspace it writes into, and a timeout reported as a failure outcome rather than a raise; it already stated utf-8 with replacement
 - `S19` merge correction: main tightened the substitution guard to count per-file sites against an allowance, so the five files this plan added tests to carry raised counts and the reason each new site exists. The red `test_storage_maintenance_tick` entry is gone with main's own fix for that file
 - `S17` Correction: the module size gate failed in CI. The GPU-ownership refusal moved beside `refuse_gpu_owned` and the uv-sync tests to a module named for the launcher they drive. The unit tier reports 5511 passed with two pre-existing environmental failures in `test_cli_index.py` TestDiskPreflightRefusal: the resident daemon owns this machine's GPU, so the borrow never reaches the preflight.
+- `S03` Correction: a unit test lending the GPU claimed the machine's real owner anchor and held it for its worker's life, refusing every other worker's borrow test. The redirect is now unconditional for the suite and a teardown guard fails any test that leaves a claim on a real hardware anchor.

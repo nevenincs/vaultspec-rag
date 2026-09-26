@@ -31,7 +31,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
+# The real resolvers are the subject here, so this module opts out of the
+# per-test anchor redirect. Nothing in it claims a machine anchor: the
+# locations are read, and every lock it takes is on a temporary file.
+pytestmark = [pytest.mark.unit, pytest.mark.real_hardware_anchor]
 
 # Every variable a process can set to move a path it resolves: the Windows
 # ProgramData and temporary variables, their POSIX counterparts, both homes,

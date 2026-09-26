@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 # Borrowing pauses a served registry, which lends its GPU through the owner
 # anchor; every test here gets a private one, so none claims the machine's.
-pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("private_gpu_owner_anchor")]
+pytestmark = [pytest.mark.unit]
 
 _TOKEN = "gpu-borrow-lease-test-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
@@ -773,14 +773,14 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
 
 
 def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
-    tmp_path: Path, private_gpu_owner_anchor: Path
+    tmp_path: Path, gpu_owner_anchor: Path
 ) -> None:
     """Binding lends the service's GPU to the borrower; resume takes it back.
 
     The served registry has loaded no model, so it does not own the GPU when
     the borrower arrives: the bind itself has to claim it before it can lend.
     """
-    anchor = private_gpu_owner_anchor
+    anchor = gpu_owner_anchor
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
@@ -822,7 +822,7 @@ def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
 
 
 def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
-    tmp_path: Path, private_gpu_owner_anchor: Path
+    tmp_path: Path, gpu_owner_anchor: Path
 ) -> None:
     """A pause whose loan was not recorded must not tell a borrower to proceed.
 
@@ -838,7 +838,7 @@ def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
     )
     ready = tmp_path / "owner-ready"
     owner = subprocess.Popen(
-        [sys.executable, "-c", owner_script, str(private_gpu_owner_anchor), str(ready)]
+        [sys.executable, "-c", owner_script, str(gpu_owner_anchor), str(ready)]
     )
     try:
         deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
