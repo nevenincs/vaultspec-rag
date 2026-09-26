@@ -18,6 +18,7 @@ input a test cannot arrange for real.
 from __future__ import annotations
 
 import os
+from contextlib import chdir
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +37,7 @@ from ..config._credentials import (
 )
 from ..config._registry import PACKAGE, entry
 from ..config._types import EnvVar
+from ..operator_state._features import TypesafeState
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._scaffold import restore_env, set_env
 
@@ -283,3 +285,46 @@ def test_the_daemon_never_reaches_the_credential_resolver() -> None:
             forbidden=("vaultspec_rag.config._credentials",),
         )
     )
+
+
+def _typesafe_state_with(value: str | None, cwd: Path) -> tuple[bool, object]:
+    """Ask the daemon's transport what it is enrolled with, from *cwd*."""
+    from ..search import _typesafe_transport as transport
+
+    previous = os.environ.pop(EnvVar.TYPESAFE_API_KEY.value, None)
+    if value is not None:
+        os.environ[EnvVar.TYPESAFE_API_KEY.value] = value
+    try:
+        with chdir(cwd):
+            return transport.available(), transport.enrollment_status().state
+    finally:
+        restore_env(EnvVar.TYPESAFE_API_KEY, previous)
+
+
+def test_the_daemon_transport_reads_no_file_beside_the_working_directory(
+    tmp_path: Path,
+) -> None:
+    """A key in a file the daemon is standing next to enrols nothing.
+
+    The resident service is host-scoped: whichever directory it happens to
+    have been started from is not a workspace it answers for, and a key found
+    there would apply to every root it serves. Only the environment its
+    launcher gave it counts.
+    """
+    workspace = _dotenv(
+        _workspace(tmp_path, package=PACKAGE, mode=InstallMode.DEPENDENCY),
+        EnvVar.TYPESAFE_API_KEY,
+    )
+
+    enrolled, state = _typesafe_state_with(None, workspace)
+
+    assert enrolled is False
+    assert state is TypesafeState.OFF
+
+
+def test_a_blank_key_leaves_the_daemon_transport_unenrolled(tmp_path: Path) -> None:
+    """Blank is unset for a credential too, not a key of no characters."""
+    enrolled, state = _typesafe_state_with("   ", tmp_path)
+
+    assert enrolled is False
+    assert state is TypesafeState.OFF
