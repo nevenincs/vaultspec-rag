@@ -514,10 +514,9 @@ def _display_service_version_error(
     is dropped by the daemon rather than rejected, so continuing would answer
     over a different candidate set with no sign anything was lost.
     """
-    remediation = [
-        *verdict.remediation(),
-        server_status_command(),
-    ]
+    # Plain ``server status`` omits the release; only its verbose view shows it.
+    confirm = server_status_command(verbose=True)
+    remediation = [*verdict.remediation(), confirm]
     if json_mode:
         _emit_json_error_and_exit(
             command,
@@ -528,10 +527,7 @@ def _display_service_version_error(
             remediation=remediation,
         )
         return
-    steps = [
-        *verdict.remediation(),
-        f"Confirm the release: {server_status_command()}",
-    ]
+    steps = [*verdict.remediation(), f"Confirm the release: {confirm}"]
     numbered = "\n".join(f"  {n}. {step}" for n, step in enumerate(steps, start=1))
     _plain(
         f"Refusing to {command} against the running service.\n"

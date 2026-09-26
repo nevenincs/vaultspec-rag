@@ -547,6 +547,9 @@ def test_cli_search_refusal_is_actionable_in_human_mode(
     assert result.exit_code == 1
     assert _FOREIGN_RELEASE in result.stdout
     assert "vaultspec-rag server stop" in result.stdout
+    # Plain `server status` omits the release, so the confirmation step must
+    # name the verbose view; pointing at the plain one fails here.
+    assert "vaultspec-rag server status --verbose" in result.stdout
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs", "client_installation")
