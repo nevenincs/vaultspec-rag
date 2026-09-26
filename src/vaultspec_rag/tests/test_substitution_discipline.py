@@ -127,6 +127,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "diagnostic and load paths share is only observable across a run of "
         "them and no real device yields one on demand",
     ),
+    "test_gpu_owner.py": (
+        1,
+        "points the ownership check load_accelerator makes at the test's "
+        "private anchor, because the machine's own anchor may be held by a "
+        "live service and a test must never contend for it; the claim, loan "
+        "and refusal behaviour itself is driven by real owner processes",
+    ),
     "test_hardware_anchor.py": (
         1,
         "forces the machine anchor directory to be unresolvable, to prove the "

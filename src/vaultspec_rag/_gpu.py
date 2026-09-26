@@ -162,9 +162,19 @@ def _import_accelerator_for_compute() -> AcceleratorContext:
 
 
 def load_accelerator() -> AcceleratorContext:
-    """Resolve and admit the accelerator for a local compute path."""
-    from ._gpu_admission import admit_accelerator_load
+    """Resolve and admit the accelerator for a local compute path.
 
+    Ownership is asked first, before torch is even imported: one model stack
+    runs per machine, so a process that may not bring one up learns it without
+    touching the device, and no compute path can reach the card around it.
+
+    Raises:
+        GpuOwnedError: Another process owns the GPU and has not lent it here.
+    """
+    from ._gpu_admission import admit_accelerator_load
+    from ._gpu_owner import require_gpu_ownership
+
+    require_gpu_ownership()
     accelerator = _import_accelerator_for_compute()
 
     def configure() -> AcceleratorContext:

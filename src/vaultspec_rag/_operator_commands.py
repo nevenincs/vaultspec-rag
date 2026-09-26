@@ -35,6 +35,7 @@ __all__ = [
     "server_jobs_command",
     "server_start_command",
     "server_status_command",
+    "server_stop_command",
 ]
 
 
@@ -169,6 +170,11 @@ def server_start_command(
     if updates:
         command += " --updates"
     return command + port_option(port)
+
+
+def server_stop_command(port: object | None = None) -> str:
+    """Return the ``server stop`` invocation an operator should run."""
+    return f"vaultspec-rag server stop{port_option(port)}"
 
 
 #: The message every verb prints when it finds no service to talk to. Ten

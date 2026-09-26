@@ -360,17 +360,20 @@ def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     and the fail-hard branches of the single centralized gate.
 
     A CUDA device present but too contended to hold a model stack is the fourth
-    real state, and the gate refuses it. Which of the two CUDA states this host
-    is in cannot be decided before the call - a sibling consumer can fill the
-    card in the interval, and refusing then is the gate working - so both are
-    accepted here while everything else stays a failure: another exception type,
-    a refusal that is not the contention one, or anything returned that is not
-    the torch module.
+    real state, and the gate refuses it. A GPU another process owns - a live
+    service on the host running this suite - is the fifth, and the gate refuses
+    that too, before torch is touched. Which of those states this host is in
+    cannot be decided before the call - a sibling consumer can fill the card or
+    a service can start in the interval, and refusing then is the gate working -
+    so each is accepted here while everything else stays a failure: another
+    exception type, a refusal that is neither of those two, or anything returned
+    that is not the torch module.
     """
     from .._gpu import detect_accelerator_backend, load_accelerator
+    from .._gpu_owner import GpuOwnedError
 
     if importlib.util.find_spec("torch") is None:
-        with pytest.raises(ImportError):
+        with pytest.raises((ImportError, GpuOwnedError)):
             load_accelerator()
         return
 
@@ -384,6 +387,8 @@ def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
 
     try:
         loaded = load_accelerator()
+    except GpuOwnedError:
+        return
     except RuntimeError as exc:
         assert "too contended" in str(exc), exc
         return
