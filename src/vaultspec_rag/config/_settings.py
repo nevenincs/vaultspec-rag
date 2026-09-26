@@ -16,6 +16,7 @@ from vaultspec_core.config import (
     get_config as get_base_config,
 )
 from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
+from vaultspec_core.logging_config import resolve_log_level
 
 from ._paths import read_persisted_local_only
 from ._registry import entry
@@ -1017,6 +1018,34 @@ class VaultSpecConfigWrapper:
         return bool(self.qdrant_server) and not bool(self.local_only)
 
     @property
+    def log_level(self) -> str:
+        """Resolve the log-level name through the one validated, chained ladder.
+
+        Delegates to core's ``resolve_log_level`` over the same
+        ``EnvVar.LOG_LEVEL`` registry entry ``configure_logging`` reads,
+        instead of the generic settings-override chain. That generic chain
+        validates nothing for a free-form string key, so a mistyped level
+        would otherwise reach this attribute unrefused while the process it
+        actually configures refuses to start over that exact same value -
+        two declarations of one concept, silently disagreeing. An explicit
+        CLI-supplied override (mirroring every other settings key's
+        precedence) still outranks the chain.
+
+        Returns:
+            The resolved, canonical (upper-case) level name.
+
+        Raises:
+            ConfigurationError: If the configured value names no recognised
+                level.
+        """
+        if "log_level" in self._rag_overrides:
+            return str(self._rag_overrides["log_level"])
+        return resolve_log_level(
+            variable=entry(EnvVar.LOG_LEVEL),
+            default=str(self._RAG_DEFAULTS["log_level"]),
+        )
+
+    @property
     def preprocess_mode(self) -> PreprocessMode:
         """Resolve the two-state document-preprocessing mode.
 
@@ -1145,7 +1174,6 @@ class VaultSpecConfigWrapper:
     index_job_concurrency: int
     index_reuse_enabled: bool
     mcp_port: int
-    log_level: str
     service_idle_ttl_seconds: int
     service_max_projects: int
     service_search_timeout_seconds: float
@@ -1300,6 +1328,65 @@ def reset_config() -> None:
     """
     global _cached_config
     _cached_config = None
+
+
+def collect_environment_problems(
+    cli_overrides: dict[str, Any] | None = None,
+) -> list[str]:
+    """Return every reason this process's environment or settings are unusable.
+
+    Every process kind that reads rag's configuration - the CLI, the stdio
+    MCP server, and the HTTP daemon - shares one refusal contract: a bad
+    product-owned value stops the process before it does anything else, and
+    every problem is reported together rather than one refusal per run. This
+    is the one place that contract is checked, so a process kind that forgot
+    to call it is the only way to drift from it.
+
+    Three sources are asked. The framework variables this package honours
+    (and the level name, which is otherwise read only where it is used and
+    would refuse a command or a daemon startup halfway through its own
+    output); the session's own unattended marker, which every prompt this
+    package might issue consults and would otherwise surface its typo at the
+    moment a question was about to be asked; and this package's own settings.
+
+    The settings check constructs a wrapper directly through
+    :meth:`VaultSpecConfigWrapper.from_environment` rather than populating
+    the cached :func:`get_config` singleton, so a validation probe run before
+    a workspace root is resolved can never leave a config built against the
+    wrong root cached for a later, unrelated ``get_config()`` call to read.
+
+    Args:
+        cli_overrides: The settings this invocation named on the command
+            line, so the report describes the configuration about to be
+            built rather than a different one. ``None`` for a process kind
+            (the daemon, the stdio server) with no CLI overrides of its own.
+
+    Returns:
+        Every problem found, one string per problem, ready to print one per
+        line; empty when the environment and settings are all usable.
+    """
+    from vaultspec_core.config import (
+        ConfigurationError,
+        check_environment,
+        unattended_declared,
+    )
+
+    from ._registry import PACKAGE as REGISTRY_PACKAGE
+
+    problems: list[str] = []
+    try:
+        check_environment(package=REGISTRY_PACKAGE)
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        unattended_declared()
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        VaultSpecConfigWrapper.from_environment(cli_overrides)
+    except ValueError as refusal:
+        problems.append(str(refusal))
+    return problems
 
 
 # Every numeric setting must declare its admissible range, and every declared

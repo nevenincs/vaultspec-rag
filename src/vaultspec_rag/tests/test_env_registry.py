@@ -245,6 +245,48 @@ def test_the_settings_chain_honours_the_framework_log_level() -> None:
     assert get_config().log_level == "DEBUG"
 
 
+def test_validating_the_environment_does_not_populate_the_cached_config() -> None:
+    """A startup validation probe must not cache a config built too early.
+
+    ``collect_environment_problems`` runs before a workspace root is
+    resolved (the CLI calls it ahead of ``named_root``/``resolve_workspace``).
+    Populating the module's cached singleton at that point would leave a
+    config whose ``target_dir`` reflects the working directory, not the
+    resolved root, for a later, unrelated ``get_config()`` call to read.
+    Constructing the wrapper directly instead (``from_environment``) means
+    the probe can only ever discard what it built.
+    """
+    from ..config import _settings
+
+    _settings.reset_config()
+    try:
+        assert _settings.collect_environment_problems(None) == []
+        assert _settings._cached_config is None
+    finally:
+        _settings.reset_config()
+
+
+@pytest.mark.usefixtures("clean_chain")
+def test_an_unrecognised_log_level_is_refused_not_silently_read() -> None:
+    """``cfg.log_level`` must not accept what ``configure_logging`` would refuse.
+
+    The generic settings-override chain validates nothing for a free-form
+    string key; delegating to core's ``resolve_log_level`` instead closes
+    that gap, so the same value that stops the process from starting cannot
+    be read back here as if it were usable.
+    """
+    from vaultspec_core.config import ConfigurationError
+
+    os.environ[EnvVar.LOG_LEVEL.value] = "WARNIGN"
+    reset_config()
+    try:
+        with pytest.raises(ConfigurationError):
+            _ = get_config().log_level
+    finally:
+        del os.environ[EnvVar.LOG_LEVEL.value]
+        reset_config()
+
+
 def test_the_registry_stays_off_the_spawn_worker_import_chain() -> None:
     """The cheap modules a spawn worker re-imports must not reach the registry.
 

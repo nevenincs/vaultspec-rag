@@ -18,8 +18,6 @@ from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
 from vaultspec_core.config import (
     ConfigurationError,
-    check_environment,
-    unattended_declared,
 )
 from vaultspec_core.config.workspace import (
     WorkspaceError,
@@ -506,12 +504,11 @@ def main(ctx: typer.Context) -> None:
 def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
     """Stop the run on any value it could not have used, naming all of them.
 
-    Two sources, one report. The framework check covers the shared variables
-    this package honours and the level name, which is read where it is used
-    and would otherwise refuse a command halfway through its own output; the
-    settings construction covers this package's own knobs. Asking both here
-    means an operator sees the whole list once instead of discovering the
-    second problem after fixing the first.
+    Delegates the actual checks to
+    :func:`~vaultspec_rag.config._settings.collect_environment_problems`, the
+    one refusal contract every rag process kind (this CLI, the stdio MCP
+    server, the HTTP daemon) shares, and renders the CLI's own report: every
+    problem printed, then a single non-zero exit.
 
     Args:
         cli_overrides: The settings this invocation named on the command
@@ -521,27 +518,9 @@ def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
     Raises:
         typer.Exit: With status 1 when anything is unusable.
     """
-    from ..config._registry import PACKAGE as REGISTRY_PACKAGE
-    from ..config._settings import get_config
+    from ..config._settings import collect_environment_problems
 
-    problems: list[str] = []
-    try:
-        check_environment(package=REGISTRY_PACKAGE)
-    except ConfigurationError as refusal:
-        problems.append(str(refusal))
-    try:
-        # The session's own marker is the framework's entry and no chain of
-        # this package's reaches it, so the check above never sees it - but
-        # every prompt this package might issue consults it, and a typo
-        # would otherwise surface at the moment a question was about to be
-        # asked, halfway through an install.
-        unattended_declared()
-    except ConfigurationError as refusal:
-        problems.append(str(refusal))
-    try:
-        get_config(cli_overrides or None)
-    except ValueError as refusal:
-        problems.append(str(refusal))
+    problems = collect_environment_problems(cli_overrides or None)
     if not problems:
         return
     for problem in problems:

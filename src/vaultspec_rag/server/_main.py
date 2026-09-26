@@ -123,8 +123,33 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None, bool]:
     return args.port, args.parent_pid, args.read_only
 
 
+def _refuse_unusable_server_environment() -> None:
+    """Stop the process before any output if the environment is unusable.
+
+    The daemon and the stdio MCP server share the CLI's refusal contract
+    (:func:`~vaultspec_rag.config._settings.collect_environment_problems`)
+    but not its rendering: there is no Typer context here, and stdio's
+    stdout is the MCP protocol channel itself, so a refusal must reach
+    stderr only, never stdout. Runs before ``configure_logging`` so a bad
+    log-level name is reported as one plain line here instead of raising a
+    bare ``ConfigurationError`` from inside ``resolve_log_level`` mid-setup.
+    """
+    import sys
+
+    from ..config._settings import collect_environment_problems
+
+    problems = collect_environment_problems()
+    if not problems:
+        return
+    for problem in problems:
+        print(f"Error: {problem}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _run_http_daemon(port: int) -> None:
     """Run the standalone HTTP daemon and enforce its shutdown contract."""
+    _refuse_unusable_server_environment()
+
     import uvicorn
 
     from ..config._settings import get_config
@@ -208,6 +233,8 @@ def _run_stdio_mcp(parent_pid: int | None, *, read_only: bool = False) -> None:
     listing is served, so they are absent from the surface rather than
     present and refusing.
     """
+    _refuse_unusable_server_environment()
+
     try:
         from ..mcp import mcp
     except ImportError as exc:
