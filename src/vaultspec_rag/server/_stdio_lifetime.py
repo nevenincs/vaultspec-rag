@@ -48,8 +48,11 @@ import sys
 import threading
 import time
 
+from vaultspec_core.config import env_source, env_value
+
 from .._env_values import BOOL_SHAPE, parse_bool
 from .._process_probe import pid_alive
+from ..config._registry import entry
 from ..config._types import EnvVar
 
 logger = logging.getLogger("vaultspec_rag.server")
@@ -82,26 +85,32 @@ def watchdog_disabled() -> bool:
     """True when the operator escape hatch disables the watchdog.
 
     The switch spells its two states the way every flag in this project does,
-    but resolves everything else the opposite way from a plain setting: an
-    empty value and a word spelling neither state both leave the backstop
-    ARMED, where a setting would read both as off.
+    and reads the same two names every shared setting does: this package's
+    own first, the framework-wide switch behind it, so a session that disarms
+    the watchdog for the vaultspec tools disarms this one too.
 
-    Failing safe is the whole point here. Disarming this leaves stdin EOF as
-    the shim's only exit path, and the shape this module exists to survive is
-    precisely the one where EOF never arrives - so an unexpanded
-    ``VAR="$UNSET"`` or a misspelt escape hatch must not silently strand shim
-    processes on an operator who never meant to disable anything. The typo is
-    logged rather than raised: a misspelt diagnostic switch must not take down
-    a server whose EOF path still works.
+    Everything else about it resolves the opposite way from a plain setting.
+    A blank value and a word spelling neither state both leave the backstop
+    ARMED, where a setting would take the first as unset and refuse the
+    second.
+
+    Failing safe is the whole point here. Disarming this leaves stdin
+    end-of-file as the shim's only exit path, and the shape this module
+    exists to survive is precisely the one where that never arrives - so an
+    unexpanded ``VAR="$UNSET"`` or a misspelt escape hatch must not silently
+    strand shim processes on an operator who never meant to disable anything.
+    The typo is logged rather than raised: a misspelt protective switch must
+    not take down a server whose exit path still works.
     """
-    raw = os.environ.get(STDIO_WATCHDOG_ENV)
-    if raw is None or not raw.strip():
+    supplied = env_source(entry(EnvVar.STDIO_WATCHDOG))
+    raw = env_value(entry(EnvVar.STDIO_WATCHDOG))
+    if raw is None:
         return False
     enabled = parse_bool(raw)
     if enabled is None:
         logger.warning(
             "%s=%r is not %s; leaving the stdio watchdog armed",
-            STDIO_WATCHDOG_ENV,
+            STDIO_WATCHDOG_ENV if supplied is None else supplied.env_name,
             raw,
             BOOL_SHAPE,
         )
