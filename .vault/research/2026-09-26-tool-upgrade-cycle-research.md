@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:a59fb26d54f69b96e9b78a76eaea8f5c079db555da0dfb60cfa85b84b40731df'
+body_hash: 'sha256:35e9993895e5e1bb7cd365242502a77b922c69d555f8c3b5559ba83aebcb4dac'
 related: []
 ---
 
@@ -83,6 +83,17 @@ environment imported cleanly afterwards with no leftover files. The
 destructive case `2026-09-04-cuda-provisioning-research` reproduced is
 `uv tool install --force`, which replaces the environment wholesale; nothing in
 this cycle needs it.
+
+In place holds only while the requested interpreter matches the environment's
+own. Against a field-shaped environment (receipt with no `python` key, CPython
+3.14.6, a live holder), `--python 3.14` and an absent `--python` both applied in
+place, but `--python 3.13` printed "Ignoring existing environment ... the
+requested Python interpreter does not match the environment interpreter" and
+rebuilt wholesale: it deleted `Lib` and then failed on the held `Scripts`,
+leaving the environment unrunnable. A plain `uv tool install` is therefore a
+wholesale replacement whenever its interpreter request differs, `--force` or not.
+The same failure occurred on 2026-09-26 against the machine's real tool
+installation, recorded in `2026-09-26-gpu-single-owner-audit`.
 
 ### F6 - one in-place command repairs an existing installation
 

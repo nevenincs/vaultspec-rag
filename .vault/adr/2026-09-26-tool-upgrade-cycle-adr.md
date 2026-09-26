@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:7ea559a1c51b15826c5174882c319b68ceed74b94849f454b99af88f68c665ae'
+body_hash: 'sha256:c94c9dc5ae045eeac5992410c04322e376a0f18d90f44106a721a9e486bc055d'
 related:
   - "[[2026-09-26-tool-upgrade-cycle-research]]"
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
@@ -79,7 +79,14 @@ be a persistent and dependable automanagement cycle.
   separate, named step.
 - Nothing replaces an environment wholesale; D1's prohibition stands, and the
   in-place repair is the only mutation the product performs on its own
-  environment.
+  environment. Because a changed interpreter request turns a plain
+  `uv tool install` into a wholesale rebuild
+  (`2026-09-26-tool-upgrade-cycle-research` F5), every command names the target
+  environment's own interpreter, and the product runs one only when uv's tool
+  entry for the package is the environment the running interpreter belongs to.
+- Under pytest the repair runner refuses any tool environment outside the
+  containment root, so no test can mutate a real installation whatever it
+  consents to.
 - The product runs the repair itself only on explicit consent - an interactive
   confirmation or `--yes` - and verifies both the compute build and the receipt
   afterwards; without consent it hands over the same command and exits

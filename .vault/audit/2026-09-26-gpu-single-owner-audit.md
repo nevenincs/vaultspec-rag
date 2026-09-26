@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:721754feb6c8b8fe2e6894b94f5c0316c33e6b811f8b3870e47a58aff0745521'
+body_hash: 'sha256:c4084f6411a8bbaf49ce04aa99279069179eb4233a574fc6e9fffa47ef8ff663'
 related: []
 ---
 
@@ -270,6 +270,24 @@ Folded into P03.S11 and P03.S13: an unbounded holder count with an "and N more"
 line, a precondition that names its command, one environment-root derivation, a
 role fallback instead of a raise, and the load-failure path's CPU-only advice
 taken from the canonical builder.
+
+### p03-incident-real-tool-env-rebuilt | critical | a consenting unit test rebuilt the machine's real tool installation
+
+During P03.S12, before its commit at 18:04, a unit test that consented to the
+in-place repair ran real uv against
+`C:\Users\hello\scoop\persist\uv\tools\versions\vaultspec-rag`, the installation
+hosting the machine's shared service. The test had forced the tool classification
+onto the project interpreter, so the command named that interpreter's Python and
+not the tool environment's. uv then ignored the existing environment, deleted its
+`Lib`, and failed on the held `Scripts` at 17:48. The running service survived on
+imported modules; the `vaultspec-rag` shim and a spawn-based rebuild in flight
+failed until another session rebuilt `Lib` at 17:58. The S12 ledger note saying
+nothing changed was wrong; only the receipt and `Scripts` had been checked.
+Reproduced in a sandbox as `2026-09-26-tool-upgrade-cycle-research` F5. Required
+before P03 resumes: the repair runner refuses under pytest outside the
+containment root, and refuses anywhere when uv's tool entry for the package is
+not the environment the running interpreter belongs to; commands name the target
+environment's own interpreter.
 
 ## Recommendations
 
