@@ -125,9 +125,10 @@ jobs:
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
        (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))
-    timeout-minutes: 40
+    timeout-minutes: 160
     runs-on: [self-hosted, Linux, X64, build]
     env:
+      CI_EXEC_BUDGET_MINUTES: 40
       # The type checkers read torch's and the model libraries' annotations,
       # so this job installs those packages - but not the CUDA runtime, which
       # nothing here imports and which is most of the stack's size.
@@ -176,7 +177,7 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
         (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
-    timeout-minutes: 45
+    timeout-minutes: 165
     runs-on: [self-hosted, Linux, X64]
     strategy:
       # Both interpreters run to completion: when only one line breaks, the
@@ -186,6 +187,7 @@ jobs:
       matrix:
         python-version: ["3.13", "3.14"]
     env:
+      CI_EXEC_BUDGET_MINUTES: 45
       # `.python-version` pins the dev interpreter to the floor, and uv reads
       # it in preference to whatever actions/setup-python put on PATH. Without
       # this the 3.14 leg would silently sync and test 3.13 — a green matrix
@@ -314,8 +316,10 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
         (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
-    timeout-minutes: 15
+    timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 15
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -359,8 +363,9 @@ jobs:
     if: always()
     timeout-minutes: 10
     # Reads results and edits a label, and never runs the pull request's
-    # code, so a hosted runner serves every pull request.
-    runs-on: ubuntu-24.04
+    # code, so it takes no slot: the verdict class admits it at once and
+    # bounds its steps to five minutes.
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       # The draft/unrelated-label path asks this workflow for its newest
@@ -370,6 +375,7 @@ jobs:
       actions: read
       pull-requests: write
     env:
+      CI_RESOURCE_CLASS: verdict
       GH_TOKEN: ${{ github.token }}
       EVENT: ${{ github.event_name }}
       DRAFT: ${{ github.event.pull_request.draft }}
