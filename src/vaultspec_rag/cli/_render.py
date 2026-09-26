@@ -24,6 +24,7 @@ from .._operator_commands import (
     server_status_command,
 )
 from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
+from ..operator_state._installation import ComputeCapability
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -537,6 +538,7 @@ def _action_label(action: object) -> str:
         "absent": "not found",
         "removed": "removed",
         "disabled": "disabled",
+        "not_applicable": ComputeCapability.NOT_APPLICABLE.label,
         "dry_run": "preview only",
         "declined": "declined",
         "skipped": "not changed",

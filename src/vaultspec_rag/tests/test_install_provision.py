@@ -246,6 +246,7 @@ class TestInstallProvisionWiring:
         assert models.action == ProvisionAction.SKIPPED
         assert "opted out" in models.detail
 
+    @pytest.mark.usefixtures("inference_host")
     def test_torch_is_opted_out_of_the_front_door(
         self, consumer_workspace: Path, isolated_status_dir: Path
     ) -> None:

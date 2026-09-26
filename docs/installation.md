@@ -68,11 +68,13 @@ vaultspec-rag inference still needs `[gpu]` and a supported accelerator.
 
 The `vaultspec-rag install` command has a broader default than the base package: it
 enrolls MCP, downloads all three models, prepares PyTorch, and provisions managed
-Qdrant. That default creates the normal combined local topology. To enroll a deliberately
-lightweight client workspace, install the base or `[mcp]` package and run:
+Qdrant. That default creates the normal combined local topology. PyTorch is prepared
+only when the environment carries `[gpu]`; a client installation is never asked to
+patch `pyproject.toml`. To enroll a deliberately lightweight client workspace, install
+the base or `[mcp]` package and run:
 
 ```bash
-vaultspec-rag install --no-provision --no-torch-config
+vaultspec-rag install --no-provision
 ```
 
 Add `--no-mcp` for a command-line-only workspace. An inference host must be prepared
@@ -277,7 +279,8 @@ For CLI-only use, add `--no-mcp`. To use an embedded store, add `--local-only`;
 see [storage backends](backends.md) for its requirements.
 
 If your project needs a PyTorch configuration patch, the installer asks before adding
-a Linux/Windows CUDA package source to `pyproject.toml`. Its platform marker keeps
+a Linux/Windows CUDA package source to `pyproject.toml`. Only an installation with the
+`[gpu]` extra needs one; a client is never asked. Its platform marker keeps
 that source inactive on macOS. Enter `y` to accept, or add `--yes` for unattended
 installation. Use `--no-torch-config` to skip that configuration step.
 

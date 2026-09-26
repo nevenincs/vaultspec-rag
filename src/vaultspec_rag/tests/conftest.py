@@ -34,6 +34,7 @@ from ..config._settings import VaultSpecConfigWrapper as VaultSpecConfig
 from ..config._settings import get_config
 from ..config._settings import reset_config as reset_rag_config
 from ..config._types import EnvVar
+from ..operator_state._installation import InstallRole
 from ..progress import NullProgressReporter
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
@@ -195,6 +196,37 @@ def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
         }
     ):
         yield status_dir
+
+
+def _pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
+    """Substitute the role reading install's torch-config step gates on.
+
+    The role comes from which distributions the running interpreter holds, and
+    the suite can neither add nor remove the inference stack in the shared
+    interpreter, so each lane could otherwise reach only one side of the gate.
+    Only the reading is replaced; the torch-config flow, the real pyproject and
+    the install orchestration run unchanged.
+    """
+    from ..commands import _torch_flow
+
+    monkeypatch.setattr(_torch_flow, "installed_role", lambda: (role, True))
+
+
+@pytest.fixture
+def inference_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make install's torch-config step see an inference host.
+
+    Only a host is ever torch-configured, and the accelerator-free lane runs
+    without the ``gpu`` extra, so a test of the patch flow pins the role or it
+    would silently exercise the client skip there instead.
+    """
+    _pin_install_role(monkeypatch, InstallRole.HOST)
+
+
+@pytest.fixture
+def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make install's torch-config step see a client, whatever this env holds."""
+    _pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
 class RagComponents(TypedDict):

@@ -1,9 +1,11 @@
 """Tests for :func:`install_run`/:func:`uninstall_run` torch-config flow.
 
 Real filesystem (``tmp_path``), real ``vaultspec_core`` from the dev
-env, real ``tomlkit``. No mocks. No HF / GPU dependency - these tests
-exercise only the pyproject-patching branch and deliberately do not
-trigger the ``sync_after`` subprocess path.
+env, real ``tomlkit``. The installation role is the one pinned input:
+the patch flow runs only on an inference host, so the module runs as one
+in every lane. No HF / GPU dependency - these tests exercise only the
+pyproject-patching branch and deliberately do not trigger the
+``sync_after`` subprocess path.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 
     from ..commands._models import InstallReport
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
 
 PROJECT_ONLY = (

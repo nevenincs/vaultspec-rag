@@ -203,6 +203,17 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "probe's verdict is substituted, and the real warning renderer, its "
         "defect gate and its topology remediation run unchanged",
     ),
+    "conftest.py": (
+        1,
+        "install configures torch only for an inference host, and the role is "
+        "read from the distributions the running interpreter holds. The "
+        "accelerator-free lane never installs the gpu extra and the gpu lane "
+        "always does, and the suite can neither add nor remove the inference "
+        "stack in the shared interpreter, so each lane would otherwise reach "
+        "only one side of the gate. Only the role reading is substituted; the "
+        "torch-config flow, the real pyproject and the install orchestration "
+        "run unchanged",
+    ),
     "test_server.py": (
         3,
         "asserts the stdio runner wires watcher cleanup and loads no model - "

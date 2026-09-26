@@ -977,9 +977,11 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     ``sync_provider`` to propagate the new sources into ``.mcp.json`` and
     provider dirs.
 
-    When ``configure_torch`` is True (the default), also patches the
+    When ``configure_torch`` is True (the default) and this installation
+    is an inference host (it carries the ``gpu`` extra), also patches the
     consumer's ``pyproject.toml`` with the canonical cu130 torch index
-    and source pin. This step is gated by an interactive confirmation
+    and source pin. A client installation is never prompted or patched.
+    This step is gated by an interactive confirmation
     prompt (bypassed with ``assume_yes=True``). In non-TTY contexts
     without ``assume_yes``, the step is skipped with a warning that
     names the ``--yes`` / ``--no-torch-config`` flags.
@@ -1225,8 +1227,13 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     # skipped-eof / error) silently drops the sync. Surface a warning
     # so the user knows their explicit ``--sync`` request did not run.
     # ``torch_sync_action == "skipped"`` is the post-init default
-    # untouched by ``_run_uv_sync_torch``.
-    if sync_after and report.torch_sync_action == "skipped":
+    # untouched by ``_run_uv_sync_torch``. A client has no torch to sync,
+    # so there is nothing to resolve and no advice to give it.
+    if (
+        sync_after
+        and report.torch_sync_action == "skipped"
+        and report.torch_config_action is not TorchConfigAction.NOT_APPLICABLE
+    ):
         report.warnings.append(
             f"--sync requested but skipped: torch-config step did not apply "
             f"and torch direct-dep step did not run "
