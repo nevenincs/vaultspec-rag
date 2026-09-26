@@ -231,20 +231,29 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def private_gpu_owner_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def private_gpu_owner_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[Path]:
     """Point every GPU ownership question this test asks at a private anchor.
 
     The machine's own anchor may be held by a live service, and a test must
     never contend for it: a test driving a start or a model load past the
     ownership check would otherwise be refused by the real owner or, on a free
     machine, take the real anchor itself. Only where the anchor lives is
-    replaced; claiming, lending and refusing run unchanged.
+    replaced; claiming, lending and refusing run unchanged. A claim the test's
+    process took on it is released afterwards, since an owner otherwise holds
+    its anchor until it exits and this one would outlive the directory.
     """
     from .. import _gpu_owner
+    from .._anchor_claim import release_anchor_claim
 
     anchor = tmp_path / "gpu-owner.lock"
     monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
-    return anchor
+    yield anchor
+    with _gpu_owner._guard:
+        descriptor = _gpu_owner._held.pop(str(anchor), None)
+    if descriptor is not None:
+        release_anchor_claim(descriptor, pid_record=True)
 
 
 class RagComponents(TypedDict):

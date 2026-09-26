@@ -122,25 +122,50 @@ def hardware_anchor_path(name: str) -> Path:
     temporary directory is: a hardware anchor resolved through anything a
     process can change would be private to whoever changed it and would
     exclude nothing. Windows asks the shell for the ProgramData folder, whose
-    default permissions let every account create files beneath it. Linux uses
-    ``/dev/shm`` and macOS ``/Users/Shared``: both are shared by every account,
-    and neither is swept by the age-based cleaners that empty the temporary
-    directories, so an anchor held for weeks is never deleted from under its
-    holder - which would let the next claimant create a fresh file and hold it
-    alongside. A host with neither has no GPU this project can use, and gets no
-    guessed substitute.
+    default permissions let every account create files beneath it.
+
+    Elsewhere the directory must be one every account shares, which a POSIX
+    host marks the same way everywhere: world-writable with the sticky bit.
+    ``/dev/shm`` (Linux) and ``/Users/Shared`` (macOS) are preferred because
+    the age-based cleaners that empty temporary directories leave them alone,
+    so an anchor held for weeks is never deleted from under its holder - which
+    would let the next claimant create a fresh file and hold it alongside. The
+    temporary directory is the last resort, for a host - a container, say -
+    that mounts neither; it is accepted only when it too is shared by every
+    account, because a per-account ``TMPDIR`` would give each account a lock of
+    its own.
 
     Raises:
-        OSError: The machine directory could not be resolved.
+        OSError: No machine-shared directory exists, or the shell could not
+            resolve ProgramData.
     """
     if sys.platform == "win32":
         from ._win32 import program_data_directory
 
         return Path(program_data_directory()) / _HARDWARE_ANCHOR_PREFIX / name
-    for directory in (Path("/dev/shm"), Path("/Users/Shared")):
-        if directory.is_dir():
+    import tempfile
+
+    for directory in (
+        Path("/dev/shm"),
+        Path("/Users/Shared"),
+        Path(tempfile.gettempdir()),
+    ):
+        if _shared_by_every_account(directory):
             return directory / f"{_HARDWARE_ANCHOR_PREFIX}-{name}"
-    raise OSError("this host has no machine-wide directory for a hardware anchor")
+    raise OSError("this host has no directory every account shares for an anchor")
+
+
+def _shared_by_every_account(directory: Path) -> bool:
+    """Whether *directory* is a POSIX directory every account may create in."""
+    import stat
+
+    try:
+        mode = directory.stat().st_mode
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(mode) and bool(mode & stat.S_IWOTH) and bool(mode & stat.S_ISVTX)
+    )
 
 
 def _open_anchor(anchor: Path, *, create: bool, shared: bool) -> int:

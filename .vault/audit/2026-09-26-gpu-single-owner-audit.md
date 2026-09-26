@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:24f0ae9740b1b048223df0725e6eb54e78c2a3f6ba3f62cabeaa70cbfdbd3599'
+body_hash: 'sha256:019dbdd762c2853aeba867b44c33c1ba29f4e71d47d8f8effb6ae6fb6ee2e753'
 related: []
 ---
 
@@ -123,6 +123,75 @@ while `_tool_root` deliberately does not, so the two disagree on POSIX.
 manylinux tag for every other platform, macOS included
 (`src/vaultspec_rag/commands/_tool_torch.py:132-136`). The ARM64 Windows URL
 returns 403 from the index.
+
+### p01-review-borrow-lane-loan | high | a loan that could not be recorded reported the bind as a success
+
+Phase P01 close review. The bind lent the GPU only if the service already held
+the owner anchor, which it takes at its first model load; a service whose models
+never loaded held nothing, the loan silently failed and the bind still succeeded,
+so the borrower's loads were refused with advice that did not apply. The
+production daemon does load its models at boot (`src/vaultspec_rag/server/_lifespan.py:519`),
+so the ordinary case was sound. Resolved: the bind now claims the GPU for the
+service before lending (`src/vaultspec_rag/_service_borrower.py`), and a loan that
+cannot be recorded refuses the pause with `borrower_gpu_not_lendable`
+(`src/vaultspec_rag/server/_routes_quiesce.py`).
+
+### p01-review-lent-path-cost | high | every model load in a borrowing process walked the process table
+
+Phase P01 close review. The loan check re-read this process's lineage at every
+`load_accelerator`, measured at about 215 ms per call on Windows. Resolved: the
+lineage is read once per process and the anchor location once, and a lent check
+now costs 0.66 ms after a first call of about 400 ms.
+
+### p01-review-citation-gate | high | the macOS shared folder tripped the identity-leak gate
+
+Phase P01 close review. `/Users/Shared` matched the user-home pattern although it
+names no account. Resolved: the gate excludes that segment beside its other
+placeholders, including where it ends a scanned value (`tools/citation_gate.py`).
+
+### p01-review-json-refusal | high | an ownership refusal at model load printed prose to a JSON caller
+
+Phase P01 close review. `_handle_gpu_error` rendered the ownership refusal in
+human mode whatever the caller had asked for. Resolved: the command name and JSON
+mode are threaded through from search and index. Local indexing runs only inside
+the `--borrow-gpu` lane (`src/vaultspec_rag/cli/_index.py:909-918`), so it needs no
+separate ownership pre-check.
+
+### p01-review-refusal-shapes | medium | one condition carried two envelope shapes and search-shaped advice on start
+
+Phase P01 close review. Resolved: both refusals carry one `gpu_owner` object from
+one helper, placed where each envelope family keeps its detail, and a start
+refusal receives start-shaped next actions.
+
+### p01-review-legacy-detection | medium | an unobservable default-location service lock read as no service
+
+Phase P01 close review. Resolved: the default-location check observes through
+the shared-anchor fallback, raises on an unobservable lock so the caller reports
+it unverifiable, and is exercised directly against held, free, absent and
+unobservable locks. The review's alternative of checking the service lock before
+the anchor was not taken, because a borrower runs beside the service that holds
+that lock and would be refused before its loan was read; the claim instead
+publishes its owner record at once, and names the service when a service lock
+refuses it.
+
+### p01-review-anchor-directory | medium | a host with neither preferred directory refused all compute
+
+Phase P01 close review. Resolved: the temporary directory is the last resort when
+every account shares it (world-writable and sticky), and the substitution entry
+now states the real constraint.
+
+### p01-review-fixture-and-foreign-release | medium | the private-anchor fixture leaked its claim, and a foreign release was refused for the wrong reason
+
+Phase P01 close review. Resolved: the fixture releases any claim taken on its
+anchor, the borrower suites use it, and a mandated local search beside a daemon of
+another release is refused as ownership, naming the release replacement as the
+way forward.
+
+### p01-review-latent | low | a forked child and a detached descendant
+
+Phase P01 close review. A forked child now forgets the parent's held claims and
+lineage. A descendant whose intermediate parent has exited cannot prove its loan;
+recorded only, as no caller starts one.
 
 ## Recommendations
 

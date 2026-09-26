@@ -33,7 +33,11 @@ def refuse_gpu_owned(
     load refused deep inside a command alike - so an operator meets one message
     and one list of next actions, and a JSON caller one ``gpu_owned`` envelope.
     """
-    from .._gpu_owner import gpu_owned_message, gpu_owned_remediation
+    from .._gpu_owner import (
+        gpu_owned_message,
+        gpu_owned_remediation,
+        gpu_owner_wire,
+    )
 
     message = gpu_owned_message(ownership)
     remediation = list(gpu_owned_remediation(ownership))
@@ -43,8 +47,7 @@ def refuse_gpu_owned(
             "gpu_owned",
             message,
             1,
-            holder_pid=ownership.holder_pid,
-            gpu_owner_state=ownership.state.value,
+            gpu_owner=gpu_owner_wire(ownership),
             remediation=remediation,
         )
     steps = "\n".join(
@@ -204,12 +207,16 @@ def warn_if_active_torch_not_accelerator(
     _plain("\n".join(lines))
 
 
-def _handle_gpu_error(exc: Exception) -> NoReturn:
+def _handle_gpu_error(
+    exc: Exception, *, command: str = "", json_mode: bool = False
+) -> NoReturn:
     """Print an actionable message for torch / CUDA failures and exit.
 
     A load refused because another process owns the GPU is answered first and
     as itself: nothing about this environment's torch is wrong, and
-    classifying it would import torch to report a working build.
+    classifying it would import torch to report a working build. That refusal
+    is emitted as *command*'s one JSON envelope when *json_mode* is set, since
+    the command that reached a model load may have been asked for JSON.
 
     Otherwise classifies this process's environment so the remediation hint
     matches the actual problem: torch absent or unloadable, a CPU-only wheel, a
@@ -229,7 +236,7 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
     from .._gpu_owner import GpuOwnedError
 
     if isinstance(exc, GpuOwnedError):
-        refuse_gpu_owned(exc.ownership, command="", json_mode=False)
+        refuse_gpu_owned(exc.ownership, command=command, json_mode=json_mode)
 
     from .._gpu import MPS_FALLBACK_MESSAGE
     from ..operator_state._compute import classify_torch, local_compute

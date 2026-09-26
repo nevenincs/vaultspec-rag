@@ -39,6 +39,7 @@ machine's own anchor, which a live service may legitimately be holding.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import threading
@@ -51,6 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from ._process_probe import LineageEntry
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -60,6 +63,7 @@ __all__ = [
     "gpu_owned_message",
     "gpu_owned_remediation",
     "gpu_owner_anchor_path",
+    "gpu_owner_wire",
     "lend_gpu",
     "observe_gpu_owner",
     "reclaim_gpu",
@@ -159,25 +163,50 @@ def gpu_owned_message(ownership: GpuOwnership) -> str:
             )
 
 
-def gpu_owned_remediation(ownership: GpuOwnership) -> tuple[str, ...]:
-    """Return the next actions that can actually resolve *ownership*."""
+def gpu_owned_remediation(
+    ownership: GpuOwnership, *, starting_service: bool = False
+) -> tuple[str, ...]:
+    """Return the next actions that can actually resolve *ownership*.
+
+    What resolves a refusal depends on what was refused. Local compute is
+    resolved by using the service instead, or by borrowing its GPU; a service
+    start is resolved only by the owner going away, so it is never told to
+    change search flags.
+    """
     from ._operator_commands import (
         server_start_command,
         server_status_command,
         server_stop_command,
     )
 
+    holder = _holder_phrase(ownership.holder_pid)
     match ownership.state:
-        case GpuOwnerState.SERVICE_HOLDS_MACHINE:
-            return (
-                "Search and index through the running service.",
-                "If it is from another release, replace it with this one: "
-                f"{server_stop_command()}, then {server_start_command()}.",
-            )
         case GpuOwnerState.UNVERIFIABLE:
             return (
                 "Make sure this account can create and lock "
                 f"{_describe_anchor()}, then retry.",
+            )
+        case GpuOwnerState.SERVICE_HOLDS_MACHINE if starting_service:
+            return (
+                f"Stop that service{holder} with {server_stop_command()}, run "
+                "with the storage directory it was started with.",
+                f"Then start this one: {server_start_command()}.",
+            )
+        case GpuOwnerState.SERVICE_HOLDS_MACHINE:
+            return (
+                "Search and index through the running service rather than "
+                "locally: drop --allow-fallback and unset VAULTSPEC_RAG_LOCAL_ONLY.",
+                "If it is from another release, which this client cannot use, "
+                f"replace it with this one first: {server_stop_command()}, then "
+                f"{server_start_command()}.",
+            )
+        case _ if starting_service:
+            return (
+                f"Stop the process that owns the GPU{holder}, or let it finish. "
+                "A vaultspec-rag service configured with another storage "
+                f"directory stops with {server_stop_command()} run under that "
+                "configuration.",
+                f"Then start this one: {server_start_command()}.",
             )
         case _:
             return (
@@ -190,6 +219,20 @@ def gpu_owned_remediation(ownership: GpuOwnership) -> tuple[str, ...]:
             )
 
 
+def gpu_owner_wire(ownership: GpuOwnership) -> dict[str, object]:
+    """Project one ownership answer into the shape every envelope carries.
+
+    A refused search and a refused start report the same condition, so both
+    carry this one object under the same key, whichever part of their own
+    envelope holds a command's detail.
+    """
+    return {
+        "state": ownership.state.value,
+        "holder_pid": ownership.holder_pid,
+        "detail": ownership.detail,
+    }
+
+
 def _describe_anchor() -> str:
     try:
         return str(gpu_owner_anchor_path())
@@ -197,8 +240,12 @@ def _describe_anchor() -> str:
         return "the machine's GPU owner anchor"
 
 
+@functools.cache
 def gpu_owner_anchor_path() -> Path:
     """Return the machine's GPU owner anchor.
+
+    Cached: the location is a property of the machine, and every model load
+    asks for it, where resolving it can mean a call into the Windows shell.
 
     Raises:
         OSError: The machine's hardware-anchor directory could not be resolved.
@@ -214,6 +261,27 @@ def gpu_owner_anchor_path() -> Path:
 # the first thread's own hold and read as a foreign owner.
 _held: dict[str, int] = {}
 _guard = threading.RLock()
+
+# This process's own lineage, read once. A process's own pid, its ancestors'
+# pids and their start times do not change while it lives, and reading them
+# walks the process table - a quarter of a second on a loaded Windows host - on
+# a path a borrowed GPU takes at every model load.
+_lineage: tuple[LineageEntry, ...] | None = None
+
+
+def _forget_inherited_state() -> None:
+    """Drop what a forked child inherited but does not itself own.
+
+    A child shares its parent's open lock rather than holding one of its own,
+    and its lineage is not its parent's, so both are forgotten and asked again.
+    """
+    global _lineage
+    _held.clear()
+    _lineage = None
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget_inherited_state)
 
 
 def require_gpu_ownership(*, anchor: Path | None = None) -> GpuOwnership:
@@ -316,12 +384,23 @@ def _take(path: Path) -> int | GpuOwnership:
 
 
 def _claim(path: Path) -> GpuOwnership:
-    """Claim *path* for this process, or report who holds it. Guard held."""
+    """Claim *path* for this process, or report who holds it. Guard held.
+
+    The anchor is asked first, so a process lent the GPU is answered by the loan
+    even while the lending service holds its storage lock. The owner record is
+    published the moment the anchor is taken, before the service lock is read,
+    so a contender racing this claim reads a live pid rather than waiting out
+    an empty record.
+    """
     from ._anchor_claim import release_anchor_claim
 
     descriptor = _take(path)
     if isinstance(descriptor, GpuOwnership):
         return descriptor
+    # A holder that cannot write its record - another account's anchor, locked
+    # read-only - still owns; it just cannot be named by the processes it
+    # refuses.
+    _publish(descriptor, {"pid": os.getpid()})
     try:
         service_pid = _service_holding_machine()
     except (ImportError, OSError, RuntimeError) as exc:
@@ -330,12 +409,11 @@ def _claim(path: Path) -> GpuOwnership:
             GpuOwnerState.UNVERIFIABLE, 0, f"the service lock could not be read: {exc}"
         )
     if service_pid is not None:
+        # Named for anyone who read this claim while it stood: the service is
+        # the reason nothing may load, not the process that briefly held it.
+        _publish(descriptor, {"pid": service_pid})
         release_anchor_claim(descriptor, pid_record=True)
         return GpuOwnership(GpuOwnerState.SERVICE_HOLDS_MACHINE, service_pid)
-    # A holder that cannot write its record - another account's anchor, locked
-    # read-only - still owns; it just cannot be named by the processes it
-    # refuses.
-    _publish(descriptor, {"pid": os.getpid()})
     _held[str(path)] = descriptor
     return GpuOwnership(GpuOwnerState.OWNED_HERE, os.getpid())
 
@@ -402,12 +480,15 @@ def _parse_record(record: object) -> tuple[int, int, float]:
 
 def _in_own_lineage(pid: int, start_time: float) -> bool:
     """Whether *pid*, started at *start_time*, is this process or an ancestor."""
-    from ._process_probe import process_lineage
+    global _lineage
+    if _lineage is None:
+        from ._process_probe import process_lineage
 
+        _lineage = process_lineage()
     return any(
         entry.pid == pid
         and abs(entry.start_time - start_time) <= _LOAN_START_TOLERANCE_SECONDS
-        for entry in process_lineage()
+        for entry in _lineage
     )
 
 
@@ -427,7 +508,6 @@ def _service_holding_machine() -> int | None:
         OSError: A service lock could not be read.
         RuntimeError: Pytest containment refused the configured lock path.
     """
-    from ._anchor_claim import AnchorOutcome, observe_existing_anchor
     from ._machine_lock import (
         default_machine_lock_path,
         machine_lock_path,
@@ -443,9 +523,30 @@ def _service_holding_machine() -> int | None:
     default = default_machine_lock_path()
     if _same_path(default, machine_lock_path()):
         return None
-    seen = observe_existing_anchor(default, pid_record=True)
+    return _holder_of_service_lock(default)
+
+
+def _holder_of_service_lock(lock: Path) -> int | None:
+    """Return who holds the storage-scoped service lock at *lock*, if anyone.
+
+    Fails closed: a lock that exists but cannot be opened or locked is not
+    evidence that no service holds it, so that is raised for the caller to
+    report as unverifiable. A lock file that does not exist is a machine where
+    no service ever ran there.
+
+    Raises:
+        ImportError: The platform ships no advisory-lock primitive.
+        OSError: The lock exists but could not be observed.
+    """
+    from ._anchor_claim import AnchorOutcome, observe_existing_anchor
+
+    seen = observe_existing_anchor(lock, pid_record=True, shared=True)
     if seen.outcome is AnchorOutcome.CONTENDED:
         return seen.holder_pid
+    if seen.outcome is AnchorOutcome.UNAVAILABLE:
+        if isinstance(seen.fault, ImportError):
+            raise seen.fault
+        raise OSError(f"{lock} could not be observed: {seen.fault}")
     return None
 
 

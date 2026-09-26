@@ -101,16 +101,7 @@ class BorrowerLeaseMixin:
         return hmac.compare_digest(bound_capability, capability)
 
     def bind_borrower_capability(self, capability: str) -> bool:
-        """Retain a verified borrower only after the registry is safely quiesced.
-
-        A bound borrower is also lent the GPU: this service keeps owning it,
-        and its owner record names the borrower, so the borrower and every
-        process it starts may load models while nothing else can. Lending runs
-        outside ``self._lock``, which is held across model construction. A loan
-        that cannot be recorded is logged and leaves the borrower's own loads
-        refused with an ownership error, which names the actual condition where
-        refusing the bind would report a lease mismatch that did not happen.
-        """
+        """Retain a verified borrower only after the registry is safely quiesced."""
         snapshot = self._quiesce_controller.snapshot()
         if (
             snapshot.state is not QuiesceState.QUIESCED
@@ -122,23 +113,33 @@ class BorrowerLeaseMixin:
             bound_capability = self._borrower_capability
             if bound_capability is None:
                 self._borrower_capability = capability
-            elif not hmac.compare_digest(bound_capability, capability):
-                return False
-        self._lend_gpu_to_borrower(capability)
-        return True
+                return True
+            return hmac.compare_digest(bound_capability, capability)
 
     @staticmethod
-    def _lend_gpu_to_borrower(capability: str) -> None:
-        """Lend the GPU to the process holding *capability*'s lease."""
-        from ._gpu_owner import lend_gpu
+    def lend_gpu_to_borrower(capability: str) -> bool:
+        """Lend this service's GPU to the process holding *capability*'s lease.
+
+        The service owns the GPU for as long as it runs, but it takes the
+        anchor at its first model load, so a service whose models never loaded
+        claims it here: lending is what lets the borrower and every process it
+        starts load models while nothing else can, and it cannot be skipped
+        because the service happens to hold nothing yet. The claim is
+        torch-free. Returns whether the loan was recorded; a borrower whose loan
+        was not must not be told the GPU is its to use.
+        """
+        from ._gpu_owner import GpuOwnedError, lend_gpu, require_gpu_ownership
         from .gpu_borrow_lease import borrower_lease_holder_pid
 
         borrower_pid = borrower_lease_holder_pid(capability)
-        if borrower_pid is None or not lend_gpu(borrower_pid):
-            logger.warning(
-                "the GPU could not be lent to the bound borrower; its model "
-                "loads will be refused"
-            )
+        if borrower_pid is None:
+            return False
+        try:
+            require_gpu_ownership()
+        except GpuOwnedError as exc:
+            logger.warning("the GPU cannot be lent to the bound borrower: %s", exc)
+            return False
+        return lend_gpu(borrower_pid)
 
     def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
         """Clear a borrower binding only for its matching achieved resume."""

@@ -130,9 +130,11 @@ _ALLOWED: dict[str, tuple[int, str]] = {
     "test_hardware_anchor.py": (
         1,
         "forces the machine anchor directory to be unresolvable, to prove the "
-        "load window then degrades rather than refusing every load; no real "
-        "host can be made to lack it, because the known-folder API always "
-        "answers on Windows and /dev/shm or /Users/Shared always exist",
+        "load window then degrades rather than refusing every load. A host "
+        "with no directory every account shares does exist, but it cannot be "
+        "staged on a runner: the suite cannot remove /dev/shm, /Users/Shared "
+        "and the shared temporary directory, nor make the Windows known-folder "
+        "API fail",
     ),
     "test_env_holders.py": (
         2,

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 import pytest
 from starlette.testclient import TestClient
 
-from .. import _gpu_owner
 from .._anchor_claim import read_anchor_record
 from .._process_probe import pid_start_time, process_lineage
 from ..config._settings import reset_config
@@ -44,7 +43,9 @@ from ._child_signal import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-pytestmark = [pytest.mark.unit]
+# Borrowing pauses a served registry, which lends its GPU through the owner
+# anchor; every test here gets a private one, so none claims the machine's.
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("private_gpu_owner_anchor")]
 
 _TOKEN = "gpu-borrow-lease-test-token"
 _HEADERS = {"Authorization": f"Bearer {_TOKEN}"}
@@ -774,14 +775,17 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
 def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
     tmp_path: Path, private_gpu_owner_anchor: Path
 ) -> None:
-    """Binding lends the service's GPU to the borrower; resume takes it back."""
+    """Binding lends the service's GPU to the borrower; resume takes it back.
+
+    The served registry has loaded no model, so it does not own the GPU when
+    the borrower arrives: the bind itself has to claim it before it can lend.
+    """
     anchor = private_gpu_owner_anchor
     with (
         _isolated_borrower_anchor(tmp_path),
         _borrower_process() as borrower,
         _borrower_routes() as routes,
     ):
-        _gpu_owner.require_gpu_ownership()
         _assert_pause_success(
             routes.client.post(
                 "/pause",
@@ -815,6 +819,53 @@ def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
     assert reclaimed == {"pid": os.getpid()}
     # A live lease names its holder only to the capability that holds it.
     assert stranger is None
+
+
+def test_a_borrower_is_refused_when_the_gpu_cannot_be_lent(
+    tmp_path: Path, private_gpu_owner_anchor: Path
+) -> None:
+    """A pause whose loan was not recorded must not tell a borrower to proceed.
+
+    Another process owns the GPU, so the service can neither claim nor lend
+    it. Mutation: ignoring the loan's result in the pause route reports an
+    achieved borrower pause here.
+    """
+    owner_script = (
+        "import sys, time; from pathlib import Path; "
+        "from vaultspec_rag._gpu_owner import require_gpu_ownership; "
+        "require_gpu_ownership(anchor=Path(sys.argv[1])); "
+        "Path(sys.argv[2]).write_text('1'); time.sleep(120)"
+    )
+    ready = tmp_path / "owner-ready"
+    owner = subprocess.Popen(
+        [sys.executable, "-c", owner_script, str(private_gpu_owner_anchor), str(ready)]
+    )
+    try:
+        deadline = time.monotonic() + CHILD_PROCESS_TIMEOUT_SECONDS
+        while not ready.exists():
+            assert owner.poll() is None, "the owning process exited early"
+            assert time.monotonic() < deadline, "the owning process never started"
+            time.sleep(0.05)
+        with (
+            _isolated_borrower_anchor(tmp_path),
+            _borrower_process() as borrower,
+            _borrower_routes() as routes,
+        ):
+            refused = routes.client.post(
+                "/pause",
+                headers=_HEADERS,
+                json={"borrower_capability": borrower.capability},
+            )
+            routes.client.post(
+                "/resume",
+                headers=_HEADERS,
+                json={"borrower_capability": borrower.capability},
+            )
+    finally:
+        owner.kill()
+        owner.wait(timeout=CHILD_PROCESS_TIMEOUT_SECONDS)
+
+    _assert_borrower_refusal(refused, "borrower_gpu_not_lendable", state="quiesced")
 
 
 def test_valid_capability_without_a_live_lease_is_refused(tmp_path: Path) -> None:

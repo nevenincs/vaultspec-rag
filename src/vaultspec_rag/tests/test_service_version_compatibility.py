@@ -539,12 +539,14 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
 def test_a_local_mandate_does_not_run_beside_a_foreign_release(
     health_service: _HealthServiceState,
 ) -> None:
-    """A foreign daemon owns the GPU; --allow-fallback must not load beside it.
+    """A foreign daemon holds this machine; --allow-fallback must not load beside it.
 
     The router used to read the mandate as permission to leave the foreign
     daemon alone and run in-process, which put a second model stack on a card
-    the daemon already held. Mutation: restoring the mandate exemption lets the
-    search reach the local path and fails the error-code assertion here.
+    the daemon already held. What blocks the local run is that the daemon holds
+    the machine, not its release, so the refusal names ownership. Mutation:
+    restoring the mandate exemption lets the search reach the local path and
+    fails the error-code assertion here.
     """
     _record_foreign_daemon(health_service.port)
 
@@ -553,8 +555,9 @@ def test_a_local_mandate_does_not_run_beside_a_foreign_release(
     assert result.exit_code == 1
     envelope = json.loads(result.stdout)
     assert envelope["ok"] is False
-    assert envelope["error"] == VERSION_ERROR_MISMATCH
-    assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
+    assert envelope["error"] == "gpu_owned"
+    assert envelope["gpu_owner"]["state"] == "service_holds_machine"
+    assert any("another release" in step for step in envelope["remediation"])
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")

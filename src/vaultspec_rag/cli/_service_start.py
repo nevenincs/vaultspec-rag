@@ -687,6 +687,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
     from .._gpu_owner import (
         gpu_owned_message,
         gpu_owned_remediation,
+        gpu_owner_wire,
         observe_gpu_owner,
     )
 
@@ -697,9 +698,8 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             error="gpu_owned",
             message="Service start failed",
             human_lines=(gpu_owned_message(ownership),),
-            next_actions=gpu_owned_remediation(ownership),
-            holder_pid=ownership.holder_pid,
-            gpu_owner_state=ownership.state.value,
+            next_actions=gpu_owned_remediation(ownership, starting_service=True),
+            gpu_owner=gpu_owner_wire(ownership),
         )
 
 

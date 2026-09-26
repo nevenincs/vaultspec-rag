@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:a80077b3a1c624d07bc37172e5ec6d869a7972f3a32ec1c1ee19f4f7ca6b79d6'
+body_hash: 'sha256:8669cf3d804603805d12db224a80e13cd8958568be30c6e7d2e008a7c950337d'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -137,6 +137,23 @@ related:
 - `S09` `verify:` `pytest test_env_holders test_tool_torch_repair test_process_probe_* test_process test_process_lineage test_cli_server_stop test_service_stop_port test_readiness test_readiness_holders` -> `pass`
 - `S09` `verify:` `guard mutations (launch chain not excluded, working-directory ancestor dropped, pairing on parentage alone, every holder unrecognised, uncounted uninspectable note) fail then pass` -> `pass`
 - `S09` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/_gpu_owner.py`
+- `S05` `M` `src/vaultspec_rag/_anchor_claim.py`
+- `S05` `M` `src/vaultspec_rag/_service_borrower.py`
+- `S05` `M` `src/vaultspec_rag/server/_routes_quiesce.py`
+- `S05` `M` `src/vaultspec_rag/cli/_index.py`
+- `S05` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S05` `M` `tools/citation_gate.py`
+- `S05` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_cli.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_session_lock.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_citation_gate.py`
+- `S05` `verify:` `pytest -m unit P01 revision set (394 passed; remaining failures outside P01)` -> `pass`
+- `S05` `verify:` `revision guard mutations (8) fail then pass` -> `pass`
 
 ## Notes
 
@@ -145,3 +162,5 @@ related:
 - `S04` P01.S03 left `test_process_probe_source_structure` failing: `permits_compute` joined the allowed membership-test shape group only here
 - `S04` `test_substitution_discipline` still fails only on `test_storage_maintenance_tick.py` from base commit d18045e8, outside this plan
 - `S07` uv 0.12.x verified in an isolated `UV_TOOL_DIR` sandbox: an == pin makes uv tool upgrade a no-op and uv names uv tool install pkg@latest; `pkg[extras]@latest` with --force, --python and --with installs and records the extras unpinned
+- `S05` P01 phase-close review revision: borrow-lane loan, lent-path cost, citation gate, JSON refusal, envelope shape, start remediation, legacy detection, anchor directory, fixture, foreign-release reason
+- `S05` `test_substitution_discipline` fails on `test_storage_maintenance_tick.py` (base commit d18045e8) and on `test_readiness_holders.py` (P02.S10 in progress), both outside this revision

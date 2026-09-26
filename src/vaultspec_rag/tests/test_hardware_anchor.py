@@ -150,9 +150,9 @@ def test_an_unshared_anchor_this_process_cannot_write_is_unavailable(
 def test_an_unresolvable_load_window_degrades_rather_than_refusing_every_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Substituted because no real host can be made to lack its machine anchor
-    # directory: the known-folder API always answers on Windows, and /dev/shm
-    # or /Users/Shared always exist where this suite runs.
+    # Substituted because a host with no directory every account shares cannot
+    # be staged here: the suite can neither remove the machine's shared
+    # directories nor make the Windows known-folder API fail.
     def unresolvable() -> Path:
         raise OSError("no machine-wide anchor directory")
 

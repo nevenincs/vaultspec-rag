@@ -97,6 +97,12 @@ ready_path = Path(sys.argv[2])
 stop_path = Path(sys.argv[3])
 trace_path = Path(sys.argv[4])
 reject_first_pause = sys.argv[5] == "1"
+# The machine's own GPU anchor may be held by a live service, so the registry
+# served here lends from a private one beside its trace; only the location of
+# the anchor changes, the claim and the loan are the production ones.
+from vaultspec_rag import _gpu_owner
+
+_gpu_owner.gpu_owner_anchor_path = lambda: trace_path.with_name("gpu-owner.lock")
 token = "captured-target-real-route-token"
 lease, holder = acquire_machine_lock_lease()
 assert lease is not None, holder

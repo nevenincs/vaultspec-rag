@@ -80,6 +80,22 @@ ready, stop = (Path(arg) for arg in sys.argv[1:3])
     + _WAIT_FOR_STOP
 )
 
+# A child that holds a storage-scoped service lock at the path given, with its
+# owner record, as a service of any release does.
+_LOCK_HOLDER = (
+    """
+import os, sys, time
+from pathlib import Path
+from vaultspec_rag._anchor_claim import claim_anchor, record_claim_owner
+
+lock, ready, stop = (Path(arg) for arg in sys.argv[1:4])
+claim = claim_anchor(lock, pid_record=True, create_parent=True)
+assert claim.descriptor is not None, claim
+record_claim_owner(claim.descriptor)
+"""
+    + _WAIT_FOR_STOP
+)
+
 # A child that holds this session's storage-scoped service lock, as a service
 # does between claiming its machine and loading its first model.
 _SERVICE = (
@@ -285,13 +301,22 @@ def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
         result = CliRunner().invoke(
             app, ["server", "start", "--json", "--port", str(free_port)]
         )
+        human = CliRunner().invoke(app, ["server", "start", "--port", str(free_port)])
 
     assert result.exit_code == 1, result.output
     envelope = json.loads(result.stdout)
     assert envelope["ok"] is False
     assert envelope["error"] == "gpu_owned"
-    assert envelope["data"]["holder_pid"] == owner_pid
-    assert envelope["data"]["gpu_owner_state"] == GpuOwnerState.OWNED_ELSEWHERE
+    assert envelope["data"]["gpu_owner"] == {
+        "state": GpuOwnerState.OWNED_ELSEWHERE,
+        "holder_pid": owner_pid,
+        "detail": "",
+    }
+    # A start is resolved by the owner going away, never by search flags.
+    # Catches the start path reusing the local-compute remediation.
+    assert human.exit_code == 1
+    assert "Then start this one" in human.output
+    assert "--allow-fallback" not in human.output
 
 
 def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
@@ -326,7 +351,12 @@ def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
     assert envelope["ok"] is False
     assert envelope["command"] == "search"
     assert envelope["error"] == "gpu_owned"
-    assert envelope["holder_pid"] == owner_pid
+    # The same object a refused start carries, so one condition has one shape.
+    assert envelope["gpu_owner"] == {
+        "state": GpuOwnerState.OWNED_ELSEWHERE,
+        "holder_pid": owner_pid,
+        "detail": "",
+    }
     assert any("--allow-fallback" in step for step in envelope["remediation"])
 
 
@@ -348,6 +378,54 @@ def test_a_load_refused_inside_a_command_renders_the_ownership_refusal(
     # Catches the ownership branch being dropped: the torch classifier then
     # prints the refusal as a bare error line, with no next actions to take.
     assert "Next actions:" in printed
+
+
+def test_a_load_refused_inside_a_json_command_emits_one_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import typer
+
+    from .._gpu_owner import GpuOwnership
+    from ..cli._gpu_errors import _handle_gpu_error
+
+    refusal = GpuOwnedError(GpuOwnership(GpuOwnerState.OWNED_ELSEWHERE, 4242))
+    with pytest.raises(typer.Exit):
+        _handle_gpu_error(refusal, command="index", json_mode=True)
+
+    # Catches the handler ignoring the caller's JSON mode: a broker parsing
+    # stdout would get prose and no document.
+    envelope = json.loads(capsys.readouterr().out)
+    assert envelope["command"] == "index"
+    assert envelope["error"] == "gpu_owned"
+    assert envelope["gpu_owner"]["holder_pid"] == 4242
+
+
+def test_a_held_default_location_service_lock_is_seen_as_a_service(
+    tmp_path: Path,
+) -> None:
+    from .._gpu_owner import _holder_of_service_lock
+
+    lock = tmp_path / "service.lock"
+    with _child(_LOCK_HOLDER, tmp_path, str(lock)) as holder_pid:
+        # Catches the default-location check being dropped or reading a held
+        # lock as free: a service of an earlier release would then be invisible.
+        assert _holder_of_service_lock(lock) == holder_pid
+    assert _holder_of_service_lock(lock) is None
+    assert _holder_of_service_lock(tmp_path / "never-created.lock") is None
+
+
+def test_an_unobservable_service_lock_fails_closed(tmp_path: Path) -> None:
+    from .._gpu_owner import _holder_of_service_lock
+
+    # Something exists where the lock should be and cannot be opened as one -
+    # a directory refuses on every platform.
+    unobservable = tmp_path / "service.lock"
+    unobservable.mkdir()
+
+    # Catches an unobservable lock being read as "no service": that is the
+    # fail-open answer on the one path that sees services of earlier releases.
+    with pytest.raises(OSError, match="could not be observed"):
+        _holder_of_service_lock(unobservable)
 
 
 def test_importing_the_ownership_module_leaves_torch_unimported() -> None:

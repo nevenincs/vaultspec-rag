@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:8bc76fc30853c597495d91de4a39e2028d2541c2f0938c9f424465a25bce0f01'
+body_hash: 'sha256:d78e110594f768acf3824ffc6d30950355aa821d15470257cb0bc47ca3c8d55f'
 related:
   - "[[2026-09-26-gpu-single-owner-audit]]"
   - "[[2026-07-24-service-quiesce-adr]]"
@@ -85,11 +85,12 @@ every path and every release.
 ## Implementation
 
 A torch-free ownership module owns one anchor file in a machine-global directory
-resolved without configuration, `TEMP` or the home directory: the ProgramData
-directory on Windows and `/tmp` elsewhere. The load-window anchor moves beside it.
-Anchors there are created readable and lockable by every account, and a process
-that cannot open one for writing locks it read-only, at the cost of not publishing
-its pid.
+resolved without configuration or the home directory: the ProgramData known folder
+on Windows; elsewhere `/dev/shm` or `/Users/Shared`, which age-based temporary
+cleaners leave alone, then the temporary directory only when every account shares
+it. The load-window anchor moves beside it. Anchors there are created readable and
+lockable by every account, and a process that cannot open one for writing locks it
+read-only, at the cost of not publishing its pid.
 
 `load_accelerator` asks the module for ownership before admission, once per
 process. The first ask claims the anchor and retains it until the process exits,

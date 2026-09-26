@@ -665,7 +665,7 @@ def _try_in_process_search(
         _handle_vaultstore_locked_error(exc, json_mode)
         return []
     except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e)
+        _handle_gpu_error(e, command="search", json_mode=request.json_mode)
         return []
 
 
@@ -1369,9 +1369,12 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         if service.reachable and not service.version.is_compatible:
             # A discovered daemon of another release cannot answer this search
             # faithfully - it drops filter fields it does not know rather than
-            # rejecting them - and a local mandate does not change that it owns
-            # this machine's GPU: running in-process beside it would load a
-            # second model stack. Replacing it is the only way forward.
+            # rejecting them - so without a mandate the release is the refusal.
+            # With one, the release is no longer what blocks: that daemon holds
+            # this machine whatever it speaks, and running in-process beside it
+            # would load a second model stack.
+            if mandate:
+                _refuse_beside_a_service_of_another_release(json_mode)
             _display_service_version_error(
                 service.version,
                 command="search",
@@ -1478,6 +1481,22 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             from ..registry import get_registry
 
             get_registry().close_project(target)
+
+
+def _refuse_beside_a_service_of_another_release(json_mode: bool) -> NoReturn:
+    """Refuse a mandated local search beside a running daemon of another release.
+
+    The ownership answer names the holder when it can see one. A daemon it
+    cannot see - one configured with another storage directory, from a release
+    that predates the GPU anchor - still answered on its port, so it is reported
+    as the service holding this machine rather than as a free GPU.
+    """
+    from .._gpu_owner import GpuOwnership, GpuOwnerState, observe_gpu_owner
+
+    ownership = observe_gpu_owner()
+    if ownership.state.permits_compute:
+        ownership = GpuOwnership(GpuOwnerState.SERVICE_HOLDS_MACHINE, 0)
+    refuse_gpu_owned(ownership, command="search", json_mode=json_mode)
 
 
 def _validate_search_extra_args(ctx: typer.Context) -> None:
