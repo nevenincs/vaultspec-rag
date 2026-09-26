@@ -230,6 +230,23 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     _pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
+@pytest.fixture
+def private_gpu_owner_anchor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point every GPU ownership question this test asks at a private anchor.
+
+    The machine's own anchor may be held by a live service, and a test must
+    never contend for it: a test driving a start or a model load past the
+    ownership check would otherwise be refused by the real owner or, on a free
+    machine, take the real anchor itself. Only where the anchor lives is
+    replaced; claiming, lending and refusing run unchanged.
+    """
+    from .. import _gpu_owner
+
+    anchor = tmp_path / "gpu-owner.lock"
+    monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
+    return anchor
+
+
 class RagComponents(TypedDict):
     """Typed bundle returned by :func:`_index_corpus` and yielded by RAG fixtures."""
 

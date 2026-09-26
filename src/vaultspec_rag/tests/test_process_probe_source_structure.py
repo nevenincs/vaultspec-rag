@@ -384,6 +384,7 @@ class TestNoStructurallyIdenticalFunctions:
 
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
         (
+            "_gpu_owner.py:permits_compute",
             "indexer/_publication_proof.py:is_open",
             "job_models.py:is_live_attempt",
             "job_models.py:is_retryable",

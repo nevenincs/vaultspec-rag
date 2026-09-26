@@ -37,6 +37,7 @@ __all__ = [
     "GPUBorrowLease",
     "acquire_gpu_borrow_lease",
     "acquire_gpu_borrow_lease_for_captured_authority",
+    "borrower_lease_holder_pid",
     "borrower_lease_status",
     "gpu_borrow_lease_path",
     "is_borrower_capability",
@@ -284,6 +285,23 @@ def borrower_lease_status(capability: str) -> BorrowerLeaseStatus:
     if recorded is None or not hmac.compare_digest(recorded, capability):
         return BorrowerLeaseStatus.CAPABILITY_INVALID
     return BorrowerLeaseStatus.HELD
+
+
+def borrower_lease_holder_pid(capability: str) -> int | None:
+    """Return the pid holding the lease *capability* names, while it holds it.
+
+    The service lends the GPU to exactly this process tree, so the pid is read
+    only after the lease is verified live and matching; a record that fails
+    either check names nobody. The pid is for that loan alone and is never
+    projected into a snapshot, status, log or error.
+    """
+    if borrower_lease_status(capability) is not BorrowerLeaseStatus.HELD:
+        return None
+    match read_anchor_record(gpu_borrow_lease_path()):
+        case {"pid": int() as pid} if type(pid) is int and pid > 0:
+            return pid
+        case _:
+            return None
 
 
 def _new_capability() -> str:

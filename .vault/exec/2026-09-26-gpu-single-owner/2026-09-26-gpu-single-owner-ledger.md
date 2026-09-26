@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:5ef44e1bb8ae968d468ab97bbf387b4197afc3b19e1681a86a892f6e04026ba6'
+body_hash: 'sha256:03b8447d133e145bef631bb369a731b94136d5fb0e37fdaf36af2c09f69b6566'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -63,8 +63,28 @@ related:
 - `S03` `verify:` `pytest -m unit test_gpu_owner test_torch_load_centralized test_lifespan_machine_lock test_machine_discovery gpu_admission` -> `pass`
 - `S03` `verify:` `guard mutations (stranger admitted, loan start time ignored, service lock ignored, unopenable anchor read free, load_accelerator unchecked) fail then pass` -> `pass`
 - `S03` `by:` `orchestrator`
+- `S04` `M` `src/vaultspec_rag/_service_borrower.py`
+- `S04` `M` `src/vaultspec_rag/_service_residency.py`
+- `S04` `M` `src/vaultspec_rag/gpu_borrow_lease.py`
+- `S04` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S04` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S04` `verify:` `ruff check` -> `pass`
+- `S04` `verify:` `ruff format --check` -> `pass`
+- `S04` `verify:` `ty check` -> `pass`
+- `S04` `verify:` `basedpyright` -> `pass`
+- `S04` `verify:` `pytest -m unit test_gpu_owner test_gpu_borrow_lease test_cli_qdrant test_torch_load_centralized test_process_probe_source_structure test_cli_server_start test_service_quiesce_controller test_job_manager_quiesce test_lifespan_machine_lock` -> `pass`
+- `S04` `verify:` `guard mutations (bind without lend, resume without reclaim, start ignoring the owner) fail then pass` -> `pass`
+- `S04` `by:` `orchestrator`
 
 ## Notes
 
 - `S02` `test_substitution_discipline` fails on the base branch for `test_storage_maintenance_tick.py` (substitution added by d18045e8, outside this plan); left untouched
 - `S06` `test_process_probe_source_structure::test_no_large_duplicate_function_bodies` fails on an uncommitted `_gpu_owner.py:permits_compute` body from the parallel phase, not on this Step's paths
+- `S04` P01.S03 left `test_process_probe_source_structure` failing: `permits_compute` joined the allowed membership-test shape group only here
+- `S04` `test_substitution_discipline` still fails only on `test_storage_maintenance_tick.py` from base commit d18045e8, outside this plan

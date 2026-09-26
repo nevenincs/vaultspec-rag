@@ -17,12 +17,16 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 import pytest
 from starlette.testclient import TestClient
 
+from .. import _gpu_owner
+from .._anchor_claim import read_anchor_record
+from .._process_probe import pid_start_time, process_lineage
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..gpu_borrow_lease import (
     BorrowerLeaseStatus,
     _read_recorded_capability,
     acquire_gpu_borrow_lease,
+    borrower_lease_holder_pid,
     borrower_lease_status,
     gpu_borrow_lease_path,
     release_gpu_borrow_lease,
@@ -765,6 +769,52 @@ def test_lost_bound_lease_auto_resumes_but_manual_quiescence_stays_held(
             asyncio.run(_borrower_lease_recovery_tick(routes.registry))
 
         assert routes.registry.quiesce_snapshot().state.value == "running"
+
+
+def test_a_bound_borrower_is_lent_the_gpu_until_its_resume(
+    tmp_path: Path, private_gpu_owner_anchor: Path
+) -> None:
+    """Binding lends the service's GPU to the borrower; resume takes it back."""
+    anchor = private_gpu_owner_anchor
+    with (
+        _isolated_borrower_anchor(tmp_path),
+        _borrower_process() as borrower,
+        _borrower_routes() as routes,
+    ):
+        _gpu_owner.require_gpu_ownership()
+        _assert_pause_success(
+            routes.client.post(
+                "/pause",
+                headers=_HEADERS,
+                json={"borrower_capability": borrower.capability},
+            )
+        )
+        lent = read_anchor_record(anchor)
+        holder = borrower_lease_holder_pid(borrower.capability)
+        assert holder is not None
+        holder_lineage = {entry.pid for entry in process_lineage(holder)}
+        holder_start = pid_start_time(holder)
+        stranger = borrower_lease_holder_pid(_unrelated_capability())
+
+        _assert_resume_success(
+            routes.client.post(
+                "/resume",
+                headers=_HEADERS,
+                json={"borrower_capability": borrower.capability},
+            )
+        )
+        reclaimed = read_anchor_record(anchor)
+
+    # The lease names the borrower child itself (or, on Windows, the
+    # interpreter its venv launcher started).
+    assert borrower.process.pid in holder_lineage
+    # Catches the bind no longer lending: the borrower and the test daemons
+    # it starts would then be refused the GPU they were just granted.
+    assert lent == {"pid": os.getpid(), "lent_to": holder, "lent_start": holder_start}
+    # Catches resume leaving the loan open while the service reloads models.
+    assert reclaimed == {"pid": os.getpid()}
+    # A live lease names its holder only to the capability that holds it.
+    assert stranger is None
 
 
 def test_valid_capability_without_a_live_lease_is_refused(tmp_path: Path) -> None:

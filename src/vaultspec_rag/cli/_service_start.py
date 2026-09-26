@@ -44,6 +44,7 @@ from .._operator_commands import (
     server_jobs_command,
     server_start_command,
     server_status_command,
+    server_stop_command,
 )
 from .._process_probe import pid_alive
 from ..config._settings import get_config
@@ -672,10 +673,33 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             ),
             next_actions=(
                 server_status_command(),
-                "vaultspec-rag server stop",
+                server_stop_command(),
             ),
             holder_pid=machine_holder,
             **({"holder_phase": "warming"} if warming else {}),
+        )
+
+    # The service lock above is scoped to a storage directory, so a service
+    # configured with another one - or a local run that already loaded models -
+    # is invisible to it. The GPU owner anchor is machine-wide; the daemon
+    # enforces it at its first model load, and asking here refuses in seconds
+    # rather than after Qdrant has been brought up.
+    from .._gpu_owner import (
+        gpu_owned_message,
+        gpu_owned_remediation,
+        observe_gpu_owner,
+    )
+
+    ownership = observe_gpu_owner()
+    if not ownership.state.permits_compute:
+        raise _fail_start(
+            json_mode,
+            error="gpu_owned",
+            message="Service start failed",
+            human_lines=(gpu_owned_message(ownership),),
+            next_actions=gpu_owned_remediation(ownership),
+            holder_pid=ownership.holder_pid,
+            gpu_owner_state=ownership.state.value,
         )
 
 

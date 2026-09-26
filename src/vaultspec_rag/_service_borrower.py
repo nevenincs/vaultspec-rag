@@ -101,7 +101,16 @@ class BorrowerLeaseMixin:
         return hmac.compare_digest(bound_capability, capability)
 
     def bind_borrower_capability(self, capability: str) -> bool:
-        """Retain a verified borrower only after the registry is safely quiesced."""
+        """Retain a verified borrower only after the registry is safely quiesced.
+
+        A bound borrower is also lent the GPU: this service keeps owning it,
+        and its owner record names the borrower, so the borrower and every
+        process it starts may load models while nothing else can. Lending runs
+        outside ``self._lock``, which is held across model construction. A loan
+        that cannot be recorded is logged and leaves the borrower's own loads
+        refused with an ownership error, which names the actual condition where
+        refusing the bind would report a lease mismatch that did not happen.
+        """
         snapshot = self._quiesce_controller.snapshot()
         if (
             snapshot.state is not QuiesceState.QUIESCED
@@ -113,8 +122,23 @@ class BorrowerLeaseMixin:
             bound_capability = self._borrower_capability
             if bound_capability is None:
                 self._borrower_capability = capability
-                return True
-            return hmac.compare_digest(bound_capability, capability)
+            elif not hmac.compare_digest(bound_capability, capability):
+                return False
+        self._lend_gpu_to_borrower(capability)
+        return True
+
+    @staticmethod
+    def _lend_gpu_to_borrower(capability: str) -> None:
+        """Lend the GPU to the process holding *capability*'s lease."""
+        from ._gpu_owner import lend_gpu
+        from .gpu_borrow_lease import borrower_lease_holder_pid
+
+        borrower_pid = borrower_lease_holder_pid(capability)
+        if borrower_pid is None or not lend_gpu(borrower_pid):
+            logger.warning(
+                "the GPU could not be lent to the bound borrower; its model "
+                "loads will be refused"
+            )
 
     def clear_borrower_capability_after_resume(self, capability: str | None) -> None:
         """Clear a borrower binding only for its matching achieved resume."""

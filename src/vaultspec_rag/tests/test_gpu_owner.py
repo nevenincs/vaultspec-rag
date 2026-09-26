@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -19,7 +20,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .. import _gpu_owner
 from .._anchor_claim import AnchorOutcome, observe_existing_anchor
 from .._gpu_owner import (
     GpuOwnedError,
@@ -257,18 +257,41 @@ def test_observing_a_free_gpu_does_not_take_it(anchor: Path) -> None:
 
 
 def test_load_accelerator_asks_for_ownership_before_anything_else(
-    anchor: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    private_gpu_owner_anchor: Path, tmp_path: Path
 ) -> None:
-    # The machine's own anchor may be held by a live service, so the check
-    # load_accelerator makes is pointed at this test's private one.
-    monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
     from .._gpu import load_accelerator
 
-    with _owner(tmp_path, anchor), pytest.raises(GpuOwnedError):
+    with _owner(tmp_path, private_gpu_owner_anchor), pytest.raises(GpuOwnedError):
         # Catches load_accelerator losing its ownership check: it would then
         # import torch and reach admission, returning an accelerator or a
         # contention refusal instead of this one.
         load_accelerator()
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs")
+def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
+    private_gpu_owner_anchor: Path, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    from ..cli import app
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+    with _owner(tmp_path, private_gpu_owner_anchor) as owner_pid:
+        # Catches the start pre-flight losing its ownership check: the start
+        # would then go on to bring Qdrant up and fail only at model load.
+        result = CliRunner().invoke(
+            app, ["server", "start", "--json", "--port", str(free_port)]
+        )
+
+    assert result.exit_code == 1, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == "gpu_owned"
+    assert envelope["data"]["holder_pid"] == owner_pid
+    assert envelope["data"]["gpu_owner_state"] == GpuOwnerState.OWNED_ELSEWHERE
 
 
 def test_importing_the_ownership_module_leaves_torch_unimported() -> None:

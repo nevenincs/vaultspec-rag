@@ -127,13 +127,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "diagnostic and load paths share is only observable across a run of "
         "them and no real device yields one on demand",
     ),
-    "test_gpu_owner.py": (
-        1,
-        "points the ownership check load_accelerator makes at the test's "
-        "private anchor, because the machine's own anchor may be held by a "
-        "live service and a test must never contend for it; the claim, loan "
-        "and refusal behaviour itself is driven by real owner processes",
-    ),
     "test_hardware_anchor.py": (
         1,
         "forces the machine anchor directory to be unresolvable, to prove the "
@@ -227,7 +220,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "replaced",
     ),
     "conftest.py": (
-        1,
+        2,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -235,7 +228,11 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "always does, and the suite can neither add nor remove the inference "
         "stack in the shared interpreter, so each lane would otherwise reach "
         "only one side of every branch. Only the role reading is substituted; "
-        "every consumer of it runs unchanged",
+        "every consumer of it runs unchanged. Separately, the GPU owner anchor "
+        "is pointed at a private file for tests that drive a start or a model "
+        "load past the ownership check, because the machine's own anchor may be "
+        "held by a live service and a test must never contend for it; only its "
+        "location is substituted",
     ),
     "test_server.py": (
         3,
