@@ -22,9 +22,11 @@ import logging
 from contextvars import Context
 from typing import TYPE_CHECKING, cast
 
+from vaultspec_core.core.diagnosis.collectors import observed_mcp_mode
 from vaultspec_core.core.enums import (
     InstallMode,
 )
+from vaultspec_core.core.install_mode import infer_upgrade_mode
 from vaultspec_core.core.mcps import (
     mcp_status,
     mcp_sync,
@@ -34,12 +36,12 @@ from vaultspec_core.core.workspace_mode import (
     PackageDeclaration,
     ResolvedMode,
     read_package_declaration,
-    resolve_install_mode,
     resolve_install_mode_with_provenance,
     write_package_declaration,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from vaultspec_core.core.types import (
@@ -96,22 +98,25 @@ def infer_rag_upgrade_mode(
 ) -> ResolvedMode:
     """Infer rag's provisioning mode for an ``install --upgrade``.
 
-    Mirrors core's ``_infer_upgrade_mode`` precedence exactly, substituting
-    rag's own deployed artifact for core's: an explicit ``--mode`` flag wins
-    (and is validated for impossible combinations), an already-persisted rag
+    Delegates the actual precedence to core's
+    :func:`~vaultspec_core.core.install_mode.infer_upgrade_mode` with
+    ``package="vaultspec-rag"``, so an explicit ``--mode`` flag wins (and is
+    validated for impossible combinations), an already-persisted rag
     declaration wins next so a second upgrade is idempotent, and a legacy
-    workspace with neither has its mode inferred from its own deployed state.
-    Rag has no pre-commit hook to read, so its deployed-state signal is the
-    observed shape of its own ``.mcp.json`` server entry
-    (:func:`~vaultspec_core.core.diagnosis.collectors.observed_mcp_mode` for
-    ``vaultspec-rag``): dependency mode only when that launch is
-    ``uv run``-shaped *and* the target's ``pyproject.toml`` lists
-    ``vaultspec-rag``; tool mode in every other case.
+    workspace with neither has its mode inferred by core's shared rule:
+    ``pyproject.toml`` placement detection carries only when it agrees with
+    how the workspace actually launches rag today.
 
-    Reading the observed shape through core's shared collector keeps rag's
-    migration and any diagnosis in agreement on what a deployed launch shape
-    means: everything routes through one core comparator, so rag and core
-    cannot drift on what a deployed launch shape means.
+    Rag has no pre-commit hook to read, so the deployment evidence core's
+    function asks for is the observed shape of rag's own ``.mcp.json`` server
+    entry (:func:`~vaultspec_core.core.diagnosis.collectors.observed_mcp_mode`
+    for ``vaultspec-rag``): dependency mode only when that launch is actually
+    ``uv run``-shaped, tool mode - including a placement-detected dependency
+    or dev group whose deployed entry is still ``uvx``-shaped - in every
+    other case. Reading the observed shape through core's shared collector
+    keeps rag's migration and any diagnosis in agreement on what a deployed
+    launch shape means: everything routes through one core comparator, so rag
+    and core cannot drift on it.
 
     Args:
         target: Workspace root directory.
@@ -136,17 +141,26 @@ def infer_rag_upgrade_mode(
             target, explicit=None, package=RAG_DISTRIBUTION_NAME
         )
 
-    detected = resolve_install_mode(
-        target, explicit=None, package=RAG_DISTRIBUTION_NAME
+    # Component-skipped installs trust package-placement detection alone,
+    # with no deployed evidence to hold it against - the unconditional
+    # ``True`` matches core's own "detected wins unless contradicted" branch
+    # without ever calling into MCP status.
+    launch_is_module_run: bool | Callable[[], bool] = (
+        True
+        if not allow_mcp_status
+        else (
+            lambda: (
+                observed_mcp_mode(target, RAG_DISTRIBUTION_NAME)
+                is InstallMode.DEPENDENCY
+            )
+        )
     )
-    # Any deployed provider is evidence of the legacy mode: a pre-dual
-    # workspace could only ever enroll the one provider that existed, so
-    # requiring every provider would misread it as tool mode.
-    if detected in {InstallMode.DEPENDENCY, InstallMode.DEV} and (
-        not allow_mcp_status or mode_is_deployed(target, require_all=False)
-    ):
-        return ResolvedMode(detected, ModeProvenance.INFERRED)
-    return ResolvedMode(InstallMode.TOOL, ModeProvenance.INFERRED)
+    inferred = infer_upgrade_mode(
+        target,
+        RAG_DISTRIBUTION_NAME,
+        launch_is_module_run=launch_is_module_run,
+    )
+    return ResolvedMode(inferred, ModeProvenance.INFERRED)
 
 
 def mode_is_deployed(target: Path, *, require_all: bool = True) -> bool:
