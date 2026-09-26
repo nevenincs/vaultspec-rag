@@ -70,8 +70,9 @@ The `vaultspec-rag install` command has a broader default than the base package:
 enrolls MCP, downloads all three models, prepares PyTorch, and provisions managed
 Qdrant. That default creates the normal combined local topology. PyTorch is prepared
 only when the environment carries `[gpu]`; a client installation is never asked to
-patch `pyproject.toml`. To enroll a deliberately lightweight client workspace, install
-the base or `[mcp]` package and run:
+patch `pyproject.toml`. The MCP entry it writes launches the model-free adapter; in
+`tool` mode, `uvx` fetches only the `mcp` extra for it. To enroll a deliberately
+lightweight client workspace, install the base or `[mcp]` package and run:
 
 ```bash
 vaultspec-rag install --no-provision

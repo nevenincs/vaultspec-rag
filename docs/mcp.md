@@ -181,11 +181,11 @@ watcher, which keeps the index current without being asked.
 copy an example below. Both use the console-script shape, which runs wherever
 `vaultspec-search-mcp` is on your PATH - a standalone tool install or a prebuilt
 binary. It is not what the installer writes for `tool` mode: that renders
-`uvx --from vaultspec-rag[gpu,mcp] python -m vaultspec_rag.server`, which
-fetches both extras rather than requiring them to be installed already. It
-writes that pair whichever extras you installed with. The server itself needs
-only `mcp`: it loads no models and forwards every call to the service. For `dependency` or
-`dev` mode, set `command` to `uv` and `args` to
+`uvx --from vaultspec-rag[mcp] python -m vaultspec_rag.server`, which fetches
+the `mcp` extra rather than requiring it to be installed already. The server
+loads no models and forwards every call to the service, so that launch never
+pulls the inference stack, whichever extras you installed with. For
+`dependency` or `dev` mode, set `command` to `uv` and `args` to
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
 Add `"args": ["--read-only"]` to either example to withhold the mutating tools.
@@ -245,7 +245,11 @@ there before you write it.
 
 ### The assistant does not see the tools
 
-Confirm the console script is on `PATH`. On macOS or Linux:
+Confirm the command your client launches is on the `PATH` the client starts
+with. An entry written by `vaultspec-rag install` launches `uvx` in `tool` mode
+or `uv` in `dependency` and `dev` mode; a hand-written entry launches
+`vaultspec-search-mcp`. Substitute the command your entry names below. On macOS
+or Linux:
 
 ```bash
 command -v vaultspec-search-mcp
@@ -272,8 +276,12 @@ vaultspec-rag server status
 If the service is down the tools connect but every call reports that the service
 is not running. Start it with `vaultspec-rag server start` and reconnect.
 
-If the script is missing, the `mcp` extra is probably absent. Run
-`vaultspec-rag install` to reconcile it.
+If the console script is missing, or exits naming the `mcp` extra, the
+installation that provides it lacks that extra. Reinstall it with `mcp` added to
+the extras it already has, keeping a GPU tool installation's
+[torch pin](installation.md#pin-the-gpu-build). `vaultspec-rag install` adds the
+extra only to a project requirement in `dependency` or `dev` mode, after which
+you run `uv sync`; it never changes a tool installation's packages.
 
 ### `server doctor` reports an install-mode mismatch
 
