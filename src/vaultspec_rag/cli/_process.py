@@ -527,8 +527,7 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     interpreter = _resolve_daemon_interpreter()
     cmd = [
         interpreter,
-        "-m",
-        "vaultspec_rag.server",
+        *SERVER_LAUNCH_MARKER,
         "--port",
         str(port),
         "--launch-token",

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:5094a79dc0bd4fb86ea23236a951352ccae9303899c53c9f2721cda4b77badee'
+body_hash: 'sha256:c0fe2718c90ad04e3953db35371c6365442c9d11f6011662d0e319a715a7187c'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -188,6 +188,9 @@ related:
 - `S11` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_torch_pin_single_source test_doctor_repair_and_holders test_cli_install test_install_torch_config test_process_probe_source_structure` -> `pass`
 - `S11` `verify:` `guard mutations (index accepted without the strategy, repair without --upgrade-package torch, version pin unread) fail then pass` -> `pass`
 - `S11` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/commands/_mode.py`
+- `S09` `verify:` `pytest -m unit test_install_mode test_managed_singleton_isolation test_cli_server_start` -> `pass`
+- `S09` `by:` `orchestrator`
 
 ## Notes
 
@@ -201,3 +204,4 @@ related:
 - `S10` `test_substitution_discipline` still fails on `test_storage_maintenance_tick.py,` a base-branch entry outside this plan
 - `S02` P01 re-review: shared open widened a private lock on POSIX; widening now limited to files the call creates
 - `S11` deleted `TORCH_TOOL_PIN_VERSION` and its mirror test: the wheel URL it fed no longer exists, and the lockfile derivation the build tooling uses stays
+- `S09` P02 review: the service spawn and `RAG_MCP_MODULE` now derive from `SERVER_LAUNCH_MARKER`
