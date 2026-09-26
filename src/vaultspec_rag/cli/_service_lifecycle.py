@@ -12,15 +12,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
+from ..config._credentials import workspace_credential
 from ..config._settings import configured_model_repos, get_config
 from ..config._types import EnvVar
-from ._app import server_root_app
+from ._app import _global_target, server_root_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
@@ -170,6 +172,10 @@ class _WarmupFetchRequest:
     label: str
     position: int
     total: int
+    #: The credential this invocation resolved, handed to the download
+    #: rather than exported. A key from the workspace's gated file belongs
+    #: to this call, not to every child process that would inherit it.
+    token: str | None
 
 
 def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
@@ -183,20 +189,21 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
     """
     from ._hf_progress import SnapshotProgress
 
-    download, progress, repo_id, label, position, total = (
+    download, progress, repo_id, label, position, total, token = (
         request.download,
         request.progress,
         request.repo_id,
         request.label,
         request.position,
         request.total,
+        request.token,
     )
 
     heading = f"Downloading {label} ({position}/{total})"
     progress.stage(f"{heading}...")
     try:
         with SnapshotProgress(progress.heartbeat, prefix=heading) as tracker:
-            download(repo_id, tqdm_class=tracker.tqdm_class)
+            download(repo_id, tqdm_class=tracker.tqdm_class, token=token)
     except Exception as exc:
         return _warmup_failure_detail(repo_id, exc)
     return f"{repo_id} downloaded"
@@ -210,7 +217,7 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
         "search time."
     ),
 )
-def service_warmup() -> None:
+def service_warmup(ctx: typer.Context) -> None:
     """Download GPU model files before they are needed."""
     try:
         from .._gpu import load_accelerator
@@ -238,7 +245,10 @@ def service_warmup() -> None:
     # unbounded download.
     with StartupStatusReporter(json_mode=False) as progress:
         progress.announce("Model warmup")
-        token = get_token()
+        credential = workspace_credential(
+            EnvVar.HF_TOKEN, _global_target(ctx) or Path.cwd()
+        )
+        token = credential.key if credential is not None else get_token()
         if token:
             _print_detail_line("HuggingFace auth", "configured")
         else:
@@ -265,6 +275,7 @@ def service_warmup() -> None:
                         label,
                         position,
                         len(models),
+                        token,
                     )
                 ),
             )

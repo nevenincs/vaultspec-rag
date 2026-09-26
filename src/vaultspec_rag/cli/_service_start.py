@@ -129,6 +129,10 @@ class _PreparedServiceRequest:
     local_only: bool
     preprocess_forward: Literal["off"] | None
     json_mode: bool
+    #: The workspace this invocation resolved. The daemon never opens a
+    #: workspace .env of its own, so any credential one holds has to be
+    #: resolved here and handed over in the child's environment.
+    root: Path
 
 
 #: Everything the start wait must cover BEYOND the qdrant readiness budget:
@@ -811,6 +815,7 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             qdrant=request.qdrant,
             local_only=request.local_only,
             preprocess_mode=request.preprocess_forward,
+            root=request.root,
         )
     except DaemonBreakawayError as exc:
         raise _fail_start(
@@ -893,15 +898,14 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
                 progress=progress,
             )
 
+        resolved_root = _global_target(ctx) or Path.cwd()
+
         # Operator visibility for the target root's preprocess rules.
         # Best-effort and human-only so the --json envelope stays a single
         # document.
         if not json_mode:
             effective_mode = preprocess_forward or get_config().preprocess_mode
-            _print_preprocess_start_notice(
-                _global_target(ctx) or Path.cwd(),
-                effective_mode,
-            )
+            _print_preprocess_start_notice(resolved_root, effective_mode)
 
         log_path = _log_file()
         interpreter = _resolve_daemon_interpreter()
@@ -924,6 +928,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             local_only=options.local_only,
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
+            root=resolved_root,
         )
         pid = _spawn_prepared_service(start_request)
         _write_service_status(pid, options.port)

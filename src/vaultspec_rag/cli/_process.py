@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
+from vaultspec_core.config import child_environment
+
 from .._process_probe import (
     bounded_call,
     iter_process_info,
@@ -46,6 +48,7 @@ from .._win32 import (
     WIN_CREATE_NO_WINDOW,
     WIN_DETACHED_PROCESS,
 )
+from ..config._credentials import credential_assignments
 from ..config._types import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
@@ -303,6 +306,7 @@ class _ServiceChildEnvOptions(TypedDict, total=False):
     qdrant: bool | None
     local_only: bool | None
     preprocess_mode: Literal["off"] | None
+    root: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,13 +317,21 @@ class _ServiceChildEnvRequest:
     qdrant: bool | None = None
     local_only: bool | None = None
     preprocess_mode: Literal["off"] | None = None
+    root: Path | None = None
 
 
 def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
-    parses no argv beyond ``--port``), so watcher flags passed to
+    parses no argv beyond ``--port``), which is also why the credentials it
+    may need are resolved HERE and assigned into that environment. The daemon
+    serves every root at once, so it must never open a workspace's own ``.env``
+    itself; this process has one resolved workspace and is the only one
+    entitled to read it. A key the session already exported is inherited
+    unchanged, and assigning the resolved value over it is a no-op.
+
+    Watcher flags passed to
     ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here,
     the qdrant server-mode flag into ``VAULTSPEC_RAG_QDRANT_SERVER``, the
     local-only opt-out into ``VAULTSPEC_RAG_LOCAL_ONLY`` so the daemon's
@@ -339,6 +351,9 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
         preprocess_mode: ``"off"`` forwards ``VAULTSPEC_RAG_PREPROCESS=off``.
             ``None`` leaves it unset so an operator-set preprocess env
             survives.
+        root: The workspace this command line resolved, whose ``.env`` may
+            supply a credential under the framework's gate. ``None`` resolves
+            nothing, leaving the inherited environment as the only source.
 
     Returns:
         The child-process environment mapping.
@@ -356,7 +371,8 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
     _excluded = str(EnvVar.RAG_ROOT).upper()
-    env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
+    inherited = child_environment(*credential_assignments(request.root))
+    env = {k: v for k, v in inherited.items() if k.upper() != _excluded}
     if watch is not None:
         env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
     if watch_debounce_ms is not None:
@@ -477,6 +493,7 @@ def _spawn_service(
                 qdrant=options.get("qdrant"),
                 local_only=options.get("local_only"),
                 preprocess_mode=options.get("preprocess_mode"),
+                root=options.get("root"),
             ),
             options.get("timeout"),
             float(options.get("cleanup_timeout", 15.0)),
