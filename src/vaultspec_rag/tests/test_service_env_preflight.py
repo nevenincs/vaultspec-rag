@@ -132,6 +132,7 @@ class TestRemediationCommands:
         assert "--reinstall" in cmd
         assert cmd.endswith("torch")
 
+    @pytest.mark.torch
     def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
         import importlib.metadata
 

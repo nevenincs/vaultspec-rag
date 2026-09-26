@@ -2,22 +2,26 @@
 
 Index your project, search its source code, and narrow the results to a file.
 
-## Step 1: Prepare an inference host
+## Step 1: Prepare a host installation
 
-This tutorial starts and uses the resident inference service in the same project
+This tutorial starts the service from a host installation in the same project
 environment. Open the [installation guide](installation.md), read
-[the installation lanes](installation.md#choose-what-this-environment-runs), and choose
-"Adding it to a project" with the `[gpu]` extra. Work from your project root. Complete
-the normal project setup to download the models, including the
-[default sparse-model access check](installation.md#the-model-cache-and-its-first-download),
-then follow "Verify the install."
+[how to choose an installation](installation.md#choose-what-this-environment-runs), and follow
+[Install as a project dependency](installation.md#install-as-a-project-dependency) with the `[gpu]` extra.
+Work from your project root. Complete the
+[default sparse-model access check](installation.md#the-model-cache-and-its-first-download)
+and the [repository setup](installation.md#set-up-each-repository), then follow
+[Start and verify](installation.md#start-and-verify).
 
 A base or `[mcp]` client installation is intentionally model-free and cannot perform
-this tutorial's `server start` step by itself. There is no `[rag]` extra.
+this tutorial's `server start` step by itself. There is no `[rag]` extra. If a host
+installation on this machine already runs the service at the client's release, a client
+can follow Steps 2 to 4: its `server start` reports the running service instead of
+starting one.
 
 Examples use the `uv run` prefix, which runs the command inside a project environment.
-If you installed vaultspec-rag as a standalone tool, drop the prefix and call
-`vaultspec-rag` directly; see the [installation guide](installation.md) for lane selection.
+If your host installation is a standalone tool, drop the prefix and call
+`vaultspec-rag` directly; see the [installation guide](installation.md) for the routes.
 
 Once verification succeeds, return here for Step 2.
 

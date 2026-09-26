@@ -54,12 +54,12 @@ The three workflows have deliberately separate responsibilities:
 1. The same workflow immediately marks the new Release as a prerelease and
    explicitly dispatches `RAG Publish` with the exact tag. `RAG Publish` also
    performs that prerelease hold for its tag-push and manual entrypoints, then
-   dispatches `RAG Binaries` only after both package-publication jobs succeed.
-   Do not dispatch the two artifact workflows independently in the normal
-   release path: their ordering is the stable/latest safety boundary.
+   dispatches `RAG Binaries` only after its GitHub package publication
+   succeeds. Do not dispatch the two artifact workflows independently in the
+   normal release path: their ordering is the stable/latest safety boundary.
 1. `RAG Publish` builds the wheel and source distribution, smoke-tests both
-   across the supported Python versions, publishes to PyPI through the trusted
-   publisher, and attaches the Python artifacts to the GitHub Release.
+   across the supported Python versions, and attaches the Python artifacts to
+   the GitHub Release. It does not upload to PyPI in this stage.
 1. `RAG Binaries` builds the exact release wheel once, passes that wheel to
    every target leg, finalizes the target-qualified executables, and creates and
    verifies one archive per target. Its release job aggregates the archive
@@ -69,11 +69,18 @@ The three workflows have deliberately separate responsibilities:
 1. `RAG Binaries` always runs `verify-release-assets` after its release job.
    The verifier derives the expected targets from the matrix and requires every
    correctly named archive, the exact wheel and source distribution, no raw
-   executables, exact `SHA256SUMS` coverage with valid digests, a visible
-   matching PyPI version, and a successful binary release job. A failed or
-   incomplete set is demoted to a prerelease. A repaired normal release is
-   promoted only after the full set passes; release tags containing `rc`,
-   `alpha`, `beta`, or `dev` remain prereleases by design.
+   executables, exact `SHA256SUMS` coverage with valid digests, and a
+   successful binary release job. A failed or incomplete set is demoted to a
+   prerelease. A normal release is promoted only after the full set and the
+   acquisition check pass; release tags containing `rc`, `alpha`, `beta`, or
+   `dev` remain prereleases by design.
+1. After promotion, `RAG Binaries` dispatches `RAG Publish` in its
+   `package-index` stage. That run refuses anything but a full release,
+   downloads the release's own wheel and source distribution, checks them
+   against the release's `SHA256SUMS`, and uploads exactly those files to PyPI
+   through the trusted publisher. An upload cannot be withdrawn, so PyPI is
+   written last: a release the final gate refuses never reaches the index, and
+   a prerelease-named tag, never promoted, never reaches it either.
 
 `RAG Publish` and `RAG Binaries` share the concurrency group
 `release-artifacts-<tag>` with `cancel-in-progress: false`. This serializes
@@ -89,8 +96,10 @@ rerun for the same tag.
    `uv.lock` are coherent, and wait for the required checks.
 1. Merge the release PR. Do not manually create a second tag or Release for
    the same version.
-1. Watch both `RAG Publish` and `RAG Binaries`. The release should remain a
-   prerelease until the binary verifier has accepted all three target archives.
+1. Watch both `RAG Publish` and `RAG Binaries`, then the `package-index` run of
+   `RAG Publish` that Binaries dispatches. The release should remain a
+   prerelease until the binary verifier has accepted all three target archives,
+   and PyPI should not list the version until after that promotion.
 1. Confirm the GitHub Release asset list and the PyPI version. A normal,
    complete release should expose three binary archives, one wheel, one source
    distribution, and `SHA256SUMS`.
@@ -157,7 +166,8 @@ promotion.
 Both artifact workflows reconcile `SHA256SUMS` in the same way:
 
 1. Generate the entries for the artifacts produced by the current workflow.
-1. Download the existing `SHA256SUMS` from the same tag when it exists.
+1. Download the existing `SHA256SUMS` from the same tag when it exists, and
+   read any legacy `./name` entry as `name`.
 1. Remove inherited entries for the filenames being replaced.
 1. Append the current entries and sort by filename.
 1. Upload the merged file with `--clobber`.
@@ -258,12 +268,24 @@ The successful binary verifier will promote a repaired normal release again.
 
 ### Missing Python artifacts or PyPI publication
 
-If the Release exists but the wheel, source distribution, or PyPI publication
-is missing, rerun `RAG Publish` for the same tag:
+If the Release exists but the wheel or source distribution is missing, rerun
+`RAG Publish` for the same tag:
 
 ```sh
 gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG"
 ```
+
+If the Release is a full release but PyPI does not list the version, retry only
+the upload. Files PyPI already holds are skipped:
+
+```sh
+gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG" \
+  --field stage=package-index
+```
+
+That stage refuses a prerelease or draft. If the release is still a
+prerelease, it has not passed the final gate: repair it and rerun
+`RAG Binaries`, which promotes it and then dispatches the upload itself.
 
 If no GitHub Release exists yet, run `RAG Publish` first and wait for its
 `github-release` job to create the Release before rerunning `RAG Binaries`. The

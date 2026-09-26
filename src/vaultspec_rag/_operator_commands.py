@@ -180,6 +180,14 @@ SERVICE_NOT_RUNNING_MESSAGE = (
     f"Service is not running. Start it with `{server_start_command()}`."
 )
 
+#: The Hugging Face login, spelled for both places a host installation lives.
+#: A standalone uv tool exposes only vaultspec-rag's own commands, so the hub's
+#: ``hf`` is not on its PATH; ``uvx`` runs the hub's CLI there instead.
+HF_LOGIN_REMEDIATION = (
+    "`hf auth login` (from a standalone tool installation, "
+    "`uvx --from huggingface_hub hf auth login`)"
+)
+
 
 def index_source_option(
     source: PublicSourceType,

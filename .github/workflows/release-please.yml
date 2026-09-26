@@ -95,9 +95,10 @@ jobs:
       # Release Please creates the GitHub Release before either artifact
       # workflow finishes. Hold that release out of `latest` until the binary
       # workflow's complete-target gate has a chance to verify the public set.
-      # Publish dispatches Binaries only after its own two publication jobs
-      # succeed, so any failure in that chain leaves the tag reachable as a
-      # prerelease instead of becoming a partial stable release.
+      # Publish dispatches Binaries only after its GitHub package publication
+      # succeeds, and PyPI follows Binaries' promotion, so any failure in that
+      # chain leaves the tag reachable as a prerelease instead of becoming a
+      # partial stable release.
       - name: Hold the release out of latest until artifacts are complete
         if: steps.release.outputs.release_created == 'true'
         env:

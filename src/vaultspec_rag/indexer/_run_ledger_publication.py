@@ -12,6 +12,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Final, Never, cast
 
 from .. import store_schema
+from .._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from .._source_types import PublicSourceType
 from ._file_state import validate_rel_path
 from ._publication_proof import (
@@ -1706,8 +1707,8 @@ class RunLedgerPublicationMethods:
                             "publication proof exists for a different backend identity"
                         )
                     raise ProofMissingError(
-                        "publication proof does not exist; an explicit rebuild is "
-                        "required"
+                        "publication proof does not exist; "
+                        f"{FULL_REINDEX_REQUIRED_PHRASE}"
                     )
                 proof = _proof_from_row(row)
                 generation_row: GenerationRow | None = fetch_one(

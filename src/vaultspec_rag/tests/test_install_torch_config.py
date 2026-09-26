@@ -1,9 +1,11 @@
 """Tests for :func:`install_run`/:func:`uninstall_run` torch-config flow.
 
 Real filesystem (``tmp_path``), real ``vaultspec_core`` from the dev
-env, real ``tomlkit``. No mocks. No HF / GPU dependency - these tests
-exercise only the pyproject-patching branch and deliberately do not
-trigger the ``sync_after`` subprocess path.
+env, real ``tomlkit``. The installation role is the one pinned input:
+the patch flow runs only on an inference host, so the module runs as one
+in every lane. No HF / GPU dependency - these tests exercise only the
+pyproject-patching branch and deliberately do not trigger the
+``sync_after`` subprocess path.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
 
     from ..commands._models import InstallReport
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("inference_host")]
 
 
 PROJECT_ONLY = (
@@ -152,9 +154,13 @@ class TestInstallTorchConfig:
         assert "torch_config_conflicts" in d
         assert d["torch_sync_action"] == "skipped"
 
+    @pytest.mark.torch
     def test_install_warns_when_hf_token_missing(
         self, consumer_workspace: Path, tmp_path: Path
     ) -> None:
+        # Only a host installation is warned, and the child classifies itself
+        # from the distributions it really holds, so this runs where the
+        # inference stack is installed; a pinned role cannot cross into it.
         env: dict[str, str] = {
             **os.environ,
             "HF_HOME": str(tmp_path / "empty-hf-home"),
@@ -184,7 +190,11 @@ class TestInstallTorchConfig:
             "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
         )
         warnings = cast("list[object]", payload["warnings"])
-        assert any("HuggingFace token not found" in str(w) for w in warnings)
+        token_warnings = [str(w) for w in warnings if "token not found" in str(w)]
+        assert token_warnings, warnings
+        # The hub removed `huggingface-cli` in 2.0; `hf auth login` is the
+        # login command every supported hub version ships.
+        assert all("`hf auth login`" in w for w in token_warnings), token_warnings
 
     def test_install_force_does_not_answer_the_torch_config_prompt(
         self, consumer_workspace: Path

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple
 
 from . import store_schema
+from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
-from .indexer._publication_proof import ProofIncompatibleError
-from .indexer._run_ledger_models import index_run_ledger_path
+from .indexer._publication_proof import (
+    ProofIncompatibleError,
+    ProofReadConflictError,
+    ProofUnverifiableError,
+)
+from .indexer._run_ledger_models import RunLedgerError, index_run_ledger_path
 from .indexer._run_ledger_runtime import RunLedger
 from .store_runtime import configured_backend_identity
 
@@ -19,11 +24,25 @@ if TYPE_CHECKING:
     from .indexer._run_ledger_models import PublicationProof
 
 __all__ = [
+    "UNREADABLE_PUBLICATION_ERRORS",
     "PublicationSnapshot",
     "acquire_publication_snapshot",
     "clear_publication_state",
     "read_all_publication_evidence",
 ]
+
+#: Every way a root's committed proof can be unreadable right now: absent,
+#: incompatible, or unverifiable proof; a run ledger an older build wrote, or
+#: one that is corrupt or contended; and a receipt an index run holds open while
+#: it publishes. A read that only uses the proof when there is one treats each of
+#: these as absence. Naming a subset made the rest fail read-only requests: a
+#: search over a root with an old ledger, or one issued while an update was
+#: publishing, answered with an internal server error.
+UNREADABLE_PUBLICATION_ERRORS: Final = (
+    ProofUnverifiableError,
+    ProofReadConflictError,
+    RunLedgerError,
+)
 
 
 class PublicationSnapshot(NamedTuple):
@@ -59,7 +78,7 @@ def acquire_publication_snapshot(
         from .indexer._publication_proof import ProofMissingError
 
         raise ProofMissingError(
-            "publication proof does not exist; an explicit rebuild is required"
+            f"publication proof does not exist; {FULL_REINDEX_REQUIRED_PHRASE}"
         )
     ledger = RunLedger(ledger_path)
     proof, token = ledger.acquire_current_publication_snapshot(

@@ -1,12 +1,14 @@
 """Unit tests for the unified provisioning front door.
 
-Exercises real orchestration over the real backends with no mocks and
-no network: the qdrant step runs against a temp-isolated managed dir
-pre-seeded exactly as a verified provision leaves it (proving the
-``unchanged`` idempotent no-op without downloading), the torch step
-patches a real temp ``pyproject.toml`` via the real ``torch_config``
-backend, and the model step exercises the skip / dry-run / opt-out
-paths plus the real Hugging Face cache probe. The verify-before-execute
+Exercises real orchestration over the real backends with no network:
+the qdrant step runs against a temp-isolated managed dir pre-seeded
+exactly as a verified provision leaves it (proving the ``unchanged``
+idempotent no-op without downloading), the torch step patches a real
+temp ``pyproject.toml`` via the real ``torch_config`` backend, and the
+model step exercises the skip / dry-run / opt-out paths plus the real
+Hugging Face cache probe. The one pinned input is the installation role:
+torch is configured only on an inference host, so the torch tests run as
+one in every lane. The verify-before-execute
 security contract of the qdrant provisioner is never weakened to make a
 test pass - the idempotency path is proven by pre-seeding, the way
 ``test_qdrant_runtime`` does.
@@ -289,6 +291,7 @@ class TestModelStep:
             reset_config()
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestTorchStep:
     def test_front_door_configures_torch_with_sync_pending(
         self, consumer_workspace: Path
@@ -427,14 +430,16 @@ class TestFrontDoorComposition:
         assert models.action == ProvisionAction.SKIPPED
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestFrontDoorIdempotency:
     """Whole-front-door idempotency, dry-run, and local-only skip.
 
     These exercise the orchestrator end-to-end (not a single step) against
-    real backends with no mocks and no network: torch patches a real temp
-    pyproject, qdrant runs against a preseeded temp-isolated managed dir,
-    and the model step uses the real Hugging Face cache probe (asserted
-    only on the network-free outcomes a cached or skipped dev host emits).
+    real backends with no network and only the installation role pinned:
+    torch patches a real temp pyproject, qdrant runs against a preseeded
+    temp-isolated managed dir, and the model step uses the real Hugging
+    Face cache probe (asserted only on the network-free outcomes a cached
+    or skipped dev host emits).
     """
 
     def test_second_run_reports_unchanged_with_no_network(

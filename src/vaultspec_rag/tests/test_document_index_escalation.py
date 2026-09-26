@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from contextlib import closing, contextmanager
 from typing import TYPE_CHECKING, Never, cast
 
 import pytest
@@ -41,8 +42,10 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ..store_runtime import configured_backend_identity
+from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
     from ..indexer._publication_proof import ProofCompatibilityKey
@@ -61,6 +64,20 @@ _DANGLING_GENERATION = "0" * 32
 
 def _audit_ledger_path(root_dir: Path) -> Path:
     return index_run_ledger_path(workspace_volume_path(root_dir.resolve()))
+
+
+@contextmanager
+def _raw_ledger_connection(path: Path) -> Generator[sqlite3.Connection]:
+    """Run one raw SQLite transaction on *path*, then close the handle.
+
+    ``sqlite3.Connection`` as a context manager commits but leaves the handle
+    open, and only the cycle collector reclaims it - at any moment, including
+    mid-audit, where its close checkpoints the seed beside the code under
+    test. Closing here keeps the audit from sharing the ledger with a stranded
+    seed connection.
+    """
+    with closing(sqlite3.connect(path)) as connection, connection:
+        yield connection
 
 
 def _audit_without_storage(root_dir: Path) -> dict[str, object]:
@@ -136,7 +153,7 @@ def _seed_document_proof(
         content_identity=_fingerprint("audit-content"),
         policy_identity=_fingerprint("audit-policy"),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with _raw_ledger_connection(ledger.path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
@@ -177,7 +194,7 @@ def _insert_open_receipt(
     receipt_id: str,
     parent_revision: int,
 ) -> None:
-    with sqlite3.connect(ledger.path) as connection:
+    with _raw_ledger_connection(ledger.path) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
@@ -233,15 +250,15 @@ def test_audit_missing_ledger_requires_rebuild_without_creating_state(
 def test_audit_missing_proof_requires_rebuild_without_seeding(
     tmp_path: Path,
 ) -> None:
-    """A non-seeding audit leaves both the ledger bytes and proof count exact."""
+    """A non-seeding audit leaves the ledger contents exact and holds no proof."""
     ledger = RunLedger(_audit_ledger_path(tmp_path))
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
     _assert_document_rebuild_required(result, error_kind="missing")
-    assert ledger.path.read_bytes() == before
-    with sqlite3.connect(ledger.path) as connection:
+    assert_sqlite_unchanged(ledger.path, before)
+    with _raw_ledger_connection(ledger.path) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM publication_proofs"
         ).fetchone() == (0,)
@@ -253,11 +270,11 @@ def test_audit_old_ledger_requires_rebuild_without_migration(
     """Reclassifying or opening an old schema breaks the typed refusal guard."""
     path = _audit_ledger_path(tmp_path)
     path.parent.mkdir(parents=True)
-    with sqlite3.connect(path) as connection:
+    with _raw_ledger_connection(path) as connection:
         connection.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
         connection.execute("INSERT INTO old_runs VALUES ('preserve-me')")
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION - 1}")
-    before = path.read_bytes()
+    before = sqlite_contents(path)
 
     result = _audit_without_storage(tmp_path)
 
@@ -265,8 +282,8 @@ def test_audit_old_ledger_requires_rebuild_without_migration(
         result,
         error_kind="RunLedgerRebuildRequiredError",
     )
-    assert path.read_bytes() == before
-    with sqlite3.connect(path) as connection:
+    assert_sqlite_unchanged(path, before)
+    with _raw_ledger_connection(path) as connection:
         assert connection.execute("SELECT value FROM old_runs").fetchone() == (
             "preserve-me",
         )
@@ -277,9 +294,9 @@ def test_audit_receipt_schema_drift_requires_rebuild_without_repair(
 ) -> None:
     """A missing required receipt index is refused and never reinstalled."""
     ledger = RunLedger(_audit_ledger_path(tmp_path))
-    with sqlite3.connect(ledger.path) as connection:
+    with _raw_ledger_connection(ledger.path) as connection:
         connection.execute("DROP INDEX publication_receipts_open")
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
@@ -287,7 +304,7 @@ def test_audit_receipt_schema_drift_requires_rebuild_without_repair(
         result,
         error_kind="RunLedgerRebuildRequiredError",
     )
-    assert ledger.path.read_bytes() == before
+    assert_sqlite_unchanged(ledger.path, before)
 
 
 @pytest.mark.parametrize(
@@ -312,12 +329,12 @@ def test_audit_incompatible_proof_requires_rebuild_before_storage(
         proof_collection=proof_collection,
         proof_storage_schema=proof_storage_schema,
     )
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
     _assert_document_rebuild_required(result, error_kind="incompatible")
-    assert ledger.path.read_bytes() == before
+    assert_sqlite_unchanged(ledger.path, before)
 
 
 def test_audit_incompatible_proof_ancestry_requires_rebuild(
@@ -328,12 +345,12 @@ def test_audit_incompatible_proof_ancestry_requires_rebuild(
         tmp_path,
         generation_collection="foreign_document_collection",
     )
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
     _assert_document_rebuild_required(result, error_kind="incompatible")
-    assert ledger.path.read_bytes() == before
+    assert_sqlite_unchanged(ledger.path, before)
 
 
 def test_audit_corrupt_open_receipt_requires_rebuild_instead_of_retry(
@@ -348,12 +365,12 @@ def test_audit_corrupt_open_receipt_requires_rebuild_instead_of_retry(
         receipt_id="corrupt-audit-receipt",
         parent_revision=4,
     )
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
     _assert_document_rebuild_required(result, error_kind="corrupt_receipt")
-    assert ledger.path.read_bytes() == before
+    assert_sqlite_unchanged(ledger.path, before)
 
 
 def test_audit_malformed_open_receipt_requires_typed_corrupt_refusal(
@@ -369,15 +386,15 @@ def test_audit_malformed_open_receipt_requires_typed_corrupt_refusal(
         receipt_id=receipt_id,
         parent_revision=3,
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with _raw_ledger_connection(ledger.path) as connection:
         connection.execute("PRAGMA ignore_check_constraints = ON")
         connection.execute(
             "UPDATE publication_receipts SET parent_revision = ? WHERE receipt_id = ?",
             ("not-an-integer", receipt_id),
         )
-    before = ledger.path.read_bytes()
+    before = sqlite_contents(ledger.path)
 
     result = _audit_without_storage(tmp_path)
 
     _assert_document_rebuild_required(result, error_kind="corrupt_receipt")
-    assert ledger.path.read_bytes() == before
+    assert_sqlite_unchanged(ledger.path, before)

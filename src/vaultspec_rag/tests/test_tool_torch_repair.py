@@ -232,16 +232,21 @@ requirements = [{ name = "vaultspec-rag", extras = ["mcp"] }]
     assert "gpu" not in requirement
 
 
-def test_a_receipt_without_the_package_falls_back_to_the_bundled_request(
+def test_a_receipt_without_the_package_falls_back_to_the_host_request(
     tmp_path: Path,
 ) -> None:
-    """An environment recording nothing gets the shipped specification."""
+    """An environment recording nothing gets the inference host's request.
+
+    Guard assertion: the MCP adapter's launch spec carries only ``mcp``, so a
+    repair request built from it would drop the inference stack the repaired
+    torch serves. Pinned to a literal so the fallback cannot follow that spec.
+    """
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
 
     assert (
         _tool_torch._tool_package_requirement(str(interpreter))
-        == _tool_torch._tool_package_spec()
+        == "vaultspec-rag[gpu,mcp]"
     )
 
 

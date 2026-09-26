@@ -24,6 +24,7 @@ from .._operator_commands import (
     server_status_command,
 )
 from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
+from ..operator_state._installation import ComputeCapability
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -513,10 +514,9 @@ def _display_service_version_error(
     is dropped by the daemon rather than rejected, so continuing would answer
     over a different candidate set with no sign anything was lost.
     """
-    remediation = [
-        *verdict.remediation(),
-        server_status_command(),
-    ]
+    # Plain ``server status`` omits the release; only its verbose view shows it.
+    confirm = server_status_command(verbose=True)
+    remediation = [*verdict.remediation(), confirm]
     if json_mode:
         _emit_json_error_and_exit(
             command,
@@ -527,16 +527,15 @@ def _display_service_version_error(
             remediation=remediation,
         )
         return
+    steps = [*verdict.remediation(), f"Confirm the release: {confirm}"]
+    numbered = "\n".join(f"  {n}. {step}" for n, step in enumerate(steps, start=1))
     _plain(
         f"Refusing to {command} against the running service.\n"
         f"{verdict.reason().capitalize()}.\n"
         f"A daemon from another release drops request fields it does not know "
         f"rather than rejecting them, so the answer would be computed over a "
         f"different candidate set with nothing to show it.\n"
-        f"Next actions:\n"
-        f"  1. Restart the service: vaultspec-rag server stop, then "
-        f"vaultspec-rag server start\n"
-        f"  2. Confirm the release:  {server_status_command()}"
+        f"Next actions:\n{numbered}"
     )
 
 
@@ -548,6 +547,7 @@ def _action_label(action: object) -> str:
         "absent": "not found",
         "removed": "removed",
         "disabled": "disabled",
+        "not_applicable": ComputeCapability.NOT_APPLICABLE.label,
         "dry_run": "preview only",
         "declined": "declined",
         "skipped": "not changed",

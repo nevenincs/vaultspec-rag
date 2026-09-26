@@ -338,6 +338,8 @@ try:
     os.write(2, b"__RAW_STDERR_RECORD__\n")
     assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
     assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpx2").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore2").getEffectiveLevel() >= logging.WARNING
 finally:
     if capture is not None and not capture.close(timeout=10.0):
         os._exit(71)

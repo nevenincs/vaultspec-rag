@@ -179,10 +179,10 @@ default is `Inspect the refusal reason and request an explicit rebuild.`
 
 ## Troubleshooting lookups
 
-```text
+```bash
 vaultspec-rag server updates status --state refused
 vaultspec-rag server updates status --source code --limit 20 --json
-vaultspec-rag server jobs --trigger watcher
+vaultspec-rag server jobs --started-by automatic
 vaultspec-rag server logs --limit 200
 ```
 

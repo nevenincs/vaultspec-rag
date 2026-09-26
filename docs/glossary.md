@@ -20,6 +20,10 @@ One selected implementation behind a stable interface. The compute backend is CU
 
 A small slice of a vault document or source file, a few hundred tokens long, that the indexer stores as one searchable unit. Search results point back to specific chunks rather than whole files. See [the architecture overview](architecture.md).
 
+## Client installation
+
+An installation without the `gpu` extra: the plain `vaultspec-rag` package, or `vaultspec-rag[mcp]` to serve an AI assistant. It loads no models and needs no GPU. It sends every search and indexing request to the service a [host installation](#host-installation) has already started on the same machine, cannot start that service itself, and must be the same release as the service. See [the installation guide](installation.md).
+
 ## Codebase index
 
 The on-disk record of chunks cut from your source files, kept alongside the vault index but searched separately through the code search type. See [the indexing guide](indexing.md).
@@ -51,6 +55,10 @@ Text produced by a project-defined converter from a format vaultspec-rag cannot 
 ## fnmatch glob
 
 A shell-style filename pattern, for example `*.md` or `notes/**/draft-*`, used in include and exclude lists. It follows Python's `fnmatch` rules, not full regex. See [the configuration guide](configuration.md).
+
+## Host installation
+
+An installation with the `gpu` extra, `vaultspec-rag[gpu]` or `vaultspec-rag[gpu,mcp]`, that runs the search models on this machine's accelerator. It is the only kind of installation that can start the [service](#service), which then serves every repository on the machine and any [client installation](#client-installation). See [the installation guide](installation.md).
 
 ## HTTP service daemon
 
@@ -110,7 +118,7 @@ The directory vaultspec-rag treats as the project boundary, the folder holding `
 
 ## Provisioning
 
-The one-time setup, run during `install`, that obtains the external dependencies vaultspec-rag needs: platform-appropriate PyTorch, search models cached from Hugging Face, and the managed Qdrant server binary. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. See [the installation guide](installation.md).
+The one-time setup, run during `install`, that obtains the external dependencies vaultspec-rag needs: search models cached from Hugging Face, the managed Qdrant server binary, and, when the [host installation](#host-installation) is a project dependency, the CUDA PyTorch source in that project's `pyproject.toml`. CUDA uses the configured cu130 source; macOS uses the standard MPS-capable wheel. A [client installation](#client-installation) needs none of these, and `install` skips them for it automatically. See [the installation guide](installation.md).
 
 ## Readiness
 
