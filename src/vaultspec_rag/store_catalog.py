@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
+from ._store_models import VAULT_CHUNK_ONLY_PAYLOAD_KEYS
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from contextlib import AbstractContextManager
@@ -22,6 +24,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["_VaultCatalogMixin"]
+
+
+def _document_view(raw: dict[str, Any] | None, fallback_id: str) -> dict[str, Any]:
+    """Read a head chunk's payload back as the document it opens.
+
+    The head chunk carries the full body as ``doc_content``; the fields that
+    describe only that chunk - its ordinal, spans and passages - say nothing
+    about the document and are dropped.
+    """
+    payload: dict[str, Any] = dict(raw) if raw else {}
+    payload["id"] = payload.pop("doc_id", fallback_id)
+    doc_content = payload.pop("doc_content", None)
+    if isinstance(doc_content, str):
+        payload["content"] = doc_content
+    for key in VAULT_CHUNK_ONLY_PAYLOAD_KEYS:
+        payload.pop(key, None)
+    return payload
 
 
 @dataclass(frozen=True)
@@ -747,15 +766,7 @@ class _VaultCatalogMixin:
             )
             if not records:
                 return None
-            raw = records[0].payload
-            payload: dict[str, object] = dict(raw) if raw else {}
-            payload["id"] = payload.pop("doc_id", doc_id)
-            doc_content = payload.pop("doc_content", None)
-            if isinstance(doc_content, str):
-                payload["content"] = doc_content
-            payload.pop("chunk_ordinal", None)
-            payload.pop("chunk_count", None)
-            return payload
+            return _document_view(records[0].payload, doc_id)
 
     def list_all_documents(
         self,
@@ -816,16 +827,7 @@ class _VaultCatalogMixin:
                 )
             point: Record
             for point in records:
-                payload: dict[str, object] = (
-                    dict(point.payload) if point.payload else {}
-                )
-                payload["id"] = payload.pop("doc_id", str(point.id))
-                doc_content = payload.pop("doc_content", None)
-                if isinstance(doc_content, str):
-                    payload["content"] = doc_content
-                payload.pop("chunk_ordinal", None)
-                payload.pop("chunk_count", None)
-                docs.append(payload)
+                docs.append(_document_view(point.payload, str(point.id)))
             if next_offset is None:
                 break
             offset = next_offset

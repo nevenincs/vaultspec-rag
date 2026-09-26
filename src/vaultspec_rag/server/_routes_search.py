@@ -660,12 +660,7 @@ def _execute_search_request(
         from ._models import SearchResultItem
         from ._routes import search_summary
 
-        items = [
-            SearchResultItem.model_validate(result, from_attributes=True).model_dump(
-                mode="json"
-            )
-            for result in results
-        ]
+        items = [SearchResultItem.serialize(result) for result in results]
         response: dict[str, object] = {
             "request_id": request.request_id,
             "results": items,

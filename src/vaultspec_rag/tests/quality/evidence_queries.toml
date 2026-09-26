@@ -1,0 +1,410 @@
+# Evidence-labelled query set for the vault evidence quality gate.
+#
+# Authored blind from the frozen reference vault, without viewing any search
+# output, MCP search tool result, or ranker source. Each case names the
+# governing record, the nearest heading above the chosen span, and a verbatim
+# evidence span copied from that record. The gate checks whether a search
+# result's snippet contains the evidence span after whitespace and
+# inline-markup normalisation (backticks and bold markers stripped, runs of
+# whitespace collapsed, case folded). "kind" is "paraphrase" when the query
+# avoids the evidence's distinctive wording, or "direct" when the query must
+# name a specific identifier the evidence itself names. "gold" lists every
+# record that independently answers the query; almost every case has exactly
+# one.
+
+[[case]]
+id = "e01"
+query = "Can the new indexing pipeline run without a graphics card or on Apple hardware?"
+kind = "paraphrase"
+note = "Only this ADR states the new stack cannot run without CUDA or on macOS."
+  [[case.gold]]
+  doc_id = "adr/2026-03-06-gpu-only-rag-stack-adr"
+  section = "Negative"
+  evidence = "Requires CUDA-capable GPU with ~3 GB VRAM. Cannot run on CPU-only machines or macOS without CUDA."
+  body_offset = 5269
+
+[[case]]
+id = "e02"
+query = "Why not use a cryptographically secure hash for detecting file edits?"
+kind = "paraphrase"
+note = "Unique rationale for choosing blake2b over a cryptographic hash for change detection."
+  [[case.gold]]
+  doc_id = "adr/2026-03-07-blake2b-file-hashing-adr"
+  section = "Rationale"
+  evidence = "Cryptographic collision resistance is irrelevant for change detection (no adversary). blake2b is 3x faster and equally deterministic."
+  body_offset = 1599
+
+[[case]]
+id = "e03"
+query = "Does setting `query_filter` alone actually constrain results when prefetch branches are involved in a hybrid search?"
+kind = "direct"
+note = "Unique undocumented-behavior claim recorded only in this ADR."
+  [[case.gold]]
+  doc_id = "adr/2026-03-07-qdrant-filter-on-prefetch-adr"
+  section = "Rationale"
+  evidence = "The top-level `query_filter` is silently ignored when `prefetch` is used with `FusionQuery`. This is undocumented behavior specific to local mode."
+  body_offset = 1056
+
+[[case]]
+id = "e04"
+query = "Why did the release workflow choose OIDC-based publishing over API tokens for PyPI?"
+kind = "paraphrase"
+note = "Only ADR record naming the reason for choosing trusted publishing."
+  [[case.gold]]
+  doc_id = "adr/2026-04-01-cicl-pipeline-adr"
+  section = "Rationale"
+  evidence = "Trusted publishing is the PyPI-recommended approach, eliminating token rotation burden"
+  body_offset = 3076
+
+[[case]]
+id = "e05"
+query = "Why can't the daemon just trust a saved process id to confirm the service is still the one it started, especially on Windows?"
+kind = "paraphrase"
+note = "Unique observation about Windows PID reuse risk for a stale lock file."
+  [[case.gold]]
+  doc_id = "adr/2026-04-04-security-hardening-adr"
+  section = "Considerations"
+  evidence = "On Windows, PID recycling is aggressive. A stale `service.json` PID can match an unrelated process."
+  body_offset = 1132
+
+[[case]]
+id = "e06"
+query = "Could the new sensitive-file blocklist accidentally block harmless files with a similar name, and is that considered okay?"
+kind = "paraphrase"
+note = "Only place recording the deny-list's accepted false-positive tradeoff with this filename example."
+  [[case.gold]]
+  doc_id = "adr/2026-04-04-security-hardening-adr"
+  section = "Consequences"
+  evidence = "may block legitimate reads of files matching deny patterns (e.g., a file literally named `credentials-readme.txt`). This is acceptable — users can read such files directly through their editor."
+  body_offset = 5252
+
+[[case]]
+id = "e07"
+query = "If a project stops shipping the file behind one of its registered MCP server entries, does the leftover registration ever get cleaned up on its own?"
+kind = "paraphrase"
+note = "Unique description of the additive-only sync bug this ADR fixes."
+  [[case.gold]]
+  doc_id = "adr/2026-04-12-vaultspec-rag-install-adr"
+  section = "Required Core Support"
+  evidence = "When a source is deleted and sync runs, the destination entry in `.mcp.json` lingers as an orphan."
+  body_offset = 19051
+
+[[case]]
+id = "e08"
+query = "Why does the GPU error handler defer importing torch until it actually needs to check CUDA status?"
+kind = "paraphrase"
+note = "Unique rationale for lazy torch import in the error path, found in this ADR's alternatives section."
+  [[case.gold]]
+  doc_id = "adr/2026-04-22-install-cuda-adr"
+  section = "alternatives considered"
+  evidence = "torch can be slow to import (~1 s) and the error path must not pay that tax when `ImportError` already fired"
+  body_offset = 22997
+
+[[case]]
+id = "e09"
+query = "What changed for users who used to pass code-only search filters together with a vault-type search?"
+kind = "paraphrase"
+note = "Unique behavioural-change statement for this contract fix."
+  [[case.gold]]
+  doc_id = "adr/2026-05-28-cli-search-filters-adr"
+  section = "Consequences"
+  evidence = "Callers that previously combined filter flags with `--type vault` now get an explicit error instead of a misleading top-k."
+  body_offset = 2168
+
+[[case]]
+id = "e10"
+query = "Why show every liveness signal as its own row instead of collapsing them into a single running/stopped verdict?"
+kind = "paraphrase"
+note = "Unique rationale for the multi-signal status table design in this ADR."
+  [[case.gold]]
+  doc_id = "adr/2026-05-30-service-lifecycle-adr"
+  section = "Rationale"
+  evidence = "A divergence row beats picking-one-and-hoping because the user sees the full picture instead of a one-word verdict that conflicts with the next row."
+  body_offset = 6400
+
+[[case]]
+id = "e11"
+query = "What's the risk of turning on locale deduplication when two distinct-language files happen to score the same?"
+kind = "paraphrase"
+note = "Unique tradeoff noted for the locale-dedup opt-in flag."
+  [[case.gold]]
+  doc_id = "adr/2026-05-31-search-postprocess-adr"
+  section = "Consequences"
+  evidence = "Genuinely different translations with tied scores would collapse; user opts out by leaving `--dedup-locales` off (the default)."
+  body_offset = 3263
+
+[[case]]
+id = "e12"
+query = "Is the inability to embed with the ONNX backend today a bug in this project's integration code?"
+kind = "paraphrase"
+note = "Unique statement attributing the ONNX embedding failure to an upstream limitation."
+  [[case.gold]]
+  doc_id = "adr/2026-06-02-onnx-encoder-backend-adr"
+  section = "Considerations"
+  evidence = "The ONNX dense path cannot produce a single Qwen3 embedding today. This is an upstream gap, not our code."
+  body_offset = 1412
+
+[[case]]
+id = "e13"
+query = "Should adding support for a networked vector-database connection be allowed to drop support for the simple offline single-file mode?"
+kind = "paraphrase"
+note = "Unique guidance that server-mode support must not break the local-file fallback path."
+  [[case.gold]]
+  doc_id = "adr/2026-06-05-qdrant-performance-adr"
+  section = "Codification candidates"
+  evidence = "Always maintain local-file mode compatibility when implementing network-based Qdrant client interfaces."
+  body_offset = 3197
+
+[[case]]
+id = "e14"
+query = "What real incident motivated adding index-freshness diagnostics to empty search responses?"
+kind = "paraphrase"
+note = "Unique origin story cited only in this ADR's problem statement."
+  [[case.gold]]
+  doc_id = "adr/2026-06-11-search-freshness-and-empty-results-adr"
+  section = "Problem Statement"
+  evidence = "During the live audit, service-backed code search returned no results for implementation that existed."
+  body_offset = 176
+
+[[case]]
+id = "e15"
+query = "In the case-study pipeline, how does the batch size used for data loading compare to the batch size used for the GPU forward pass?"
+kind = "paraphrase"
+note = "Unique numeric batch-size breakdown cited from the Daft.ai case study in this research record."
+  [[case.gold]]
+  doc_id = "research/2026-03-06-gpu-rag-architecture-research"
+  section = "Pipeline Architecture (from Daft.ai's Qwen3 case study)"
+  evidence = "**Multi-level batch sizing**: Pipeline batch (512 records) > GPU batch (16-64 sequences)"
+  body_offset = 12022
+
+[[case]]
+id = "e16"
+query = "What numeric constant does Qdrant use in its reciprocal-rank fusion formula, and what problem does that formula solve?"
+kind = "direct"
+note = "Unique statement of the RRF constant and its purpose recorded in this research file."
+  [[case.gold]]
+  doc_id = "research/2026-03-08-qdrant-hybrid-search-patterns-research"
+  section = "RRF Formula"
+  evidence = "RRF score = `1/(k+r)` where `r` is rank position and `k=2` (Qdrant's constant). This mitigates outlier rankings from individual retrieval methods."
+  body_offset = 1399
+
+[[case]]
+id = "e17"
+query = "Is there an environment variable in the search package for overriding the workspace root that actually has no effect because resolution happens elsewhere?"
+kind = "paraphrase"
+note = "Unique observation that this env var is defined but unused, found only in this research record."
+  [[case.gold]]
+  doc_id = "research/2026-04-06-ecosystem-integration-research"
+  section = "Q5: config alignment"
+  evidence = "RAG defines `VAULTSPEC_RAG_ROOT` in its `EnvVar` enum but does not actively use it — root resolution delegates to core's `VaultSpecConfig.target_dir`."
+  body_offset = 5398
+
+[[case]]
+id = "e18"
+query = "Which client editors does the secondary MCP listing site say it covers for browsing available servers?"
+kind = "paraphrase"
+note = "Unique description of the MCP.Directory listing target in this research record."
+  [[case.gold]]
+  doc_id = "research/2026-05-03-discoverability-research"
+  section = "MCP directories"
+  evidence = "The directory has a visible `Submit Server` path and positions itself as a browsable directory for MCP servers across Cursor, Claude Desktop, VS Code, Claude Code, and other MCP-compatible clients."
+  body_offset = 1198
+
+[[case]]
+id = "e19"
+query = "Why would the metrics endpoint be scraped on demand instead of pushed by a dedicated background worker?"
+kind = "paraphrase"
+note = "Unique reasoning for the pull-based metrics tier in this record's findings list."
+  [[case.gold]]
+  doc_id = "research/2026-06-01-service-observability-research"
+  section = "Findings"
+  evidence = "Tier 3 `/metrics` (greenfield, HTTP-native, pull/on-demand to avoid a background thread)."
+  body_offset = 2067
+
+[[case]]
+id = "e20"
+query = "In local mode, roughly how long does the sparse encoder's brute-force pass over the chunk set take, and is that the real bottleneck for the glob pushdown idea?"
+kind = "paraphrase"
+note = "Unique measured latency figure attributing local-mode cost to the SPLADE scan."
+  [[case.gold]]
+  doc_id = "research/2026-06-09-sparse-search-latency-research"
+  section = "Why the abort outcome holds (with a corrected rationale)"
+  evidence = "The dominant local-mode cost is the SPLADE sparse linear scan (~20s across ~114k chunks per the ADR)."
+  body_offset = 1796
+
+[[case]]
+id = "e21"
+query = "Does deleting a project's local index files also get rid of its collections when running against the shared backend?"
+kind = "paraphrase"
+note = "Unique confirmed gap between local-dir cleanup and server-mode collection removal, cited from the provisioning ADR's consequence."
+  [[case.gold]]
+  doc_id = "research/2026-06-18-storage-lifecycle-research"
+  section = "F5 - Slot eviction is not data deletion; releasing the slot must precede deleting data"
+  evidence = "Confirmed by the provisioning ADR's own consequence: cleaning a project's data dir no longer removes its server-mode collections."
+  body_offset = 8601
+
+[[case]]
+id = "e22"
+query = "What actually happens if someone launches the MCP server subcommand while pointing the CLI at a different working folder via its root-override flag?"
+kind = "direct"
+note = "Unique concrete impact statement for the found --target propagation bug in this audit."
+  [[case.gold]]
+  doc_id = "audit/2026-03-08-target-flag-propagation-audit"
+  section = "MEDIUM: --target silently ignored for `server mcp start`"
+  evidence = "Users running `vaultspec-rag --target /my/project server mcp start` will get results from cwd, not from `/my/project`."
+  body_offset = 5931
+
+[[case]]
+id = "e23"
+query = "Does the search package ship any of its own event-triggered automation hooks yet, or only the generic sample one inherited from the framework?"
+kind = "paraphrase"
+note = "Unique gap noted between core's example hook and rag's lack of feature-specific hooks."
+  [[case.gold]]
+  doc_id = "audit/2026-04-02-release-readiness-audit"
+  section = "L4 — Hook definitions"
+  evidence = "Core has `.vaultspec/rules/hooks/example-audit-on-create.yaml`. RAG has the same example hook but no RAG-specific hooks."
+  body_offset = 10218
+
+[[case]]
+id = "e24"
+query = "If a single spawn attempt after a crash fails for a transient reason, can the supervisor still try again later, or is it stuck?"
+kind = "paraphrase"
+note = "Unique finding about the restart-budget-exhaustion bug in this record."
+  [[case.gold]]
+  doc_id = "audit/2026-06-12-qdrant-server-provisioning-audit"
+  section = "SUP-03 | LOW | A failed restart still consumes the one-shot restart budget"
+  evidence = "The restart counter increments before the spawn attempt, so a transient spawn failure permanently exhausts the bounded restart budget and the service degrades until manual intervention."
+  body_offset = 3688
+
+[[case]]
+id = "e25"
+query = "Can a config-only environment variable determine which qdrant binary gets launched, bypassing the checksum verification entirely and without any warning?"
+kind = "direct"
+note = "Unique HIGH finding about the env-var binary override bypassing the pinned-binary verification."
+  [[case.gold]]
+  doc_id = "audit/2026-06-19-destructive-ops-security-audit"
+  section = "HIGH"
+  evidence = "Anyone who can set `VAULTSPEC_RAG_QDRANT_BINARY` in the service environment runs an arbitrary executable as the service user, silently shadowing a correctly provisioned, pinned binary with no execution-time signal."
+  body_offset = 3573
+
+[[case]]
+id = "e26"
+query = "Before this bug was fixed, what would happen to the vault's existing data if a full reindex crashed partway through?"
+kind = "paraphrase"
+note = "Unique CRITICAL finding describing the destroy-before-rebuild data-loss bug."
+  [[case.gold]]
+  doc_id = "audit/2026-04-12-vault-index-perf-memory-audit"
+  section = "Iteration 1 — commit d73b7a3 (2026-04-12)"
+  evidence = "`VaultIndexer.full_index` destroys the collection (drop_table or delete_all) before the new slices have been encoded; mid-run failure leaves the vault empty."
+  body_offset = 2344
+
+[[case]]
+id = "e27"
+query = "How did this plan propose to split the security-fix work across two parallel workers by file?"
+kind = "paraphrase"
+note = "Unique task-split instruction found only in this plan's parallelization section."
+  [[case.gold]]
+  doc_id = "plan/2026-04-04-security-hardening-plan"
+  section = "Parallelization"
+  evidence = "Use 2 subagents: one for mcp_server.py (SEC-001, SEC-002, SEC-003 + tests) and one for cli.py (SEC-004 + tests)."
+  body_offset = 3407
+
+[[case]]
+id = "e28"
+query = "If the status file disappears while the heartbeat task is running, does it try to recreate it or just give up quietly?"
+kind = "paraphrase"
+note = "Unique note that the heartbeat loop treats a missing status file as a stop condition, not an error."
+  [[case.gold]]
+  doc_id = "plan/2026-05-30-service-lifecycle-plan"
+  section = "Phase 1 — daemon heartbeat + atexit"
+  evidence = "Reads current `service.json` via `asyncio.to_thread`; if missing, exits the loop (heartbeat is best-effort, not a guarantee)."
+  body_offset = 1829
+
+[[case]]
+id = "e29"
+query = "What upstream release milestone is this plan waiting on before it turns on and measures the new dense-encoder backend?"
+kind = "paraphrase"
+note = "Unique deferred-activation condition tied to an upstream CUDA-13 onnxruntime build."
+  [[case.gold]]
+  doc_id = "plan/2026-06-02-onnx-encoder-backend-plan"
+  section = "Description"
+  evidence = "Activation/benchmarking is deferred per the ADR until onnxruntime ships a CUDA-13 build."
+  body_offset = 1442
+
+[[case]]
+id = "e30"
+query = "Does this plan call for keeping a separate 'info' command alongside 'status', or merging the two?"
+kind = "paraphrase"
+note = "Unique implementation directive about resolving the info/status command overlap in Wave 01."
+  [[case.gold]]
+  doc_id = "plan/2026-06-11-cli-service-operability-hardening-epic-plan"
+  section = "Wave 01 - Canonical Status Model And MCP Deconflation"
+  evidence = "Either remove `server info` as a competing concept or fold it into a clearly named detail/status subcommand."
+  body_offset = 8079
+
+[[case]]
+id = "e31"
+query = "After the reranker started preloading at service startup, roughly how much faster did the very first search's project-lease phase become afterward?"
+kind = "direct"
+note = "Unique measured before/after timing improvement recorded near the end of this plan's integration summary."
+  [[case.gold]]
+  doc_id = "plan/2026-06-11-cli-service-operability-hardening-epic-plan"
+  section = "Execution Summary: Wave 05 Integration"
+  evidence = "manual first-search timing after restart dropped cold `project_lease_seconds` from about `6.53s` to about `1.35s`."
+  body_offset = 40711
+
+[[case]]
+id = "e32"
+query = "Why does migrating from a local on-disk index favor a handful of big scroll pages over many small ones?"
+kind = "paraphrase"
+note = "Unique performance characteristic of local-engine scroll paging cited in this reference."
+  [[case.gold]]
+  doc_id = "reference/2026-06-18-storage-lifecycle-reference"
+  section = "Windows / local caveats"
+  evidence = "Local-engine `scroll` is O(N^2) over pages (documented in `store.py`'s `_id_scan_page_limit`): when the source is local, read in few large pages and run off the hot service thread."
+  body_offset = 3123
+
+[[case]]
+id = "e33"
+query = "Does the indexing CLI need its own logic to detect a non-interactive terminal and strip color codes, or does the rendering library already handle that?"
+kind = "paraphrase"
+note = "Unique statement that Rich's own TTY auto-detection covers non-interactive output, found only in this reference."
+  [[case.gold]]
+  doc_id = "reference/2026-04-12-index-progress-bars-reference"
+  section = "NO_COLOR / non-TTY handling"
+  evidence = "Rich's Console auto-detects TTY by default. Non-TTY rendering degrades gracefully (Rich strips ANSI codes automatically)."
+  body_offset = 8082
+
+[[case]]
+id = "e34"
+query = "Was the graph cache's thread-safety verified with a concurrency test right at the point the cached value expires?"
+kind = "paraphrase"
+note = "Unique concurrency test description found only in this execution record."
+  [[case.gold]]
+  doc_id = "exec/2026-04-02-service-graph/2026-04-02-service-graph-phase1-step1-exec"
+  section = "Verification"
+  evidence = "Concurrent `get()` with 8 threads at TTL boundary: all threads get a result"
+  body_offset = 2050
+
+[[case]]
+id = "e35"
+query = "Did the end-to-end test against the actual provisioned server binary have any flaky failures, and if so were they caused by a bug?"
+kind = "paraphrase"
+note = "Unique note attributing a transient integration-test failure to disk space rather than a defect."
+  [[case.gold]]
+  doc_id = "exec/2026-06-12-qdrant-server-provisioning/2026-06-12-qdrant-server-provisioning-P05-summary"
+  section = "Description"
+  evidence = "the real-binary integration suite proves the index+search round trip, two-root namespacing, and clean shutdown end to end (it failed only transiently under a genuinely full system disk, not a code defect)."
+  body_offset = 2541
+
+[[case]]
+id = "e36"
+query = "Did the new watcher integration test confirm that creating a file on disk actually gets picked up and made searchable automatically?"
+kind = "paraphrase"
+note = "Unique outcome statement recorded for this watcher file-creation test step."
+  [[case.gold]]
+  doc_id = "exec/2026-06-05-service-stress-watcher/2026-06-05-service-stress-watcher-W01-P01-S02"
+  section = "Outcome"
+  evidence = "Real-time file creation triggers automatic index refreshes in the watcher test case, validating system design."
+  body_offset = 419
+

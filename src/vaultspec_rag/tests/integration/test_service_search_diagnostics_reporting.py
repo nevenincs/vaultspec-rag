@@ -100,6 +100,11 @@ def test_cli_human_renders_shared_readiness_scenario(
         assert all(len(item) <= 256 for item in fact.evidence)
         for wait in fact.waits:
             assert f"Wait {fact.source} {wait.cause.value}:" in result.output
+    for witness in scenario.results:
+        if witness.section is not None:
+            located = f"{witness.result_id}:{witness.line_start}-{witness.line_end}"
+            assert located in result.output
+            assert f"section: {witness.section}" in result.output
     if scenario.failure is not None:
         assert f"Code: {scenario.failure.code}" in result.output
         assert scenario.failure.remediation in result.output

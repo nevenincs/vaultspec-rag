@@ -2627,6 +2627,113 @@ def test_concurrent_fresh_schema_openers_observe_only_empty_or_current(
         )
 
 
+def _peer_creates_current_schema(path: Path, *, busy_seconds: float) -> bool:
+    """Commit the whole current schema from another connection, as a peer would.
+
+    Returns whether the commit landed; ``False`` means a reader's lock held it
+    off for *busy_seconds*.
+    """
+    connection = sqlite3.connect(path, timeout=busy_seconds)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        RunLedger._create_base_tables(connection)
+        RunLedger._create_publication_tables(connection)
+        RunLedger._create_required_indexes(connection)
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
+    except sqlite3.OperationalError as exc:
+        connection.rollback()
+        assert "locked" in str(exc), exc
+        return False
+    finally:
+        connection.close()
+    return True
+
+
+def _interleave_peer_after_version_read(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    nth_read: int,
+    busy_seconds: float,
+) -> list[bool]:
+    """Let a peer create the schema right after the opener's *nth* version read.
+
+    The interleaving is forced, not raced: the opener's own read returns, the
+    peer then tries to commit, and only after that does the opener continue.
+    """
+    from ..indexer import _run_ledger_runtime
+
+    real_fetch_one = _run_ledger_runtime.fetch_one
+    reads = 0
+    landed: list[bool] = []
+
+    def interleaving_fetch_one(
+        connection: sqlite3.Connection,
+        sql: str,
+        parameters: tuple[object, ...] = (),
+    ) -> object:
+        nonlocal reads
+        row: object = real_fetch_one(connection, sql, parameters)
+        if "user_version" in sql:
+            reads += 1
+            if reads == nth_read:
+                path = Path(connection.execute("PRAGMA database_list").fetchone()[2])
+                landed.append(
+                    _peer_creates_current_schema(path, busy_seconds=busy_seconds)
+                )
+        return row
+
+    monkeypatch.setattr(_run_ledger_runtime, "fetch_one", interleaving_fetch_one)
+    return landed
+
+
+def test_a_schema_committed_mid_preflight_is_not_read_as_pre_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The preflight reads the version and the tables from one snapshot.
+
+    Mutation: dropping the preflight's ``BEGIN``. The peer's commit then lands
+    between the two reads, the fresh file reads as tables without a version,
+    and opening raises the pre-proof refusal instead of succeeding.
+    """
+    path = tmp_path / "runs.sqlite3"
+    path.touch()
+    landed = _interleave_peer_after_version_read(
+        monkeypatch, nth_read=1, busy_seconds=0.2
+    )
+
+    RunLedger(path)
+
+    # The snapshot held the peer off, so the opener created the schema itself.
+    assert landed == [False]
+    with sqlite3.connect(path) as connection:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
+            SCHEMA_VERSION
+        )
+
+
+def test_a_schema_committed_before_the_initializer_locks_is_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A peer that finished creating the schema first leaves nothing to refuse.
+
+    Mutation: restoring the initializer's unlocked version-then-tables check.
+    Its version read predates the peer's commit and its table read follows
+    it, so opening raises "changed before current-schema creation".
+    """
+    path = tmp_path / "runs.sqlite3"
+    path.touch()
+    landed = _interleave_peer_after_version_read(
+        monkeypatch, nth_read=2, busy_seconds=PROCESS_TIMEOUT_SECONDS
+    )
+
+    RunLedger(path)
+
+    assert landed == [True]
+
+
 def test_existing_empty_file_receives_the_exact_current_schema(tmp_path: Path) -> None:
     path = tmp_path / "runs.sqlite3"
     path.touch()

@@ -281,14 +281,16 @@ def _display_search_results(
 def _search_result_meta_line(result: dict[str, object]) -> str | None:
     """Render the vault frontmatter line: type, feature, status, date, related.
 
-    Returns ``None`` for results without a ``doc_type`` (codebase hits), so only
-    vault documents gain the metadata line. Surfaces the pipeline context that
-    turns a hit into an orientation entry point - especially ``status`` (so a
-    superseded ADR is visible as such) and the ``related`` lineage edges.
+    Surfaces the pipeline context that turns a hit into an orientation entry
+    point - especially ``status`` (so a superseded ADR is visible as such) and
+    the ``related`` lineage edges - then the section the shown text sits
+    under. A hit without a ``doc_type`` shows only its section, and a codebase
+    hit, which has neither, gains no line at all.
     """
     doc_type = _non_empty_result_string(result, "doc_type")
+    section = _non_empty_result_string(result, "section")
     if doc_type is None:
-        return None
+        return None if section is None else f"section: {section}"
     parts: list[str] = [doc_type]
     feature = _non_empty_result_string(result, "feature")
     if feature is not None:
@@ -305,6 +307,8 @@ def _search_result_meta_line(result: dict[str, object]) -> str | None:
         shown = ", ".join(str(x) for x in related_items[:5])
         suffix = ", ..." if len(related_items) > 5 else ""
         parts.append(f"related: {shown}{suffix}")
+    if section is not None:
+        parts.append(f"section: {section}")
     return " | ".join(parts)
 
 
@@ -315,11 +319,15 @@ def _display_text_lines(value: object) -> list[str]:
 def _search_result_text_lines(
     result: dict[str, object], *, root: Path | None
 ) -> list[str]:
-    full_text = _non_empty_result_string(result, "rerank_text")
-    if full_text is not None:
-        return _display_text_lines(full_text)
+    """Show the file's own lines at the hit, while they still hold the snippet.
+
+    A file edited since it was indexed no longer says what the hit matched,
+    and printing its current lines would show different text from the JSON
+    form of the same search; the indexed snippet is shown instead.
+    """
     source_lines = _source_line_text_lines(result, root=root)
-    if source_lines:
+    snippet = _non_empty_result_string(result, "snippet")
+    if source_lines and (snippet is None or snippet.strip() in "\n".join(source_lines)):
         return source_lines
     return _display_text_lines(result.get("snippet", ""))
 
@@ -382,9 +390,12 @@ def _search_result_location(result: dict[str, object]) -> str:
             or _result_int(result, "col_start")
             or _result_int(result, "column")
         )
+        line_end = _result_int(result, "line_end")
         suffix = f":{line_start}"
         if column is not None:
             suffix += f":{column}"
+        elif line_end is not None and line_end > line_start:
+            suffix += f"-{line_end}"
         return f"{path}{suffix}"
 
     locator = _non_empty_result_string(result, "locator")

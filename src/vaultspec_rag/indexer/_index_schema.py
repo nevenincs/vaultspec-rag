@@ -4,7 +4,7 @@ from typing import Final
 
 CODE_EMBED_SCHEMA: Final = 2
 DOCUMENT_EMBED_SCHEMA: Final = 1
-VAULT_POINT_SCHEMA: Final = 2
+VAULT_POINT_SCHEMA: Final = 3
 
 __all__ = [
     "CODE_EMBED_SCHEMA",
