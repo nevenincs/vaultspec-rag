@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import IO, TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TextIO, cast
 
 import pytest
 
@@ -693,7 +693,9 @@ class TestRefusedInstall:
 
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
 
-        assert result.exit_code == 2, result.output
+        # A refusal is a failure, not a skip for want of consent: nothing was
+        # installed, so the requested state was not reached.
+        assert result.exit_code == 1, result.output
         assert "vaultspec-rag installed" not in result.output
         assert "refused" in result.output
         assert ComputeCapability.CPU_ONLY_BUILD.label in result.output
@@ -718,7 +720,7 @@ class TestRefusedInstall:
         )
 
         assert "upgrade refused" in result.output
-        assert result.exit_code == 2
+        assert result.exit_code == 1
 
     def test_the_refusal_is_one_stable_json_envelope(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -732,12 +734,14 @@ class TestRefusedInstall:
 
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes", "--json"])
 
-        payload = json.loads(result.stdout)
+        envelope = json.loads(result.stdout)
+        assert envelope["status"] == "failed"
+        payload = envelope["data"]
         assert payload["action"] == "install"
         assert payload["refused"]
         assert payload["warnings"] == []
         assert payload["tool_torch_repair"]["commands"] == [_REFUSAL_COMMAND]
-        assert result.exit_code == 2
+        assert result.exit_code == 1
         # A step that never ran reports nothing, not its default: "not
         # changed" and "skipped" are answers a run gives.
         for field in (
@@ -776,7 +780,7 @@ class TestRefusedInstall:
         result = runner.invoke(app, ["install", "--target", str(ws), "--force"])
 
         assert authorised == [False]
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         assert _REFUSAL_COMMAND in result.output
 
     def test_yes_authorises_the_repair(
@@ -799,23 +803,37 @@ class TestRefusedInstall:
         assert authorised == [True]
 
     def test_a_json_run_is_never_given_a_confirmer(self) -> None:
-        """Guard assertion: one JSON document, whatever stdin looks like.
+        """Guard assertion: one JSON document, whatever the streams look like.
 
         The prompt renders on the same stream as the envelope, and Windows
         reports stdin redirected from NUL as a terminal, so the terminal test
-        alone put a question in front of the document a broker parses.
+        alone put a question in front of the document a broker parses. Both
+        streams here report a terminal and the environment declares nothing,
+        so the JSON flag is the only thing that can withhold the confirmer.
         """
-        from ..cli._install import _consent_prompt_wanted
+        from ..cli._install import _confirmation_hook
 
         class _Terminal:
             @staticmethod
             def isatty() -> bool:
                 return True
 
-        terminal = cast("IO[str]", _Terminal())
+        terminal = cast("TextIO", _Terminal())
 
-        assert _consent_prompt_wanted(json_output=False, stdin=terminal) is True
-        assert _consent_prompt_wanted(json_output=True, stdin=terminal) is False
+        def _confirm(prompt: str) -> bool:
+            raise AssertionError(f"resolving the hook asked: {prompt}")
+
+        def _hook(*, json_output: bool) -> object:
+            return _confirmation_hook(
+                _confirm,
+                json_output=json_output,
+                environ={},
+                stdin=terminal,
+                stdout=terminal,
+            )
+
+        assert _hook(json_output=False) is _confirm
+        assert _hook(json_output=True) is None
 
     def test_an_install_run_probes_an_interpreter_at_most_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
