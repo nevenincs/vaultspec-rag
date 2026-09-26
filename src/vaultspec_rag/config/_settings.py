@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -979,6 +978,12 @@ class VaultSpecConfigWrapper:
             self._watch_retry_bounds,
             self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
+            # The kill switch carries no settings key of its own, so the
+            # per-key sweep above never reaches it. Resolving it here is what
+            # puts a mistyped switch in the same collective report as every
+            # other unusable value instead of surfacing it on the first
+            # document a run tries to preprocess.
+            lambda: self.preprocess_mode,
         )
         for relation in relations:
             try:
@@ -1017,30 +1022,47 @@ class VaultSpecConfigWrapper:
 
         Kept off the generic override map because this is a transform, not an
         override. ``VAULTSPEC_RAG_PREPROCESS`` is a kill switch: its value is
-        not the setting's value, only ``off`` means anything, and it has to
-        beat a CLI override that the generic path deliberately ranks ABOVE the
-        environment - an operator must always be able to silence a root's
-        rules. Reading it live also lets a flag forwarded into the daemon
-        environment take effect without rebuilding the config. Resolution is:
+        not the setting's value, and it has to beat a CLI override that the
+        generic path deliberately ranks ABOVE the environment - an operator
+        must always be able to silence a root's rules. Reading it live also
+        lets a flag forwarded into the daemon environment take effect without
+        rebuilding the config. Resolution is:
 
-        - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off``, beating everything.
+        - a false word forces ``off``, beating everything;
+        - a true word, blank or unset leaves the decision below it;
         - otherwise the CLI override, then the module default (``default``,
           on).
 
+        It is a boolean because every other switch in the framework is, and a
+        switch that honoured only one of the eight words operators actually
+        type is a switch that silently ignores seven of them: ``=0`` and
+        ``=false`` used to leave preprocessing running.
+
         An unrecognised configured mode degrades to ``default`` with a warning
         instead of being rejected, the one place this module bends its own
-        rule. Rejecting here would refuse to start the daemon over a knob whose
-        safe reading is the shipped one, and the degrade is announced rather
-        than silent. The value cannot arrive from the environment anyway - the
-        kill switch is the only env input - so an operator typo cannot reach
-        this branch.
+        rule. Rejecting there would refuse to start the daemon over a knob
+        whose safe reading is the shipped one, and the degrade is announced
+        rather than silent. The switch itself gets no such latitude: a word it
+        does not recognise is refused with the rest of the unusable settings,
+        because guessing which way an operator meant a kill switch is the
+        guess that matters most.
 
         Returns:
             One of ``"default"`` or ``"off"``.
+
+        Raises:
+            ValueError: If the kill switch carries a word the shared boolean
+                vocabulary does not recognise.
         """
-        off_raw = os.environ.get(EnvVar.PREPROCESS.value)
-        if off_raw is not None and off_raw.strip().lower() == "off":
-            return "off"
+        switch_raw = env_value(entry(EnvVar.PREPROCESS))
+        if switch_raw is not None:
+            switch = parse_bool(switch_raw)
+            if switch is None:
+                raise setting_rejection(
+                    "preprocess_mode", BOOL_SHAPE, switch_raw, EnvVar.PREPROCESS
+                )
+            if not switch:
+                return "off"
         configured = str(self._resolve_rag_default("preprocess_mode"))
         if configured not in VALID_PREPROCESS_MODES:
             logger.warning(

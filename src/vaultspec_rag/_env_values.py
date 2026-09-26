@@ -2,74 +2,58 @@
 
 A flag whose accepted words differ from its neighbour's is a flag operators
 get wrong. ``off`` disabled one switch here while enabling another, and both
-spellings looked equally reasonable in a shell. So the token table lives in
-exactly one place and every switch reads it, rather than each call site
-deciding for itself what ``off`` means.
+spellings looked equally reasonable in a shell. The table therefore lives in
+exactly one place - and that place is now the framework, not this package, so
+the same word in the same variable means the same thing across every vaultspec
+tool rather than merely across this one.
+
+This module is the package-local name for it, kept so the readers that grew up
+against these names keep working, and kept deliberately thin: it adds no
+behaviour, and there is nothing here for the framework's rules to drift from.
 
 What a call site still owns is the *out-of-band* policy: what to do with a
-word that spells neither state. :func:`parse_bool` answers only the question
-it can answer everywhere - which state a recognised word names - and returns
-``None`` for anything else, so a reader that must reject, one that must fail
-safe, and one that must defer to another library's parser can each do so
-without a second copy of the table.
+blank value and with a word that spells neither state. :func:`parse_bool`
+answers only the question it can answer everywhere - which state a recognised
+word names - and returns ``None`` for anything else, so a reader that must
+reject, one that must fail safe, and one that must defer to another library's
+parser can each do so without a second copy of the table. Blank is not in
+either table: it is unset, which :func:`is_blank` is for, and a reader decides
+for itself whether unset means its default or its protective state.
 
-The module is stdlib-only, and must stay that way. It is imported at module
-scope by code reachable from spawn workers, which re-import their whole chain;
-pulling the settings package (and through it the vaultspec-core config
-package) or torch in here would reintroduce that cost in every worker.
+The chain stays cheap on purpose. It is imported at module scope by code
+reachable from spawn workers, which re-import their whole chain per worker,
+and the framework module behind it imports nothing beyond the standard
+library. Pulling the settings package (and through it the framework's
+configuration package) or torch in here would reintroduce that cost in every
+worker.
 """
 
 from __future__ import annotations
 
-#: Spellings that name the on state.
-TRUE_TOKENS: frozenset[str] = frozenset({"1", "true", "yes", "on"})
-
-#: Spellings that name the off state. The empty string is included because
-#: ``VAR=`` is how a shell spells "not on", and off is the safe direction to
-#: resolve it in. A reader for which off is *not* the safe direction handles
-#: the empty case before calling :func:`parse_bool`.
-FALSE_TOKENS: frozenset[str] = frozenset({"0", "false", "no", "off", ""})
-
-#: The human phrase completing "<name> must be ...". Built from the tables so
-#: the message can never list a spelling the parser does not accept. The empty
-#: string is omitted: it has no spelling to print.
-BOOL_SHAPE: str = "one of " + ", ".join(
-    sorted(token for token in TRUE_TOKENS | FALSE_TOKENS if token)
+from vaultspec_core.env_values import (
+    BOOL_SHAPE as BOOL_SHAPE,
+)
+from vaultspec_core.env_values import (
+    FALSE_TOKENS as FALSE_TOKENS,
+)
+from vaultspec_core.env_values import (
+    TRUE_TOKENS as TRUE_TOKENS,
+)
+from vaultspec_core.env_values import (
+    is_blank as is_blank,
+)
+from vaultspec_core.env_values import (
+    parse_bool as parse_bool,
+)
+from vaultspec_core.env_values import (
+    rejection as rejection,
 )
 
-
-def parse_bool(raw: str) -> bool | None:
-    """Return the state *raw* names, or ``None`` when it names neither.
-
-    Comparison is case-folded and stripped, so an operator's stray whitespace
-    or capitalisation resolves rather than being refused.
-
-    Args:
-        raw: The raw environment value.
-
-    Returns:
-        ``True`` or ``False`` for a recognised spelling; ``None`` for a word
-        that is in neither table, leaving the caller to apply its own policy.
-    """
-    token = raw.strip().lower()
-    if token in TRUE_TOKENS:
-        return True
-    if token in FALSE_TOKENS:
-        return False
-    return None
-
-
-def rejection(where: str, shape: str, value: object) -> ValueError:
-    """Build the one rejection message shape this project emits for env values.
-
-    Args:
-        where: What failed, named the way its reader identifies it - a bare
-            variable name, or a variable name with the settings key it feeds.
-        shape: The human phrase describing what was expected.
-        value: The offending value, rendered for the operator.
-
-    Returns:
-        A ``ValueError`` naming the source, the value and the expected shape,
-        so the message alone is enough to fix the mistake.
-    """
-    return ValueError(f"{where} must be {shape}, got {value!r}")
+__all__ = [
+    "BOOL_SHAPE",
+    "FALSE_TOKENS",
+    "TRUE_TOKENS",
+    "is_blank",
+    "parse_bool",
+    "rejection",
+]

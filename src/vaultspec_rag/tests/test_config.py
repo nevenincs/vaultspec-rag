@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import vaultspec_core
 
+from .._env_values import FALSE_TOKENS, TRUE_TOKENS
 from .._job_errors import JobError, JobErrorKind
 from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
 from ..config._settings import (
@@ -945,10 +947,15 @@ def test_cuda_ceiling_comparison_is_baseline_consistent() -> None:
 
 def test_memory_budget_fails_closed_when_real_measurements_are_unavailable() -> None:
     source_root = Path(__file__).resolve().parents[2]
+    # ``-S`` is what makes the measurement libraries unavailable, and it also
+    # drops whatever puts the framework on the path, so both source roots are
+    # named explicitly. The probe reaches the framework only for the shared
+    # value vocabulary, which imports nothing beyond the standard library.
+    framework_root = Path(vaultspec_core.__file__).resolve().parents[1]
     child_code = """
 import sys
 
-sys.path.insert(0, sys.argv[1])
+sys.path[:0] = sys.argv[1:3]
 
 from vaultspec_rag._job_errors import JobError, JobErrorKind  # absolute-import-ok
 from vaultspec_rag.memory_probe import MemoryBudget  # absolute-import-ok
@@ -982,7 +989,14 @@ else:
 print(f"{rss_kind},{cuda_kind}")
 """
     completed = subprocess.run(
-        [sys.executable, "-S", "-c", child_code, os.fspath(source_root)],
+        [
+            sys.executable,
+            "-S",
+            "-c",
+            child_code,
+            os.fspath(source_root),
+            os.fspath(framework_root),
+        ],
         cwd=source_root,
         capture_output=True,
         text=True,
@@ -1408,6 +1422,49 @@ def test_preprocess_kill_switch_beats_an_explicit_configured_mode() -> None:
     try:
         reset_config()
         assert get_config({"preprocess_mode": "default"}).preprocess_mode == "off"
+    finally:
+        restore_env(EnvVar.PREPROCESS, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize("word", sorted(FALSE_TOKENS))
+def test_every_false_word_kills_preprocessing(word: str) -> None:
+    # The switch used to honour "off" alone, so an operator who typed 0 or
+    # false got preprocessing anyway and nothing said so. Every word the
+    # shared vocabulary spells off now means off.
+    prev = set_env(EnvVar.PREPROCESS, word)
+    try:
+        reset_config()
+        assert get_config().preprocess_mode == "off"
+    finally:
+        restore_env(EnvVar.PREPROCESS, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize("word", [*sorted(TRUE_TOKENS), "", "   "])
+def test_a_true_or_blank_switch_leaves_preprocessing_to_the_rungs_below(
+    word: str,
+) -> None:
+    # A true word asks for the shipped behaviour, and blank asks for nothing
+    # at all; neither may silence a root's rules.
+    prev = set_env(EnvVar.PREPROCESS, word)
+    try:
+        reset_config()
+        assert get_config().preprocess_mode == "default"
+    finally:
+        restore_env(EnvVar.PREPROCESS, prev)
+        reset_config()
+
+
+def test_an_unrecognised_switch_word_is_refused_with_the_other_settings() -> None:
+    # Guessing which way an operator meant a kill switch is the guess that
+    # matters most, so it is refused at construction with everything else
+    # that is unusable rather than at the first document of a run.
+    prev = set_env(EnvVar.PREPROCESS, "offf")
+    try:
+        reset_config()
+        with pytest.raises(ValueError, match=EnvVar.PREPROCESS.value):
+            get_config()
     finally:
         restore_env(EnvVar.PREPROCESS, prev)
         reset_config()

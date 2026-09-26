@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
-from ._env_values import BOOL_SHAPE, parse_bool, rejection
+from ._env_values import BOOL_SHAPE, is_blank, parse_bool, rejection
 from ._job_errors import JobError, JobErrorKind
 from ._units import bytes_to_mib, mib_to_bytes
 
@@ -182,8 +182,11 @@ def is_enabled() -> bool:
     Raises:
         ValueError: If the variable is set to a value spelling neither state.
     """
-    raw = os.environ.get(ENV_VAR, "")
-    enabled = parse_bool(raw)
+    raw = os.environ.get(ENV_VAR)
+    if is_blank(raw):
+        return False
+    # is_blank has already ruled None out.
+    enabled = parse_bool(str(raw))
     if enabled is None:
         raise rejection(ENV_VAR, BOOL_SHAPE, raw)
     return enabled
