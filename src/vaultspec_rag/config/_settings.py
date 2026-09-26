@@ -35,7 +35,8 @@ class VaultSpecConfigWrapper:
     Resolution order for RAG keys:
     1. CLI override (stored via ``overrides`` dict at construction)
     2. Environment variable (via ``ENV_OVERRIDE_MAP``)
-    3. ``_RAG_DEFAULTS`` value
+    3. The persisted local-only marker (``local_only`` only)
+    4. ``_RAG_DEFAULTS`` value
 
     The resolved value is then coerced and range-checked under the module's
     coercion and validation policy, both on construction and on every read.
@@ -766,12 +767,6 @@ class VaultSpecConfigWrapper:
         """Return whether an override source explicitly supplies *name*."""
         if name in self._rag_overrides:
             return True
-        try:
-            getattr(self._base, name)
-        except AttributeError:
-            pass
-        else:
-            return True
         env_key = ENV_OVERRIDE_MAP.get(name)
         return env_key is not None and os.environ.get(env_key.value) is not None
 
@@ -904,20 +899,9 @@ class VaultSpecConfigWrapper:
 
     def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
         """Resolve *name* through the precedence chain without validating it."""
+        # 1. CLI override
         if name in self._rag_overrides:
             return self._rag_overrides[name], None
-        # 1. CLI override via base config
-        try:
-            return getattr(self._base, name), None
-        except AttributeError as exc:
-            # Base config doesn't carry RAG-specific knob; fall
-            # through to env var, then to module default. Debug
-            # so the swallow stays observable.
-            logger.debug(
-                "config attr %s not on base; fall through: %s",
-                name,
-                exc,
-            )
 
         # 2. Env var override
         env_key = ENV_OVERRIDE_MAP.get(name)
@@ -938,7 +922,7 @@ class VaultSpecConfigWrapper:
                 else:
                     return self._coerce_env(name, env_val, env_key), env_key
 
-        # 2.5. Persisted runtime selection (local_only only). When
+        # 3. Persisted runtime selection (local_only only). When
         # ``install --local-only`` wrote the marker, a later
         # ``server start`` with no flag and no env honours it. Precedence
         # is explicit env/flag (above) > persisted config (here) >
@@ -949,7 +933,7 @@ class VaultSpecConfigWrapper:
             if persisted is not None:
                 return persisted, None
 
-        # 3. Default
+        # 4. Default
         return self._RAG_DEFAULTS[name], None
 
     def _resolve_rag_default(self, name: str) -> Any:
@@ -1042,8 +1026,8 @@ class VaultSpecConfigWrapper:
         environment take effect without rebuilding the config. Resolution is:
 
         - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off``, beating everything.
-        - otherwise the base-config/CLI override, then the module default
-          (``default``, on).
+        - otherwise the CLI override, then the module default (``default``,
+          on).
 
         An unrecognised configured mode degrades to ``default`` with a warning
         instead of being rejected, the one place this module bends its own
@@ -1189,9 +1173,13 @@ class VaultSpecConfigWrapper:
         """Return a config attribute, checking env overrides then defaults.
 
         Resolution order for known RAG keys:
-        1. Base config (may contain CLI overrides)
+        1. CLI override (stored via ``overrides`` dict at construction)
         2. Environment variable (via ``ENV_OVERRIDE_MAP``)
-        3. ``_RAG_DEFAULTS`` fallback
+        3. The persisted local-only marker (``local_only`` only)
+        4. ``_RAG_DEFAULTS`` fallback
+
+        A name that is not a known RAG key delegates to the base config
+        instead, unconditionally - the fallback below.
 
         Whichever source wins, the value is coerced and range-checked before it
         is returned, so no access path can hand back an unvalidated setting.
