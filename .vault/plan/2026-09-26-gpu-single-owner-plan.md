@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:5553519252faca40f30fd3204114f0e9983a695ce8c2ed2e812e51cde9fcd20c'
+body_hash: 'sha256:5ec3361a13bd22dc9bf030520f320432774e2d0d4cd6db86bf7ff5d60faefecb'
 ---
 
 # `gpu-single-owner` plan
@@ -82,7 +82,7 @@ Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool u
 - [x] `P03.S12` - make install treat a non-durable receipt as needing the repair, run the in-place repair itself on consent and verify compute and receipt afterwards, and hand over the command otherwise; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_install.py`.
 - [x] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
 - [x] `P03.S14` - prove the cycle against real uv with loopback stand-in wheels: a receipt written with the options is durable, the repair applies in place under a live holder, and a bare upgrade keeps the CUDA build; `src/vaultspec_rag/tests/`.
-- [ ] `P03.S15` - install uv tool hosts with the CUDA index and first-match strategy in the documentation, and document upgrading as uv tool upgrade followed by a service restart; `docs/, README.md`.
+- [x] `P03.S15` - install uv tool hosts with the CUDA index and first-match strategy in the documentation, and document upgrading as uv tool upgrade followed by a service restart; `docs/, README.md`.
 
 ## Parallelization
 

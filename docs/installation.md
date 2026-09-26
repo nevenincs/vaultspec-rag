@@ -163,30 +163,29 @@ reference.
 ### Install as a standalone tool
 
 Choose this route by default. The following commands install the host and the Model
-Context Protocol (MCP) adapter that AI assistants launch. The Windows and Linux commands
-pin the CUDA build of PyTorch in the tool's receipt, so later upgrades keep it.
+Context Protocol (MCP) adapter that AI assistants launch. The Windows and Linux command
+records the CUDA package index and its resolution strategy in the tool's installation
+receipt, which uv re-applies on every later upgrade, so the GPU build survives them.
 
-Windows x86-64:
-
-```powershell
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
-```
-
-Linux x86-64 (glibc 2.28 or newer):
+Windows x86-64, Linux x86-64 and Linux aarch64 (glibc 2.28 or newer):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl"
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
 ```
 
-Apple silicon macOS:
+Apple silicon macOS, which uses Metal rather than CUDA:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-For other Python versions or Linux architectures, install without the `--with` pin,
-then [pin the GPU build](#pin-the-gpu-build). If uv reports its executables directory
-isn't on your `PATH`, run `uv tool update-shell` and open a new terminal.
+Both options are needed. The index alone leaves the request unsatisfiable, because the
+CUDA index mirrors packages this one depends on at versions it cannot use and uv's
+default strategy forbids falling through to PyPI. Choose a Python version your platform
+has a CUDA build for; PyTorch publishes them for Windows x86-64 and Linux x86-64 and
+aarch64 only. An installation made without the two options is repaired in place by
+[pin the GPU build](#pin-the-gpu-build). If uv reports its executables directory isn't
+on your `PATH`, run `uv tool update-shell` and open a new terminal.
 
 Run every later command as `vaultspec-rag`. Continue with
 [set up each repository](#set-up-each-repository).
@@ -530,35 +529,35 @@ installation and every client together.
 
 1. Upgrade the host installation with the command for its route:
 
-   | Installation route              | Upgrade command                                               |
-   | ------------------------------- | ------------------------------------------------------------- |
-   | Project dependency              | `uv sync --upgrade-package vaultspec-rag`                     |
-   | Standalone tool, unpinned       | `uv tool upgrade vaultspec-rag`                               |
-   | Standalone tool, version pinned | Re-install at `@latest`, below                                |
-   | Scoop                           | `scoop update vaultspec-rag`                                  |
-   | Homebrew                        | `brew upgrade vaultspec-rag`                                  |
-   | Downloaded archive              | Verify and extract the new release in place of the old folder |
+   | Installation route | Upgrade command                                               |
+   | ------------------ | ------------------------------------------------------------- |
+   | Project dependency | `uv sync --upgrade-package vaultspec-rag`                     |
+   | Standalone tool    | `uv tool upgrade vaultspec-rag`                               |
+   | Scoop              | `scoop update vaultspec-rag`                                  |
+   | Homebrew           | `brew upgrade vaultspec-rag`                                  |
+   | Downloaded archive | Verify and extract the new release in place of the old folder |
 
-   uv upgrades respect version constraints, and a standalone tool keeps the Python
-   version and [GPU build pin](#pin-the-gpu-build) from its receipt. For a temporary
-   run, follow [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
+   uv upgrades respect version constraints, and a standalone tool re-applies the Python
+   version, the extras and the [CUDA index](#install-as-a-standalone-tool) its receipt
+   records, so the GPU build survives the upgrade. For a temporary run, follow
+   [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
    and keep your extras.
 
-   A [GPU build repair](#pin-the-gpu-build) installs an exact version, and uv records
-   that pin. `uv tool upgrade` then reports `Nothing to upgrade`. Re-install at
-   `@latest` instead, keeping the Python request, the extras and the wheel URL the
-   receipt already carries:
+   A standalone tool installed before this mechanism, or installed without the two index
+   options, records no CUDA source: a plain upgrade then resolves a CPU-only PyTorch.
+   `vaultspec-rag server doctor` says so and prints the one command that repairs it,
+   which is the same command [pin the GPU build](#pin-the-gpu-build) describes. Nothing
+   needs to be stopped for it.
 
-   ```sh
-   uv tool install --force --python 3.13 "vaultspec-rag[gpu,mcp]@latest" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
+1. Start the service again from the host installation, so it runs the release you just
+   installed:
+
+   ```bash
+   vaultspec-rag server start
    ```
 
-   Read the receipt's own values with
-   `uv tool list --show-paths --show-python --show-with`. When the running release is
-   below a declared floor,
-   `vaultspec-rag server doctor` prints this command for the installation it finds.
-   The preconditions of a repair apply: nothing may be running out of the tool
-   environment.
+   An upgrade replaces the installed package while the running daemon keeps the code it
+   imported at startup, so clients refuse it as a different release until it restarts.
 
 1. Read the new release from the upgraded host installation with
    `vaultspec-rag --version`. Move every client project to that release, keeping its
@@ -674,10 +673,14 @@ The repository setup needs consent it doesn't have, so it exits non-zero. Rerun 
 
 ### `install` prints a repair command instead of repairing the tool
 
-The repository setup prints a repair command rather than replacing the environment it's
-running in, and exits non-zero without setting up the repository. Follow
-[pin the GPU build](#pin-the-gpu-build) to stop the service and its assistant sessions,
-then run the saved command from outside the tool environment. See the
+The repository setup found a tool environment that cannot run the GPU stack, or whose
+installation receipt records no CUDA source, and it was not authorised to change
+anything. It prints the command that repairs it and exits non-zero without setting up
+the repository.
+
+Run the repository setup again with `--yes` to let it apply the repair itself, or run
+the printed command. Either way the change is made in place and nothing has to be
+stopped; see [pin the GPU build](#pin-the-gpu-build) for the whole sequence and the
 [install command reference](cli.md#install) for configuration flags.
 
 <p id="a-tool-environment-is-missing-packages-after-a-failed-reinstall"></p>
@@ -689,10 +692,13 @@ An interrupted reinstall can leave `vaultspec-rag` unable to run, reporting
 
 [Report the failed command](https://github.com/nevenincs/vaultspec-rag/issues) with the
 error, operating system, Python version, and output of
-`uv tool list --show-paths --show-python --show-with`. Include any saved pinned install
-command. While the service or assistant sessions still use the tool environment, don't
-force another reinstall; [pin the GPU build](#pin-the-gpu-build) requires them to stop
-first.
+`uv tool list --show-paths --show-python --show-with`. Include the command that was
+interrupted. Don't force another reinstall while the service or an assistant session
+still uses the tool environment: `uv tool install --force` removes the environment's
+contents before writing the new ones, and a file it cannot remove leaves the
+installation in exactly this state. The repair in
+[pin the GPU build](#pin-the-gpu-build) is not a forced reinstall and does not have
+this failure mode.
 
 <p id="server-start-cannot-find-the-qdrant-binary"></p>
 
@@ -717,56 +723,52 @@ file. Retry. On an air-gapped machine, register your own executable with
 
 ### Pin the GPU build
 
-Use these steps to repair missing or CPU-only PyTorch in a standalone tool on Linux or
-Windows. Apple silicon uses the standard wheel's MPS support.
+Use these steps when a standalone tool on Linux or Windows has a missing or CPU-only
+PyTorch, or when `server doctor` reports that its receipt records no CUDA source. Apple
+silicon uses the standard wheel's Metal support and needs none of this.
 
-A pin saves the direct `torch` wheel URL in the tool's installation receipt through
-`--with`. Unpinned upgrades can select a CPU build. Project `pyproject.toml` settings
-and `uv sync` don't configure tool environments.
+The repair installs the CUDA build of PyTorch in place and records the CUDA package
+index in the tool's installation receipt, which uv re-applies on every later upgrade.
+It changes PyTorch alone: the installed release, the extras and the Python version stay
+as they are, and nothing is removed, so the service and any assistant session may keep
+running throughout. Project `pyproject.toml` settings and `uv sync` do not configure
+tool environments.
 
 If `ModuleNotFoundError` prevents `vaultspec-rag` from running, see
 [the interrupted reinstall entry](#a-tool-environment-is-missing-packages-after-an-interrupted-reinstall)
 before attempting these steps.
 
-1. If `vaultspec-rag` runs, preview the repair:
+1. Ask what this installation needs:
 
    ```sh
-   vaultspec-rag install --dry-run --no-torch-config
+   vaultspec-rag server doctor
    ```
 
-   For a missing or CPU-only PyTorch build, this prints a pinned, platform-specific
-   `uv tool install` command. Save it. The preview neither replaces the tool nor checks
-   for processes holding its files. If no command appears, follow the diagnosis and
-   rerun the checks in [start and verify](#start-and-verify).
+   It names the compute build, what the next upgrade would resolve, and the exact
+   command for this installation. `vaultspec-rag install --dry-run --no-torch-config`
+   prints the same command without changing anything.
 
-1. Before running the saved command, locate the tool environment and stop its service:
+1. Let the installer apply it, or run it yourself:
 
    ```sh
-   uv tool list --show-paths --show-python --show-with
+   vaultspec-rag install --yes --no-torch-config
+   ```
+
+   With a terminal it asks first; `--yes` answers in advance. It then verifies both the
+   installed build and the receipt, and reports a failure rather than a repair if
+   either is wrong. Running the printed command yourself does the same thing.
+
+1. Restart the service so it uses the new build:
+
+   ```sh
    vaultspec-rag server stop
+   vaultspec-rag server start
    ```
 
-1. Prepare the tool environment for replacement:
+   A process that was already running keeps the PyTorch it imported at startup.
 
-   1. If the stop command reports a failure, resolve it first.
-   1. Close assistant sessions that use the tool.
-   1. Move shells and editors outside its environment directory. Open file handles can
-      leave an incomplete installation on Windows.
-
-1. Run the saved command from a shell outside the tool environment. Preserve its
-   `--python` selection and wheel URL; Python must match the wheel's compatibility tags.
-
-1. Run the tool listing again and confirm it shows the direct `torch` URL. Rerun
-   `vaultspec-rag install --no-torch-config` in each repository whose setup was
-   refused, then rerun the checks in [start and verify](#start-and-verify).
-
-### Ask for help
-
-Open an issue on the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues)
-with the output of `vaultspec-rag server doctor --json`,
-`vaultspec-rag server status --json`, and `vaultspec-rag server logs`. Redact
-credentials and private content first. The tracker takes questions as well as bug
-reports, and it's the only support channel.
+1. Confirm with `vaultspec-rag server doctor` that compute is ready and the receipt
+   keeps it, then rerun the checks in [start and verify](#start-and-verify).
 
 <p id="remove-it"></p>
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:d532668cc59decd9bdad9b96b60cc731a1e761c934d68c35da02eaa25e07ee78'
+body_hash: 'sha256:862ef2f09869d38c1c0d0549d9bef0d625349079092dcf2f0b0297b2e665d9f4'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -238,6 +238,14 @@ related:
 - `S14` `verify:` `pytest test_tool_env_provisioning_hostile (11 real-uv proofs) test_substitution_discipline test_process_probe_source_structure` -> `pass`
 - `S14` `verify:` `guard mutation (index recorded without the strategy) fails then passes` -> `pass`
 - `S14` `by:` `vaultspec-high-executor`
+- `S15` `M` `docs/installation.md`
+- `S15` `M` `README.md`
+- `S15` `verify:` `mdformat --check` -> `pass`
+- `S15` `verify:` `pymarkdownlnt scan` -> `pass`
+- `S15` `verify:` `tools/check_docs_conventions.py` -> `pass`
+- `S15` `verify:` `tools/check_docs_version.py` -> `pass`
+- `S15` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
+- `S15` `by:` `vaultspec-high-executor`
 
 ## Notes
 
