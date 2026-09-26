@@ -14,6 +14,7 @@ from ..operator_state._compute import ProbeDepth
 from ..operator_state._environment_probe import InterpreterFacts
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
+from ..operator_state._provisioning import ToolReceiptVerdict
 from ..operator_state._topology import RuntimeEnvKind
 
 pytestmark = [pytest.mark.unit]
@@ -25,6 +26,28 @@ if TYPE_CHECKING:
 
 def _persistent_tool_env(_root: object) -> RuntimeEnvKind:
     return RuntimeEnvKind.UV_TOOL
+
+
+def _durable_receipt(_interpreter: str) -> ToolReceiptVerdict:
+    return ToolReceiptVerdict.DURABLE
+
+
+def _no_cuda_receipt(_interpreter: str) -> ToolReceiptVerdict:
+    return ToolReceiptVerdict.NO_CUDA_SOURCE
+
+
+def _remediation_for(interpreter: str) -> _provisioning.CudaRemediation:
+    """The remediation a tool environment is handed, built where all are."""
+    return _provisioning.cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
+
+
+def _need(capability: ComputeCapability) -> _tool_torch._RepairNeed:
+    """The assessed need a defective tool environment produces."""
+    return _tool_torch._RepairNeed(
+        capability=capability,
+        receipt=ToolReceiptVerdict.NO_CUDA_SOURCE,
+        reason=capability.label,
+    )
 
 
 def _probe_answering(capability: ComputeCapability):
@@ -85,7 +108,9 @@ def test_a_non_interactive_run_reports_the_handoff_instead_of_stopping(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=False
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(),
     )
 
     assert outcome.action in {
@@ -109,7 +134,9 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=False
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(),
     )
 
     assert outcome.action in {
@@ -121,17 +148,143 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
     assert "tool CUDA repair for" in outcome.detail
 
 
-def test_the_repair_module_cannot_launch_a_replacement_at_all() -> None:
-    """Guard assertion: no path in this module spawns uv.
+def test_no_path_here_replaces_an_environment_wholesale() -> None:
+    """Guard assertion: a wholesale replacement is what destroys a held env.
 
-    A refusal that merely avoids the call today is one refactor away from
-    calling it again, so the absence is asserted structurally rather than
-    behaviourally.
+    The repair changes torch in place, which is why the product may run it at
+    all. ``uv tool install --force`` rebuilds the environment instead,
+    removing its contents first and leaving nothing runnable behind when a
+    file cannot be removed - the field failure this cycle exists to end. The
+    absence of that flag is asserted structurally, because a refusal that
+    merely avoids it today is one refactor away from passing it again.
     """
     source = inspect.getsource(_tool_torch)
 
-    assert "subprocess" not in source
-    assert not hasattr(_tool_torch, "subprocess")
+    assert "--force" not in source
+    assert "--force" not in " ".join(
+        _provisioning.tool_repair_arguments("/opt/env/bin/python")
+    )
+    assert "--force" not in " ".join(
+        _provisioning.tool_repair_arguments("/opt/env/bin/python", upgrade=True)
+    )
+
+
+def test_nothing_is_installed_without_consent(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Guard assertion: the repair mutates the operator's environment.
+
+    It is the one mutation this product performs on an environment it did not
+    create, so a run that was never authorised must launch nothing at all -
+    not uv, and not the command it would have been given.
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> tuple[bool, str]:
+        raise AssertionError("an unconsented repair must launch nothing")
+
+    monkeypatch.setattr(_tool_torch, "_run_repair", _refuse)
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(confirm=lambda _prompt: False),
+    )
+
+    assert outcome.blocks_install
+    assert "declined at the prompt" in outcome.detail
+
+
+def test_a_consented_repair_runs_and_is_verified_rather_than_assumed(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Guard assertion: uv exiting zero is not proof of a repaired host.
+
+    uv rewrites the receipt and keeps an installed CPU torch that still
+    satisfies the requirement, so a run that trusts the exit code reports a
+    GPU host that cannot serve one request.
+    """
+    launched: list[str] = []
+
+    def _ran(interpreter: str, *, stream: bool) -> tuple[bool, str]:
+        del stream
+        launched.append(interpreter)
+        return True, "uv applied the repair"
+
+    monkeypatch.setattr(_tool_torch, "_run_repair", _ran)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.CPU_ONLY_BUILD),
+    )
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(assume_yes=True),
+    )
+
+    assert launched == [str(interpreter)]
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIR_FAILED
+    assert outcome.blocks_install
+    assert ComputeCapability.CPU_ONLY_BUILD.label in outcome.detail
+
+
+def test_a_repair_that_worked_is_reported_as_done(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """A verified repair lets the install continue and says what it did."""
+
+    def _ran(_interpreter: str, *, stream: bool) -> tuple[bool, str]:
+        del stream
+        return True, "uv applied the repair"
+
+    monkeypatch.setattr(_tool_torch, "_run_repair", _ran)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable_receipt)
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(assume_yes=True),
+    )
+
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIRED
+    assert not outcome.blocks_install
+    assert outcome.receipt is ToolReceiptVerdict.DURABLE
+
+
+def test_a_working_torch_with_a_receipt_that_will_lose_it_needs_the_repair(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Guard assertion: this host breaks itself at the next upgrade.
+
+    Its torch is a GPU build today and its receipt records no CUDA source, so
+    the first ``uv tool upgrade`` resolves a CPU wheel over it with nobody
+    present. An install that reads only the build walks past that.
+    """
+    monkeypatch.setattr(_tool_torch, "classify_environment", _persistent_tool_env)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _no_cuda_receipt)
+
+    assessed = _tool_torch._assess("ignored")
+
+    assert isinstance(assessed, _tool_torch._RepairNeed)
+    assert assessed.capability is ComputeCapability.READY
+    assert ToolReceiptVerdict.NO_CUDA_SOURCE.label in assessed.reason
 
 
 def test_cuda_build_without_a_visible_device_never_reinstalls(
@@ -152,7 +305,9 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
 
     monkeypatch.setattr(_tool_torch, "_repair_defective_tool", _unexpected_repair)
 
-    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+    outcome = _tool_torch.repair_tool_torch(
+        _tool_torch.ToolRepairRequest(interpreter="ignored")
+    )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.CUDA_UNVERIFIED
     assert outcome.blocks_install
@@ -278,15 +433,18 @@ def test_the_install_report_itself_carries_the_repair_section(
 
 
 def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
-    """A CUDA-ready environment ends the transaction without a report."""
+    """A CUDA-ready environment with a durable receipt ends the transaction."""
     monkeypatch.setattr(_tool_torch, "classify_environment", _persistent_tool_env)
+    monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable_receipt)
     monkeypatch.setattr(
         _environment_probe,
         "probe_interpreter",
         _probe_answering(ComputeCapability.READY),
     )
 
-    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+    outcome = _tool_torch.repair_tool_torch(
+        _tool_torch.ToolRepairRequest(interpreter="ignored")
+    )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.ALREADY_READY
     assert not outcome.blocks_install
@@ -302,7 +460,9 @@ def test_a_project_venv_is_not_this_transaction_s_business(
 
     monkeypatch.setattr(_tool_torch, "classify_environment", _project_venv)
 
-    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+    outcome = _tool_torch.repair_tool_torch(
+        _tool_torch.ToolRepairRequest(interpreter="ignored")
+    )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.NOT_APPLICABLE
     assert not outcome.blocks_install
@@ -316,7 +476,9 @@ def test_a_dry_run_previews_the_command_without_inspecting_holders(
     interpreter.parent.mkdir()
 
     outcome = _tool_torch._repair_defective_tool(
-        str(interpreter), ComputeCapability.CPU_ONLY_BUILD, dry_run=True
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(dry_run=True),
     )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.DRY_RUN
@@ -393,7 +555,7 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
 
     with hold_environment(root, by_image=True) as holder:
         outcome = _tool_torch._handoff_outcome(
-            str(interpreter), _provisioning.tool_repair_command(str(interpreter)), ()
+            str(interpreter), _remediation_for(str(interpreter))
         )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED
@@ -426,7 +588,9 @@ def test_an_install_without_the_gpu_extra_is_not_a_defect(
         _probe_answering(ComputeCapability.NOT_APPLICABLE),
     )
 
-    outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
+    outcome = _tool_torch.repair_tool_torch(
+        _tool_torch.ToolRepairRequest(interpreter="ignored")
+    )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.NOT_APPLICABLE
     assert not outcome.blocks_install
@@ -494,7 +658,7 @@ def _refusal_detail(tmp_path: Path) -> str:
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir(exist_ok=True)
     return _tool_torch._handoff_outcome(
-        str(interpreter), _provisioning.tool_repair_command(str(interpreter)), ()
+        str(interpreter), _remediation_for(str(interpreter))
     ).detail
 
 

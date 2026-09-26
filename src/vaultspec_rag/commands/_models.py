@@ -156,6 +156,28 @@ def _mcp_sync_failed(results: list[SyncResult], direct_errors: list[str]) -> boo
     return False
 
 
+#: Every field of the install report that describes a step of the run. A
+#: refused run reports ``null`` for each, because it executed none of them
+#: and each one's default is a sentence about an outcome.
+_INSTALL_STEP_FIELDS = (
+    "created_dirs",
+    "seeded",
+    "sync_added",
+    "sync_updated",
+    "sync_pruned",
+    "sync_providers",
+    "mcp_errors",
+    "mcp_failed",
+    "torch_config_action",
+    "torch_config_conflicts",
+    "torch_direct_dep_action",
+    "torch_direct_dep_location",
+    "torch_sync_action",
+    "mcp_extra_action",
+    "provisioning",
+)
+
+
 @dataclass
 class InstallReport:
     """Structured result of an install run.
@@ -206,6 +228,26 @@ class InstallReport:
         return _mcp_sync_failed(self.mcp_sync_results, self.mcp_errors)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the JSON view, reporting no step that did not run.
+
+        A refused run executed none of them, and every step field has a
+        default that reads as an outcome: "not changed" and "skipped" are
+        answers a run gives, not the absence of one. A reader deciding what
+        happened gets ``null`` for each instead, and the refusal beside it.
+        """
+        if self.refused:
+            return {
+                "action": self.action,
+                "target": str(self.target),
+                "refused": self.refused,
+                "warnings": list(self.warnings),
+                "tool_torch_repair": (
+                    self.tool_torch_repair.to_dict()
+                    if self.tool_torch_repair is not None
+                    else None
+                ),
+                **dict.fromkeys(_INSTALL_STEP_FIELDS),
+            }
         return {
             "action": self.action,
             "target": str(self.target),

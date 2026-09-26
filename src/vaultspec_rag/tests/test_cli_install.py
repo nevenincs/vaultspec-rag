@@ -118,49 +118,6 @@ def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
     assert "PYTORCH_ENABLE_MPS_FALLBACK=1" in rendered
 
 
-class TestCpuOnlyMessageRendering:
-    """Regression guard for literal TOML keys in the CPU_ONLY copy.
-
-    The CLI prints this message with Rich markup disabled so TOML keys,
-    dependency groups, and command lines stay literal in user output.
-    """
-
-    @staticmethod
-    def _render() -> str:
-        import io
-
-        from rich.console import Console
-
-        from ..cli._gpu_errors import _cpu_only_message
-
-        buf = io.StringIO()
-        Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _cpu_only_message(), markup=False, highlight=False
-        )
-        return buf.getvalue()
-
-    def test_renders_double_brackets_for_aot(self) -> None:
-        out = self._render()
-        assert "[[tool.uv.index]]" in out, out
-
-    def test_renders_single_brackets_for_section(self) -> None:
-        out = self._render()
-        assert "[tool.uv.sources]" in out, out
-
-    def test_renders_project_and_groups_keys(self) -> None:
-        out = self._render()
-        assert "[project].dependencies" in out, out
-        assert "[dependency-groups].dev" in out, out
-
-    def test_no_stray_backslashes_in_rendered_output(self) -> None:
-        """Rich passes ``\\]`` through verbatim - only ``[`` is escapable.
-        A stray backslash in the rendered text means a future edit
-        overcorrected and put ``\\]`` somewhere it should not be.
-        """
-        out = self._render()
-        assert "\\" not in out, out
-
-
 class TestNoGpuMessageRendering:
     """TEST-04 regression: NO_GPU message must render its three
     bullets verbatim through Rich. Symmetric guard with
@@ -680,18 +637,19 @@ class TestInstallTargetValidation:
         assert result.exit_code == 0, result.output
 
 
-_REFUSAL_COMMAND = "uv tool install --force --python 3.13 sentinel"
+_REFUSAL_COMMAND = "uv tool install --python 3.13 sentinel --upgrade-package torch"
 
 
-def _blocking_repair(**_kwargs: object) -> ToolTorchRepairOutcome:
+def _blocking_repair(*_args: object, **_kwargs: object) -> ToolTorchRepairOutcome:
     """A repair outcome that stops the install, as a held tool env yields."""
     return ToolTorchRepairOutcome(
         ToolTorchRepairAction.HOLDER_DETECTED,
         "tool CUDA repair must run from outside C:/tools/vaultspec-rag\n"
         "  holders to clear first:",
         _REFUSAL_COMMAND,
-        steps=(f"Make upgrades keep the GPU wheel: {_REFUSAL_COMMAND}",),
+        steps=(f"Install the CUDA build of torch: {_REFUSAL_COMMAND}",),
         capability=ComputeCapability.CPU_ONLY_BUILD,
+        reason=ComputeCapability.CPU_ONLY_BUILD.label,
     )
 
 
@@ -772,6 +730,19 @@ class TestRefusedInstall:
         assert payload["warnings"] == []
         assert payload["tool_torch_repair"]["command"] == _REFUSAL_COMMAND
         assert result.exit_code == 2
+        # A step that never ran reports nothing, not its default: "not
+        # changed" and "skipped" are answers a run gives.
+        for field in (
+            "torch_config_action",
+            "torch_direct_dep_action",
+            "torch_sync_action",
+            "mcp_extra_action",
+            "sync_added",
+            "sync_updated",
+            "sync_pruned",
+            "provisioning",
+        ):
+            assert payload[field] is None, field
 
     def test_an_install_run_probes_an_interpreter_at_most_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -783,6 +754,7 @@ class TestRefusedInstall:
         interpreter and let one run print two verdicts that need not agree.
         """
         from ..commands import _tool_torch
+        from ..operator_state._provisioning import ToolReceiptVerdict
         from ..operator_state._topology import RuntimeEnvKind
 
         calls: list[str] = []
@@ -804,6 +776,15 @@ class TestRefusedInstall:
             return RuntimeEnvKind.UV_TOOL
 
         monkeypatch.setattr(_tool_torch, "classify_environment", _tool_env)
+
+        def _durable(_interpreter: str) -> ToolReceiptVerdict:
+            return ToolReceiptVerdict.DURABLE
+
+        # A durable receipt is what leaves this environment needing nothing,
+        # so the run reaches the post-install warning with the verdict the
+        # repair already obtained. Without it the repair would run uv against
+        # a real tool installation from a unit test.
+        monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable)
         ws = self._workspace(tmp_path)
 
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])

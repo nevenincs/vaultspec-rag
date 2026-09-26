@@ -1,10 +1,19 @@
-"""Durable CUDA repair for the active ``uv tool`` environment."""
+"""Durable CUDA repair for a ``uv tool`` environment.
+
+The repair changes torch in place and records the CUDA index in the
+installation receipt, so nothing has to be stopped for it and later upgrades
+keep the GPU build. It is run only on explicit consent, and what it did is
+verified afterwards rather than assumed from an exit code.
+"""
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from .._process_probe import (
     EnvironmentHolder,
@@ -13,12 +22,22 @@ from .._process_probe import (
 )
 from ..operator_state._holders import holder_role, holder_summary
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._provisioning import cuda_remediation
+from ..operator_state._provisioning import (
+    CudaRemediation,
+    ToolReceiptVerdict,
+    classify_tool_receipt,
+    cuda_remediation,
+    tool_repair_arguments,
+)
 from ..operator_state._topology import (
     RuntimeEnvKind,
     classify_environment,
     environment_root,
 )
+from ._util import confirmation_outcome
+
+if TYPE_CHECKING:
+    from ._models import ConfirmFn
 
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
@@ -31,8 +50,24 @@ HOLDER_REPORT_LIMIT = 10
 #: where the walk takes longest.
 HOLDER_SCAN_BUDGET_SECONDS = 60.0
 
+#: How long the repair may run before it is abandoned. It resolves a full
+#: dependency set and downloads an accelerated torch build, which is gigabytes
+#: over a link the product does not control, so the bound is generous; what it
+#: exists for is a uv that never returns, not a slow network.
+REPAIR_TIMEOUT_SECONDS = 1800.0
+
+#: What the operator is asked before anything is changed. It names the one
+#: mutation and the one thing that does not happen, because the previous
+#: repair replaced the whole environment and this one does not.
+CONSENT_PROMPT = (
+    "Install the CUDA build of torch into this tool environment and record "
+    "the CUDA index in its receipt? Nothing is removed and nothing has to be "
+    "stopped."
+)
+
 __all__ = [
     "HOLDER_REPORT_LIMIT",
+    "ToolRepairRequest",
     "ToolTorchRepairAction",
     "ToolTorchRepairOutcome",
     "repair_tool_torch",
@@ -45,6 +80,8 @@ class ToolTorchRepairAction(StrEnum):
     NOT_APPLICABLE = "not_applicable"
     ALREADY_READY = "already_ready"
     DRY_RUN = "dry_run"
+    REPAIRED = "repaired"
+    REPAIR_FAILED = "repair_failed"
     HOLDER_DETECTED = "holder_detected"
     HANDOFF_REQUIRED = "handoff_required"
     CUDA_UNVERIFIED = "cuda_unverified"
@@ -74,6 +111,11 @@ class ToolTorchRepairOutcome:
     holders: tuple[EnvironmentHolder, ...] = ()
     steps: tuple[str, ...] = field(default_factory=tuple)
     capability: ComputeCapability | None = None
+    receipt: ToolReceiptVerdict | None = None
+    #: Why this environment needs attention, in one line. The detail below it
+    #: is a block; a report that has to open with the condition needs the
+    #: sentence rather than its first line, which names the environment.
+    reason: str = ""
 
     @property
     def blocks_install(self) -> bool:
@@ -82,6 +124,7 @@ class ToolTorchRepairOutcome:
             ToolTorchRepairAction.HOLDER_DETECTED,
             ToolTorchRepairAction.HANDOFF_REQUIRED,
             ToolTorchRepairAction.CUDA_UNVERIFIED,
+            ToolTorchRepairAction.REPAIR_FAILED,
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -94,6 +137,8 @@ class ToolTorchRepairOutcome:
             "capability": (
                 self.capability.value if self.capability is not None else None
             ),
+            "receipt": (self.receipt.value if self.receipt is not None else None),
+            "reason": self.reason,
             "holders": [
                 {
                     "pid": holder.pid,
@@ -130,10 +175,9 @@ def _uninspected_note(found: EnvironmentHolders) -> str | None:
 
 def _handoff_outcome(
     interpreter: str,
-    command: str,
-    steps: tuple[str, ...],
-    *,
-    capability: ComputeCapability | None = None,
+    remediation: CudaRemediation,
+    need: _RepairNeed | None = None,
+    answer: str = "",
 ) -> ToolTorchRepairOutcome:
     """Hand over the command that repairs this environment, and who is in it.
 
@@ -146,6 +190,8 @@ def _handoff_outcome(
         root, exclude_launch_chain=True, timeout=HOLDER_SCAN_BUDGET_SECONDS
     )
     lines = [f"tool CUDA repair for {root}"]
+    if need is not None:
+        lines.append(f"  {need.reason}; {answer}")
     if found.self_held:
         lines.append("  this command is running inside that environment")
     if found.holders:
@@ -166,27 +212,53 @@ def _handoff_outcome(
         else ToolTorchRepairAction.HANDOFF_REQUIRED
     )
     return ToolTorchRepairOutcome(
-        action, "\n".join(lines), command, found.holders, steps, capability
+        action,
+        "\n".join(lines),
+        remediation.repair_command,
+        found.holders,
+        remediation.steps,
+        None if need is None else need.capability,
+        None if need is None else need.receipt,
+        "" if need is None else need.reason,
     )
 
 
-def repair_tool_torch(
-    *,
-    dry_run: bool,
-    interpreter: str | None = None,
-) -> ToolTorchRepairOutcome:
-    """Report what a defective persistent tool interpreter needs.
+@dataclass(frozen=True, slots=True)
+class ToolRepairRequest:
+    """One caller's terms for a tool-environment repair.
 
-    Nothing is mutated, so nothing is asked. The transaction inspects the
-    environment and returns the command an operator must run from outside it;
-    consent belonged to a replacement this no longer performs, and keeping the
-    prompt would have blocked non-interactive installs on a question with no
-    consequence.
+    ``stream`` lets the child write to the terminal, which a human run needs
+    and a JSON run must not have: one envelope is the whole of that output.
+    """
+
+    dry_run: bool = False
+    interpreter: str | None = None
+    assume_yes: bool = False
+    confirm: ConfirmFn | None = None
+    stream: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _RepairNeed:
+    """Why this environment needs the repair, as the operator should read it."""
+
+    capability: ComputeCapability
+    receipt: ToolReceiptVerdict
+    reason: str
+
+
+def _assess(interpreter: str) -> ToolTorchRepairOutcome | _RepairNeed:
+    """Decide whether this environment needs the repair, and why.
+
+    Two conditions need the same one. A torch build that cannot use the GPU
+    is the visible one. The other is an installation whose receipt records no
+    CUDA source: its torch may work today, and the next upgrade resolves a
+    CPU build over it, so walking past it leaves a host that breaks itself
+    later without anyone touching it.
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
 
-    interpreter = interpreter or sys.executable
     kind = classify_environment(environment_root(interpreter))
     if kind is not RuntimeEnvKind.UV_TOOL:
         return ToolTorchRepairOutcome(
@@ -194,12 +266,6 @@ def repair_tool_torch(
             "active interpreter is not a persistent uv tool environment",
         )
     capability = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute.capability
-    if capability is ComputeCapability.READY:
-        return ToolTorchRepairOutcome(
-            ToolTorchRepairAction.ALREADY_READY,
-            "tool interpreter already has CUDA-ready torch",
-            capability=capability,
-        )
     if capability is ComputeCapability.NOT_APPLICABLE:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.NOT_APPLICABLE,
@@ -207,44 +273,173 @@ def repair_tool_torch(
             "extra to run searches locally",
             capability=capability,
         )
-    if not capability.fixed_by_torch_reinstall:
+    receipt = classify_tool_receipt(interpreter)
+    ready = capability is ComputeCapability.READY
+    if ready and receipt.durable:
+        return ToolTorchRepairOutcome(
+            ToolTorchRepairAction.ALREADY_READY,
+            "tool interpreter has CUDA-ready torch and a receipt that keeps it",
+            capability=capability,
+            receipt=receipt,
+        )
+    if not ready and not capability.fixed_by_torch_reinstall:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.CUDA_UNVERIFIED,
             capability.label,
             capability=capability,
+            receipt=receipt,
+            reason=capability.label,
         )
+    reason = f"the installation receipt {receipt.label}" if ready else capability.label
+    return _RepairNeed(capability=capability, receipt=receipt, reason=reason)
 
-    return _repair_defective_tool(interpreter, capability, dry_run=dry_run)
+
+def repair_tool_torch(request: ToolRepairRequest) -> ToolTorchRepairOutcome:
+    """Report what a persistent tool environment needs, and fix it on consent.
+
+    With consent the repair runs from here, because it changes torch in place
+    and needs nothing stopped. Without consent the command is handed over and
+    the install stops, which is what it has always done.
+    """
+    interpreter = request.interpreter or sys.executable
+    assessed = _assess(interpreter)
+    if isinstance(assessed, ToolTorchRepairOutcome):
+        return assessed
+    return _repair_defective_tool(interpreter, assessed, request)
+
+
+#: How each answer to the consent prompt reads in a report. An end of input
+#: is a non-interactive run rather than a refusal, and saying so is what tells
+#: a script author about the flag that would have worked.
+_CONSENT_ANSWERS = {
+    "approved": "authorised at the prompt",
+    "declined": "declined at the prompt",
+    "eof": "confirmation prompt hit end of input; re-run with --yes",
+    "interrupted": "confirmation interrupted",
+}
+
+
+def _consented(assume_yes: bool, confirm: ConfirmFn | None) -> tuple[bool, str]:
+    """Whether the operator authorised the repair, and how they answered."""
+    if assume_yes:
+        return True, "authorised with --yes"
+    if confirm is None:
+        return False, "no terminal to ask for confirmation; re-run with --yes"
+    outcome = confirmation_outcome(confirm, CONSENT_PROMPT)
+    answer = _CONSENT_ANSWERS.get(
+        outcome, f"confirmation could not be asked ({outcome})"
+    )
+    return outcome == "approved", answer
+
+
+def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
+    """Run the in-place repair, bounded, and say what happened.
+
+    uv is resolved through the PATH rather than assumed: the product does not
+    provision it, and an absent uv is an ordinary state on a machine whose
+    tool installation was made elsewhere.
+
+    In human mode the child writes straight to the terminal, because a
+    multi-gigabyte download with no output reads as a hang. In JSON mode its
+    output is captured instead, so the one envelope stays the only thing on
+    stdout.
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        return False, "uv is not on PATH, so the repair could not be run here"
+    arguments = (uv, *tool_repair_arguments(interpreter)[1:])
+    try:
+        # Argument form, with uv resolved off the PATH: no shell is involved.
+        completed = subprocess.run(
+            arguments,
+            capture_output=not stream,
+            text=True,
+            timeout=REPAIR_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"the repair did not finish within {REPAIR_TIMEOUT_SECONDS:.0f}s"
+    except OSError as exc:
+        return False, f"the repair could not be started: {exc}"
+    if completed.returncode == 0:
+        return True, "uv applied the repair"
+    tail = (completed.stderr or completed.stdout or "").strip().splitlines()[-5:]
+    detail = "; ".join(line.strip() for line in tail if line.strip())
+    return False, f"uv exited with code {completed.returncode}" + (
+        f": {detail}" if detail else ""
+    )
+
+
+def _verify_repair(interpreter: str) -> tuple[bool, str]:
+    """Check what the repair actually produced, rather than trusting uv.
+
+    Both halves are asked: the build now installed, and the receipt that
+    decides what the next upgrade resolves. A run that fixed the build and
+    recorded nothing leaves the same host broken again at the next upgrade,
+    which is the failure this whole cycle exists to end. The probe is a second
+    verify-depth read of this interpreter in one command, and the only one
+    justified: the environment changed in between.
+    """
+    from ..operator_state._compute import ProbeDepth
+    from ..operator_state._environment_probe import probe_interpreter
+
+    capability = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute.capability
+    receipt = classify_tool_receipt(interpreter)
+    if capability is not ComputeCapability.READY:
+        return False, f"after the repair, {capability.label}"
+    if not receipt.durable:
+        return False, f"after the repair, the receipt {receipt.label}"
+    return True, "CUDA-ready torch, and a receipt that keeps it across upgrades"
 
 
 def _repair_defective_tool(
-    interpreter: str, capability: ComputeCapability, *, dry_run: bool
+    interpreter: str, need: _RepairNeed, request: ToolRepairRequest
 ) -> ToolTorchRepairOutcome:
-    """Ask the one remediation builder what this environment needs.
+    """Ask the one remediation builder what to run, then run it or hand it over.
 
-    A host PyTorch publishes no accelerated wheel for has no repair to hand
-    over, so the defect is reported as unresolved with the plain reason rather
-    than as a command that cannot work.
+    A host PyTorch publishes no accelerated wheel for has no repair to offer,
+    so the defect is reported as unresolved with the plain reason rather than
+    as a command that cannot work.
     """
     remediation = cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
     if not remediation.kind.repairable:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.CUDA_UNVERIFIED,
-            capability.label,
+            need.capability.label,
             steps=remediation.steps,
-            capability=capability,
+            capability=need.capability,
+            receipt=need.receipt,
+            reason=need.capability.label,
         )
-    if dry_run:
+    if request.dry_run:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
-            f"tool CUDA repair is needed because {capability.label}",
+            f"tool CUDA repair is needed because {need.reason}",
             remediation.repair_command,
             steps=remediation.steps,
-            capability=capability,
+            capability=need.capability,
+            receipt=need.receipt,
         )
-    return _handoff_outcome(
-        interpreter,
-        remediation.repair_command,
-        remediation.steps,
-        capability=capability,
+    consented, answer = _consented(request.assume_yes, request.confirm)
+    if not consented:
+        return _handoff_outcome(interpreter, remediation, need, answer)
+    ran, detail = _run_repair(interpreter, stream=request.stream)
+    if ran:
+        ran, detail = _verify_repair(interpreter)
+    if not ran:
+        return ToolTorchRepairOutcome(
+            ToolTorchRepairAction.REPAIR_FAILED,
+            detail,
+            remediation.repair_command,
+            steps=remediation.steps,
+            capability=need.capability,
+            receipt=classify_tool_receipt(interpreter),
+            reason=detail,
+        )
+    return ToolTorchRepairOutcome(
+        ToolTorchRepairAction.REPAIRED,
+        detail,
+        capability=ComputeCapability.READY,
+        receipt=classify_tool_receipt(interpreter),
+        steps=(remediation.steps[-1],),
     )

@@ -680,6 +680,8 @@ _TOOL_REPAIR_HEADINGS = {
     "dry_run": "Tool environment needs a CUDA repair (preview)",
     "handoff_required": "Tool environment needs a CUDA repair",
     "holder_detected": "Tool environment needs a CUDA repair",
+    "repaired": "Tool environment CUDA repair applied",
+    "repair_failed": "Tool environment CUDA repair did not succeed",
 }
 
 

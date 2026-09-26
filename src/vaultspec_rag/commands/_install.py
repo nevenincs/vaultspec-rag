@@ -66,7 +66,7 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
-from ._tool_torch import ToolTorchRepairOutcome, repair_tool_torch
+from ._tool_torch import ToolRepairRequest, ToolTorchRepairOutcome, repair_tool_torch
 from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
@@ -833,6 +833,7 @@ class _InstallRunRequest:
     install_mcp: bool = False
     mode: InstallMode | None = None
     repair_tool_torch: bool = True
+    stream_repair: bool = False
     tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
 
 
@@ -852,6 +853,7 @@ class _InstallRunOptions(TypedDict, total=False):
     install_mcp: bool
     mode: InstallMode | None
     repair_tool_torch: bool
+    stream_repair: bool
 
 
 def install_run(
@@ -888,12 +890,7 @@ def _refused_report(
     action = (
         "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
     )
-    capability = outcome.capability
-    reason = (
-        capability.label
-        if capability is not None
-        else outcome.detail.splitlines()[0].strip()
-    )
+    reason = outcome.reason or outcome.detail.splitlines()[0].strip()
     return InstallReport(
         action=action,
         target=_resolve_target(request.path, bootstrap=False),
@@ -993,9 +990,21 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
 def _tool_repair_outcome(
     request: _InstallRunRequest,
 ) -> ToolTorchRepairOutcome | None:
+    """Assess the tool environment once, before anything else is touched.
+
+    The repair may run from here on consent: it changes torch in place, so
+    nothing has to be stopped and no other install step has happened yet.
+    """
     if not request.repair_tool_torch:
         return request.tool_torch_repair_outcome
-    return repair_tool_torch(dry_run=request.dry_run)
+    return repair_tool_torch(
+        ToolRepairRequest(
+            dry_run=request.dry_run,
+            assume_yes=request.assume_yes or request.force,
+            confirm=request.confirm,
+            stream=request.stream_repair,
+        )
+    )
 
 
 def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:

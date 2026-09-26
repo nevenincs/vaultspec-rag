@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from .._gpu_owner import GpuOwnership
 
 __all__ = [
-    "_cpu_only_message",
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
@@ -55,30 +54,6 @@ def refuse_gpu_owned(
     )
     _plain(f"Error: {message}\nNext actions:\n{steps}")
     raise typer.Exit(code=1)
-
-
-def _cpu_only_message() -> str:
-    """Return the CPU_ONLY remediation copy as plain text."""
-    return (
-        f"Error: {ComputeCapability.CPU_ONLY_BUILD.label}. Your GPU is fine.\n\n"
-        "  Install vaultspec-rag with its [gpu] extra, then run "
-        "uv run vaultspec-rag install; it patches your pyproject.toml "
-        "with the cu130 torch index and adds torch>=2.4 as a direct "
-        "dependency when needed. After patching, rerun "
-        "uv sync --reinstall-package torch.\n\n"
-        "  If install has already run and you are still here, verify:\n"
-        "    1. pyproject.toml has [[tool.uv.index]] "
-        'name = "pytorch-cu130" and [tool.uv.sources] torch = ...\n'
-        "    2. pyproject.toml requests vaultspec-rag[gpu] and has "
-        "torch>=2.4 as a direct dependency in [project].dependencies "
-        "or [dependency-groups].dev\n"
-        "    3. uv.lock has a torch entry with source = "
-        '{ registry = "https://download.pytorch.org/whl/cu130" } '
-        "(not pypi.org/simple)\n"
-        "    4. If the lockfile still points at PyPI, rerun "
-        "uv lock --refresh-package torch && uv sync.\n\n"
-        "  Or configure manually by adding this to your pyproject.toml:"
-    )
 
 
 def _no_torch_message() -> str:
@@ -168,7 +143,11 @@ def warn_if_active_torch_not_accelerator(
         return
 
     from ..operator_state._provisioning import cuda_remediation
-    from ..operator_state._topology import RuntimeEnvKind, classify_environment
+    from ..operator_state._topology import (
+        RuntimeEnvKind,
+        classify_environment,
+        environment_root,
+    )
 
     lines = [
         "",
@@ -192,7 +171,7 @@ def warn_if_active_torch_not_accelerator(
         _plain("\n".join(lines))
         return
 
-    kind = classify_environment(sys.prefix)
+    kind = classify_environment(environment_root(sys.executable))
     if kind is RuntimeEnvKind.UVX_EPHEMERAL:
         lines.append(
             f"  This interpreter is a uvx EPHEMERAL cache environment "
@@ -241,7 +220,7 @@ def _handle_gpu_error(
     from .._gpu import MPS_FALLBACK_MESSAGE
     from ..operator_state._compute import classify_torch, local_compute
     from ..operator_state._installation import ComputeCapability
-    from ..torch_config._mutate import manual_snippet
+    from ..operator_state._provisioning import cuda_remediation
 
     loaded = sys.modules.get("torch")
     capability = (
@@ -260,8 +239,13 @@ def _handle_gpu_error(
     elif sys.platform == "darwin":
         _plain(_no_mps_message())
     elif capability is ComputeCapability.CPU_ONLY_BUILD:
-        _plain(_cpu_only_message())
-        _plain(manual_snippet())
+        # The repair depends on what kind of environment this is, and the
+        # project advice printed here was wrong for every tool installation
+        # that met it: patching a pyproject.toml changes nothing about an
+        # environment uv resolved from a receipt.
+        _plain(f"Error: {capability.label}. Your GPU is fine.")
+        for step in cuda_remediation(sys.executable).steps:
+            _plain(f"  {step}", soft_wrap=True)
     elif capability is ComputeCapability.NO_DEVICE:
         _plain(_no_gpu_message())
     else:

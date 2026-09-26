@@ -14,7 +14,7 @@ from ..torch_config._constants import (
     TorchConfigAction,
     TorchConfigState,
 )
-from ._util import _exception_caused_by
+from ._util import confirmation_outcome
 from ._uv_sync import _run_uv_sync_torch
 
 if TYPE_CHECKING:
@@ -40,24 +40,6 @@ class TorchInstallOptions:
     torch_group: str | None = None
 
 
-def _torch_confirmation_outcome(
-    confirm: ConfirmFn,
-    prompt: str,
-) -> str:
-    """Run one interactive confirmation without exposing callback failures."""
-    try:
-        return "approved" if confirm(prompt) else "declined"
-    except KeyboardInterrupt:
-        return "interrupted"
-    except EOFError:
-        return "eof"
-    except Exception as exc:
-        if _exception_caused_by(exc, EOFError):
-            return "eof"
-        logger.warning("torch-config confirm() raised %s: %s", type(exc).__name__, exc)
-        return f"error:{type(exc).__name__}"
-
-
 def _confirm_torch_patch(
     pyproject: Path,
     report: InstallReport,
@@ -76,7 +58,7 @@ def _confirm_torch_patch(
             "See pyproject.toml shape in `vaultspec-rag install --help`."
         )
         return False
-    outcome = _torch_confirmation_outcome(
+    outcome = confirmation_outcome(
         confirm,
         f"Patch {pyproject} with the cu130 torch index? "
         "This lets uv resolve the CUDA torch wheel.",

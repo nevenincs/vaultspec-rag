@@ -402,6 +402,9 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
             install_mcp=options.install_mcp,
             mode=options.mode,
             repair_tool_torch=options.tool_repair,
+            # A multi-gigabyte download with no output reads as a hang, and a
+            # broker reading JSON must see one envelope and nothing else.
+            stream_repair=not options.json_output,
         )
     except ParseError as exc:
         _plain(f"Install failed: {exc}", soft_wrap=True)

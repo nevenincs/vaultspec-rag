@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:a962016c88ee53e2b1eb0538a5039a97211027c0536a1e429f84ca55b8ddc1a9'
+body_hash: 'sha256:48bd9da5704da63d2da2f5e7874e44663eb0d55970df3d29001aacaa8caf577a'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -192,6 +192,23 @@ related:
 - `S09` `verify:` `pytest -m unit test_install_mode test_managed_singleton_isolation test_cli_server_start` -> `pass`
 - `S09` `by:` `orchestrator`
 - `S10` `by:` `orchestrator`
+- `S12` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S12` `M` `src/vaultspec_rag/commands/_install.py`
+- `S12` `M` `src/vaultspec_rag/commands/_models.py`
+- `S12` `M` `src/vaultspec_rag/commands/_util.py`
+- `S12` `M` `src/vaultspec_rag/commands/_torch_flow.py`
+- `S12` `M` `src/vaultspec_rag/cli/_install.py`
+- `S12` `M` `src/vaultspec_rag/cli/_render.py`
+- `S12` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S12` `verify:` `ruff check` -> `pass`
+- `S12` `verify:` `ruff format --check` -> `pass`
+- `S12` `verify:` `ty check` -> `pass`
+- `S12` `verify:` `basedpyright` -> `pass`
+- `S12` `verify:` `pytest test_tool_torch_repair test_cli_install test_install_mode test_install_provision test_install_client_role test_install_torch_config test_service_env_preflight` -> `pass`
+- `S12` `verify:` `guard mutations (repair run without consent, uv exit code trusted, receipt ignored when torch works, --force reintroduced, refused report emitting step defaults) fail then pass` -> `pass`
+- `S12` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -207,3 +224,4 @@ related:
 - `S11` deleted `TORCH_TOOL_PIN_VERSION` and its mirror test: the wheel URL it fed no longer exists, and the lockfile derivation the build tooling uses stays
 - `S09` P02 review: the service spawn and `RAG_MCP_MODULE` now derive from `SERVER_LAUNCH_MARKER`
 - `S10` P02 review: `get_readiness` replaced the released `include_holders` keyword with `holders_root;` marked as a breaking change for release
+- `S12` folded in the P02 review findings for the refused JSON envelope, the sys.prefix classification and the project-only `CPU_ONLY` advice in `_handle_gpu_error;` a test that consented reached real uv against the operator's tool installation before it was corrected, and uv refused it without changing anything
