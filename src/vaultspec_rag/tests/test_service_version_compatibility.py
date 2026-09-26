@@ -535,6 +535,28 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
     assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
 
 
+@pytest.mark.usefixtures("isolated_singleton_dirs", "private_gpu_owner_anchor")
+def test_a_local_mandate_does_not_run_beside_a_foreign_release(
+    health_service: _HealthServiceState,
+) -> None:
+    """A foreign daemon owns the GPU; --allow-fallback must not load beside it.
+
+    The router used to read the mandate as permission to leave the foreign
+    daemon alone and run in-process, which put a second model stack on a card
+    the daemon already held. Mutation: restoring the mandate exemption lets the
+    search reach the local path and fails the error-code assertion here.
+    """
+    _record_foreign_daemon(health_service.port)
+
+    result = runner.invoke(app, ["search", "anything", "--allow-fallback", "--json"])
+
+    assert result.exit_code == 1
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"] == VERSION_ERROR_MISMATCH
+    assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
+
+
 @pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_cli_search_refusal_is_actionable_in_human_mode(
     health_service: _HealthServiceState,

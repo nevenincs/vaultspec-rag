@@ -7,18 +7,51 @@ from typing import TYPE_CHECKING
 import typer
 
 from ..operator_state._installation import ComputeCapability
-from ._render import _plain
+from ._render import _emit_json_error_and_exit, _plain
 
 if TYPE_CHECKING:
     from typing import NoReturn
+
+    from .._gpu_owner import GpuOwnership
 
 __all__ = [
     "_cpu_only_message",
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
+    "refuse_gpu_owned",
     "warn_if_active_torch_not_accelerator",
 ]
+
+
+def refuse_gpu_owned(
+    ownership: GpuOwnership, *, command: str, json_mode: bool
+) -> NoReturn:
+    """Refuse local compute because this process does not own the GPU.
+
+    One refusal for every local compute surface - the search pre-check and a
+    load refused deep inside a command alike - so an operator meets one message
+    and one list of next actions, and a JSON caller one ``gpu_owned`` envelope.
+    """
+    from .._gpu_owner import gpu_owned_message, gpu_owned_remediation
+
+    message = gpu_owned_message(ownership)
+    remediation = list(gpu_owned_remediation(ownership))
+    if json_mode:
+        _emit_json_error_and_exit(
+            command,
+            "gpu_owned",
+            message,
+            1,
+            holder_pid=ownership.holder_pid,
+            gpu_owner_state=ownership.state.value,
+            remediation=remediation,
+        )
+    steps = "\n".join(
+        f"  {number}. {step}" for number, step in enumerate(remediation, start=1)
+    )
+    _plain(f"Error: {message}\nNext actions:\n{steps}")
+    raise typer.Exit(code=1)
 
 
 def _cpu_only_message() -> str:
@@ -166,10 +199,14 @@ def warn_if_active_torch_not_accelerator() -> None:
 def _handle_gpu_error(exc: Exception) -> NoReturn:
     """Print an actionable message for torch / CUDA failures and exit.
 
-    Classifies this process's environment so the remediation hint matches
-    the actual problem: torch absent or unloadable, a CPU-only wheel, a CUDA
-    build with no visible device, or a refused MPS fallback policy. Unlike the
-    post-install warning, which asks a child interpreter, this runs after a
+    A load refused because another process owns the GPU is answered first and
+    as itself: nothing about this environment's torch is wrong, and
+    classifying it would import torch to report a working build.
+
+    Otherwise classifies this process's environment so the remediation hint
+    matches the actual problem: torch absent or unloadable, a CPU-only wheel, a
+    CUDA build with no visible device, or a refused MPS fallback policy. Unlike
+    the post-install warning, which asks a child interpreter, this runs after a
     compute path in this very process failed, so it classifies the torch that
     failed here rather than starting another interpreter to ask.
 
@@ -180,6 +217,11 @@ def _handle_gpu_error(exc: Exception) -> NoReturn:
         typer.Exit: Always exits with code 1.
     """
     import sys
+
+    from .._gpu_owner import GpuOwnedError
+
+    if isinstance(exc, GpuOwnedError):
+        refuse_gpu_owned(exc.ownership, command="", json_mode=False)
 
     from .._gpu import MPS_FALLBACK_MESSAGE
     from ..operator_state._compute import classify_torch, local_compute

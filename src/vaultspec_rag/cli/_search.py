@@ -17,6 +17,7 @@ from .._operator_commands import (
     index_command,
     server_start_command,
     server_status_command,
+    server_stop_command,
 )
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
@@ -33,7 +34,7 @@ from ._app import (
     PortOption,
     app,
 )
-from ._gpu_errors import _handle_gpu_error
+from ._gpu_errors import _handle_gpu_error, refuse_gpu_owned
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
@@ -373,7 +374,7 @@ def _handle_vaultstore_locked_error(
                 "Wait for the other command or update to finish.",
                 "vaultspec-rag search ... --port 8766",
                 server_status_command(),
-                "vaultspec-rag server stop",
+                server_stop_command(),
                 "Stop any orphaned Python process that is still using this workspace.",
             ],
         )
@@ -391,9 +392,9 @@ def _handle_vaultstore_locked_error(
         "service on a port, e.g.:\n"
         "         vaultspec-rag search ... --port 8766\n"
         "    3. Check the service:\n"
-        "         vaultspec-rag server status\n"
+        f"         {server_status_command()}\n"
         "    4. Stop the running service:\n"
-        "         vaultspec-rag server stop\n"
+        f"         {server_stop_command()}\n"
         "    5. If no vaultspec-rag process is alive, look for an "
         "orphaned Python process using the index and stop it manually."
     )
@@ -1368,18 +1369,16 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         if service.reachable and not service.version.is_compatible:
             # A discovered daemon of another release cannot answer this search
             # faithfully - it drops filter fields it does not know rather than
-            # rejecting them. With a local mandate the operator has already
-            # authorised the in-process path, so the foreign daemon is left
-            # alone; without one this is a refusal, never a silent local run.
-            if not mandate:
-                _display_service_version_error(
-                    service.version,
-                    command="search",
-                    json_mode=json_mode,
-                )
-                raise typer.Exit(code=1)
-        else:
-            port = service.port
+            # rejecting them - and a local mandate does not change that it owns
+            # this machine's GPU: running in-process beside it would load a
+            # second model stack. Replacing it is the only way forward.
+            _display_service_version_error(
+                service.version,
+                command="search",
+                json_mode=json_mode,
+            )
+            raise typer.Exit(code=1)
+        port = service.port
 
     if port is not None:
         service_results = try_http_search(
@@ -1443,6 +1442,17 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             2,
             json_mode=json_mode,
         )
+
+    # A mandate authorises local compute, not a second model stack: when
+    # another process owns the GPU - the service this search could not use, or
+    # anyone else - refuse before the store is opened or a model is touched.
+    # The model load asks again, as every load does; this only makes the
+    # refusal immediate and structured.
+    from .._gpu_owner import observe_gpu_owner
+
+    ownership = observe_gpu_owner()
+    if not ownership.state.permits_compute:
+        refuse_gpu_owned(ownership, command="search", json_mode=json_mode)
 
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while

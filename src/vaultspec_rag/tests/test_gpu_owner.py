@@ -294,6 +294,62 @@ def test_server_start_refuses_in_seconds_when_another_process_owns_the_gpu(
     assert envelope["data"]["gpu_owner_state"] == GpuOwnerState.OWNED_ELSEWHERE
 
 
+def test_a_mandated_local_search_is_refused_while_another_process_owns_the_gpu(
+    private_gpu_owner_anchor: Path, tmp_path: Path
+) -> None:
+    from typer.testing import CliRunner
+
+    from ..cli import app
+
+    workspace = tmp_path / "workspace"
+    (workspace / ".vaultspec").mkdir(parents=True)
+    with _owner(tmp_path, private_gpu_owner_anchor) as owner_pid:
+        # Catches the search router running in-process on a local mandate
+        # beside a live owner: it would open the store and load models
+        # instead of refusing.
+        result = CliRunner().invoke(
+            app,
+            [
+                "--target",
+                str(workspace),
+                "search",
+                "anything",
+                "--port",
+                "1",
+                "--allow-fallback",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 1, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["command"] == "search"
+    assert envelope["error"] == "gpu_owned"
+    assert envelope["holder_pid"] == owner_pid
+    assert any("--allow-fallback" in step for step in envelope["remediation"])
+
+
+def test_a_load_refused_inside_a_command_renders_the_ownership_refusal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import typer
+
+    from .._gpu_owner import GpuOwnership
+    from ..cli._gpu_errors import _handle_gpu_error
+
+    refusal = GpuOwnedError(GpuOwnership(GpuOwnerState.OWNED_ELSEWHERE, 4242))
+    with pytest.raises(typer.Exit) as exited:
+        _handle_gpu_error(refusal)
+
+    printed = capsys.readouterr().out
+    assert exited.value.exit_code == 1
+    assert str(refusal) in " ".join(printed.split())
+    # Catches the ownership branch being dropped: the torch classifier then
+    # prints the refusal as a bare error line, with no next actions to take.
+    assert "Next actions:" in printed
+
+
 def test_importing_the_ownership_module_leaves_torch_unimported() -> None:
     check = "import sys, vaultspec_rag._gpu_owner; print('torch' in sys.modules)"
     imported = subprocess.run(
