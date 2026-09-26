@@ -141,6 +141,14 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "the working directory; blank means unset, and the shared "
         "VAULTSPEC_TARGET_DIR is read behind it."
     ),
+    EnvVar.LOG_LEVEL: (
+        "The log level every process kind configures its root logger with. "
+        "Resolved through the settings wrapper's own log_level property "
+        "(delegating to core's resolve_log_level) rather than the generic "
+        "settings-override chain, so an unrecognised name is refused instead "
+        "of silently reaching an unvalidated settings read; blank means "
+        "unset, and the shared VAULTSPEC_LOG_LEVEL is read behind it."
+    ),
     EnvVar.MEMORY_PROBE: (
         "Set to a true word to record resident-set and CUDA memory at named "
         "checkpoints through an indexing run. A diagnostic, off by default."

@@ -157,7 +157,11 @@ ENV_OVERRIDE_MAP: dict[str, EnvVar] = {
     "status_dir": EnvVar.STATUS_DIR,
     "log_file": EnvVar.LOG_FILE,
     "mcp_port": EnvVar.PORT,
-    "log_level": EnvVar.LOG_LEVEL,
+    # "log_level" is deliberately absent: it is a ``VaultSpecConfigWrapper``
+    # property that delegates to ``resolve_log_level`` instead of this
+    # generic chain, so it shares the one validated, chain-fallback answer
+    # ``configure_logging`` itself resolves rather than a second,
+    # unvalidated read of the same variable.
     "service_idle_ttl_seconds": EnvVar.SERVICE_IDLE_TTL_SECONDS,
     "service_max_projects": EnvVar.SERVICE_MAX_PROJECTS,
     "service_search_timeout_seconds": EnvVar.SERVICE_SEARCH_TIMEOUT,
