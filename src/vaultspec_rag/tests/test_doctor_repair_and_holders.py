@@ -252,7 +252,15 @@ def test_doctor_reports_what_the_next_upgrade_would_resolve(
     reported = envelope["data"]["receipt"]
     assert reported["verdict"] == "no_cuda_source"
     assert reported["durable"] is False
-    assert "--index-strategy unsafe-first-match" in reported["fix"]
+    # A list, in order, beside the other command fields: running only the
+    # visible step leaves a receipt the next upgrade resolves back to CPU.
+    assert reported["fix"] == list(
+        classify_tool_receipt(str(root / "Scripts" / "python.exe")).fix(
+            str(root / "Scripts" / "python.exe")
+        )
+    )
+    assert len(reported["fix"]) == 2
+    assert "in order" in human.stdout
 
 
 def test_doctor_says_nothing_about_a_receipt_a_durable_one_has(
@@ -282,7 +290,7 @@ def test_doctor_says_nothing_about_a_receipt_a_durable_one_has(
     envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
 
     assert envelope["data"]["receipt"]["durable"] is True
-    assert envelope["data"]["receipt"]["fix"] is None
+    assert envelope["data"]["receipt"]["fix"] == []
     assert "make upgrades keep the GPU build" not in human.stdout
 
 

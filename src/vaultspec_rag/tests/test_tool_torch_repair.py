@@ -478,9 +478,10 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
         _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
         "tool CUDA repair for C:/tools/vaultspec-rag"
         + chr(10)
-        + "  running out of it now, and unchanged until restarted:"
+        + "  running out of it now, and still on the old build until restarted:"
         + chr(10)
-        + "    pid 4321 (end this process): C:/tools/vaultspec-rag/Scripts/python.exe",
+        + "    pid 4321 - another process running out of this environment: "
+        + "restart it once the repair is done",
         ("uv pip install ...", "uv tool install ..."),
         steps=(
             "Install the CUDA build of torch into this environment: uv pip install ...",

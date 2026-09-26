@@ -297,7 +297,15 @@ def _receipt_lines() -> list[str]:
     if verdict.durable:
         return []
     fix = verdict.fix(interpreter)
-    return [f"Upgrades: {verdict.label}", *([f"  Fix: {fix}"] if fix else [])]
+    if not fix:
+        return [f"Upgrades: {verdict.label}"]
+    # Listed in order, because running only the first leaves a receipt the
+    # next upgrade resolves back to a CPU-only build.
+    return [
+        f"Upgrades: {verdict.label}",
+        "  Fix, in order:",
+        *(f"    {command}" for command in fix),
+    ]
 
 
 def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:

@@ -1044,7 +1044,11 @@ class TestTheReceiptLineOnStatus:
         lines = _status._receipt_lines()
 
         assert any(line.startswith("Upgrades: ") for line in lines)
-        assert any("--index-strategy unsafe-first-match" in line for line in lines)
+        # Both commands, in order: the first alone leaves a receipt the next
+        # upgrade resolves back to a CPU-only build.
+        assert any("Fix, in order:" in line for line in lines)
+        assert sum("uv pip install" in line for line in lines) == 1
+        assert sum("uv tool install" in line for line in lines) == 1
 
     def test_a_durable_receipt_adds_no_line(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

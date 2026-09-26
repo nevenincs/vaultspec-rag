@@ -41,10 +41,12 @@ __all__ = [
     "ToolReceiptVerdict",
     "classify_tool_receipt",
     "cuda_remediation",
+    "durable_upgrade_commands",
     "environment_python_request",
     "inplace_cuda_command",
     "published_wheel_platform_tag",
     "read_receipt",
+    "release_upgrade_command",
     "restart_service_command",
     "tool_package_requirement",
     "tool_receipt_arguments",
@@ -126,11 +128,16 @@ class ToolReceiptVerdict(StrEnum):
         """Whether an upgrade of this installation keeps the GPU build."""
         return self is ToolReceiptVerdict.DURABLE
 
-    def fix(self, interpreter: str) -> str | None:
-        """The one command that makes this receipt durable, if one is needed."""
-        if self.durable:
-            return None
-        return "\n".join(tool_repair_commands(interpreter))
+    def fix(self, interpreter: str) -> tuple[str, ...]:
+        """The commands that make this receipt durable, in the order they run.
+
+        Empty when nothing is needed. A sequence rather than one block of
+        text, because the order is load-bearing and a reader given the two
+        joined by a newline runs the visible one: the package change alone
+        leaves a receipt the next upgrade resolves straight back to a
+        CPU-only build.
+        """
+        return () if self.durable else tool_repair_commands(interpreter)
 
 
 class CudaRepairKind(StrEnum):
@@ -167,11 +174,6 @@ class CudaRemediation:
     #: reports on its own, where reaching into ``steps`` by position picks up
     #: whatever happens to be last.
     restart_step: str = ""
-
-    @property
-    def repair_command(self) -> str:
-        """The repair as one block, for a report that carries one string."""
-        return "\n".join(self.repair_commands)
 
 
 def read_receipt(receipt: Path) -> dict[str, object] | None:
@@ -518,6 +520,24 @@ def tool_repair_commands(interpreter: str) -> tuple[str, ...]:
     return tuple(_render_command(step) for step in tool_repair_steps(interpreter))
 
 
+def release_upgrade_command() -> str:
+    """The command that takes a newer release, and nothing else.
+
+    uv's own verb is the only thing in this cycle that moves the release. It
+    keeps the GPU build because the receipt carries the CUDA source, and it
+    leaves the environment whole with a launcher running, where an install
+    would remove it. Named rather than picked out of a sequence by position:
+    the sequence starts with a receipt install whenever the receipt is not
+    durable yet, and that command takes no release at all.
+    """
+    return f"uv tool upgrade {Requirement(_HOST_TOOL_REQUEST).name}"
+
+
+def durable_upgrade_commands() -> tuple[str, ...]:
+    """Upgrading an installation whose receipt already carries the source."""
+    return (release_upgrade_command(), restart_service_command())
+
+
 def tool_upgrade_commands(
     interpreter: str, verdict: ToolReceiptVerdict | None = None
 ) -> tuple[str, ...]:
@@ -531,14 +551,12 @@ def tool_upgrade_commands(
     """
     if verdict is None:
         verdict = classify_tool_receipt(interpreter)
-    package = Requirement(_HOST_TOOL_REQUEST).name
-    upgrade = f"uv tool upgrade {package}"
-    steps = (
-        (upgrade,)
-        if verdict.durable
-        else (_render_command(tool_receipt_arguments(interpreter)), upgrade)
+    if verdict.durable:
+        return durable_upgrade_commands()
+    return (
+        _render_command(tool_receipt_arguments(interpreter)),
+        *durable_upgrade_commands(),
     )
-    return (*steps, restart_service_command())
 
 
 def restart_service_command() -> str:
@@ -686,7 +704,10 @@ def cuda_remediation(
             "changes no package and only writes the index into the "
             "installation receipt, so later upgrades keep the GPU build.",
             RESTART_NOTE,
-            f"Take a newer release later with: {upgrade[0]}",
+            # After this repair the receipt carries the CUDA source, so
+            # the command that takes a release later is uv's own verb - not
+            # whatever this installation needs first today.
+            f"Take a newer release later with: {release_upgrade_command()}",
         ),
         repair_commands=repair,
         upgrade_commands=upgrade,

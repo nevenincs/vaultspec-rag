@@ -465,7 +465,7 @@ def _verify_repair(interpreter: str) -> tuple[bool, str]:
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ..operator_state._provisioning import tool_upgrade_commands
+    from ..operator_state._provisioning import release_upgrade_command
 
     capability = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute.capability
     receipt = classify_tool_receipt(interpreter)
@@ -477,7 +477,7 @@ def _verify_repair(interpreter: str) -> tuple[bool, str]:
         return False, (
             f"after the repair, {capability.label}: the CUDA index publishes "
             "no accelerated build of the torch release this environment asks "
-            f"for. Take a newer release with: {tool_upgrade_commands(interpreter)[0]}"
+            f"for. Take a newer release with: {release_upgrade_command()}"
         )
     if capability is not ComputeCapability.READY:
         return False, f"after the repair, {capability.label}"

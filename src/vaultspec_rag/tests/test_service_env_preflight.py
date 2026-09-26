@@ -27,6 +27,7 @@ from ..operator_state._provisioning import (
     environment_python_request,
     inplace_cuda_command,
     published_wheel_platform_tag,
+    release_upgrade_command,
     tool_repair_commands,
     tool_upgrade_commands,
     upgrade_commands_for_mode,
@@ -188,7 +189,7 @@ class TestRemediationCommands:
 
         assert remediation.kind is CudaRepairKind.NO_PUBLISHED_WHEEL
         assert not remediation.kind.repairable
-        assert remediation.repair_command == ""
+        assert remediation.repair_commands == ()
         joined = "\n".join(remediation.steps)
         assert CU130_INDEX_URL not in joined
         assert "publishes no CUDA build" in joined
@@ -311,7 +312,7 @@ class TestTheReceiptCarriesTheCudaSource:
         offered = (
             *remediation.repair_commands,
             *remediation.upgrade_commands,
-            str(classify_tool_receipt(interpreter).fix(interpreter)),
+            *classify_tool_receipt(interpreter).fix(interpreter),
             *upgrade_commands_for_mode("tool", interpreter),
         )
 
@@ -381,7 +382,7 @@ class TestTheReceiptCarriesTheCudaSource:
 
         assert verdict is ToolReceiptVerdict.DURABLE
         assert verdict.durable
-        assert verdict.fix(interpreter) is None
+        assert verdict.fix(interpreter) == ()
 
     def test_a_version_pin_is_named_as_the_reason_upgrades_do_nothing(
         self, tmp_path: Path
@@ -399,7 +400,7 @@ class TestTheReceiptCarriesTheCudaSource:
 
         assert verdict is ToolReceiptVerdict.VERSION_PINNED
         assert not verdict.durable
-        assert verdict.fix(interpreter) == "\n".join(tool_repair_commands(interpreter))
+        assert verdict.fix(interpreter) == tool_repair_commands(interpreter)
 
     def test_a_pinned_torch_wheel_is_named_as_its_own_defect(
         self, tmp_path: Path
@@ -501,6 +502,33 @@ class TestUpgradeCommands:
         assert "server stop" in restart
         assert "server start" in restart
 
+    def test_the_repair_block_offers_the_verb_that_takes_a_release(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: the receipt install takes no release at all.
+
+        The later-upgrade line was the first element of this installation's
+        current upgrade sequence, which for a receipt carrying no CUDA source
+        is the options-only install. An operator following it changes
+        nothing and stays on the release they wanted to leave. The repair
+        itself makes the receipt durable, so the honest command afterwards is
+        uv's own verb.
+        """
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
+
+        remediation = cuda_remediation(
+            interpreter,
+            env_kind=RuntimeEnvKind.UV_TOOL,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        later = [step for step in remediation.steps if "Take a newer release" in step]
+        assert later == [
+            f"Take a newer release later with: {release_upgrade_command()}"
+        ]
+        assert "uv tool install" not in later[0]
+
     def test_a_receipt_that_is_not_durable_upgrades_through_the_repair(
         self, tmp_path: Path
     ) -> None:
@@ -534,7 +562,7 @@ def _durable_command_for(interpreter: str) -> str:
     """The request the one builder offers an ephemeral environment."""
     return cuda_remediation(
         interpreter, env_kind=RuntimeEnvKind.UVX_EPHEMERAL
-    ).repair_command
+    ).repair_commands[-1]
 
 
 class TestEphemeralEnvWarning:

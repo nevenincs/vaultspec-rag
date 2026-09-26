@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:6b0dfcee18acb6f7aa7b77ebfef734eeab4145cc77dbdf7b868bd454fa558b98'
+body_hash: 'sha256:d461712c70db4a173748afe4a11eada858eecc0c61e5f4e85618f2a8731db908'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -309,6 +309,21 @@ related:
 - `S16` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
 - `S16` `verify:` `pytest test_server_doctor test_service_env_preflight test_doctor_repair_and_holders` -> `pass`
 - `S16` `verify:` `guard mutation (floor advice reduced to the bare upgrade verb) fails then passes` -> `pass`
+- `S16` `verify:` `pytest test_service_env_preflight test_tool_torch_repair` -> `pass`
+- `S16` `verify:` `guard mutation (later-upgrade line taken from the sequence by index) fails then passes` -> `pass`
+- `S18` `M` `src/vaultspec_rag/cli/_status.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S18` `verify:` `pytest test_doctor_repair_and_holders test_cli_status test_service_env_preflight` -> `pass`
+- `S18` `verify:` `guard mutations (fix rendered as one joined block in status and unordered in doctor) fail then pass` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S17` `verify:` `pytest test_service_env_preflight` -> `pass`
+- `S19` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S19` `M` `src/vaultspec_rag/_process_probe.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S19` `M` `README.md`
+- `S19` `verify:` `mdformat --check and pymarkdownlnt scan README.md` -> `pass`
+- `S19` `verify:` `pytest test_tool_torch_repair` -> `pass`
 
 ## Notes
 
@@ -332,3 +347,7 @@ related:
 - `S18` no production caller targets an environment other than the running one: `repair_tool_torch` defaults the interpreter to sys.executable and install passes none, so the running-interpreter predicate was added rather than reported as a conflict
 - `S19` the destruction proof carries a Windows-only skip marker, approved by the orchestrator: POSIX unlink semantics let uv replace a running launcher, so the behaviour does not exist there. The product's own argument tuples are driven through the sandbox because the runner refuses any target that is not the environment it runs out of; its guards are unit-proved
 - `S16` correction: the doctor's version-floor advice named only the first step of the tool upgrade, which for a non-durable receipt is the receipt install and not an upgrade. It now carries every step in order, in both the human output and the envelope; the full unit tier caught it
+- `S16` correction for p04-review-upgrade-advice-names-a-command-that-does-not-upgrade: the repair block offered the options-only install as the way to take a release. Every consumer now names what it means through `release_upgrade_command` or `durable_upgrade_commands` rather than indexing the sequence
+- `S18` correction for p04-review-receipt-fix-is-a-newline-blob: ToolReceiptVerdict.fix returns the commands as a sequence, doctor and status list them in order, and the JSON receipt.fix is a list beside the other command fields. It crosses no service boundary: the receipt axis is built in the doctor process and status renders locally
+- `S17` correction for p04-review-repair-command-property-is-test-only: deleted `CudaRemediation.repair_command` and repointed its two test callers at `repair_commands`
+- `S19` corrections for p04-review-lows: the holder serialiser's command-line claim is scoped to the HTTP shape, which is the one that omits them, while `holder_summary` keeps them for the operator reading locally; HolderRelation's docstring states the restart policy HolderRole.remediation owns; the two renderer fixtures carry the S18 wording; README wrapping restored. The damaged-metadata release pin and the console-script adapter role are left for the user's decision

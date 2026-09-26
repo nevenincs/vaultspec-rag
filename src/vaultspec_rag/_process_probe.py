@@ -626,10 +626,12 @@ class HolderRelation(StrEnum):
     """How a process was found to hold an environment.
 
     The witness is carried rather than collapsed into a boolean because the
-    relations need DIFFERENT remediation: an image or launch-path holder is a
-    process to end, while a working-directory holder is a shell or an editor
-    to move out of the tree, whose own binary may have nothing to do with the
-    environment it is blocking.
+    relations need DIFFERENT remediation: a process running the environment's
+    own interpreter, by image path or by the launch path a symlinked POSIX
+    environment presents, keeps the packages it imported until it restarts,
+    while a working-directory holder is a shell or an editor to move out of
+    the tree, whose own binary may have nothing to do with the environment.
+    What each one is told is owned by ``HolderRole.remediation``.
 
     ``LAUNCH_PATH`` exists because a POSIX virtual environment's interpreter is
     a SYMLINK to the base interpreter, so the image path of a process running

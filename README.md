@@ -101,9 +101,9 @@ the new release; if uv reports an entry point it could not overwrite because the
 in use, the release is installed and the running launcher keeps working. An installation
 made without the two index options resolves a CPU-only PyTorch at its next upgrade;
 `vaultspec-rag server doctor` reports that and prints the two commands that repair it in
-place, which
-[pin the GPU build](docs/installation.md#pin-the-gpu-build) describes. If uv reports that its executables directory isn't on your
-`PATH`, run `uv tool update-shell` and open a new terminal.
+place, which [pin the GPU build](docs/installation.md#pin-the-gpu-build) describes. If
+uv reports that its executables directory isn't on your `PATH`, run
+`uv tool update-shell` and open a new terminal.
 
 By default, search needs access to the sparse model. If you can't accept its licence,
 set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in your user environment and skip to the

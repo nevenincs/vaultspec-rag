@@ -87,11 +87,13 @@ def holder_wire(
     existed, with different keys and different bounds, so the same machine
     described itself two ways depending on which command was asked.
 
-    Command lines are left out. This shape also travels over HTTP from the
-    readiness route, and an argument vector can carry material an operator
-    never chose to publish; the role and the port say what the process is
-    without it. The total is carried because a capped list with no count
-    reads as the whole story.
+    Command lines are left out of THIS shape, which travels over HTTP from
+    the readiness route: an argument vector can carry material an operator
+    never chose to publish, and the role and the port say what the process
+    is without it. The lines an operator reads locally, built by
+    :func:`holder_summary`, do show the command line, because that is what
+    tells two processes of the same image apart in front of them. The total
+    is carried because a capped list with no count reads as the whole story.
     """
     return {
         "total": len(holders),

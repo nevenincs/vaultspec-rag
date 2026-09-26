@@ -333,7 +333,7 @@ def _receipt_axis(interpreter: str) -> dict[str, object] | None:
         "verdict": verdict.value,
         "label": verdict.label,
         "durable": verdict.durable,
-        "fix": verdict.fix(interpreter),
+        "fix": list(verdict.fix(interpreter)),
     }
 
 
@@ -343,10 +343,14 @@ def _render_receipt_axis(interpreter: str) -> None:
     if axis is None:
         return
     _plain(f"Installation receipt: {axis['label']}")
-    fix = axis["fix"]
-    if isinstance(fix, str) and fix:
+    raw = axis["fix"]
+    commands = cast("list[object]", raw) if isinstance(raw, list) else []
+    if not commands:
+        return
+    _plain("  make upgrades keep the GPU build, in order:")
+    for command in commands:
         # Soft-wrapped: a folded command is not one an operator can paste.
-        _plain(f"  make upgrades keep the GPU build: {fix}", soft_wrap=True)
+        _plain(f"    {command}", soft_wrap=True)
 
 
 def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
