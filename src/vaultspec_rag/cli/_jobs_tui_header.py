@@ -49,6 +49,7 @@ else:
     _MixinBase = object
 
 if TYPE_CHECKING:
+    from ..job_models import JobState
     from ._jobs_tui_state import (
         MachineSignals,
         SearchActivityState,
@@ -86,7 +87,7 @@ class HeaderRenderingMixin(_MixinBase):
 
         def selected_job(self) -> dict[str, object] | None: ...
 
-    def _header_counts(self) -> list[tuple[str, int]]:
+    def _header_counts(self) -> list[tuple[JobState | None, int]]:
         """Count what the service holds, not what fits on the page.
 
         The service tallies every record matching the filter; the page is at
@@ -97,23 +98,25 @@ class HeaderRenderingMixin(_MixinBase):
 
         The residue is named rather than dropped. Counters that quietly omit
         every state they have no bucket for sum to nothing in particular, and
-        an operator cannot tell a missing state from a zero one.
+        an operator cannot tell a missing state from a zero one. The residue
+        is the ``None`` bucket.
         """
         summary = self._summary
+        counts: list[tuple[JobState | None, int]]
         if isinstance(summary, dict):
             counted = cast("dict[str, object]", summary)
             counts = [
-                (label, count(counted.get(key)) or 0) for label, key in SUMMARY_BUCKETS
+                (state, count(counted.get(state)) or 0) for state in SUMMARY_BUCKETS
             ]
-            tallied = sum(tally for _label, tally in counts)
+            tallied = sum(tally for _state, tally in counts)
             scope = self._total if self._total is not None else tallied
         else:
             states = [str(job.get("state", "")) for job in self._jobs]
-            counts = [(label, states.count(key)) for label, key in SUMMARY_BUCKETS]
+            counts = [(state, states.count(state)) for state in SUMMARY_BUCKETS]
             scope = len(self._jobs)
-        other = scope - sum(tally for _label, tally in counts)
+        other = scope - sum(tally for _state, tally in counts)
         if other > 0:
-            counts.append(("other", other))
+            counts.append((None, other))
         return counts
 
     def _unicode_glyphs(self) -> bool:
@@ -141,12 +144,12 @@ class HeaderRenderingMixin(_MixinBase):
         A pill with work in it wears its token's solid fill; an empty one
         wears the muted fill so colour always means signal.
         """
-        for key, tally in self._header_counts():
-            spec = STATE_PILLS.get(key)
+        for state, tally in self._header_counts():
+            spec = None if state is None else STATE_PILLS.get(state)
             if spec is None:
                 # The residue bucket, in the same anatomy as its neighbours.
                 glyph, fallback = OTHER_PILL_GLYPHS
-                label, tone = key, "muted"
+                label, tone = "other", "muted"
             else:
                 glyph, fallback, label, tone, _bold = spec
             content = f"{glyph if unicode_ok else fallback} {tally}"

@@ -51,6 +51,7 @@ __all__ = [
     "SchemaCompatibility",
     "VaultChunkPayload",
     "VaultDocPayload",
+    "VaultPassagePayload",
     "assert_compatible",
     "collection_names",
     "current_identity",
@@ -143,12 +144,31 @@ class VaultDocPayload(TypedDict):
     content: str
 
 
+class VaultPassagePayload(TypedDict):
+    """One answer-sized passage inside a vault chunk.
+
+    ``start``/``end`` index the chunk's own ``content`` (end exclusive);
+    ``line_start``/``line_end`` are 1-based lines of the source file;
+    ``section`` is the heading path above the passage, ``" > "``-joined and
+    without the document title, empty above every heading.
+    """
+
+    start: int
+    end: int
+    line_start: int
+    line_end: int
+    section: str
+
+
 class VaultChunkPayload(TypedDict):
     """Payload of a ``vault_docs`` chunk-level point.
 
     The parent document's metadata is flattened onto every chunk so filters
     work unchanged; ``doc_id`` groups chunks back into documents. ``doc_content``
     travels only on the ordinal-0 chunk, so it is ``NotRequired``.
+    ``body_line`` is the file line the parent body starts on; ``line_start``,
+    ``line_end`` and ``section`` locate the chunk's own text in that file, and
+    ``passages`` divides it into the spans a search result can show.
     """
 
     doc_id: str
@@ -163,6 +183,11 @@ class VaultChunkPayload(TypedDict):
     title: str
     status: str
     content: str
+    body_line: int
+    line_start: int
+    line_end: int
+    section: str
+    passages: list[VaultPassagePayload]
     doc_content: NotRequired[str]
 
 

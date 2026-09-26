@@ -780,8 +780,6 @@ class _InProcessRenderRequest:
 
 
 def _render_in_process_results(request: _InProcessRenderRequest) -> None:
-    from dataclasses import asdict
-
     from ..search._outcomes import (
         COMBINED_SEARCH_FAILED,
         COMBINED_SEARCH_FAILED_MESSAGE,
@@ -823,12 +821,17 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     else:
         result_items = cast("list[SearchResult | DocumentSearchResult]", results)
         domains = None
+    # The service's own wire form, so an in-process search shows the same
+    # fields - and withholds the same ones - as a search the service answers.
+    from ..server._models import SearchResultItem
+
+    items = [SearchResultItem.serialize(r) for r in result_items]
     if json_mode:
         data: dict[str, object] = {
             "query": query,
             "search_type": search_type.value,
             "via": "in-process",
-            "results": [asdict(r) for r in result_items],
+            "results": items,
         }
         if domains is not None:
             data["partial"] = cast("CombinedSearchOutcome", results).partial
@@ -854,7 +857,7 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
         return
 
     _display_search_results(
-        [asdict(r) for r in result_items],
+        items,
         search_type.value,
         via="in-process",
         show_scores=show_scores,

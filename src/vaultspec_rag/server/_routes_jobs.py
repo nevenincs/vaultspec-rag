@@ -40,6 +40,8 @@ __all__ = [
     "_normalise_job_source_filter",
     "_parse_since_seconds",
     "_prioritise_running_jobs",
+    "job_project_root",
+    "job_source",
     "job_state",
     "job_updated_timestamp",
 ]
@@ -136,7 +138,7 @@ def _job_trigger(record: dict[str, object]) -> str:
     return "tool" if kind else "unknown"
 
 
-def _job_project_root(record: dict[str, object]) -> str | None:
+def job_project_root(record: dict[str, object]) -> str | None:
     project_root = _job_spec_value(record, "project_root")
     if project_root is None:
         project_root = _job_values.mapping(record.get("initiator")).get("project_root")
@@ -663,7 +665,7 @@ def _job_with_liveness(
             now=now,
             inputs=_job_evidence.DegradationInputs(
                 source=job_source(record),
-                project_root=_job_project_root(record),
+                project_root=job_project_root(record),
                 step=_job_progress_step(record) or None,
                 forward=forward,
                 encode=encode,
@@ -730,7 +732,7 @@ def _job_search_text(record: dict[str, object]) -> str:
             _job_desired_state(record),
             str(record.get("operation", "")),
             str(record.get("mode", "")),
-            str(_job_project_root(record) or ""),
+            str(job_project_root(record) or ""),
             str(record.get("result", "")),
             _job_progress_text(record),
             *_job_nested_values(record.get("spec")),
@@ -935,7 +937,7 @@ def _machine_pressure(
     return _job_evidence.machine_pressure(
         now=now,
         forwards=[_job_telemetry(record, "forward") for record in running],
-        project_root=_job_project_root(anchor) if anchor is not None else None,
+        project_root=job_project_root(anchor) if anchor is not None else None,
         source=job_source(anchor) if anchor is not None else "code",
         store_failures=_recent_store_failures(records, now=now),
     )

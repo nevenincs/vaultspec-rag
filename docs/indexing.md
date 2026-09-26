@@ -180,7 +180,7 @@ case results are returned in fusion order.
 
 The store keeps three independent collections, regardless of backend:
 
-- `vault_docs` - one point per vault chunk, heading-aware and capped at `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`, so a document usually contributes several
+- `vault_docs` - one point per vault chunk, heading-aware and capped at `VAULTSPEC_RAG_VAULT_CHUNK_CHARS`, so a document usually contributes several. Each chunk also records the file lines it covers, the section it opens under, and its answer-sized passages, from which a search picks the one to show
 - `codebase_docs` - one point per source-code chunk
 - `document_docs` - one point per extracted-document chunk
 

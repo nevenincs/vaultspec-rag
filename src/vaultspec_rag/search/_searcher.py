@@ -13,13 +13,18 @@ import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, fields, replace
+from functools import partial
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from .. import store_schema
 from .._search_state import SearchWaitCause
 from .._store_search import HybridSearchRequest
 from ._intent_rank import apply_intent_prior, apply_status_filter, apply_type_cap
-from ._models import DocumentSearchResult, ParsedQuery, SearchResult
+from ._models import (
+    DocumentSearchResult,
+    ParsedQuery,
+    SearchResult,
+)
 from ._noise import (
     apply_domain_demotion,
     partition_hard_domains,
@@ -36,11 +41,15 @@ from ._result_shaping import (
     PHASE_DEMOTE,
     PHASE_EMBEDDING,
     PHASE_GRAPH_RERANK,
+    PHASE_PASSAGE,
     PHASE_POSTPROCESS,
     PHASE_PREFER,
     PHASE_QDRANT,
     PHASE_RERANK,
     PHASE_RESULT_MAPPING,
+    select_passages,
+    show_passage,
+    vault_row_passages,
 )
 from ._result_shaping import (
     add_seconds as _add_seconds,
@@ -397,9 +406,9 @@ class VaultSearcher:
     def _get_reranker(self) -> CrossEncoder:
         """Lazily load the CrossEncoder reranker model onto GPU.
 
-        Returns the cached CrossEncoder instance on subsequent calls.
-        The model (BAAI/bge-reranker-v2-m3 by default) is loaded with
-        ``activation_fn=Sigmoid()`` for calibrated [0, 1] scores.
+        Returns the cached CrossEncoder instance on subsequent calls. A
+        searcher the service builds is handed the shared reranker; only a
+        standalone searcher reaches the load here.
 
         Returns:
             Cached or newly loaded CrossEncoder instance.
@@ -412,13 +421,8 @@ class VaultSearcher:
         with self._reranker_lock:
             if self._reranker is not None:
                 return self._reranker
-            from sentence_transformers import CrossEncoder
+            from ..embeddings import load_reranker
 
-            from .._gpu import load_accelerator
-            from ..config._settings import get_config
-
-            accelerator = load_accelerator()
-            torch = accelerator.torch
             # Hold the shared GPU lock across the model load. Constructing the
             # CrossEncoder materialises weights on the device, and that CUDA work
             # must not run concurrently with another root's forward pass (or a
@@ -426,16 +430,10 @@ class VaultSearcher:
             # unserialised load races and crashes the process. The lock is
             # released before the forward pass in ``_rerank`` re-acquires it.
             with self._gpu_section():
-                self._reranker = CrossEncoder(
-                    self._reranker_model_name,
-                    device=accelerator.device,
-                    activation_fn=torch.nn.Sigmoid(),
-                    max_length=int(get_config().reranker_max_length),
-                    local_files_only=self._local_files_only,
-                )
+                self._reranker = load_reranker(local_files_only=self._local_files_only)
             logger.info(
                 "CrossEncoder reranker loaded on %s: %s",
-                accelerator.name,
+                self._reranker.device,
                 self._reranker_model_name,
             )
             return self._reranker
@@ -469,32 +467,52 @@ class VaultSearcher:
         """
         if not self._reranker_enabled or len(results) <= 1:
             return results[:top_k]
-        from .._gpu import load_accelerator
         from ..config._settings import get_config
 
-        accelerator = load_accelerator()
-        cfg = get_config()
-        reranker = self._get_reranker()
         # Score the real candidate content, not the 200-char display
         # snippet. The character cap only bounds tokenizer work on
         # oversized rows (~6 chars per BPE token is a safe ceiling);
         # the model's own max_length does the exact token truncation.
-        char_cap = max(1, int(cfg.reranker_max_length)) * 6
-        # Declared, not inferred: `list` is invariant, so an inferred
-        # `list[tuple[str, str]]` is not assignable to the `list[PairInput]`
-        # the overloads accept.
-        pairs: list[PairInput] = [  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
-            (query, (r.rerank_text or r.snippet)[:char_cap]) for r in results
-        ]
-        batch_size = cfg.reranker_batch_size
+        char_cap = max(1, int(get_config().reranker_max_length)) * 6
+        scores = self._predict_scores(
+            [(query, (r.rerank_text or r.snippet)[:char_cap]) for r in results],
+            timings=timings,
+        )
+        for result, score in zip(results, scores, strict=True):
+            result.score = score
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:top_k]
+
+    def _predict_scores(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        timings: dict[str, float] | None = None,
+    ) -> list[float]:
+        """Score (query, text) pairs with the reranker, halving batches on OOM.
+
+        The GPU lock wraps only the model forward call; pairs arrive already
+        built and the score-to-float conversion runs after release.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If OOM persists even
+                after halving batch size down to 1.
+        """
+        from .._gpu import load_accelerator
+        from ..config._settings import get_config
+
+        accelerator = load_accelerator()
+        reranker = self._get_reranker()
+        # Declared, not inferred: `list` is invariant, so a `list[tuple[str,
+        # str]]` is not assignable to the `list[PairInput]` the overloads accept.
+        model_pairs: list[PairInput] = list(pairs)  # pyright: ignore[reportUnknownVariableType]  # sentence_transformers stubs incomplete
+        batch_size = get_config().reranker_batch_size
         raw_scores = None
-        # The GPU lock wraps only the model forward call; the
-        # score-to-float conversion below runs after release.
-        with self._gpu_section(timings):
+        with self._gpu_section(timings), accelerator.half_accumulation():
             while True:
                 try:
                     raw_scores = reranker.predict(  # pyright: ignore[reportUnknownMemberType]  # sentence_transformers stubs incomplete
-                        pairs,
+                        model_pairs,
                         batch_size=batch_size,
                         show_progress_bar=False,
                     )
@@ -511,11 +529,7 @@ class VaultSearcher:
                         accelerator.backend.upper(),
                         batch_size,
                     )
-        scores = [float(s) for s in raw_scores]
-        for result, score in zip(results, scores, strict=True):
-            result.score = score
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results[:top_k]
+        return [float(s) for s in raw_scores]
 
     def _get_graph(self) -> VaultGraph | None:
         """Return the cached VaultGraph, rebuilding on TTL expiry.
@@ -615,7 +629,15 @@ class VaultSearcher:
     def _map_vault_results(
         self, raw_results: list[dict[str, object]], encoded: _EncodedSearchQuery
     ) -> list[SearchResult]:
-        """Map retrieved vault rows with their full content for reranking."""
+        """Map retrieved vault rows with their full content for reranking.
+
+        Each result starts out showing its chunk's first passage; the final
+        page later swaps in the passage that best answers the query. A row
+        stored without passages shows its chunk text, cut at the passage
+        bound, and reports whatever chunk span it carries.
+        """
+        from .._markdown_passages import PASSAGE_MAX_CHARS
+
         phase_started = time.perf_counter()
         docs_prefix = self._vault_docs_prefix()
         results: list[SearchResult] = []
@@ -629,24 +651,59 @@ class VaultSearcher:
                 if isinstance(related_raw, list)
                 else []
             )
-            results.append(
-                SearchResult(
-                    id=str(row["id"]),
-                    path=_join_doc_path(docs_prefix, str(row["path"])),
-                    title=str(row.get("title", "")),
-                    score=score,
-                    snippet=content[:200].strip(),
-                    source="vault",
-                    doc_type=str(row.get("doc_type", "")),
-                    feature=str(row.get("feature", "")),
-                    date=str(row.get("date", "")),
-                    status=str(row.get("status", "")),
-                    related=related,
-                    rerank_text=content or None,
-                ),
+            line_start, line_end = row.get("line_start"), row.get("line_end")
+            section = row.get("section")
+            result = SearchResult(
+                id=str(row["id"]),
+                path=_join_doc_path(docs_prefix, str(row["path"])),
+                title=str(row.get("title", "")),
+                score=score,
+                snippet=content[:PASSAGE_MAX_CHARS].strip(),
+                source="vault",
+                doc_type=str(row.get("doc_type", "")),
+                feature=str(row.get("feature", "")),
+                date=str(row.get("date", "")),
+                status=str(row.get("status", "")),
+                related=related,
+                line_start=line_start if isinstance(line_start, int) else None,
+                line_end=line_end if isinstance(line_end, int) else None,
+                section=section if isinstance(section, str) and section else None,
+                rerank_text=content or None,
+                passages=vault_row_passages(row, content),
             )
+            if result.passages:
+                show_passage(result, result.passages[0])
+            results.append(result)
         _record_seconds(encoded.timings, PHASE_RESULT_MAPPING, phase_started)
         return results
+
+    def _select_passages(
+        self, encoded: _EncodedSearchQuery, results: list[SearchResult]
+    ) -> None:
+        """Show each result the passage that best answers the query."""
+        phase_started = time.perf_counter()
+        scorer = (
+            partial(self._score_passages, timings=encoded.timings)
+            if self._reranker_enabled
+            else None
+        )
+        select_passages(encoded.text, results, scorer)
+        _record_seconds(encoded.timings, PHASE_PASSAGE, phase_started)
+
+    def _score_passages(
+        self,
+        pairs: list[tuple[str, str]],
+        *,
+        timings: dict[str, float] | None,
+    ) -> list[float] | None:
+        """Score passage pairs, or ``None`` when the accelerator runs out of memory."""
+        from .._gpu import load_accelerator
+
+        predict = partial(self._predict_scores, pairs, timings=timings)
+        scores = load_accelerator().unless_out_of_memory(predict)
+        if scores is None:
+            logger.warning("passage scoring ran out of memory; first passages kept")
+        return scores
 
     def search_vault_encoded(
         self,
@@ -743,13 +800,16 @@ class VaultSearcher:
         if status_spec:
             results = apply_status_filter(results, status_spec)
         _record_seconds(encoded.timings, PHASE_GRAPH_RERANK, phase_started)
+        page = results[: encoded.top_k]
+        self._select_passages(encoded, page)
         if encoded.timings is not None:
             encoded.timings[PHASE_POSTPROCESS] = (
                 encoded.timings.get(PHASE_RESULT_MAPPING, 0.0)
                 + encoded.timings.get(PHASE_RERANK, 0.0)
                 + encoded.timings.get(PHASE_GRAPH_RERANK, 0.0)
+                + encoded.timings.get(PHASE_PASSAGE, 0.0)
             )
-        return results[: encoded.top_k]
+        return page
 
     @staticmethod
     def _build_codebase_store_filters(

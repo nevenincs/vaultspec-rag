@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._operator_commands import _shell_argument
 from ..operator_state._service import DegradationReason, ServiceLifecycle
 from ..serviceclient._transport import _try_http_health
 from ._cli_helpers import (
@@ -100,6 +101,7 @@ def _last_failed_record() -> dict[str, object]:
 #: know, which must still be rendered.
 _CODES = {
     "the latest indexing job failed: other": "job_failed",
+    "the latest indexing job failed: full_reindex_required": "job_failed",
     "2 indexing job(s) are stalled": "jobs_stalled",
     "1 indexing job(s) are stalled": "jobs_stalled",
     "embedding models are not loaded": "models_not_loaded",
@@ -211,6 +213,57 @@ class TestDegradedStatusExplainsItself:
         next_action = lines[lines.index("Next action:") + 1]
         assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
         assert "--verbose" not in result.output
+
+    def test_a_refused_incremental_names_the_rebuild_of_its_own_project(
+        self, tmp_path: Path
+    ) -> None:
+        project = tmp_path / "other project"
+        refused = _last_failed_record() | {
+            "source": "vault",
+            "project_root": str(project),
+            "error_kind": "full_reindex_required",
+        }
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: full_reindex_required"],
+                jobs={"last_failed": refused},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        # The job's logs only restate the refusal; the rebuild is the remedy.
+        # The service serves every project, so the command names the one the
+        # refused job belongs to rather than whichever the operator stands in.
+        next_action = lines[lines.index("Next action:") + 1]
+        assert next_action == (
+            f"vaultspec-rag --target {_shell_argument(str(project))} "
+            "index --rebuild --type vault"
+        )
+        assert f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}" not in lines
+
+    def test_a_refusal_with_no_known_project_points_at_its_logs(
+        self, tmp_path: Path
+    ) -> None:
+        refused = _last_failed_record() | {
+            "source": "vault",
+            "error_kind": "full_reindex_required",
+        }
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["the latest indexing job failed: full_reindex_required"],
+                jobs={"last_failed": refused},
+            ),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        # An unscoped rebuild would act on the operator's own project, which
+        # need not be the one refused.
+        next_action = lines[lines.index("Next action:") + 1]
+        assert next_action == f"vaultspec-rag server logs --job-id {_FAILED_JOB_ID}"
 
     def test_failed_job_count_carries_the_failed_jobs_view(
         self, tmp_path: Path
@@ -467,6 +520,27 @@ class TestOneRendererServesEverySurface:
         # The defect this replaced: a list of records interpolated into one
         # line, printing Python syntax at an operator.
         assert not any(("{" in line or "'" in line) for line in lines)
+
+    def test_a_refused_incremental_names_the_rebuild_for_its_source(self) -> None:
+        lines = _index_degradation(
+            {
+                "degraded_reasons": [
+                    {
+                        "source": "vault",
+                        "job_id": _FAILED_JOB_ID,
+                        "reason": "failed",
+                        "error_kind": "full_reindex_required",
+                    },
+                ]
+            }
+        )
+
+        assert lines == [
+            "Degraded because:",
+            "  - the vault index job failed: full_reindex_required",
+            "    job e8f8ac43",
+            "    vaultspec-rag index --rebuild --type vault",
+        ]
 
     def test_unphrasable_index_record_is_flattened_not_repred(self) -> None:
         lines = _index_degradation(

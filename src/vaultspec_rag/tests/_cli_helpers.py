@@ -622,8 +622,7 @@ def _search_output_contract_server() -> tuple[
                         "path": "src/search_ui.py",
                         "line_start": 12,
                         "score": 0.875,
-                        "snippet": "def render_search",
-                        "rerank_text": (
+                        "snippet": (
                             "def render_search_results():\n"
                             "    return 'full service text'"
                         ),
@@ -632,8 +631,7 @@ def _search_output_contract_server() -> tuple[
                         "anchor": "docs/ops.md#service-status",
                         "path": "docs/ops.md",
                         "score": 0.5,
-                        "snippet": "Use server status",
-                        "rerank_text": (
+                        "snippet": (
                             "Use server status for service readiness and current work."
                         ),
                     },

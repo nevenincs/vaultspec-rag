@@ -33,7 +33,7 @@ from .._store_models import (
 )
 from ..job_control import NO_RUN_CONTROL
 from ._ast_chunker import ASTChunker
-from ._chunking import LANGUAGE_MAP, TextSplitter
+from ._chunking import LANGUAGE_MAP, TextSplitter, locate_pieces
 from ._content_policy import ContentKind
 from ._document_identity import document_point_id
 from ._preprocess_cache import (
@@ -1455,21 +1455,14 @@ def chunk_with_splitter(
     # This breaks line number tracking below.
     splitter = TextSplitter(language=language, chunk_overlap=0)
     text_chunks = splitter.split_text(content)
+    offsets = locate_pieces(content, text_chunks, label=rel_path)
 
     chunks: list[CodeChunk] = []
-    search_offset = 0
     line_cursor_offset = 0
     line_cursor = 1
-    for index, text in enumerate(text_chunks):
-        idx = content.find(text, search_offset)
-        if idx != -1:
-            chunk_offset = idx
-            search_offset = idx + len(text)
-        else:
-            raise RuntimeError(
-                "zero-overlap TextSplitter returned a chunk absent from "
-                f"{rel_path} at or after offset {search_offset}"
-            )
+    for index, (text, chunk_offset) in enumerate(
+        zip(text_chunks, offsets, strict=True)
+    ):
         line_cursor += content.count("\n", line_cursor_offset, chunk_offset)
         line_cursor_offset = chunk_offset
         line_start = line_cursor

@@ -3,13 +3,15 @@ tags:
   - '#adr'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-07-27'
-body_hash: 'sha256:501a8281b91f733f9f97d617b9f8bfcd215a1eb77e2fbc5db182ed706e09674a'
+modified: '2026-09-23'
+body_hash: 'sha256:d1435ff1546f29805dd8f350e8abedc5f50899adb99d211f741c7e955fa13884'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-06-05-qdrant-performance-adr]]"
   - "[[2026-06-02-index-gpu-pipeline-adr]]"
+  - '[[2026-09-23-vault-result-evidence-audit]]'
+  - '[[2026-09-23-vault-result-evidence-adr]]'
 ---
 
 # `service-concurrency` adr: `concurrent saturation architecture rework` | (**status:** `accepted`)
@@ -134,6 +136,16 @@ class/function) prepended to the chunk text; stored content stays raw. Vault chu
 embed `title + heading-path + chunk text`. Queries gain per-surface Qwen3
 instructions: a code-retrieval instruction for codebase search, a documentation-
 retrieval instruction for vault search.
+
+*Amended 2026-09-23:* vault chunks embed `title + chunk text`; the heading path is
+not part of the input. A controlled comparison separated the heading path from the
+input's format, on the frozen ranking gates and an external vault
+(`2026-09-23-vault-result-evidence-audit`, heading-path-embedding). In every form
+tried, the heading path left hit@1, evidence-in-snippet and section match unchanged.
+It also pushed an accepted decision out of the top five for its own orientation
+query, by displacing that record's chunk from the reranked candidate window. Results
+carry the heading path as their `section` instead
+(`2026-09-23-vault-result-evidence-adr`).
 
 **D9 — Bounded graph nudge (O11).** The post-rerank multiplicative graph boost
 (×2.0 in-links, ×1.15 feature-neighbor) becomes a bounded additive nudge in the same

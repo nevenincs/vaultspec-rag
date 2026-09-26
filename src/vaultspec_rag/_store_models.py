@@ -27,10 +27,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from . import store_schema
+    from ._markdown_passages import Passage
 
 __all__ = [
     "ROOT_COLLECTION_PREFIX_RE",
     "VAULT_BODY_PAYLOAD_KEYS",
+    "VAULT_CHUNK_ONLY_PAYLOAD_KEYS",
     "VAULT_STRUCTURAL_PAYLOAD_KEYS",
     "CodeChunk",
     "DocumentChunk",
@@ -232,6 +234,8 @@ class VaultDocument:
         status: ADR lifecycle status parsed from the H1 (e.g. ``accepted``,
             ``superseded``); empty for legacy no-marker ADRs and non-ADR types.
         content: Full markdown body text.
+        body_line: 1-based file line on which ``content`` begins, so offsets
+            into the body map back to lines of the file.
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
         sparse_values: Sparse vector values (SPLADE).
@@ -247,6 +251,7 @@ class VaultDocument:
     title: str
     content: str
     status: str = ""
+    body_line: int = 1
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
     sparse_values: list[float] = field(default_factory=list)
@@ -277,6 +282,13 @@ class VaultChunk:
         title: Parent document title.
         status: Parent ADR status (empty for non-ADR and legacy headings).
         doc_content: Full parent body; populated only on ordinal 0.
+        body_line: 1-based file line the parent body begins on.
+        line_start: 1-based file line of the chunk's first non-blank text.
+        line_end: 1-based file line of the chunk's last non-blank text.
+        section: Section path the chunk opens under (``""`` above every
+            heading).
+        passages: The chunk's answer-sized passages, their offsets relative
+            to ``text``.
         vector: Dense embedding vector.
         sparse_indices: Sparse vector indices (SPLADE).
         sparse_values: Sparse vector values (SPLADE).
@@ -295,6 +307,11 @@ class VaultChunk:
     title: str
     status: str = ""
     doc_content: str | None = None
+    body_line: int = 1
+    line_start: int = 1
+    line_end: int = 1
+    section: str = ""
+    passages: tuple[Passage, ...] = ()
     vector: list[float] = field(default_factory=list)
     sparse_indices: list[int] = field(default_factory=list)
     sparse_values: list[float] = field(default_factory=list)
@@ -363,12 +380,25 @@ class CodeChunk:
 VAULT_BODY_PAYLOAD_KEYS: Final = frozenset({"content", "doc_content"})
 
 #: Vault payload keys that address a point rather than describe its document.
-#: They are derived from the document's identity and its chunk partition, both
-#: of which are already decided by the body digest and the chunk boundary, so
-#: they carry no independent metadata a digest could miss.
+#: They are derived from the document's identity, its body and its chunk
+#: partition, all decided by the body digest and the chunk boundary, plus the
+#: body's starting line, which the metadata subset carries as ``body_line``;
+#: so they carry no independent metadata a digest could miss.
 VAULT_STRUCTURAL_PAYLOAD_KEYS: Final = frozenset(
-    {"doc_id", "chunk_ordinal", "chunk_count"}
+    {
+        "doc_id",
+        "chunk_ordinal",
+        "chunk_count",
+        "line_start",
+        "line_end",
+        "section",
+        "passages",
+    }
 )
+
+#: Structural keys that describe one chunk rather than its document, dropped
+#: when a head chunk's payload is read back as the document it opens.
+VAULT_CHUNK_ONLY_PAYLOAD_KEYS: Final = VAULT_STRUCTURAL_PAYLOAD_KEYS - {"doc_id"}
 
 #: Digest width for the metadata subset. Sixteen bytes render as thirty-two hex
 #: characters, which keeps the per-document sidecar entry small while leaving
@@ -376,7 +406,7 @@ VAULT_STRUCTURAL_PAYLOAD_KEYS: Final = frozenset(
 _METADATA_DIGEST_BYTES: Final = 16
 
 
-def vault_indexed_metadata(doc: VaultDocument) -> dict[str, str | list[str]]:
+def vault_indexed_metadata(doc: VaultDocument) -> dict[str, str | int | list[str]]:
     """Return the frontmatter-derived subset that enters vault point payloads.
 
     This is the contract change detection digests, and it lives here - beside
@@ -389,6 +419,10 @@ def vault_indexed_metadata(doc: VaultDocument) -> dict[str, str | list[str]]:
     an exclusion list: it is not a :class:`VaultDocument` field at all, so it
     cannot be named here, and a stamp refresh over a byte-identical body
     therefore produces an identical digest.
+
+    ``body_line`` is here because the frontmatter's length sets it: a field
+    added to or dropped from the frontmatter moves every stored line span of
+    an unchanged body, and only a metadata delta rebuilds them.
     """
     return {
         "path": doc.path,
@@ -399,6 +433,7 @@ def vault_indexed_metadata(doc: VaultDocument) -> dict[str, str | list[str]]:
         "related": doc.related,
         "title": doc.title,
         "status": doc.status,
+        "body_line": doc.body_line,
     }
 
 
@@ -418,6 +453,8 @@ def _canonical_metadata(doc: VaultDocument) -> str:
     for key, value in vault_indexed_metadata(doc).items():
         if isinstance(value, str):
             canonical[key] = value.strip()
+        elif isinstance(value, int):
+            canonical[key] = value
         else:
             canonical[key] = [str(item).strip() for item in value]
     return json.dumps(
@@ -478,6 +515,20 @@ def _vault_chunk_payload(chunk: VaultChunk) -> store_schema.VaultChunkPayload:
         "title": chunk.title,
         "status": chunk.status,
         "content": chunk.text,
+        "body_line": chunk.body_line,
+        "line_start": chunk.line_start,
+        "line_end": chunk.line_end,
+        "section": chunk.section,
+        "passages": [
+            {
+                "start": passage.start,
+                "end": passage.end,
+                "line_start": passage.line_start,
+                "line_end": passage.line_end,
+                "section": passage.section,
+            }
+            for passage in chunk.passages
+        ],
     }
     if chunk.ordinal == 0 and chunk.doc_content is not None:
         payload["doc_content"] = chunk.doc_content

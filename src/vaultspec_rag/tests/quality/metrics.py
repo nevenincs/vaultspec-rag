@@ -13,6 +13,7 @@ and never touch a retriever. Documents absent from ``gold`` are grade 0.
 
 from __future__ import annotations
 
+import re
 from math import log2
 from typing import TYPE_CHECKING
 
@@ -21,11 +22,16 @@ if TYPE_CHECKING:
 
 __all__ = [
     "authoritative_at_k",
+    "contains_evidence",
     "mrr_at_first_grade",
     "ndcg_at_k",
+    "normalize_evidence_text",
     "rank_of_first_grade",
     "role_precision_at_k",
 ]
+
+_INLINE_MARKUP = re.compile(r"`|\*\*")
+_WHITESPACE = re.compile(r"\s+")
 
 
 def _gain(grade: int) -> float:
@@ -125,3 +131,19 @@ def role_precision_at_k(
         return 0.0
     hits = sum(1 for doc_id in ranked[:k] if gold.get(doc_id, 0) >= min_grade)
     return hits / k
+
+
+def normalize_evidence_text(text: str) -> str:
+    """Fold text to the form evidence spans are compared in.
+
+    Hard wrapping and inline code or bold markers vary between the labelled
+    evidence and the markdown a snippet carries, and neither changes what the
+    passage says, so both sides drop them before comparison.
+    """
+    return _WHITESPACE.sub(" ", _INLINE_MARKUP.sub("", text)).strip().lower()
+
+
+def contains_evidence(excerpt: str, evidence: str) -> bool:
+    """Whether *excerpt* carries the whole labelled *evidence* span."""
+    target = normalize_evidence_text(evidence)
+    return bool(target) and target in normalize_evidence_text(excerpt)

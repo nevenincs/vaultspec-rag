@@ -27,6 +27,7 @@ from ._donor_candidates import (
     discover_donor_candidates,
     evaluate_donor_eligibility,
 )
+from ._slicing import vault_embed_input, vault_embed_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -103,21 +104,38 @@ class ReuseStats:
 def _chunk_point_identity(
     chunk: CodeChunk | DocumentChunk | VaultChunk,
 ) -> tuple[str, str]:
-    """Return one chunk's (string point id, expected stored content) pair.
+    """Return one chunk's (string point id, expected donor evidence) pair.
 
     Must mirror the store's upsert identity and payload exactly: code chunks
     key on ``chunk.id`` and store ``chunk.content``; vault chunks key on
-    ``chunk.point_key`` and store ``chunk.text`` as the payload ``content``
-    field; document chunks key on ``chunk.id`` and store
-    ``chunk.payload.content``. Any drift here makes reuse verification fail
-    (a hit-rate regression), never adopt a wrong vector - adoption still
-    requires the stored content to equal this expected string.
+    ``chunk.point_key``; document chunks key on ``chunk.id`` and store
+    ``chunk.payload.content``. A vault chunk's expected evidence is its whole
+    embedding input, because its document title shapes the vector and can
+    change while the chunk's own text does not. Any drift here makes reuse
+    verification fail (a hit-rate regression), never adopt a wrong vector.
     """
     if isinstance(chunk, CodeChunk):
         return chunk.id, chunk.content
     if isinstance(chunk, VaultChunk):
-        return chunk.point_key, chunk.text
+        return chunk.point_key, vault_embed_text(chunk)
     return chunk.id, chunk.payload.content
+
+
+def _donor_evidence(
+    chunk: CodeChunk | DocumentChunk | VaultChunk, payload: dict[str, object]
+) -> str | None:
+    """Rebuild, from a donor's stored payload, what its vectors were made from.
+
+    Mirrors :func:`_chunk_point_identity`: a vault donor's evidence is the
+    embedding input rebuilt from its stored title and content.
+    """
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return None
+    if isinstance(chunk, VaultChunk):
+        title = payload.get("title")
+        return vault_embed_input(title, content) if isinstance(title, str) else None
+    return content
 
 
 def _verify_and_adopt(
@@ -129,14 +147,13 @@ def _verify_and_adopt(
 ) -> bool:
     """Verify one donor point against a chunk and adopt its vectors on a hit.
 
-    A hit requires the stored payload ``content`` to equal *expected_content*
-    byte-for-byte AND (when the run writes sparse vectors) the donor point to
-    carry a sparse vector. On a hit the chunk's dense and sparse vector fields
-    are overwritten and ``True`` is returned; otherwise the chunk is left
-    untouched and ``False`` is returned.
+    A hit requires the donor's evidence (see :func:`_donor_evidence`) to equal
+    *expected_content* byte-for-byte AND (when the run writes sparse vectors)
+    the donor point to carry a sparse vector. On a hit the chunk's dense and
+    sparse vector fields are overwritten and ``True`` is returned; otherwise
+    the chunk is left untouched and ``False`` is returned.
     """
-    payload_content = point.payload.get("content")
-    if not isinstance(payload_content, str) or payload_content != expected_content:
+    if _donor_evidence(chunk, point.payload) != expected_content:
         # Same point id, different stored bytes: the id scheme's residual
         # collision/staleness risk lands here and MUST read as a miss, never
         # an adoption.

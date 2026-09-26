@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     import numpy as np
-    from sentence_transformers import SentenceTransformer, SparseEncoder
+    from sentence_transformers import CrossEncoder, SentenceTransformer, SparseEncoder
     from torch import Tensor
 
     from ._gpu import AcceleratorContext
@@ -49,7 +49,7 @@ _MISSING_COMPUTE_DEPENDENCIES_MESSAGE = (
 if sys.platform == "win32":
     os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
 
-__all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult"]
+__all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult", "load_reranker"]
 
 
 @dataclass
@@ -446,6 +446,40 @@ def _check_rag_deps() -> AcceleratorContext:
     if importlib.util.find_spec("sentence_transformers") is None:
         raise ImportError(_MISSING_COMPUTE_DEPENDENCIES_MESSAGE) from None
     return accelerator
+
+
+def load_reranker(*, local_files_only: bool) -> CrossEncoder:
+    """Construct the configured CrossEncoder reranker on the accelerator.
+
+    The one construction path for the reranker. It loads in half precision,
+    like the dense and sparse encoders: the reranker's forward pass is most of
+    a search's time, and fp16 cuts it several-fold while moving calibrated
+    scores by thousandths, too little to reorder a ranking. The sigmoid
+    activation keeps scores in ``[0, 1]``.
+
+    Args:
+        local_files_only: Load from the local Hugging Face cache without
+            remote metadata requests.
+
+    Raises:
+        ImportError: If the GPU inference dependencies are not installed.
+        RuntimeError: If no supported accelerator is available.
+    """
+    from sentence_transformers import CrossEncoder
+
+    from .config._settings import get_config
+
+    accelerator = _check_rag_deps()
+    torch = accelerator.torch
+    cfg = get_config()
+    return CrossEncoder(
+        str(cfg.reranker_model),
+        device=accelerator.device,
+        activation_fn=torch.nn.Sigmoid(),
+        max_length=int(cfg.reranker_max_length),
+        local_files_only=local_files_only,
+        model_kwargs={"torch_dtype": torch.float16},
+    )
 
 
 def _sparse_tensor_to_results(
