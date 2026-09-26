@@ -36,7 +36,8 @@ Use `--no-mcp` for a CLI-only workspace, which also skips the `mcp` dependency
 and, on Windows, `pywin32`.
 
 Prefer `vaultspec-rag install` over hand-writing the config. `--mode` selects
-the launch shape: `tool` (the default, launched via uvx), `dependency` (resolved
+the launch shape: `tool` (launched via uvx, and used when neither a recorded mode nor
+the project's dependencies say otherwise), `dependency` (resolved
 through the project's own virtual environment and shipped in built
 distributions), or `dev` (like `dependency`, but confined to the dev dependency
 group). `server doctor` compares the shape in your config against the declared
@@ -51,7 +52,7 @@ protocol and the local inference stack together for a host installation.
 
 ### Start the service
 
-Start the HTTP service before connecting a client:
+Start the service from the host installation before connecting an assistant:
 
 ```bash
 vaultspec-rag server start
