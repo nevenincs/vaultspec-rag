@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .operator_state._compute import local_compute
 
@@ -308,28 +308,19 @@ def _environment_holders_readiness(root: str | Path) -> EnvironmentHoldersReadin
     be worked through, and the command producing it is not something its
     reader can clear.
     """
-    from ._process_probe import environment_holders, server_launch_port
-    from .operator_state._holders import holder_role
+    from ._process_probe import environment_holders
+    from .operator_state._holders import holder_wire
 
     found = environment_holders(
         root, exclude_launch_chain=True, timeout=_HOLDER_SCAN_BUDGET_SECONDS
     )
+    wire = holder_wire(found.holders, limit=_HOLDER_REPORT_LIMIT)
     return EnvironmentHoldersReadiness(
         held=found.held,
         certain=found.certain,
-        total=len(found.holders),
+        total=cast("int", wire["total"]),
         self_held=found.self_held,
-        holders=[
-            {
-                "pid": holder.pid,
-                "launcher_pid": holder.launcher_pid,
-                "relation": str(holder.relation),
-                "role": str(holder_role(holder)),
-                "port": server_launch_port(holder.argv),
-                "image": holder.image,
-            }
-            for holder in found.holders[:_HOLDER_REPORT_LIMIT]
-        ],
+        holders=cast("list[dict[str, object]]", wire["holders"]),
     )
 
 

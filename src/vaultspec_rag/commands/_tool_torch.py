@@ -23,7 +23,7 @@ from .._process_probe import (
     environment_holders,
 )
 from .._test_isolation import enforce_pytest_singleton_containment
-from ..operator_state._holders import holder_role, holder_summary
+from ..operator_state._holders import holder_summary, holder_wire
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
     CudaRemediation,
@@ -150,17 +150,7 @@ class ToolTorchRepairOutcome:
             ),
             "receipt": (self.receipt.value if self.receipt is not None else None),
             "reason": self.reason,
-            "holders": [
-                {
-                    "pid": holder.pid,
-                    "launcher_pid": holder.launcher_pid,
-                    "relation": holder.relation.value,
-                    "role": holder_role(holder).value,
-                    "image": holder.image,
-                    "cmdline": holder.cmdline,
-                }
-                for holder in self.holders
-            ],
+            **holder_wire(self.holders, limit=HOLDER_REPORT_LIMIT),
         }
 
 
@@ -529,5 +519,5 @@ def _repair_defective_tool(
         detail,
         capability=ComputeCapability.READY,
         receipt=classify_tool_receipt(interpreter),
-        steps=(remediation.steps[-1],),
+        steps=(remediation.restart_step,),
     )

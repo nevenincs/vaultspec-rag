@@ -20,9 +20,17 @@ from .._operator_commands import server_stop_command
 from .._process_probe import HolderRelation, is_server_launch, server_launch_port
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .._process_probe import EnvironmentHolder
 
-__all__ = ["HolderRole", "holder_line", "holder_role", "holder_summary"]
+__all__ = [
+    "HolderRole",
+    "holder_line",
+    "holder_role",
+    "holder_summary",
+    "holder_wire",
+]
 
 #: How much of a command line is shown. Long enough to recognise a process by,
 #: short enough that ten holders stay readable.
@@ -57,6 +65,37 @@ class HolderRole(StrEnum):
             HolderRole.DIRECTORY_VISITOR: "move this process out of the directory",
             HolderRole.UNRECOGNISED: "end this process",
         }[self]
+
+
+def holder_wire(
+    holders: Sequence[EnvironmentHolder], *, limit: int
+) -> dict[str, object]:
+    """Serialise a holder list for a report, bounded and counted.
+
+    One serialisation for every surface that publishes holders. Two of them
+    existed, with different keys and different bounds, so the same machine
+    described itself two ways depending on which command was asked.
+
+    Command lines are left out. This shape also travels over HTTP from the
+    readiness route, and an argument vector can carry material an operator
+    never chose to publish; the role and the port say what the process is
+    without it. The total is carried because a capped list with no count
+    reads as the whole story.
+    """
+    return {
+        "total": len(holders),
+        "holders": [
+            {
+                "pid": holder.pid,
+                "launcher_pid": holder.launcher_pid,
+                "relation": str(holder.relation),
+                "role": str(holder_role(holder)),
+                "port": server_launch_port(holder.argv),
+                "image": holder.image,
+            }
+            for holder in holders[:limit]
+        ],
+    }
 
 
 def holder_role(holder: EnvironmentHolder) -> HolderRole:

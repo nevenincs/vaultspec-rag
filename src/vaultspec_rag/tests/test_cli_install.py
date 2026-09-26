@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, cast
 
 import pytest
 
@@ -743,6 +743,71 @@ class TestRefusedInstall:
             "provisioning",
         ):
             assert payload[field] is None, field
+
+    def test_force_alone_does_not_authorise_the_repair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: --force overwrites files, it does not consent.
+
+        It authorises replacing artefacts this product owns. Reading it as
+        consent let a scripted `install --force` start a multi-gigabyte
+        reinstall of packages in an environment the product did not create,
+        which the accepted decision limits to `--yes` or a prompt.
+        """
+        from ..commands import _install
+
+        authorised: list[bool] = []
+
+        def _record(request: object) -> ToolTorchRepairOutcome:
+            authorised.append(bool(getattr(request, "assume_yes", False)))
+            return _blocking_repair()
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _record)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--force"])
+
+        assert authorised == [False]
+        assert result.exit_code == 2, result.output
+        assert _REFUSAL_COMMAND in result.output
+
+    def test_yes_authorises_the_repair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pair of the flag above: --yes is consent, and reaches it."""
+        from ..commands import _install
+
+        authorised: list[bool] = []
+
+        def _record(request: object) -> ToolTorchRepairOutcome:
+            authorised.append(bool(getattr(request, "assume_yes", False)))
+            return _blocking_repair()
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _record)
+        ws = self._workspace(tmp_path)
+
+        runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        assert authorised == [True]
+
+    def test_a_json_run_is_never_given_a_confirmer(self) -> None:
+        """Guard assertion: one JSON document, whatever stdin looks like.
+
+        The prompt renders on the same stream as the envelope, and Windows
+        reports stdin redirected from NUL as a terminal, so the terminal test
+        alone put a question in front of the document a broker parses.
+        """
+        from ..cli._install import _consent_prompt_wanted
+
+        class _Terminal:
+            @staticmethod
+            def isatty() -> bool:
+                return True
+
+        terminal = cast("IO[str]", _Terminal())
+
+        assert _consent_prompt_wanted(json_output=False, stdin=terminal) is True
+        assert _consent_prompt_wanted(json_output=True, stdin=terminal) is False
 
     def test_an_install_run_probes_an_interpreter_at_most_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

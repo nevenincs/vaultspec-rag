@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import IO, TYPE_CHECKING, Any, TypedDict, cast
 
 import click
 import typer
@@ -345,6 +345,21 @@ def handle_install() -> None:
     """Register the custom command; it dispatches through ``_InstallCommand``."""
 
 
+def _consent_prompt_wanted(*, json_output: bool, stdin: IO[str]) -> bool:
+    """Whether this run may ask the operator a question before acting.
+
+    Non-TTY detection lives at the CLI edge: only an interactive terminal can
+    produce a meaningful answer, and in CI or a pipe the absent confirmer is
+    what routes a run to the branch naming ``--yes``.
+
+    A JSON run never prompts, whatever stdin looks like. The prompt renders on
+    the same stream as the envelope, and Windows reports stdin redirected from
+    NUL as a terminal, so the terminal test alone put a question in front of
+    the one document a broker is parsing.
+    """
+    return stdin.isatty() and not json_output
+
+
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
     import sys as _sys
@@ -370,7 +385,16 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # can produce meaningful confirmation answers. In CI / pipes,
     # leaving confirm=None forces the "skipped-non-tty" branch, which
     # instructs the user to pass --yes or --no-torch-config.
-    confirm_fn = _confirm if _sys.stdin.isatty() else None
+    #
+    # A JSON run never prompts, whatever stdin looks like. The prompt
+    # renders on the same stream as the envelope, and Windows reports stdin
+    # redirected from NUL as a terminal, so the terminal test alone put a
+    # question in front of the one document a broker is parsing.
+    confirm_fn = (
+        _confirm
+        if _consent_prompt_wanted(json_output=options.json_output, stdin=_sys.stdin)
+        else None
+    )
 
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the

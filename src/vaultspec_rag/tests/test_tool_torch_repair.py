@@ -333,6 +333,11 @@ def test_a_repair_that_worked_is_reported_as_done(
     assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIRED
     assert not outcome.blocks_install
     assert outcome.receipt is ToolReceiptVerdict.DURABLE
+    # The daemon keeps the build it imported at startup, so a repair that
+    # says nothing about restarting leaves the service on the CPU wheel it
+    # was just repaired out of.
+    assert outcome.steps == (_provisioning.RESTART_NOTE,)
+    assert "server stop" in outcome.steps[0]
 
 
 def test_a_working_torch_with_a_receipt_that_will_lose_it_needs_the_repair(

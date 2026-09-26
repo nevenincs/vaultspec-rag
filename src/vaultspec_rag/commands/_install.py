@@ -1000,7 +1000,10 @@ def _tool_repair_outcome(
     return repair_tool_torch(
         ToolRepairRequest(
             dry_run=request.dry_run,
-            assume_yes=request.assume_yes or request.force,
+            # ``--force`` authorises overwriting files this product owns.
+            # It is not consent to reinstall packages in an environment it
+            # did not create, which is what this repair does.
+            assume_yes=request.assume_yes,
             confirm=request.confirm,
             stream=request.stream_repair,
         )

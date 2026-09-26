@@ -162,7 +162,11 @@ class CudaRemediation:
     steps: tuple[str, ...]
     repair_commands: tuple[str, ...] = ()
     upgrade_commands: tuple[str, ...] = ()
-    restart_command: str = ""
+    #: What to do once the repair has been applied, as the operator should
+    #: read it. Carried by name because it is the step a successful repair
+    #: reports on its own, where reaching into ``steps`` by position picks up
+    #: whatever happens to be last.
+    restart_step: str = ""
 
     @property
     def repair_command(self) -> str:
@@ -644,7 +648,6 @@ def cuda_remediation(
         )
     repair = tool_repair_commands(interpreter)
     upgrade = tool_upgrade_commands(interpreter)
-    restart = restart_service_command()
     if kind is RuntimeEnvKind.UVX_EPHEMERAL:
         return CudaRemediation(
             kind=CudaRepairKind.EPHEMERAL_ENVIRONMENT,
@@ -656,7 +659,7 @@ def cuda_remediation(
             ),
             repair_commands=repair,
             upgrade_commands=upgrade,
-            restart_command=restart,
+            restart_step=RESTART_NOTE,
         )
     return CudaRemediation(
         kind=CudaRepairKind.TOOL_ENVIRONMENT,
@@ -672,5 +675,5 @@ def cuda_remediation(
         ),
         repair_commands=repair,
         upgrade_commands=upgrade,
-        restart_command=restart,
+        restart_step=RESTART_NOTE,
     )
