@@ -137,14 +137,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "API fail",
     ),
     "test_env_holders.py": (
-        2,
-        "drives the two fail-closed branches of the holder query - a process "
-        "whose image and directory both read as unknown, and a process table "
-        "that cannot be enumerated at all. Neither can be provoked on demand "
-        "from a live table: the first needs a process this user may not "
-        "inspect, the second needs the operating system to refuse the walk. "
-        "Every relation the query actually reports is driven for real, "
-        "against real environments held by real child processes",
+        6,
+        "drives the fail-closed branches of the holder query and the shapes a "
+        "live table cannot be made to contain: a process whose image and "
+        "directory both read as unknown, a table that cannot be enumerated at "
+        "all, a launcher paired with the interpreter it re-executed, a shell "
+        "that must not be paired with its child, and this process itself "
+        "holding the tree so the launch-chain exclusion can be asked about. "
+        "None can be provoked on demand - the first needs a process this user "
+        "may not inspect, the second needs the operating system to refuse the "
+        "walk, and the rest need a parentage the test cannot arrange around "
+        "its own pid. Every relation the query reports is still driven for "
+        "real elsewhere in the file, against real environments held by real "
+        "child processes",
     ),
     "test_job_progress_durability.py": (
         1,
@@ -199,7 +204,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "content, from finding no holder",
     ),
     "test_doctor_repair_and_holders.py": (
-        7,
+        16,
         "substitutes the interpreter probe, the daemon interpreter and the "
         "holder scan across three cases. The probe starts a child "
         "interpreter and imports torch in it, so a CPU-only build cannot be "
@@ -210,18 +215,24 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "are the same directory. The holder scan is substituted so the roots "
         "it is asked about can be observed and so a service-shaped holder "
         "exists at all; spawning one would mean starting a real daemon in a "
-        "unit test. Everything else is the real verb, including the whole "
-        "render and envelope path the assertions read",
+        "unit test. The later cases add the receipt verdict, the bounded "
+        "holder list and a role from another release, each of which needs the "
+        "same three boundaries staged again. Everything else is the real "
+        "verb, including the whole render and envelope path the assertions "
+        "read",
     ),
     "test_install_torch_config.py": (
-        1,
+        3,
         "drives a real install under a symlinked system temp root - the shape "
         "macOS has by default, where TMPDIR lives under a symlink - and the "
         "temp module caches its answer in a module attribute that pytest's own "
         "tmp_path populates before the test runs, so the documented "
         "environment override cannot take effect until that cache is cleared; "
         "the install itself runs for real and nothing about its behaviour is "
-        "replaced",
+        "replaced. Two more stand in for the uv the project sync launches: a "
+        "uv that never returns cannot be staged with a real one, and the "
+        "workspace-containment refusal must be observed without any uv "
+        "running at all",
     ),
     "test_jobs_device_load.py": (
         5,
@@ -232,12 +243,20 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "runner",
     ),
     "test_cli_install.py": (
-        2,
+        10,
         "the post-install warning classifies the running interpreter in a child "
         "process, and a client or an MPS-refused environment cannot be made on "
         "the test host without replacing its installed torch; only the child "
         "probe's verdict is substituted, and the real warning renderer, its "
-        "defect gate and its topology remediation run unchanged",
+        "defect gate and its topology remediation run unchanged. The refusal "
+        "cases substitute the tool repair itself for the same reason the "
+        "repair's own tests do - running it would reinstall packages in a real "
+        "tool environment - and the consent cases observe what the install "
+        "hands it, because the flag's whole effect is which authorisation "
+        "arrives there. The run that counts interpreter probes also pins the "
+        "environment's classification and its receipt verdict, so the count "
+        "is of one known state rather than of whatever this host happens to "
+        "be",
     ),
     "test_install_client_role.py": (
         1,
@@ -274,14 +293,18 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "contract, and passed against a real load added one frame down",
     ),
     "test_tool_torch_repair.py": (
-        8,
+        28,
         "the persistent uv tool interpreter and machine singleton cannot be "
-        "safely forced through a defective-CUDA reinstall during a test: that "
-        "would replace the developer's installed tool and can disrupt a live "
-        "machine service. The tests retain the real repair transaction and "
-        "substitute only its externally-owned observations, with sentinels "
-        "that fail if a holder, no-device diagnosis, CUDA re-probe, or receipt "
-        "postcondition is bypassed",
+        "safely forced through a CUDA repair during a test: that would install "
+        "packages into the developer's own tool environment, which is how a "
+        "live installation was once emptied. The tests retain the real repair "
+        "transaction and substitute only its externally-owned observations - "
+        "the child interpreter probe, the environment classification, the "
+        "receipt verdict, the process table and the uv launch itself - with "
+        "sentinels that fail if consent, a foreign target, an unreadable "
+        "release, a holder, a no-device diagnosis, the CUDA re-probe or the "
+        "receipt postcondition is bypassed. The count is high because each "
+        "guard stages the same boundaries again for the one branch it proves",
     ),
     "test_watcher_controller_intake.py": (
         11,

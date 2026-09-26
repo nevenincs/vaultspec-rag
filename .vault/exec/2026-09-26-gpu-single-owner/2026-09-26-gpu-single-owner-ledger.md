@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:2d6ae62399df5660d025485a150234fe8384a71ed50736a40d240d603bc8268e'
+body_hash: 'sha256:79be61c0f7fdeb8ffa52984ff95c37a1844e8145373730badee32276152d4793'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -333,6 +333,8 @@ related:
 - `S17` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
 - `S17` `verify:` `pytest test_install_torch_config` -> `pass`
 - `S17` `verify:` `guard mutation (containment removed, the subprocess double fires) fails then passes` -> `pass`
+- `S19` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S19` `verify:` `pytest test_substitution_discipline` -> `pass`
 
 ## Notes
 
@@ -363,3 +365,4 @@ related:
 - `S16` correction for the damaged-metadata low: the release comes from the environment's installed metadata or, failing that, the receipt's exact pin; with neither the product refuses to run the repair on consent and hands the commands over, because a swap naming no release resolves the newest one
 - `S18` correction for p04-e2e-console-script-adapter-unrecognised: a server launch through its installed console script is recognised as well as the module form, with the names read from entry-point metadata. Caller audit: `is_server_launch` and `server_launch_port` are called only by the holder role and report; the spawn witness, the orphan reap and the spawn itself match `SERVER_LAUNCH_MARKER` directly, so broadening changes nothing that can be reaped or stopped
 - `S17` correction for p03-review-second-uv-launcher-unbounded: the project sync gets a named timeout sized like the tool repair's, pytest containment on the workspace it writes into, and a timeout reported as a failure outcome rather than a raise; it already stated utf-8 with replacement
+- `S19` merge correction: main tightened the substitution guard to count per-file sites against an allowance, so the five files this plan added tests to carry raised counts and the reason each new site exists. The red `test_storage_maintenance_tick` entry is gone with main's own fix for that file
