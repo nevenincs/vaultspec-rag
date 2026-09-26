@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 import pytest
 from pytest import MonkeyPatch
 
-from ..cli._gpu_errors import RuntimeEnvKind
 from ..commands import _tool_torch
-from ..operator_state import _environment_probe
+from ..operator_state import _environment_probe, _provisioning
 from ..operator_state._compute import ProbeDepth
 from ..operator_state._environment_probe import InterpreterFacts
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
+from ..operator_state._topology import RuntimeEnvKind
 
 pytestmark = [pytest.mark.unit]
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _persistent_tool_env(_interpreter: str) -> RuntimeEnvKind:
+def _persistent_tool_env(_root: object) -> RuntimeEnvKind:
     return RuntimeEnvKind.UV_TOOL
 
 
@@ -155,13 +155,7 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """A driver/device problem is diagnostic, not a reason to rewrite the tool."""
-    from ..cli import _gpu_errors
-
-    monkeypatch.setattr(
-        _gpu_errors,
-        "classify_interpreter_env",
-        _persistent_tool_env,
-    )
+    monkeypatch.setattr(_tool_torch, "classify_environment", _persistent_tool_env)
     monkeypatch.setattr(
         _environment_probe,
         "probe_interpreter",
@@ -192,7 +186,8 @@ def test_the_handoff_reports_a_receipt_that_already_carries_the_pin(
     """
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
-    spec = _tool_torch.tool_cuda_install_spec()
+    spec = _provisioning.tool_cuda_install_spec()
+    assert spec is not None
     (tmp_path / "uv-receipt.toml").write_text(
         f"""[tool]
 requirements = [{{ name = "torch", url = "{spec.wheel_url}" }}]
@@ -200,7 +195,7 @@ requirements = [{{ name = "torch", url = "{spec.wheel_url}" }}]
         encoding="utf-8",
     )
 
-    outcome = _tool_torch._handoff_outcome(str(interpreter), spec, "uv tool install")
+    outcome = _tool_torch._handoff_outcome(str(interpreter), spec, ())
 
     assert "the receipt already pins this wheel" in outcome.detail
 
@@ -225,7 +220,7 @@ requirements = [{ name = "vaultspec-rag", extras = ["mcp"] }]
         encoding="utf-8",
     )
 
-    requirement = _tool_torch._tool_package_requirement(str(interpreter))
+    requirement = _provisioning.tool_package_requirement(str(interpreter))
 
     version = importlib.metadata.version("vaultspec-rag")
     assert requirement == f"vaultspec-rag[mcp]=={version}"
@@ -245,7 +240,7 @@ def test_a_receipt_without_the_package_falls_back_to_the_host_request(
     interpreter.parent.mkdir()
 
     assert (
-        _tool_torch._tool_package_requirement(str(interpreter))
+        _provisioning.tool_package_requirement(str(interpreter))
         == "vaultspec-rag[gpu,mcp]"
     )
 
@@ -267,6 +262,7 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
         + chr(10)
         + "    pid 4321 (end this process): C:/tools/vaultspec-rag/Scripts/python.exe",
         "uv tool install --force ...",
+        steps=("Make upgrades keep the GPU wheel: uv tool install --force ...",),
     )
 
     _render_tool_torch_repair(outcome)
@@ -310,6 +306,7 @@ def test_the_install_report_itself_carries_the_repair_section(
         _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
         "tool CUDA repair must run from outside " + str(tmp_path),
         "uv tool install --force ...",
+        steps=("Make upgrades keep the GPU wheel: uv tool install --force ...",),
     )
 
     _render_install_report(report)
@@ -321,9 +318,7 @@ def test_the_install_report_itself_carries_the_repair_section(
 
 def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
     """A CUDA-ready environment ends the transaction without a report."""
-    from ..cli import _gpu_errors
-
-    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
+    monkeypatch.setattr(_tool_torch, "classify_environment", _persistent_tool_env)
     monkeypatch.setattr(
         _environment_probe,
         "probe_interpreter",
@@ -340,12 +335,11 @@ def test_a_project_venv_is_not_this_transaction_s_business(
     monkeypatch: MonkeyPatch,
 ) -> None:
     """Only a persistent tool environment is repaired through this path."""
-    from ..cli import _gpu_errors
 
-    def _project_venv(_interpreter: str) -> RuntimeEnvKind:
+    def _project_venv(_root: object) -> RuntimeEnvKind:
         return RuntimeEnvKind.PROJECT_VENV
 
-    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _project_venv)
+    monkeypatch.setattr(_tool_torch, "classify_environment", _project_venv)
 
     outcome = _tool_torch.repair_tool_torch(dry_run=False, interpreter="ignored")
 
@@ -437,11 +431,9 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
         interpreter = root / "bin" / "python"
 
     with hold_environment(root, by_image=True) as holder:
-        outcome = _tool_torch._handoff_outcome(
-            str(interpreter),
-            _tool_torch.tool_cuda_install_spec(),
-            "uv tool install --force ...",
-        )
+        spec = _provisioning.tool_cuda_install_spec()
+        assert spec is not None
+        outcome = _tool_torch._handoff_outcome(str(interpreter), spec, ())
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED
     assert any(found.pid == holder.pid for found in outcome.holders)
@@ -461,9 +453,7 @@ def test_an_install_without_the_gpu_extra_is_not_a_defect(
     impossible to complete without a terminal - a defect introduced by reading
     a choice as a fault.
     """
-    from ..cli import _gpu_errors
-
-    monkeypatch.setattr(_gpu_errors, "classify_interpreter_env", _persistent_tool_env)
+    monkeypatch.setattr(_tool_torch, "classify_environment", _persistent_tool_env)
     monkeypatch.setattr(
         _environment_probe,
         "probe_interpreter",
@@ -490,7 +480,9 @@ def test_torch_missing_from_a_gpu_install_is_still_a_defect() -> None:
     assert missing.is_defect
 
 
-def test_the_tool_root_is_the_environment_not_the_link_target(tmp_path: Path) -> None:
+def test_the_environment_root_is_the_environment_not_the_link_target(
+    tmp_path: Path,
+) -> None:
     """A symlinked interpreter names its OWN environment, not the base one.
 
     Guard assertion: a tool environment's interpreter is a symlink to the base
@@ -512,5 +504,5 @@ def test_the_tool_root_is_the_environment_not_the_link_target(tmp_path: Path) ->
     except (OSError, NotImplementedError):  # pragma: no cover - needs privilege
         pytest.skip("this platform does not allow creating a symlink here")
 
-    assert _tool_torch._tool_root(str(interpreter)) == env
-    assert _tool_torch._tool_root(str(interpreter)) != base.parent
+    assert _provisioning.environment_root(str(interpreter)) == env
+    assert _provisioning.environment_root(str(interpreter)) != base.parent

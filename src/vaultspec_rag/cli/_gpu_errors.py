@@ -2,172 +2,23 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import typer
 
-from ..commands._tool_torch import tool_cuda_install_spec
 from ..operator_state._installation import ComputeCapability
 from ._render import _plain
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import NoReturn
 
 __all__ = [
-    "RuntimeEnvKind",
     "_cpu_only_message",
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
-    "classify_interpreter_env",
-    "classify_runtime_env",
-    "durable_tool_install_command",
-    "gpu_escape_hatch_command",
     "warn_if_active_torch_not_accelerator",
 ]
-
-
-class RuntimeEnvKind(StrEnum):
-    """Classification of the environment a python prefix belongs to.
-
-    Drives which torch remediation is offered: a ``uv tool`` env can only be
-    repaired in place (the project-scoped cu130 pin never reaches it), a uvx
-    ephemeral cache env is almost never the environment the operator thinks
-    they are running, and a project venv is served by ``vaultspec-rag install``.
-    """
-
-    UV_TOOL = "uv-tool"
-    UVX_EPHEMERAL = "uvx-ephemeral"
-    PROJECT_VENV = "project-venv"
-    OTHER = "other"
-
-    @property
-    def label(self) -> str:
-        """Human-readable form used beside interpreter paths in messages."""
-        return {
-            RuntimeEnvKind.UV_TOOL: "uv tool install",
-            RuntimeEnvKind.UVX_EPHEMERAL: (
-                "uvx ephemeral cache env - NOT the installed tool"
-            ),
-            RuntimeEnvKind.PROJECT_VENV: "project venv",
-            RuntimeEnvKind.OTHER: "unrecognized env",
-        }[self]
-
-
-def classify_runtime_env(prefix: str | Path | None = None) -> RuntimeEnvKind:
-    """Classify the environment rooted at ``prefix`` (default: the running one).
-
-    Pure path logic - never shells out to ``uv`` (this runs on the ``server
-    start`` path). The uvx ephemeral cache is positively identified by the
-    ``archive-v0`` component of the uv cache layout (or a ``UV_CACHE_DIR``
-    ancestor); the installed-tool shape is the prefix sitting directly inside a
-    ``tools`` directory (or a ``UV_TOOL_DIR`` ancestor); a ``.venv``/``venv``
-    prefix is a project venv. Misclassification degrades only which remediation
-    hint is printed, never correctness.
-    """
-    import os
-    import sys
-    from pathlib import Path
-
-    resolved = Path(prefix if prefix is not None else sys.prefix).resolve()
-    parts = {part.lower() for part in resolved.parts}
-    cache_dir = os.environ.get("UV_CACHE_DIR", "")
-    if "archive-v0" in parts or (
-        cache_dir and resolved.is_relative_to(Path(cache_dir).resolve())
-    ):
-        return RuntimeEnvKind.UVX_EPHEMERAL
-    tool_dir = os.environ.get("UV_TOOL_DIR", "")
-    if tool_dir and resolved.is_relative_to(Path(tool_dir).resolve()):
-        return RuntimeEnvKind.UV_TOOL
-    if resolved.parent.name.lower() == "tools":
-        return RuntimeEnvKind.UV_TOOL
-    if resolved.name.lower() in {".venv", "venv"}:
-        return RuntimeEnvKind.PROJECT_VENV
-    return RuntimeEnvKind.OTHER
-
-
-def classify_interpreter_env(interpreter: str | Path) -> RuntimeEnvKind:
-    """Classify the environment that owns ``interpreter`` (a python binary).
-
-    Walks up from the binary to its env root (the parent of ``Scripts``/
-    ``bin``) and classifies that root, so the daemon interpreter resolved by
-    the start pre-flight gets the same classification as a running prefix.
-    """
-    from pathlib import Path
-
-    binary = Path(interpreter).resolve()
-    if binary.parent.name.lower() in {"scripts", "bin"}:
-        return classify_runtime_env(binary.parent.parent)
-    return classify_runtime_env(binary.parent)
-
-
-def gpu_escape_hatch_command(interpreter: str) -> str:
-    """The in-place GPU-wheel repair for ``interpreter``.
-
-    Works on any env kind but is undone by the next tool-env re-resolution
-    (``--torch-backend`` is ``uv pip``-only); pair it with
-    :func:`durable_tool_install_command` on tool envs.
-    """
-    from ..torch_config._index import CU130_INDEX_URL
-
-    backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
-    return (
-        f'uv pip install --python "{interpreter}" '
-        f"--reinstall --torch-backend={backend} torch"
-    )
-
-
-def durable_tool_install_command() -> str:
-    """The receipt-carrying tool reinstall that keeps CUDA across upgrades.
-
-    uv records ``--with`` requirements (including a PEP 508 direct wheel URL)
-    in the tool receipt and re-applies them on every ``uv tool upgrade``, so
-    torch keeps resolving to the cu130 wheel. ``--index`` is NOT recorded by
-    current uv (verified on 0.11.x: the receipt carried no index options and
-    an upgrade re-resolved torch to the CPU wheel), so the direct URL is the
-    only re-resolution-proof pin. Nothing may be running out of the target
-    environment first: a forced reinstall fails mid-removal on the locked
-    Scripts dir, and the holder is as often an MCP client session's server
-    process as the service itself.
-
-    A direct wheel URL has to name one interpreter and one ABI, so both tags
-    are read off the running interpreter rather than written down. Hardcoding
-    them hands a 3.13 wheel to whoever is running 3.14, and uv rejects the
-    mismatch with a tag error that says nothing about why the command was wrong.
-
-    The two tags are NOT interchangeable: a free-threaded build is
-    ``cp314-cp314t``, and ``sys.version_info`` is ``(3, 14)`` for both the
-    free-threaded and the GIL build, so deriving one tag and using it twice
-    silently names the GIL wheel on a free-threaded host. ``packaging`` already
-    resolves this from ``Py_GIL_DISABLED`` and is a direct dependency, so ask it
-    instead of re-deriving the rule here. Its first tag is the most specific one
-    for this interpreter.
-
-    The manylinux level stays hand-picked - it must match what PyTorch
-    actually publishes (``manylinux_2_28``), which is not necessarily the
-    first platform tag ``packaging`` yields for the host - but the machine
-    architecture is read from the host, since PyTorch publishes that level
-    per architecture (``x86_64`` and ``aarch64``).
-
-    The torch version tracks the distribution already installed in this env
-    (the CPU wheel being replaced), with the local ``+cpu`` suffix stripped:
-    the same release is guaranteed to exist in the cu130 flavour for an
-    interpreter that resolved it, where a baked constant goes stale against
-    an env that has not caught up with the workspace pin. The constant
-    remains only as the fallback when no torch is present at all.
-
-    The command must also carry ``--python``: ``uv tool install --force``
-    rebuilds the tool env with uv's *default* python request, not the
-    interpreter that printed this command, so on a host whose default is a
-    different version (or a free-threaded build) the pinned wheel fails the
-    resolve on a tag mismatch that never names the real cause. The request is
-    parsed out of the same tag as the wheel filename so the two cannot
-    diverge, and uv records ``python`` in the tool receipt, so upgrades keep
-    resolving on the matching interpreter.
-    """
-    return tool_cuda_install_spec().command
 
 
 def _cpu_only_message() -> str:
@@ -272,73 +123,43 @@ def warn_if_active_torch_not_accelerator() -> None:
         _plain(f"\nWARNING: {MPS_FALLBACK_MESSAGE}")
         return
 
+    from ..operator_state._provisioning import cuda_remediation
+    from ..operator_state._topology import RuntimeEnvKind, classify_environment
+
     lines = [
         "",
         "WARNING: the active interpreter's torch has no supported accelerator.",
     ]
-    if sys.platform == "darwin":
-        lines += [
-            "  MPS is unavailable. vaultspec-rag requires Apple silicon with a "
-            "PyTorch build that supports Metal; CPU fallback is not accepted.",
-            "  Check the active interpreter:",
-            '    python -c "import torch; print(torch.backends.mps.is_built(), '
-            'torch.backends.mps.is_available())"',
-        ]
-        _plain("\n".join(lines))
-        return
     if capability is ComputeCapability.CPU_ONLY_BUILD:
         lines.append(
-            "  The installed torch is a CPU-only wheel. pyproject.toml may be "
-            "configured for cu130, but the wheel actually present is CPU - "
-            "vaultspec-rag is GPU-only and the service will not start."
+            "  The installed torch is a CPU-only wheel - vaultspec-rag is "
+            "GPU-only and the service will not start."
         )
     elif capability.fixed_by_torch_reinstall:
         lines.append(f"  In the active interpreter, {capability.label}.")
     else:
+        lines.append(f"  In the active interpreter, {capability.label}.")
         lines.append(
-            "  torch is a CUDA build but no supported accelerator is visible "
-            "(driver or hardware). Run nvidia-smi to check CUDA visibility."
+            "  Confirm the accelerator is visible: python -c "
+            '"import torch; print(torch.backends.mps.is_available())"'
+            if sys.platform == "darwin"
+            else "  Confirm the driver sees the GPU: nvidia-smi"
         )
         _plain("\n".join(lines))
         return
 
-    kind = classify_runtime_env()
-    if kind is RuntimeEnvKind.UV_TOOL:
-        lines += [
-            "",
-            "  This vaultspec-rag is a `uv tool` install. The cu130 GPU pin is "
-            "project-scoped and does not reach `uv tool` / `pip` installs "
-            "(`--torch-backend` is `uv pip`-only), so every `uv tool upgrade` "
-            "re-resolves torch to the CPU wheel.",
-            "  Repair this environment now (undone by the next upgrade):",
-            f"    {gpu_escape_hatch_command(sys.executable)}",
-            "  Make upgrades keep the GPU wheel. Stop the service and close "
-            "every editor or agent session running an MCP stdio transport "
-            "first: a "
-            "held file stops the forced reinstall after it has removed the "
-            "old packages, leaving the environment unrunnable.",
-            f"    {durable_tool_install_command()}",
-        ]
-    elif kind is RuntimeEnvKind.UVX_EPHEMERAL:
-        lines += [
-            "",
-            "  This interpreter is a uvx EPHEMERAL cache environment "
+    kind = classify_environment(sys.prefix)
+    if kind is RuntimeEnvKind.UVX_EPHEMERAL:
+        lines.append(
+            f"  This interpreter is a uvx EPHEMERAL cache environment "
             f"({sys.prefix}) - not the installed tool. uvx silently falls "
-            "back to it when the installed tool env is broken or the request "
-            "does not match it.",
-            "  Reinstall the tool with nothing running out of its "
-            "environment - the service, and every editor or agent session "
-            "running an MCP stdio transport, both take the Scripts lock that "
-            "stops a forced reinstall half-way:",
-            f"    {durable_tool_install_command()}",
-        ]
-    else:
-        lines += [
-            "",
-            "  Provision the cu130 GPU wheel in this environment:",
-            "    vaultspec-rag install   (patches pyproject.toml with the cu130 index)",
-            "    uv sync --reinstall-package torch",
-        ]
+            "back to it when the installed tool environment is broken or the "
+            "request does not match it."
+        )
+    lines.append("")
+    lines.extend(
+        f"  {step}" for step in cuda_remediation(sys.executable, env_kind=kind).steps
+    )
     _plain("\n".join(lines))
 
 

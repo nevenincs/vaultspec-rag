@@ -2,27 +2,33 @@
 
 from __future__ import annotations
 
-import importlib.metadata
-import os
 import sys
-import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote
 
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.tags import Tag, cpython_tags
-from packaging.version import InvalidVersion, Version
 
 from .._process_probe import (
     EnvironmentHolder,
     HolderRelation,
     environment_holders,
 )
-from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-from ..torch_config._index import CU130_INDEX_URL
+from ..operator_state._provisioning import (
+    ToolCudaInstallSpec,
+    cuda_remediation,
+    read_receipt,
+)
+from ..operator_state._topology import (
+    TOOL_RECEIPT_NAME,
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
@@ -35,18 +41,11 @@ HOLDER_REPORT_LIMIT = 10
 #: where the walk takes longest.
 HOLDER_SCAN_BUDGET_SECONDS = 60.0
 
-#: The tool request a CUDA repair falls back to when the receipt records none.
-#: Only an inference host has torch to repair, so the request carries the
-#: inference stack; the MCP adapter's own launch needs only the ``mcp`` extra.
-_HOST_TOOL_REQUEST = "vaultspec-rag[gpu,mcp]"
-
 __all__ = [
     "HOLDER_REPORT_LIMIT",
-    "ToolCudaInstallSpec",
     "ToolTorchRepairAction",
     "ToolTorchRepairOutcome",
     "repair_tool_torch",
-    "tool_cuda_install_spec",
 ]
 
 
@@ -69,28 +68,21 @@ class ToolTorchRepairAction(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCudaInstallSpec:
-    """The one receipt-carrying CUDA tool installation request."""
-
-    args: tuple[str, ...]
-    wheel_url: str
-
-    @property
-    def command(self) -> str:
-        """Render the request for an operator without reparsing it later."""
-        return " ".join(
-            f'"{part}"' if " " in part or "[" in part else part for part in self.args
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class ToolTorchRepairOutcome:
-    """One truthful repair result, including its safe remediation command."""
+    """One truthful repair result, including its safe remediation steps.
+
+    ``command`` is the durable request an operator is handed, kept as its own
+    field for the structured report; ``steps`` is the whole remediation as it
+    should be read, built where every other surface builds it, so a refusal
+    here and a warning elsewhere cannot describe the same environment
+    differently.
+    """
 
     action: ToolTorchRepairAction
     detail: str
     command: str = ""
     holders: tuple[EnvironmentHolder, ...] = ()
+    steps: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def blocks_install(self) -> bool:
@@ -107,6 +99,7 @@ class ToolTorchRepairOutcome:
             "action": self.action.value,
             "detail": self.detail,
             "command": self.command,
+            "steps": list(self.steps),
             "holders": [
                 {
                     "pid": holder.pid,
@@ -119,144 +112,10 @@ class ToolTorchRepairOutcome:
         }
 
 
-def _wheel_torch_version(installed: str | None) -> str:
-    """Return the CUDA release matching an installed torch distribution."""
-    if installed is None:
-        return TORCH_TOOL_PIN_VERSION
-    try:
-        return Version(installed).base_version
-    except InvalidVersion:
-        return TORCH_TOOL_PIN_VERSION
-
-
-def _wheel_platform_tag(platform_name: str, machine: str) -> str:
-    """Return the published PyTorch wheel platform segment."""
-    if platform_name == "win32":
-        return "win_amd64"
-    return f"manylinux_2_28_{machine.lower()}"
-
-
-def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | None:
-    """Return the extras the receipt records for *package*, if it records any.
-
-    The operator chose those extras. A repair that re-specifies the tool has
-    no business widening them, so what is already recorded is what gets asked
-    for again.
-    """
-    try:
-        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return None
-    tool = data.get("tool")
-    requirements = (
-        cast("dict[str, object]", tool).get("requirements")
-        if isinstance(tool, dict)
-        else None
-    )
-    if not isinstance(requirements, list):
-        return None
-    for entry in cast("list[object]", requirements):
-        if not isinstance(entry, dict):
-            continue
-        record = cast("dict[str, object]", entry)
-        name = record.get("name")
-        if not isinstance(name, str) or name.lower() != package.lower():
-            continue
-        extras = record.get("extras")
-        if isinstance(extras, list):
-            return tuple(str(extra) for extra in cast("list[object]", extras))
-        return ()
-    return None
-
-
-def _tool_package_requirement(interpreter: str) -> str:
-    """Render the package request a repair may ask for, and no more.
-
-    A bare name resolves to whatever is newest, so the command that repairs a
-    torch wheel would also upgrade the tool and impose this build's extras on
-    an operator who chose otherwise. The installed version is pinned and the
-    receipt's own extras are reused; the host request is the fallback for an
-    environment that records neither.
-    """
-    fallback = _HOST_TOOL_REQUEST
-    package = Requirement(fallback).name
-    extras = _receipt_package_extras(
-        _tool_root(interpreter) / "uv-receipt.toml", package
-    )
-    if extras is None:
-        return fallback
-    try:
-        version = importlib.metadata.version(package)
-    except importlib.metadata.PackageNotFoundError:
-        return fallback
-    rendered = f"{package}[{','.join(sorted(extras))}]" if extras else package
-    return f"{rendered}=={version}"
-
-
-def tool_cuda_install_spec(
-    *,
-    torch_version: str | None = None,
-    tag: Tag | None = None,
-    platform_tag: str | None = None,
-    package_spec: str | None = None,
-) -> ToolCudaInstallSpec:
-    """Build the durable CUDA request from the running interpreter's tags."""
-    import platform
-
-    if torch_version is None:
-        try:
-            installed = importlib.metadata.version("torch")
-        except importlib.metadata.PackageNotFoundError:
-            installed = None
-        torch_version = _wheel_torch_version(installed)
-    tag = tag or next(iter(cpython_tags()))
-    platform_tag = platform_tag or _wheel_platform_tag(sys.platform, platform.machine())
-    python_request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"
-    if tag.abi.endswith("t"):
-        python_request += "t"
-    wheel_url = (
-        f"{CU130_INDEX_URL}/torch-{torch_version}%2Bcu130"
-        f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
-    )
-    return ToolCudaInstallSpec(
-        args=(
-            "uv",
-            "tool",
-            "install",
-            "--force",
-            "--python",
-            python_request,
-            package_spec or _HOST_TOOL_REQUEST,
-            "--with",
-            f"torch @ {wheel_url}",
-        ),
-        wheel_url=wheel_url,
-    )
-
-
-def _tool_root(interpreter: str) -> Path:
-    """The environment an interpreter BELONGS to, not the one it resolves to.
-
-    Normalised but never resolved. A tool environment's interpreter is a real
-    file inside the tree on Windows and a symlink to the base interpreter on
-    POSIX, so resolving it walks out of the environment entirely and lands in
-    the shared Python installation. Every consumer here is then wrong in the
-    same direction: the refusal names a directory the operator is not in, the
-    holder scan reports processes belonging to unrelated software using that
-    base interpreter and misses the ones actually holding the tool
-    environment, and the receipt is looked for where no receipt exists.
-    """
-    binary = Path(os.path.abspath(interpreter))
-    if binary.parent.name.lower() in {"scripts", "bin"}:
-        return binary.parent.parent
-    return binary.parent
-
-
 def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
     """Check uv's parsed receipt retains the exact direct CUDA requirement."""
-    try:
-        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+    data = read_receipt(receipt)
+    if data is None:
         return False
     expected = unquote(wheel_url)
     pending: list[object] = [data]
@@ -306,7 +165,7 @@ def _holder_summary(holder: EnvironmentHolder) -> str:
 
 
 def _handoff_outcome(
-    interpreter: str, spec: ToolCudaInstallSpec, command: str
+    interpreter: str, spec: ToolCudaInstallSpec, steps: tuple[str, ...]
 ) -> ToolTorchRepairOutcome:
     """Refuse to replace this environment, and say what has to happen instead.
 
@@ -318,7 +177,7 @@ def _handoff_outcome(
     first, and a working-directory holder needs different handling from a
     process to end.
     """
-    root = _tool_root(interpreter)
+    root = environment_root(interpreter)
     found = environment_holders(root, timeout=HOLDER_SCAN_BUDGET_SECONDS)
     lines = [
         f"tool CUDA repair must run from outside {root}",
@@ -336,14 +195,16 @@ def _handoff_outcome(
         lines.append(
             "  some processes could not be inspected, so this list may be short"
         )
-    if _receipt_has_cuda_requirement(root / "uv-receipt.toml", spec.wheel_url):
+    if _receipt_has_cuda_requirement(root / TOOL_RECEIPT_NAME, spec.wheel_url):
         lines.append("  the receipt already pins this wheel; the environment does not")
     action = (
         ToolTorchRepairAction.HOLDER_DETECTED
         if found.holders
         else ToolTorchRepairAction.HANDOFF_REQUIRED
     )
-    return ToolTorchRepairOutcome(action, "\n".join(lines), command, found.holders)
+    return ToolTorchRepairOutcome(
+        action, "\n".join(lines), spec.command, found.holders, steps
+    )
 
 
 def repair_tool_torch(
@@ -359,13 +220,13 @@ def repair_tool_torch(
     prompt would have blocked non-interactive installs on a question with no
     consequence.
     """
-    from ..cli._gpu_errors import RuntimeEnvKind, classify_interpreter_env
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
     from ..operator_state._installation import ComputeCapability
 
     interpreter = interpreter or sys.executable
-    if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UV_TOOL:
+    kind = classify_environment(environment_root(interpreter))
+    if kind is not RuntimeEnvKind.UV_TOOL:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.NOT_APPLICABLE,
             "active interpreter is not a persistent uv tool environment",
@@ -392,12 +253,24 @@ def repair_tool_torch(
 def _repair_defective_tool(
     interpreter: str, detail: str, *, dry_run: bool
 ) -> ToolTorchRepairOutcome:
-    spec = tool_cuda_install_spec(package_spec=_tool_package_requirement(interpreter))
-    command = spec.command
+    """Ask the one remediation builder what this environment needs.
+
+    A host PyTorch publishes no accelerated wheel for has no repair to hand
+    over, so the defect is reported as unresolved with the plain reason rather
+    than as a command that cannot work.
+    """
+    remediation = cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
+    if remediation.spec is None:
+        return ToolTorchRepairOutcome(
+            ToolTorchRepairAction.CUDA_UNVERIFIED,
+            detail,
+            steps=remediation.steps,
+        )
     if dry_run:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
             f"tool CUDA repair is needed because {detail}",
-            command,
+            remediation.durable_command,
+            steps=remediation.steps,
         )
-    return _handoff_outcome(interpreter, spec, command)
+    return _handoff_outcome(interpreter, remediation.spec, remediation.steps)

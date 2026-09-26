@@ -15,23 +15,26 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from ..cli._gpu_errors import (
-    RuntimeEnvKind,
-    classify_interpreter_env,
-    classify_runtime_env,
-    durable_tool_install_command,
-    gpu_escape_hatch_command,
-)
 from ..cli._service_start import (
     _caller_ephemeral_warning,
     _ephemeral_env_warning,
     _tail_daemon_log,
 )
 from ..cli._status_labels import _status_env_label
-from ..commands._tool_torch import (
-    _wheel_platform_tag,
+from ..operator_state._provisioning import (
+    HOLDER_PRECONDITION,
+    CudaRepairKind,
     _wheel_torch_version,
+    cuda_remediation,
+    inplace_cuda_command,
+    published_wheel_platform_tag,
     tool_cuda_install_spec,
+)
+from ..operator_state._topology import (
+    TOOL_RECEIPT_NAME,
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
 )
 from ..torch_config._index import CU130_INDEX_URL
 
@@ -64,15 +67,24 @@ def test_status_env_label_missing_is_explicit() -> None:
 class TestRuntimeEnvClassifier:
     """Pure-path env classification: tool env, uvx ephemeral, project venv."""
 
-    def test_uv_tool_env_windows_shape(self, tmp_path: Path) -> None:
-        prefix = tmp_path / "AppData" / "Roaming" / "uv" / "tools" / "vaultspec-rag"
+    def test_a_receipt_marks_a_tool_environment(self, tmp_path: Path) -> None:
+        """The receipt uv writes is what makes an environment a tool env.
+
+        Guard assertion: detection used to require a parent directory named
+        ``tools``, and uv nests its tool trees one level deeper than that, so
+        a real tool environment classified as unrecognised unless the operator
+        happened to have exported ``UV_TOOL_DIR``.
+        """
+        prefix = tmp_path / "uv" / "tools" / "versions" / "vaultspec-rag"
         prefix.mkdir(parents=True)
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.UV_TOOL
+        assert classify_environment(prefix) is RuntimeEnvKind.OTHER
+        (prefix / TOOL_RECEIPT_NAME).write_text("[tool]\n", encoding="utf-8")
+        assert classify_environment(prefix) is RuntimeEnvKind.UV_TOOL
 
     def test_uvx_ephemeral_archive_v0_shape(self, tmp_path: Path) -> None:
         prefix = tmp_path / "uv" / "cache" / "archive-v0" / "AbC123xyz"
         prefix.mkdir(parents=True)
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
+        assert classify_environment(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
 
     def test_uv_tool_dir_override_wins(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -81,7 +93,7 @@ class TestRuntimeEnvClassifier:
         prefix = tool_root / "vaultspec-rag"
         prefix.mkdir(parents=True)
         monkeypatch.setenv("UV_TOOL_DIR", str(tool_root))
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.UV_TOOL
+        assert classify_environment(prefix) is RuntimeEnvKind.UV_TOOL
 
     def test_uv_cache_dir_override_marks_ephemeral(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -90,31 +102,39 @@ class TestRuntimeEnvClassifier:
         prefix = cache_root / "someenv"
         prefix.mkdir(parents=True)
         monkeypatch.setenv("UV_CACHE_DIR", str(cache_root))
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
+        assert classify_environment(prefix) is RuntimeEnvKind.UVX_EPHEMERAL
 
     def test_project_venv_shape(self, tmp_path: Path) -> None:
         prefix = tmp_path / "myproject" / ".venv"
         prefix.mkdir(parents=True)
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.PROJECT_VENV
+        assert classify_environment(prefix) is RuntimeEnvKind.PROJECT_VENV
 
     def test_unrecognized_is_other(self, tmp_path: Path) -> None:
         prefix = tmp_path / "somewhere" / "python-3.13"
         prefix.mkdir(parents=True)
-        assert classify_runtime_env(prefix) is RuntimeEnvKind.OTHER
+        assert classify_environment(prefix) is RuntimeEnvKind.OTHER
 
     def test_interpreter_classification_walks_to_env_root(self, tmp_path: Path) -> None:
-        scripts = tmp_path / "uv" / "tools" / "vaultspec-rag" / "Scripts"
+        root = tmp_path / "uv" / "tools" / "vaultspec-rag"
+        scripts = root / "Scripts"
         scripts.mkdir(parents=True)
+        (root / TOOL_RECEIPT_NAME).write_text("[tool]\n", encoding="utf-8")
         interpreter = scripts / "python.exe"
         interpreter.touch()
-        assert classify_interpreter_env(interpreter) is RuntimeEnvKind.UV_TOOL
+        assert (
+            classify_environment(environment_root(interpreter))
+            is RuntimeEnvKind.UV_TOOL
+        )
 
     def test_interpreter_classification_posix_bin(self, tmp_path: Path) -> None:
         bin_dir = tmp_path / "cache" / "archive-v0" / "aBcDeF" / "bin"
         bin_dir.mkdir(parents=True)
         interpreter = bin_dir / "python"
         interpreter.touch()
-        assert classify_interpreter_env(interpreter) is RuntimeEnvKind.UVX_EPHEMERAL
+        assert (
+            classify_environment(environment_root(interpreter))
+            is RuntimeEnvKind.UVX_EPHEMERAL
+        )
 
     def test_every_kind_has_a_label(self) -> None:
         for kind in RuntimeEnvKind:
@@ -122,10 +142,10 @@ class TestRuntimeEnvClassifier:
 
 
 class TestRemediationCommands:
-    """The two remediation strings derive from the one cu130 constant surface."""
+    """Every CUDA repair string derives from the one cu130 constant surface."""
 
     def test_escape_hatch_targets_the_interpreter_and_cu130_backend(self) -> None:
-        cmd = gpu_escape_hatch_command(r"C:\envs\tool\Scripts\python.exe")
+        cmd = inplace_cuda_command(r"C:\envs\tool\Scripts\python.exe")
         assert '--python "C:\\envs\\tool\\Scripts\\python.exe"' in cmd
         backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
         assert f"--torch-backend={backend}" in cmd
@@ -138,7 +158,9 @@ class TestRemediationCommands:
 
         from packaging.version import Version
 
-        cmd = durable_tool_install_command()
+        spec = tool_cuda_install_spec()
+        assert spec is not None
+        cmd = spec.command
         assert CU130_INDEX_URL in cmd
         assert "uv tool install" in cmd
         assert "vaultspec-rag[gpu,mcp]" in cmd
@@ -190,10 +212,79 @@ class TestRemediationCommands:
         PyTorch publishes ``manylinux_2_28`` wheels per machine architecture,
         so the machine must be read from the host.
         """
-        assert _wheel_platform_tag("linux", "aarch64") == "manylinux_2_28_aarch64"
-        assert _wheel_platform_tag("linux", "x86_64") == "manylinux_2_28_x86_64"
-        # Windows publishes one architecture, so the machine is not consulted.
-        assert _wheel_platform_tag("win32", "AMD64") == "win_amd64"
+        assert (
+            published_wheel_platform_tag("linux", "aarch64") == "manylinux_2_28_aarch64"
+        )
+        assert (
+            published_wheel_platform_tag("linux", "x86_64") == "manylinux_2_28_x86_64"
+        )
+        # Windows publishes one architecture, so the machine is consulted only
+        # to confirm it is that one.
+        assert published_wheel_platform_tag("win32", "AMD64") == "win_amd64"
+
+    def test_a_platform_without_a_cuda_wheel_has_no_tag(self) -> None:
+        """Guard assertion: an invented tag names a URL the index refuses.
+
+        The tag was derived from the platform family alone, so an ARM64
+        Windows machine and every macOS machine were handed a wheel URL that
+        returns an error - which reads to an operator as a repair they applied
+        wrong rather than one that does not exist.
+        """
+        assert published_wheel_platform_tag("win32", "ARM64") is None
+        assert published_wheel_platform_tag("darwin", "arm64") is None
+        assert published_wheel_platform_tag("linux", "armv7l") is None
+
+    def test_an_unsupported_platform_is_refused_in_plain_words(self) -> None:
+        """No command is offered where no accelerated build exists."""
+        remediation = cuda_remediation(
+            "/opt/env/bin/python", platform_name="win32", machine="ARM64"
+        )
+
+        assert remediation.kind is CudaRepairKind.NO_PUBLISHED_WHEEL
+        assert not remediation.kind.repairable
+        assert remediation.durable_command == ""
+        assert remediation.immediate_command == ""
+        joined = "\n".join(remediation.steps)
+        assert CU130_INDEX_URL not in joined
+        assert "publishes no CUDA build" in joined
+
+    def test_macos_is_pointed_at_metal_not_at_a_cuda_wheel(self) -> None:
+        """Guard assertion: a cu130 URL on macOS is a repair that cannot work."""
+        remediation = cuda_remediation(
+            "/opt/env/bin/python", platform_name="darwin", machine="arm64"
+        )
+
+        assert remediation.kind is CudaRepairKind.APPLE_METAL
+        joined = "\n".join(remediation.steps)
+        assert CU130_INDEX_URL not in joined
+        assert "Metal" in joined
+
+    def test_a_tool_environment_gets_both_repairs_and_the_precondition(
+        self, tmp_path: Path
+    ) -> None:
+        """The immediate repair and the durable receipt fix, together, once.
+
+        Guard assertion: one field run printed three different repair commands
+        from three surfaces, because each surface built its own.
+        """
+        interpreter = tmp_path / "Scripts" / "python.exe"
+        interpreter.parent.mkdir()
+
+        remediation = cuda_remediation(
+            str(interpreter),
+            env_kind=RuntimeEnvKind.UV_TOOL,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        assert remediation.kind is CudaRepairKind.TOOL_ENVIRONMENT
+        assert remediation.immediate_command == inplace_cuda_command(str(interpreter))
+        assert remediation.spec is not None
+        assert remediation.durable_command == remediation.spec.command
+        joined = "\n".join(remediation.steps)
+        assert remediation.immediate_command in joined
+        assert remediation.durable_command in joined
+        assert HOLDER_PRECONDITION in remediation.steps
 
     def test_command_names_the_free_threaded_abi(self) -> None:
         """A free-threaded host must get the ``t`` wheel, not the GIL one.
@@ -207,11 +298,13 @@ class TestRemediationCommands:
         """
         from packaging.tags import Tag
 
-        cmd = tool_cuda_install_spec(
+        spec = tool_cuda_install_spec(
             torch_version="2.9.0",
             tag=Tag("cp314", "cp314t", "win_amd64"),
             platform_tag="win_amd64",
-        ).command
+        )
+        assert spec is not None
+        cmd = spec.command
 
         assert "-cp314-cp314t-" in cmd, (
             f"free-threaded host must be offered the cp314t wheel; command was: {cmd}"
@@ -236,15 +329,24 @@ class TestRemediationCommands:
         """
         from packaging.tags import Tag
 
-        cmd = tool_cuda_install_spec(
+        spec = tool_cuda_install_spec(
             torch_version="2.9.0",
             tag=Tag("cp313", "cp313", "win_amd64"),
             platform_tag="manylinux_2_28_aarch64",
-        ).command
+        )
+        assert spec is not None
+        cmd = spec.command
 
         assert "--python 3.13 " in cmd
         assert "-cp313-cp313-manylinux_2_28_aarch64.whl" in cmd
         assert "3.13t" not in cmd
+
+
+def _durable_command_for(interpreter: str) -> str:
+    """The durable request the one builder offers an ephemeral environment."""
+    return cuda_remediation(
+        interpreter, env_kind=RuntimeEnvKind.UVX_EPHEMERAL
+    ).durable_command
 
 
 class TestEphemeralEnvWarning:
@@ -259,7 +361,7 @@ class TestEphemeralEnvWarning:
         joined = "\n".join(lines)
         assert "EPHEMERAL" in joined
         assert "not the installed tool" in joined
-        assert durable_tool_install_command() in joined
+        assert _durable_command_for(str(interpreter)) in joined
         assert str(interpreter) in joined
 
     def test_silent_for_a_tool_env_interpreter(self, tmp_path: Path) -> None:
@@ -292,7 +394,7 @@ class TestCallerEphemeralWarning:
         assert str(interpreter) in joined
         # The remediation must stay the single-sourced durable command, so the
         # attach path cannot drift from the spawn path's guidance.
-        assert durable_tool_install_command() in joined
+        assert _durable_command_for(str(interpreter)) in joined
 
     def test_names_the_caller_not_the_service(self, tmp_path: Path) -> None:
         scripts = tmp_path / "cache" / "archive-v0" / "aB3dEf" / "Scripts"

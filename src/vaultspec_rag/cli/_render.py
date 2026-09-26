@@ -704,10 +704,10 @@ def _render_tool_torch_repair(outcome: object) -> None:
     for line in str(getattr(outcome, "detail", "")).splitlines():
         if line.strip():
             _plain(f"  {line}" if not line.startswith(" ") else line)
-    command = str(getattr(outcome, "command", ""))
-    if command:
-        _plain("  run this from a shell that holds nothing in that environment:")
-        _plain(f"    {command}", soft_wrap=True)
+    steps = getattr(outcome, "steps", ())
+    if isinstance(steps, tuple):
+        for step in cast("tuple[object, ...]", steps):
+            _plain(f"  {step}", soft_wrap=True)
 
 
 def _render_install_report(report: InstallReport) -> None:

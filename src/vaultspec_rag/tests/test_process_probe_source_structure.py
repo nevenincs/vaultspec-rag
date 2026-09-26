@@ -390,10 +390,10 @@ class TestNoStructurallyIdenticalFunctions:
             "operator_state/_installation.py:fixed_by_torch_reinstall",
         ): _NAMED_SUBSET,
         (
-            "cli/_gpu_errors.py:label",
             "operator_state/_features.py:label",
             "operator_state/_installation.py:label",
             "operator_state/_service.py:label",
+            "operator_state/_topology.py:label",
         ): _ENUM_LABEL_TABLE,
         (
             "indexer/_incremental_commit.py:__init__",
