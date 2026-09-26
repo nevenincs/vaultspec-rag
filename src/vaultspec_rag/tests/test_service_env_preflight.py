@@ -27,7 +27,7 @@ from ..operator_state._provisioning import (
     environment_python_request,
     inplace_cuda_command,
     published_wheel_platform_tag,
-    tool_repair_command,
+    tool_repair_commands,
     tool_upgrade_commands,
     upgrade_command_for_mode,
 )
@@ -205,6 +205,13 @@ class TestRemediationCommands:
         assert "Metal" in joined
 
 
+def _install_metadata(tmp_path: Path, distribution: str, version: str) -> None:
+    """Record *distribution* as installed in the stand-in tool environment."""
+    site = tmp_path / "vaultspec-rag" / "Lib" / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    (site / f"{distribution}-{version}.dist-info").mkdir(exist_ok=True)
+
+
 def _tool_env(tmp_path: Path, receipt: str) -> str:
     """A tool environment carrying *receipt*, and the interpreter inside it."""
     root = tmp_path / "vaultspec-rag"
@@ -231,30 +238,88 @@ class TestTheReceiptCarriesTheCudaSource:
     only by making the installation unable to move at all.
     """
 
-    def test_the_repair_records_the_index_and_changes_torch_only(
+    def test_the_repair_swaps_torch_first_and_records_the_index_after(
         self, tmp_path: Path
     ) -> None:
-        """The command uv re-applies on every upgrade is what carries CUDA.
+        """Two steps, in this order, and neither re-installs a launcher.
 
-        Without ``--upgrade-package torch`` uv rewrites the receipt and keeps
-        the CPU build it already has, because that build still satisfies the
-        requirement; with ``--force`` it would replace the whole environment,
-        which is the destruction this cycle exists to avoid.
+        Guard assertion: a ``uv tool install`` that changes any package
+        re-installs the tool's entry-point launchers, cannot replace one that
+        is running, and then removes the whole environment. The product's own
+        consented run always holds a launcher, so the package change goes
+        through uv's pip interface and the install that follows it has
+        nothing left to change.
         """
         interpreter = _tool_env(
             tmp_path,
             '[tool]\nrequirements = [{ name = "vaultspec-rag", extras = ["gpu"] }]\n',
         )
+        _install_metadata(tmp_path, "vaultspec_rag", "0.5.2")
+        _install_metadata(tmp_path, "torch", "2.14.0+cpu")
 
-        command = tool_repair_command(interpreter)
+        swap, receipt = tool_repair_commands(interpreter)
 
-        assert f"--index {CU130_INDEX_URL}" in command
-        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in command
-        assert "--upgrade-package torch" in command
-        assert '"vaultspec-rag[gpu]"' in command
-        assert "--force" not in command
-        assert "==" not in command
-        assert "--with" not in command
+        assert swap.startswith("uv pip install ")
+        assert f"--python {interpreter}" in swap or f'--python "{interpreter}"' in swap
+        assert f"--index {CU130_INDEX_URL}" in swap
+        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in swap
+        assert "--reinstall-package torch" in swap
+        # The release already installed, so a damaged environment regains
+        # what it lost without gaining a release nobody asked for.
+        assert '"vaultspec-rag[gpu]==0.5.2"' in swap
+        # The public release, because no index publishes a local build under
+        # its local segment; which build answers is the index's decision.
+        assert "torch==2.14.0" in swap
+        assert "+cpu" not in swap
+
+        assert receipt.startswith("uv tool install ")
+        assert f"--index {CU130_INDEX_URL}" in receipt
+        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in receipt
+        assert '"vaultspec-rag[gpu]"' in receipt
+        assert "==" not in receipt
+
+    def test_no_command_for_an_existing_environment_changes_a_package_by_tool_install(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: this is the shape that deletes the environment.
+
+        `uv tool install` re-installs every entry-point launcher after any
+        package change. On Windows it cannot replace a running one, and it
+        removes the whole environment rather than leaving it half-written.
+        Every flag below makes such an install change a package, so none of
+        them may appear in a command the product runs or hands over for an
+        environment that already exists.
+        """
+        forbidden = (
+            "--upgrade",
+            "--upgrade-package",
+            "--reinstall",
+            "--reinstall-package",
+            "--force",
+            "--with",
+        )
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
+        _install_metadata(tmp_path, "vaultspec_rag", "0.5.2")
+        _install_metadata(tmp_path, "torch", "2.14.0+cpu")
+        remediation = cuda_remediation(
+            interpreter,
+            env_kind=RuntimeEnvKind.UV_TOOL,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        offered = (
+            *remediation.repair_commands,
+            *remediation.upgrade_commands,
+            str(classify_tool_receipt(interpreter).fix(interpreter)),
+            upgrade_command_for_mode("tool", interpreter),
+        )
+
+        for command in offered:
+            for line in command.splitlines():
+                if not line.strip().startswith("uv tool install"):
+                    continue
+                assert not any(flag in line for flag in forbidden), line
 
     def test_the_python_request_names_the_target_environments_own_version(
         self, tmp_path: Path
@@ -277,7 +342,7 @@ class TestTheReceiptCarriesTheCudaSource:
         )
 
         assert environment_python_request(interpreter) == "3.14"
-        assert "--python 3.14 " in tool_repair_command(interpreter)
+        assert "--python 3.14 " in tool_repair_commands(interpreter)[1]
 
     def test_an_environment_that_cannot_be_read_gets_no_python_request(
         self, tmp_path: Path
@@ -290,25 +355,22 @@ class TestTheReceiptCarriesTheCudaSource:
         interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
 
         assert environment_python_request(interpreter) is None
-        assert "--python" not in tool_repair_command(interpreter)
+        assert "--python" not in tool_repair_commands(interpreter)[1]
 
-    def test_a_free_threaded_environment_keeps_its_t_suffix(
+    def test_a_damaged_environment_is_named_without_a_release(
         self, tmp_path: Path
     ) -> None:
-        """A free-threaded build is a different interpreter to uv.
+        """An environment that lost its metadata is not given a guessed one.
 
-        Guard assertion: the version alone reads the same for both builds, so
-        a request derived from it names the GIL interpreter and uv rebuilds.
+        Guard assertion: naming the asking process's own release here would
+        install that release into someone else's environment.
         """
         interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
-        root = Path(interpreter).parent.parent
-        (root / "pyvenv.cfg").write_text(
-            "home = /opt/uv/python/cpython-3.14.6+freethreaded-linux\n"
-            "version_info = 3.14.6\n",
-            encoding="utf-8",
-        )
 
-        assert environment_python_request(interpreter) == "3.14t"
+        swap = tool_repair_commands(interpreter)[0]
+
+        assert swap.endswith("vaultspec-rag")
+        assert "==" not in swap
 
     def test_a_receipt_with_both_options_and_no_pin_is_durable(
         self, tmp_path: Path
@@ -337,7 +399,7 @@ class TestTheReceiptCarriesTheCudaSource:
 
         assert verdict is ToolReceiptVerdict.VERSION_PINNED
         assert not verdict.durable
-        assert verdict.fix(interpreter) == tool_repair_command(interpreter)
+        assert verdict.fix(interpreter) == "\n".join(tool_repair_commands(interpreter))
 
     def test_a_pinned_torch_wheel_is_named_as_its_own_defect(
         self, tmp_path: Path
@@ -417,16 +479,23 @@ class TestUpgradeCommands:
     def test_a_receipt_that_is_not_durable_upgrades_through_the_repair(
         self, tmp_path: Path
     ) -> None:
-        """A bare upgrade of such an installation drops the GPU build."""
-        interpreter = _tool_env(
-            tmp_path, '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
-        )
+        """A bare upgrade of such an installation drops the GPU build.
 
-        upgrade = tool_upgrade_commands(interpreter)[0]
+        Guard assertion: the previous form reached for
+        `uv tool install --upgrade`, which re-installs the launchers and
+        removes the environment while one of them runs. The receipt is
+        recorded first instead, by an install that changes no package, and
+        uv's own verb then does the upgrading.
+        """
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
 
-        assert upgrade == tool_repair_command(interpreter, upgrade=True)
-        assert "--upgrade" in upgrade
-        assert f"--index {CU130_INDEX_URL}" in upgrade
+        record, upgrade, restart = tool_upgrade_commands(interpreter)
+
+        assert record.startswith("uv tool install ")
+        assert f"--index {CU130_INDEX_URL}" in record
+        assert "--upgrade" not in record
+        assert upgrade == "uv tool upgrade vaultspec-rag"
+        assert "server stop" in restart
 
     def test_a_project_installation_upgrades_through_its_lockfile(self) -> None:
         """Only a standalone tool needs the receipt-aware form."""

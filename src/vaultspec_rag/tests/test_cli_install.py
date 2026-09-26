@@ -637,7 +637,7 @@ class TestInstallTargetValidation:
         assert result.exit_code == 0, result.output
 
 
-_REFUSAL_COMMAND = "uv tool install --python 3.13 sentinel --upgrade-package torch"
+_REFUSAL_COMMAND = "uv pip install --python sentinel --reinstall-package torch"
 
 
 def _blocking_repair(*_args: object, **_kwargs: object) -> ToolTorchRepairOutcome:
@@ -646,7 +646,7 @@ def _blocking_repair(*_args: object, **_kwargs: object) -> ToolTorchRepairOutcom
         ToolTorchRepairAction.HOLDER_DETECTED,
         "tool CUDA repair must run from outside C:/tools/vaultspec-rag\n"
         "  holders to clear first:",
-        _REFUSAL_COMMAND,
+        (_REFUSAL_COMMAND,),
         steps=(f"Install the CUDA build of torch: {_REFUSAL_COMMAND}",),
         capability=ComputeCapability.CPU_ONLY_BUILD,
         reason=ComputeCapability.CPU_ONLY_BUILD.label,
@@ -728,7 +728,7 @@ class TestRefusedInstall:
         assert payload["action"] == "install"
         assert payload["refused"]
         assert payload["warnings"] == []
-        assert payload["tool_torch_repair"]["command"] == _REFUSAL_COMMAND
+        assert payload["tool_torch_repair"]["commands"] == [_REFUSAL_COMMAND]
         assert result.exit_code == 2
         # A step that never ran reports nothing, not its default: "not
         # changed" and "skipped" are answers a run gives.

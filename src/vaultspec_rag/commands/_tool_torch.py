@@ -30,7 +30,7 @@ from ..operator_state._provisioning import (
     ToolReceiptVerdict,
     classify_tool_receipt,
     cuda_remediation,
-    tool_repair_arguments,
+    tool_repair_steps,
 )
 from ..operator_state._topology import (
     RuntimeEnvKind,
@@ -102,11 +102,11 @@ class ToolTorchRepairAction(StrEnum):
 class ToolTorchRepairOutcome:
     """One truthful repair result, including its safe remediation steps.
 
-    ``command`` is the durable request an operator is handed, kept as its own
-    field for the structured report; ``steps`` is the whole remediation as it
-    should be read, built where every other surface builds it, so a refusal
-    here and a warning elsewhere cannot describe the same environment
-    differently.
+    ``commands`` is the repair an operator is handed, in the order it has to
+    run, kept as its own field for the structured report; ``steps`` is the
+    whole remediation as it should be read, built where every other surface
+    builds it, so a refusal here and a warning elsewhere cannot describe the
+    same environment differently.
 
     ``capability`` is the verdict this transaction obtained about the
     interpreter, carried so that nothing downstream asks a second time. The
@@ -118,7 +118,7 @@ class ToolTorchRepairOutcome:
 
     action: ToolTorchRepairAction
     detail: str
-    command: str = ""
+    commands: tuple[str, ...] = ()
     holders: tuple[EnvironmentHolder, ...] = ()
     steps: tuple[str, ...] = field(default_factory=tuple)
     capability: ComputeCapability | None = None
@@ -143,7 +143,7 @@ class ToolTorchRepairOutcome:
         return {
             "action": self.action.value,
             "detail": self.detail,
-            "command": self.command,
+            "commands": list(self.commands),
             "steps": list(self.steps),
             "capability": (
                 self.capability.value if self.capability is not None else None
@@ -225,7 +225,7 @@ def _handoff_outcome(
     return ToolTorchRepairOutcome(
         action,
         "\n".join(lines),
-        remediation.repair_command,
+        remediation.repair_commands,
         found.holders,
         remediation.steps,
         None if need is None else need.capability,
@@ -344,11 +344,18 @@ def _consented(assume_yes: bool, confirm: ConfirmFn | None) -> tuple[bool, str]:
 
 
 def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
-    """Run the in-place repair, bounded, and say what happened.
+    """Run the repair's steps in order, bounded, and say what happened.
 
     uv is resolved through the PATH rather than assumed: the product does not
     provision it, and an absent uv is an ordinary state on a machine whose
     tool installation was made elsewhere.
+
+    The steps run in order and stop at the first failure. The order is what
+    makes the second one safe: it changes no package only because the first
+    has already brought the environment to the recorded request, and a
+    ``uv tool install`` that changes a package re-installs the tool's
+    launchers, cannot replace one that is running, and then removes the
+    environment.
 
     In human mode the child writes straight to the terminal, because a
     multi-gigabyte download with no output reads as a hang. In JSON mode its
@@ -370,11 +377,19 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     mismatch = _target_mismatch(uv, interpreter)
     if mismatch is not None:
         return False, mismatch
-    arguments = (uv, *tool_repair_arguments(interpreter)[1:])
+    for step in tool_repair_steps(interpreter):
+        ran, detail = _run_uv(uv, step, stream=stream)
+        if not ran:
+            return False, detail
+    return True, "uv applied the repair"
+
+
+def _run_uv(uv: str, step: tuple[str, ...], *, stream: bool) -> tuple[bool, str]:
+    """Run one bounded uv invocation and report what it did."""
     try:
         # Argument form, with uv resolved off the PATH: no shell is involved.
         completed = subprocess.run(
-            arguments,
+            (uv, *step[1:]),
             capture_output=not stream,
             text=True,
             encoding="utf-8",
@@ -387,7 +402,7 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     except OSError as exc:
         return False, f"the repair could not be started: {exc}"
     if completed.returncode == 0:
-        return True, "uv applied the repair"
+        return True, "uv applied the step"
     tail = (completed.stderr or completed.stdout or "").strip().splitlines()[-5:]
     detail = "; ".join(line.strip() for line in tail if line.strip())
     return False, f"uv exited with code {completed.returncode}" + (
@@ -444,9 +459,20 @@ def _verify_repair(interpreter: str) -> tuple[bool, str]:
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
+    from ..operator_state._provisioning import tool_upgrade_commands
 
     capability = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute.capability
     receipt = classify_tool_receipt(interpreter)
+    if capability is ComputeCapability.CPU_ONLY_BUILD:
+        # The request named the release the environment already had, and the
+        # CUDA index publishes no build of it. Saying so is the difference
+        # between a repair that failed and one that cannot succeed at this
+        # release; taking a newer one is what changes the answer.
+        return False, (
+            f"after the repair, {capability.label}: the CUDA index publishes "
+            "no accelerated build of the torch release this environment asks "
+            f"for. Take a newer release with: {tool_upgrade_commands(interpreter)[0]}"
+        )
     if capability is not ComputeCapability.READY:
         return False, f"after the repair, {capability.label}"
     if not receipt.durable:
@@ -477,7 +503,7 @@ def _repair_defective_tool(
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
             f"tool CUDA repair is needed because {need.reason}",
-            remediation.repair_command,
+            remediation.repair_commands,
             steps=remediation.steps,
             capability=need.capability,
             receipt=need.receipt,
@@ -492,7 +518,7 @@ def _repair_defective_tool(
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.REPAIR_FAILED,
             detail,
-            remediation.repair_command,
+            remediation.repair_commands,
             steps=remediation.steps,
             capability=need.capability,
             receipt=classify_tool_receipt(interpreter),

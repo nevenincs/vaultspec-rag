@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:6445c705dc66e5bfe31c4ec915fa27b5be9af66349270dd2fbf5d6f8ad92dafb'
+body_hash: 'sha256:f413cc28a9e20226c448aa9b298efeaab8cebb8b79be92d703a2084e7b3eedd4'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -247,6 +247,19 @@ related:
 - `S15` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
 - `S15` `by:` `vaultspec-high-executor`
 - `S12` `verify:` `pytest dev/guards/test_child_output_decoding.py` -> `pass`
+- `S16` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S16` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S16` `verify:` `ruff check` -> `pass`
+- `S16` `verify:` `ruff format --check` -> `pass`
+- `S16` `verify:` `ty check` -> `pass`
+- `S16` `verify:` `basedpyright` -> `pass`
+- `S16` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_doctor_repair_and_holders test_cli_install` -> `pass`
+- `S16` `verify:` `guard mutation (receipt step carrying --upgrade-package torch) fails then passes` -> `pass`
+- `S16` `by:` `vaultspec-high-executor`
 
 ## Notes
 

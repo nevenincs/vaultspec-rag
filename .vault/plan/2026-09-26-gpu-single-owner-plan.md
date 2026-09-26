@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:57df17a72e3c4bce0f8429659ad7bc03ee6e8617749a80f261217ea286a263b1'
+body_hash: 'sha256:1ced0c13cda03d63fc307202d71ab9d4ef2534479f85e0bc2ed9af0769fcbaca'
 ---
 
 # `gpu-single-owner` plan
@@ -96,7 +96,7 @@ Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool u
 
 Makes the product's own consented repair and every command it hands over leave a tool environment whole while any launcher of the tool is running, and resolves the P03 review's high and medium findings.
 
-- [ ] `P04.S16` - split the tool repair into a swap through uv's pip interface of the recorded request at its installed release with torch reinstalled from the CUDA index, followed by an options-only receipt install, and make the non-durable upgrade the options-only install followed by a bare uv tool upgrade; `src/vaultspec_rag/operator_state/_provisioning.py, src/vaultspec_rag/commands/_tool_torch.py`.
+- [x] `P04.S16` - split the tool repair into a swap through uv's pip interface of the recorded request at its installed release with torch reinstalled from the CUDA index, followed by an options-only receipt install, and make the non-durable upgrade the options-only install followed by a bare uv tool upgrade; `src/vaultspec_rag/operator_state/_provisioning.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [ ] `P04.S17` - name the restart after an applied repair, take consent only from --yes or a prompt, never prompt on the JSON path, and serialise holders once, bounded, with a total; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/_readiness.py`.
 - [ ] `P04.S18` - state holder remedies as restarts after an in-place repair, correct the doctor holder wording, enforce the running-interpreter predicate, and treat a path or specifier torch pin as pinned; `src/vaultspec_rag/operator_state/_holders.py, src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/operator_state/_provisioning.py`.
 - [ ] `P04.S19` - prove against real uv on Windows with a running launcher that the repair and the upgrade leave the environment whole, and that a package-changing tool install removes it; `src/vaultspec_rag/tests/`.

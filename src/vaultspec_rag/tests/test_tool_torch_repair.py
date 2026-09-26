@@ -119,7 +119,7 @@ def test_a_non_interactive_run_reports_the_handoff_instead_of_stopping(
         _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
         _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
     }
-    assert "uv tool install" in outcome.command
+    assert any("uv tool install" in command for command in outcome.commands)
 
 
 def test_a_defective_tool_is_handed_off_rather_than_replaced(
@@ -146,7 +146,7 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
         _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
     }
     assert outcome.blocks_install
-    assert "uv tool install" in outcome.command
+    assert any("uv tool install" in command for command in outcome.commands)
     assert "tool CUDA repair for" in outcome.detail
 
 
@@ -163,12 +163,8 @@ def test_no_path_here_replaces_an_environment_wholesale() -> None:
     source = inspect.getsource(_tool_torch)
 
     assert "--force" not in source
-    assert "--force" not in " ".join(
-        _provisioning.tool_repair_arguments("/opt/env/bin/python")
-    )
-    assert "--force" not in " ".join(
-        _provisioning.tool_repair_arguments("/opt/env/bin/python", upgrade=True)
-    )
+    for step in _provisioning.tool_repair_steps("/opt/env/bin/python"):
+        assert "--force" not in " ".join(step)
 
 
 def test_a_repair_outside_the_pytest_root_never_reaches_uv(
@@ -447,10 +443,9 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
         + "  running out of it now, and unchanged until restarted:"
         + chr(10)
         + "    pid 4321 (end this process): C:/tools/vaultspec-rag/Scripts/python.exe",
-        "uv tool install ... --upgrade-package torch",
+        ("uv pip install ...", "uv tool install ..."),
         steps=(
-            "Install the CUDA build of torch into this environment: "
-            "uv tool install ... --upgrade-package torch",
+            "Install the CUDA build of torch into this environment: uv pip install ...",
         ),
     )
 
@@ -459,7 +454,7 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
     printed = capsys.readouterr().out
     assert "Tool environment needs a CUDA repair" in printed
     assert "pid 4321" in printed
-    assert "uv tool install ... --upgrade-package torch" in printed
+    assert "uv pip install ..." in printed
 
 
 def test_a_healthy_tool_environment_prints_no_repair_section(
@@ -470,7 +465,7 @@ def test_a_healthy_tool_environment_prints_no_repair_section(
 
     _render_tool_torch_repair(
         _tool_torch.ToolTorchRepairOutcome(
-            _tool_torch.ToolTorchRepairAction.ALREADY_READY, "fine", ""
+            _tool_torch.ToolTorchRepairAction.ALREADY_READY, "fine"
         )
     )
     _render_tool_torch_repair(None)
@@ -494,10 +489,9 @@ def test_the_install_report_itself_carries_the_repair_section(
     report.tool_torch_repair = _tool_torch.ToolTorchRepairOutcome(
         _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
         "tool CUDA repair for " + str(tmp_path),
-        "uv tool install ... --upgrade-package torch",
+        ("uv pip install ...", "uv tool install ..."),
         steps=(
-            "Install the CUDA build of torch into this environment: "
-            "uv tool install ... --upgrade-package torch",
+            "Install the CUDA build of torch into this environment: uv pip install ...",
         ),
     )
 
@@ -505,7 +499,7 @@ def test_the_install_report_itself_carries_the_repair_section(
 
     printed = capsys.readouterr().out
     assert "Tool environment needs a CUDA repair" in printed
-    assert "uv tool install ... --upgrade-package torch" in printed
+    assert "uv pip install ..." in printed
 
 
 def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
@@ -559,7 +553,7 @@ def test_a_dry_run_previews_the_command_without_inspecting_holders(
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.DRY_RUN
     assert ComputeCapability.CPU_ONLY_BUILD.label in outcome.detail
-    assert "uv tool install" in outcome.command
+    assert any("uv tool install" in command for command in outcome.commands)
     assert outcome.holders == ()
 
 
@@ -579,7 +573,7 @@ def test_every_unresolved_outcome_stops_the_install(
     Guard assertion: continuing past any of these would leave the operator with
     a completed install on top of an environment that cannot serve a request.
     """
-    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", "command")
+    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", ("command",))
 
     assert outcome.blocks_install
 
@@ -596,7 +590,7 @@ def test_a_resolved_outcome_lets_the_install_continue(
     action: _tool_torch.ToolTorchRepairAction,
 ) -> None:
     """Nothing to repair, or nothing asked for, does not block the install."""
-    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", "command")
+    outcome = _tool_torch.ToolTorchRepairOutcome(action, "detail", ("command",))
 
     assert not outcome.blocks_install
 

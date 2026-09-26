@@ -45,9 +45,12 @@ __all__ = [
     "inplace_cuda_command",
     "published_wheel_platform_tag",
     "read_receipt",
+    "restart_service_command",
     "tool_package_requirement",
-    "tool_repair_arguments",
-    "tool_repair_command",
+    "tool_receipt_arguments",
+    "tool_repair_commands",
+    "tool_repair_steps",
+    "tool_swap_arguments",
     "tool_upgrade_commands",
     "upgrade_command_for_mode",
 ]
@@ -125,7 +128,9 @@ class ToolReceiptVerdict(StrEnum):
 
     def fix(self, interpreter: str) -> str | None:
         """The one command that makes this receipt durable, if one is needed."""
-        return None if self.durable else tool_repair_command(interpreter)
+        if self.durable:
+            return None
+        return "\n".join(tool_repair_commands(interpreter))
 
 
 class CudaRepairKind(StrEnum):
@@ -155,8 +160,14 @@ class CudaRemediation:
 
     kind: CudaRepairKind
     steps: tuple[str, ...]
-    repair_command: str = ""
+    repair_commands: tuple[str, ...] = ()
     upgrade_commands: tuple[str, ...] = ()
+    restart_command: str = ""
+
+    @property
+    def repair_command(self) -> str:
+        """The repair as one block, for a report that carries one string."""
+        return "\n".join(self.repair_commands)
 
 
 def read_receipt(receipt: Path) -> dict[str, object] | None:
@@ -369,32 +380,104 @@ def _render_command(args: tuple[str, ...]) -> str:
     )
 
 
-def tool_repair_arguments(
-    interpreter: str, *, upgrade: bool = False
-) -> tuple[str, ...]:
-    """The in-place repair, as the argument list the product itself runs.
+def environment_distribution_version(interpreter: str, distribution: str) -> str | None:
+    """The version of *distribution* installed in *interpreter*'s environment.
 
-    It re-installs the tool with the extras and interpreter already recorded,
-    adds the CUDA index and the strategy that reaches it - which uv writes
-    into the receipt and re-applies on every later upgrade - and upgrades
-    torch alone, because uv otherwise keeps a CPU build that still satisfies
-    the requirement. There is no ``--force``: a wholesale replacement is what
-    destroys an environment something is running out of, and nothing in this
-    cycle needs one.
+    Read out of that environment's own installed metadata, not out of the
+    process asking: an install run from a project environment is repairing a
+    tool environment whose releases are unrelated to its own. Absent metadata
+    is an ordinary state - a damaged environment has lost distributions - and
+    yields ``None`` rather than an exception.
+    """
+    root = environment_root(interpreter)
+    candidates = [root / "Lib" / "site-packages"]
+    candidates.extend(sorted(root.glob("lib/python*/site-packages")))
+    prefix = f"{distribution.replace('-', '_').lower()}-"
+    for site in candidates:
+        try:
+            entries = sorted(site.glob("*.dist-info"))
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.lower().startswith(prefix):
+                return entry.name[len(prefix) : -len(".dist-info")]
+    return None
 
-    ``upgrade`` takes the newest release in the same step, for an
-    installation whose receipt cannot carry the CUDA source across a bare
-    upgrade yet.
 
-    ``--python`` names the version the TARGET environment already runs, read
+def _public_version(version: str | None) -> str | None:
+    """A version without its local segment, which no index publishes under.
+
+    ``2.14.0+cpu`` and ``2.14.0+cu130`` are the same release built twice. The
+    request names the release; which build answers it is what the index and
+    the strategy decide.
+    """
+    if version is None:
+        return None
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(version).public
+    except InvalidVersion:
+        return version.partition("+")[0] or None
+
+
+def tool_swap_arguments(interpreter: str) -> tuple[str, ...]:
+    """Bring a tool environment to its recorded request on the CUDA source.
+
+    This is uv's pip interface, not ``uv tool install``, and the difference is
+    the whole reason the repair is two steps: a ``uv tool install`` that
+    changes any package re-installs the tool's launchers afterwards, cannot
+    replace one that is running, and then removes the environment. Nothing
+    here touches a launcher.
+
+    The request names the package at the release already installed, so a
+    damaged environment regains the distributions it lost without gaining a
+    release it did not ask for, and torch is reinstalled at the release it
+    already has, from the CUDA index under the strategy that reaches it. A
+    version that cannot be read is left unnamed rather than guessed.
+    """
+    package = tool_package_requirement(interpreter)
+    installed = environment_distribution_version(
+        interpreter, Requirement(_HOST_TOOL_REQUEST).name
+    )
+    torch_version = _public_version(
+        environment_distribution_version(interpreter, "torch")
+    )
+    return (
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        interpreter,
+        "--index",
+        CU130_INDEX_URL,
+        "--index-strategy",
+        CU130_INDEX_STRATEGY,
+        "--reinstall-package",
+        "torch",
+        package if installed is None else f"{package}=={installed}",
+        *(() if torch_version is None else (f"torch=={torch_version}",)),
+    )
+
+
+def tool_receipt_arguments(interpreter: str) -> tuple[str, ...]:
+    """Record the CUDA source in the receipt, changing no package.
+
+    Run after the swap, when the environment already satisfies the request,
+    uv reports the tool as installed and writes the options; it re-installs
+    nothing, so no launcher is touched. It carries no ``--upgrade``,
+    ``--reinstall``, ``--force`` or ``--with``: each of those changes a
+    package, and a package change is what turns this into a removal of the
+    environment while a launcher runs.
+
+    ``--python`` names the version the target environment already runs, read
     out of that environment. A request uv reads as a different interpreter is
-    not applied in place at all: uv rebuilds the environment wholesale, which
-    removes its contents and then fails on whatever a running service holds.
-    An environment that cannot be read is given no request, which uv applies
-    in place and records nothing for.
+    not applied in place at all: uv rebuilds the environment wholesale. An
+    environment that cannot be read is given no request, which uv applies in
+    place and records nothing for.
     """
     python = environment_python_request(interpreter)
-    args = (
+    return (
         "uv",
         "tool",
         "install",
@@ -405,12 +488,16 @@ def tool_repair_arguments(
         "--index-strategy",
         CU130_INDEX_STRATEGY,
     )
-    return (*args, "--upgrade") if upgrade else (*args, "--upgrade-package", "torch")
 
 
-def tool_repair_command(interpreter: str, *, upgrade: bool = False) -> str:
-    """The in-place repair as one line an operator can paste."""
-    return _render_command(tool_repair_arguments(interpreter, upgrade=upgrade))
+def tool_repair_steps(interpreter: str) -> tuple[tuple[str, ...], ...]:
+    """The repair, in the order it must run: swap the build, then record it."""
+    return (tool_swap_arguments(interpreter), tool_receipt_arguments(interpreter))
+
+
+def tool_repair_commands(interpreter: str) -> tuple[str, ...]:
+    """The repair as lines an operator can paste, in order."""
+    return tuple(_render_command(step) for step in tool_repair_steps(interpreter))
 
 
 def tool_upgrade_commands(
@@ -418,20 +505,27 @@ def tool_upgrade_commands(
 ) -> tuple[str, ...]:
     """How to take a newer release of a tool installation, and then serve it.
 
-    A durable receipt upgrades with uv's own verb and keeps the GPU build. A
-    receipt that is not durable yet is brought onto the cycle by the repair
-    with a full upgrade, which does both in one step. Either way the running
-    daemon keeps the release it started with until it is restarted.
+    A durable receipt upgrades with uv's own verb, which keeps the GPU build
+    and leaves the environment whole even when a launcher of the tool is
+    running. A receipt that is not durable yet is brought onto the cycle
+    first, by the options-only install that changes no package. Either way the
+    running daemon keeps the release it started with until it is restarted.
     """
     if verdict is None:
         verdict = classify_tool_receipt(interpreter)
     package = Requirement(_HOST_TOOL_REQUEST).name
-    upgrade = (
-        f"uv tool upgrade {package}"
+    upgrade = f"uv tool upgrade {package}"
+    steps = (
+        (upgrade,)
         if verdict.durable
-        else tool_repair_command(interpreter, upgrade=True)
+        else (_render_command(tool_receipt_arguments(interpreter)), upgrade)
     )
-    return (upgrade, f"{server_stop_command()} && {server_start_command()}")
+    return (*steps, restart_service_command())
+
+
+def restart_service_command() -> str:
+    """Restart the service, which is how a new build reaches the daemon."""
+    return f"{server_stop_command()} && {server_start_command()}"
 
 
 def upgrade_command_for_mode(mode: str, interpreter: str) -> str:
@@ -474,7 +568,7 @@ def _metal_remediation(interpreter: str) -> CudaRemediation:
             'Confirm Metal is usable: python -c "import torch; '
             'print(torch.backends.mps.is_available())"',
         ),
-        repair_command=command,
+        repair_commands=(command,),
     )
 
 
@@ -503,7 +597,7 @@ def _project_remediation(interpreter: str, *, project: bool) -> CudaRemediation:
             "pyproject.toml and uv sync --reinstall-package torch applies it, "
             "so the build survives a resolve.",
         ),
-        repair_command=command,
+        repair_commands=(command,),
     )
 
 
@@ -548,28 +642,35 @@ def cuda_remediation(
         return _project_remediation(
             interpreter, project=kind is RuntimeEnvKind.PROJECT_VENV
         )
-    repair = tool_repair_command(interpreter)
-    upgrade, restart = tool_upgrade_commands(interpreter)
+    repair = tool_repair_commands(interpreter)
+    upgrade = tool_upgrade_commands(interpreter)
+    restart = restart_service_command()
     if kind is RuntimeEnvKind.UVX_EPHEMERAL:
         return CudaRemediation(
             kind=CudaRepairKind.EPHEMERAL_ENVIRONMENT,
             steps=(
                 "Install the tool itself, so the environment that serves is "
-                f"the one carrying the GPU build: {repair}",
+                "the one carrying the GPU build:",
+                *repair,
                 RESTART_NOTE,
             ),
-            repair_command=repair,
-            upgrade_commands=(upgrade, restart),
+            repair_commands=repair,
+            upgrade_commands=upgrade,
+            restart_command=restart,
         )
     return CudaRemediation(
         kind=CudaRepairKind.TOOL_ENVIRONMENT,
         steps=(
-            f"Install the CUDA build of torch into this environment: {repair}",
-            "It changes torch alone, in place, and records the CUDA index in "
-            "the installation receipt, so later upgrades keep the GPU build.",
+            "Install the CUDA build of torch into this environment, then "
+            "record the index it came from, in this order:",
+            *repair,
+            "The first command changes torch alone, in place; the second "
+            "changes no package and only writes the index into the "
+            "installation receipt, so later upgrades keep the GPU build.",
             RESTART_NOTE,
-            f"Take a newer release later with: {upgrade}",
+            f"Take a newer release later with: {upgrade[0]}",
         ),
-        repair_command=repair,
-        upgrade_commands=(upgrade, restart),
+        repair_commands=repair,
+        upgrade_commands=upgrade,
+        restart_command=restart,
     )
