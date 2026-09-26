@@ -5,10 +5,8 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
-
-from packaging.requirements import InvalidRequirement, Requirement
 
 from .._process_probe import (
     EnvironmentHolder,
@@ -18,7 +16,7 @@ from .._process_probe import (
 from ..operator_state._provisioning import (
     ToolCudaInstallSpec,
     cuda_remediation,
-    read_receipt,
+    receipt_torch_wheel_url,
 )
 from ..operator_state._topology import (
     TOOL_RECEIPT_NAME,
@@ -113,40 +111,14 @@ class ToolTorchRepairOutcome:
 
 
 def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
-    """Check uv's parsed receipt retains the exact direct CUDA requirement."""
-    data = read_receipt(receipt)
-    if data is None:
-        return False
-    expected = unquote(wheel_url)
-    pending: list[object] = [data]
-    while pending:
-        value = pending.pop()
-        if isinstance(value, dict):
-            record = cast("dict[str, object]", value)
-            name = record.get("name")
-            url = record.get("url")
-            if (
-                isinstance(name, str)
-                and name.lower() == "torch"
-                and isinstance(url, str)
-                and unquote(url) == expected
-            ):
-                return True
-            pending.extend(record.values())
-        elif isinstance(value, list):
-            pending.extend(cast("list[object]", value))
-        elif isinstance(value, str):
-            try:
-                requirement = Requirement(value)
-            except InvalidRequirement:
-                continue
-            if (
-                requirement.name.lower() == "torch"
-                and requirement.url is not None
-                and unquote(requirement.url) == expected
-            ):
-                return True
-    return False
+    """Check uv's parsed receipt retains the exact direct CUDA requirement.
+
+    Both URLs are decoded before they are compared: uv re-encodes what it was
+    given, so two spellings of one wheel differ as strings while naming the
+    same file.
+    """
+    recorded = receipt_torch_wheel_url(receipt)
+    return recorded is not None and unquote(recorded) == unquote(wheel_url)
 
 
 def _holder_summary(holder: EnvironmentHolder) -> str:

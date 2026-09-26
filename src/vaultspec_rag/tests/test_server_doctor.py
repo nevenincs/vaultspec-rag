@@ -199,6 +199,32 @@ def test_doctor_weights_below_floor_as_error(
     assert result.exit_code == 2
 
 
+def test_doctor_floor_advice_names_a_command_that_upgrades(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor error hands over a command that can actually raise the version.
+
+    Guard assertion: the advice was `uv tool upgrade vaultspec-rag`, which a
+    tool environment pinned by the CUDA repair answers with "nothing to
+    upgrade". An operator following it sees no change and no reason why.
+    """
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    write_package_declaration(
+        ws,
+        "vaultspec-rag",
+        PackageDeclaration(install_mode=InstallMode.TOOL, minimum_version="99.0.0"),
+    )
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor"])
+
+    assert "uv tool upgrade vaultspec-rag" not in result.stdout
+    assert "vaultspec-rag[gpu,mcp]@latest" in result.stdout
+
+
 def test_doctor_weights_mode_mismatch_as_warning(
     isolated_status_dir: Path,
     tmp_path: Path,

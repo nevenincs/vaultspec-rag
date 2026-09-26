@@ -29,6 +29,8 @@ from ..operator_state._provisioning import (
     inplace_cuda_command,
     published_wheel_platform_tag,
     tool_cuda_install_spec,
+    tool_upgrade_command,
+    upgrade_command_for_mode,
 )
 from ..operator_state._topology import (
     TOOL_RECEIPT_NAME,
@@ -340,6 +342,90 @@ class TestRemediationCommands:
         assert "--python 3.13 " in cmd
         assert "-cp313-cp313-manylinux_2_28_aarch64.whl" in cmd
         assert "3.13t" not in cmd
+
+
+class TestUpgradeCommands:
+    """A pinned tool installation is told how to actually take a new release."""
+
+    def test_the_upgrade_keeps_the_extras_and_the_wheel_and_asks_for_latest(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: `uv tool upgrade` is a no-op on a pinned tool.
+
+        uv records the exact version the CUDA repair asks for, and answers a
+        later upgrade with "nothing to upgrade", naming a re-install at
+        ``@latest`` itself. Dropping the recorded wheel or the extras from
+        that re-install undoes the GPU build the repair just established.
+        """
+        root = tmp_path / "vaultspec-rag"
+        (root / "Scripts").mkdir(parents=True)
+        wheel = f"{CU130_INDEX_URL}/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
+        (root / TOOL_RECEIPT_NAME).write_text(
+            "[tool]\nrequirements = [\n"
+            '  { name = "vaultspec-rag", extras = ["gpu", "mcp"], '
+            'specifier = "==0.5.2" },\n'
+            f'  {{ name = "torch", url = "{wheel}" }},\n'
+            "]\n",
+            encoding="utf-8",
+        )
+
+        command = tool_upgrade_command(str(root / "Scripts" / "python.exe"))
+
+        assert "uv tool install --force" in command
+        assert '"vaultspec-rag[gpu,mcp]@latest"' in command
+        assert "==" not in command
+        assert f'"torch @ {wheel}"' in command
+
+    def test_an_unpinned_tool_environment_still_gets_the_reinstall_form(
+        self, tmp_path: Path
+    ) -> None:
+        """No receipt means no recorded wheel, and no invented one."""
+        root = tmp_path / "vaultspec-rag"
+        (root / "Scripts").mkdir(parents=True)
+
+        command = tool_upgrade_command(str(root / "Scripts" / "python.exe"))
+
+        assert '"vaultspec-rag[gpu,mcp]@latest"' in command
+        assert "--with" not in command
+
+    def test_a_project_installation_upgrades_through_its_lockfile(self) -> None:
+        """Only a standalone tool needs the receipt-carrying re-installation."""
+        for mode in ("dependency", "dev"):
+            assert (
+                upgrade_command_for_mode(mode, sys.executable)
+                == "uv sync --upgrade-package vaultspec-rag"
+            )
+
+    def test_a_pinned_repair_discloses_the_pin_and_names_the_upgrade(
+        self, tmp_path: Path
+    ) -> None:
+        """The repair says it pins, and what to run instead of the no-op.
+
+        Guard assertion: the repair pins the installed version by decision,
+        and nothing told the operator that their usual upgrade command would
+        silently stop working.
+        """
+        root = tmp_path / "vaultspec-rag"
+        (root / "Scripts").mkdir(parents=True)
+        (root / TOOL_RECEIPT_NAME).write_text(
+            '[tool]\nrequirements = [{ name = "vaultspec-rag", extras = ["gpu"] }]\n',
+            encoding="utf-8",
+        )
+
+        remediation = cuda_remediation(
+            str(root / "Scripts" / "python.exe"),
+            env_kind=RuntimeEnvKind.UV_TOOL,
+            platform_name="win32",
+            machine="AMD64",
+        )
+
+        pinned = [step for step in remediation.steps if "pins the release" in step]
+        assert pinned, "a pinned repair must say that it pins the release"
+        pin_step = pinned[0]
+        assert "uv tool upgrade" in pin_step
+        assert remediation.upgrade_command in pin_step
+        assert "@latest" in remediation.upgrade_command
+        assert "==" in remediation.durable_command
 
 
 def _durable_command_for(interpreter: str) -> str:

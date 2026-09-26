@@ -26,8 +26,10 @@ import typer
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
+from ..operator_state._provisioning import upgrade_command_for_mode
 from ..operator_state._service import ServiceLifecycle
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
+from ._process import _resolve_daemon_interpreter
 from ._render import _emit_json, _plain
 
 
@@ -61,7 +63,6 @@ def service_doctor(
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ._process import _resolve_daemon_interpreter
 
     compute = probe_interpreter(
         _resolve_daemon_interpreter(), ProbeDepth.VERIFY
@@ -308,11 +309,15 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
         detail = "ok - artifacts match the declared mode"
     _plain(f"  install mode: {detail}")
     if mode.get("version_floor") == "below":
+        upgrade = upgrade_command_for_mode(
+            str(mode.get("declared_mode", "")), _resolve_daemon_interpreter()
+        )
         _plain(
             f"  version floor: error - running {mode.get('version_floor_running')} "
-            f"is below the declared floor {mode.get('version_floor_minimum')}; "
-            f"upgrade with uv tool upgrade vaultspec-rag"
+            f"is below the declared floor {mode.get('version_floor_minimum')}"
         )
+        # Soft-wrapped: a folded command is not one an operator can paste.
+        _plain(f"    upgrade with: {upgrade}", soft_wrap=True)
     else:
         _plain("  version floor: ok")
 

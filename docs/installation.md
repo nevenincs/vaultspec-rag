@@ -530,18 +530,35 @@ installation and every client together.
 
 1. Upgrade the host installation with the command for its route:
 
-   | Installation route | Upgrade command                                               |
-   | ------------------ | ------------------------------------------------------------- |
-   | Project dependency | `uv sync --upgrade-package vaultspec-rag`                     |
-   | Standalone tool    | `uv tool upgrade vaultspec-rag`                               |
-   | Scoop              | `scoop update vaultspec-rag`                                  |
-   | Homebrew           | `brew upgrade vaultspec-rag`                                  |
-   | Downloaded archive | Verify and extract the new release in place of the old folder |
+   | Installation route              | Upgrade command                                               |
+   | ------------------------------- | ------------------------------------------------------------- |
+   | Project dependency              | `uv sync --upgrade-package vaultspec-rag`                     |
+   | Standalone tool, unpinned       | `uv tool upgrade vaultspec-rag`                               |
+   | Standalone tool, version pinned | Re-install at `@latest`, below                                |
+   | Scoop                           | `scoop update vaultspec-rag`                                  |
+   | Homebrew                        | `brew upgrade vaultspec-rag`                                  |
+   | Downloaded archive              | Verify and extract the new release in place of the old folder |
 
    uv upgrades respect version constraints, and a standalone tool keeps the Python
    version and [GPU build pin](#pin-the-gpu-build) from its receipt. For a temporary
    run, follow [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
    and keep your extras.
+
+   A [GPU build repair](#pin-the-gpu-build) installs an exact version, and uv records
+   that pin. `uv tool upgrade` then reports `Nothing to upgrade`. Re-install at
+   `@latest` instead, keeping the Python request, the extras and the wheel URL the
+   receipt already carries:
+
+   ```sh
+   uv tool install --force --python 3.13 "vaultspec-rag[gpu,mcp]@latest" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
+   ```
+
+   Read the receipt's own values with
+   `uv tool list --show-paths --show-python --show-with`. When the running release is
+   below a declared floor,
+   `vaultspec-rag server doctor` prints this command for the installation it finds.
+   The preconditions of a repair apply: nothing may be running out of the tool
+   environment.
 
 1. Read the new release from the upgraded host installation with
    `vaultspec-rag --version`. Move every client project to that release, keeping its

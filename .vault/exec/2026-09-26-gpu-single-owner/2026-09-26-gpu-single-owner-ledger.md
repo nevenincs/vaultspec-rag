@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:03b8447d133e145bef631bb369a731b94136d5fb0e37fdaf36af2c09f69b6566'
+body_hash: 'sha256:0e6b7f1de47d032c208d69c2e4637b0b1bef8f3a412d2cdb2fd6b0dc460c0767'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -81,6 +81,32 @@ related:
 - `S04` `verify:` `pytest -m unit test_gpu_owner test_gpu_borrow_lease test_cli_qdrant test_torch_load_centralized test_process_probe_source_structure test_cli_server_start test_service_quiesce_controller test_job_manager_quiesce test_lifespan_machine_lock` -> `pass`
 - `S04` `verify:` `guard mutations (bind without lend, resume without reclaim, start ignoring the owner) fail then pass` -> `pass`
 - `S04` `by:` `orchestrator`
+- `S07` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S07` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S07` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S07` `M` `docs/installation.md`
+- `S07` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S07` `verify:` `ruff check` -> `pass`
+- `S07` `verify:` `ruff format --check` -> `pass`
+- `S07` `verify:` `ty check` -> `pass`
+- `S07` `verify:` `basedpyright` -> `pass`
+- `S07` `verify:` `mdformat --check and pymarkdownlnt scan docs/installation.md` -> `pass`
+- `S07` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_server_doctor test_cli_install` -> `pass`
+- `S07` `verify:` `guard mutations (upgrade drops the recorded wheel, pin disclosure removed, doctor advises uv tool upgrade) fail then pass` -> `pass`
+- `S07` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S05` `M` `src/vaultspec_rag/cli/_search.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
+- `S05` `verify:` `ruff check` -> `pass`
+- `S05` `verify:` `ruff format --check` -> `pass`
+- `S05` `verify:` `ty check` -> `pass`
+- `S05` `verify:` `basedpyright` -> `pass`
+- `S05` `verify:` `pytest -m unit test_gpu_owner test_cli_search_safety test_cli_search test_search_service_first test_service_version_compatibility test_cli_install test_qdrant_identity test_service_preflight_cli` -> `pass`
+- `S05` `verify:` `guard mutations (local search beside an owner, mandate exempting a foreign release, load refusal without next actions) fail then pass` -> `pass`
+- `S05` `by:` `orchestrator`
 
 ## Notes
 
@@ -88,3 +114,4 @@ related:
 - `S06` `test_process_probe_source_structure::test_no_large_duplicate_function_bodies` fails on an uncommitted `_gpu_owner.py:permits_compute` body from the parallel phase, not on this Step's paths
 - `S04` P01.S03 left `test_process_probe_source_structure` failing: `permits_compute` joined the allowed membership-test shape group only here
 - `S04` `test_substitution_discipline` still fails only on `test_storage_maintenance_tick.py` from base commit d18045e8, outside this plan
+- `S07` uv 0.12.x verified in an isolated `UV_TOOL_DIR` sandbox: an == pin makes uv tool upgrade a no-op and uv names uv tool install pkg@latest; `pkg[extras]@latest` with --force, --python and --with installs and records the extras unpinned

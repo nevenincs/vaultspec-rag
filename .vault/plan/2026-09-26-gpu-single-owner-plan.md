@@ -12,7 +12,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:e84bd5253b8bcc351c5cb6497a389195630af718196ec70eedd8bf18d3c60584'
+body_hash: 'sha256:f588fe5f12a277fdf28d1d69aa1fcaf88e7eac7f952160a8563b5cc786e81795'
 ---
 
 # `gpu-single-owner` plan
@@ -52,14 +52,14 @@ Makes it impossible for any process, release or configuration to load a model st
 - [x] `P01.S02` - resolve one machine-global GPU anchor directory, create shared anchors lockable by every account with a read-only fallback, and move the load-window anchor into it; `src/vaultspec_rag/_anchor_claim.py, src/vaultspec_rag/_gpu_admission.py`.
 - [x] `P01.S03` - add the torch-free GPU ownership module (claim, observe, lend, reclaim, legacy owner detection, typed refusal) and enforce it in load_accelerator before admission; `src/vaultspec_rag/_gpu_owner.py, src/vaultspec_rag/_gpu.py`.
 - [x] `P01.S04` - lend the GPU to a bound borrower and reclaim it on resume or lease loss, and observe ownership in the server start preflight; `src/vaultspec_rag/_service_borrower.py, src/vaultspec_rag/_service_residency.py, src/vaultspec_rag/gpu_borrow_lease.py, src/vaultspec_rag/cli/_service_start.py`.
-- [ ] `P01.S05` - refuse a mandated local search before it runs when another process owns the GPU, and render the typed refusal on every local compute path; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_gpu_errors.py`.
+- [x] `P01.S05` - refuse a mandated local search before it runs when another process owns the GPU, and render the typed refusal on every local compute path; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_gpu_errors.py`.
 
 ### Phase `P02` - one voice for install and doctor remediation
 
 Makes install, doctor, status and start give one correct, exact repair per condition, list only real holders, and never report a refused install as a success.
 
 - [x] `P02.S06` - move install-topology classification into operator_state, detect uv tool environments by their receipt with one non-resolving environment root, and build every tool CUDA command from one platform-checked builder; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_gpu_errors.py, src/vaultspec_rag/cli/_service_start.py`.
-- [ ] `P02.S07` - state the version pin in the tool repair and replace every uv tool upgrade recommendation with a command that upgrades while keeping the CUDA wheel; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_service_doctor.py, docs/`.
+- [x] `P02.S07` - state the version pin in the tool repair and replace every uv tool upgrade recommendation with a command that upgrades while keeping the CUDA wheel; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_service_doctor.py, docs/`.
 - [ ] `P02.S08` - render a refused install as refused, once: correct headline and action, no duplicated warnings, no second torch diagnosis, no rows for steps that never ran; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_render.py`.
 - [ ] `P02.S09` - exclude the invoking launch chain from environment holders, pair launcher and interpreter, name each holder's role, and count what could not be inspected; `src/vaultspec_rag/_process_probe.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [ ] `P02.S10` - make doctor print the exact repair for the daemon interpreter and report that environment's holders in both human and JSON output; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/_readiness.py`.
