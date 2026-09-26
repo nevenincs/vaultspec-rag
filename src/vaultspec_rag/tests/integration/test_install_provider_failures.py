@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -19,6 +18,7 @@ from ._install_helpers import (
     _RAG_MCP_REL,
     _RAG_SKILL_REL,
     _install,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_inventory,
@@ -72,7 +72,7 @@ class TestProviderFailureContract:
         )
 
         assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["sync_providers"]["codex"]["errored"] == 1
         assert data["sync_providers"]["codex"]["errors"]
@@ -119,7 +119,7 @@ class TestProviderFailureContract:
         )
 
         assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["mcp_errors"]
         assert "ownership" in " ".join(data["mcp_errors"]).lower()
@@ -183,7 +183,7 @@ class TestProviderFailureContract:
         )
 
         assert result.exit_code == 2, result.output
-        report = json.loads(result.output)
+        report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert report["mcp_extra_action"] == expected_action
         assert report["mcp_errors"]

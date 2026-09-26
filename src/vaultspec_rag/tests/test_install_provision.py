@@ -321,11 +321,20 @@ class TestInstallCliFlags:
     envelope is the contract these assertions read.
     """
 
+    def _report(self, output: str) -> dict[str, object]:
+        """Return the install report from inside the shared JSON envelope.
+
+        ``install --json`` prints core's ``{schema, status, data}`` envelope,
+        so the report every assertion below reads is the ``data`` member and
+        never the top level.
+        """
+        envelope = cast("dict[str, object]", json.loads(output))
+        report = cast("dict[str, object]", envelope["data"])
+        assert isinstance(report, dict)
+        return report
+
     def _provisioning(self, output: str) -> dict[str, object]:
-        # ``install --json`` prints the report dict directly (not the
-        # shared envelope), so ``provisioning`` is a top-level key.
-        report = cast("dict[str, object]", json.loads(output))
-        provisioning = cast("dict[str, object]", report["provisioning"])
+        provisioning = cast("dict[str, object]", self._report(output)["provisioning"])
         assert isinstance(provisioning, dict)
         return provisioning
 
@@ -416,5 +425,4 @@ class TestInstallCliFlags:
             ],
         )
         assert result.exit_code == 0, result.output
-        report = json.loads(result.output)
-        assert report["provisioning"] is None
+        assert self._report(result.output)["provisioning"] is None

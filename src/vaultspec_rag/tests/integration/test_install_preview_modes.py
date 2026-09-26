@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -19,6 +18,7 @@ from ._install_helpers import (
     _RAG_MCP_REL,
     _install,
     _node_signature,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_file_bytes,
@@ -494,7 +494,7 @@ class TestInstallModeTransitions:
             catch_exceptions=False,
         )
         assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        data = install_report(result.output)
         assert data["mcp_extra_action"] == "conflict"
         assert data["mcp_failed"] is True
         assert workspace_file_bytes(fresh_workspace) == before

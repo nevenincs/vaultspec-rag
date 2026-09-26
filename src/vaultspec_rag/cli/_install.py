@@ -496,11 +496,13 @@ def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object]
     """
     from vaultspec_core.envelope import hints_suppressed
 
+    from .._operator_commands import server_status_command
+
     if status not in {"created", "updated"} or hints_suppressed(no_hints=no_hints):
         return None
     return {
         "text": "Check the resident server and provisioning state",
-        "command": "vaultspec-rag server status",
+        "command": server_status_command(),
     }
 
 

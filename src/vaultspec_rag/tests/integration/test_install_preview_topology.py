@@ -22,6 +22,7 @@ from ._install_helpers import (
     _install,
     _node_signature,
     create_windows_junction,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     required_mcp_transaction_inventory,
@@ -917,7 +918,7 @@ class TestInstallPreviewTopology:
         )
 
         assert result.exit_code == 2, result.output
-        report = cast("dict[str, object]", json.loads(result.output))
+        report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert "required MCP topology preflight failed" in " ".join(
             cast("list[str]", report["mcp_errors"])

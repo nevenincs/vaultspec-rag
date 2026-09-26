@@ -1336,7 +1336,7 @@ def collect_environment_problems(
     """Return every reason this process's environment or settings are unusable.
 
     Every process kind that reads rag's configuration - the CLI, the stdio
-    MCP server, and the HTTP daemon - shares one refusal contract: a bad
+    MCP transport, and the HTTP daemon - shares one refusal contract: a bad
     product-owned value stops the process before it does anything else, and
     every problem is reported together rather than one refusal per run. This
     is the one place that contract is checked, so a process kind that forgot

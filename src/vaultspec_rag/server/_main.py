@@ -126,7 +126,7 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None, bool]:
 def _refuse_unusable_server_environment() -> None:
     """Stop the process before any output if the environment is unusable.
 
-    The daemon and the stdio MCP server share the CLI's refusal contract
+    The daemon and the stdio MCP transport share the CLI's refusal contract
     (:func:`~vaultspec_rag.config._settings.collect_environment_problems`)
     but not its rendering: there is no Typer context here, and stdio's
     stdout is the MCP protocol channel itself, so a refusal must reach

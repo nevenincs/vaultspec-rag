@@ -16,6 +16,7 @@ from ._install_helpers import (
     _RAG_RULE_REL,
     _RAG_SKILL_REL,
     _install,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_inventory,
@@ -67,7 +68,7 @@ class TestFreshInstall:
         )
 
         assert result.exit_code == 2, result.output
-        report = json.loads(result.output)
+        report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert "provider intent is unreadable" in " ".join(report["mcp_errors"])
         assert workspace_inventory(fresh_workspace) == before
@@ -95,7 +96,7 @@ class TestFreshInstall:
         )
 
         assert result.exit_code == 0, result.output
-        report = json.loads(result.output)
+        report = install_report(result.output)
         assert report["mcp_failed"] is False
         assert set(report["sync_providers"]) == {"claude", "codex"}
         assert read_manifest(fresh_workspace) == {"claude", "codex"}
