@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.config import ConfigurationError
+from vaultspec_core.config import ConfigurationError, check_environment
 from vaultspec_core.config.workspace import (
     WorkspaceError,
     WorkspaceLayout,
@@ -499,13 +499,46 @@ def main(ctx: typer.Context) -> None:
     _configure_root_context(ctx, options)
 
 
-def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
-    """Configure logging, resolve workspace, and dispatch to a subcommand."""
-    configure_logging(debug=options.debug, level="INFO" if options.verbose else None)
+def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
+    """Stop the run on any value it could not have used, naming all of them.
 
-    # Wire CLI overrides into the config system.
+    Two sources, one report. The framework check covers the shared variables
+    this package honours and the level name, which is read where it is used
+    and would otherwise refuse a command halfway through its own output; the
+    settings construction covers this package's own knobs. Asking both here
+    means an operator sees the whole list once instead of discovering the
+    second problem after fixing the first.
+
+    Args:
+        cli_overrides: The settings this invocation named on the command
+            line, so the report describes the configuration about to be
+            built rather than a different one.
+
+    Raises:
+        typer.Exit: With status 1 when anything is unusable.
+    """
+    from ..config._registry import PACKAGE as REGISTRY_PACKAGE
     from ..config._settings import get_config
 
+    problems: list[str] = []
+    try:
+        check_environment(package=REGISTRY_PACKAGE)
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        get_config(cli_overrides or None)
+    except ValueError as refusal:
+        problems.append(str(refusal))
+    if not problems:
+        return
+    for problem in problems:
+        _plain(f"Error: {problem}")
+    raise typer.Exit(code=1)
+
+
+def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
+    """Configure logging, resolve workspace, and dispatch to a subcommand."""
+    # Wire CLI overrides into the config system.
     cli_overrides: dict[str, str] = {}
     if options.data_dir is not None:
         cli_overrides["data_dir"] = options.data_dir
@@ -515,8 +548,18 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
         cli_overrides["status_dir"] = options.status_dir
     if options.log_file is not None:
         cli_overrides["log_file"] = options.log_file
-    if cli_overrides:
-        get_config(cli_overrides)
+
+    # Refuse every unusable value before anything is configured or written,
+    # and report them together: an operator editing a deployment environment
+    # fixes one round of mistakes rather than one mistake per run. Both
+    # halves are asked - the framework variables this package honours, and
+    # this package's own settings - because a run stopped by one and then by
+    # the other is two rounds for what is one edit. It runs before logging is
+    # configured, so a mistyped level joins the report instead of refusing
+    # the run on its own.
+    _refuse_unusable_environment(cli_overrides)
+
+    configure_logging(debug=options.debug, verbose=options.verbose)
 
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())

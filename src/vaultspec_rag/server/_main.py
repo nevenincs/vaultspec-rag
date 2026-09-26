@@ -137,7 +137,12 @@ def _run_http_daemon(port: int) -> None:
 
     # Install ordering (CRITICAL): argparse → configure_logging → capture →
     # fault dump → uvicorn.
-    configure_logging(level="INFO")
+    #
+    # INFO is the daemon's declared last rung, not a fixed level: its output
+    # is a managed log nobody is watching live, so it ships more verbose than
+    # a command an operator is reading. A level named in the environment
+    # still outranks it, which is what a hard-coded level denied.
+    configure_logging(default="INFO")
     cfg = get_config()
     log_capture = install_daemon_log_capture(
         _m._resolve_log_path(),
@@ -213,7 +218,14 @@ def _run_stdio_mcp(parent_pid: int | None, *, read_only: bool = False) -> None:
 
         restrict_to_read_only_tools()
 
+    from ..logging_config import configure_logging
     from ._stdio_lifetime import install_stdio_lifetime_watchdog
+
+    # Stdout is the protocol channel here, so this configures stderr logging
+    # and nothing else. It used to configure nothing at all, which left the
+    # level variable unread in the one process kind whose diagnostics are
+    # hardest to get at.
+    configure_logging()
 
     install_stdio_lifetime_watchdog(parent_pid)
     _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]
