@@ -23,7 +23,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import typer.main
@@ -192,7 +192,7 @@ def test_no_rag_module_declares_a_shadow_vocabulary_table() -> None:
     package_root = pathlib.Path(
         importlib.import_module("vaultspec_rag").__file__  # type: ignore[arg-type]
     ).parent
-    offenders = []
+    offenders: list[str] = []
     for path in package_root.rglob("*.py"):
         if "tests" in path.parts:
             continue
@@ -241,8 +241,7 @@ def _root_command(app: typer.Typer) -> Command:
 
 def _subcommand(app: typer.Typer, name: str) -> Command:
     root = _root_command(app)
-    commands = getattr(root, "commands", None)
-    assert isinstance(commands, dict)
+    commands = cast("dict[str, Command]", getattr(root, "commands", None) or {})
     return commands[name]
 
 
