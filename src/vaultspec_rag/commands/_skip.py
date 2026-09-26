@@ -3,8 +3,11 @@
 Rag interprets ``core`` and ``mcp`` itself; every other ``--skip`` token
 travels unchanged into core's own provider sync (``sync_provider("all", ...,
 skip={*skip, "mcp"})``), so the forwarded half of rag's vocabulary is exactly
-what that sync accepts - core's providers plus its ``hooks`` and
-``precommit`` sync-pass names. An unrecognised token used to reach that sync
+what that sync accepts - core's provider names (``VALID_PROVIDERS``, minus the
+``"all"`` selector) plus its ``hooks`` and ``precommit`` sync-pass names.
+Reading the provider half straight from ``VALID_PROVIDERS`` rather than
+copying it means a provider core adds is accepted by rag's own ``--skip``
+with no matching edit here. An unrecognised token used to reach that sync
 inside a broad ``except Exception`` and surface as a warning after files were
 already written; validating the whole set up front, before either command
 does anything, turns a typo into a refusal instead.
@@ -12,7 +15,7 @@ does anything, turns a typo into a refusal instead.
 
 from __future__ import annotations
 
-from vaultspec_core.core.commands import SYNC_PROVIDERS
+from vaultspec_core.core.provider_registry import VALID_PROVIDERS
 
 #: Tokens rag's own orchestration reads directly and never forwards.
 _RAG_CONSUMED_TOKENS = frozenset({"core", "mcp"})
@@ -25,7 +28,7 @@ _CORE_SYNC_PASS_TOKENS = frozenset({"hooks", "precommit"})
 
 def rag_skip_vocabulary() -> frozenset[str]:
     """Return every token vaultspec-rag's ``--skip`` accepts."""
-    return _RAG_CONSUMED_TOKENS | (SYNC_PROVIDERS - {"all"}) | _CORE_SYNC_PASS_TOKENS
+    return _RAG_CONSUMED_TOKENS | (VALID_PROVIDERS - {"all"}) | _CORE_SYNC_PASS_TOKENS
 
 
 def validate_rag_skip(skip: set[str]) -> None:

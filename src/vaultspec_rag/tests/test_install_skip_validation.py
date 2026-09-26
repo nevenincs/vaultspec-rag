@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 from vaultspec_core.core.enums import Tool
+from vaultspec_core.core.exceptions import ProviderError
+from vaultspec_core.core.provider_registry import VALID_PROVIDERS
+from vaultspec_core.core.provider_registry import validate_skip as _core_validate_skip
 
 from ..commands._install import install_run
 from ..commands._skip import rag_skip_vocabulary, validate_rag_skip
@@ -29,8 +32,30 @@ _EXPECTED_VOCABULARY = frozenset({"core", "mcp", "hooks", "precommit"}) | {
 }
 
 
+def _core_accepted_skip_tokens() -> frozenset[str]:
+    """Probe core's own ``validate_skip`` for the tokens it accepts.
+
+    Calls the real function under test's dependency rather than
+    reconstructing its internal formula, so a change to what core allows is
+    caught here without the two copies drifting apart.
+    """
+    candidates = VALID_PROVIDERS | rag_skip_vocabulary()
+    accepted: set[str] = set()
+    for token in candidates:
+        try:
+            _core_validate_skip({token})
+        except ProviderError:
+            continue
+        accepted.add(token)
+    return frozenset(accepted)
+
+
 def test_rag_skip_vocabulary_matches_the_domain() -> None:
     assert rag_skip_vocabulary() == _EXPECTED_VOCABULARY
+
+
+def test_rag_skip_vocabulary_is_a_superset_of_cores_accepted_skip_set() -> None:
+    assert rag_skip_vocabulary() >= _core_accepted_skip_tokens()
 
 
 @pytest.mark.parametrize("token", sorted(_EXPECTED_VOCABULARY))
