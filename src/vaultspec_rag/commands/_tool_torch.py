@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.metadata
-import json
 import os
 import sys
 import tomllib
@@ -35,6 +34,11 @@ HOLDER_REPORT_LIMIT = 10
 #: busy machine - the case where holders are most likely - is exactly the case
 #: where the walk takes longest.
 HOLDER_SCAN_BUDGET_SECONDS = 60.0
+
+#: The tool request a CUDA repair falls back to when the receipt records none.
+#: Only an inference host has torch to repair, so the request carries the
+#: inference stack; the MCP adapter's own launch needs only the ``mcp`` extra.
+_HOST_TOOL_REQUEST = "vaultspec-rag[gpu,mcp]"
 
 __all__ = [
     "HOLDER_REPORT_LIMIT",
@@ -132,18 +136,6 @@ def _wheel_platform_tag(platform_name: str, machine: str) -> str:
     return f"manylinux_2_28_{machine.lower()}"
 
 
-def _tool_package_spec() -> str:
-    """Read the one tool-mode package request from the bundled definition."""
-    from importlib.resources import files
-
-    source = files("vaultspec_rag.builtins") / "mcps" / "vaultspec-rag.builtin.json"
-    data = json.loads(source.read_text(encoding="utf-8"))
-    value = data.get("_vaultspec_mode_tool_spec")
-    if not isinstance(value, str) or not value:
-        raise RuntimeError("bundled tool definition has no tool package specification")
-    return value
-
-
 def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | None:
     """Return the extras the receipt records for *package*, if it records any.
 
@@ -183,10 +175,10 @@ def _tool_package_requirement(interpreter: str) -> str:
     A bare name resolves to whatever is newest, so the command that repairs a
     torch wheel would also upgrade the tool and impose this build's extras on
     an operator who chose otherwise. The installed version is pinned and the
-    receipt's own extras are reused; the bundled specification is the fallback
-    for an environment that records neither.
+    receipt's own extras are reused; the host request is the fallback for an
+    environment that records neither.
     """
-    fallback = _tool_package_spec()
+    fallback = _HOST_TOOL_REQUEST
     package = Requirement(fallback).name
     extras = _receipt_package_extras(
         _tool_root(interpreter) / "uv-receipt.toml", package
@@ -234,7 +226,7 @@ def tool_cuda_install_spec(
             "--force",
             "--python",
             python_request,
-            package_spec or _tool_package_spec(),
+            package_spec or _HOST_TOOL_REQUEST,
             "--with",
             f"torch @ {wheel_url}",
         ),

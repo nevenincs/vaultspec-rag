@@ -396,6 +396,86 @@ def test_retry_delay_circuit_and_retry_admission_are_deterministic() -> None:
     assert admitted.reason is ControllerReason.RETRY_ADMITTED
 
 
+def test_open_circuit_becomes_ready_once_its_retry_time_passes() -> None:
+    # The reevaluation reports the persisted circuit, which stays open until an
+    # admission moves it to half-open. Holding an elapsed open circuit in
+    # retrying therefore never probed, and its decision deadline stayed due,
+    # so the scheduler spun on it. Mutation: gating the open-circuit branch on
+    # the circuit alone fails the READY assertion below.
+    clock = _Clock(12.0)
+    controller = _controller(clock)
+    controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
+
+    held = controller.evaluate(
+        _measurement(clock),
+        retry_at=20.0,
+        circuit_state=WatcherCircuitState.OPEN,
+    )
+    assert held.reason is ControllerReason.CIRCUIT_OPEN
+    assert held.next_decision_at == 20.0
+
+    clock.now = 20.0
+    probed = controller.evaluate(
+        _measurement(clock),
+        retry_at=20.0,
+        circuit_state=WatcherCircuitState.OPEN,
+    )
+    assert probed.state is ControllerState.READY
+    assert probed.reason is ControllerReason.RETRY_ADMITTED
+
+
+def test_open_circuit_without_a_retry_time_stays_held() -> None:
+    clock = _Clock(12.0)
+    controller = _controller(clock)
+    controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
+
+    held = controller.evaluate(
+        _measurement(clock),
+        circuit_state=WatcherCircuitState.OPEN,
+    )
+
+    assert held.state is ControllerState.RETRYING
+    assert held.reason is ControllerReason.CIRCUIT_OPEN
+    assert held.next_decision_at is None
+
+
+def test_admission_binds_a_controller_a_change_returned_to_collection() -> None:
+    # The intake task observes changes while the manager persists the job, and
+    # observation moves the controller back to collecting. Refusing to bind it
+    # stranded the created job with nothing to dispatch it. Mutation: limiting
+    # admission to ready raises here instead of binding.
+    clock = _Clock(12.0)
+    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
+    controller.evaluate(_measurement(clock))
+    controller.advance(ControllerReason.FAIR_TURN_SELECTED)
+    controller.observe(
+        ControllerScope(
+            generation=4,
+            pending=(_observation(), _observation("src/later.py")),
+        )
+    )
+    assert controller.snapshot.state is ControllerState.COLLECTING
+
+    admitted = controller.admit("job-1")
+
+    assert admitted.state is ControllerState.ADMITTED
+    assert admitted.job_id == "job-1"
+
+
+def test_admission_still_rejects_a_refused_controller() -> None:
+    clock = _Clock(12.0)
+    controller = _controller(clock)
+    controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
+    controller.refuse(
+        ControllerReason.FULL_REINDEX_REQUIRED,
+        remediation="Run an explicit full reindex.",
+    )
+
+    with pytest.raises(ValueError, match="ready or collecting controller"):
+        controller.admit("job-1")
+
+
 def test_fair_selection_admission_start_and_successful_convergence() -> None:
     clock = _Clock(12.0)
     controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))

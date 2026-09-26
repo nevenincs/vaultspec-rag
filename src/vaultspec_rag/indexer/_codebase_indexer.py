@@ -528,6 +528,11 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         and serializes against concurrent reindex callers (#68).
         """
         run_control.checkpoint()
+        if authority is RunAuthority.REBUILD:
+            from ._run_ledger_models import index_run_ledger_path
+            from ._run_ledger_runtime import set_aside_unsupported_ledger
+
+            set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
         resolved_policy, discovered_paths = self._accept_preflight(
             preflight,
             changed_paths=None,

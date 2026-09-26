@@ -46,7 +46,7 @@ def _test_accelerator(torch: ModuleType) -> AcceleratorContext:
 
 
 class TestSparseTensorConversionParity:
-    pytestmark: ClassVar = [pytest.mark.unit]
+    pytestmark: ClassVar = [pytest.mark.unit, pytest.mark.torch]
 
     def _assert_matches_reference(self, converted: list[SparseResult]) -> None:
         reference = _reference_conversion(_ROWS)

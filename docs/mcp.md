@@ -18,8 +18,10 @@ standalone tool and no-install routes.
 
 ## Install the MCP server
 
-`vaultspec-rag install` enrolls the MCP server by default. It installs the
-optional `mcp` dependency and writes the client configuration for you:
+`vaultspec-rag install` enrolls the MCP server by default and writes the client
+configuration for you. When vaultspec-rag is a project dependency, it also adds
+the optional `mcp` extra to that requirement; run `uv sync` afterwards, because
+the written configuration launches the server without syncing:
 
 ```bash
 vaultspec-rag install
@@ -34,7 +36,8 @@ Use `--no-mcp` for a CLI-only workspace, which also skips the `mcp` dependency
 and, on Windows, `pywin32`.
 
 Prefer `vaultspec-rag install` over hand-writing the config. `--mode` selects
-the launch shape: `tool` (the default, launched via uvx), `dependency` (resolved
+the launch shape: `tool` (launched via uvx, and used when neither a recorded mode nor
+the project's dependencies say otherwise), `dependency` (resolved
 through the project's own virtual environment and shipped in built
 distributions), or `dev` (like `dependency`, but confined to the dev dependency
 group). `server doctor` compares the shape in your config against the declared
@@ -43,12 +46,13 @@ check.
 
 The `vaultspec-search-mcp` console script is registered by the base install, but
 it needs the `mcp` extra to run. Without it the server exits at launch with a
-message naming the fix. `vaultspec-rag[gpu,mcp]` installs the MCP protocol and
-the local inference stack together.
+message naming the fix. The server loads no models, so `vaultspec-rag[mcp]` is
+all a client installation needs; `vaultspec-rag[gpu,mcp]` installs the MCP
+protocol and the local inference stack together for a host installation.
 
 ### Start the service
 
-Start the HTTP service before connecting a client:
+Start the service from the host installation before connecting an assistant:
 
 ```bash
 vaultspec-rag server start
@@ -178,11 +182,11 @@ watcher, which keeps the index current without being asked.
 copy an example below. Both use the console-script shape, which runs wherever
 `vaultspec-search-mcp` is on your PATH - a standalone tool install or a prebuilt
 binary. It is not what the installer writes for `tool` mode: that renders
-`uvx --from vaultspec-rag[gpu,mcp] python -m vaultspec_rag.server`, which
-fetches both extras rather than requiring them to be installed already. It
-writes that pair whichever extras you installed with, so an entry naming only
-`mcp` is not a variant of it - it is a server without the inference stack. For `dependency` or
-`dev` mode, set `command` to `uv` and `args` to
+`uvx --from vaultspec-rag[mcp] python -m vaultspec_rag.server`, which fetches
+the `mcp` extra rather than requiring it to be installed already. The server
+loads no models and forwards every call to the service, so that launch never
+pulls the inference stack, whichever extras you installed with. For
+`dependency` or `dev` mode, set `command` to `uv` and `args` to
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
 Add `"args": ["--read-only"]` to either example to withhold the mutating tools.
@@ -242,7 +246,11 @@ there before you write it.
 
 ### The assistant does not see the tools
 
-Confirm the console script is on `PATH`. On macOS or Linux:
+Confirm the command your client launches is on the `PATH` the client starts
+with. An entry written by `vaultspec-rag install` launches `uvx` in `tool` mode
+or `uv` in `dependency` and `dev` mode; a hand-written entry launches
+`vaultspec-search-mcp`. Substitute the command your entry names below. On macOS
+or Linux:
 
 ```bash
 command -v vaultspec-search-mcp
@@ -269,8 +277,12 @@ vaultspec-rag server status
 If the service is down the tools connect but every call reports that the service
 is not running. Start it with `vaultspec-rag server start` and reconnect.
 
-If the script is missing, the `mcp` extra is probably absent. Run
-`vaultspec-rag install` to reconcile it.
+If the console script is missing, or exits naming the `mcp` extra, the
+installation that provides it lacks that extra. Reinstall it with `mcp` added to
+the extras it already has, keeping a GPU tool installation's
+[torch pin](installation.md#pin-the-gpu-build). `vaultspec-rag install` adds the
+extra only to a project requirement in `dependency` or `dev` mode, after which
+you run `uv sync`; it never changes a tool installation's packages.
 
 ### `server doctor` reports an install-mode mismatch
 
@@ -287,11 +299,13 @@ which rarely matches the project you want.
 
 ### The first call is slow
 
-The first search of a session loads the models and can take several seconds.
-Pre-warm them before launching the assistant:
+The MCP server loads no models. The service loads them when it starts, and
+`server start` waits until they are ready. A slow first call usually means the
+service is still starting, or is opening that project for the first time. Check
+its state:
 
 ```bash
-vaultspec-rag server warmup
+vaultspec-rag server status
 ```
 
 ## Process lifetime

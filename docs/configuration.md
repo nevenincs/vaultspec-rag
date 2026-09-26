@@ -80,6 +80,8 @@ Enrollment authorizes paid external processing of search queries and full candid
 content. Successful classification can reorder hits and drop confidently irrelevant
 results, including returning an empty page. Explicit filters still apply. Missing,
 rejected or temporarily unavailable credentials retain the existing local pipeline.
+A request the provider's network edge refuses for its content falls back for that
+search only; it leaves the key enrolled and does not change the state below.
 
 Both lifecycle commands display a `Typesafe:` line from the daemon's `/health`
 snapshot; neither command tests the key or spends API credits:

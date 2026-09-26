@@ -211,6 +211,10 @@ class FileChunkResult:
     chunks: list[CodeChunk]
     preprocess_status: str | None = None
     preprocess_reason: str | None = None
+    #: The source decoded to nothing but whitespace, so like an empty file it
+    #: has nothing to index. Its hash is not the empty digest, so the sink
+    #: cannot tell it apart from a chunking failure without this.
+    blank: bool = False
 
 
 @dataclass(slots=True)
@@ -1158,6 +1162,8 @@ def _raw_file_result(
     content = _decode_source(source.raw, source.path, source.execution_policy)
     if content is None:
         return FileChunkResult(source.rel_path, source.content_hash, [])
+    if not content.strip():
+        return FileChunkResult(source.rel_path, source.content_hash, [], blank=True)
     chunks = _chunk_decoded(
         content,
         source.path,

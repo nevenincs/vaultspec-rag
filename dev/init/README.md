@@ -66,10 +66,22 @@ a machine you do not administer, or in a sandbox.
 downloads, RAG model and Qdrant provisioning, and `cargo install` of dev gates
 stay behind their own named recipes. `init` restores what the lockfiles pin.
 
-## Layout
+**The inference stack is sized per machine.** `VAULTSPEC_INIT_GPU_STACK`
+chooses how much of the `gpu` dependency group — torch, its model libraries,
+and the CUDA runtime torch pulls in — `init-python` installs:
 
-Every file here except `plan.py` is byte-identical in `vaultspec-core`,
-`vaultspec-rag`, `vaultspec-dashboard`, `vaultspec-a2a` and `cadrumo`.
+| Value            | Installs                                   | For                                        |
+| ---------------- | ------------------------------------------ | ------------------------------------------ |
+| `full` (default) | The whole group, CUDA runtime included.    | GPU workstations and the accelerator tiers. |
+| `types`          | The group's packages, no CUDA runtime.     | Jobs that type-check; torch cannot import. |
+| `none`           | Nothing from the group.                    | Every other job that runs no GPU work.     |
+
+Any other value fails the run rather than falling back to `full`. Tests that
+need torch installed but no device carry the `torch` marker, so the
+accelerator-free lane excludes them and the GPU lane runs them. Switching the
+value re-runs `init-python`: the stamp digests each phase's resolved commands.
+
+## Layout
 
 | File          | Role                                                           |
 | ------------- | -------------------------------------------------------------- |
@@ -77,7 +89,7 @@ Every file here except `plan.py` is byte-identical in `vaultspec-core`,
 | `process.py`  | Running a step, and classifying its failure into an exit code. |
 | `probe.py`    | Host-tool discovery and version comparison.                    |
 | `stamp.py`    | Input digests and the idempotence stamp.                       |
-| `plan.py`     | **This repository's** phases. The only file that differs.      |
+| `plan.py`     | This repository's phases and their steps.                      |
 
 The package imports only the standard library and `dev.exit_codes`. It must
 never import `dev.toolchain`, `dev.runner`, or anything reached through

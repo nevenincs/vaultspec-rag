@@ -89,6 +89,10 @@ JSCPD = ("--min-lines", "20", "--min-tokens", "70", "--reporters", "console")
 #: subprocess_gpu/cuda test slip through gateless and hard-abort the recipe on
 #: a GPU-less runner; matching conftest's own set is the durable fix, because a
 #: newly-added GPU-marked test is then excluded automatically.
+#:
+#: ``torch`` needs no device, only the local inference stack. It is excluded
+#: because the accelerator-free lane runs in an environment that never installs
+#: that stack; the gpu lane, whose host always has it, runs those tests instead.
 NEEDS_REAL_INFRA = (
     "integration",
     "quality",
@@ -97,6 +101,7 @@ NEEDS_REAL_INFRA = (
     "subprocess_gpu",
     "cuda",
     "mps",
+    "torch",
 )
 
 #: The marker expression selecting every lane runnable without an accelerator.
@@ -651,7 +656,7 @@ TEST = Verb(
                 _pytest(
                     "-q",
                     "-m",
-                    "(integration or quality or robustness or cuda) "
+                    "(integration or quality or robustness or cuda or torch) "
                     "and not performance and not subprocess_gpu",
                 ),
                 _pytest("-q", "-m", "subprocess_gpu"),

@@ -43,7 +43,7 @@ class Evaluation:
     timings: dict[str, float] = field(default_factory=dict)
 
 
-def _mapping(value: object) -> dict[str, object]:
+def json_mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("invalid_mapping")
     items = cast("dict[object, object]", value)
@@ -62,7 +62,7 @@ def _number(value: object, upper: float = 1.0) -> float:
 
 
 def _distribution(value: object, keys: set[str]) -> dict[str, float]:
-    raw = _mapping(value)
+    raw = json_mapping(value)
     if set(raw) != keys or not keys:
         raise ValueError("invalid_probability_keys")
     result = {key: _number(probability) for key, probability in raw.items()}
@@ -72,7 +72,7 @@ def _distribution(value: object, keys: set[str]) -> dict[str, float]:
 
 
 def _answer(raw: object, question: dict[str, object]) -> Answer:
-    answer = _mapping(raw)
+    answer = json_mapping(raw)
     kind = question.get("type")
     if answer.get("type") != kind:
         raise ValueError("invalid_answer_type")
@@ -84,7 +84,7 @@ def _answer(raw: object, question: dict[str, object]) -> Answer:
         if set(answer) != {"type", "choice", "confidence", "probabilities"}:
             raise ValueError("invalid_answer_fields")
         probabilities = _distribution(
-            answer["probabilities"], set(_mapping(question.get("criteria")))
+            answer["probabilities"], set(json_mapping(question.get("criteria")))
         )
         choice = answer["choice"]
         if not isinstance(choice, str) or choice not in probabilities:
@@ -106,7 +106,7 @@ def _score(answer: dict[str, object], question: dict[str, object]) -> ScoreAnswe
     levels = cast("list[object]", raw_levels)
     if not 2 <= len(levels) <= 10:
         raise ValueError("invalid_level_count")
-    legend = _mapping(answer["legend"])
+    legend = json_mapping(answer["legend"])
     expected = {str(index): description for index, description in enumerate(levels)}
     if legend != expected:
         raise ValueError("invalid_legend")
@@ -132,13 +132,13 @@ def validate_evaluation(
     raw: object, questions: dict[str, dict[str, object]]
 ) -> Evaluation:
     """Reject the whole evaluation if any judgment violates its request."""
-    envelope = _mapping(raw)
+    envelope = json_mapping(raw)
     if envelope.get("model") != MODEL:
         raise ValueError("invalid_model")
-    answers = _mapping(envelope.get("answers"))
+    answers = json_mapping(envelope.get("answers"))
     if not questions or set(answers) != set(questions):
         raise ValueError("invalid_answer_ids")
-    usage = _mapping(envelope.get("usage"))
+    usage = json_mapping(envelope.get("usage"))
     return Evaluation(
         {key: _answer(answers[key], question) for key, question in questions.items()},
         MODEL,

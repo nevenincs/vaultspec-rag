@@ -164,6 +164,7 @@ class TestComputeReadinessShape:
         ]
 
 
+@pytest.mark.torch
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestTorchDimension:
     def test_torch_dimension_reflects_the_real_accelerator_state(self) -> None:

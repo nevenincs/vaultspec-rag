@@ -371,7 +371,7 @@ def _distinct_texts(count: int, length: int = 200) -> list[str]:
 class TestBucketedDenseEncode:
     """The dense encode path plans buckets and scopes OOM retry to one bucket."""
 
-    pytestmark: ClassVar = [pytest.mark.unit]
+    pytestmark: ClassVar = [pytest.mark.unit, pytest.mark.torch]
 
     def test_each_planned_bucket_is_one_encode_call(self):
         texts = _distinct_texts(4)
@@ -554,7 +554,7 @@ class TestBucketedDenseEncode:
 class TestBucketedSparseEncode:
     """The sparse path shares the planner and the token-denominated ceiling."""
 
-    pytestmark: ClassVar = [pytest.mark.unit]
+    pytestmark: ClassVar = [pytest.mark.unit, pytest.mark.torch]
 
     def test_each_planned_bucket_is_one_forward(self):
         texts = _distinct_texts(4)
@@ -743,7 +743,7 @@ class TestCalibrationBoundsUnderPlanning:
     tokenizer is CPU-only text processing.
     """
 
-    pytestmark: ClassVar = [pytest.mark.unit]
+    pytestmark: ClassVar = [pytest.mark.unit, pytest.mark.torch]
 
     #: Upper bound on real_tokens / estimated_tokens over the corpus.
     #: Derivation: one OOM re-clamp halves the planning budget, so two

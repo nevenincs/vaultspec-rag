@@ -191,6 +191,55 @@ def test_the_production_sink_converges_a_vanished_source(tmp_path: Path) -> None
     assert by_path["present.py"].chunks, "the surviving file still indexes"
 
 
+def test_the_production_sink_converges_a_whitespace_only_source(
+    tmp_path: Path,
+) -> None:
+    """A package marker holding only a newline must not end the run.
+
+    Such a file yields no chunks for the same reason an empty one does - there
+    is nothing to index - but its hash is not the empty digest, so the sink
+    classified it as a chunking failure and failed every full code index of
+    any root that contained one.
+
+    Mutation: dropped the blank case from the empty-source convergence in
+    ``raise_code_result_failure``; ``JobError: chunk_failed`` then escapes the
+    production call below.
+    """
+    from ._chunk_production import produce_file_results
+
+    survivor = tmp_path / "present.py"
+    survivor.write_text("value = 1\n", encoding="utf-8")
+    marker = tmp_path / "package" / "__init__.py"
+    marker.parent.mkdir()
+    marker.write_text("\n", encoding="utf-8")
+
+    indexer = _chunk_only_indexer(tmp_path)
+    results = produce_file_results(indexer, [survivor, marker])
+
+    by_path = {result.rel_path: result for result in results}
+    assert by_path["package/__init__.py"].blank
+    assert by_path["package/__init__.py"].chunks == []
+    assert by_path["present.py"].chunks, "the surviving file still indexes"
+
+
+def test_a_chunking_failure_names_the_file_that_caused_it(tmp_path: Path) -> None:
+    """The run fails as a whole, so the path is the operator's only handle.
+
+    Mutation: restoring the path-free message fails the match below.
+    """
+    from .._job_errors import JobError
+
+    pipeline = _chunk_only_indexer(tmp_path)._consumer_pipeline
+    unindexable = _chunk_worker.FileChunkResult(
+        rel_path="src/unindexable.py",
+        content_hash="b" * 64,
+        chunks=[],
+    )
+
+    with pytest.raises(JobError, match=r"src/unindexable\.py"):
+        pipeline.raise_code_result_failure(unindexable, None)
+
+
 def test_the_production_sink_converges_a_preprocessor_skipped_source(
     tmp_path: Path,
 ) -> None:

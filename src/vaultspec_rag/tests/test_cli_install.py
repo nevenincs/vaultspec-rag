@@ -567,6 +567,7 @@ class TestRenderUninstallReport:
         assert "Codex MCP: pruned 1" in out
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestInstallExitCodes:
     """CLI3-01 regression: install exits non-zero on the torch-config
     terminal states the user did not opt into. Issue #83 finding 3

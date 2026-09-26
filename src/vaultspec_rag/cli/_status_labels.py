@@ -508,6 +508,26 @@ def _stalled_jobs_finding(
     )
 
 
+def _undispatched_jobs_finding(
+    health: dict[str, object] | None,
+    now: float,
+) -> DegradedFinding | None:
+    _ = now
+    undispatched = health_section(health, "jobs").get("undispatched")
+    if not isinstance(undispatched, int) or undispatched <= 0:
+        return None
+    return DegradedFinding(
+        cause=(
+            f"nothing is starting {_counted_unit(undispatched, 'queued indexing job')}"
+        ),
+        detail="the service dispatches queued work again when it restarts",
+        # Queued work has no state filter of its own; the unfiltered view
+        # lists it directly after running work.
+        command=server_jobs_command(state=None),
+        family=DegradationReason.JOBS_UNDISPATCHED,
+    )
+
+
 def _vector_service_finding(
     health: dict[str, object] | None,
     now: float,
@@ -610,6 +630,7 @@ _EVIDENCE: dict[
     Callable[[dict[str, object] | None, float], DegradedFinding | None],
 ] = {
     DegradationReason.JOBS_STALLED: _stalled_jobs_finding,
+    DegradationReason.JOBS_UNDISPATCHED: _undispatched_jobs_finding,
     DegradationReason.JOB_FAILED: _failed_job_finding,
     DegradationReason.QUARANTINED: _quarantine_finding,
     DegradationReason.STORE_CARRIED_ACROSS: _store_format_finding,

@@ -369,6 +369,7 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
         )
     if action in {
         TorchConfigAction.DISABLED,
+        TorchConfigAction.NOT_APPLICABLE,
         TorchConfigAction.ABSENT,
         TorchConfigAction.DECLINED,
         TorchConfigAction.SKIPPED,
@@ -402,6 +403,11 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
 
 def _torch_skip_reason(action: object, report: InstallReport) -> str:
     """Pick the most specific skip reason from the torch report."""
+    from ..operator_state._installation import ComputeCapability
+    from ..torch_config._constants import TorchConfigAction
+
+    if action == TorchConfigAction.NOT_APPLICABLE:
+        return f"torch configuration {ComputeCapability.NOT_APPLICABLE.label}"
     if report.warnings:
         return report.warnings[-1]
     return f"torch configuration {action}"

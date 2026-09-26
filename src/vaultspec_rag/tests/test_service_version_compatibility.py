@@ -170,6 +170,46 @@ def test_verdict_dict_carries_every_field_a_surface_renders() -> None:
     }
 
 
+@pytest.mark.usefixtures("client_installation")
+def test_a_client_is_sent_to_the_service_release_not_told_to_restart() -> None:
+    """A client cannot start the service, so restarting it is not its fix.
+
+    Mutation check: returning the host's stop-then-start advice regardless of
+    role fails the pin assertion here; restoring the role branch passes.
+    """
+    remediation = classify_service_version(
+        {SERVICE_VERSION_FIELD: _FOREIGN_RELEASE}
+    ).remediation()
+
+    assert f"=={_FOREIGN_RELEASE}" in remediation[0]
+    assert remediation[1].startswith("Or restart the service from a host installation")
+    assert local_package_version() in remediation[1]
+    assert not any("server start" in step for step in remediation)
+
+
+@pytest.mark.usefixtures("client_installation")
+def test_a_client_facing_an_unreported_release_is_sent_to_the_host() -> None:
+    """With no service release to pin to, only a host restart converges them."""
+    remediation = classify_service_version(None).remediation()
+
+    assert remediation == (
+        "Restart the service from a host installation running "
+        f"vaultspec-rag {local_package_version()}.",
+    )
+
+
+@pytest.mark.usefixtures("inference_host")
+def test_a_host_is_told_to_restart_the_service_it_can_start() -> None:
+    """The host keeps the one action that replaces a foreign daemon."""
+    remediation = classify_service_version(
+        {SERVICE_VERSION_FIELD: _FOREIGN_RELEASE}
+    ).remediation()
+
+    assert len(remediation) == 1
+    assert "vaultspec-rag server stop" in remediation[0]
+    assert "vaultspec-rag server start" in remediation[0]
+
+
 # ---------------------------------------------------------------------------
 # Publication
 # ---------------------------------------------------------------------------
@@ -260,7 +300,7 @@ def test_start_emits_exactly_one_envelope_on_the_refusal_path(
     assert result.stdout.lstrip()[consumed:].strip() == ""
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
+@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_start_refusal_is_non_zero_and_actionable_in_human_mode(
     health_service: _HealthServiceState,
 ) -> None:
@@ -303,7 +343,7 @@ def test_start_still_attaches_to_a_daemon_of_this_release(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
+@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_mcp_tools_refuse_a_foreign_release_with_the_same_code(
     health_service: _HealthServiceState,
 ) -> None:
@@ -495,7 +535,7 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
     assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs")
+@pytest.mark.usefixtures("isolated_singleton_dirs", "inference_host")
 def test_cli_search_refusal_is_actionable_in_human_mode(
     health_service: _HealthServiceState,
 ) -> None:
@@ -507,6 +547,23 @@ def test_cli_search_refusal_is_actionable_in_human_mode(
     assert result.exit_code == 1
     assert _FOREIGN_RELEASE in result.stdout
     assert "vaultspec-rag server stop" in result.stdout
+    # Plain `server status` omits the release, so the confirmation step must
+    # name the verbose view; pointing at the plain one fails here.
+    assert "vaultspec-rag server status --verbose" in result.stdout
+
+
+@pytest.mark.usefixtures("isolated_singleton_dirs", "client_installation")
+def test_cli_search_refusal_sends_a_client_to_the_service_release(
+    health_service: _HealthServiceState,
+) -> None:
+    """The rendered refusal carries the client's advice, not the host's."""
+    _record_foreign_daemon(health_service.port)
+
+    result = runner.invoke(app, ["search", "anything"])
+
+    assert result.exit_code == 1
+    assert f"=={_FOREIGN_RELEASE}" in result.stdout
+    assert "vaultspec-rag server stop" not in result.stdout
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
