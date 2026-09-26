@@ -173,6 +173,23 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "function of the results, and is driven through the renderer itself "
         "with nothing substituted",
     ),
+    "test_tool_env_provisioning_hostile.py": (
+        1,
+        "points the production CUDA-index constant at the loopback index the "
+        "proofs serve. What is being proved is what uv records in a receipt "
+        "and re-applies on a later upgrade, not which host the accelerated "
+        "index lives on; resolving against the real one would put a network "
+        "dependency and a multi-gigabyte download in a commit-gating test",
+    ),
+    "test_cli_status.py": (
+        3,
+        "redirects the daemon interpreter at a purpose-built tool "
+        "environment. The receipt verdict is a fact about the environment "
+        "that would serve, and a test cannot make the interpreter running it "
+        "into a uv tool installation; asserting against whatever this "
+        "developer's own daemon interpreter happens to be would assert "
+        "nothing",
+    ),
     "test_readiness_holders.py": (
         1,
         "widens the scan budget, which production sizes for an HTTP route: a "

@@ -1,15 +1,26 @@
-"""What real uv does to a tool environment under hostile conditions.
+"""What real uv does to a tool environment, hostile conditions and the cycle.
 
-These are the proofs the tool-mode CUDA work deferred: no test had ever watched
-real uv act on a held environment, nor checked the production receipt matcher
-against a receipt uv itself wrote. Both gaps are closed here, and neither can
-touch a live installation - every uv invocation runs in a sandbox whose tool,
-bin and cache directories are inside ``tmp_path``.
+Two kinds of proof live here, and neither can touch a live installation:
+every uv invocation runs in a sandbox whose tool, bin and cache directories
+are inside ``tmp_path``, and the distributions are locally built stand-ins
+served over a loopback index.
 
-The destruction proof is Windows-only by nature rather than by choice: a
-blocked removal is what turns a forced reinstall destructive, and POSIX unlink
-semantics do not produce one. It is skipped elsewhere rather than weakened into
-something that passes everywhere and proves nothing.
+The first kind is why the product never replaces an environment: a forced
+reinstall of a held one removes the installed distributions and then fails,
+and so does an install whose interpreter request does not match the
+environment it names. Both leave wreckage, and both are reproduced rather
+than described.
+
+The second is the install and upgrade cycle itself, end to end against real
+uv: an installation made with the CUDA index and the first-match strategy
+records both in its receipt, the product's own repair applies to a held
+environment in place, and a plain upgrade afterwards moves the release while
+keeping the accelerated build.
+
+The destruction proofs are Windows-only by nature rather than by choice: a
+blocked removal is what turns a replacement destructive, and POSIX unlink
+semantics do not produce one. They are skipped elsewhere rather than weakened
+into something that passes everywhere and proves nothing.
 """
 
 from __future__ import annotations
@@ -19,14 +30,23 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from ..commands._tool_torch import _receipt_has_cuda_requirement
+from ..commands import _tool_torch
+from ..operator_state import _provisioning
+from ..operator_state._provisioning import (
+    CU130_INDEX_STRATEGY,
+    ToolReceiptVerdict,
+    classify_tool_receipt,
+    tool_repair_arguments,
+)
 from ._uv_env_harness import (
     UvSandbox,
+    WheelContents,
     WheelTags,
     build_wheel,
     hold_environment,
     index_arguments,
     installed_distributions,
+    publish_index,
     receipt_text,
     sandbox_from,
     serve_wheels,
@@ -38,12 +58,17 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.unit]
 
-_TOOL = "provtool"
-# The production matcher only recognises a requirement NAMED torch, so the
-# stand-in carries that name. It is a locally built pure-Python wheel served
-# from a loopback index with --no-index, so nothing resolves to real torch.
-_STANDIN = "torch"
-_STANDIN_VERSION = "2.14.0+cu130"
+#: The stand-in tool carries this product's own name, because the repair
+#: builds its request from that name and reads the entry uv keeps under it.
+_TOOL = "vaultspec-rag"
+_TOOL_VERSION = "1.0.0"
+_NEWER_TOOL_VERSION = "1.1.0"
+
+#: The stand-in for torch. Both builds exist, so an upgrade that silently
+#: resolves the plain one is visible as a version rather than inferred.
+_TORCH = "torch"
+_CPU_TORCH = "1.0.0"
+_CUDA_TORCH = "1.0.0+cu130"
 
 
 @pytest.fixture
@@ -54,87 +79,245 @@ def sandbox(tmp_path: Path) -> UvSandbox:
 
 @pytest.fixture
 def wheel_index(tmp_path: Path) -> Iterator[str]:
-    """Serve the stand-in distributions over loopback HTTP."""
+    """Serve the stand-in distributions over loopback HTTP as a flat listing."""
     wheels = tmp_path / "wheels"
-    build_wheel(wheels, name=_TOOL, version="1.0.0")
-    build_wheel(wheels, name=_STANDIN, version=_STANDIN_VERSION)
+    build_wheel(
+        wheels,
+        name=_TOOL,
+        version=_TOOL_VERSION,
+        contents=WheelContents(requires=(_TORCH,)),
+    )
+    build_wheel(wheels, name=_TORCH, version=_CPU_TORCH)
     build_wheel(
         wheels,
         name="badtag",
         version="1.0.0",
-        tags=WheelTags(python="cp299", abi="cp299", platform="win_amd64"),
+        contents=WheelContents(
+            tags=WheelTags(python="cp299", abi="cp299", platform="win_amd64")
+        ),
     )
     with serve_wheels(wheels) as base_url:
         yield base_url
 
 
-def _standin_url(base_url: str) -> str:
-    return f"{base_url}/{_STANDIN}-{_STANDIN_VERSION}-py3-none-any.whl"
+@pytest.fixture
+def cuda_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """A simple index standing in for the accelerated one, and its two builds.
+
+    The product compares a receipt's recorded index against one constant, so
+    that constant is pointed at this index for the duration: what is being
+    proved is what uv records and re-applies, not which host the real index
+    lives on.
+    """
+    packages = tmp_path / "cuda-index"
+    wheels = tmp_path / "cuda-wheels"
+    needs_torch = WheelContents(requires=(_TORCH,))
+    build_wheel(wheels, name=_TOOL, version=_TOOL_VERSION, contents=needs_torch)
+    build_wheel(wheels, name=_TOOL, version=_NEWER_TOOL_VERSION, contents=needs_torch)
+    build_wheel(wheels, name=_TORCH, version=_CUDA_TORCH)
+    publish_index(wheels, packages)
+    with serve_wheels(packages) as base_url:
+        monkeypatch.setattr(_provisioning, "CU130_INDEX_URL", base_url)
+        yield base_url
 
 
-def _install(sandbox: UvSandbox, base_url: str, *extra: str) -> None:
-    """Install the tool with the stand-in pinned by direct URL."""
-    completed = sandbox.run(
-        "tool",
-        "install",
-        "--force",
-        _TOOL,
-        "--with",
-        f"{_STANDIN} @ {_standin_url(base_url)}",
-        *index_arguments(base_url),
-        *extra,
-    )
+def _cuda_options(base_url: str) -> tuple[str, ...]:
+    """The two options the product records, as uv arguments."""
+    return ("--index", base_url, "--index-strategy", CU130_INDEX_STRATEGY)
+
+
+def _interpreter(sandbox: UvSandbox) -> str:
+    """The stand-in tool environment's own interpreter."""
+    root = sandbox.tool_root(_TOOL)
+    windows = root / "Scripts" / "python.exe"
+    return str(windows if windows.exists() else root / "bin" / "python")
+
+
+def _installed_version(sandbox: UvSandbox, distribution: str) -> str:
+    """The version of *distribution* installed in the tool environment."""
+    site = sandbox.site_packages(_TOOL)
+    prefix = f"{distribution.replace('-', '_')}-"
+    for entry in site.glob("*.dist-info"):
+        if entry.name.startswith(prefix):
+            return entry.name.removeprefix(prefix).removesuffix(".dist-info")
+    raise AssertionError(f"{distribution} is not installed: {sorted(site.iterdir())}")
+
+
+def _install_without_the_cuda_source(sandbox: UvSandbox, base_url: str) -> None:
+    """Stage the field shape: an installation recording no CUDA source."""
+    completed = sandbox.run("tool", "install", _TOOL, *index_arguments(base_url))
     assert completed.returncode == 0, completed.stderr
 
 
-def test_a_receipt_written_by_uv_satisfies_the_production_matcher(
+def test_an_installation_made_with_the_options_is_durable(
+    sandbox: UvSandbox, cuda_index: str
+) -> None:
+    """uv records the index and the strategy, and production reads them back.
+
+    This is the whole basis of the cycle: the receipt is the only state uv
+    consults on a later upgrade, so a CUDA source recorded there is the only
+    one that survives an upgrade nobody supervises. The receipt is written by
+    real uv rather than by this test, because what it serialises is the fact
+    being relied on.
+    """
+    completed = sandbox.run("tool", "install", _TOOL, *_cuda_options(cuda_index))
+    assert completed.returncode == 0, completed.stderr
+
+    recorded = receipt_text(sandbox, _TOOL)
+    assert f'index-strategy = "{CU130_INDEX_STRATEGY}"' in recorded
+    assert cuda_index in recorded
+    assert classify_tool_receipt(_interpreter(sandbox)) is ToolReceiptVerdict.DURABLE
+
+
+@pytest.mark.usefixtures("cuda_index")
+def test_an_installation_made_without_them_is_not(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
-    """The shipped matcher accepts a receipt uv actually wrote.
+    """The field shape reads as what it is: one upgrade from a CPU build.
 
-    This is the assertion the earlier work could not make: its receipt tests
-    hand-wrote the TOML they then parsed, so a change in how uv serialises a
-    direct requirement would have gone unnoticed until an operator hit it.
+    Guard assertion: this installation's torch works, so a check that reads
+    only the installed build calls it healthy and lets the next upgrade
+    replace it.
     """
-    _install(sandbox, wheel_index)
+    _install_without_the_cuda_source(sandbox, wheel_index)
 
-    assert _receipt_has_cuda_requirement(
-        sandbox.receipt(_TOOL), _standin_url(wheel_index)
+    assert (
+        classify_tool_receipt(_interpreter(sandbox))
+        is ToolReceiptVerdict.NO_CUDA_SOURCE
     )
 
 
-def test_the_matcher_rejects_a_receipt_pinning_a_different_wheel(
+@pytest.mark.usefixtures("cuda_index")
+def test_the_repair_applies_in_place_to_a_held_environment(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
-    """A receipt naming another wheel is not accepted as the pin.
+    """The product's own repair, run against an environment being used.
 
-    Guard assertion: a matcher that ignored the URL would report every
-    receipt as pinned, which is exactly the failure its caller exists to catch.
+    Nothing is stopped for it: a process is running out of the environment
+    throughout, and it is still running afterwards. This is what lets the
+    product run the repair itself, and the command is the one the builder
+    produces rather than one written here.
     """
-    _install(sandbox, wheel_index)
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    assert _installed_version(sandbox, _TORCH) == _CPU_TORCH
+    interpreter = _interpreter(sandbox)
 
-    other = f"{wheel_index}/{_STANDIN}-9.9.9-py3-none-any.whl"
-    assert not _receipt_has_cuda_requirement(sandbox.receipt(_TOOL), other)
+    with hold_environment(sandbox.tool_root(_TOOL), by_image=True) as holder:
+        completed = sandbox.run(*tool_repair_arguments(interpreter)[1:])
+
+        assert completed.returncode == 0, completed.stderr
+        assert holder.poll() is None, "the repair must not end a running process"
+
+    assert _installed_version(sandbox, _TORCH) == _CUDA_TORCH
+    assert _installed_version(sandbox, _TOOL) == _TOOL_VERSION
+    assert classify_tool_receipt(interpreter) is ToolReceiptVerdict.DURABLE
 
 
-def test_a_direct_url_requirement_is_recorded_as_a_url(
+@pytest.mark.usefixtures("cuda_index")
+def test_a_plain_upgrade_after_the_repair_keeps_the_cuda_build(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
-    """uv records an http requirement under ``url``, which production reads.
+    """The end of the cycle: uv's own verb, and the GPU build survives it.
 
-    A receipt always carries ``path`` keys for entry-point install paths, so
-    the requirement's own line is what must be inspected.
+    Guard assertion: this is what the previous mechanism could not do. It
+    kept CUDA by pinning the release, so the same upgrade reported nothing to
+    upgrade and the host never moved.
     """
-    _install(sandbox, wheel_index)
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    interpreter = _interpreter(sandbox)
+    repaired = sandbox.run(*tool_repair_arguments(interpreter)[1:])
+    assert repaired.returncode == 0, repaired.stderr
 
-    lines = [
-        line.strip()
-        for line in receipt_text(sandbox, _TOOL).splitlines()
-        if _STANDIN in line and "name =" in line
-    ]
-    assert lines, receipt_text(sandbox, _TOOL)
-    assert 'url = "http://127.0.0.1' in lines[0]
-    assert "path = " not in lines[0]
+    upgraded = sandbox.run("tool", "upgrade", _TOOL)
+
+    assert upgraded.returncode == 0, upgraded.stderr
+    assert "Nothing to upgrade" not in upgraded.stdout + upgraded.stderr
+    assert _installed_version(sandbox, _TOOL) == _NEWER_TOOL_VERSION
+    assert _installed_version(sandbox, _TORCH) == _CUDA_TORCH
+
+
+@pytest.mark.usefixtures("cuda_index")
+def test_the_builder_asks_for_the_environments_own_interpreter(
+    sandbox: UvSandbox, wheel_index: str
+) -> None:
+    """The request the product issues is the one uv applies in place.
+
+    Guard assertion: a request uv reads as another interpreter is not applied
+    in place at all, and the destruction that follows is proved below. The
+    version is read from the environment uv built, not from this process.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    interpreter = _interpreter(sandbox)
+
+    arguments = tool_repair_arguments(interpreter)
+
+    request = _provisioning.environment_python_request(interpreter)
+    assert request is not None
+    assert "--python" in arguments
+    assert arguments[arguments.index("--python") + 1] == request
+    assert "--force" not in arguments
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="a blocked removal is what makes a replacement destructive, and "
+    "POSIX unlink semantics do not produce one",
+)
+def test_an_interpreter_request_that_does_not_match_destroys_the_environment(
+    sandbox: UvSandbox, cuda_index: str, wheel_index: str
+) -> None:
+    """The incident, reproduced: a mismatched request is a replacement.
+
+    uv treats an install whose ``--python`` names a different interpreter as
+    a request for a different environment and rebuilds wholesale, which
+    removes the installed distributions before it fails on the held files.
+    This is why the request is read from the target environment and why the
+    runner refuses when uv's entry is not the environment in hand.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    interpreter = _interpreter(sandbox)
+    own = _provisioning.environment_python_request(interpreter)
+    assert own is not None
+    other = f"{sys.version_info[0]}.{sys.version_info[1] - 1}"
+    assert other != own
+
+    with hold_environment(sandbox.tool_root(_TOOL), by_image=True):
+        completed = sandbox.run(
+            "tool", "install", "--python", other, _TOOL, *_cuda_options(cuda_index)
+        )
+
+        assert completed.returncode != 0
+        assert installed_distributions(sandbox, _TOOL) == set()
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="a blocked removal is what makes the reinstall destructive, and "
+    "POSIX unlink semantics do not produce one",
+)
+def test_a_forced_reinstall_destroys_a_held_environment(
+    sandbox: UvSandbox, wheel_index: str
+) -> None:
+    """The field failure, reproduced: held environment in, wreckage out.
+
+    A process running the environment's own interpreter blocks removal of
+    ``Scripts``. uv has already removed the installed distributions by then,
+    so what survives is an environment that cannot run and a receipt
+    describing one that no longer exists. The ban on ``--force`` exists
+    because of it.
+    """
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    assert installed_distributions(sandbox, _TOOL)
+
+    with hold_environment(sandbox.tool_root(_TOOL), by_image=True):
+        completed = sandbox.run(
+            "tool", "install", "--force", _TOOL, *index_arguments(wheel_index)
+        )
+
+        assert completed.returncode != 0
+        assert "failed to remove" in completed.stderr
+        assert installed_distributions(sandbox, _TOOL) == set()
+        assert sandbox.receipt(_TOOL).exists()
 
 
 def test_an_unreachable_wheel_leaves_the_environment_intact(
@@ -142,11 +325,11 @@ def test_an_unreachable_wheel_leaves_the_environment_intact(
 ) -> None:
     """A resolve-stage failure is not a destructive one.
 
-    uv resolves and fetches before it replaces, so a bad pin costs the
+    uv resolves and fetches before it replaces, so a bad request costs the
     operator an error rather than an environment. This is what separates the
-    conditions a preflight must guard from the ones uv already handles safely.
+    conditions the product must guard from the ones uv already handles safely.
     """
-    _install(sandbox, wheel_index)
+    _install_without_the_cuda_source(sandbox, wheel_index)
     before = installed_distributions(sandbox, _TOOL)
     receipt_before = receipt_text(sandbox, _TOOL)
 
@@ -156,7 +339,7 @@ def test_an_unreachable_wheel_leaves_the_environment_intact(
         "--force",
         _TOOL,
         "--with",
-        f"{_STANDIN} @ {wheel_index}/{_STANDIN}-9.9.9-py3-none-any.whl",
+        f"{_TORCH} @ {wheel_index}/{_TORCH}-9.9.9-py3-none-any.whl",
         *index_arguments(wheel_index),
     )
 
@@ -169,7 +352,7 @@ def test_a_wheel_tagged_for_another_interpreter_is_refused(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
     """An ABI mismatch is refused, and refused without touching the install."""
-    _install(sandbox, wheel_index)
+    _install_without_the_cuda_source(sandbox, wheel_index)
     before = installed_distributions(sandbox, _TOOL)
 
     completed = sandbox.run(
@@ -198,31 +381,24 @@ def test_an_offline_run_without_a_cache_fails_rather_than_reaching_out(
     assert installed_distributions(sandbox, _TOOL) == set()
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="a blocked removal is what makes the reinstall destructive, and "
-    "POSIX unlink semantics do not produce one",
-)
-def test_a_forced_reinstall_destroys_a_held_environment(
+@pytest.mark.usefixtures("cuda_index")
+def test_the_runner_refuses_an_entry_that_is_another_environment(
     sandbox: UvSandbox, wheel_index: str
 ) -> None:
-    """The field failure, reproduced: held environment in, wreckage out.
+    """The product's launcher asks uv where it would install, and compares.
 
-    A process running the environment's own interpreter blocks removal of
-    ``Scripts``. uv has already removed the installed distributions by then, so
-    what survives is an environment that cannot run and a receipt describing
-    one that no longer exists. Everything downstream of this - the holder
-    preflight, the refusal, the handed-over command - exists because of it.
+    Guard assertion: uv acts on its own entry for the package. The incident
+    that destroyed a live installation was exactly this - the interpreter in
+    hand belonged to one environment and uv's entry was another - so the
+    comparison happens before anything that mutates is launched.
     """
-    _install(sandbox, wheel_index)
-    assert installed_distributions(sandbox, _TOOL)
+    _install_without_the_cuda_source(sandbox, wheel_index)
+    elsewhere = sandbox.tool_root("another-tool")
+    (elsewhere / "Scripts").mkdir(parents=True)
 
-    with hold_environment(sandbox.tool_root(_TOOL), by_image=True):
-        completed = sandbox.run(
-            "tool", "install", "--force", _TOOL, *index_arguments(wheel_index)
-        )
+    ran, detail = _tool_torch._run_repair(
+        str(elsewhere / "Scripts" / "python.exe"), stream=False
+    )
 
-        assert completed.returncode != 0
-        assert "failed to remove" in completed.stderr
-        assert installed_distributions(sandbox, _TOOL) == set()
-        assert sandbox.receipt(_TOOL).exists()
+    assert not ran
+    assert "which is not the environment being repaired" in detail

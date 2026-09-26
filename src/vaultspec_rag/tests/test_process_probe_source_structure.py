@@ -341,6 +341,14 @@ class TestNoStructurallyIdenticalFunctions:
         "which is the enumeration these properties exist to remove."
     )
 
+    _WIRE_PROJECTION = (
+        "Two records projecting their own fields into their own wire dict. "
+        "The shape they share is `return {key: self.field}`, and the whole "
+        "content is which fields each publishes - sharing it would mean one "
+        "projection keyed by every record's attribute names, which trades a "
+        "checked reference for a string."
+    )
+
     _ENUM_LABEL_TABLE = (
         "An enum's own label table: `return {member: sentence}[self]`. The "
         "whole content is which sentence belongs to which member, so sharing "
@@ -401,6 +409,10 @@ class TestNoStructurallyIdenticalFunctions:
             "operator_state/_features.py:label",
             "operator_state/_provisioning.py:label",
         ): _ENUM_LABEL_TABLE,
+        (
+            "_gpu_admission.py:device_load_wire",
+            "_readiness.py:to_dict",
+        ): _WIRE_PROJECTION,
         (
             "indexer/_incremental_commit.py:__init__",
             "server/_stdio_lifetime.py:__init__",

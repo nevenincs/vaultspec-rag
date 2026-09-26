@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:64423d7918af02029f3b27db68750b2aaeb149c39b7e30922ae34af874d6cf0b'
+body_hash: 'sha256:d532668cc59decd9bdad9b96b60cc731a1e761c934d68c35da02eaa25e07ee78'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -227,6 +227,17 @@ related:
 - `S13` `verify:` `pytest test_doctor_repair_and_holders test_cli_status test_server_doctor test_readiness_holders test_service_version_compatibility` -> `pass`
 - `S13` `verify:` `guard mutations (receipt axis unrendered, capped holder list without its total, unknown role raising, status receipt line removed) fail then pass` -> `pass`
 - `S13` `by:` `vaultspec-high-executor`
+- `S14` `M` `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`
+- `S14` `M` `src/vaultspec_rag/tests/_uv_env_harness.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S14` `verify:` `ruff check` -> `pass`
+- `S14` `verify:` `ruff format --check` -> `pass`
+- `S14` `verify:` `ty check` -> `pass`
+- `S14` `verify:` `basedpyright` -> `pass`
+- `S14` `verify:` `pytest test_tool_env_provisioning_hostile (11 real-uv proofs) test_substitution_discipline test_process_probe_source_structure` -> `pass`
+- `S14` `verify:` `guard mutation (index recorded without the strategy) fails then passes` -> `pass`
+- `S14` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -245,3 +256,4 @@ related:
 - `S12` folded in the P02 review findings for the refused JSON envelope, the sys.prefix classification and the project-only `CPU_ONLY` advice in `_handle_gpu_error;` a test that consented reached real uv against the operator's tool installation before it was corrected, and uv refused it without changing anything
 - `S12` correction: the earlier S12 note was wrong. The test that reached real uv did change the machine's tool installation - uv rebuilt it wholesale because the --python request named another interpreter, deleting Lib at 17:48 before failing on the held Scripts; another session rebuilt Lib at 17:58. The repair launcher now enforces pytest containment on the target environment, refuses when uv's tool entry is not the environment in hand, and derives --python from the target environment's own pyvenv.cfg
 - `S13` folded in the P02 review findings for the floor command in the JSON envelope and the holder total and role fallback
+- `S14` the receipt-matcher proofs of the deleted direct-wheel model are removed with it; that import had left this file failing at collection since P03.S11, which this Step closes
