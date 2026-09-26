@@ -4,16 +4,16 @@ Verifies that ``_raise_for_hf_access`` converts ``GatedRepoError`` and
 ``RepositoryNotFoundError`` into actionable ``RuntimeError`` messages
 without any mocks -- just real exception instances.
 
-``HfHubHTTPError.__init__`` requires an ``httpx.Response`` (which is a
-transitive dependency of huggingface-hub). We construct minimal real
-``httpx.Request`` / ``httpx.Response`` values to satisfy the signature.
+``HfHubHTTPError.__init__`` requires a response from the HTTP client the hub
+is built on - ``httpx`` before 2.0, ``httpx2`` from 2.0 - so the minimal real
+request and response are built from the module the hub itself exports.
 """
 
 from __future__ import annotations
 
-import httpx
 import pytest
 from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+from huggingface_hub.utils import httpx
 
 from ..embeddings import _raise_for_hf_access
 
@@ -43,6 +43,18 @@ class TestRaiseForHfAccess:
         with pytest.raises(RuntimeError) as exc_info:
             _raise_for_hf_access(model_id, _gated_exc(model_id))
         assert "HF_TOKEN" in str(exc_info.value)
+
+    def test_gated_repo_error_names_the_current_login_command(self) -> None:
+        """The remediation names ``hf auth login``, which every supported hub ships.
+
+        Mutation it catches: restoring ``huggingface-cli login``. The hub
+        removed that entry point in 2.0, so the message would send the
+        operator to a command that does not exist.
+        """
+        model_id = "naver/splade-v3"
+        with pytest.raises(RuntimeError) as exc_info:
+            _raise_for_hf_access(model_id, _gated_exc(model_id))
+        assert "`hf auth login`" in str(exc_info.value)
 
     def test_gated_repo_error_contains_model_url(self) -> None:
         model_id = "naver/splade-v3"
@@ -94,3 +106,18 @@ class TestRaiseForHfAccess:
             _raise_for_hf_access(model_id, _not_found_exc(model_id))
         # must NOT say "gated" for a 404
         assert "gated" not in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+class TestWarmupFailureDetail:
+    def test_a_gated_fetch_names_the_current_login_command(self) -> None:
+        """Warmup sends an unauthenticated operator to ``hf auth login``.
+
+        Mutation it catches: restoring ``huggingface-cli login``, an entry
+        point the hub removed in 2.0.
+        """
+        from ..cli._service_lifecycle import _warmup_failure_detail
+
+        model_id = "naver/splade-v3"
+        detail = _warmup_failure_detail(model_id, _gated_exc(model_id))
+        assert detail == f"{model_id} auth required; run hf auth login"

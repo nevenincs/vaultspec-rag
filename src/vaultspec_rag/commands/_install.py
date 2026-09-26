@@ -1358,7 +1358,7 @@ def _maybe_warn_hf_auth(report: InstallReport) -> None:
     if get_token():
         return
     report.warnings.append(
-        "HuggingFace token not found. Run `huggingface-cli login` before "
+        "HuggingFace token not found. Run `hf auth login` before "
         "model warmup, indexing, or search if model downloads require auth."
     )
 

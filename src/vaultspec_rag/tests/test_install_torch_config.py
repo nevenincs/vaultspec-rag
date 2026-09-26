@@ -197,7 +197,11 @@ class TestInstallTorchConfig:
             "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
         )
         warnings = cast("list[object]", payload["warnings"])
-        assert any("HuggingFace token not found" in str(w) for w in warnings)
+        token_warnings = [str(w) for w in warnings if "token not found" in str(w)]
+        assert token_warnings, warnings
+        # The hub removed `huggingface-cli` in 2.0; `hf auth login` is the
+        # login command every supported hub version ships.
+        assert all("`hf auth login`" in w for w in token_warnings), token_warnings
 
     def test_install_force_implies_assume_yes_for_torch_config(
         self, consumer_workspace: Path
