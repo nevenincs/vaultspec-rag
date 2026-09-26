@@ -707,39 +707,44 @@ def _storage_maintenance_tick_sync() -> None:
     job_id = _jobs_registry.record_start(
         JobSource.MAINTENANCE, "schedule", command="storage_maintenance"
     )
-    url = cfg.effective_qdrant_url
-    client = QdrantClient(url=url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS)
-    now = datetime.now(UTC)
+    # Everything between opening the record and reporting its outcome sits
+    # under one guard. A failure outside it leaves the record running forever
+    # with no thread behind it, and the next hourly cycle adds another.
     try:
-        result = run_maintenance_cycle(
-            MaintenanceCycleRequest(
-                client=client,
-                now=now,
-                policy=policy,
-                storage_dir=collections_dir if collections_dir.is_dir() else None,
-                snapshots_dir=snapshots_dir,
-                archive_dir=archive_dir,
+        client = QdrantClient(
+            url=cfg.effective_qdrant_url, timeout=_QDRANT_CLIENT_OP_TIMEOUT_SECONDS
+        )
+        now = datetime.now(UTC)
+        try:
+            result = run_maintenance_cycle(
+                MaintenanceCycleRequest(
+                    client=client,
+                    now=now,
+                    policy=policy,
+                    storage_dir=collections_dir if collections_dir.is_dir() else None,
+                    snapshots_dir=snapshots_dir,
+                    archive_dir=archive_dir,
+                )
             )
+        finally:
+            client.close()
+
+        _publish_survey_from_cycle(result, now.isoformat())
+
+        import shutil
+
+        try:
+            disk_free = shutil.disk_usage(str(collections_dir.parent)).free
+        except OSError:
+            disk_free = -1
+        _publish_cycle_metrics(
+            result,
+            disk_free=disk_free,
+            removed=len(_removed_prefixes(result)),
         )
     except BaseException as exc:
         _jobs_registry.record_finish(job_id, error=str(exc))
         raise
-    finally:
-        client.close()
-
-    _publish_survey_from_cycle(result, now.isoformat())
-
-    import shutil
-
-    try:
-        disk_free = shutil.disk_usage(str(collections_dir.parent)).free
-    except OSError:
-        disk_free = -1
-    _publish_cycle_metrics(
-        result,
-        disk_free=disk_free,
-        removed=len(_removed_prefixes(result)),
-    )
     _report_cycle_outcome(result, job_id=job_id, disk_free=disk_free)
 
 

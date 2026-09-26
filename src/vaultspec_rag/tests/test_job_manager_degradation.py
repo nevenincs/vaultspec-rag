@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -130,7 +131,7 @@ class TestInterruptedJobDegradationSplit:
             records = {record["id"]: record for record in snapshot()}
             assert records[job_id]["phase"] == "interrupted"
 
-            jobs_health, degraded_reasons = _jobs_health()
+            jobs_health, degraded_reasons = _jobs_health(now=time.time())
         finally:
             reset()
 

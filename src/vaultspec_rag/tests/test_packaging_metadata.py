@@ -148,7 +148,7 @@ def test_canonical_mcp_builtin_is_installed() -> None:
         "args": ["@@VAULTSPEC_INSTALL_MODE_ARGS@@"],
         "_vaultspec_mode_package": "vaultspec-rag",
         "_vaultspec_mode_module": "vaultspec_rag.server",
-        "_vaultspec_mode_tool_spec": "vaultspec-rag[gpu,mcp]",
+        "_vaultspec_mode_tool_spec": "vaultspec-rag[mcp]",
     }
 
 

@@ -391,17 +391,16 @@ class CodeConsumerPipeline:
         """Return the durable state and typed error for a failed file result."""
         if result.chunks:
             return None
+        # The path is the operator's only handle on the fix: the run fails
+        # as a whole, and the rule is to correct the content or its parser.
+        detail = f"admitted code source {result.rel_path} produced no indexable chunks"
         if result.preprocess_status == "ok":
             return (
                 FileStateKind.EXTRACT_RETRYABLE,
                 JobErrorKind.EXTRACTION_RETRYABLE,
-                "admitted code source produced no indexable chunks",
+                detail,
             )
-        return (
-            FileStateKind.CHUNK_FAILED,
-            JobErrorKind.CHUNK_FAILED,
-            "admitted code source produced no indexable chunks",
-        )
+        return (FileStateKind.CHUNK_FAILED, JobErrorKind.CHUNK_FAILED, detail)
 
     def _record_vanished_source(
         self,
@@ -500,11 +499,12 @@ class CodeConsumerPipeline:
     ) -> bool:
         """Converge an empty source instead of failing the run over it.
 
-        A file that reads as zero bytes yields no chunks, which is not a
-        chunking defect - there was nothing to chunk. Treating it as one let a
-        single file caught mid-save abort an entire indexing job, which is how
-        one editor save became a failed generation and, through resume, a
-        sustained outage.
+        A file that reads as zero bytes, or as nothing but whitespace, yields
+        no chunks, which is not a chunking defect - there was nothing to chunk.
+        Treating it as one let a single file caught mid-save abort an entire
+        indexing job, which is how one editor save became a failed generation
+        and, through resume, a sustained outage. A package marker holding only
+        a newline did the same to every full code index of its root.
 
         The rejection is stable only against the hash that evidenced it, so a
         file caught mid-save converges against the empty hash and is classified
@@ -515,7 +515,9 @@ class CodeConsumerPipeline:
         Returns:
             True when the result was an empty source and has been recorded.
         """
-        if result.chunks or result.content_hash != _EMPTY_SOURCE_DIGEST:
+        if result.chunks or not (
+            result.blank or result.content_hash == _EMPTY_SOURCE_DIGEST
+        ):
             return False
         if checkpoint is not None:
             self._lifecycle.drift_owner.retire_retained_outcome(

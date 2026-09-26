@@ -1207,12 +1207,28 @@ def _failure_was_superseded(
     )
 
 
-def _jobs_health() -> tuple[dict[str, object], list[Degradation]]:
+def _undispatched_job_count(now: float) -> int:
+    """Count queued work that nothing has started for the stall threshold.
+
+    Queued work is normally dispatched the moment it is queued, so work that
+    has waited this long with no owner will never start by itself.
+    """
+    from .. import jobs as _jobs_registry
+    from .._job_errors import STALL_THRESHOLD_SECONDS
+
+    return sum(
+        now - snapshot.timestamps.state_changed_at >= STALL_THRESHOLD_SECONDS
+        for snapshot in _jobs_registry.get_job_manager().undispatched()
+    )
+
+
+def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     """Build the bounded job rollup and its service degradation reasons."""
     from ._routes_jobs import _job_summary, job_state
 
     canonical_records, job_records = _health_job_records()
-    summary = _job_summary(job_records, now=time.time())
+    summary = _job_summary(job_records, now=now)
+    undispatched = _undispatched_job_count(now)
     # Health answers one question: can this process serve a query right now.
     # Only a failure bears on that, which is why the selector is narrower than
     # the set of terminal states that are not success. An interrupted run left
@@ -1252,6 +1268,7 @@ def _jobs_health() -> tuple[dict[str, object], list[Degradation]]:
         "transitional": summary["transitional"],
         "active": summary["active"],
         "stalled": summary["stalled"],
+        "undispatched": undispatched,
         "degraded": summary["degraded"],
         "effective_operations": effective_operations,
         "control_pending": summary["control_pending"],
@@ -1265,6 +1282,15 @@ def _jobs_health() -> tuple[dict[str, object], list[Degradation]]:
             Degradation(
                 reason=DegradationReason.JOBS_STALLED,
                 detail=f"{summary['stalled']} indexing job(s) are stalled",
+            )
+        )
+    if undispatched:
+        degradations.append(
+            Degradation(
+                reason=DegradationReason.JOBS_UNDISPATCHED,
+                detail=(
+                    f"{undispatched} queued indexing job(s) have nothing to start them"
+                ),
             )
         )
     if summary["degraded"]:
@@ -1320,7 +1346,7 @@ async def health_handler(request: Request) -> object:
         qdrant_state,
         quiesce_snapshot,
     )
-    jobs_health, jobs_degradations = _jobs_health()
+    jobs_health, jobs_degradations = _jobs_health(now=time.time())
     degradations.extend(jobs_degradations)
     if status is HealthVerdict.READY and degradations:
         status = HealthVerdict.DEGRADED

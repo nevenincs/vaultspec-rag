@@ -6,7 +6,7 @@ provisioner - calls after creating one. It never asks a question, never needs
 an argument, and is always safe to run again.
 
 This package is the implementation behind that recipe, and it is subject to
-three constraints the rest of ``dev/`` is not:
+two constraints the rest of ``dev/`` is not:
 
 It runs BEFORE the virtual environment exists.
     So it is invoked on an ephemeral interpreter
@@ -15,14 +15,6 @@ It runs BEFORE the virtual environment exists.
     stdlib-only. It must never import :mod:`dev.toolchain`, :mod:`dev.runner`,
     or anything reached through ``uv run --no-sync python -m dev``: those
     presume the environment this package is responsible for creating.
-
-It is the same command in every repository.
-    Every module here except :mod:`dev.init.plan` is byte-identical across
-    ``vaultspec-core``, ``vaultspec-rag``, ``vaultspec-dashboard``,
-    ``vaultspec-a2a`` and ``cadrumo``. :mod:`dev.init.plan` is the one file
-    that states what THIS repository's bootstrap actually is, declaratively, as
-    data. A repository's initialization differs in its steps, never in its
-    contract.
 
 Its failures are read by machines.
     A provisioner needs to tell "your workstation is missing Node" apart from
@@ -38,7 +30,7 @@ Modules:
     :mod:`dev.init.probe`: Host-tool discovery and version comparison.
     :mod:`dev.init.stamp`: Input digests and the idempotence stamp that makes
         a second run a sub-second no-op.
-    :mod:`dev.init.plan`: THIS repository's phases. The only file that differs.
+    :mod:`dev.init.plan`: This repository's phases and their steps.
 """
 
 from __future__ import annotations

@@ -145,6 +145,7 @@ class DegradationReason(StrEnum):
     QUARANTINED = "quarantined"
     STORE_CARRIED_ACROSS = "store_carried_across"
     JOBS_STALLED = "jobs_stalled"
+    JOBS_UNDISPATCHED = "jobs_undispatched"
     JOBS_DEGRADED = "jobs_degraded"
     JOB_FAILED = "job_failed"
 
@@ -167,6 +168,9 @@ class DegradationReason(StrEnum):
                 "longer read it"
             ),
             DegradationReason.JOBS_STALLED: "indexing jobs are stalled",
+            DegradationReason.JOBS_UNDISPATCHED: (
+                "queued indexing jobs have nothing to start them"
+            ),
             DegradationReason.JOBS_DEGRADED: "indexing jobs are degraded",
             DegradationReason.JOB_FAILED: "the latest indexing job failed",
         }[self]

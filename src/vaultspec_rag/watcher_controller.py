@@ -288,6 +288,13 @@ _REFUSAL_REASONS: Final = frozenset(
     }
 )
 
+_ADMISSIBLE_STATES: Final = frozenset(
+    {
+        ControllerState.READY,
+        ControllerState.COLLECTING,
+    }
+)
+
 
 class WatcherController:
     """Deterministic state machine for one canonical root/source."""
@@ -377,7 +384,13 @@ class WatcherController:
         retry_at: float | None,
         circuit_state: WatcherCircuitState,
     ) -> ControllerSnapshot | None:
-        if circuit_state is WatcherCircuitState.OPEN:
+        # An open circuit holds only until its retry time. Once that passes the
+        # controller must become ready, because the durable admission is what
+        # moves the circuit to half-open; holding it here instead leaves the
+        # circuit open forever with a decision deadline that is always due.
+        if circuit_state is WatcherCircuitState.OPEN and (
+            retry_at is None or retry_at > now
+        ):
             return self._transition(
                 ControllerState.RETRYING,
                 ControllerReason.CIRCUIT_OPEN,
@@ -473,9 +486,16 @@ class WatcherController:
         return None
 
     def admit(self, job_id: str) -> ControllerSnapshot:
-        """Bind the canonical incremental job admitted for this controller."""
-        if self._snapshot.state is not ControllerState.READY or not job_id:
-            msg = "admission requires a ready controller and job identity"
+        """Bind the canonical incremental job admitted for this controller.
+
+        A change observed while the manager persists the job returns the
+        controller to collection before it can be bound. The durable fence
+        already owns the captured scope and the later paths stay pending, so
+        that controller is bound like a ready one. Refusing it would strand a
+        created job that nothing dispatches.
+        """
+        if self._snapshot.state not in _ADMISSIBLE_STATES or not job_id:
+            msg = "admission requires a ready or collecting controller and job identity"
             raise ValueError(msg)
         return self._transition(
             ControllerState.ADMITTED,

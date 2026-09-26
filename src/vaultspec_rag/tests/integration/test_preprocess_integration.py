@@ -33,6 +33,7 @@ from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...progress import NullProgressReporter
 from .._publication_assertions import published_content_identities
+from .._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -118,7 +119,7 @@ class _OffHookSetup(NamedTuple):
     cache_root: Path
     before_ids: set[str]
     before_path_ids: list[str]
-    before_metadata: bytes
+    before_metadata: list[str]
     before_cache: dict[str, bytes]
     root: Path
 
@@ -214,7 +215,7 @@ def _prepare_off_hook_setup(
     (cache_root / "preserved.json").write_bytes(b'{"preserved":true}')
     before_ids = store.get_all_code_ids()
     before_path_ids = store.get_code_ids_by_paths({"doc.pdf"})
-    before_metadata = metadata_path.read_bytes()
+    before_metadata = sqlite_contents(metadata_path)
     before_cache = _file_tree_bytes(cache_root)
     assert before_ids
     assert before_path_ids
@@ -634,7 +635,7 @@ class TestPreprocessEndToEnd:
             assert (
                 setup.store.get_code_ids_by_paths({"doc.pdf"}) == setup.before_path_ids
             )
-            assert setup.metadata_path.read_bytes() == setup.before_metadata
+            assert_sqlite_unchanged(setup.metadata_path, setup.before_metadata)
             assert _file_tree_bytes(setup.cache_root) == setup.before_cache
         finally:
             setup.store.close()

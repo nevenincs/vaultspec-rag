@@ -198,6 +198,13 @@ class VaultIndexer(VaultIncrementalMixin):
         ``run_control`` defaults to the inert implementation for direct calls.
         """
         run_control.checkpoint()
+        if authority is RunAuthority.REBUILD:
+            from ._run_ledger_models import index_run_ledger_path
+            from ._run_ledger_runtime import set_aside_unsupported_ledger
+
+            set_aside_unsupported_ledger(
+                index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
+            )
         with self._writer_lock, self._memory_telemetry():
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
@@ -285,12 +292,13 @@ class VaultIndexer(VaultIncrementalMixin):
             )
 
         docs_dir = self.root_dir / get_config().docs_dir
-        content_identities = self._hash_documents(
-            {doc.id: docs_dir / doc.path for doc in docs},
-            reporter,
-            run_control=run_control,
-            full_membership=True,
-        )
+        with controlled_phase(reporter, run_control, "hash documents", len(docs)):
+            content_identities = self._hash_documents(
+                {doc.id: docs_dir / doc.path for doc in docs},
+                reporter,
+                run_control=run_control,
+                full_membership=True,
+            )
         checkpoint = VaultRunCheckpoint.open(
             self.root_dir,
             backend_identity=self.store.backend_identity,

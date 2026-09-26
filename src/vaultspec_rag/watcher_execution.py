@@ -320,20 +320,38 @@ async def submit_watcher_job(
         controller.observe(controller_scope_from_retry_state(slot.retry_policy.state))
         return
 
-    controller.admit(snapshot.id)
-
-    await _dispatch_created_watcher_job(
-        _CreatedWatcherJobRequest(
-            controller=controller,
-            slot=slot,
-            manager=manager,
-            snapshot=snapshot,
-            candidate_paths=admission.candidate_paths,
-            code_preflight=code_preflight,
-            document_preflight=document_preflight,
-            secondary_graph_cache=secondary_graph_cache,
+    # The slot now names the created job, and every later admission joins it
+    # instead of creating another. A failure before dispatch must therefore
+    # settle that job, or it stays queued with nothing to run it and wedges
+    # automatic indexing for this root and source.
+    try:
+        controller.admit(snapshot.id)
+        await _dispatch_created_watcher_job(
+            _CreatedWatcherJobRequest(
+                controller=controller,
+                slot=slot,
+                manager=manager,
+                snapshot=snapshot,
+                candidate_paths=admission.candidate_paths,
+                code_preflight=code_preflight,
+                document_preflight=document_preflight,
+                secondary_graph_cache=secondary_graph_cache,
+            )
         )
-    )
+    except Exception as exc:
+        await _finish_unstarted_watcher_failure(
+            slot,
+            controller,
+            UnstartedFailure(
+                manager=manager,
+                job_id=snapshot.id,
+                attempt=snapshot.attempt.number,
+                message=str(exc).strip() or type(exc).__name__,
+                action="record_dispatch_failure",
+                reason="dispatch_failed",
+            ),
+        )
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,9 +525,14 @@ async def _finish_unstarted_watcher_failure(
     failure: UnstartedFailure,
 ) -> None:
     """Durably settle an orchestration failure before releasing its slot."""
-    await _run_in_thread(
+    failed_before_dispatch = await _run_in_thread(
         partial(failure.manager.fail_unstarted, failure.job_id, result=failure.message),
     )
+    if failed_before_dispatch.code == "runtime_already_owned":
+        # The attempt reached a runtime owner, whose finish callback settles
+        # the retry fence. Settling it here too would record a failure for
+        # work that is still running.
+        return
     error = RuntimeError(failure.message)
     retry_state = await _settle_retry_failure(
         slot,

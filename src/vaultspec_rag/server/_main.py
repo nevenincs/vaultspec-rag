@@ -34,9 +34,37 @@ from ._runtime import ServerRouteRuntime, install_route_runtime
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
     from starlette.types import Lifespan
 
 logger = logging.getLogger("vaultspec_rag.server")
+
+
+async def _unhandled_route_error(_request: Request, exc: Exception) -> JSONResponse:
+    """Answer a route failure nothing handled in the service's own envelope.
+
+    The framework default is a plain-text body, which no client can tell apart
+    from another process answering the port, so a daemon failing on every
+    search was reported as a wrong port while the real cause sat only in the
+    service log. The framework still re-raises after this answer, so the
+    traceback keeps reaching that log.
+    """
+    from starlette.responses import JSONResponse
+
+    from .._job_errors import classify_error_text, remediation
+
+    kind = classify_error_text(str(exc))
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "internal_error",
+            "message": f"{type(exc).__name__}: {exc}",
+            "error_kind": kind.value if kind is not None else None,
+            "remediation": remediation(kind),
+        },
+        status_code=500,
+    )
 
 
 def create_http_app(
@@ -52,6 +80,7 @@ def create_http_app(
     app = Starlette(
         routes=[Route("/health", health_handler), *ROUTES],
         lifespan=lifespan,
+        exception_handlers={Exception: _unhandled_route_error},
     )
     install_route_runtime(app, runtime)
     return app

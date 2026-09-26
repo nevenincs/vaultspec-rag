@@ -308,6 +308,7 @@ def test_half_accumulation_runs_unchanged_on_torch_without_the_switch() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.torch
 def test_half_accumulation_drives_the_installed_torch_switch() -> None:
     """The switch named is the one the installed torch reads.
 

@@ -20,6 +20,7 @@ from ..indexer._chunking import (
     _is_binary,
 )
 from ..indexer._vault_prep import _extract_feature, _extract_title
+from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -839,12 +840,12 @@ class TestCanonicalPublishedBreadth:
         with sqlite3.connect(ledger_path) as connection:
             connection.execute("CREATE TABLE old_runs (id TEXT PRIMARY KEY)")
             connection.execute("INSERT INTO old_runs VALUES ('old')")
-        before = ledger_path.read_bytes()
+        before = sqlite_contents(ledger_path)
 
         with pytest.raises(RunLedgerRebuildRequiredError, match="rebuild"):
             acquire_code_breadth_snapshot(tmp_path)
 
-        assert ledger_path.read_bytes() == before
+        assert_sqlite_unchanged(ledger_path, before)
 
 
 class TestDataRootResolution:

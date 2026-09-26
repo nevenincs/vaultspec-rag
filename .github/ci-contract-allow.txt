@@ -44,9 +44,9 @@ binaries.yml:Aggregate checksums
 binaries.yml:Commit the Scoop manifest and Homebrew formula
 binaries.yml:Require artifacts on the published release
 binaries.yml:Ask the acquisition check to try this release
-binaries.yml:Promote a repaired release back to latest
+binaries.yml:Promote the release, then publish it to the package index
 publish.yml:Generate checksums
-publish.yml:Publish to PyPI
+publish.yml:Publish the release's verified packages to PyPI
 publish.yml:Hold the release as a prerelease
 release-please.yml:Regenerate and push uv.lock
 release-please.yml:Dispatch the merge gate for the release pull request

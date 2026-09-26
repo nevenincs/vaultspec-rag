@@ -244,6 +244,7 @@ def _production_service(
         assert not thread.is_alive()
 
 
+@pytest.mark.torch
 def test_preflight_observes_safe_service_but_never_authorizes_gpu(
     isolated_status_dir: Path,
 ) -> None:
@@ -270,6 +271,7 @@ def test_preflight_observes_safe_service_but_never_authorizes_gpu(
     assert '"capacity": {' in result.output
 
 
+@pytest.mark.torch
 def test_preflight_refuses_a_discovered_service_that_is_not_safe(
     isolated_status_dir: Path,
 ) -> None:
@@ -531,6 +533,7 @@ def test_preflight_refuses_an_empty_discovered_token(
     assert '"lease_required": true' in result.output
 
 
+@pytest.mark.torch
 def test_preflight_refuses_an_authenticated_state_route_without_a_project_root(
     isolated_singleton_dirs: Path,
     tmp_path: Path,
@@ -548,6 +551,7 @@ def test_preflight_refuses_an_authenticated_state_route_without_a_project_root(
     assert '"lease_required": true' in result.output
 
 
+@pytest.mark.torch
 def test_preflight_pins_authenticated_state_to_the_machine_pointer_token(
     isolated_singleton_dirs: Path,
     tmp_path: Path,

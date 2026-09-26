@@ -29,6 +29,9 @@ permissions:
 
 env:
   NO_COLOR: "1"
+  # Every scanner here reads source statically; none imports the local
+  # inference stack, so `just init` leaves torch and its CUDA runtime out.
+  VAULTSPEC_INIT_GPU_STACK: "none"
 
 concurrency:
   # A schedule that fires while the previous run is still queued should not

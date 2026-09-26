@@ -203,6 +203,26 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "probe's verdict is substituted, and the real warning renderer, its "
         "defect gate and its topology remediation run unchanged",
     ),
+    "test_install_client_role.py": (
+        1,
+        "forces the Hugging Face token absent to prove a client installation is "
+        "never asked for one. The hub fixes its token file location when it is "
+        "imported, so the token cannot be redirected in-process, and a "
+        "developer's stored login would hide the warning whether or not the "
+        "client gate works; the real install runs and only the token lookup is "
+        "replaced",
+    ),
+    "conftest.py": (
+        1,
+        "install's torch and provisioning steps and the release-mismatch advice "
+        "all branch on whether this is a host or a client installation, and the "
+        "role is read from the distributions the running interpreter holds. The "
+        "accelerator-free lane never installs the gpu extra and the gpu lane "
+        "always does, and the suite can neither add nor remove the inference "
+        "stack in the shared interpreter, so each lane would otherwise reach "
+        "only one side of every branch. Only the role reading is substituted; "
+        "every consumer of it runs unchanged",
+    ),
     "test_server.py": (
         3,
         "asserts the stdio runner wires watcher cleanup and loads no model - "
@@ -224,13 +244,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "postcondition is bypassed",
     ),
     "test_watcher_controller_intake.py": (
-        6,
+        11,
         "the intake durability tests intercept the persistence boundary to prove "
         "commit-before-ack and cancellation ordering; the scheduler wiring test "
         "captures registration and supplies an otherwise host-dependent storage "
         "measurement; and the pre-creation recovery test forces failures at the "
         "preflight and manager boundaries. Real equivalents require crashing or "
-        "changing the service's live storage state at an exact instruction boundary",
+        "changing the service's live storage state at an exact instruction "
+        "boundary. The post-creation admission tests use the real process job "
+        "manager but skip scoped preflight, which needs the root's GPU compute "
+        "lease; they wrap the real create to land an intake observation at the "
+        "instant the job exists, which no real event can be timed to hit; and "
+        "they replace dispatch, which would run a real GPU index attempt, with "
+        "one that records, fails, or really binds and dispatches before failing",
     ),
     "test_watcher_recovery.py": (
         1,

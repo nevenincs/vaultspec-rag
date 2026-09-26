@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..operator_state import _compute
+from ..operator_state._installation import InstallRole
 from ..torch_config import _direct_dep, _inspect, _mutate
 from ..torch_config._constants import (
     DIRECT_TORCH_REQUIREMENT,
@@ -145,6 +147,10 @@ def _run_torch_config_install(
 ) -> None:
     """Apply the cu130 torch-config patch to the consumer pyproject.
 
+    Only an inference host is configured. A client installation (no ``gpu``
+    extra) sends every search to the service and never needs torch, so it is
+    neither prompted nor patched and the pyproject is left untouched.
+
     Decisions are recorded on ``report``. The body converts the
     raise-paths from :mod:`vaultspec_rag.torch_config`
     (``tomlkit.exceptions.ParseError`` on corrupt TOML, ``OSError``
@@ -155,6 +161,8 @@ def _run_torch_config_install(
     """
     if not options.configure_torch:
         report.torch_config_action = TorchConfigAction.DISABLED
+    elif _compute.installed_role()[0] is InstallRole.CLIENT:
+        report.torch_config_action = TorchConfigAction.NOT_APPLICABLE
     else:
         pyproject = target / "pyproject.toml"
         try:

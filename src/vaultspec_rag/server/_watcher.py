@@ -260,10 +260,10 @@ class _WatcherScheduler:
         for key, registration in registrations:
             if self._registrations.get(key) is not registration:
                 continue
-            deadline = registration.controller.snapshot.next_decision_at
-            due = deadline is not None and deadline <= now
-            periodic = deadline is None or deadline > now
-            if (due or periodic) and not self._recovery_delayed(registration, now):
+            # Every controller is reevaluated on every turn, due or not: a
+            # measurement such as a cleared backlog can change its decision
+            # before its own deadline arrives.
+            if not self._recovery_delayed(registration, now):
                 try:
                     await self._invoke(key, registration.reevaluate)
                 except Exception:
@@ -303,8 +303,12 @@ class _WatcherScheduler:
         finally:
             current = self._registrations.get(key)
             after = current.controller.snapshot if current is not None else None
-            if after is not None and after.last_transition != (
-                None if before is None else before.last_transition
+            # Every reevaluation stamps a fresh transition record, so comparing
+            # records logs each scheduler turn. Only a changed state or reason
+            # is a transition an operator can act on.
+            if after is not None and (
+                before is None
+                or (after.state, after.reason) != (before.state, before.reason)
             ):
                 from ..api import controller_snapshot_envelope
 

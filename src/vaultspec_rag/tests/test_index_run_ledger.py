@@ -66,6 +66,7 @@ from ..indexer._run_ledger_models import (
 from ..indexer._run_ledger_publication import RunLedgerPublicationMethods
 from ..indexer._run_ledger_runtime import RunLedger, _signature_from_payload
 from ._child_signal import PROCESS_TIMEOUT_SECONDS
+from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 pytestmark = [pytest.mark.unit]
 
@@ -241,31 +242,14 @@ def _proof_key_for_signature(signature: RunSignature) -> ProofCompatibilityKey:
     )
 
 
-def _assert_rebuild_required_without_mutation(
-    path: Path,
-    *,
-    match: str,
-    compare_companions: bool = True,
-) -> None:
-    before = path.read_bytes()
-    companions = tuple(
-        Path(f"{path}{suffix}") for suffix in ("-journal", "-shm", "-wal")
-    )
-    companion_bytes = {
-        companion: companion.read_bytes() if companion.exists() else None
-        for companion in companions
-    }
+def _assert_rebuild_required_without_mutation(path: Path, *, match: str) -> None:
+    before = sqlite_contents(path)
 
     with pytest.raises(RunLedgerRebuildRequiredError, match=match) as caught:
         RunLedger(path)
 
     assert type(caught.value) is RunLedgerRebuildRequiredError
-    assert path.read_bytes() == before
-    if compare_companions:
-        assert {
-            companion: companion.read_bytes() if companion.exists() else None
-            for companion in companions
-        } == companion_bytes
+    assert_sqlite_unchanged(path, before)
 
 
 def _seed_publication_proof(
@@ -2487,11 +2471,7 @@ def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(
                 "_require_current_or_empty_schema",
                 track_preflight_schema,
             )
-            _assert_rebuild_required_without_mutation(
-                path,
-                match="rebuild",
-                compare_companions=False,
-            )
+            _assert_rebuild_required_without_mutation(path, match="rebuild")
         assert observed_versions == [6]
         assert peer.execute("PRAGMA user_version").fetchone() == (6,)
         assert peer.execute("SELECT value FROM old_runs").fetchall() == [

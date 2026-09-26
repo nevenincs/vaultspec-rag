@@ -1148,6 +1148,10 @@ _THIRD_PARTY_LOG_LEVELS: tuple[tuple[str, int], ...] = (
     # obscures those summaries and creates disproportionate managed-log I/O.
     ("httpx", logging.WARNING),
     ("httpcore", logging.WARNING),
+    # The same per-request chatter from the httpx2 stack, which the MCP SDK
+    # uses and the Hugging Face Hub downloads models through from its 2.0 line.
+    ("httpx2", logging.WARNING),
+    ("httpcore2", logging.WARNING),
     # One record per filesystem event, emitted for every change the watcher
     # already reports as a coalesced job outcome.
     ("watchfiles.main", logging.WARNING),

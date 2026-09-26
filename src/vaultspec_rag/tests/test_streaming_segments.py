@@ -655,6 +655,7 @@ def test_vector_fields_are_released_from_real_chunk_types() -> None:
     assert vault.sparse_values == []
 
 
+@pytest.mark.torch
 def test_real_numpy_and_cpu_torch_rows_convert_to_store_vectors() -> None:
     numpy_row = np.asarray([1.25, 2.5], dtype=np.float32)
     assert _transfer_to_cpu(numpy_row) is numpy_row

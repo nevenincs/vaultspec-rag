@@ -104,6 +104,8 @@ class TorchConfigAction(StrEnum):
         ABSENT: no pyproject.toml at the target.
         REMOVED: cu130 block was just removed (uninstall side only).
         DISABLED: ``configure_torch=False`` opted out.
+        NOT_APPLICABLE: the installation is a client (no ``gpu`` extra),
+            which never needs torch; nothing was inspected or written.
         DRY_RUN: dry-run preview, no write.
         DECLINED: user declined the prompt (or a custom confirm hook
             raised an exception we converted to a decline).
@@ -120,6 +122,7 @@ class TorchConfigAction(StrEnum):
     ABSENT = "absent"
     REMOVED = "removed"
     DISABLED = "disabled"
+    NOT_APPLICABLE = "not_applicable"
     DRY_RUN = "dry_run"
     DECLINED = "declined"
     SKIPPED = "skipped"

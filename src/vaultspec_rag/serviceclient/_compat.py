@@ -45,8 +45,8 @@ VERSION_STATE_UNREPORTED = "unreported"
 VERSION_ERROR_MISMATCH = "service_version_mismatch"
 VERSION_ERROR_UNREPORTED = "service_version_unreported"
 
-#: The one remediation for both incompatible states: the running daemon is not
-#: this install's, and only replacing it converges them.
+#: A host installation's remediation for both incompatible states: the running
+#: daemon is not this install's, and only replacing it converges them.
 _RESTART_REMEDIATION = (
     "Restart the service so it runs this install: "
     "`vaultspec-rag server stop` then `vaultspec-rag server start`.",
@@ -124,8 +124,33 @@ class ServiceVersionVerdict:
         )
 
     def remediation(self) -> tuple[str, ...]:
-        """Return the operator's next actions, empty when compatible."""
-        return () if self.is_compatible else _RESTART_REMEDIATION
+        """Return the operator's next actions, empty when compatible.
+
+        A client installation cannot start the service, so restarting it from
+        here would only be refused. The client either moves to the service's
+        release or has the service restarted from a host installation running
+        its own. The role is read only on this failure path, never on the
+        compatibility check itself, which sits on polling loops.
+        """
+        if self.is_compatible:
+            return ()
+        from ..operator_state import _compute
+        from ..operator_state._installation import InstallRole
+
+        if _compute.installed_role()[0] is InstallRole.HOST:
+            return _RESTART_REMEDIATION
+        from_host = (
+            "the service from a host installation running "
+            f"vaultspec-rag {self.client_version}."
+        )
+        if self.service_version is None:
+            return (f"Restart {from_host}",)
+        return (
+            "Move this client to the service's release: pin the project's "
+            f"vaultspec-rag requirement to =={self.service_version}, keeping its "
+            "extras, then run `uv sync`.",
+            f"Or restart {from_host}",
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return the JSON-serialisable view carried on every envelope."""
