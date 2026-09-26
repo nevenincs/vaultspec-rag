@@ -559,6 +559,11 @@ installation and every client together.
    An upgrade replaces the installed package while the running daemon keeps the code it
    imported at startup, so clients refuse it as a different release until it restarts.
 
+   If uv reports that it could not install an entry point because the file is in use,
+   the release is installed and the environment is intact: only the launcher it could
+   not overwrite was left alone, and that launcher keeps working. Restarting the
+   service, and any assistant session holding one, is what clears the report.
+
 1. Read the new release from the upgraded host installation with
    `vaultspec-rag --version`. Move every client project to that release, keeping its
    extras:
@@ -727,12 +732,17 @@ Use these steps when a standalone tool on Linux or Windows has a missing or CPU-
 PyTorch, or when `server doctor` reports that its receipt records no CUDA source. Apple
 silicon uses the standard wheel's Metal support and needs none of this.
 
-The repair installs the CUDA build of PyTorch in place and records the CUDA package
-index in the tool's installation receipt, which uv re-applies on every later upgrade.
-It changes PyTorch alone: the installed release, the extras and the Python version stay
-as they are, and nothing is removed, so the service and any assistant session may keep
-running throughout. Project `pyproject.toml` settings and `uv sync` do not configure
-tool environments.
+The repair is two commands, in order. The first installs the CUDA build of PyTorch into
+the environment through uv's pip interface, naming the release the environment already
+has; the second re-runs the tool installation with the CUDA index and its resolution
+strategy, which changes no package and only records those options in the installation
+receipt, so every later upgrade keeps resolving the GPU build. The order matters: an
+install that changes a package re-installs the tool's launchers, and one that is running
+cannot be replaced.
+
+Neither step removes anything, so the service and any assistant session may keep running
+throughout. The installed release, the extras and the Python version all stay as they
+are. Project `pyproject.toml` settings and `uv sync` do not configure tool environments.
 
 If `ModuleNotFoundError` prevents `vaultspec-rag` from running, see
 [the interrupted reinstall entry](#a-tool-environment-is-missing-packages-after-an-interrupted-reinstall)
@@ -744,19 +754,20 @@ before attempting these steps.
    vaultspec-rag server doctor
    ```
 
-   It names the compute build, what the next upgrade would resolve, and the exact
-   command for this installation. `vaultspec-rag install --dry-run --no-torch-config`
-   prints the same command without changing anything.
+   It names the compute build, what the next upgrade would resolve, and the two commands
+   for this installation. `vaultspec-rag install --dry-run --no-torch-config` prints the
+   same commands without changing anything.
 
-1. Let the installer apply it, or run it yourself:
+1. Let the installer apply them, or run them yourself in the order given:
 
    ```sh
    vaultspec-rag install --yes --no-torch-config
    ```
 
-   With a terminal it asks first; `--yes` answers in advance. It then verifies both the
-   installed build and the receipt, and reports a failure rather than a repair if
-   either is wrong. Running the printed command yourself does the same thing.
+   With a terminal it asks first; `--yes` answers in advance. `--force` does not: it
+   authorises overwriting this product's own files, not installing packages. The
+   installer then verifies both the installed build and the receipt, and reports a
+   failure rather than a repair if either is wrong.
 
 1. Restart the service so it uses the new build:
 
@@ -765,10 +776,19 @@ before attempting these steps.
    vaultspec-rag server start
    ```
 
-   A process that was already running keeps the PyTorch it imported at startup.
+   A process that was already running keeps the PyTorch it imported at startup. Restart
+   any assistant session that runs the MCP adapter for the same reason.
 
 1. Confirm with `vaultspec-rag server doctor` that compute is ready and the receipt
    keeps it, then rerun the checks in [start and verify](#start-and-verify).
+
+### Ask for help
+
+Open an issue on the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues)
+with the output of `vaultspec-rag server doctor --json`,
+`vaultspec-rag server status --json`, and `vaultspec-rag server logs`. Redact
+credentials and private content first. The tracker takes questions as well as bug
+reports, and it's the only support channel.
 
 <p id="remove-it"></p>
 

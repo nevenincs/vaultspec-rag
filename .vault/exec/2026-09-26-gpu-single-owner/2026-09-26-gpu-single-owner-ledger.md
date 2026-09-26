@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:a57c96a2243b0992d55710a6b85b9f23de6e48b0d20ab6f69ae064f319f28e20'
+body_hash: 'sha256:e79eb7b4a5cc1a48361e72e085db1fc9a321864220221231bf04dab7fa52795b'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -297,6 +297,14 @@ related:
 - `S19` `verify:` `pytest test_tool_env_provisioning_hostile (14 real-uv proofs)` -> `pass`
 - `S19` `verify:` `guard mutation (repair pointed back at one package-changing tool install) fails on the whole-environment assertion then passes` -> `pass`
 - `S19` `by:` `vaultspec-high-executor`
+- `S20` `M` `docs/installation.md`
+- `S20` `M` `README.md`
+- `S20` `verify:` `mdformat --check` -> `pass`
+- `S20` `verify:` `pymarkdownlnt scan` -> `pass`
+- `S20` `verify:` `tools/check_docs_conventions.py` -> `pass`
+- `S20` `verify:` `tools/check_docs_version.py` -> `pass`
+- `S20` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
+- `S20` `by:` `vaultspec-high-executor`
 
 ## Notes
 

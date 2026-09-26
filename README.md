@@ -97,9 +97,12 @@ uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
 Upgrade later with `uv tool upgrade vaultspec-rag`, then restart the service so it runs
-the new release. An installation made without the two index options resolves a CPU-only
-PyTorch at its next upgrade; `vaultspec-rag server doctor` reports that and prints the
-command that fixes it. If uv reports that its executables directory isn't on your
+the new release; if uv reports an entry point it could not overwrite because the file is
+in use, the release is installed and the running launcher keeps working. An installation
+made without the two index options resolves a CPU-only PyTorch at its next upgrade;
+`vaultspec-rag server doctor` reports that and prints the two commands that repair it in
+place, which
+[pin the GPU build](docs/installation.md#pin-the-gpu-build) describes. If uv reports that its executables directory isn't on your
 `PATH`, run `uv tool update-shell` and open a new terminal.
 
 By default, search needs access to the sparse model. If you can't accept its licence,

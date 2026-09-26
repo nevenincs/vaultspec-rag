@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:05fb3917eb1f288d81b56a229502005ac3b5581806d4af11270ae5fa03919e46'
+body_hash: 'sha256:bbcb29f87cd8b7fd9d2e3672ef32445fa20ee8e208b4e2eedec2b4ec5818f29a'
 ---
 
 # `gpu-single-owner` plan
@@ -100,7 +100,7 @@ Makes the product's own consented repair and every command it hands over leave a
 - [x] `P04.S17` - name the restart after an applied repair, take consent only from --yes or a prompt, never prompt on the JSON path, and serialise holders once, bounded, with a total; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/_readiness.py`.
 - [x] `P04.S18` - state holder remedies as restarts after an in-place repair, correct the doctor holder wording, enforce the running-interpreter predicate, and treat a path or specifier torch pin as pinned; `src/vaultspec_rag/operator_state/_holders.py, src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/operator_state/_provisioning.py`.
 - [x] `P04.S19` - prove against real uv on Windows with a running launcher that the repair and the upgrade leave the environment whole, and that a package-changing tool install removes it; `src/vaultspec_rag/tests/`.
-- [ ] `P04.S20` - document the two-step repair and the in-use launcher report of an upgrade, and restore the installation guide's support section; `docs/installation.md, README.md`.
+- [x] `P04.S20` - document the two-step repair and the in-use launcher report of an upgrade, and restore the installation guide's support section; `docs/installation.md, README.md`.
 
 ## Parallelization
 
