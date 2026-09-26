@@ -49,6 +49,7 @@ __all__ = [
     "EnvironmentHolder",
     "EnvironmentHolders",
     "HolderRelation",
+    "LineageEntry",
     "bounded_call",
     "close_process_handle",
     "environment_holders",
@@ -62,6 +63,7 @@ __all__ = [
     "pid_listens_on_loopback_port",
     "pid_matches_start_time",
     "pid_start_time",
+    "process_lineage",
     "reap_if_child",
     "send_signal",
     "wait_for_exit",
@@ -406,6 +408,67 @@ def pid_matches_start_time(
         return False
     live_start = pid_start_time(pid, timeout=timeout)
     return live_start > 0.0 and abs(live_start - expected_start_time) <= tolerance
+
+
+@dataclass(frozen=True, slots=True)
+class LineageEntry:
+    """One process in a lineage: its pid and the creation time that pins it.
+
+    The start time is what makes a pid mean one process: a recorded pid that
+    has since been recycled has the same number and a different start time.
+    """
+
+    pid: int
+    start_time: float
+
+
+#: The deepest ancestry a lineage walk follows. A real chain - a terminal, a
+#: shell, ``uv``, its trampoline, a venv launcher, the interpreter - is well
+#: under a dozen deep; the bound only stops a pathological parent table from
+#: turning a question into an unbounded walk.
+_LINEAGE_DEPTH_LIMIT = 32
+
+
+def process_lineage(pid: int | None = None) -> tuple[LineageEntry, ...]:
+    """Return *pid* (default: this process) and its live ancestors, nearest first.
+
+    The one answer to "which processes is this one running inside", asked by
+    anything that must tell its own launch chain from a stranger: a Windows
+    venv interpreter is started by a launcher that stays alive as its parent,
+    and a process granted a resource on behalf of an ancestor must be able to
+    prove the ancestry.
+
+    Every step goes through psutil's own parent lookup, which refuses a parent
+    created after its child, so a recycled parent pid ends the walk instead of
+    grafting an unrelated process onto the chain. A process that cannot be
+    inspected, or has exited, ends the walk too: the lineage returned is the
+    part that could be established, never a guess past it. An empty tuple means
+    not even *pid* itself could be read.
+    """
+    import psutil
+
+    if pid is not None and pid <= 0:
+        return ()
+    try:
+        current = psutil.Process(os.getpid() if pid is None else pid)
+    except psutil.Error as exc:
+        logger.debug("lineage unreadable for pid %s: %s", pid, exc)
+        return ()
+    lineage: list[LineageEntry] = []
+    seen: set[int] = set()
+    for _ in range(_LINEAGE_DEPTH_LIMIT):
+        try:
+            entry = LineageEntry(pid=current.pid, start_time=current.create_time())
+            parent = current.parent()
+        except psutil.Error as exc:
+            logger.debug("lineage walk stopped at pid %d: %s", current.pid, exc)
+            break
+        lineage.append(entry)
+        seen.add(entry.pid)
+        if parent is None or parent.pid in seen:
+            break
+        current = parent
+    return tuple(lineage)
 
 
 def pid_is_zombie(pid: int) -> bool:
