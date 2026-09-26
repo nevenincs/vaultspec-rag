@@ -334,6 +334,33 @@ class TestTheEnvironmentValueItself:
         resolved = named_root()
         assert resolved.path == Path("~").expanduser().resolve()
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason=(
+            "ntpath.expanduser only raises past pathlib's RuntimeError guard "
+            "when neither USERPROFILE nor HOMEPATH/HOMEDRIVE is set; "
+            "posixpath.expanduser falls back to the pwd database, which a "
+            "real account under test typically still resolves."
+        ),
+    )
+    def test_a_root_whose_home_cannot_be_determined_names_its_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A host with no way to resolve ``~`` refuses, naming the variable.
+
+        ``Path.expanduser()`` itself raises a bare ``RuntimeError`` in this
+        case; the resolver must not let that propagate unrelated to the
+        variable an operator actually set.
+        """
+        self._clear(monkeypatch)
+        monkeypatch.delenv("USERPROFILE", raising=False)
+        monkeypatch.delenv("HOMEPATH", raising=False)
+        monkeypatch.delenv("HOMEDRIVE", raising=False)
+        monkeypatch.setenv(EnvVar.RAG_ROOT.value, "~/somewhere")
+
+        with pytest.raises(ConfigurationError, match=EnvVar.RAG_ROOT.value):
+            named_root()
+
     def test_the_framework_name_answers_behind_the_scoped_one(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

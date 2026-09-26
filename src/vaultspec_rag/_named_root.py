@@ -33,7 +33,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vaultspec_core.config import VAULTSPEC_TARGET_DIR, resolve_target
+from vaultspec_core.config import (
+    VAULTSPEC_TARGET_DIR,
+    ConfigurationError,
+    resolve_target,
+)
 
 from .config._registry import entry
 from .config._types import EnvVar
@@ -58,12 +62,25 @@ def _home_expanded(environ: Mapping[str, str]) -> Mapping[str, str]:
     taken against the working directory and then refused as a directory that
     does not exist. Expanding it here keeps a launcher-written root working
     while the order, the chain and the refusal all stay the framework's.
+
+    Raises:
+        ConfigurationError: If the host has no way to determine a home
+            directory (``Path.expanduser()`` raises ``RuntimeError``), so
+            the failure names the variable that supplied the value instead
+            of propagating an unrelated stdlib exception.
     """
-    expanded = {
-        name: str(Path(raw.strip()).expanduser())
-        for name in _ROOT_NAMES
-        if (raw := environ.get(name, "")).strip().startswith("~")
-    }
+    expanded: dict[str, str] = {}
+    for name in _ROOT_NAMES:
+        raw = environ.get(name, "")
+        if not raw.strip().startswith("~"):
+            continue
+        try:
+            expanded[name] = str(Path(raw.strip()).expanduser())
+        except RuntimeError as exc:
+            raise ConfigurationError(
+                f"{name} names {raw!r}, whose ~ could not be expanded "
+                f"(no home directory could be determined): {exc}"
+            ) from exc
     return {**environ, **expanded} if expanded else environ
 
 
