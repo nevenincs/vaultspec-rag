@@ -71,7 +71,7 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["sync_providers"]["codex"]["errored"] == 1
@@ -89,7 +89,7 @@ class TestProviderFailureContract:
             ],
             catch_exceptions=False,
         )
-        assert human_result.exit_code == 2, human_result.output
+        assert human_result.exit_code == 1, human_result.output
         assert "Codex MCP: errored 1" in human_result.output
         assert "error:" in human_result.output
 
@@ -118,7 +118,7 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["mcp_errors"]
@@ -182,7 +182,7 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert report["mcp_extra_action"] == expected_action

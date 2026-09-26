@@ -67,7 +67,7 @@ class TestFreshInstall:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert "provider intent is unreadable" in " ".join(report["mcp_errors"])

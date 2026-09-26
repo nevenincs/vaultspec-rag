@@ -23,6 +23,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ..cli import app
+from ._cli_helpers import usage_metavar
 from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
@@ -356,11 +357,7 @@ def test_updates_status_help_uses_project_language() -> None:
 def test_updates_project_argument_uses_project_language(argv: list[str]) -> None:
     result = runner.invoke(app, argv)
     assert result.exit_code == 0
-    # Typer renders a required positional as ``{name}`` in the usage line,
-    # so the argument reads as the project it names, never as a root.
-    assert "{project}" in result.stdout
-    assert " ROOT" not in result.stdout
-    assert "{root}" not in result.stdout
+    assert usage_metavar(result.stdout) == "project"
     assert "Project root" not in result.stdout
 
 

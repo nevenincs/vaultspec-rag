@@ -493,7 +493,7 @@ class TestInstallModeTransitions:
             ],
             catch_exceptions=False,
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
         data = install_report(result.output)
         assert data["mcp_extra_action"] == "conflict"
         assert data["mcp_failed"] is True

@@ -698,7 +698,9 @@ class TestErrorBranches:
             ],
             catch_exceptions=False,
         )
-        assert result.exit_code == 2, result.output
+        # A failed run, so the shared table's failure code - 2 is reserved
+        # for a run that completed and skipped a required step.
+        assert result.exit_code == 1, result.output
         assert pyproject.read_bytes() == before
         assert not list(ws.rglob("*.lock"))
 
