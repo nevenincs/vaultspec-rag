@@ -235,14 +235,14 @@ def acquire_index_integrity_snapshot_if_proven(
     """Acquire the proof token, or ``None`` when no proof can be read.
 
     The serving path needs the fence when there is one and must not fail
-    without it, so the typed rebuild-required outcome is turned into an
-    absence here rather than raised through a read-only request.
+    without it, so every unreadable-proof outcome is turned into an absence
+    here rather than raised through a read-only request.
     """
-    from .indexer._publication_proof import ProofUnverifiableError
+    from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
 
     try:
         return acquire_index_integrity_snapshot(root, source)
-    except ProofUnverifiableError:
+    except UNREADABLE_PUBLICATION_ERRORS:
         return None
 
 
