@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:f54cd18461afe6e17df883b6a0327346b50d7433855693dd19975171f77db6c0'
+body_hash: 'sha256:1f386bd7ab9edd0e8f3d80e217eccadca72b55f5905e244f064c0b1fd279c88f'
 related: []
 ---
 
@@ -219,6 +219,47 @@ descriptors. The temporary-directory fallback remains weaker than the two
 preferred locations - a per-account `1777` `TMPDIR` passes the shared test, and
 `/tmp` is swept by age - and is reached only on a host with neither preferred
 directory; whether such a host should refuse instead is a follow-on decision.
+
+### p02-review-verdict | low | Phase P02 passed its close review
+
+Phase P02 close review of `bc1f4c11` to `8a160339`: every audit finding it
+targeted closes. The refused install gives one refusal, one verify-depth probe,
+one envelope and exit 2; its holder list excludes the invoking chain and names an
+MCP adapter with the session to close. Each of the classifier, environment root,
+holder role and remediation builder exists once.
+
+### p02-review-json-parity | medium | two adapters still disagreed with their human output
+
+Doctor's JSON carried no version-floor upgrade command, and a refused install's
+JSON still carried the defaults of steps that never ran. Folded into P03.S13 and
+P03.S12, which rewrite those surfaces.
+
+### p02-review-api-rename | medium | a released public keyword was renamed without a breaking marker
+
+`get_readiness(include_holders=...)` became `holders_root=...`. Resolved by
+`2cd6282f`, which documents both parameters and carries a `BREAKING CHANGE`
+footer; the merge request must carry the marker too if the branch is squashed.
+
+### p02-review-launch-marker | medium | the service spawn spelled the launch module apart from its matchers
+
+Resolved by `d69a8c3d`: the spawn and the MCP launch module both derive from the
+shared launch marker.
+
+### p02-review-posix-bare-python-holder | medium | a POSIX holder started as bare `python -m` from an activated venv is not detected
+
+Suspected, not reproduced. The harm named - an operator running a wholesale
+`--force` replacement against a held environment - is removed by Phase P03, whose
+repair and upgrade apply in place, tolerate holders, and never replace an
+environment; holders then inform rather than gate. Recorded, with the evidence
+question (how a POSIX process is proven to run from an environment) left for a
+follow-on decision should holders gate anything again.
+
+### p02-review-lows | low | holder count, precondition wording, root spelling, role fallback, CPU-only advice
+
+Folded into P03.S11 and P03.S13: an unbounded holder count with an "and N more"
+line, a precondition that names its command, one environment-root derivation, a
+role fallback instead of a raise, and the load-failure path's CPU-only advice
+taken from the canonical builder.
 
 ## Recommendations
 
