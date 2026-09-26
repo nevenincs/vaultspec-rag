@@ -222,15 +222,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "read",
     ),
     "test_install_torch_config.py": (
-        3,
+        1,
         "drives a real install under a symlinked system temp root - the shape "
         "macOS has by default, where TMPDIR lives under a symlink - and the "
         "temp module caches its answer in a module attribute that pytest's own "
         "tmp_path populates before the test runs, so the documented "
         "environment override cannot take effect until that cache is cleared; "
         "the install itself runs for real and nothing about its behaviour is "
-        "replaced. Two more stand in for the uv the project sync launches: a "
-        "uv that never returns cannot be staged with a real one, and the "
+        "replaced",
+    ),
+    "test_uv_sync.py": (
+        2,
+        "stands in for the uv the project sync launches: a uv that never "
+        "returns cannot be staged with a real one, and the "
         "workspace-containment refusal must be observed without any uv "
         "running at all",
     ),
