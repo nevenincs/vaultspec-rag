@@ -77,8 +77,8 @@ version = "0.5.2"
 
   [project.optional-dependencies]
   # There is deliberately no `dev` extra here. The development toolchain lives
-  # in `[dependency-groups].dev` below, which is what `uv sync --group dev` and
-  # every CI job install. A `dev` extra existed alongside it and was installed
+  # in `[dependency-groups].dev` below, which is what `just init` and every CI
+  # job install. A `dev` extra existed alongside it and was installed
   # by nothing; it had drifted into a stale subset, missing the type checker
   # and every complexity, dead-code, dependency and security tool, so anyone
   # who did install it got a toolchain that silently could not run the gates.
@@ -131,10 +131,17 @@ dev = [
   "ty>=0.0.15",
   "vulture>=2.16",
   "xenon>=0.9.3",
-  "vaultspec-rag[gpu,mcp]",
+  "vaultspec-rag[mcp]",
 ]
+# The local inference stack is a group of its own, apart from `dev`, because
+# the gates and the accelerator-free suite never load a model: a job that runs
+# no GPU work syncs without it and never downloads torch or its CUDA wheels.
+# It stays a default group, so a plain `uv sync` or `uv run` on a GPU
+# workstation keeps the stack instead of uninstalling it.
+gpu = ["vaultspec-rag[gpu]"]
 
 [tool.uv]
+default-groups = ["dev", "gpu"]
 # Pin transitive deps up to non-vulnerable versions. `uv audit` flags
 # python-multipart<0.0.26 (CVE-2026-40347) via `mcp`. constraint-dependencies
 # forces the resolver to pick a fixed release without us taking a direct dep.
@@ -229,6 +236,7 @@ markers = [
   "cuda: requires serialized access to a real CUDA device",
   "mps: requires Apple silicon and runs the real model stack through MPS",
   "subprocess_gpu: CLI subprocess tests that load their own GPU models (run separately from integration)",
+  "torch: needs the local inference stack installed (torch, sentence-transformers) but no accelerator",
   "performance: benchmarking tests for throughput and latency",
   "quality: precision/recall and document coverage tests",
   "robustness: edge case and error handling tests",

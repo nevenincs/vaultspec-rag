@@ -99,6 +99,11 @@ env:
   # Job conditions cannot read env, so their literals are checked against the
   # canon. Steps use this one value directly.
   FULL_RUN_LABEL: "ci:full"
+  # No job here runs GPU work, so `just init` never installs the local
+  # inference stack: torch and its CUDA runtime are several gigabytes that the
+  # accelerator-free suite, the audit and the build never import. Tests that
+  # need torch as a library carry the `torch` marker and run in the GPU tier.
+  VAULTSPEC_INIT_GPU_STACK: "none"
 
 # Every self-hosted runner is persistent, and `contain-writes` points
 # `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
@@ -122,6 +127,11 @@ jobs:
        (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))
     timeout-minutes: 40
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      # The type checkers read torch's and the model libraries' annotations,
+      # so this job installs those packages - but not the CUDA runtime, which
+      # nothing here imports and which is most of the stack's size.
+      VAULTSPEC_INIT_GPU_STACK: "types"
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -2646,9 +2646,12 @@ dev = [
     { name = "radon" },
     { name = "ruff" },
     { name = "ty" },
-    { name = "vaultspec-rag", extra = ["gpu", "mcp"] },
+    { name = "vaultspec-rag", extra = ["mcp"] },
     { name = "vulture" },
     { name = "xenon" },
+]
+gpu = [
+    { name = "vaultspec-rag", extra = ["gpu"] },
 ]
 
 [package.metadata]
@@ -2704,10 +2707,11 @@ dev = [
     { name = "radon", specifier = ">=6.0.1" },
     { name = "ruff", specifier = ">=0.15.2" },
     { name = "ty", specifier = ">=0.0.15" },
-    { name = "vaultspec-rag", extras = ["gpu", "mcp"] },
+    { name = "vaultspec-rag", extras = ["mcp"] },
     { name = "vulture", specifier = ">=2.16" },
     { name = "xenon", specifier = ">=0.9.3" },
 ]
+gpu = [{ name = "vaultspec-rag", extras = ["gpu"] }]
 
 [[package]]
 name = "vulture"

@@ -369,6 +369,7 @@ class TestTheWireReading:
         assert wire["admitted"] is False
         assert wire["reason"] == REASON_BELOW_FLOOR
 
+    @pytest.mark.torch
     def test_device_load_reading_projects_the_evaluated_verdict(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

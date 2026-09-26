@@ -12,12 +12,20 @@ verb it is; ``init-python`` is the worktree-provisioning path to the same
 environment. No phase installs git hooks: gates run explicitly, and the commit
 hook runner's stash-and-restore cycle is unsafe when workers share a tree.
 
+One input is not a file: how much of the local inference stack to install is
+read from :data:`GPU_STACK_ENV`, because it is a property of the machine and
+the job, not of the checkout. A GPU workstation wants all of it by default; a
+job that runs no GPU work wants none of it and must never download it.
+
 Stdlib-only, by the constraint stated in :mod:`dev.init`.
 """
 
 from __future__ import annotations
 
+import os
 import sys
+import tomllib
+from pathlib import Path
 from typing import Final
 
 from dev.init.contract import Phase, Step
@@ -51,16 +59,87 @@ PREFLIGHT: Final[tuple[Step, ...]] = (
     ),
 )
 
+#: Chooses how much of the local inference stack - the `gpu` dependency group,
+#: torch and its model libraries - `init-python` installs. Unset means ``full``.
+GPU_STACK_ENV: Final = "VAULTSPEC_INIT_GPU_STACK"
+
+#: ``full`` installs the group with the CUDA runtime torch pulls in, which a
+#: workstation and the accelerator tiers need. ``types`` installs the group
+#: without that runtime, so the type checkers read the libraries' annotations
+#: on a host that never runs them; torch cannot be imported there. ``none``
+#: omits the group: the accelerator-free suite and every gate but type checking
+#: need nothing from it, and it is several gigabytes.
+GPU_STACKS: Final = ("full", "types", "none")
+
+
+def _cuda_runtime_packages() -> tuple[str, ...]:
+    """Return the locked packages that make up the CUDA runtime.
+
+    Read from the lock rather than listed, so a torch upgrade that adds or
+    renames a runtime wheel is excluded without anyone editing this file.
+
+    Returns:
+        The package names, sorted, or nothing when the lock is unreadable -
+        in which case the locked sync fails on its own and says why.
+    """
+    lock = Path(__file__).resolve().parents[2] / "uv.lock"
+    try:
+        packages = tomllib.loads(lock.read_text(encoding="utf-8")).get("package", [])
+    except (OSError, tomllib.TOMLDecodeError):
+        return ()
+    names = {str(package.get("name", "")) for package in packages}
+    return tuple(
+        sorted(
+            name
+            for name in names
+            if name.startswith(("nvidia-", "cuda-")) or name == "triton"
+        )
+    )
+
+
+def _uv_sync() -> Step:
+    """Return the locked sync for the inference stack the environment asks for.
+
+    Returns:
+        The step. Its argv differs per stack, which is what makes switching
+        stacks re-run the phase rather than trust a stamp written for another.
+
+    Raises:
+        SystemExit: When :data:`GPU_STACK_ENV` names no known stack. A typo
+            must not fall back to the default and quietly install gigabytes.
+    """
+    stack = os.environ.get(GPU_STACK_ENV, "").strip().lower() or "full"
+    argv: tuple[str, ...] = ("uv", "sync", "--locked", "--group", "dev")
+    if stack == "full":
+        argv = (*argv, "--group", "gpu")
+    elif stack == "types":
+        argv = (
+            *argv,
+            "--group",
+            "gpu",
+            *(
+                arg
+                for name in _cuda_runtime_packages()
+                for arg in ("--no-install-package", name)
+            ),
+        )
+    elif stack == "none":
+        argv = (*argv, "--no-group", "gpu")
+    else:
+        raise SystemExit(
+            f"{GPU_STACK_ENV}={stack!r} is not one of: {', '.join(GPU_STACKS)}"
+        )
+    return Step(
+        name="uv-sync",
+        argv=argv,
+        summary=f"Install the locked dev group; inference stack: {stack}.",
+    )
+
+
 PYTHON = Phase(
     name="python",
     summary="Resolve the locked Python development toolchain into .venv.",
-    steps=(
-        Step(
-            name="uv-sync",
-            argv=("uv", "sync", "--locked", "--group", "dev"),
-            summary="Install the locked dev dependency group.",
-        ),
-    ),
+    steps=(_uv_sync(),),
     inputs=("uv.lock", "pyproject.toml", ".python-version"),
     artifacts=(".venv",),
 )

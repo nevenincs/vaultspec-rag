@@ -66,6 +66,21 @@ a machine you do not administer, or in a sandbox.
 downloads, RAG model and Qdrant provisioning, and `cargo install` of dev gates
 stay behind their own named recipes. `init` restores what the lockfiles pin.
 
+**The inference stack is sized per machine.** `VAULTSPEC_INIT_GPU_STACK`
+chooses how much of the `gpu` dependency group — torch, its model libraries,
+and the CUDA runtime torch pulls in — `init-python` installs:
+
+| Value            | Installs                                   | For                                        |
+| ---------------- | ------------------------------------------ | ------------------------------------------ |
+| `full` (default) | The whole group, CUDA runtime included.    | GPU workstations and the accelerator tiers. |
+| `types`          | The group's packages, no CUDA runtime.     | Jobs that type-check; torch cannot import. |
+| `none`           | Nothing from the group.                    | Every other job that runs no GPU work.     |
+
+Any other value fails the run rather than falling back to `full`. Tests that
+need torch installed but no device carry the `torch` marker, so the
+accelerator-free lane excludes them and the GPU lane runs them. Switching the
+value re-runs `init-python`: the stamp digests each phase's resolved commands.
+
 ## Layout
 
 Every file here except `plan.py` is byte-identical in `vaultspec-core`,

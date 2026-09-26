@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dev.toolchain import CPU_ONLY
+
 from ._tier_gate import (
     SLOW_TIERS,
     coscheduled_device_tiers,
@@ -123,6 +125,23 @@ class TestTierClassification:
         )
 
         assert contradictory == ["t.py::test_gpu"]
+
+    def test_the_inference_stack_marker_is_a_requirement_not_a_tier(self) -> None:
+        """``torch`` says what must be installed, never which lane a test is in.
+
+        Mutation it catches: admitting ``torch`` as a tier. A test declaring
+        only that would pass the gate with no lane, and folding it into the
+        slow tiers would make a torch-only run borrow the resident service and
+        refuse distribution for tests that touch no device.
+        """
+        untiered, _, _ = tier_violations([_FakeItem("t.py::test_tensor", "torch")])
+        _, contradictory, _ = tier_violations(
+            [_FakeItem("t.py::test_tensor", "unit", "torch")]
+        )
+
+        assert untiered == ["t.py::test_tensor"]
+        assert contradictory == []
+        assert selectable_slow_tiers("torch") == []
 
     def test_two_device_tiers_together_are_reported(self) -> None:
         """The pairing this suite carried for a long time, now refused.
@@ -231,13 +250,10 @@ class TestSelectedTiers:
         assert selected_tiers([]) == set()
 
 
-#: The exclusion the project's own distributed lane passes. Held here as the
-#: input it is, so the admission direction is pinned against the real string
+#: The exclusion the project's own distributed lane passes, read from the
+#: recipe itself, so the admission direction is pinned against the real string
 #: rather than one invented to pass.
-_DISTRIBUTED_LANE_EXCLUSION = (
-    "not (integration or quality or performance or robustness "
-    "or subprocess_gpu or cuda or mps)"
-)
+_DISTRIBUTED_LANE_EXCLUSION = CPU_ONLY
 
 
 def _options(
