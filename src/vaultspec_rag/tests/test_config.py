@@ -1188,12 +1188,13 @@ def test_index_reuse_enabled_default() -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    ["0", "false", "False", "no", "off", ""],
-    ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
+    ["0", "false", "False", "no", "off"],
+    ids=["zero", "false-lower", "false-title", "no", "off"],
 )
 def test_index_reuse_enabled_env_falsey(raw: str) -> None:
-    # The off-switch parses off: any non-truthy value disables every donor
-    # lookup and restores the encode-everything baseline in one flip.
+    # The off-switch parses off: a false word disables every donor lookup and
+    # restores the encode-everything baseline in one flip. A blank value is
+    # not one of them - it is unset, and covered by the test below.
     prev = set_env(EnvVar.INDEX_REUSE, raw)
     try:
         reset_config()
@@ -1201,6 +1202,21 @@ def test_index_reuse_enabled_env_falsey(raw: str) -> None:
         value = cfg.index_reuse_enabled
         assert value is False
         assert isinstance(value, bool)
+    finally:
+        restore_env(EnvVar.INDEX_REUSE, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["", "   "], ids=["empty", "whitespace"])
+def test_index_reuse_enabled_env_blank_is_unset(raw: str) -> None:
+    # A shell spells an unset variable blank whenever an expansion misses, so
+    # blank falls through to the shipped default rather than reading as off.
+    # Resolving it as off would silently disable the feature for anyone whose
+    # deployment template exports a knob it has no value for.
+    prev = set_env(EnvVar.INDEX_REUSE, raw)
+    try:
+        reset_config()
+        assert get_config().index_reuse_enabled is True
     finally:
         restore_env(EnvVar.INDEX_REUSE, prev)
         reset_config()

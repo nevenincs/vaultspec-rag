@@ -1,0 +1,263 @@
+"""This package's environment variables, declared to the framework registry.
+
+:class:`~vaultspec_rag.config._types.EnvVar` stays the one list of names; this
+module is what turns each of those names into a registered framework entry, so
+the shared accessors - ``env_value``, ``env_flag``, ``child_environment`` and
+``resolve_credential`` - work on them. The entries are built by iterating the
+enum rather than restated one by one, because a second list is a list that
+drifts: a member added to the enum is registered here the moment it exists.
+
+What an entry declares here is the *name-level* contract, the part the
+framework needs in order to answer for a variable: who owns the name, whether
+it carries a credential, whether a workspace ``.env`` may supply that
+credential, and which framework-scoped name it falls back to. The *value-level*
+contract - the admissible range, the coercion, the collective rejection - stays
+with the settings schema that already owns it, which is why every entry
+declares ``var_type=str`` and no default: nothing is loaded into a framework
+configuration field, so the framework never parses one of these values.
+
+The three chained names are the settings this package shares with the rest of
+the framework. Each reads its own scoped name first and the shared name behind
+it, so one variable configures every package in a session that sets only the
+shared one.
+
+**Import cost.** This module reaches ``vaultspec_core.config``, which is an
+order of magnitude more expensive to import than the stdlib-only value
+vocabulary. Spawn-started workers re-import their whole chain per worker, so a
+module on that chain must not import this one; the guards in the test suite
+pin the modules that have to stay off it.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Final
+
+from vaultspec_core.config import (
+    VAULTSPEC_LOG_LEVEL,
+    VAULTSPEC_STDIO_WATCHDOG,
+    VAULTSPEC_TARGET_DIR,
+    ConfigVariable,
+    VariableScope,
+    register_registry,
+)
+
+from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
+from ._types import EnvVar
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+__all__ = ["PACKAGE", "entry"]
+
+#: The distribution these entries belong to. The credential gate resolves this
+#: package's install mode - not another's - before it opens a workspace ``.env``.
+PACKAGE: Final = "vaultspec-rag"
+
+#: Conventions another tool or standard owns, which this package honours. An
+#: explicit list rather than a prefix test: admitting a name to it is the
+#: decision that this project does not own the behaviour behind it, and that
+#: decision deserves to be reviewed one name at a time. The framework refuses
+#: the two halves disagreeing anyway - a product entry must carry the product
+#: prefix, and an external one must not - so a misfiling here cannot be built.
+_EXTERNAL: Final = frozenset(
+    {
+        EnvVar.HF_ENDPOINT,
+        EnvVar.HF_HOME,
+        EnvVar.HF_HUB_OFFLINE,
+        EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
+        EnvVar.HF_TOKEN,
+        EnvVar.TRANSFORMERS_OFFLINE,
+        EnvVar.DISABLE_SAFETENSORS_CONVERSION,
+        EnvVar.VIRTUAL_ENV,
+    }
+)
+
+#: Credentials. A secret's value is withheld from any message that refuses it,
+#: and a credential never chains to a second name: a key provisioned for one
+#: package must not enrol another.
+_SECRETS: Final = frozenset(
+    {
+        EnvVar.TYPESAFE_API_KEY,
+        EnvVar.QDRANT_API_KEY,
+        EnvVar.HF_TOKEN,
+    }
+)
+
+#: Credentials a workspace-root ``.env`` may supply, and only under the gate:
+#: the running interpreter inside the workspace, and this package resolved
+#: there as a project dependency. The Qdrant key is deliberately absent - it
+#: addresses an operator's own deployment, which repository content has no
+#: business naming.
+_WORKSPACE_DOTENV: Final = frozenset(
+    {
+        EnvVar.TYPESAFE_API_KEY,
+        EnvVar.HF_TOKEN,
+    }
+)
+
+#: The scoped names that fall back to a framework-scoped one.
+_FALLBACKS: Final[Mapping[EnvVar, ConfigVariable]] = {
+    EnvVar.RAG_ROOT: VAULTSPEC_TARGET_DIR,
+    EnvVar.LOG_LEVEL: VAULTSPEC_LOG_LEVEL,
+    EnvVar.STDIO_WATCHDOG: VAULTSPEC_STDIO_WATCHDOG,
+}
+
+#: Protective switches: an unusable value leaves the guard in its protective
+#: state and warns, rather than refusing the process.
+_FAIL_SAFE: Final = frozenset({EnvVar.STDIO_WATCHDOG})
+
+#: Markers this package sets on its own child processes. Documented, but not
+#: operator settings, so the collective startup check leaves them alone.
+_INTERNAL: Final[frozenset[EnvVar]] = frozenset()
+
+#: The settings key each override variable feeds, so a description can name it.
+_SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
+    var: key for key, var in ENV_OVERRIDE_MAP.items()
+}
+
+#: What a variable that is not a plain settings override does. A member with
+#: neither a settings key nor an entry here fails the totality check below,
+#: so a new name cannot land undescribed.
+_DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
+    EnvVar.RAG_ROOT: (
+        "The workspace root every process kind resolves against. Ranked below "
+        "an explicit target named by the invocation and above discovery from "
+        "the working directory; blank means unset, and the shared "
+        "VAULTSPEC_TARGET_DIR is read behind it."
+    ),
+    EnvVar.MEMORY_PROBE: (
+        "Set to a true word to record resident-set and CUDA memory at named "
+        "checkpoints through an indexing run. A diagnostic, off by default."
+    ),
+    EnvVar.TYPESAFE_API_KEY: (
+        "TypeSafe API key enabling the hosted classifier. Read from the "
+        "process environment first. A workspace-root .env supplies it only "
+        "when this package runs from the workspace's own environment in "
+        "dependency or dev mode, never for a globally installed tool, and the "
+        "resident daemon is handed the resolved value rather than reading any "
+        "file of its own."
+    ),
+    EnvVar.PREPROCESS: (
+        "Kill switch for document preprocessing. A false word stops every "
+        "root's rules from loading, beating a flag and a configured mode "
+        "alike; a true word, unset or blank leaves preprocessing on."
+    ),
+    EnvVar.STDIO_WATCHDOG: (
+        "Lifetime watchdog of the stdio server, on by default. A false word "
+        "disarms it, leaving stdin end-of-file as the only exit path. Unset, "
+        "blank or an unrecognised word leaves it armed: it is a protective "
+        "switch, so a typo warns rather than turning the guard off. The "
+        "shared VAULTSPEC_STDIO_WATCHDOG is read behind it."
+    ),
+    EnvVar.HF_TOKEN: (
+        "Hugging Face access token, honoured by huggingface_hub for gated "
+        "model repositories. Read from the process environment first; a "
+        "workspace-root .env supplies it under the same gate as the hosted "
+        "classifier key."
+    ),
+    EnvVar.HF_ENDPOINT: (
+        "Hugging Face Hub endpoint, honoured by huggingface_hub. Named here "
+        "so the literal lives in one place; the behaviour is the library's."
+    ),
+    EnvVar.HF_HOME: (
+        "Hugging Face cache location, honoured by huggingface_hub. Reported "
+        "on status surfaces so an operator can see where models will land."
+    ),
+    EnvVar.HF_HUB_OFFLINE: (
+        "Hugging Face Hub offline switch. A true word makes model loads "
+        "cache-only; a word the shared vocabulary does not recognise reads as "
+        "online, because the owning library, not this package, has authority "
+        "over its own value."
+    ),
+    EnvVar.HF_HUB_DOWNLOAD_TIMEOUT: (
+        "Per-request download timeout, honoured by huggingface_hub. Named "
+        "here so the literal lives in one place."
+    ),
+    EnvVar.TRANSFORMERS_OFFLINE: (
+        "Transformers offline switch, read alongside the Hub's own and under "
+        "the same lenient reading."
+    ),
+    EnvVar.DISABLE_SAFETENSORS_CONVERSION: (
+        "Transformers switch suppressing on-the-fly safetensors conversion. "
+        "Named here so the literal lives in one place."
+    ),
+    EnvVar.VIRTUAL_ENV: (
+        "The active virtual environment, set by the tool that activated it. "
+        "Read to report which environment a command is running from."
+    ),
+}
+
+
+def _scope(var: EnvVar) -> VariableScope:
+    """Return who owns *var*'s name."""
+    if var in _INTERNAL:
+        return VariableScope.INTERNAL
+    if var in _EXTERNAL:
+        return VariableScope.EXTERNAL
+    return VariableScope.PRODUCT
+
+
+def _description(var: EnvVar) -> str:
+    """Return what *var* does, for the operator reading a diagnostic.
+
+    A plain settings override is described from the schema that already
+    declares its key and its admissible range, so the two cannot disagree.
+
+    Args:
+        var: The variable to describe.
+
+    Returns:
+        A one-sentence description.
+
+    Raises:
+        KeyError: If *var* is neither a settings override nor described above.
+    """
+    written = _DESCRIPTIONS.get(var)
+    if written is not None:
+        return written
+    key = _SETTING_KEYS[var]
+    bound = SETTING_BOUNDS.get(key)
+    if bound is None:
+        return f"Overrides the {key} setting."
+    return f"Overrides the {key} setting, which must be {bound.shape}."
+
+
+_undescribed = sorted(
+    var.name for var in EnvVar if var not in _DESCRIPTIONS and var not in _SETTING_KEYS
+)
+if _undescribed:
+    raise RuntimeError(
+        "environment variables carry no description (add a settings key or a "
+        "written one): " + ", ".join(_undescribed)
+    )
+
+#: One registered entry per enum member, keyed by the member.
+_ENTRIES: Final[Mapping[EnvVar, ConfigVariable]] = {
+    var: ConfigVariable(
+        env_name=var.value,
+        attr_name=None,
+        var_type=str,
+        default=None,
+        description=_description(var),
+        secret=var in _SECRETS,
+        scope=_scope(var),
+        workspace_dotenv=var in _WORKSPACE_DOTENV,
+        fail_safe=var in _FAIL_SAFE,
+        fallback=_FALLBACKS.get(var),
+    )
+    for var in EnvVar
+}
+
+register_registry(PACKAGE, _ENTRIES.values())
+
+
+def entry(var: EnvVar) -> ConfigVariable:
+    """Return the registered entry for *var*.
+
+    Args:
+        var: The variable whose entry is wanted.
+
+    Returns:
+        The entry to hand to a framework accessor.
+    """
+    return _ENTRIES[var]

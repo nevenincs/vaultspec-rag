@@ -257,6 +257,10 @@ class EnvVar(StrEnum):
     HF_HOME = "HF_HOME"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
+    # Access token for gated model repositories, honoured by huggingface_hub.
+    # A credential, so it is resolved and passed explicitly rather than read
+    # off the ambient environment wherever a download happens.
+    HF_TOKEN = "HF_TOKEN"
     TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"
     DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
     VIRTUAL_ENV = "VIRTUAL_ENV"

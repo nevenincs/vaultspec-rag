@@ -11,11 +11,15 @@ from vaultspec_core.config import (
     VaultSpecConfig as BaseConfig,
 )
 from vaultspec_core.config import (
+    env_value,
+)
+from vaultspec_core.config import (
     get_config as get_base_config,
 )
 
 from .._env_values import BOOL_SHAPE, parse_bool
 from ._paths import read_persisted_local_only
+from ._registry import entry
 from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
 from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
 
@@ -768,7 +772,7 @@ class VaultSpecConfigWrapper:
         if name in self._rag_overrides:
             return True
         env_key = ENV_OVERRIDE_MAP.get(name)
-        return env_key is not None and os.environ.get(env_key.value) is not None
+        return env_key is not None and env_value(entry(env_key)) is not None
 
     def _legacy_watcher_value(
         self,
@@ -903,24 +907,18 @@ class VaultSpecConfigWrapper:
         if name in self._rag_overrides:
             return self._rag_overrides[name], None
 
-        # 2. Env var override
+        # 2. Env var override, read through the registry so the value arrives
+        # stripped, a blank one reads as unset for every key regardless of its
+        # type, and a scoped name that supplies nothing falls through to the
+        # framework name behind it. Blank as unset is what keeps ``VAR="$UNSET"``
+        # from repointing a path-like knob at the working directory, and it is
+        # now the same rule for a number and a flag rather than a carve-out for
+        # strings alone.
         env_key = ENV_OVERRIDE_MAP.get(name)
         if env_key is not None:
-            env_val = os.environ.get(env_key.value)
+            env_val = env_value(entry(env_key))
             if env_val is not None:
-                default = self._RAG_DEFAULTS[name]
-                if isinstance(default, str) and not env_val.strip():
-                    # An empty/whitespace string override for a path-like knob is
-                    # a footgun - e.g. ``VAR="$UNSET"`` exports ``""`` - and
-                    # ``Path("").expanduser()`` is the cwd, which would repoint
-                    # the managed-dir blast radius (delete/clean) into the working
-                    # dir. Treat it as absent (fall through to the module
-                    # default), matching the persistence helpers' ``or DEFAULT``.
-                    # The sole silent-fallback carve-out; every other malformed
-                    # value is rejected.
-                    pass
-                else:
-                    return self._coerce_env(name, env_val, env_key), env_key
+                return self._coerce_env(name, env_val, env_key), env_key
 
         # 3. Persisted runtime selection (local_only only). When
         # ``install --local-only`` wrote the marker, a later
