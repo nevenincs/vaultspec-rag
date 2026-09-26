@@ -423,17 +423,18 @@ def _report_command_failure(
 
 def _install_outcome(
     report: "InstallReport", *, configure_torch: bool
-) -> tuple[str, bool]:
-    """Classify a completed install run into its envelope status and exit need.
+) -> tuple[str, int]:
+    """Classify a completed install run into its envelope status and exit code.
 
-    Both a genuine failure and a required step skipped for lack of consent
-    map to the same non-zero exit code (issue #83 finding 3: an operator who
-    wanted the torch-config patch and did not get it must see CI fail
-    loudly), but the envelope's status word tells them apart for a ``--json``
-    consumer. ``DECLINED`` (the user's own answer to a prompt) and
-    ``CONFLICT`` (the user's own customised state, the warning is the
-    signal) stay a plain completed status; so do ``ABSENT`` and ``DISABLED``,
-    both intentional opt-outs.
+    Both outcomes below exit non-zero so CI fails loudly (issue #83 finding
+    3: an operator who wanted the torch-config patch and did not get it must
+    not read a green run), but they are not the same outcome and the shared
+    exit-code table keeps them apart: 1 is a failure, and 2 is a run that
+    completed with a required step skipped for lack of consent. The envelope
+    status word says the same thing in words. ``DECLINED`` (the user's own
+    answer to a prompt) and ``CONFLICT`` (the user's own customised state,
+    the warning is the signal) stay a plain completed status; so do
+    ``ABSENT`` and ``DISABLED``, both intentional opt-outs.
 
     Args:
         report: The completed run's report.
@@ -441,8 +442,8 @@ def _install_outcome(
             an explicit opt-out never turns its own absence into a failure.
 
     Returns:
-        ``(status, needs_nonzero_exit)``: the canonical outcome word for the
-        envelope, and whether the CLI must exit non-zero for it.
+        ``(status, exit_code)``: the canonical outcome word for the
+        envelope, and the process exit code that outcome carries.
     """
     from ..torch_config._constants import TorchConfigAction
 
@@ -467,14 +468,14 @@ def _install_outcome(
         or torch_errored
     )
     if hard_failure:
-        return "failed", True
+        return "failed", 1
     if torch_skipped:
-        return "skipped", True
+        return "skipped", 2
     if report.action == "dry_run":
-        return "unchanged", False
+        return "unchanged", 0
     if report.action == "upgrade":
-        return "updated", False
-    return "created", False
+        return "updated", 0
+    return "created", 0
 
 
 def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object] | None:
@@ -563,7 +564,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         _report_command_failure(
             exc, prefix="Install failed", json_output=options.json_output
         )
-        raise typer.Exit(code=2) from exc
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         _report_command_failure(
             exc, prefix="Install failed", json_output=options.json_output
@@ -580,7 +581,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # ``CONFLICT`` is by-definition the user's own customised state -
     # keep that 0 too (the warning is the signal). ``ABSENT`` and
     # ``DISABLED`` are intentional opt-outs; both 0.
-    status, needs_nonzero_exit = _install_outcome(
+    status, exit_code = _install_outcome(
         report, configure_torch=options.configure_torch
     )
 
@@ -605,8 +606,8 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
 
             warn_if_active_torch_not_accelerator()
 
-    if needs_nonzero_exit:
-        raise typer.Exit(code=2)
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
 @dataclass(frozen=True, slots=True)

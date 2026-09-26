@@ -105,13 +105,14 @@ def test_install_json_envelope_reports_skipped_on_unattended_torch_prompt(
 def test_install_json_envelope_reports_failed_on_corrupt_pyproject(
     tmp_path: Path,
 ) -> None:
+    """A failure is exit 1, the code above's skipped-step state is exit 2."""
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "pyproject.toml").write_text("[project\nname = ", encoding="utf-8")
 
     result = runner.invoke(app, ["install", "--target", str(ws), "--yes", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 1, result.output
     envelope = json.loads(result.output)
     assert envelope["schema"] == "vaultspec.rag.install.v1"
     assert envelope["status"] == "failed"

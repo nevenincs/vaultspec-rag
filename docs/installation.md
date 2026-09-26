@@ -295,6 +295,29 @@ See the [install command reference](cli.md#install) for all flags and exit codes
 For project dependencies, [complete the install with a sync](#complete-the-install-with-a-sync).
 Then [verify the install](#verify-the-install).
 
+#### Machine-readable output
+
+`install --json` and `uninstall --json` print one line: the shared vaultspec
+envelope `{"schema", "status", "data"}`, plus `"hints"` when the run has a next
+step to advise. The run's own report is the `data` member, and `status` is one
+word from the shared vocabulary:
+
+| Status      | Meaning                                                      |
+| ----------- | ------------------------------------------------------------ |
+| `created`   | The workspace was enrolled                                   |
+| `updated`   | An existing installation was upgraded                        |
+| `unchanged` | A preview (`--dry-run`), or a run that changed nothing       |
+| `removed`   | Uninstall removed the installation                           |
+| `skipped`   | The run completed but a required step was skipped for consent |
+| `failed`    | The run failed                                               |
+
+A run that cannot start at all prints the `vaultspec.error.v1` envelope with
+its reason instead, so every `--json` run is parsed the same way.
+
+The exit codes are the shared ones: `0` for success, `1` for a failure, and `2`
+for the `skipped` status above - a run that completed with a required step
+skipped, such as the PyTorch configuration patch nobody was there to approve.
+
 ### Choose where vaultspec-rag lives
 
 *Project and standalone tool routes.*
