@@ -202,6 +202,7 @@ None.
 | `--skip-models` | boolean | no | off | Skip the embedding/reranker model provisioning step. |
 | `--skip-qdrant` | boolean | no | off | Skip the Qdrant server binary provisioning step. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
+| `--no-hints` | boolean | no | off | Suppress next-step advisory hints. |
 
 ## uninstall
 

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from typer._click import Context as ClickContext
 
-    from ..commands._models import ConfirmFn
+    from ..commands._models import ConfirmFn, InstallReport, UninstallReport
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         skip_models: bool
         skip_qdrant: bool
         json: bool
+        no_hints: bool
 
     class _UninstallParams(TypedDict):
         target: Path | None
@@ -96,6 +97,7 @@ class _InstallOptions:
     skip_models: bool
     skip_qdrant: bool
     json_output: bool
+    no_hints: bool
 
 
 class _InstallCommand(TyperCommand):
@@ -284,6 +286,12 @@ class _InstallCommand(TyperCommand):
                     is_flag=True,
                     help=JSON_OPTION_HELP,
                 ),
+                TyperOption(
+                    param_decls=["--no-hints"],
+                    default=False,
+                    is_flag=True,
+                    help="Suppress next-step advisory hints.",
+                ),
             )
         )
         for param in self.params:
@@ -321,6 +329,7 @@ class _InstallCommand(TyperCommand):
                 skip_models=params["skip_models"],
                 skip_qdrant=params["skip_qdrant"],
                 json_output=params["json"],
+                no_hints=params["no_hints"],
             ),
         )
 
@@ -389,6 +398,112 @@ def _confirmation_hook(
     return None if unattended else confirm
 
 
+def _report_command_failure(
+    exc: BaseException, *, prefix: str, json_output: bool
+) -> None:
+    """Report a failure that stopped install or uninstall before any report.
+
+    Under ``--json`` this is core's ``vaultspec.error.v1`` envelope rather
+    than a plain line, so a scripted caller parsing every ``--json`` run the
+    same way sees a failure rather than empty stdout and a bare exit code.
+
+    Args:
+        exc: The exception that stopped the run.
+        prefix: ``"Install failed"`` or ``"Uninstall failed"``.
+        json_output: Whether this invocation requested ``--json``.
+    """
+    message = f"{prefix}: {exc}"
+    if json_output:
+        from vaultspec_core.envelope import render_error_envelope
+
+        typer.echo(render_error_envelope(message))
+    else:
+        _plain(message, soft_wrap=True)
+
+
+def _install_outcome(
+    report: "InstallReport", *, configure_torch: bool
+) -> tuple[str, bool]:
+    """Classify a completed install run into its envelope status and exit need.
+
+    Both a genuine failure and a required step skipped for lack of consent
+    map to the same non-zero exit code (issue #83 finding 3: an operator who
+    wanted the torch-config patch and did not get it must see CI fail
+    loudly), but the envelope's status word tells them apart for a ``--json``
+    consumer. ``DECLINED`` (the user's own answer to a prompt) and
+    ``CONFLICT`` (the user's own customised state, the warning is the
+    signal) stay a plain completed status; so do ``ABSENT`` and ``DISABLED``,
+    both intentional opt-outs.
+
+    Args:
+        report: The completed run's report.
+        configure_torch: Whether this run asked to configure PyTorch at all;
+            an explicit opt-out never turns its own absence into a failure.
+
+    Returns:
+        ``(status, needs_nonzero_exit)``: the canonical outcome word for the
+        envelope, and whether the CLI must exit non-zero for it.
+    """
+    from ..torch_config._constants import TorchConfigAction
+
+    torch_errored = (
+        configure_torch and report.torch_config_action is TorchConfigAction.ERROR
+    )
+    # The one place this run declined a required step for lack of consent
+    # rather than failing outright - the shared exit-code table's "completed
+    # with a required step skipped" (e.g. an unattended run with nobody to
+    # answer the torch-config prompt).
+    torch_skipped = configure_torch and report.torch_config_action in {
+        TorchConfigAction.SKIPPED_EOF,
+        TorchConfigAction.SKIPPED_NON_TTY,
+    }
+    hard_failure = (
+        report.mcp_extra_action == "error"
+        or report.mcp_sync_failed
+        or (
+            report.tool_torch_repair is not None
+            and report.tool_torch_repair.blocks_install
+        )
+        or torch_errored
+    )
+    if hard_failure:
+        return "failed", True
+    if torch_skipped:
+        return "skipped", True
+    if report.action == "dry_run":
+        return "unchanged", False
+    if report.action == "upgrade":
+        return "updated", False
+    return "created", False
+
+
+def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object] | None:
+    """Return the install envelope's next-step hint, or ``None`` when withheld.
+
+    Withheld under ``--no-hints`` or ``VAULTSPEC_NO_HINTS`` (core's shared
+    :func:`~vaultspec_core.envelope.hints_suppressed`, so the one suppression
+    contract holds here too), inside a git commit hook (the same function),
+    and for every status but a completed enrollment: a dry run previewed
+    nothing to check, and a failed or skipped run has a warning to read
+    first, not a follow-up command.
+
+    Args:
+        status: The envelope's own outcome word for this run.
+        no_hints: Whether the invocation passed ``--no-hints``.
+
+    Returns:
+        The structured hint, or ``None``.
+    """
+    from vaultspec_core.envelope import hints_suppressed
+
+    if status not in {"created", "updated"} or hints_suppressed(no_hints=no_hints):
+        return None
+    return {
+        "text": "Check the resident server and provisioning state",
+        "command": "vaultspec-rag server status",
+    }
+
+
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
 
@@ -443,17 +558,38 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
             repair_tool_torch=options.tool_repair,
         )
     except ParseError as exc:
-        _plain(f"Install failed: {exc}", soft_wrap=True)
+        _report_command_failure(
+            exc, prefix="Install failed", json_output=options.json_output
+        )
         raise typer.Exit(code=2) from exc
     except Exception as exc:
-        _plain(f"Install failed: {exc}", soft_wrap=True)
+        _report_command_failure(
+            exc, prefix="Install failed", json_output=options.json_output
+        )
         raise typer.Exit(code=1) from exc
 
-    if options.json_output:
-        import json as _json
+    # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
+    # wanted but couldn't be applied"). The configure_torch=True path
+    # ended in an outcome the user clearly did not opt into - surface
+    # it via a non-zero exit so CI consumers fail loudly instead of
+    # reading "torch-config: skipped-eof" buried in stdout.
+    #
+    # ``DECLINED`` is the user's own answer to a prompt - keep that 0.
+    # ``CONFLICT`` is by-definition the user's own customised state -
+    # keep that 0 too (the warning is the signal). ``ABSENT`` and
+    # ``DISABLED`` are intentional opt-outs; both 0.
+    status, needs_nonzero_exit = _install_outcome(
+        report, configure_torch=options.configure_torch
+    )
 
-        _cli.console.print_json(
-            _json.dumps(report.to_dict(), default=str), highlight=False
+    if options.json_output:
+        from vaultspec_core.envelope import render_install_envelope
+
+        hints = _install_next_step_hint(status, no_hints=options.no_hints)
+        typer.echo(
+            render_install_envelope(
+                "rag.install", status, report.to_dict(), hints=hints
+            )
         )
     else:
         _render_install_report(report)
@@ -467,35 +603,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
 
             warn_if_active_torch_not_accelerator()
 
-    # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
-    # wanted but couldn't be applied"). The configure_torch=True path
-    # ended in an outcome the user clearly did not opt into - surface
-    # it via a non-zero exit so CI consumers fail loudly instead of
-    # reading "torch-config: skipped-eof" buried in stdout.
-    #
-    # ``DECLINED`` is the user's own answer to a prompt - keep that 0.
-    # ``CONFLICT`` is by-definition the user's own customised state -
-    # keep that 0 too (the warning is the signal). ``ABSENT`` and
-    # ``DISABLED`` are intentional opt-outs; both 0.
-    from ..torch_config._constants import TorchConfigAction
-
-    if (
-        report.mcp_extra_action == "error"
-        or report.mcp_sync_failed
-        or (
-            report.tool_torch_repair is not None
-            and report.tool_torch_repair.blocks_install
-        )
-        or (
-            options.configure_torch
-            and report.torch_config_action
-            in {
-                TorchConfigAction.ERROR,
-                TorchConfigAction.SKIPPED_EOF,
-                TorchConfigAction.SKIPPED_NON_TTY,
-            }
-        )
-    ):
+    if needs_nonzero_exit:
         raise typer.Exit(code=2)
 
 
@@ -628,17 +736,39 @@ def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
             assume_yes=options.yes,
         )
     except Exception as exc:
-        _plain(f"Uninstall failed: {exc}", soft_wrap=True)
+        _report_command_failure(
+            exc, prefix="Uninstall failed", json_output=options.json_output
+        )
         raise typer.Exit(code=1) from exc
 
-    if options.json_output:
-        import json as _json
+    status = _uninstall_status(report)
 
-        _cli.console.print_json(
-            _json.dumps(report.to_dict(), default=str), highlight=False
-        )
+    if options.json_output:
+        from vaultspec_core.envelope import render_install_envelope
+
+        typer.echo(render_install_envelope("rag.uninstall", status, report.to_dict()))
     else:
         _render_uninstall_report(report)
 
     if report.mcp_sync_failed:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=1)
+
+
+def _uninstall_status(report: "UninstallReport") -> str:
+    """Return the envelope's canonical outcome word for a completed uninstall.
+
+    Args:
+        report: The completed run's report.
+
+    Returns:
+        ``"failed"`` when any requested MCP lifecycle operation failed,
+        ``"unchanged"`` for a preview or a run that removed nothing,
+        ``"removed"`` otherwise.
+    """
+    if report.mcp_sync_failed:
+        return "failed"
+    if report.action == "dry_run":
+        return "unchanged"
+    if report.removed:
+        return "removed"
+    return "unchanged"
