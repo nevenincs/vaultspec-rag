@@ -162,8 +162,8 @@ class TestInstallTorchConfig:
         # from the distributions it really holds, so this runs where the
         # inference stack is installed; a pinned role cannot cross into it.
         #
-        # Removing the variable is enough now that a workspace .env is read
-        # only inside the credential gate: nothing re-injects a developer's
+        # Removing the variable is enough: a workspace .env is read only
+        # inside the credential gate, so nothing re-injects a developer's
         # real token into the child on the way past.
         env: dict[str, str] = {
             **os.environ,

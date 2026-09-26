@@ -349,14 +349,16 @@ project:
 
 1. Run the setup. It asks to add a CUDA package source to `pyproject.toml`; answer `y`,
    or pass `--yes` for an unattended run. On Windows, declining leaves PyPI's CPU-only
-   PyTorch, which can't run the service. `--force` overwrites existing files but never
-   answers this prompt on its own - only `--yes` does. A run with nobody to answer it
-   (CI, a non-TTY session, or `--json`) never prompts: it skips the patch, reports the
-   skip, and exits non-zero so the gap is visible rather than silent.
+   PyTorch, which can't run the service.
 
    ```sh
    uv run vaultspec-rag install
    ```
+
+   `--force` overwrites existing files but never answers this prompt; only `--yes`
+   does. A run with nobody to answer it, such as CI, a non-TTY session, or `--json`,
+   never prompts. It skips the patch, reports the skip, and exits non-zero, so the gap
+   is visible rather than silent.
 
 1. Install the CUDA build and the `mcp` extra the setup adds:
 
@@ -391,10 +393,10 @@ the [install command reference](cli.md#install) for every flag and exit code.
 
 #### Machine-readable output
 
-`install --json` and `uninstall --json` print one line: the shared vaultspec
-envelope `{"schema", "status", "data"}`, plus `"hints"` when the run has a next
-step to advise. The run's own report is the `data` member, and `status` is one
-word from the shared vocabulary:
+`install --json` and `uninstall --json` print one line: the shared vaultspec envelope
+`{"schema", "status", "data"}`, plus `"hints"` when the run has a next step to advise.
+The run's own report is the `data` member, and `status` is one word from the shared
+vocabulary:
 
 | Status      | Meaning                                                       |
 | ----------- | ------------------------------------------------------------- |
@@ -405,15 +407,14 @@ word from the shared vocabulary:
 | `skipped`   | The run completed but a required step was skipped for consent |
 | `failed`    | The run failed                                                |
 
-A run that cannot start at all prints the `vaultspec.error.v1` envelope with
-its reason instead, so every `--json` run is parsed the same way.
+A run that can't start at all prints the `vaultspec.error.v1` envelope with its reason
+instead, so every `--json` run is parsed the same way.
 
-The exit codes are the shared ones: `0` for success, `1` for a failure, and `2`
-for the `skipped` status above - a run that completed with a required step
-skipped, such as the PyTorch configuration patch nobody was there to approve.
-A tool environment that needs the CUDA repair, and was not authorised to have
-it applied, is a failure rather than a skip: nothing was installed, so the
-requested state was not reached.
+The exit codes are the shared ones: `0` for success, `1` for a failure, and `2` for the
+`skipped` status above, a run that completed with a required step skipped, such as the
+PyTorch configuration patch nobody was there to approve. A tool environment that needs
+the CUDA repair, and wasn't authorised to have it applied, is a failure rather than a
+skip: nothing was installed, so the requested state wasn't reached.
 
 <p id="verify-the-install"></p>
 
@@ -614,12 +615,12 @@ installation and every client together.
 
    A client runs it as `uv run vaultspec-rag install --upgrade`.
 
-   A workspace from before placement was recorded (no `.vaultspec/workspace.json`
-   entry for vaultspec-rag) has its placement inferred rather than reset: a
-   `pyproject.toml` runtime dependency or dev-group entry is only honoured when the
-   workspace's already-deployed MCP launch actually matches it, so `--upgrade` cannot
-   silently move a working `tool`-mode deployment onto `dependency` mode just because
-   the package is also listed.
+   A repository set up before its placement was recorded, with no vaultspec-rag entry
+   in `.vaultspec/workspace.json`, has its placement inferred rather than reset. A
+   `pyproject.toml` runtime dependency or dev-group entry counts only when the
+   repository's existing MCP launch already matches it, so `--upgrade` can't move a
+   working `tool`-mode setup onto `dependency` mode just because the package is also
+   listed.
 
 1. If you ran the host's repository setup with `--local-only`, `--skip-qdrant`, or
    `--no-provision`, it skipped the Qdrant download. When the
@@ -833,9 +834,8 @@ reports, and it's the only support channel.
 Removing a repository's setup removes its integration, not the package, and it keeps
 indexed data by default. Read the [uninstall flags](cli.md#uninstall) before choosing
 data removal. If vaultspec-rag is a project dependency, prefix each command with
-`uv run`. Uninstall is destructive by default: without `--force`, and without
-`--dry-run` to preview instead, the command refuses to run rather than silently
-previewing.
+`uv run`. Uninstall is destructive by default: without `--force`, or `--dry-run` to
+preview instead, the command refuses to run rather than silently previewing.
 
 1. From the repository root, preview the changes:
 
