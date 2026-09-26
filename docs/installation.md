@@ -467,6 +467,13 @@ service with either `HF_TOKEN` or a persisted login:
 hf auth login
 ```
 
+A standalone tool installation exposes only vaultspec-rag's own commands, so `hf` is
+not on your `PATH` there. Run the login through uv instead:
+
+```bash
+uvx --from huggingface_hub hf auth login
+```
+
 `HF_TOKEN` takes precedence over the token stored by the login command. A token alone
 is not sufficient until its account has accepted the model conditions. Without both
 access approval and authentication, model download or `server start` may report a
@@ -496,7 +503,8 @@ If a run exhausts GPU memory, that's a runtime concern rather than an install on
 ## Upgrade
 
 Close connected clients before stopping the service. The service may be shared
-with other clients, so coordinate the interruption.
+with other clients, so coordinate the interruption. Stop and start it from the host
+installation; a client installation cannot start it again.
 
 The service and setup commands use `vaultspec-rag`. For project dependencies, add `uv run`;
 for the temporary route, use your original `uvx` invocation. See
@@ -518,12 +526,17 @@ Resolve any stop failure before updating. Use the command for your installation 
 uv upgrades respect version constraints. Preserve your Python selection and
 [CUDA build pin](#pin-the-gpu-build).
 
+A client installation refuses a service from a different release, even a newer one.
+When you upgrade the host installation, move every client project to the same release,
+for example with `uv add --dev "vaultspec-rag[mcp]==<release>"` for a client in the
+development dependencies.
+
 For `uvx`, follow [version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
 and keep your chosen extras.
 
 From each project root, refresh the bundled rules, skills, and MCP files.
 Reuse your original installation options, including `--no-mcp` or `--local-only`
-if you selected them:
+if you selected them, and `--no-provision` for a client installation:
 
 ```bash
 vaultspec-rag install --upgrade

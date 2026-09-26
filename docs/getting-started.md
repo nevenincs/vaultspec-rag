@@ -13,7 +13,10 @@ the normal project setup to download the models, including the
 then follow "Verify the install."
 
 A base or `[mcp]` client installation is intentionally model-free and cannot perform
-this tutorial's `server start` step by itself. There is no `[rag]` extra.
+this tutorial's `server start` step by itself. There is no `[rag]` extra. If a host
+installation on this machine already runs the service at the client's release, a client
+can follow Steps 2 to 4: its `server start` reports the running service instead of
+starting one.
 
 Examples use the `uv run` prefix, which runs the command inside a project environment.
 If you installed vaultspec-rag as a standalone tool, drop the prefix and call

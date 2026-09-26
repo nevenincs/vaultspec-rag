@@ -18,8 +18,10 @@ standalone tool and no-install routes.
 
 ## Install the MCP server
 
-`vaultspec-rag install` enrolls the MCP server by default. It installs the
-optional `mcp` dependency and writes the client configuration for you:
+`vaultspec-rag install` enrolls the MCP server by default and writes the client
+configuration for you. When vaultspec-rag is a project dependency, it also adds
+the optional `mcp` extra to that requirement; run `uv sync` afterwards, because
+the written configuration launches the server without syncing:
 
 ```bash
 vaultspec-rag install
@@ -43,8 +45,9 @@ check.
 
 The `vaultspec-search-mcp` console script is registered by the base install, but
 it needs the `mcp` extra to run. Without it the server exits at launch with a
-message naming the fix. `vaultspec-rag[gpu,mcp]` installs the MCP protocol and
-the local inference stack together.
+message naming the fix. The server loads no models, so `vaultspec-rag[mcp]` is
+all a client installation needs; `vaultspec-rag[gpu,mcp]` installs the MCP
+protocol and the local inference stack together for a host installation.
 
 ### Start the service
 
@@ -180,8 +183,8 @@ copy an example below. Both use the console-script shape, which runs wherever
 binary. It is not what the installer writes for `tool` mode: that renders
 `uvx --from vaultspec-rag[gpu,mcp] python -m vaultspec_rag.server`, which
 fetches both extras rather than requiring them to be installed already. It
-writes that pair whichever extras you installed with, so an entry naming only
-`mcp` is not a variant of it - it is a server without the inference stack. For `dependency` or
+writes that pair whichever extras you installed with. The server itself needs
+only `mcp`: it loads no models and forwards every call to the service. For `dependency` or
 `dev` mode, set `command` to `uv` and `args` to
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
@@ -287,11 +290,13 @@ which rarely matches the project you want.
 
 ### The first call is slow
 
-The first search of a session loads the models and can take several seconds.
-Pre-warm them before launching the assistant:
+The MCP server loads no models. The service loads them when it starts, and
+`server start` waits until they are ready. A slow first call usually means the
+service is still starting, or is opening that project for the first time. Check
+its state:
 
 ```bash
-vaultspec-rag server warmup
+vaultspec-rag server status
 ```
 
 ## Process lifetime

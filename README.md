@@ -96,7 +96,9 @@ The default setup downloads
 [`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a gated sparse model.
 Before running it, accept the model's access conditions and authenticate the service
 account with `HF_TOKEN` or `hf auth login`; a token alone is insufficient until its
-account has accepted the conditions. The model's CC-BY-NC-SA-4.0 license restricts
+account has accepted the conditions. A standalone tool installation exposes only
+vaultspec-rag's own commands, so run the login there as
+`uvx --from huggingface_hub hf auth login`. The model's CC-BY-NC-SA-4.0 license restricts
 commercial use. If the gate or license is unsuitable, follow the
 [dense-only setup](docs/installation.md#the-model-cache-and-its-first-download) instead.
 
@@ -125,6 +127,9 @@ vaultspec-rag server doctor
 
 Check that the report detects your GPU and finds all three models and the Qdrant
 binary. If it reports a problem, use the [installation troubleshooting guide](docs/installation.md#when-something-goes-wrong).
+A client installation reports PyTorch as not needed instead; check a client with
+`vaultspec-rag server status`, which must show the running service at the client's
+own release.
 
 ## Use it
 
