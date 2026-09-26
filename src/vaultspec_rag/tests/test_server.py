@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import httpx
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 from ..capabilities import BackendCapabilities
 from ..config._settings import reset_config
@@ -95,6 +97,49 @@ class TestServerRouteRuntime:
         assert get_app_runtime(app).port == 8765
         with pytest.raises(RuntimeError, match="no valid server route runtime"):
             get_app_runtime(Starlette())
+
+    def test_an_unhandled_route_failure_answers_in_the_service_envelope(
+        self,
+    ) -> None:
+        # The framework default answers plain text, which the client rightly
+        # cannot attribute to this daemon, so every search failing on an old
+        # ledger was reported as a wrong port. Mutation: dropping the handler
+        # from the production factory fails the content-type assertion below.
+        from starlette.testclient import TestClient
+
+        from ..indexer._run_ledger_models import RunLedgerRebuildRequiredError
+
+        app = create_http_app(
+            ServerRouteRuntime(
+                token="unhandled-route-token",
+                registry=ServiceRegistry(),
+                port=8765,
+            ),
+            lifespan=None,
+        )
+
+        async def failing(_request: Request) -> Response:
+            raise RunLedgerRebuildRequiredError(
+                "run ledger schema 6 is not supported; expected 9; "
+                "an explicit rebuild is required"
+            )
+
+        app.add_route("/failing", failing)
+        client = cast("httpx.Client", TestClient(app, raise_server_exceptions=False))
+
+        response = client.get("/failing")
+
+        assert response.status_code == 500
+        assert response.headers["content-type"] == "application/json"
+        body = cast("dict[str, object]", response.json())
+        assert body["ok"] is False
+        assert body["error"] == "internal_error"
+        assert body["message"] == (
+            "RunLedgerRebuildRequiredError: run ledger schema 6 is not supported; "
+            "expected 9; an explicit rebuild is required"
+        )
+        assert body["error_kind"] == "full_reindex_required"
+        assert body["remediation"]
 
 
 def _run[T](coro: Coroutine[object, object, T]) -> T:
