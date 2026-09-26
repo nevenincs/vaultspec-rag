@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:c0fe2718c90ad04e3953db35371c6365442c9d11f6011662d0e319a715a7187c'
+body_hash: 'sha256:a962016c88ee53e2b1eb0538a5039a97211027c0536a1e429f84ca55b8ddc1a9'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -191,6 +191,7 @@ related:
 - `S09` `M` `src/vaultspec_rag/commands/_mode.py`
 - `S09` `verify:` `pytest -m unit test_install_mode test_managed_singleton_isolation test_cli_server_start` -> `pass`
 - `S09` `by:` `orchestrator`
+- `S10` `by:` `orchestrator`
 
 ## Notes
 
@@ -205,3 +206,4 @@ related:
 - `S02` P01 re-review: shared open widened a private lock on POSIX; widening now limited to files the call creates
 - `S11` deleted `TORCH_TOOL_PIN_VERSION` and its mirror test: the wheel URL it fed no longer exists, and the lockfile derivation the build tooling uses stays
 - `S09` P02 review: the service spawn and `RAG_MCP_MODULE` now derive from `SERVER_LAUNCH_MARKER`
+- `S10` P02 review: `get_readiness` replaced the released `include_holders` keyword with `holders_root;` marked as a breaking change for release
