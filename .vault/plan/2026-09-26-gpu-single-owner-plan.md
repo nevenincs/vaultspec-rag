@@ -10,9 +10,10 @@ related:
   - '[[2026-09-04-cuda-provisioning-adr]]'
   - '[[2026-09-23-status-messages-adr]]'
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
+  - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:a974e74c2ddc63ce4aaf8f81467dff6f14d646f870dfdb2d951dfe89ea740b98'
+body_hash: 'sha256:db7560e677582fa804fe59f13496d012187394dcacf1ac73a50a93f49cb05c1b'
 ---
 
 # `gpu-single-owner` plan
@@ -42,6 +43,15 @@ builder of P02.S06 needs them to avoid printing a wheel URL that cannot exist.
 Free-threaded interpreter support and network verification of wheel URLs stay out
 of scope.
 
+Phase P03 added 2026-09-26. Basis: asked why the repair keeps a potentially stale
+CUDA pin, the user directed "keep investigating and hardening - the install
+upgrade cycle must be a persistent and dependable automanagement cycle". P03
+implements `2026-09-26-tool-upgrade-cycle-adr`, grounded in
+`2026-09-26-tool-upgrade-cycle-research`, which replaces the direct-wheel pin
+(`2026-07-14-tool-env-gpu-continuity-adr` O-A1) and the version pin
+(`2026-09-04-cuda-provisioning-adr` D3) that P02.S06 and P02.S07 built on; the
+remaining decisions of both records stand.
+
 ## Steps
 
 ### Phase `P01` - one GPU owner per machine
@@ -64,6 +74,16 @@ Makes install, doctor, status and start give one correct, exact repair per condi
 - [ ] `P02.S09` - exclude the invoking launch chain from environment holders, pair launcher and interpreter, name each holder's role, and count what could not be inspected; `src/vaultspec_rag/_process_probe.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [ ] `P02.S10` - make doctor print the exact repair for the daemon interpreter and report that environment's holders in both human and JSON output; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/_readiness.py`.
 
+### Phase `P03` - one self-sustaining install and upgrade cycle
+
+Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool upgrade, with a receipt-carried CUDA source and in-place repair the product can run itself on consent.
+
+- [ ] `P03.S11` - add the typed tool-receipt verdict to operator_state and rebuild the command builder on the receipt-carried CUDA index and first-match strategy: an in-place torch-only repair and a bare upgrade, deleting the direct-wheel and version-pin machinery; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/commands/_tool_torch.py`.
+- [ ] `P03.S12` - make install treat a non-durable receipt as needing the repair, run the in-place repair itself on consent and verify compute and receipt afterwards, and hand over the command otherwise; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_install.py`.
+- [ ] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
+- [ ] `P03.S14` - prove the cycle against real uv with loopback stand-in wheels: a receipt written with the options is durable, the repair applies in place under a live holder, and a bare upgrade keeps the CUDA build; `src/vaultspec_rag/tests/`.
+- [ ] `P03.S15` - install uv tool hosts with the CUDA index and first-match strategy in the documentation, and document upgrading as uv tool upgrade followed by a service restart; `docs/, README.md`.
+
 ## Parallelization
 
 P01.S01 lands first because P02.S09 consumes the lineage query it adds. After it,
@@ -75,6 +95,10 @@ owns every other path it names. The one shared file, `cli/_service_start.py`, is
 split by function: P01.S04 edits only the machine-owner preflight and P02.S06 only
 the compute preflight and ephemeral warnings. Each Step commits its own paths by
 explicit pathspec. Within each Phase, Steps run in order.
+
+Phase P03 starts only after P02 closes, because it rewrites the command builder
+and the install, doctor and start surfaces P02 owns; one executor carries it
+serially.
 
 ## Verification
 
@@ -92,6 +116,11 @@ explicit pathspec. Within each Phase, Steps run in order.
 - A blocked install prints one refusal with one command, no success headline, and
   no holder that is the invoking command or its launcher.
 - Doctor prints the exact repair for a CPU-only daemon interpreter.
+- A tool host installed with the documented command, and one repaired by the
+  product, both carry a durable receipt, and a bare `uv tool upgrade` against real
+  uv keeps the CUDA build while moving the release.
+- The repair applies in place while a process holds the environment, and no path
+  replaces an environment wholesale.
 - Lint, format, type-check and the tests covering every touched path pass at each
-  Step; the P01 and P02 Phase closes each pass an integrated review recorded in the
-  audit.
+  Step; the P01, P02 and P03 Phase closes each pass an integrated review recorded
+  in the audit.
