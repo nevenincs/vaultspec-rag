@@ -198,6 +198,13 @@ class VaultIndexer(VaultIncrementalMixin):
         ``run_control`` defaults to the inert implementation for direct calls.
         """
         run_control.checkpoint()
+        if authority is RunAuthority.REBUILD:
+            from ._run_ledger_models import index_run_ledger_path
+            from ._run_ledger_runtime import set_aside_unsupported_ledger
+
+            set_aside_unsupported_ledger(
+                index_run_ledger_path(workspace_volume_path(self.root_dir.resolve()))
+            )
         with self._writer_lock, self._memory_telemetry():
             return run_index_lifecycle(
                 lambda: self._full_index_locked(

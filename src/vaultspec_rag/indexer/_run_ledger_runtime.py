@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 import uuid
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from .._source_types import PublicSourceType
+from ..logging_config import log_event
+from ._index_lifecycle import INDEX_EVENT_NAMESPACE
 from ._run_ledger_commits import RunLedgerCommitMethods
 from ._run_ledger_files import (
     RunLedgerFileMethods,
@@ -26,6 +29,7 @@ from ._run_ledger_models import (
     FinalizationPhase,
     GenerationRow,
     RunGeneration,
+    RunLedgerContentionError,
     RunLedgerCorruptionError,
     RunLedgerRebuildRequiredError,
     RunLedgerStateError,
@@ -50,7 +54,9 @@ from ._run_ledger_publication import (
 if TYPE_CHECKING:
     from ._content_policy import ContentKind
 
-__all__ = ["RunLedger"]
+__all__ = ["RunLedger", "set_aside_unsupported_ledger"]
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_schema_definition(definition: str) -> str:
@@ -1187,3 +1193,99 @@ def _signature_from_payload(payload: dict[str, object]) -> RunSignature:
         policy_fingerprint=_typed_field(payload, "policy_fingerprint", str),
         backend_identity=_typed_field(payload, "backend_identity", str),
     )
+
+
+#: How long an explicit rebuild waits, first for a peer rebuild of the same
+#: root setting the same ledger aside, then for readers to release the files it
+#: renames. Each is a few renames or a short read, so a wait past this bound is
+#: stuck rather than slow.
+_SET_ASIDE_WAIT_SECONDS: Final = 30.0
+
+#: SQLite's journal companions, moved before the database itself. A fresh
+#: ledger created at the original path must never find the old write-ahead log
+#: beside it, because SQLite would replay those frames into the new file.
+_LEDGER_COMPANION_SUFFIXES: Final = ("-wal", "-shm")
+
+
+def _replace_when_released(source: Path, target: Path, deadline: float) -> None:
+    """Rename *source*, waiting out a reader that briefly holds it open.
+
+    Every opener inspects the file through a short read-only connection, and on
+    Windows a file with any open handle cannot be renamed.
+    """
+    while True:
+        try:
+            source.replace(target)
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+        else:
+            return
+
+
+def set_aside_unsupported_ledger(path: Path) -> Path | None:
+    """Move a ledger this build refuses to open aside, intact, for a rebuild.
+
+    Opening never alters an older or differently shaped ledger, and nothing
+    migrates one, so an explicit rebuild over it failed with the same
+    rebuild-required error that names the rebuild as the remedy, and the root
+    could never be indexed again. Only a rebuild calls this: it renames the
+    database and its journal companions beside the original path, never edits
+    or deletes them, and the rebuild then creates a current ledger in place.
+    The ledger is shared by every source of the root, but a format this build
+    cannot read serves none of them, so no readable proof is lost.
+
+    Args:
+        path: The root's run-ledger path.
+
+    Returns:
+        The path the refused ledger now lives at, or ``None`` when the ledger
+        is absent or this build opens it.
+
+    Raises:
+        RunLedgerContentionError: A peer rebuild held the set-aside lock past
+            the wait bound.
+    """
+    from datetime import UTC, datetime
+
+    from .._store_locks import FileLock
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(path.with_name(f"{path.name}.set-aside.lock"))
+    deadline = time.monotonic() + _SET_ASIDE_WAIT_SECONDS
+    while not lock.acquire():
+        if lock.last_error_stage != "lock" or time.monotonic() >= deadline:
+            raise RunLedgerContentionError(
+                f"run ledger {path} could not be set aside: {lock.last_error}"
+            )
+        time.sleep(0.05)
+    try:
+        if not path.is_file():
+            return None
+        try:
+            RunLedger(path)
+        except RunLedgerRebuildRequiredError as exc:
+            refusal = str(exc)
+        else:
+            return None
+        deadline = time.monotonic() + _SET_ASIDE_WAIT_SECONDS
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        target = path.with_name(f"{path.name}.unsupported-{stamp}")
+        for suffix in _LEDGER_COMPANION_SUFFIXES:
+            companion = Path(f"{path}{suffix}")
+            if companion.exists():
+                _replace_when_released(companion, Path(f"{target}{suffix}"), deadline)
+        _replace_when_released(path, target, deadline)
+    finally:
+        lock.release()
+    log_event(
+        logger,
+        INDEX_EVENT_NAMESPACE,
+        "ledger_set_aside",
+        severity=logging.WARNING,
+        ledger=path,
+        set_aside_as=target,
+        refusal=refusal,
+    )
+    return target
