@@ -22,7 +22,7 @@ from contextlib import chdir
 from typing import TYPE_CHECKING
 
 import pytest
-from vaultspec_core.config import CredentialSource
+from vaultspec_core.config import VAULTSPEC_TARGET_DIR, CredentialSource
 from vaultspec_core.core.enums import InstallMode
 from vaultspec_core.core.workspace_mode import (
     PackageDeclaration,
@@ -243,15 +243,29 @@ def test_the_daemon_environment_carries_the_sessions_credentials(
 def test_the_daemon_child_environment_never_pins_the_project_root(
     tmp_path: Path,
 ) -> None:
-    """The multi-root daemon must not inherit one workspace's root."""
+    """The multi-root daemon must not inherit one workspace's root.
+
+    Both names have to go. They are two rungs of one chain, so leaving the
+    framework name behind would pin the daemon just as effectively as the
+    scoped one - and rather less visibly, because a session that exports it
+    is usually naming a workspace for some other tool.
+    """
     root = _workspace(tmp_path, package=PACKAGE, mode=InstallMode.DEPENDENCY)
-    previous = set_env(EnvVar.RAG_ROOT, str(root))
+    scoped = os.environ.get(EnvVar.RAG_ROOT.value)
+    shared = os.environ.get(VAULTSPEC_TARGET_DIR.env_name)
+    os.environ[EnvVar.RAG_ROOT.value] = str(root)
+    os.environ[VAULTSPEC_TARGET_DIR.env_name] = str(root)
     try:
         env = _build_service_child_env(_ServiceChildEnvRequest(root=root))
     finally:
-        restore_env(EnvVar.RAG_ROOT, previous)
+        restore_env(EnvVar.RAG_ROOT, scoped)
+        if shared is None:
+            os.environ.pop(VAULTSPEC_TARGET_DIR.env_name, None)
+        else:
+            os.environ[VAULTSPEC_TARGET_DIR.env_name] = shared
 
     assert EnvVar.RAG_ROOT.value not in env
+    assert VAULTSPEC_TARGET_DIR.env_name not in env
 
 
 def test_no_workspace_resolves_no_assignments() -> None:

@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
-from vaultspec_core.config import child_environment
+from vaultspec_core.config import VAULTSPEC_TARGET_DIR, child_environment
 
 from .._process_probe import (
     bounded_call,
@@ -366,13 +366,15 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
         request.local_only,
         request.preprocess_mode,
     )
-    # Strip VAULTSPEC_RAG_ROOT from the daemon env - the HTTP service is
-    # multi-tenant and must not fall back to a baked-in project root.
+    # Strip every name that could pin a root - this package's own and the
+    # framework name behind it, which the same chain reads. The HTTP service
+    # is multi-tenant and must not fall back to a baked-in project: leaving
+    # either one in would answer one root's question about another.
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
-    _excluded = str(EnvVar.RAG_ROOT).upper()
+    _excluded = {EnvVar.RAG_ROOT.value.upper(), VAULTSPEC_TARGET_DIR.env_name.upper()}
     inherited = child_environment(*credential_assignments(request.root))
-    env = {k: v for k, v in inherited.items() if k.upper() != _excluded}
+    env = {k: v for k, v in inherited.items() if k.upper() not in _excluded}
     if watch is not None:
         env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
     if watch_debounce_ms is not None:

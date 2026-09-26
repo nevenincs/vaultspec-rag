@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
+from vaultspec_core.config import ConfigurationError
 from vaultspec_core.config.workspace import (
     WorkspaceError,
     WorkspaceLayout,
@@ -24,8 +25,7 @@ from vaultspec_core.config.workspace import (
 
 import vaultspec_rag.cli as _cli
 
-from .._named_root import env_named_root
-from ..config._types import EnvVar
+from .._named_root import named_root
 from ..logging_config import configure_logging
 from ._render import _plain
 
@@ -524,14 +524,19 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
 
     # Precedence for the project this invocation addresses: the flag, then the
     # environment, then whatever the workspace resolver makes of the working
-    # directory. The environment sits in the middle because exporting
-    # ``VAULTSPEC_RAG_ROOT`` names a project as deliberately as typing the
-    # flag does, and the working directory names nothing - it is wherever the
-    # shell happened to be. Reading it here, before any workspace is resolved,
-    # is what makes that possible: the variable decides *which* project a
-    # configuration is built for, so it cannot be resolved alongside the
-    # settings that are read out of that project.
-    named_target = options.target if options.target is not None else env_named_root()
+    # directory. The environment sits in the middle because exporting a root
+    # names a project as deliberately as typing the flag does, and the working
+    # directory names nothing - it is wherever the shell happened to be.
+    # Reading it here, before any workspace is resolved, is what makes that
+    # possible: the variable decides *which* project a configuration is built
+    # for, so it cannot be resolved alongside the settings that are read out
+    # of that project.
+    try:
+        resolved_root = named_root(options.target)
+    except ConfigurationError as refusal:
+        _plain(f"Error: {refusal}")
+        raise typer.Exit(code=1) from None
+    named_target = resolved_root.path
 
     if ctx.invoked_subcommand in (
         "server",
@@ -554,13 +559,14 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
         layout = resolve_workspace(target_override=named_target)
         ctx.obj = CLIState(layout)
     except WorkspaceError as e:
-        if options.target is None and named_target is not None:
-            # Attribute the failure to the variable: an operator who passed no
-            # flag has no other way to learn that the environment chose the
-            # directory being complained about.
+        if resolved_root.variable is not None:
+            # Attribute the failure to the variable the operator actually set,
+            # which may be the framework-wide name behind this package's own:
+            # somebody who passed no flag has no other way to learn that the
+            # environment chose the directory being complained about.
             _plain(
-                f"Error: {EnvVar.RAG_ROOT.value} names {named_target}, which is "
-                f"not a usable workspace: {e}"
+                f"Error: {resolved_root.variable} names {named_target}, which "
+                f"is not a usable workspace: {e}"
             )
         else:
             _plain(f"Error: {e}")
