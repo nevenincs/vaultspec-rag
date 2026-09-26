@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:56ffb8a9dfda12c098e692efc10b0df8e0a83914053e744a069639597beeae9e'
+body_hash: 'sha256:fb1c5ce592f5e3debc85cba04af7c32ec757c7c4e9f88d43942fdd51c0b601be'
 related: []
 ---
 
@@ -367,6 +367,30 @@ product produces reaches it.
 ### p03-review-second-uv-launcher-unbounded | low | the project sync launch has no timeout or containment
 
 `src/vaultspec_rag/commands/_uv_sync.py:31-42`; predates the branch.
+
+### p04-e2e-repair-survives-running-launchers | info | the two-step repair and a bare upgrade leave the environment whole end to end
+
+Rerun on Windows with uv 0.12.12 from wheels built at `fc40e93a` (0.5.2, and
+a 0.5.3 bump), in a sandbox tool directory in the field shape, with an MCP
+adapter running through its launcher throughout. `install --upgrade --json`
+without consent exited 2 with one JSON document naming both steps.
+`install --upgrade --yes` run through the product's own launcher exited 0:
+torch `2.14.0+cu130`, the receipt step reported the package already installed,
+`Lib`, both launchers and a receipt carrying the index and strategy intact, and
+the restart named. A bare `uv tool upgrade` then installed 0.5.3 with torch
+still `+cu130`, reporting only the running adapter launcher, which runs 0.5.3.
+This closes p03-e2e-running-launcher-deletes-env.
+
+### p04-e2e-console-script-adapter-unrecognised | low | an MCP adapter started through its console script is reported as an unrecognised process
+
+The same run listed the running adapter with role `unrecognised`: the
+`vaultspec-search-mcp` console script (`pyproject.toml:71`) starts
+`vaultspec_rag.server:main` without `-m vaultspec_rag.server` on its command
+line, so `is_server_launch` (`src/vaultspec_rag/_process_probe.py:672`) does
+not match it. The remedy printed, restart once the repair is done, is still
+right; the label is less specific than the product can be. The
+`HolderRelation` docstring (`src/vaultspec_rag/_process_probe.py:625-633`)
+still says image and launch-path holders are processes to end.
 
 ## Recommendations
 
