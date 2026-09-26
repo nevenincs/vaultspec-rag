@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:4d9414033b62d288f7927cf3832e9093a57ff032115e7415dc61f569e2d9714e'
+body_hash: 'sha256:0ec39a85894cfc1319524346798472474b77c295b19166e581924f4e89a7dd62'
 ---
 
 # `gpu-single-owner` plan
@@ -72,7 +72,7 @@ Makes install, doctor, status and start give one correct, exact repair per condi
 - [x] `P02.S07` - state the version pin in the tool repair and replace every uv tool upgrade recommendation with a command that upgrades while keeping the CUDA wheel; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_service_doctor.py, docs/`.
 - [x] `P02.S08` - render a refused install as refused, once: correct headline and action, no duplicated warnings, no second torch diagnosis, no rows for steps that never ran; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/cli/_render.py`.
 - [x] `P02.S09` - exclude the invoking launch chain from environment holders, pair launcher and interpreter, name each holder's role, and count what could not be inspected; `src/vaultspec_rag/_process_probe.py, src/vaultspec_rag/commands/_tool_torch.py`.
-- [ ] `P02.S10` - make doctor print the exact repair for the daemon interpreter and report that environment's holders in both human and JSON output; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/_readiness.py`.
+- [x] `P02.S10` - make doctor print the exact repair for the daemon interpreter and report that environment's holders in both human and JSON output; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/_readiness.py`.
 
 ### Phase `P03` - one self-sustaining install and upgrade cycle
 

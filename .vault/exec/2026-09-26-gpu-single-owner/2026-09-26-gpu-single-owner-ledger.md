@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:8669cf3d804603805d12db224a80e13cd8958568be30c6e7d2e008a7c950337d'
+body_hash: 'sha256:73e7450a4dabd50b17692d8ec863be1a5afdff5accd70c119ca644dacccce7f3'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -154,6 +154,20 @@ related:
 - `S05` `M` `src/vaultspec_rag/tests/test_citation_gate.py`
 - `S05` `verify:` `pytest -m unit P01 revision set (394 passed; remaining failures outside P01)` -> `pass`
 - `S05` `verify:` `revision guard mutations (8) fail then pass` -> `pass`
+- `S10` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S10` `M` `src/vaultspec_rag/_readiness.py`
+- `S10` `M` `src/vaultspec_rag/api.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_readiness_holders.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S10` `verify:` `ruff check` -> `pass`
+- `S10` `verify:` `ruff format --check` -> `pass`
+- `S10` `verify:` `ty check` -> `pass`
+- `S10` `verify:` `basedpyright` -> `pass`
+- `S10` `verify:` `pytest test_server_doctor test_doctor_repair_and_holders test_readiness test_readiness_holders test_substitution_discipline` -> `pass`
+- `S10` `verify:` `guard mutations (repair not printed, holders scanned over sys.prefix, holders absent from both outputs) fail then pass` -> `pass`
+- `S10` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -164,3 +178,4 @@ related:
 - `S07` uv 0.12.x verified in an isolated `UV_TOOL_DIR` sandbox: an == pin makes uv tool upgrade a no-op and uv names uv tool install pkg@latest; `pkg[extras]@latest` with --force, --python and --with installs and records the extras unpinned
 - `S05` P01 phase-close review revision: borrow-lane loan, lent-path cost, citation gate, JSON refusal, envelope shape, start remediation, legacy detection, anchor directory, fixture, foreign-release reason
 - `S05` `test_substitution_discipline` fails on `test_storage_maintenance_tick.py` (base commit d18045e8) and on `test_readiness_holders.py` (P02.S10 in progress), both outside this revision
+- `S10` `test_substitution_discipline` still fails on `test_storage_maintenance_tick.py,` a base-branch entry outside this plan

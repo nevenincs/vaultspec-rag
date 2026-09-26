@@ -20,17 +20,22 @@ nothing - the dependency reporter and the live signals are both read-only.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
-from ..operator_state._provisioning import upgrade_command_for_mode
+from ..operator_state._holders import HolderRole, holder_line
+from ..operator_state._provisioning import cuda_remediation, upgrade_command_for_mode
 from ..operator_state._service import ServiceLifecycle
+from ..operator_state._topology import environment_root
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
 from ._process import _resolve_daemon_interpreter
 from ._render import _emit_json, _plain
+
+if TYPE_CHECKING:
+    from ..operator_state._installation import ComputeCapability
 
 
 @server_root_app.command(
@@ -64,10 +69,11 @@ def service_doctor(
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
 
-    compute = probe_interpreter(
-        _resolve_daemon_interpreter(), ProbeDepth.VERIFY
-    ).compute
-    report = get_readiness(include_holders=True, compute=compute)
+    interpreter = _resolve_daemon_interpreter()
+    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    # The holders that matter are the ones holding the environment the
+    # service would run in, which is not necessarily this command's own.
+    report = get_readiness(holders_root=environment_root(interpreter), compute=compute)
     service = _live_service_axis()
     mode = _mode_floor_axis(Path.cwd())
     overall_ready, status = _overall_readiness(report, service)
@@ -80,10 +86,15 @@ def service_doctor(
             "dependencies": report.get("dependencies"),
             "service": service,
             "mode": mode,
+            "interpreter": interpreter,
+            "environment_holders": report.get("environment_holders"),
+            "compute_repair": _compute_repair_steps(interpreter, compute.capability),
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
+        _render_compute_repair(interpreter, compute.capability)
+        _render_environment_holders(report)
         _render_mode_floor_axis(mode)
     raise typer.Exit(code=_doctor_exit_code(service, mode))
 
@@ -289,6 +300,73 @@ def _render_readiness(
     _plain(f"Readiness: {_overall_label(overall_ready, status)}")
     _render_live_service_axis(service)
     _render_dependency_axis(report)
+
+
+def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
+    """The repair for this interpreter, or nothing when there is none to run.
+
+    Only a defect a new torch wheel fixes has a provisioning repair. A
+    missing device or a refused accelerator policy is answered by the
+    capability's own remediation, which the readiness line already carries.
+    """
+    if not capability.fixed_by_torch_reinstall:
+        return []
+    return list(cuda_remediation(interpreter).steps)
+
+
+def _render_compute_repair(interpreter: str, capability: ComputeCapability) -> None:
+    """Print the exact repair for the interpreter the service would run in.
+
+    The compute capability's own remediation says this command prints it,
+    and status renders that sentence, so it has to be true here.
+    """
+    steps = _compute_repair_steps(interpreter, capability)
+    if not steps:
+        return
+    _plain(f"Repair for {interpreter}:")
+    for step in steps:
+        _plain(f"  {step}", soft_wrap=True)
+
+
+def _render_environment_holders(report: dict[str, object]) -> None:
+    """Report who is running out of the service environment, and what they are.
+
+    The scan ran for the daemon's environment, so the list is about the
+    environment a repair would replace rather than the one this command
+    happens to run in.
+    """
+    raw = report.get("environment_holders")
+    if not isinstance(raw, dict):
+        return
+    snapshot = cast("dict[str, object]", raw)
+    if not snapshot.get("scanned"):
+        return
+    holders = snapshot.get("holders")
+    entries = cast("list[object]", holders) if isinstance(holders, list) else []
+    if not entries and snapshot.get("certain") and not snapshot.get("self_held"):
+        _plain("Service environment: nothing is running out of it")
+        return
+    _plain("Running out of the service environment:")
+    if snapshot.get("self_held"):
+        _plain("  this command is running inside that environment")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        holder = cast("dict[str, object]", entry)
+        pid = holder.get("pid")
+        port = holder.get("port")
+        launcher = holder.get("launcher_pid")
+        _plain(
+            "  "
+            + holder_line(
+                int(pid) if isinstance(pid, int) else 0,
+                HolderRole(str(holder.get("role", HolderRole.UNRECOGNISED))),
+                launcher_pid=launcher if isinstance(launcher, int) else None,
+                port=port if isinstance(port, int) else None,
+            )
+        )
+    if not snapshot.get("certain"):
+        _plain("  the scan was incomplete, so this list may be short")
 
 
 def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:

@@ -22,7 +22,7 @@ from .._process_probe import HolderRelation, is_server_launch, server_launch_por
 if TYPE_CHECKING:
     from .._process_probe import EnvironmentHolder
 
-__all__ = ["HolderRole", "holder_role", "holder_summary"]
+__all__ = ["HolderRole", "holder_line", "holder_role", "holder_summary"]
 
 #: How much of a command line is shown. Long enough to recognise a process by,
 #: short enough that ten holders stay readable.
@@ -77,6 +77,28 @@ def holder_role(holder: EnvironmentHolder) -> HolderRole:
     )
 
 
+def holder_line(
+    pid: int,
+    role: HolderRole,
+    *,
+    launcher_pid: int | None = None,
+    port: int | None = None,
+) -> str:
+    """Name one holder, what it is, and what clears it, in one line.
+
+    Two surfaces report holders and they may not show the same detail: the
+    install refusal shows the command line, and the readiness snapshot must
+    not, because it is also served over HTTP. What they do share is this
+    line, so an operator reading either one is told the same thing about the
+    same process.
+    """
+    pids = f"pid {pid}"
+    if launcher_pid is not None:
+        pids += f" (with its launcher, pid {launcher_pid})"
+    named = role.label + (f" on port {port}" if port is not None else "")
+    return f"{pids} - {named}: {role.remediation(port)}"
+
+
 def _shortened(cmdline: str) -> str:
     """Trim a command line to something an operator can read in a list."""
     return (
@@ -93,11 +115,11 @@ def holder_summary(holder: EnvironmentHolder) -> str:
     process in one environment has the same image, so the image answers "which
     of these is the service" for none of them.
     """
-    role = holder_role(holder)
-    pids = f"pid {holder.pid}"
-    if holder.launcher_pid is not None:
-        pids += f" (with its launcher, pid {holder.launcher_pid})"
-    port = server_launch_port(holder.argv)
-    named = role.label + (f" on port {port}" if port is not None else "")
+    line = holder_line(
+        holder.pid,
+        holder_role(holder),
+        launcher_pid=holder.launcher_pid,
+        port=server_launch_port(holder.argv),
+    )
     what = holder.cmdline or holder.image or "unknown process"
-    return f"{pids} - {named}: {role.remediation(port)}\n      {_shortened(what)}"
+    return f"{line}\n      {_shortened(what)}"

@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING
 from .operator_state._compute import local_compute
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .operator_state._models import ComputeReport
 
 logger = logging.getLogger(__name__)
@@ -139,15 +141,23 @@ class EnvironmentHoldersReadiness:
         certain: Whether an empty list may be read as "nothing holds this".
             False when a process could not be inspected or the scan could not
             finish - absence of evidence, not evidence of absence.
-        holders: Bounded holder facts: pid, relation and image path. Command
-            lines are deliberately omitted; this snapshot is also served over
-            HTTP, and an argument vector can carry material the readiness
-            route has no business republishing.
+        self_held: Whether the asking process, or something that launched it,
+            runs out of this environment. It is left out of the list because
+            it is not an obstacle the reader can clear, and reported here so
+            they are told once.
+        holders: Bounded holder facts: pids, relation, role, the port a
+            service holder serves on, and the image path. Command lines are
+            deliberately omitted; this snapshot is also served over HTTP, and
+            an argument vector can carry material the readiness route has no
+            business republishing. The role is derived from the command line
+            in this process, so the reader learns what each holder is without
+            the argument vector leaving it.
     """
 
     scanned: bool = True
     held: bool = False
     certain: bool = True
+    self_held: bool = False
     holders: list[dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -156,6 +166,7 @@ class EnvironmentHoldersReadiness:
             "scanned": self.scanned,
             "held": self.held,
             "certain": self.certain,
+            "self_held": self.self_held,
             "holders": self.holders,
         }
 
@@ -237,7 +248,7 @@ class ReadinessReport:
 
 def compute_readiness(
     *,
-    include_holders: bool = False,
+    holders_root: str | Path | None = None,
     compute: ComputeReport | None = None,
 ) -> ReadinessReport:
     """Aggregate the bounded per-dependency readiness snapshot.
@@ -247,10 +258,13 @@ def compute_readiness(
     a model, touching the GPU, downloading, or mutating any state.
 
     Args:
-        include_holders: Scan for processes running out of this interpreter's
-            environment. Off by default because the walk costs seconds and
+        holders_root: The environment to scan for holders, or ``None`` to
+            skip the scan. Off by default because the walk costs seconds and
             every caller pays it; an operator diagnosing a machine wants it,
-            a polled route does not.
+            a polled route does not. The root is asked for rather than
+            assumed, because the environment a caller needs to know about is
+            the one that would run the service, which is not necessarily the
+            one this process runs in.
         compute: The compute verdict for the environment being assessed. A
             torch-free caller supplies the one it probed out of process;
             when omitted, this process classifies its own environment.
@@ -272,33 +286,41 @@ def compute_readiness(
         ],
         server_mode=server_mode,
         environment_holders=(
-            _environment_holders_readiness()
-            if include_holders
-            else EnvironmentHoldersReadiness(scanned=False, certain=False)
+            EnvironmentHoldersReadiness(scanned=False, certain=False)
+            if holders_root is None
+            else _environment_holders_readiness(holders_root)
         ),
     )
 
 
-def _environment_holders_readiness() -> EnvironmentHoldersReadiness:
-    """Report the live processes running out of this interpreter's environment.
+def _environment_holders_readiness(root: str | Path) -> EnvironmentHoldersReadiness:
+    """Report the live processes running out of the environment at *root*.
 
     Bounded twice over: the scan carries a short budget because this reporter
     also answers an HTTP route, and the reported list is capped because an
     operator acts on holders one at a time rather than reading a census.
+
+    The asking process and its launch chain are left out. This list exists to
+    be worked through, and the command producing it is not something its
+    reader can clear.
     """
-    import sys
-    from pathlib import Path
+    from ._process_probe import environment_holders, server_launch_port
+    from .operator_state._holders import holder_role
 
-    from ._process_probe import environment_holders
-
-    found = environment_holders(Path(sys.prefix), timeout=_HOLDER_SCAN_BUDGET_SECONDS)
+    found = environment_holders(
+        root, exclude_launch_chain=True, timeout=_HOLDER_SCAN_BUDGET_SECONDS
+    )
     return EnvironmentHoldersReadiness(
         held=found.held,
         certain=found.certain,
+        self_held=found.self_held,
         holders=[
             {
                 "pid": holder.pid,
+                "launcher_pid": holder.launcher_pid,
                 "relation": str(holder.relation),
+                "role": str(holder_role(holder)),
+                "port": server_launch_port(holder.argv),
                 "image": holder.image,
             }
             for holder in found.holders[:_HOLDER_REPORT_LIMIT]

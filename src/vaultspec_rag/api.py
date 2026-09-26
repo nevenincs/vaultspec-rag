@@ -1124,7 +1124,7 @@ def run_quality_probe(
 
 def get_readiness(
     *,
-    include_holders: bool = False,
+    holders_root: str | pathlib.Path | None = None,
     compute: ComputeReport | None = None,
 ) -> dict[str, Any]:
     """Return a bounded, read-only dependency-readiness snapshot.
@@ -1148,14 +1148,14 @@ def get_readiness(
         non-ready dimensions, the config-derived ``support_profile``,
         the bounded storage ``schema`` descriptor, and an
         ``environment_holders`` snapshot that is only populated when
-        *include_holders* asks for it - the scan walks the process table
-        and costs seconds, which a polled route must not pay. Designed to
+        *holders_root* names an environment to scan - the scan walks the
+        process table and costs seconds, which a polled route must not pay. Designed to
         serve both a human render and a JSON envelope. A torch-free caller
         passes the *compute* verdict it probed out of process.
     """
     from ._readiness import compute_readiness
 
-    return compute_readiness(include_holders=include_holders, compute=compute).to_dict()
+    return compute_readiness(holders_root=holders_root, compute=compute).to_dict()
 
 
 class _WatcherState(TypedDict):

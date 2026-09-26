@@ -174,17 +174,27 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "with nothing substituted",
     ),
     "test_readiness_holders.py": (
-        2,
-        "points the readiness scan at a purpose-built environment by "
-        "substituting the running interpreter's own prefix, which the "
-        "reporter reads to decide what to scan. A test cannot relaunch itself "
-        "from inside a temporary virtual environment, and asserting on "
-        "whatever happens to hold the developer's own prefix would assert "
-        "nothing. The second widens the scan budget, which production sizes "
-        "for an HTTP route: a walk of every process on a runner hosting a "
-        "dozen parallel workers does not finish inside it, and the snapshot "
-        "then honestly reports that it could not tell - indistinguishable, to "
-        "an assertion about content, from finding no holder",
+        1,
+        "widens the scan budget, which production sizes for an HTTP route: a "
+        "walk of every process on a runner hosting a dozen parallel workers "
+        "does not finish inside it, and the snapshot then honestly reports "
+        "that it could not tell - indistinguishable, to an assertion about "
+        "content, from finding no holder",
+    ),
+    "test_doctor_repair_and_holders.py": (
+        7,
+        "substitutes the interpreter probe, the daemon interpreter and the "
+        "holder scan across three cases. The probe starts a child "
+        "interpreter and imports torch in it, so a CPU-only build cannot be "
+        "provoked on a GPU host and the defect branch would never run. The "
+        "daemon interpreter is redirected at a purpose-built environment "
+        "because the point of the assertion is that the verb asks about that "
+        "environment rather than its own, which is untestable while the two "
+        "are the same directory. The holder scan is substituted so the roots "
+        "it is asked about can be observed and so a service-shaped holder "
+        "exists at all; spawning one would mean starting a real daemon in a "
+        "unit test. Everything else is the real verb, including the whole "
+        "render and envelope path the assertions read",
     ),
     "test_install_torch_config.py": (
         1,
