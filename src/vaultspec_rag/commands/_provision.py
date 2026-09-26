@@ -323,7 +323,6 @@ def _provision_torch(request: _TorchProvisionRequest) -> ProvisionStepResult:
         report=report,
         options=TorchInstallOptions(
             dry_run=dry_run,
-            force=False,
             configure_torch=True,
             assume_yes=assume_yes,
             sync_after=sync_after,

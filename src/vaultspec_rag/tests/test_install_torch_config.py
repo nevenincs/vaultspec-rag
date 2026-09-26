@@ -186,22 +186,24 @@ class TestInstallTorchConfig:
         warnings = cast("list[object]", payload["warnings"])
         assert any("HuggingFace token not found" in str(w) for w in warnings)
 
-    def test_install_force_implies_assume_yes_for_torch_config(
+    def test_install_force_does_not_answer_the_torch_config_prompt(
         self, consumer_workspace: Path
     ) -> None:
-        """Issue #83 finding 2: ``--force`` should bypass the torch-config
-        confirmation. A user who typed --force expects the whole install
-        to land; silently skipping the patch with a warning is the bug.
+        """``--force`` overwrites files; it never answers a consent prompt.
+        Only ``--yes`` may apply the patch non-interactively - a user who
+        typed ``--force`` alone gets the same non-TTY skip as one who typed
+        neither, with a warning naming ``--yes``.
         """
         report = install_run(
             path=consumer_workspace,
             force=True,
             assume_yes=False,
-            confirm=None,  # non-interactive - would otherwise be skipped-non-tty
+            confirm=None,  # non-interactive - hits the non-TTY skip branch
         )
-        assert report.torch_config_action == "applied"
+        assert report.torch_config_action == "skipped-non-tty"
+        assert any("--yes" in w for w in report.warnings)
         assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
-            TorchConfigState.CANONICAL
+            TorchConfigState.MISSING
         )
 
     def test_install_eof_distinguished_from_decline(
@@ -299,7 +301,7 @@ class TestInstallTorchConfig:
     def test_install_force_with_customised_still_reports_conflict(
         self, tmp_path: Path
     ) -> None:
-        """``--force`` bypasses the *prompt*, not the safety classifier.
+        """``--force`` never overrides the safety classifier.
         A CUSTOMISED block must still surface as a conflict - silently
         overwriting user-customised tool config is the worst outcome.
         """
@@ -501,11 +503,9 @@ class TestInstallTorchConfigFollowups:
     def test_install_force_with_no_torch_config_disables_patch(
         self, consumer_workspace: Path
     ) -> None:
-        """TEST-03 / INSTALL precedence: ``--no-torch-config`` must win
-        over ``--force``. A future refactor that hoisted the
-        force-implies-yes coercion above the configure_torch
-        short-circuit would silently apply the patch despite the user's
-        explicit opt-out.
+        """TEST-03 / INSTALL precedence: ``--no-torch-config`` disables the
+        patch outright, regardless of ``--force`` - which never reaches the
+        torch-config decision at all.
         """
         sha_before = _sha(consumer_workspace / "pyproject.toml")
         report = install_run(

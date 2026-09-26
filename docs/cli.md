@@ -187,10 +187,10 @@ None.
 | `--target`, `-t` | directory | no | - | Workspace path (default: current working directory). |
 | `--upgrade` | boolean | no | off | Refresh bundled rules and integration files even if present. |
 | `--dry-run` | boolean | no | off | Preview changes without writing. |
-| `--force` | boolean | no | off | Override existing files. Also bypasses the torch-config confirmation prompt (implies --yes for that step). --no-torch-config still wins. |
+| `--force` | boolean | no | off | Override existing files. Never answers the torch-config confirmation prompt; use --yes for that. |
 | `--skip` | str | no | () | Skip a component (repeatable). |
 | `--mode` | choice | no | - | Provisioning mode: 'tool' (default, launched via uvx), 'dependency' (a runtime project dependency resolved through the project's own venv, ships in built distributions), or 'dev' (the default dev dependency group; renders like dependency but does not ship in built distributions). Auto-detected from pyproject.toml when omitted. |
-| `--torch-config`, `--no-torch-config` | boolean | no | on | Configure the CUDA PyTorch package source in pyproject.toml. --no-torch-config takes precedence over --force / --yes. |
+| `--torch-config`, `--no-torch-config` | boolean | no | on | Configure the CUDA PyTorch package source in pyproject.toml. --no-torch-config takes precedence over --yes. |
 | `--tool-repair`, `--no-tool-repair` | boolean | no | on | Check whether a persistent uv tool environment holds a processor-only torch build, and report the command that repairs it. Nothing is installed or replaced by this check. --no-tool-repair skips it entirely. |
 | `--torch-group` | str | no | - | Place the managed CUDA torch direct-dependency under the PEP 735 [dependency-groups].NAME surface instead of [project].dependencies, so a dev-only consumer does not leak torch into its published requirements. Defaults the group name to 'dev' when passed without a value. Omit the flag entirely to keep the historic [project].dependencies placement. The group must be enabled for the resolve (`uv sync --group NAME`) for the cu130 pin to apply. |
 | `--yes`, `-y` | boolean | no | off | Skip the PyTorch configuration prompt. Required for non-interactive installs unless --no-torch-config is used. |

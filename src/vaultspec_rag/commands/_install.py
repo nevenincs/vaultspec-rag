@@ -1209,7 +1209,6 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
         report=report,
         options=TorchInstallOptions(
             dry_run=dry_run,
-            force=force,
             configure_torch=configure_torch,
             assume_yes=assume_yes,
             sync_after=sync_after,

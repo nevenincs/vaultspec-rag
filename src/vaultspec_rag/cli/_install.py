@@ -143,11 +143,8 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--force"],
                     default=False,
                     is_flag=True,
-                    help=(
-                        "Override existing files. Also bypasses the torch-config "
-                        "confirmation prompt (implies --yes for that step). "
-                        "--no-torch-config still wins."
-                    ),
+                    help="Override existing files. Never answers the torch-config "
+                    "confirmation prompt; use --yes for that.",
                 ),
                 TyperOption(
                     param_decls=["--skip"],
@@ -176,7 +173,7 @@ class _InstallCommand(TyperCommand):
                     is_flag=True,
                     help=(
                         "Configure the CUDA PyTorch package source in pyproject.toml. "
-                        "--no-torch-config takes precedence over --force / --yes."
+                        "--no-torch-config takes precedence over --yes."
                     ),
                 ),
                 TyperOption(
