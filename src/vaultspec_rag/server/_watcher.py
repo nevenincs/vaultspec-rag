@@ -303,8 +303,12 @@ class _WatcherScheduler:
         finally:
             current = self._registrations.get(key)
             after = current.controller.snapshot if current is not None else None
-            if after is not None and after.last_transition != (
-                None if before is None else before.last_transition
+            # Every reevaluation stamps a fresh transition record, so comparing
+            # records logs each scheduler turn. Only a changed state or reason
+            # is a transition an operator can act on.
+            if after is not None and (
+                before is None
+                or (after.state, after.reason) != (before.state, before.reason)
             ):
                 from ..api import controller_snapshot_envelope
 
