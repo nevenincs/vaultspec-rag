@@ -130,11 +130,16 @@ def _child(script: str, tmp_path: Path, *args: str) -> Generator[int]:
     process = subprocess.Popen([sys.executable, "-c", script, *arguments])
     try:
         deadline = time.monotonic() + _STARTUP_SECONDS
-        while not ready.exists():
+        # The content, not the file: creating it and writing the pid into it
+        # are two steps, and a loaded host can be descheduled between them.
+        reported = ""
+        while not reported:
             assert process.poll() is None, "the holder exited before it was ready"
             assert time.monotonic() < deadline, "the holder never became ready"
-            time.sleep(0.05)
-        yield int(ready.read_text())
+            reported = ready.read_text() if ready.exists() else ""
+            if not reported:
+                time.sleep(0.05)
+        yield int(reported)
     finally:
         stop.write_text("stop")
         try:

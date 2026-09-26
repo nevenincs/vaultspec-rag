@@ -1246,3 +1246,36 @@ def test_a_busy_service_is_told_to_wait_not_that_pause_failed() -> None:
         _pause_refusal_message(None)
         == "The service did not acknowledge borrower pause."
     )
+
+
+def test_a_refusal_the_service_named_reaches_the_operator_unchanged() -> None:
+    """A quiesced service that still refuses has a reason only it knows.
+
+    A loan it could not record - an anchor another account created and left
+    unwritable - looks, from the snapshot alone, exactly like a pause that was
+    never acknowledged, and the operator is told to debug quiescence while the
+    actual condition is a permission on a file. The service names it; this
+    side must not paper over the name with a sentence true of every refusal.
+
+    Mutation check: dropped the named-refusal branch, the shape this had.
+    Observed this assertion fail on the generic "reached a quiesced state but
+    did not acknowledge" sentence arriving instead.
+    """
+    from ..cli._gpu_lease import _pause_refusal_message
+
+    refused = _pause_refusal_message(
+        {
+            "ok": False,
+            "status": "borrower_gpu_not_lendable",
+            "error": "borrower_gpu_not_lendable",
+            "message": (
+                "The service paused for this borrower but could not lend it "
+                "the GPU, because another process owns the GPU or the loan "
+                "could not be recorded, so the GPU must not be used."
+            ),
+            "quiesce": _envelope(state="quiesced", active_compute_tickets=0),
+        }
+    )
+
+    assert "could not lend it the GPU" in refused
+    assert "did not acknowledge" not in refused
