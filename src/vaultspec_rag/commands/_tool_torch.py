@@ -8,11 +8,13 @@ verified afterwards rather than assumed from an exit code.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .._process_probe import (
@@ -20,6 +22,7 @@ from .._process_probe import (
     EnvironmentHolders,
     environment_holders,
 )
+from .._test_isolation import enforce_pytest_singleton_containment
 from ..operator_state._holders import holder_role, holder_summary
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
@@ -59,6 +62,14 @@ REPAIR_TIMEOUT_SECONDS = 1800.0
 #: What the operator is asked before anything is changed. It names the one
 #: mutation and the one thing that does not happen, because the previous
 #: repair replaced the whole environment and this one does not.
+#: How long uv may take to report where its tool directory is. It reads
+#: configuration and prints a path, so a second is generous; the bound exists
+#: because the repair must not hang on a uv that never answers.
+_TOOL_DIR_TIMEOUT_SECONDS = 30.0
+
+#: The tool directory entry this package installs as.
+_TOOL_ENTRY_NAME = "vaultspec-rag"
+
 CONSENT_PROMPT = (
     "Install the CUDA build of torch into this tool environment and record "
     "the CUDA index in its receipt? Nothing is removed and nothing has to be "
@@ -344,9 +355,21 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     output is captured instead, so the one envelope stays the only thing on
     stdout.
     """
+    # The one mutation this product performs on an environment it did not
+    # create. Under pytest it must stay inside the session's own temporary
+    # tree: a test that substitutes a classifier can otherwise point this at
+    # the machine's real tool installation, and uv rebuilding that
+    # environment removes its contents before it fails on the held files.
+    # Inert outside pytest, where an operator's own environment is the point.
+    enforce_pytest_singleton_containment(
+        environment_root(interpreter), operation="repair a tool environment"
+    )
     uv = shutil.which("uv")
     if uv is None:
         return False, "uv is not on PATH, so the repair could not be run here"
+    mismatch = _target_mismatch(uv, interpreter)
+    if mismatch is not None:
+        return False, mismatch
     arguments = (uv, *tool_repair_arguments(interpreter)[1:])
     try:
         # Argument form, with uv resolved off the PATH: no shell is involved.
@@ -367,6 +390,41 @@ def _run_repair(interpreter: str, *, stream: bool) -> tuple[bool, str]:
     detail = "; ".join(line.strip() for line in tail if line.strip())
     return False, f"uv exited with code {completed.returncode}" + (
         f": {detail}" if detail else ""
+    )
+
+
+def _target_mismatch(uv: str, interpreter: str) -> str | None:
+    """Refuse when uv's entry for this tool is not the environment in hand.
+
+    ``uv tool install`` acts on the tool directory's entry for the package,
+    which is not necessarily the environment the interpreter belongs to - and
+    when it is not, uv rebuilds that entry wholesale, removing its contents
+    before it fails on anything held. The two are compared before anything is
+    launched, by name rather than by resolved path, because an environment's
+    interpreter is a symlink out of the tree on POSIX.
+
+    ``uv tool dir`` reads configuration and writes nothing.
+    """
+    target = environment_root(interpreter)
+    try:
+        located = subprocess.run(
+            (uv, "tool", "dir"),
+            capture_output=True,
+            text=True,
+            timeout=_TOOL_DIR_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return f"uv could not report its tool directory, so the repair stopped: {exc}"
+    if located.returncode != 0:
+        return "uv could not report its tool directory, so the repair stopped"
+    entry = Path(os.path.abspath(located.stdout.strip())) / _TOOL_ENTRY_NAME
+    if entry == target:
+        return None
+    return (
+        f"uv would install into {entry}, which is not the environment being "
+        f"repaired ({target}); the repair stopped rather than rebuild another "
+        "environment"
     )
 
 

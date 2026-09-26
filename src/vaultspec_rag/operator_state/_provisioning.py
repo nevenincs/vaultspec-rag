@@ -41,6 +41,7 @@ __all__ = [
     "ToolReceiptVerdict",
     "classify_tool_receipt",
     "cuda_remediation",
+    "environment_python_request",
     "inplace_cuda_command",
     "published_wheel_platform_tag",
     "read_receipt",
@@ -307,6 +308,40 @@ def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | No
     return None
 
 
+def environment_python_request(interpreter: str) -> str | None:
+    """The ``--python`` request naming the version an environment already runs.
+
+    Read out of the environment's own configuration rather than from the
+    process asking, because they are routinely different: an install run from
+    a project virtual environment is asking about a tool environment built on
+    another interpreter. uv treats a request that does not match as a request
+    for a different environment and rebuilds, which is destructive; matching
+    it exactly is what keeps the repair in place.
+
+    ``None`` when the environment cannot be read. uv then keeps the
+    interpreter the environment already has, which is the outcome wanted, and
+    records no version request of its own.
+    """
+    config = environment_root(interpreter) / "pyvenv.cfg"
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    values = {
+        key.strip().lower(): value.strip()
+        for key, _, value in (line.partition("=") for line in lines)
+        if value
+    }
+    version = values.get("version_info") or values.get("version") or ""
+    parts = version.split(".")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    request = f"{parts[0]}.{parts[1]}"
+    # A free-threaded build is a different interpreter to uv, and the version
+    # alone does not say so; uv names it in the interpreter it points home at.
+    return f"{request}t" if "freethreaded" in values.get("home", "") else request
+
+
 def tool_package_requirement(interpreter: str) -> str:
     """Render the package request a repair may ask for, and no more.
 
@@ -350,16 +385,20 @@ def tool_repair_arguments(
     ``upgrade`` takes the newest release in the same step, for an
     installation whose receipt cannot carry the CUDA source across a bare
     upgrade yet.
+
+    ``--python`` names the version the TARGET environment already runs, read
+    out of that environment. A request uv reads as a different interpreter is
+    not applied in place at all: uv rebuilds the environment wholesale, which
+    removes its contents and then fails on whatever a running service holds.
+    An environment that cannot be read is given no request, which uv applies
+    in place and records nothing for.
     """
-    # ``--python`` names the interpreter itself: uv rebuilds a tool
-    # environment with its own default python request, so an installation
-    # made against another interpreter silently moves without it.
+    python = environment_python_request(interpreter)
     args = (
         "uv",
         "tool",
         "install",
-        "--python",
-        interpreter,
+        *(() if python is None else ("--python", python)),
         tool_package_requirement(interpreter),
         "--index",
         CU130_INDEX_URL,

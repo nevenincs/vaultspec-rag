@@ -8,12 +8,9 @@ label against plain dicts.
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 from ..cli._service_start import (
     _caller_ephemeral_warning,
@@ -27,6 +24,7 @@ from ..operator_state._provisioning import (
     ToolReceiptVerdict,
     classify_tool_receipt,
     cuda_remediation,
+    environment_python_request,
     inplace_cuda_command,
     published_wheel_platform_tag,
     tool_repair_command,
@@ -215,6 +213,8 @@ def _tool_env(tmp_path: Path, receipt: str) -> str:
     return str(root / "Scripts" / "python.exe")
 
 
+_PLAIN_RECEIPT = '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
+
 _DURABLE_RECEIPT = (
     '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
     "[tool.options]\n"
@@ -255,6 +255,60 @@ class TestTheReceiptCarriesTheCudaSource:
         assert "--force" not in command
         assert "==" not in command
         assert "--with" not in command
+
+    def test_the_python_request_names_the_target_environments_own_version(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: a mismatched request destroys the environment.
+
+        uv reads a ``--python`` it does not recognise as the environment's
+        own as a request for a different environment, and rebuilds wholesale:
+        it removes the contents and then fails on whatever a running service
+        holds, leaving nothing importable. The version therefore comes out of
+        the target environment, never out of the process doing the asking.
+        """
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
+        root = Path(interpreter).parent.parent
+        (root / "pyvenv.cfg").write_text(
+            "home = C:/python/cpython-3.14-windows\n"
+            "implementation = CPython\n"
+            "version_info = 3.14.6\n",
+            encoding="utf-8",
+        )
+
+        assert environment_python_request(interpreter) == "3.14"
+        assert "--python 3.14 " in tool_repair_command(interpreter)
+
+    def test_an_environment_that_cannot_be_read_gets_no_python_request(
+        self, tmp_path: Path
+    ) -> None:
+        """No request at all keeps the interpreter uv already has.
+
+        Guessing one from the running process is what produced the mismatch
+        that rebuilds the environment.
+        """
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
+
+        assert environment_python_request(interpreter) is None
+        assert "--python" not in tool_repair_command(interpreter)
+
+    def test_a_free_threaded_environment_keeps_its_t_suffix(
+        self, tmp_path: Path
+    ) -> None:
+        """A free-threaded build is a different interpreter to uv.
+
+        Guard assertion: the version alone reads the same for both builds, so
+        a request derived from it names the GIL interpreter and uv rebuilds.
+        """
+        interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
+        root = Path(interpreter).parent.parent
+        (root / "pyvenv.cfg").write_text(
+            "home = /opt/uv/python/cpython-3.14.6+freethreaded-linux\n"
+            "version_info = 3.14.6\n",
+            encoding="utf-8",
+        )
+
+        assert environment_python_request(interpreter) == "3.14t"
 
     def test_a_receipt_with_both_options_and_no_pin_is_durable(
         self, tmp_path: Path

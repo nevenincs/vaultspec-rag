@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from pytest import MonkeyPatch
 
+from .._test_isolation import ManagedSingletonIsolationError
 from ..commands import _tool_torch
 from ..operator_state import _environment_probe, _provisioning
 from ..operator_state._compute import ProbeDepth
@@ -21,7 +24,6 @@ pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
-    from pathlib import Path
 
 
 def _persistent_tool_env(_root: object) -> RuntimeEnvKind:
@@ -167,6 +169,80 @@ def test_no_path_here_replaces_an_environment_wholesale() -> None:
     assert "--force" not in " ".join(
         _provisioning.tool_repair_arguments("/opt/env/bin/python", upgrade=True)
     )
+
+
+def test_a_repair_outside_the_pytest_root_never_reaches_uv(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Guard assertion: this is the one call that mutates a real environment.
+
+    A test that substitutes the environment classifier can point the repair
+    at the machine's own tool installation, and uv answers a request it
+    cannot apply in place by rebuilding the environment - which removes its
+    contents first and then fails on the files a running service holds. That
+    happened: a unit test deleted the live installation's `Lib`. Consent and
+    substitution are the test author's to give, so the refusal lives in the
+    launcher itself, where nothing a test does can reach around it.
+
+    Mutation check: deleting the containment call from `_run_repair` makes
+    this fail at `pytest.raises`, with the subprocess double proving no uv
+    would have started either way.
+    """
+
+    class _NoSubprocess:
+        """Stands in for the subprocess module: nothing may be launched."""
+
+        @staticmethod
+        def run(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("the repair must be refused before uv starts")
+
+    monkeypatch.setattr(_tool_torch, "subprocess", _NoSubprocess)
+    outside = Path.home() / "not-a-real-tool-env" / "Scripts" / "python.exe"
+
+    with pytest.raises(ManagedSingletonIsolationError):
+        _tool_torch._run_repair(str(outside), stream=False)
+
+
+def test_a_repair_aimed_at_another_environment_is_refused(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Guard assertion: uv acts on its own entry, not on the path given.
+
+    ``uv tool install`` installs into the tool directory's entry for the
+    package. When that entry is a different environment from the one being
+    repaired, uv rebuilds it wholesale - removing its contents and then
+    failing on whatever holds it, which is how a live installation lost its
+    packages. The two are compared before anything that mutates is launched.
+
+    Mutation check: deleting the target comparison from `_run_repair` makes
+    this fail on the "would install into" assertion, and the subprocess
+    double proves no installing uv would have started either way.
+    """
+    elsewhere = tmp_path / "tools" / "vaultspec-rag"
+    (elsewhere / "Scripts").mkdir(parents=True)
+    other = tmp_path / "another-env"
+    (other / "Scripts").mkdir(parents=True)
+
+    def _uv_answers(args: tuple[str, ...], **_kwargs: object) -> object:
+        assert args[1:] == ("tool", "dir"), (
+            "nothing but the read-only tool-directory query may run"
+        )
+        return SimpleNamespace(returncode=0, stdout=str(tmp_path / "tools"), stderr="")
+
+    monkeypatch.setattr(_tool_torch.subprocess, "run", _uv_answers)
+
+    def _uv_on_path(_name: str) -> str:
+        return "uv"
+
+    monkeypatch.setattr(_tool_torch.shutil, "which", _uv_on_path)
+
+    ran, detail = _tool_torch._run_repair(
+        str(other / "Scripts" / "python.exe"), stream=False
+    )
+
+    assert not ran
+    assert "would install into" in detail
+    assert str(elsewhere) in detail
 
 
 def test_nothing_is_installed_without_consent(
