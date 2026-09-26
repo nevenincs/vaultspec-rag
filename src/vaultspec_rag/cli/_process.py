@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
 from .._process_probe import (
+    SERVER_LAUNCH_MARKER,
+    argv_contains,
+    argv_of,
     bounded_call,
     iter_process_info,
     pid_alive,
@@ -807,20 +810,9 @@ def _is_service_command(
     launch_token: str,
 ) -> bool:
     """Return whether argv carries this exact resident-server launch witness."""
-    if not isinstance(raw_cmdline, list):
-        return False
-    argv = [str(item) for item in cast("list[object]", raw_cmdline)]
-    expected = [
-        "-m",
-        "vaultspec_rag.server",
-        "--port",
-        str(port),
-        "--launch-token",
-        launch_token,
-    ]
-    return any(
-        argv[index : index + len(expected)] == expected
-        for index in range(len(argv) - len(expected) + 1)
+    return argv_contains(
+        argv_of(raw_cmdline),
+        (*SERVER_LAUNCH_MARKER, "--port", str(port), "--launch-token", launch_token),
     )
 
 

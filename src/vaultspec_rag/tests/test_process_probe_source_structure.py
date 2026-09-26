@@ -392,6 +392,7 @@ class TestNoStructurallyIdenticalFunctions:
         ): _NAMED_SUBSET,
         (
             "operator_state/_features.py:label",
+            "operator_state/_holders.py:label",
             "operator_state/_installation.py:label",
             "operator_state/_service.py:label",
             "operator_state/_topology.py:label",

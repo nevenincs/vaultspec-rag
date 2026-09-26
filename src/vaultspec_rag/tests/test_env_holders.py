@@ -235,7 +235,7 @@ def test_an_uninspectable_process_denies_certainty_without_inventing_a_holder(
     """
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
-        _table({"pid": 4321, "exe": None, "cwd": None, "cmdline": None}),
+        _table({"pid": 4321, "ppid": None, "exe": None, "cwd": None, "cmdline": None}),
     )
 
     result = environment_holders(tmp_path)
@@ -306,3 +306,137 @@ def test_a_path_outside_the_tree_is_never_named_under_it(tmp_path: Path) -> None
     assert not _names_under(str(root / ".." / "escape"), root)
     assert not _names_under("python", root)
     assert not _names_under(None, root)
+
+
+def _row(
+    pid: int,
+    *,
+    exe: str | None = None,
+    cwd: str | None = None,
+    cmdline: list[str] | None = None,
+    ppid: int | None = None,
+) -> dict[str, object]:
+    """One process-table row in the shape the holder scan reads."""
+    return {"pid": pid, "ppid": ppid, "exe": exe, "cwd": cwd, "cmdline": cmdline}
+
+
+class TestTheAskingCommandIsNotAnObstacle:
+    """A command run from inside an environment is not a holder to clear.
+
+    Guard assertion: the scan had no exclusion, so a refusal printed the pid
+    of the very command the operator had just run, and its launcher beside
+    it, as two processes to end before running the command it handed over.
+    """
+
+    def test_the_invoking_chain_is_excluded_and_stated_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os
+
+        from .._process_probe import process_lineage
+
+        interpreter = str(tmp_path / "Scripts" / "python.exe")
+        monkeypatch.setattr(
+            "vaultspec_rag._process_probe.iter_process_info",
+            _table(
+                _row(os.getpid(), exe=interpreter, cmdline=[interpreter, "-m", "pip"]),
+                _row(999_001, exe=interpreter, cmdline=[interpreter, "-c", "pass"]),
+            ),
+        )
+        assert any(entry.pid == os.getpid() for entry in process_lineage())
+
+        result = environment_holders(tmp_path, exclude_launch_chain=True)
+
+        assert [holder.pid for holder in result.holders] == [999_001]
+        assert result.self_held is True
+
+    def test_an_ancestor_holding_by_directory_stays_listed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shell the operator typed in is something they can leave.
+
+        Guard assertion: excluding the whole launch chain by pid would drop
+        it, and its open handle on the directory is what stops the removal on
+        Windows.
+        """
+        import os
+
+        monkeypatch.setattr(
+            "vaultspec_rag._process_probe.iter_process_info",
+            _table(
+                _row(
+                    os.getpid(),
+                    exe=str(tmp_path / "Scripts" / "python.exe"),
+                    cmdline=[],
+                ),
+                _row(
+                    os.getppid(),
+                    exe="C:/Windows/System32/cmd.exe",
+                    cwd=str(tmp_path),
+                ),
+            ),
+        )
+
+        result = environment_holders(tmp_path, exclude_launch_chain=True)
+
+        assert [holder.pid for holder in result.holders] == [os.getppid()]
+        assert result.holders[0].relation is HolderRelation.WORKING_DIRECTORY
+
+
+def test_a_launcher_and_its_interpreter_are_one_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One logical process is reported once, carrying both pids.
+
+    Guard assertion: a virtual environment's python re-executes the real
+    interpreter with the same command line and stays alive as its parent, so
+    every holder appeared twice - and on Windows one of the two rows named
+    the shared base interpreter, which is not in the environment at all.
+    """
+    argv = [str(tmp_path / "Scripts" / "python.exe"), "-m", "vaultspec_rag.server"]
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.iter_process_info",
+        _table(
+            _row(4320, exe="C:/Python313/python.exe", cmdline=argv),
+            _row(
+                4321,
+                exe=str(tmp_path / "Scripts" / "python.exe"),
+                cmdline=argv,
+                ppid=4320,
+            ),
+        ),
+    )
+
+    result = environment_holders(tmp_path)
+
+    assert len(result.holders) == 1
+    assert result.holders[0].pid == 4321
+    assert result.holders[0].launcher_pid == 4320
+
+
+def test_a_shell_and_the_process_it_started_stay_two_holders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pairing requires the launcher's own command line, not just parentage.
+
+    Guard assertion: pairing on the parent relation alone would swallow a
+    shell sitting in the tree behind the process it started, and the shell's
+    own handle on the directory is what blocks the removal.
+    """
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.iter_process_info",
+        _table(
+            _row(5000, exe="C:/Windows/System32/cmd.exe", cwd=str(tmp_path)),
+            _row(
+                5001,
+                exe=str(tmp_path / "bin" / "python"),
+                cmdline=[str(tmp_path / "bin" / "python"), "-c", "pass"],
+                ppid=5000,
+            ),
+        ),
+    )
+
+    result = environment_holders(tmp_path)
+
+    assert sorted(holder.pid for holder in result.holders) == [5000, 5001]
+    assert all(holder.launcher_pid is None for holder in result.holders)

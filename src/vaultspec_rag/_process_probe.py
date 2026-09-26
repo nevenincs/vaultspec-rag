@@ -29,11 +29,11 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Collection, Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 if TYPE_CHECKING:
     import ctypes
@@ -45,14 +45,18 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PROCESS_QUERY_LIMITED_INFORMATION",
+    "SERVER_LAUNCH_MARKER",
     "START_TIME_TOLERANCE_SECONDS",
     "EnvironmentHolder",
     "EnvironmentHolders",
     "HolderRelation",
     "LineageEntry",
+    "argv_contains",
+    "argv_of",
     "bounded_call",
     "close_process_handle",
     "environment_holders",
+    "is_server_launch",
     "iter_process_info",
     "open_process_handle",
     "pid_alive",
@@ -66,6 +70,7 @@ __all__ = [
     "process_lineage",
     "reap_if_child",
     "send_signal",
+    "server_launch_port",
     "wait_for_exit",
     "win_kernel32",
 ]
@@ -640,15 +645,78 @@ class HolderRelation(StrEnum):
     WORKING_DIRECTORY = "working-directory"
 
 
+#: How this product's server process appears on a command line, whatever it
+#: was launched for. Three call sites matched a superset of this by hand - the
+#: spawn witness by port and token, the orphan reap by port, and the holder
+#: report by neither - so the shape they all start from is named once.
+SERVER_LAUNCH_MARKER: Final = ("-m", "vaultspec_rag.server")
+
+
+def argv_of(cmdline: object) -> tuple[str, ...]:
+    """Return a process's command line as a tuple, or empty when unreadable."""
+    if isinstance(cmdline, list):
+        return tuple(str(part) for part in cast("list[object]", cmdline))
+    return ()
+
+
+def argv_contains(argv: Sequence[str], marker: Sequence[str]) -> bool:
+    """Whether *marker* appears as a contiguous run inside *argv*."""
+    if not marker or len(marker) > len(argv):
+        return False
+    return any(
+        list(argv[index : index + len(marker)]) == list(marker)
+        for index in range(len(argv) - len(marker) + 1)
+    )
+
+
+def is_server_launch(argv: Sequence[str]) -> bool:
+    """Whether *argv* runs this product's server module."""
+    return argv_contains(argv, SERVER_LAUNCH_MARKER)
+
+
+def server_launch_port(argv: Sequence[str]) -> int | None:
+    """The port a server launch serves on, or ``None`` for a stdio adapter.
+
+    The two launch shapes differ by this option alone: the resident daemon is
+    given a port, and the adapter an assistant session starts speaks over
+    standard input and is given none. Telling them apart is what lets a
+    refusal name the process an operator has to deal with, and how.
+    """
+    if not is_server_launch(argv):
+        return None
+    for index, part in enumerate(argv):
+        if part == "--port" and index + 1 < len(argv):
+            try:
+                return int(argv[index + 1])
+            except ValueError:
+                return None
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class EnvironmentHolder:
-    """One live process holding an environment root, and how it was found."""
+    """One live process holding an environment root, and how it was found.
+
+    ``launcher_pid`` is the pid of the process that started this one when that
+    process is a launcher for it rather than a holder in its own right: a
+    virtual environment's ``python`` re-executes the real interpreter with the
+    same command line and stays alive as its parent, so one logical process
+    appears twice in the table. Reported as one entry carrying both pids, an
+    operator ends one thing rather than two identical-looking strangers.
+    """
 
     pid: int
     relation: HolderRelation
     image: str | None
     working_directory: str | None
-    cmdline: str | None
+    argv: tuple[str, ...] = ()
+    ppid: int | None = None
+    launcher_pid: int | None = None
+
+    @property
+    def cmdline(self) -> str | None:
+        """The command line as one line, or ``None`` when it was unreadable."""
+        return " ".join(self.argv) if self.argv else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,6 +736,11 @@ class EnvironmentHolders:
     holders: tuple[EnvironmentHolder, ...]
     uninspectable: int
     complete: bool
+    #: Whether the asking process, or something that launched it, runs out of
+    #: this root and was left out of the list. It is a fact about the caller,
+    #: not an obstacle it can clear, so reporting it as a holder to end tells
+    #: an operator to kill the command they are running.
+    self_held: bool = False
 
     @property
     def held(self) -> bool:
@@ -748,14 +821,6 @@ def _names_under(value: object, *roots: Path) -> bool:
     return any(candidate.is_relative_to(root) for root in roots)
 
 
-def _rendered_cmdline(value: object) -> str | None:
-    """Render a process command line for an operator, never for matching."""
-    if isinstance(value, list):
-        parts = [str(part) for part in cast("list[object]", value)]
-        return " ".join(parts) if parts else None
-    return None
-
-
 #: Processes inspected at once by the holder scan. This scan is the one caller
 #: that needs BOTH expensive attributes for very nearly every process: a
 #: process is ruled out only after its command line and its working directory
@@ -790,6 +855,7 @@ def _holder_of(
     if not isinstance(pid, int) or pid in excluded:
         return None
     image = info["exe"]
+    parent = info["ppid"]
     working_directory: object = None
     if _resolves_under(image, resolved, resolved_paths):
         relation = HolderRelation.IMAGE
@@ -812,7 +878,10 @@ def _holder_of(
         working_directory=(
             working_directory if isinstance(working_directory, str) else None
         ),
-        cmdline=_rendered_cmdline(info["cmdline"]),
+        argv=argv_of(info["cmdline"]),
+        ppid=(
+            parent if isinstance(parent, int) and not isinstance(parent, bool) else None
+        ),
     )
 
 
@@ -836,7 +905,7 @@ def _scan_environment_holders(
         # Drained inside the guard: enumerating the table is what raises, and
         # a scan that could not run must still be reported as unknown rather
         # than as an environment nothing holds.
-        processes = list(iter_process_info(["pid", "exe", "cwd", "cmdline"]))
+        processes = list(iter_process_info(["pid", "ppid", "exe", "cwd", "cmdline"]))
         with ThreadPoolExecutor(max_workers=_HOLDER_SCAN_WORKERS) as pool:
             verdicts = list(pool.map(classify, processes))
     except OSError as exc:
@@ -850,13 +919,44 @@ def _scan_environment_holders(
     # Ordered by pid rather than by whatever order the pool finished in, so a
     # caller that shows only the first few holders shows the same few twice.
     found.sort(key=lambda holder: holder.pid)
-    return tuple(found), blind
+    return _pair_launchers(found), blind
+
+
+def _pair_launchers(
+    holders: list[EnvironmentHolder],
+) -> tuple[EnvironmentHolder, ...]:
+    """Collapse a launcher and the process it started into one entry.
+
+    A virtual environment's ``python`` starts the real interpreter with the
+    same command line and stays alive as its parent, so one thing an operator
+    has to end is two rows whose difference they cannot see - and on Windows
+    the launcher's image is the shared base interpreter, so one of the two
+    rows names a binary that has nothing to do with the environment.
+
+    Only an exact command-line match pairs them. A shell and the process it
+    started are two different things in the same tree, and both have to be
+    reported.
+    """
+    by_pid = {holder.pid: holder for holder in holders}
+    launchers = {
+        holder.ppid
+        for holder in holders
+        if holder.ppid in by_pid
+        and holder.argv
+        and by_pid[holder.ppid].argv == holder.argv
+    }
+    return tuple(
+        replace(holder, launcher_pid=holder.ppid if holder.ppid in launchers else None)
+        for holder in holders
+        if holder.pid not in launchers
+    )
 
 
 def environment_holders(
     root: str | Path,
     *,
     exclude_pids: Collection[int] = (),
+    exclude_launch_chain: bool = False,
     timeout: float | None = 10.0,
 ) -> EnvironmentHolders:
     """Return the live processes holding the environment rooted at *root*.
@@ -873,6 +973,15 @@ def environment_holders(
     every process rather than only for matches, because its first element is
     the launch path, and that is the only evidence of the POSIX relation where
     an environment's interpreter is a symlink pointing out of the tree.
+
+    ``exclude_launch_chain`` leaves out this process and the processes that
+    started it, where they hold the root by running out of it. A command run
+    from inside the environment it is asking about is always one of its own
+    holders, and listing it tells an operator to end the command they are
+    running. An ancestor holding only by working directory - the shell they
+    typed in - stays listed, because leaving that shell is something they can
+    actually do and the removal needs it. The result says whether anything was
+    left out, so a caller can state the fact once instead.
 
     Follows this module's fail-closed rule: a process that cannot be inspected
     is counted, not silently dropped, and an empty holder list from an
@@ -900,8 +1009,26 @@ def environment_holders(
             root=resolved, holders=(), uninspectable=0, complete=False
         )
     holders, blind = outcome
+    self_held = False
+    if exclude_launch_chain:
+        chain = {entry.pid for entry in process_lineage()}
+        kept = tuple(
+            holder
+            for holder in holders
+            if holder.relation is HolderRelation.WORKING_DIRECTORY
+            or not (
+                holder.pid in chain
+                or (holder.launcher_pid is not None and holder.launcher_pid in chain)
+            )
+        )
+        self_held = len(kept) != len(holders)
+        holders = kept
     return EnvironmentHolders(
-        root=resolved, holders=holders, uninspectable=blind, complete=True
+        root=resolved,
+        holders=holders,
+        uninspectable=blind,
+        complete=True,
+        self_held=self_held,
     )
 
 

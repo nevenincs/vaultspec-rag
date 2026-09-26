@@ -19,6 +19,7 @@ from ..operator_state._topology import RuntimeEnvKind
 pytestmark = [pytest.mark.unit]
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
 
@@ -436,7 +437,12 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
         outcome = _tool_torch._handoff_outcome(str(interpreter), spec, ())
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED
-    assert any(found.pid == holder.pid for found in outcome.holders)
+    # A venv interpreter is a launcher that re-executes the real one, so the
+    # pid Popen returned may be reported as the paired launcher rather than as
+    # the entry itself.
+    assert any(
+        holder.pid in {found.pid, found.launcher_pid} for found in outcome.holders
+    )
     assert f"pid {holder.pid}" in outcome.detail
     assert "end this process" in outcome.detail
     assert outcome.blocks_install
@@ -506,3 +512,82 @@ def test_the_environment_root_is_the_environment_not_the_link_target(
 
     assert _provisioning.environment_root(str(interpreter)) == env
     assert _provisioning.environment_root(str(interpreter)) != base.parent
+
+
+def _process_table(*rows: dict[str, object]):
+    """An ``iter_process_info`` stand-in yielding *rows*."""
+
+    def scan(attrs: list[str]) -> Iterator[Mapping[str, object]]:
+        del attrs
+        yield from rows
+
+    return scan
+
+
+def _holder_row(
+    pid: int, image: str | None, argv: list[str] | None = None
+) -> dict[str, object]:
+    return {"pid": pid, "ppid": None, "exe": image, "cwd": None, "cmdline": argv}
+
+
+def _refusal_detail(tmp_path: Path) -> str:
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir(exist_ok=True)
+    spec = _provisioning.tool_cuda_install_spec()
+    assert spec is not None
+    return _tool_torch._handoff_outcome(str(interpreter), spec, ()).detail
+
+
+def test_the_refusal_names_what_each_holder_is_and_how_to_clear_it(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """A pid and an image path do not tell an operator what to do.
+
+    Guard assertion: the list showed the image path alone, which is the same
+    interpreter for every process in one environment - so the service, an
+    assistant's stdio adapter and a stranger's script were three identical
+    lines, and the remediation for all three was "end this process".
+    """
+    image = str(tmp_path / "Scripts" / "python.exe")
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.iter_process_info",
+        _process_table(
+            _holder_row(
+                701,
+                image,
+                [image, "-m", "vaultspec_rag.server", "--port", "8776"],
+            ),
+            _holder_row(702, image, [image, "-m", "vaultspec_rag.server"]),
+            _holder_row(703, image, [image, "-c", "import time; time.sleep(9)"]),
+        ),
+    )
+
+    detail = _refusal_detail(tmp_path)
+
+    assert "vaultspec-rag service on port 8776" in detail
+    assert "vaultspec-rag server stop --port 8776" in detail
+    assert "MCP stdio adapter" in detail
+    assert "close the editor or agent session that started it" in detail
+    assert "end this process" in detail
+    # The command line is what tells the three apart; the image cannot.
+    assert "-m vaultspec_rag.server" in detail
+
+
+def test_the_refusal_counts_the_processes_it_could_not_inspect(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """A count is actionable; "some processes" is not.
+
+    Guard assertion: one protected system process and a table belonging to
+    another user produced the same sentence, and they are different answers
+    to "is this list the whole story".
+    """
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.iter_process_info",
+        _process_table(_holder_row(801, None)),
+    )
+
+    detail = _refusal_detail(tmp_path)
+
+    assert "1 process could not be inspected" in detail
+    assert "some processes could not be inspected" not in detail

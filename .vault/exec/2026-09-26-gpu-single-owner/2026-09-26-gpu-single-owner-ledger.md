@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:8fb07bba40a9c7e180a1c7253a06933309ecb68f2bbd5a630de3ce2899b7b515'
+body_hash: 'sha256:a80077b3a1c624d07bc37172e5ec6d869a7972f3a32ec1c1ee19f4f7ca6b79d6'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -122,6 +122,21 @@ related:
 - `S08` `verify:` `pytest test_cli_install test_tool_torch_repair test_install_mode test_install_provision test_install_client_role test_install_mcp_extra test_install_torch_config test_service_env_preflight` -> `pass`
 - `S08` `verify:` `guard mutations (hard-coded install action, warnings copies restored, refusal rendered as a full report, second post-install probe) fail then pass` -> `pass`
 - `S08` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/_process_probe.py`
+- `S09` `A` `src/vaultspec_rag/operator_state/_holders.py`
+- `S09` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S09` `M` `src/vaultspec_rag/cli/_process.py`
+- `S09` `M` `src/vaultspec_rag/cli/_service_stop.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_env_holders.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S09` `verify:` `ruff check` -> `pass`
+- `S09` `verify:` `ruff format --check` -> `pass`
+- `S09` `verify:` `ty check` -> `pass`
+- `S09` `verify:` `basedpyright` -> `pass`
+- `S09` `verify:` `pytest test_env_holders test_tool_torch_repair test_process_probe_* test_process test_process_lineage test_cli_server_stop test_service_stop_port test_readiness test_readiness_holders` -> `pass`
+- `S09` `verify:` `guard mutations (launch chain not excluded, working-directory ancestor dropped, pairing on parentage alone, every holder unrecognised, uncounted uninspectable note) fail then pass` -> `pass`
+- `S09` `by:` `vaultspec-high-executor`
 
 ## Notes
 

@@ -10,9 +10,10 @@ from urllib.parse import unquote
 
 from .._process_probe import (
     EnvironmentHolder,
-    HolderRelation,
+    EnvironmentHolders,
     environment_holders,
 )
+from ..operator_state._holders import holder_role, holder_summary
 from ..operator_state._installation import ComputeCapability
 from ..operator_state._provisioning import (
     ToolCudaInstallSpec,
@@ -113,7 +114,9 @@ class ToolTorchRepairOutcome:
             "holders": [
                 {
                     "pid": holder.pid,
+                    "launcher_pid": holder.launcher_pid,
                     "relation": holder.relation.value,
+                    "role": holder_role(holder).value,
                     "image": holder.image,
                     "cmdline": holder.cmdline,
                 }
@@ -133,19 +136,24 @@ def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
     return recorded is not None and unquote(recorded) == unquote(wheel_url)
 
 
-def _holder_summary(holder: EnvironmentHolder) -> str:
-    """One holder line, with the remediation its relation actually needs.
+def _uninspected_note(found: EnvironmentHolders) -> str | None:
+    """Say what the scan could not see, as a count rather than a shrug.
 
-    Only a working-directory holder is asked to move: it is a shell or an
-    editor whose binary has nothing to do with this environment. Anything
-    running the environment's own interpreter - by image path, or by the
-    launch path a symlinked POSIX venv presents - has to end.
+    "Some processes" is the same sentence whether one protected system
+    process was unreadable or the whole table was another user's, and those
+    are different situations for someone deciding whether the list in front
+    of them is the whole story.
     """
-    if holder.relation is HolderRelation.WORKING_DIRECTORY:
-        action = "move this process out of the directory"
-    else:
-        action = "end this process"
-    return f"    pid {holder.pid} ({action}): {holder.image or 'unknown image'}"
+    if not found.complete:
+        return "  the holder scan did not finish, so this list may be short"
+    if found.uninspectable:
+        count = found.uninspectable
+        noun = "process" if count == 1 else "processes"
+        return (
+            f"  {count} {noun} could not be inspected (another user's, or "
+            "exiting), so this list may be short"
+        )
+    return None
 
 
 def _handoff_outcome(
@@ -166,23 +174,27 @@ def _handoff_outcome(
     process to end.
     """
     root = environment_root(interpreter)
-    found = environment_holders(root, timeout=HOLDER_SCAN_BUDGET_SECONDS)
-    lines = [
-        f"tool CUDA repair must run from outside {root}",
-        "  the environment is replaced wholesale, and this process runs inside it",
-    ]
+    found = environment_holders(
+        root, exclude_launch_chain=True, timeout=HOLDER_SCAN_BUDGET_SECONDS
+    )
+    lines = [f"tool CUDA repair must run from outside {root}"]
+    if found.self_held:
+        lines.append(
+            "  this command is running inside that environment, so the "
+            "replacement has to be issued from a shell that is not"
+        )
     if found.holders:
         lines.append("  holders to clear first:")
         lines.extend(
-            _holder_summary(holder) for holder in found.holders[:HOLDER_REPORT_LIMIT]
+            f"    {holder_summary(holder)}"
+            for holder in found.holders[:HOLDER_REPORT_LIMIT]
         )
         remaining = len(found.holders) - HOLDER_REPORT_LIMIT
         if remaining > 0:
             lines.append(f"    ... and {remaining} more")
-    if not found.certain:
-        lines.append(
-            "  some processes could not be inspected, so this list may be short"
-        )
+    note = _uninspected_note(found)
+    if note is not None:
+        lines.append(note)
     if _receipt_has_cuda_requirement(root / TOOL_RECEIPT_NAME, spec.wheel_url):
         lines.append("  the receipt already pins this wheel; the environment does not")
     action = (
