@@ -127,6 +127,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "diagnostic and load paths share is only observable across a run of "
         "them and no real device yields one on demand",
     ),
+    "test_hardware_anchor.py": (
+        1,
+        "forces the machine anchor directory to be unresolvable, to prove the "
+        "load window then degrades rather than refusing every load; no real "
+        "host can be made to lack it, because the known-folder API always "
+        "answers on Windows and /dev/shm or /Users/Shared always exist",
+    ),
     "test_env_holders.py": (
         2,
         "drives the two fail-closed branches of the holder query - a process "

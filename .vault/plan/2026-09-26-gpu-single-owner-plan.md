@@ -12,7 +12,7 @@ related:
   - '[[2026-07-14-tool-env-gpu-continuity-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:2e5c8f1181a9988ed57ea99ef8dc94c986e7f4aca3a93506b6e8081affb519d5'
+body_hash: 'sha256:60a062b1357968cc6ac2d3e2a0785f9e6bb03456f1ab237ec9720a4f8dca2b72'
 ---
 
 # `gpu-single-owner` plan
@@ -49,7 +49,7 @@ of scope.
 Makes it impossible for any process, release or configuration to load a model stack while another process owns the machine's GPU, except the process tree the owner has lent it to.
 
 - [x] `P01.S01` - add the canonical own-process lineage query (pid and start time of this process and its ancestors) to the process probe; `src/vaultspec_rag/_process_probe.py`.
-- [ ] `P01.S02` - resolve one machine-global GPU anchor directory, create shared anchors lockable by every account with a read-only fallback, and move the load-window anchor into it; `src/vaultspec_rag/_anchor_claim.py, src/vaultspec_rag/_gpu_admission.py`.
+- [x] `P01.S02` - resolve one machine-global GPU anchor directory, create shared anchors lockable by every account with a read-only fallback, and move the load-window anchor into it; `src/vaultspec_rag/_anchor_claim.py, src/vaultspec_rag/_gpu_admission.py`.
 - [ ] `P01.S03` - add the torch-free GPU ownership module (claim, observe, lend, reclaim, legacy owner detection, typed refusal) and enforce it in load_accelerator before admission; `src/vaultspec_rag/_gpu_owner.py, src/vaultspec_rag/_gpu.py`.
 - [ ] `P01.S04` - lend the GPU to a bound borrower and reclaim it on resume or lease loss, and observe ownership in the server start preflight; `src/vaultspec_rag/_service_borrower.py, src/vaultspec_rag/cli/_service_start.py`.
 - [ ] `P01.S05` - refuse a mandated local search before it runs when another process owns the GPU, and render the typed refusal on every local compute path; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_gpu_errors.py`.

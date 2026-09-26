@@ -43,7 +43,16 @@ __all__ = [
     "WIN_DETACHED_PROCESS",
     "assign_process_to_job",
     "create_kill_on_close_job",
+    "program_data_directory",
 ]
+
+#: ``FOLDERID_ProgramData`` (``KnownFolders.h``).
+_FOLDERID_PROGRAM_DATA: Final = (
+    0x62AB5D82,
+    0xFDC1,
+    0x4DC3,
+    (0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97),
+)
 
 #: New process group: the child does not receive the parent console's CTRL_C.
 WIN_CREATE_NEW_PROCESS_GROUP: Final = 0x00000200
@@ -151,6 +160,57 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
         kernel32.CloseHandle(job)
         return None
     return int(job)
+
+
+def program_data_directory() -> str:
+    """Return the machine's ProgramData directory as the shell records it.
+
+    Asked of the known-folder API rather than read from the ``ProgramData``
+    environment variable, because a variable is one assignment away from
+    pointing somewhere else: a directory chosen to be the same for every
+    process on the machine must not be relocatable by the process asking.
+
+    Raises:
+        OSError: Off Windows, or when the shell cannot resolve the folder.
+    """
+    if sys.platform != "win32":
+        raise OSError("the ProgramData known folder exists only on Windows")
+    from ctypes import wintypes
+
+    class _Guid(ctypes.Structure):
+        _fields_ = [
+            ("Data1", wintypes.DWORD),
+            ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    data1, data2, data3, data4 = _FOLDERID_PROGRAM_DATA
+    folder = _Guid(data1, data2, data3, (ctypes.c_ubyte * 8)(*data4))
+    # A private library handle, so these declarations cannot collide with any
+    # other module's use of the process-global ``ctypes.windll`` cache.
+    shell32 = ctypes.WinDLL("shell32")
+    shell32.SHGetKnownFolderPath.argtypes = (
+        ctypes.POINTER(_Guid),
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    )
+    shell32.SHGetKnownFolderPath.restype = ctypes.HRESULT
+    ole32 = ctypes.WinDLL("ole32")
+    ole32.CoTaskMemFree.argtypes = (ctypes.c_void_p,)
+    ole32.CoTaskMemFree.restype = None
+    resolved = ctypes.c_wchar_p()
+    try:
+        # An HRESULT restype raises OSError on failure by itself.
+        shell32.SHGetKnownFolderPath(
+            ctypes.byref(folder), 0, None, ctypes.byref(resolved)
+        )
+        if not resolved.value:
+            raise OSError("the shell returned no ProgramData path")
+        return resolved.value
+    finally:
+        ole32.CoTaskMemFree(resolved)
 
 
 def assign_process_to_job(
