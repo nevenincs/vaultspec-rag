@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:e14ed60b4ca8d6611d19c99067ae32f541f86cf85985a479d093becc37928b4a'
+body_hash: 'sha256:64423d7918af02029f3b27db68750b2aaeb149c39b7e30922ae34af874d6cf0b'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -213,6 +213,20 @@ related:
 - `S12` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
 - `S12` `verify:` `pytest test_tool_torch_repair test_cli_install test_service_env_preflight` -> `pass`
 - `S12` `verify:` `guard mutations (containment removed, target comparison removed, python request taken from the running process) fail then pass` -> `pass`
+- `S13` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status.py`
+- `S13` `M` `src/vaultspec_rag/_readiness.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_compat.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S13` `verify:` `ruff check` -> `pass`
+- `S13` `verify:` `ruff format --check` -> `pass`
+- `S13` `verify:` `ty check` -> `pass`
+- `S13` `verify:` `basedpyright` -> `pass`
+- `S13` `verify:` `pytest test_doctor_repair_and_holders test_cli_status test_server_doctor test_readiness_holders test_service_version_compatibility` -> `pass`
+- `S13` `verify:` `guard mutations (receipt axis unrendered, capped holder list without its total, unknown role raising, status receipt line removed) fail then pass` -> `pass`
+- `S13` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -230,3 +244,4 @@ related:
 - `S10` P02 review: `get_readiness` replaced the released `include_holders` keyword with `holders_root;` marked as a breaking change for release
 - `S12` folded in the P02 review findings for the refused JSON envelope, the sys.prefix classification and the project-only `CPU_ONLY` advice in `_handle_gpu_error;` a test that consented reached real uv against the operator's tool installation before it was corrected, and uv refused it without changing anything
 - `S12` correction: the earlier S12 note was wrong. The test that reached real uv did change the machine's tool installation - uv rebuilt it wholesale because the --python request named another interpreter, deleting Lib at 17:48 before failing on the held Scripts; another session rebuilt Lib at 17:58. The repair launcher now enforces pytest containment on the target environment, refuses when uv's tool entry is not the environment in hand, and derives --python from the target environment's own pyvenv.cfg
+- `S13` folded in the P02 review findings for the floor command in the JSON envelope and the holder total and role fallback

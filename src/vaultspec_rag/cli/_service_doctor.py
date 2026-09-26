@@ -27,9 +27,17 @@ import typer
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ..operator_state._holders import HolderRole, holder_line
-from ..operator_state._provisioning import cuda_remediation, upgrade_command_for_mode
+from ..operator_state._provisioning import (
+    classify_tool_receipt,
+    cuda_remediation,
+    upgrade_command_for_mode,
+)
 from ..operator_state._service import ServiceLifecycle
-from ..operator_state._topology import environment_root
+from ..operator_state._topology import (
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
+)
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
 from ._process import _resolve_daemon_interpreter
 from ._render import _emit_json, _plain
@@ -89,10 +97,12 @@ def service_doctor(
             "interpreter": interpreter,
             "environment_holders": report.get("environment_holders"),
             "compute_repair": _compute_repair_steps(interpreter, compute.capability),
+            "receipt": _receipt_axis(interpreter),
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
+        _render_receipt_axis(interpreter)
         _render_compute_repair(interpreter, compute.capability)
         _render_environment_holders(report)
         _render_mode_floor_axis(mode)
@@ -277,13 +287,19 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         )
     except Exception:
         return None
+    declared_mode = declaration.install_mode.value
     return {
         "package": RAG_DISTRIBUTION_NAME,
-        "declared_mode": declaration.install_mode.value,
+        "declared_mode": declared_mode,
         "mode_mismatch": mode_mismatch.value,
         "version_floor": floor.value,
         "version_floor_running": running,
         "version_floor_minimum": minimum,
+        # Computed here so the envelope and the rendered block read one
+        # value, and so the daemon interpreter is resolved once.
+        "upgrade_command": upgrade_command_for_mode(
+            declared_mode, _resolve_daemon_interpreter()
+        ),
     }
 
 
@@ -300,6 +316,37 @@ def _render_readiness(
     _plain(f"Readiness: {_overall_label(overall_ready, status)}")
     _render_live_service_axis(service)
     _render_dependency_axis(report)
+
+
+def _receipt_axis(interpreter: str) -> dict[str, object] | None:
+    """What an upgrade of this installation would resolve, or ``None``.
+
+    Only a uv tool installation has a receipt to judge. Everything else
+    resolves from a project or from nothing, and reporting a verdict about a
+    file that does not exist would be an invented fact.
+    """
+    kind = classify_environment(environment_root(interpreter))
+    if kind is not RuntimeEnvKind.UV_TOOL:
+        return None
+    verdict = classify_tool_receipt(interpreter)
+    return {
+        "verdict": verdict.value,
+        "label": verdict.label,
+        "durable": verdict.durable,
+        "fix": verdict.fix(interpreter),
+    }
+
+
+def _render_receipt_axis(interpreter: str) -> None:
+    """Report what the next upgrade of this installation would resolve."""
+    axis = _receipt_axis(interpreter)
+    if axis is None:
+        return
+    _plain(f"Installation receipt: {axis['label']}")
+    fix = axis["fix"]
+    if isinstance(fix, str) and fix:
+        # Soft-wrapped: a folded command is not one an operator can paste.
+        _plain(f"  make upgrades keep the GPU build: {fix}", soft_wrap=True)
 
 
 def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
@@ -360,13 +407,30 @@ def _render_environment_holders(report: dict[str, object]) -> None:
             "  "
             + holder_line(
                 int(pid) if isinstance(pid, int) else 0,
-                HolderRole(str(holder.get("role", HolderRole.UNRECOGNISED))),
+                _holder_role(holder.get("role")),
                 launcher_pid=launcher if isinstance(launcher, int) else None,
                 port=port if isinstance(port, int) else None,
             )
         )
+    total = snapshot.get("total")
+    if isinstance(total, int) and total > len(entries):
+        _plain(f"  ... and {total - len(entries)} more")
     if not snapshot.get("certain"):
         _plain("  the scan was incomplete, so this list may be short")
+
+
+def _holder_role(value: object) -> HolderRole:
+    """Read a reported role, without failing on one this build does not know.
+
+    The snapshot can come from a service of another release, and a role it
+    names that this one does not is still a process an operator has to deal
+    with. Refusing to render the whole block over the word is a worse answer
+    than calling it what it is: something running out of the environment.
+    """
+    try:
+        return HolderRole(str(value))
+    except ValueError:
+        return HolderRole.UNRECOGNISED
 
 
 def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
@@ -387,9 +451,7 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
         detail = "ok - artifacts match the declared mode"
     _plain(f"  install mode: {detail}")
     if mode.get("version_floor") == "below":
-        upgrade = upgrade_command_for_mode(
-            str(mode.get("declared_mode", "")), _resolve_daemon_interpreter()
-        )
+        upgrade = str(mode.get("upgrade_command", ""))
         _plain(
             f"  version floor: error - running {mode.get('version_floor_running')} "
             f"is below the declared floor {mode.get('version_floor_minimum')}"

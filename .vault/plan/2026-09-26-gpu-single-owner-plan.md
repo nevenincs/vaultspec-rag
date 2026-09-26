@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:487d16905bd2fafea0c5808c617337eec55ed95dc395cb8063936e1d61bd0078'
+body_hash: 'sha256:8c22afacf788b5b5ac011e99bdf55e2c2a6c64923c40aa08147f0a2d1cffc4e1'
 ---
 
 # `gpu-single-owner` plan
@@ -80,7 +80,7 @@ Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool u
 
 - [x] `P03.S11` - add the typed tool-receipt verdict to operator_state and rebuild the command builder on the receipt-carried CUDA index and first-match strategy: an in-place torch-only repair and a bare upgrade, deleting the direct-wheel and version-pin machinery; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/commands/_tool_torch.py`.
 - [x] `P03.S12` - make install treat a non-durable receipt as needing the repair, run the in-place repair itself on consent and verify compute and receipt afterwards, and hand over the command otherwise; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_install.py`.
-- [ ] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
+- [x] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
 - [ ] `P03.S14` - prove the cycle against real uv with loopback stand-in wheels: a receipt written with the options is durable, the repair applies in place under a live holder, and a bare upgrade keeps the CUDA build; `src/vaultspec_rag/tests/`.
 - [ ] `P03.S15` - install uv tool hosts with the CUDA index and first-match strategy in the documentation, and document upgrading as uv tool upgrade followed by a service restart; `docs/, README.md`.
 

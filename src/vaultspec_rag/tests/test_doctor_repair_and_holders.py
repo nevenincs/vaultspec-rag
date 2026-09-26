@@ -26,9 +26,17 @@ from ..cli import app
 from ..operator_state import _environment_probe
 from ..operator_state._compute import ProbeDepth
 from ..operator_state._environment_probe import InterpreterFacts
+from ..operator_state._holders import HolderRole
 from ..operator_state._installation import ComputeCapability, InstallRole
 from ..operator_state._models import ComputeReport
-from ..operator_state._provisioning import cuda_remediation
+from ..operator_state._provisioning import (
+    CU130_INDEX_STRATEGY,
+    ToolReceiptVerdict,
+    classify_tool_receipt,
+    cuda_remediation,
+)
+from ..operator_state._topology import TOOL_RECEIPT_NAME
+from ..torch_config._index import CU130_INDEX_URL
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,13 +68,21 @@ def _probe_reporting(capability: ComputeCapability):
     return probe
 
 
-def _daemon_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _daemon_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, receipt: str | None = None
+) -> Path:
     """Point the daemon interpreter at a tool environment under *tmp_path*."""
     root = tmp_path / "service-env"
     (root / "Scripts").mkdir(parents=True)
     interpreter = root / "Scripts" / "python.exe"
     interpreter.touch()
-    monkeypatch.setattr(doctor, "_resolve_daemon_interpreter", lambda: str(interpreter))
+    if receipt is not None:
+        (root / TOOL_RECEIPT_NAME).write_text(receipt, encoding="utf-8")
+
+    def _daemon() -> str:
+        return str(interpreter)
+
+    monkeypatch.setattr(doctor, "_resolve_daemon_interpreter", _daemon)
     return root
 
 
@@ -197,3 +213,155 @@ def test_doctor_reports_the_holders_in_both_output_modes(
     assert reported["holders"][0]["port"] == 8776
     # An argument vector reaches an HTTP route through this snapshot.
     assert "cmdline" not in reported["holders"][0]
+
+
+def test_doctor_reports_what_the_next_upgrade_would_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GPU host whose receipt records no CUDA source is told so now.
+
+    Guard assertion: such an installation runs perfectly until an upgrade
+    nobody supervises resolves a CPU build over it, and every surface
+    reported only the build in front of it.
+    """
+    root = _daemon_environment(
+        tmp_path,
+        monkeypatch,
+        receipt='[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n',
+    )
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.environment_holders", _recording_scan([])
+    )
+    expected = classify_tool_receipt(str(root / "Scripts" / "python.exe"))
+
+    human = runner.invoke(app, ["server", "doctor"])
+    envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
+
+    assert expected is ToolReceiptVerdict.NO_CUDA_SOURCE
+    # The label is prose and wraps at the console width; the command is
+    # soft-wrapped, because a folded command cannot be pasted.
+    assert "Installation receipt:" in human.stdout
+    assert expected.label.split(",")[0] in human.stdout
+    assert "--index-strategy unsafe-first-match" in human.stdout
+    reported = envelope["data"]["receipt"]
+    assert reported["verdict"] == "no_cuda_source"
+    assert reported["durable"] is False
+    assert "--index-strategy unsafe-first-match" in reported["fix"]
+
+
+def test_doctor_says_nothing_about_a_receipt_a_durable_one_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installation that will keep its GPU build needs no line at all."""
+    _daemon_environment(
+        tmp_path,
+        monkeypatch,
+        receipt=(
+            '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
+            "[tool.options]\n"
+            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n'
+        ),
+    )
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.environment_holders", _recording_scan([])
+    )
+
+    human = runner.invoke(app, ["server", "doctor"])
+    envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
+
+    assert envelope["data"]["receipt"]["durable"] is True
+    assert envelope["data"]["receipt"]["fix"] is None
+    assert "make upgrades keep the GPU build" not in human.stdout
+
+
+def test_a_capped_holder_list_says_how_many_it_did_not_show(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ten of twelve holders with no total reads as the whole story.
+
+    Guard assertion: an operator clearing the list would think they had
+    finished, and the repair would still be blocked by the two they never
+    saw.
+    """
+    _daemon_environment(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.READY),
+    )
+    holders = tuple(
+        EnvironmentHolder(
+            pid=5000 + index,
+            relation=HolderRelation.IMAGE,
+            image="python.exe",
+            working_directory=None,
+            argv=("python.exe", "-c", "pass"),
+        )
+        for index in range(12)
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.environment_holders",
+        _recording_scan([], holders),
+    )
+
+    human = runner.invoke(app, ["server", "doctor"])
+    envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
+
+    assert "... and 2 more" in human.stdout
+    assert envelope["data"]["environment_holders"]["total"] == 12
+    assert len(envelope["data"]["environment_holders"]["holders"]) == 10
+
+
+def test_a_role_this_build_does_not_know_still_renders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snapshot from another release must not break the whole block.
+
+    Guard assertion: constructing the enum from a reported string raises on
+    a member this build has never heard of, and the holder is still a
+    process someone has to deal with.
+    """
+    _daemon_environment(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_reporting(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.environment_holders",
+        _recording_scan(
+            [],
+            (
+                EnvironmentHolder(
+                    pid=6001,
+                    relation=HolderRelation.IMAGE,
+                    image="python.exe",
+                    working_directory=None,
+                    argv=("python.exe",),
+                ),
+            ),
+        ),
+    )
+
+    def _future_role(_holder: object) -> str:
+        return "a-role-from-the-future"
+
+    monkeypatch.setattr(
+        "vaultspec_rag.operator_state._holders.holder_role", _future_role
+    )
+
+    human = runner.invoke(app, ["server", "doctor"])
+
+    assert "pid 6001" in human.stdout
+    assert HolderRole.UNRECOGNISED.label in human.stdout

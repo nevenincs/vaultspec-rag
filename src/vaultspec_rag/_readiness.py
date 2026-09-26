@@ -141,6 +141,8 @@ class EnvironmentHoldersReadiness:
         certain: Whether an empty list may be read as "nothing holds this".
             False when a process could not be inspected or the scan could not
             finish - absence of evidence, not evidence of absence.
+        total: How many holders were found, which the bounded list may not
+            show all of. A capped list with no total reads as the whole story.
         self_held: Whether the asking process, or something that launched it,
             runs out of this environment. It is left out of the list because
             it is not an obstacle the reader can clear, and reported here so
@@ -157,6 +159,7 @@ class EnvironmentHoldersReadiness:
     scanned: bool = True
     held: bool = False
     certain: bool = True
+    total: int = 0
     self_held: bool = False
     holders: list[dict[str, object]] = field(default_factory=list)
 
@@ -166,6 +169,7 @@ class EnvironmentHoldersReadiness:
             "scanned": self.scanned,
             "held": self.held,
             "certain": self.certain,
+            "total": self.total,
             "self_held": self.self_held,
             "holders": self.holders,
         }
@@ -313,6 +317,7 @@ def _environment_holders_readiness(root: str | Path) -> EnvironmentHoldersReadin
     return EnvironmentHoldersReadiness(
         held=found.held,
         certain=found.certain,
+        total=len(found.holders),
         self_held=found.self_held,
         holders=[
             {
