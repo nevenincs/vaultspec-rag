@@ -356,23 +356,13 @@ class ServiceRegistry(
         with self._reranker_lock:
             if self._reranker is not None:
                 return self._reranker
-            from sentence_transformers import CrossEncoder
-
-            from ._gpu import load_accelerator
             from .config._settings import get_config
             from .config._types import hf_cache_only
+            from .embeddings import load_reranker
 
-            accelerator = load_accelerator()
-            torch = accelerator.torch
             cfg = get_config()
             local_files_only = hf_cache_only()
-            self._reranker = CrossEncoder(
-                cfg.reranker_model,
-                device=accelerator.device,
-                activation_fn=torch.nn.Sigmoid(),
-                max_length=int(cfg.reranker_max_length),
-                local_files_only=local_files_only,
-            )
+            self._reranker = load_reranker(local_files_only=local_files_only)
             with self._lock:
                 model_name = (
                     self._gpu_residency_recipe.model_name
@@ -386,7 +376,7 @@ class ServiceRegistry(
                 )
             logger.info(
                 "Shared CrossEncoder loaded on %s: %s (cache-only=%s)",
-                accelerator.name,
+                self._reranker.device,
                 cfg.reranker_model,
                 local_files_only,
             )

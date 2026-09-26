@@ -1078,8 +1078,12 @@ def _failed_job_health(record: dict[str, object] | None) -> dict[str, object] | 
     """Project the bounded latest-failure health shape."""
     if record is None:
         return None
+    from ._routes_jobs import job_project_root, job_source
+
     return {
         "id": record.get("id"),
+        "source": job_source(record),
+        "project_root": job_project_root(record),
         "error_kind": record.get("error_kind"),
         "finished_at": record.get("finished_at"),
     }
@@ -1166,25 +1170,38 @@ def _failure_was_superseded(
     failed: dict[str, object],
     records: list[dict[str, object]],
 ) -> bool:
-    """Return whether a later run of the same source already succeeded.
+    """Return whether a later run of the same source and project succeeded.
 
     A failure degrades health because it says the index is not being kept
-    current. A success afterwards on the same source answers that: the run
-    that mattered got through. Without this, one transient failure - a
+    current. A success afterwards on the same source of the same project
+    answers that: the run that mattered got through. Another project's
+    success answers nothing about this one. Without this, one transient failure - a
     momentary memory ceiling, a file that vanished mid-scan - degrades the
     service for the rest of the generation no matter how many runs succeed
     after it, and the operator is told the *latest* job failed while newer
     ones are visibly finishing clean.
     """
-    from ._routes_jobs import job_source, job_state, job_updated_timestamp
+    from ._routes_jobs import (
+        job_project_root,
+        job_source,
+        job_state,
+        job_updated_timestamp,
+    )
 
     failed_at = job_updated_timestamp(failed)
     if failed_at is None:
         return False
+
+    def project_key(record: dict[str, object]) -> str | None:
+        root = job_project_root(record)
+        return os.path.normcase(os.path.normpath(root)) if root else None
+
     source = job_source(failed)
+    project = project_key(failed)
     return any(
         job_state(record) == "succeeded"
         and job_source(record) == source
+        and project_key(record) == project
         and (job_updated_timestamp(record) or float("-inf")) > failed_at
         for record in records
     )

@@ -1,10 +1,13 @@
 """Unit tests for rag.search - query parsing and metadata extraction."""
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
 from .. import ParsedQuery, SearchResult, parse_query
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
 
 # No module-level pytestmark - each class sets its own marker
 
@@ -546,3 +549,133 @@ class TestInlinePathScopeToken:
             CodebaseSearchOptions(path="src/pkg/a.py"),
         )
         assert store_filters["path"] == "src/pkg/a.py"
+
+
+class TestPassageSelectionUnderMemoryExhaustion:
+    """A ranked page keeps usable snippets when passage scoring cannot run."""
+
+    pytestmark: ClassVar = [pytest.mark.cuda]
+
+    def test_results_keep_their_first_passage_when_scoring_runs_out_of_memory(
+        self,
+    ) -> None:
+        import threading
+
+        from .._gpu import load_accelerator
+        from ..search._models import ResultPassage
+        from ..search._searcher import VaultSearcher, _EncodedSearchQuery
+
+        torch = load_accelerator().torch
+
+        class _ExhaustedReranker:
+            def predict(self, *_args: object, **_kwargs: object) -> object:
+                raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker = cast("CrossEncoder", _ExhaustedReranker())
+        searcher._reranker_enabled = True
+        searcher._gpu_lock = None
+        searcher._reranker_lock = threading.Lock()
+        result = SearchResult(
+            id="adr/sample",
+            path=".vault/adr/sample.md",
+            title="sample",
+            score=0.9,
+            snippet="chunk head",
+            source="vault",
+        )
+        result.passages = (
+            ResultPassage("first passage", 12, 12, "Options"),
+            ResultPassage("second passage", 14, 15, "Options"),
+        )
+        encoded = _EncodedSearchQuery(
+            ParsedQuery(text="q", filters={}), "q", [1.0], None, 1, {}
+        )
+
+        # Without the fallback the exhausted forward propagates out of the
+        # search, and this call raises instead of returning.
+        searcher._select_passages(encoded, [result])
+
+        assert (result.snippet, result.line_start, result.section) == (
+            "first passage",
+            12,
+            "Options",
+        )
+
+
+class TestRerankerForwardScope:
+    """The reranker forward runs under the GPU lock with half accumulation."""
+
+    pytestmark: ClassVar = [pytest.mark.cuda]
+
+    def test_predict_runs_locked_with_half_accumulation_and_restores_it(
+        self,
+    ) -> None:
+        import threading
+
+        from .._gpu import load_accelerator
+        from ..search._searcher import VaultSearcher
+
+        matmul = load_accelerator().torch.backends.cuda.matmul
+        previous = matmul.allow_fp16_accumulation
+        gpu_lock = threading.Lock()
+        observed: list[tuple[bool, bool]] = []
+
+        class _RecordingReranker:
+            def predict(self, pairs: list[object], **_kwargs: object) -> object:
+                observed.append((gpu_lock.locked(), matmul.allow_fp16_accumulation))
+                return [0.5 for _ in pairs]
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker = cast("CrossEncoder", _RecordingReranker())
+        searcher._reranker_enabled = True
+        searcher._gpu_lock = gpu_lock
+        searcher._reranker_lock = threading.Lock()
+
+        scores = searcher._predict_scores([("q", "a"), ("q", "b")])
+
+        assert scores == [0.5, 0.5]
+        # Held inside the forward only: locked, switched on, then restored.
+        assert observed == [(True, True)]
+        assert matmul.allow_fp16_accumulation is previous
+        assert not gpu_lock.locked()
+
+
+class TestPassageSelectionWithoutReranker:
+    """With reranking off, every result on the page shows its first passage."""
+
+    pytestmark: ClassVar = [pytest.mark.unit]
+
+    def test_each_result_shows_its_leading_passage(self) -> None:
+        from ..search._models import ResultPassage
+        from ..search._searcher import VaultSearcher, _EncodedSearchQuery
+
+        searcher = VaultSearcher.__new__(VaultSearcher)
+        searcher._reranker_enabled = False
+        page: list[SearchResult] = []
+        for name, count in (("several", 3), ("single", 1), ("none", 0)):
+            result = SearchResult(
+                id=f"adr/{name}",
+                path=f".vault/adr/{name}.md",
+                title=name,
+                score=0.5,
+                snippet="chunk head",
+                source="vault",
+            )
+            result.passages = tuple(
+                ResultPassage(f"{name} passage {n}", 20 + n, 20 + n, "Options")
+                for n in range(count)
+            )
+            page.append(result)
+        encoded = _EncodedSearchQuery(
+            ParsedQuery(text="q", filters={}), "q", [1.0], None, len(page), {}
+        )
+
+        searcher._select_passages(encoded, page)
+
+        assert [result.snippet for result in page] == [
+            "several passage 0",
+            "single passage 0",
+            "chunk head",
+        ]
+        assert [result.line_start for result in page] == [20, 20, None]

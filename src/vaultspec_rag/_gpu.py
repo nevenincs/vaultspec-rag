@@ -8,10 +8,12 @@ The import remains function-local so importing this module is torch-free.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
     from types import ModuleType
 
 AcceleratorBackend = Literal["cuda", "mps"]
@@ -70,6 +72,41 @@ class AcceleratorContext:
     def release_cache(self) -> None:
         """Return unused allocator blocks to the selected backend."""
         getattr(self.torch, self.backend).empty_cache()
+
+    def unless_out_of_memory[T](self, call: Callable[[], T]) -> T | None:
+        """Return *call*'s result, or ``None`` if it exhausts accelerator memory.
+
+        Any other failure propagates: only allocator exhaustion is a result a
+        caller can degrade around.
+        """
+        try:
+            return call()
+        except BaseException as exc:
+            if not self.is_out_of_memory(exc):
+                raise
+            return None
+
+    @contextmanager
+    def half_accumulation(self) -> Generator[None]:
+        """Accumulate half-precision matrix products in half precision.
+
+        Consumer CUDA cards run fp16 products with fp16 accumulation at twice
+        the fp32-accumulation rate. The switch is process-wide, so it is held
+        only for the calls inside this block and restored after; callers run
+        it under the GPU lock, which keeps any other forward pass out of the
+        window. Other backends, and torch builds older than the switch, run
+        unchanged.
+        """
+        matmul = self.torch.backends.cuda.matmul if self.backend == "cuda" else None
+        previous = getattr(matmul, "allow_fp16_accumulation", None)
+        if matmul is None or previous is None:
+            yield
+            return
+        matmul.allow_fp16_accumulation = True
+        try:
+            yield
+        finally:
+            matmul.allow_fp16_accumulation = previous
 
 
 def _mps_fallback_enabled() -> bool:

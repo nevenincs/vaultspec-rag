@@ -50,8 +50,43 @@ __all__ = [
     "_wait_for_exit",
     "cpu_backed_embedding_model",
     "provisioned_qdrant_binary",
+    "seed_vault_publication",
     "serve_qdrant",
 ]
+
+
+async def seed_vault_publication(port: int, root: Path) -> None:
+    """Rebuild *root*'s vault through the service and wait for it to publish.
+
+    An incremental vault run needs a published proof to descend from, and a
+    search needs published points; a rebuild establishes both.
+    """
+    import asyncio
+    from typing import cast
+
+    from ...indexer._run_ledger_models import RunAuthority
+    from ...mcp import _admin_client as admin_tools
+    from ...serviceclient._transport import _try_http_reindex
+
+    response = await asyncio.to_thread(
+        _try_http_reindex,
+        "vault",
+        True,
+        port,
+        str(root),
+        authority=RunAuthority.REBUILD,
+        initiator_kind="mcp",
+    )
+    assert response is not None and response.get("ok") is True, response
+    job_id = cast("str", response["job_id"])
+    for _ in range(500):
+        jobs_res = await admin_tools.get_jobs()
+        jobs = [job for job in jobs_res.get("jobs", []) if job["id"] == job_id]
+        if jobs and jobs[0]["phase"] in ("done", "error", "failed"):
+            assert jobs[0]["phase"] == "done", jobs[0]
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"rebuild publication job {job_id} did not finish")
 
 
 def provisioned_qdrant_binary() -> Path:

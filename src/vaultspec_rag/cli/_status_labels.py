@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 
 import pydantic
 
+from .._job_errors import JobErrorKind
 from .._job_values import text
 from .._operator_commands import (
     IndexCommandOptions,
@@ -476,10 +477,18 @@ def _failed_job_finding(
     if not job_id:
         return None
     kind = _error_kind(record)
+    # The service serves every project, so a rebuild is named only with the
+    # project it belongs to; run anywhere else it would rebuild the wrong one.
+    project_root = record.get("project_root")
+    rebuild = (
+        _rebuild_remedy(record, project_root=project_root)
+        if isinstance(project_root, str) and project_root
+        else ""
+    )
     return DegradedFinding(
         cause=f"an indexing job failed{f': {kind}' if kind else ''}",
         detail=_failed_job_identity(record, now=now, with_kind=False),
-        command=f"vaultspec-rag server logs --job-id {job_id}",
+        command=rebuild or f"vaultspec-rag server logs --job-id {job_id}",
         family=DegradationReason.JOB_FAILED,
     )
 
@@ -662,11 +671,41 @@ def _domain_cause(record: dict[str, object]) -> str:
     return f"{domain} {phrase}{f': {kind}' if kind else ''}"
 
 
+#: Sources a single index rebuild addresses; ``combined`` is a selection
+#: across them, never the source of one job.
+_REBUILDABLE_SOURCES = frozenset(
+    {PublicSourceType.VAULT, PublicSourceType.CODE, PublicSourceType.DOCUMENT}
+)
+
+
+def _rebuild_remedy(
+    record: dict[str, object], *, project_root: str | None = None
+) -> str:
+    """The rebuild a failed job's refusal asks for, or an empty string.
+
+    A job refused as ``full_reindex_required`` names its remedy: its own logs
+    only restate the refusal, and no command but the rebuild of its source
+    clears it. *project_root* names the project in the command, for a caller
+    that is not already scoped to it.
+    """
+    source = record.get("source")
+    if (
+        _error_kind(record) == JobErrorKind.FULL_REINDEX_REQUIRED.value
+        and isinstance(source, str)
+        and source in _REBUILDABLE_SOURCES
+    ):
+        return index_command(
+            source, IndexCommandOptions(rebuild=True, target=project_root)
+        )
+    return ""
+
+
 def _domain_degradation(record: dict[str, object]) -> DegradedFinding:
     """Turn one structured per-domain index degradation into a finding."""
     raw_job_id = record.get("job_id")
     job_id = raw_job_id.strip() if isinstance(raw_job_id, str) else ""
     _, command = _DOMAIN_REASONS.get(str(record.get("reason")), ("", ""))
+    command = _rebuild_remedy(record) or command
     if not command and job_id:
         command = f"vaultspec-rag server logs --job-id {job_id}"
     return DegradedFinding(
