@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -202,22 +203,61 @@ def test_a_repair_outside_the_pytest_root_never_reaches_uv(
 def test_a_repair_aimed_at_another_environment_is_refused(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
+    """Guard assertion: the only environment this may change is its own.
+
+    It is the environment whose state the run has just read and the one the
+    accepted decision permits the product to change. A classifier
+    substituted in a test, or a caller that does not exist yet, is how a
+    target belonging to someone else arrives here.
+
+    Mutation check: deleting the running-interpreter comparison from
+    `_target_mismatch` makes this fail on the "not the environment this
+    command is running in" assertion, and the subprocess double proves no
+    installing uv would have started either way.
+    """
+
+    class _NoSubprocess:
+        """Stands in for the subprocess module: nothing may be launched."""
+
+        @staticmethod
+        def run(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("a foreign target must be refused before uv runs")
+
+    monkeypatch.setattr(_tool_torch, "subprocess", _NoSubprocess)
+
+    def _uv_on_path(_name: str) -> str:
+        return "uv"
+
+    monkeypatch.setattr(_tool_torch.shutil, "which", _uv_on_path)
+    other = tmp_path / "another-env"
+    (other / "Scripts").mkdir(parents=True)
+
+    ran, detail = _tool_torch._run_repair(
+        str(other / "Scripts" / "python.exe"), stream=False
+    )
+
+    assert not ran
+    assert "is not the environment this command is running in" in detail
+    assert str(other) in detail
+
+
+def test_a_repair_whose_tool_entry_is_another_environment_is_refused(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
     """Guard assertion: uv acts on its own entry, not on the path given.
 
     ``uv tool install`` installs into the tool directory's entry for the
-    package. When that entry is a different environment from the one being
-    repaired, uv rebuilds it wholesale - removing its contents and then
-    failing on whatever holds it, which is how a live installation lost its
-    packages. The two are compared before anything that mutates is launched.
+    package. When that entry is a different environment, uv rebuilds it
+    wholesale - removing its contents and then failing on whatever holds it,
+    which is how a live installation lost its packages. The target here is
+    this process's own environment, so the first comparison passes and this
+    one is what refuses.
 
-    Mutation check: deleting the target comparison from `_run_repair` makes
-    this fail on the "would install into" assertion, and the subprocess
-    double proves no installing uv would have started either way.
+    Mutation check: deleting the tool-entry comparison makes this fail on the
+    "would install into" assertion, and the double proves nothing that
+    mutates would have run.
     """
-    elsewhere = tmp_path / "tools" / "vaultspec-rag"
-    (elsewhere / "Scripts").mkdir(parents=True)
-    other = tmp_path / "another-env"
-    (other / "Scripts").mkdir(parents=True)
+    running = str(Path(sys.executable))
 
     def _uv_answers(args: tuple[str, ...], **_kwargs: object) -> object:
         assert args[1:] == ("tool", "dir"), (
@@ -227,18 +267,11 @@ def test_a_repair_aimed_at_another_environment_is_refused(
 
     monkeypatch.setattr(_tool_torch.subprocess, "run", _uv_answers)
 
-    def _uv_on_path(_name: str) -> str:
-        return "uv"
+    detail = _tool_torch._target_mismatch("uv", running)
 
-    monkeypatch.setattr(_tool_torch.shutil, "which", _uv_on_path)
-
-    ran, detail = _tool_torch._run_repair(
-        str(other / "Scripts" / "python.exe"), stream=False
-    )
-
-    assert not ran
+    assert detail is not None
     assert "would install into" in detail
-    assert str(elsewhere) in detail
+    assert str(tmp_path / "tools" / "vaultspec-rag") in detail
 
 
 def test_nothing_is_installed_without_consent(
@@ -641,7 +674,7 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
         holder.pid in {found.pid, found.launcher_pid} for found in outcome.holders
     )
     assert f"pid {holder.pid}" in outcome.detail
-    assert "end this process" in outcome.detail
+    assert "restart it once the repair is done" in outcome.detail
     assert outcome.blocks_install
 
 
@@ -765,9 +798,10 @@ def test_the_refusal_names_what_each_holder_is_and_how_to_clear_it(
 
     assert "vaultspec-rag service on port 8776" in detail
     assert "vaultspec-rag server stop --port 8776" in detail
+    assert "vaultspec-rag server start --port 8776" in detail
     assert "MCP stdio adapter" in detail
-    assert "close the editor or agent session that started it" in detail
-    assert "end this process" in detail
+    assert "restart the editor or agent session that started it" in detail
+    assert "restart it once the repair is done" in detail
     # The command line is what tells the three apart; the image cannot.
     assert "-m vaultspec_rag.server" in detail
 

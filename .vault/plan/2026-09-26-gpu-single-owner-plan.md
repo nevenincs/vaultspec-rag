@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:b62b33a716beb0f8c3134d5b32871c490ec273ac7f93185f26358271e0fb27b5'
+body_hash: 'sha256:eb70a551321768d77fa6f8bf39d307d1a4841db007dcdcc02d258d08800cd242'
 ---
 
 # `gpu-single-owner` plan
@@ -98,7 +98,7 @@ Makes the product's own consented repair and every command it hands over leave a
 
 - [x] `P04.S16` - split the tool repair into a swap through uv's pip interface of the recorded request at its installed release with torch reinstalled from the CUDA index, followed by an options-only receipt install, and make the non-durable upgrade the options-only install followed by a bare uv tool upgrade; `src/vaultspec_rag/operator_state/_provisioning.py, src/vaultspec_rag/commands/_tool_torch.py`.
 - [x] `P04.S17` - name the restart after an applied repair, take consent only from --yes or a prompt, never prompt on the JSON path, and serialise holders once, bounded, with a total; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/_readiness.py`.
-- [ ] `P04.S18` - state holder remedies as restarts after an in-place repair, correct the doctor holder wording, enforce the running-interpreter predicate, and treat a path or specifier torch pin as pinned; `src/vaultspec_rag/operator_state/_holders.py, src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/operator_state/_provisioning.py`.
+- [x] `P04.S18` - state holder remedies as restarts after an in-place repair, correct the doctor holder wording, enforce the running-interpreter predicate, and treat a path or specifier torch pin as pinned; `src/vaultspec_rag/operator_state/_holders.py, src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/operator_state/_provisioning.py`.
 - [ ] `P04.S19` - prove against real uv on Windows with a running launcher that the repair and the upgrade leave the environment whole, and that a package-changing tool install removes it; `src/vaultspec_rag/tests/`.
 - [ ] `P04.S20` - document the two-step repair and the in-use launcher report of an upgrade, and restore the installation guide's support section; `docs/installation.md, README.md`.
 

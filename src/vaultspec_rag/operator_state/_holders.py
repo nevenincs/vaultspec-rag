@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from .._operator_commands import server_stop_command
+from .._operator_commands import server_start_command, server_stop_command
 from .._process_probe import HolderRelation, is_server_launch, server_launch_port
 
 if TYPE_CHECKING:
@@ -56,14 +56,25 @@ class HolderRole(StrEnum):
         }[self]
 
     def remediation(self, port: int | None = None) -> str:
-        """What clears this holder, naming the command where one exists."""
+        """What this holder needs once the repair has been applied.
+
+        The repair changes the environment in place and nothing has to stop
+        for it, so a process running out of that environment is not an
+        obstacle to clear: it is a process still running the build it
+        imported at startup, and a restart is what moves it onto the new one.
+        Only a process holding the tree by working directory is asked to
+        move, because its own binary has nothing to do with the environment.
+        """
         return {
-            HolderRole.SERVICE: f"stop it with `{server_stop_command(port)}`",
+            HolderRole.SERVICE: (
+                f"restart it with `{server_stop_command(port)}` then "
+                f"`{server_start_command(port)}` to pick up the new build"
+            ),
             HolderRole.MCP_ADAPTER: (
-                "close the editor or agent session that started it"
+                "restart the editor or agent session that started it"
             ),
             HolderRole.DIRECTORY_VISITOR: "move this process out of the directory",
-            HolderRole.UNRECOGNISED: "end this process",
+            HolderRole.UNRECOGNISED: "restart it once the repair is done",
         }[self]
 
 

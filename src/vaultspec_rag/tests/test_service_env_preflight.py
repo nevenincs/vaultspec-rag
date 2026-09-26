@@ -215,7 +215,7 @@ def _install_metadata(tmp_path: Path, distribution: str, version: str) -> None:
 def _tool_env(tmp_path: Path, receipt: str) -> str:
     """A tool environment carrying *receipt*, and the interpreter inside it."""
     root = tmp_path / "vaultspec-rag"
-    (root / "Scripts").mkdir(parents=True)
+    (root / "Scripts").mkdir(parents=True, exist_ok=True)
     (root / TOOL_RECEIPT_NAME).write_text(receipt, encoding="utf-8")
     return str(root / "Scripts" / "python.exe")
 
@@ -413,6 +413,31 @@ class TestTheReceiptCarriesTheCudaSource:
         assert (
             classify_tool_receipt(interpreter) is ToolReceiptVerdict.TORCH_WHEEL_PINNED
         )
+
+    def test_a_torch_pin_counts_however_it_was_recorded(self, tmp_path: Path) -> None:
+        """Guard assertion: a pin is a pin whichever key uv wrote it under.
+
+        uv records a direct requirement under ``url`` for an http one and
+        ``path`` for a local file, and an exact specifier freezes the build
+        just as hard. Reading only the first called the other two durable,
+        so an installation that can never resolve a new torch reported that
+        upgrades would keep its GPU build.
+        """
+        for recorded in (
+            '{ name = "torch", path = "C:/wheels/torch.whl" }',
+            '{ name = "torch", specifier = "==2.14.0+cu130" }',
+        ):
+            interpreter = _tool_env(
+                tmp_path,
+                "[tool]\nrequirements = [\n"
+                '  { name = "vaultspec-rag" },\n'
+                f"  {recorded},\n]\n",
+            )
+
+            assert (
+                classify_tool_receipt(interpreter)
+                is ToolReceiptVerdict.TORCH_WHEEL_PINNED
+            ), recorded
 
     def test_a_receipt_without_the_options_will_resolve_a_cpu_build(
         self, tmp_path: Path

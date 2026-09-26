@@ -379,8 +379,10 @@ def _render_environment_holders(report: dict[str, object]) -> None:
     """Report who is running out of the service environment, and what they are.
 
     The scan ran for the daemon's environment, so the list is about the
-    environment a repair would replace rather than the one this command
-    happens to run in.
+    environment a repair would change rather than the one this command
+    happens to run in. Nothing here blocks that repair: it is applied in
+    place, and these are the processes that keep the build they imported at
+    startup until they are restarted.
     """
     raw = report.get("environment_holders")
     if not isinstance(raw, dict):

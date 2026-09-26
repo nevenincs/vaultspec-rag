@@ -196,7 +196,9 @@ def _handoff_outcome(
     if found.self_held:
         lines.append("  this command is running inside that environment")
     if found.holders:
-        lines.append("  running out of it now, and unchanged until restarted:")
+        lines.append(
+            "  running out of it now, and still on the old build until restarted:"
+        )
         lines.extend(
             f"    {holder_summary(holder)}"
             for holder in found.holders[:HOLDER_REPORT_LIMIT]
@@ -401,18 +403,32 @@ def _run_uv(uv: str, step: tuple[str, ...], *, stream: bool) -> tuple[bool, str]
 
 
 def _target_mismatch(uv: str, interpreter: str) -> str | None:
-    """Refuse when uv's entry for this tool is not the environment in hand.
+    """Refuse unless the target is this process's own tool environment.
 
-    ``uv tool install`` acts on the tool directory's entry for the package,
-    which is not necessarily the environment the interpreter belongs to - and
-    when it is not, uv rebuilds that entry wholesale, removing its contents
-    before it fails on anything held. The two are compared before anything is
-    launched, by name rather than by resolved path, because an environment's
-    interpreter is a symlink out of the tree on POSIX.
+    Two things have to hold, and both are asked before anything is launched.
 
+    The target must be the environment this process is running out of. That
+    is what the accepted decision permits the product to change, and the one
+    environment whose state it has just read; anything else is a stranger's,
+    reached through a substituted classifier or a caller that does not exist.
+
+    uv's own entry for the package must be that same environment. ``uv tool
+    install`` acts on the tool directory's entry, not on the path it is
+    given, and when the two differ uv rebuilds that entry wholesale, removing
+    its contents before it fails on anything held.
+
+    Both comparisons are by name rather than by resolved path, because an
+    environment's interpreter is a symlink out of the tree on POSIX.
     ``uv tool dir`` reads configuration and writes nothing.
     """
     target = environment_root(interpreter)
+    running = environment_root(sys.executable)
+    if running != target:
+        return (
+            f"{target} is not the environment this command is running in "
+            f"({running}); the repair stopped rather than change another "
+            "environment"
+        )
     try:
         located = subprocess.run(
             (uv, "tool", "dir"),

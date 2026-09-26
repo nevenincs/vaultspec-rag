@@ -259,10 +259,24 @@ def _records_cuda_index(options: dict[str, object]) -> bool:
 
 
 def _pins_a_torch_wheel(requirements: list[dict[str, object]]) -> bool:
-    """Whether the receipt names one torch file instead of a source for it."""
+    """Whether the receipt names one torch build instead of a source for it.
+
+    uv records a direct requirement under ``url`` for an http one and
+    ``path`` for a local file, and an exact specifier pins just as hard: each
+    one makes the next upgrade re-apply the build recorded here rather than
+    resolve an accelerated one. Reading only the first reported a receipt
+    written the other two ways as durable.
+    """
     for record in requirements:
         name = record.get("name")
-        if isinstance(name, str) and name.lower() == "torch" and record.get("url"):
+        if not isinstance(name, str) or name.lower() != "torch":
+            continue
+        specifier = record.get("specifier")
+        if (
+            record.get("url")
+            or record.get("path")
+            or (isinstance(specifier, str) and "==" in specifier)
+        ):
             return True
     return False
 

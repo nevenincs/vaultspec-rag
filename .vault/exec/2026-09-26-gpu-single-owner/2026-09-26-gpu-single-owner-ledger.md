@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:7cfa1712e2606d72e171131024b9b4a5ac5b3f02fc1be172229d9fe1ca887b2a'
+body_hash: 'sha256:7e29e0c802e5fdf7a17e9fa95bc768b258917571e137f92d41204feee747edc1'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -275,6 +275,19 @@ related:
 - `S17` `verify:` `pytest test_cli_install test_tool_torch_repair test_readiness_holders test_doctor_repair_and_holders test_service_env_preflight` -> `pass`
 - `S17` `verify:` `guard mutations (restart taken by index, --force read as consent, prompt allowed on the JSON path) fail then pass` -> `pass`
 - `S17` `by:` `vaultspec-high-executor`
+- `S18` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S18` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S18` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S18` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S18` `verify:` `ruff check` -> `pass`
+- `S18` `verify:` `ruff format --check` -> `pass`
+- `S18` `verify:` `ty check` -> `pass`
+- `S18` `verify:` `basedpyright` -> `pass`
+- `S18` `verify:` `pytest test_tool_torch_repair test_service_env_preflight test_doctor_repair_and_holders test_readiness_holders` -> `pass`
+- `S18` `verify:` `guard mutations (url-only pin detection, running-interpreter check removed, holder told to end rather than restart) fail then pass` -> `pass`
+- `S18` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -295,3 +308,4 @@ related:
 - `S13` folded in the P02 review findings for the floor command in the JSON envelope and the holder total and role fallback
 - `S14` the receipt-matcher proofs of the deleted direct-wheel model are removed with it; that import had left this file failing at collection since P03.S11, which this Step closes
 - `S12` correction: the repair runner read uv's output under the ambient encoding, which the shipped-module decoding guard forbids; both subprocess reads now state utf-8 with replacement. The full unit tier was what caught it, not the covering-test selection
+- `S18` no production caller targets an environment other than the running one: `repair_tool_torch` defaults the interpreter to sys.executable and install passes none, so the running-interpreter predicate was added rather than reported as a conflict
