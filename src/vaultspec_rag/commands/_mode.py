@@ -121,9 +121,14 @@ def infer_rag_upgrade_mode(
     Args:
         target: Workspace root directory.
         explicit: The mode requested via ``--mode``, or ``None``.
-        allow_mcp_status: Whether legacy inference may inspect native MCP deployment
-            state. Component-skipped installs disable this and use only durable
-            declaration or package-placement evidence.
+        allow_mcp_status: Whether legacy inference may inspect native MCP
+            deployment state. Component-skipped installs disable this and use
+            only durable declaration or package-placement evidence - with no
+            deployed launch to hold that evidence against, this path answers
+            core's deployment question with an unconditional yes
+            (``launch_is_module_run=True``), so a placement-detected mode is
+            trusted alone rather than contradicted by a shape nothing looked
+            at.
 
     Returns:
         The inferred mode paired with its provenance.

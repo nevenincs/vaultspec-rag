@@ -254,7 +254,7 @@ def _find_option(command: Command, long_flag: str) -> TyperOption:
     raise AssertionError(f"{long_flag} is not registered on {command.name!r}")
 
 
-#: The ADR's shared root options: long flag -> short flag.
+#: The root options every vaultspec package shares: long flag -> short flag.
 _SHARED_ROOT_FLAGS: dict[str, str] = {
     "--target": "-t",
     "--debug": "-d",
@@ -276,7 +276,8 @@ def test_shared_root_flags_match_core(long_flag: str, short_flag: str) -> None:
     assert core_param.is_flag == rag_param.is_flag
 
 
-#: The ADR's shared install flags: long flag -> short flag, or ``None``.
+#: The install flags every vaultspec package shares: long flag -> short
+#: flag, or ``None`` where the flag has no short form.
 _SHARED_INSTALL_FLAGS: dict[str, str | None] = {
     "--target": "-t",
     "--upgrade": None,
@@ -318,9 +319,8 @@ def test_shared_install_flags_match_core(
 def test_uninstall_shares_target_and_json_with_core() -> None:
     """``uninstall`` carries the root-selector and machine-output flags too.
 
-    ``--upgrade``/``--mode``/``--no-hints`` are install-only per the ADR's
-    own flag table, so this checks only the subset uninstall actually
-    declares.
+    ``--upgrade``/``--mode``/``--no-hints`` are install-only in every
+    package, so this checks only the subset uninstall actually declares.
     """
     shared_flags = (
         ("--target", "-t"),

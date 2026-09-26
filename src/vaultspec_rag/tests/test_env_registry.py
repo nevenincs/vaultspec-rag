@@ -21,7 +21,6 @@ test cannot pass by restating the table it is checking.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,10 +41,11 @@ from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar
 from ..indexer._preprocess_schema import PREPROCESS_INVOCATION_ENV
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
-from ._scaffold import restore_env, set_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from vaultspec_core.config import ConfigVariable
 
 pytestmark = [pytest.mark.unit]
 
@@ -66,34 +66,42 @@ _EXPECTED_DOTENV = {EnvVar.TYPESAFE_API_KEY, EnvVar.HF_TOKEN}
 
 #: The settings shared with the rest of the framework, and the framework name
 #: each falls back to.
-_EXPECTED_FALLBACKS = {
+_EXPECTED_FALLBACKS: dict[EnvVar, ConfigVariable] = {
     EnvVar.RAG_ROOT: VAULTSPEC_TARGET_DIR,
     EnvVar.LOG_LEVEL: VAULTSPEC_LOG_LEVEL,
     EnvVar.STDIO_WATCHDOG: VAULTSPEC_STDIO_WATCHDOG,
 }
 
+#: The same variables in a stable order, so a parametrised case keeps its id
+#: across runs. Named here rather than sorted inline in the decorator, where
+#: the surrounding overload widens the element type to ``object`` and the key
+#: function loses the member it is reading.
+_CHAINED_VARIABLES: list[EnvVar] = sorted(
+    _EXPECTED_FALLBACKS, key=lambda variable: variable.value
+)
+
 
 @pytest.fixture
-def clean_chain() -> Iterator[None]:
-    """Unset the scoped and framework names these tests drive, then restore."""
-    scoped = {var: os.environ.pop(var.value, None) for var in _EXPECTED_FALLBACKS}
-    framework = {
-        shared.env_name: os.environ.pop(shared.env_name, None)
-        for shared in _EXPECTED_FALLBACKS.values()
-    }
-    port = os.environ.pop(EnvVar.PORT.value, None)
+def clean_chain(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Unset the scoped and framework names these tests drive, then restore.
+
+    The session environment is moved through ``monkeypatch`` rather than
+    ``os.environ`` directly, and the cached settings are cleared on both
+    sides of the test. Hand-rolled save-and-restore is how a variable
+    escapes one test and decides another's answer: it is skipped whenever a
+    test raises before reaching its own cleanup, and the next reader of a
+    cached configuration built under the escaped value is some unrelated
+    test much later in the lane.
+    """
+    for var in _EXPECTED_FALLBACKS:
+        monkeypatch.delenv(var.value, raising=False)
+    for shared in _EXPECTED_FALLBACKS.values():
+        monkeypatch.delenv(shared.env_name, raising=False)
+    monkeypatch.delenv(EnvVar.PORT.value, raising=False)
     reset_config()
     try:
         yield
     finally:
-        for var, previous in scoped.items():
-            restore_env(var, previous)
-        for name, previous in framework.items():
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
-        restore_env(EnvVar.PORT, port)
         reset_config()
 
 
@@ -180,7 +188,7 @@ def test_only_the_watchdog_fails_safe() -> None:
     assert {var for var in EnvVar if entry(var).fail_safe} == {EnvVar.STDIO_WATCHDOG}
 
 
-@pytest.mark.parametrize("var", sorted(_EXPECTED_FALLBACKS, key=lambda v: v.value))
+@pytest.mark.parametrize("var", _CHAINED_VARIABLES)
 def test_the_scoped_name_outranks_the_framework_name(var: EnvVar) -> None:
     """A session setting both gets the scoped answer, naming the scoped source."""
     shared = _EXPECTED_FALLBACKS[var]
@@ -189,7 +197,7 @@ def test_the_scoped_name_outranks_the_framework_name(var: EnvVar) -> None:
     assert env_source(entry(var), environ) is entry(var)
 
 
-@pytest.mark.parametrize("var", sorted(_EXPECTED_FALLBACKS, key=lambda v: v.value))
+@pytest.mark.parametrize("var", _CHAINED_VARIABLES)
 def test_the_framework_name_answers_when_the_scoped_one_is_blank(var: EnvVar) -> None:
     """A blank scoped name is unset, so the shared name behind it answers.
 
@@ -209,38 +217,34 @@ def test_an_unchained_setting_never_reads_a_framework_name() -> None:
 
 
 @pytest.mark.usefixtures("clean_chain")
-def test_a_blank_numeric_setting_falls_through_to_its_default() -> None:
+def test_a_blank_numeric_setting_falls_through_to_its_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Blank is unset for every key, not a value to be parsed or refused.
 
     ``VAR="$UNSET"`` exports a blank string from a shell, and the resolution
     contract is that it means the same as never setting it at all - for a
     number as much as for a path.
     """
-    previous = set_env(EnvVar.PORT, "   ")
-    try:
-        reset_config()
-        assert get_config().mcp_port == 8766
-    finally:
-        restore_env(EnvVar.PORT, previous)
-        reset_config()
+    monkeypatch.setenv(EnvVar.PORT.value, "   ")
+    reset_config()
+    assert get_config().mcp_port == 8766
 
 
 @pytest.mark.usefixtures("clean_chain")
-def test_a_setting_arrives_stripped() -> None:
+def test_a_setting_arrives_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
     """Surrounding whitespace resolves rather than refusing the value."""
-    previous = set_env(EnvVar.PORT, "  9001\t")
-    try:
-        reset_config()
-        assert get_config().mcp_port == 9001
-    finally:
-        restore_env(EnvVar.PORT, previous)
-        reset_config()
+    monkeypatch.setenv(EnvVar.PORT.value, "  9001\t")
+    reset_config()
+    assert get_config().mcp_port == 9001
 
 
 @pytest.mark.usefixtures("clean_chain")
-def test_the_settings_chain_honours_the_framework_log_level() -> None:
+def test_the_settings_chain_honours_the_framework_log_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A session that sets only the shared level configures this package too."""
-    os.environ[VAULTSPEC_LOG_LEVEL.env_name] = "DEBUG"
+    monkeypatch.setenv(VAULTSPEC_LOG_LEVEL.env_name, "DEBUG")
     reset_config()
     assert get_config().log_level == "DEBUG"
 
@@ -267,7 +271,9 @@ def test_validating_the_environment_does_not_populate_the_cached_config() -> Non
 
 
 @pytest.mark.usefixtures("clean_chain")
-def test_an_unrecognised_log_level_is_refused_not_silently_read() -> None:
+def test_an_unrecognised_log_level_is_refused_not_silently_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``cfg.log_level`` must not accept what ``configure_logging`` would refuse.
 
     The generic settings-override chain validates nothing for a free-form
@@ -277,14 +283,10 @@ def test_an_unrecognised_log_level_is_refused_not_silently_read() -> None:
     """
     from vaultspec_core.config import ConfigurationError
 
-    os.environ[EnvVar.LOG_LEVEL.value] = "WARNIGN"
+    monkeypatch.setenv(EnvVar.LOG_LEVEL.value, "WARNIGN")
     reset_config()
-    try:
-        with pytest.raises(ConfigurationError):
-            _ = get_config().log_level
-    finally:
-        del os.environ[EnvVar.LOG_LEVEL.value]
-        reset_config()
+    with pytest.raises(ConfigurationError):
+        _ = get_config().log_level
 
 
 def test_the_registry_stays_off_the_spawn_worker_import_chain() -> None:
