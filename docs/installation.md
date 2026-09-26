@@ -279,7 +279,11 @@ see [storage backends](backends.md) for its requirements.
 If your project needs a PyTorch configuration patch, the installer asks before adding
 a Linux/Windows CUDA package source to `pyproject.toml`. Its platform marker keeps
 that source inactive on macOS. Enter `y` to accept, or add `--yes` for unattended
-installation. Use `--no-torch-config` to skip that configuration step.
+installation. Use `--no-torch-config` to skip that configuration step. `--force`
+overwrites existing files but never answers this prompt on its own - only `--yes`
+does. A run with nobody to answer it (CI, a non-TTY session, or `--json`) never
+prompts: it skips the patch, reports the skip, and exits non-zero so the gap is
+visible rather than silent.
 
 From your project root, run:
 
@@ -526,6 +530,13 @@ if you selected them:
 vaultspec-rag install --upgrade
 ```
 
+A workspace from before placement was recorded (no `.vaultspec/workspace.json`
+entry for vaultspec-rag) has its placement inferred rather than reset: a
+`pyproject.toml` runtime dependency or dev-group entry is only honoured when
+the workspace's already-deployed MCP launch actually matches it, so `--upgrade`
+cannot silently move a working `tool`-mode deployment onto `dependency` mode
+just because the package is also listed.
+
 If the [release notes](https://github.com/nevenincs/vaultspec-rag/releases) specify
 a new bundled Qdrant version, update Qdrant:
 
@@ -549,11 +560,14 @@ data by default. Read the [uninstall flags](cli.md#uninstall) before choosing
 data removal.
 
 If RAG is a project dependency, prefix `vaultspec-rag` commands with `uv run`.
+Uninstall is destructive by default: without `--force` (and without `--dry-run`
+to preview instead), the command refuses to run rather than silently
+previewing.
 
 1. From your project root, preview the integration changes:
 
    ```sh
-   vaultspec-rag uninstall
+   vaultspec-rag uninstall --dry-run
    ```
 
 1. Review the preview, then apply it:
