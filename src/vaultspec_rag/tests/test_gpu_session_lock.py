@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 # Borrowing pauses a served registry, which lends its GPU through the owner
 # anchor; every test here gets a private one, so none claims the machine's.
-pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("private_gpu_owner_anchor")]
+pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "gpu-pytest-session-route-token"
 

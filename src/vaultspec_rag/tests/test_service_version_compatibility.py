@@ -535,7 +535,7 @@ def test_cli_search_refuses_a_foreign_release_rather_than_answering(
     assert envelope["version"]["service_version"] == _FOREIGN_RELEASE
 
 
-@pytest.mark.usefixtures("isolated_singleton_dirs", "private_gpu_owner_anchor")
+@pytest.mark.usefixtures("isolated_singleton_dirs")
 def test_a_local_mandate_does_not_run_beside_a_foreign_release(
     health_service: _HealthServiceState,
 ) -> None:

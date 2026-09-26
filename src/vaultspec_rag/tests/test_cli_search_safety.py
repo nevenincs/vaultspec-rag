@@ -73,7 +73,6 @@ class TestSearchSafetyContract:
         assert "Qdrant lock" not in normalized
         assert "in-process" not in normalized
 
-    @pytest.mark.usefixtures("private_gpu_owner_anchor")
     def test_search_port_dead_with_allow_fallback_no_warning(self, tmp_path: Path):
         """--allow-fallback does NOT emit the legacy fallthrough warning."""
         (tmp_path / ".vaultspec").mkdir()
@@ -298,7 +297,6 @@ class TestSearchSafetyContract:
         assert "index is for" not in result.output
         assert not any("=" in line for line in lines)
 
-    @pytest.mark.usefixtures("private_gpu_owner_anchor")
     def test_empty_local_fallback_search_is_actionable(self, tmp_path: Path) -> None:
         (tmp_path / ".vaultspec").mkdir()
         result = runner.invoke(
@@ -343,7 +341,6 @@ class TestSearchSafetyContract:
         assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
         assert os.environ["TRANSFORMERS_VERBOSITY"] == "error"
 
-    @pytest.mark.usefixtures("private_gpu_owner_anchor")
     def test_search_locked_store_raises_actionable_error(self, tmp_path: Path):
         """A store held by another process prints the routing-mode message.
 
@@ -391,7 +388,6 @@ class TestSearchSafetyContract:
         assert "RAG service" not in normalized
         assert "file watcher" not in normalized
 
-    @pytest.mark.usefixtures("private_gpu_owner_anchor")
     def test_search_locked_store_json_mode(self, tmp_path: Path):
         """A store held by another process reports local_store_locked under --json.
 

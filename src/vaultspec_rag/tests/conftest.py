@@ -230,30 +230,85 @@ def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
     _pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 
-@pytest.fixture
-def private_gpu_owner_anchor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture(autouse=True)
+def gpu_owner_anchor(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[Path]:
-    """Point every GPU ownership question this test asks at a private anchor.
+    """Point every machine-hardware anchor a test reaches at a private file.
 
-    The machine's own anchor may be held by a live service, and a test must
-    never contend for it: a test driving a start or a model load past the
-    ownership check would otherwise be refused by the real owner or, on a free
-    machine, take the real anchor itself. Only where the anchor lives is
-    replaced; claiming, lending and refusing run unchanged. A claim the test's
-    process took on it is released afterwards, since an owner otherwise holds
-    its anchor until it exits and this one would outlive the directory.
+    The machine's own anchors may be held by a live service, and a test must
+    never contend for them: a test driving a start, a loan or a model load past
+    the ownership check would otherwise be refused by the real owner or, on a
+    free machine, take the real anchor itself - and an owner holds its anchor
+    until the process exits, so one such test silences every GPU test that runs
+    after it in that worker, and holds the anchor the developer's own service
+    needs. Which makes this unconditional rather than opt-in: a test cannot
+    declare in advance that nothing it drives will ask.
+
+    Only where the anchors live is replaced; claiming, lending and refusing run
+    unchanged, and there is no such redirection outside the suite. A test that
+    asserts where the real ones resolve opts out with ``real_hardware_anchor``.
     """
-    from .. import _gpu_owner
+    from .. import _gpu_admission, _gpu_owner
     from .._anchor_claim import release_anchor_claim
 
     anchor = tmp_path / "gpu-owner.lock"
-    monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
+    if "real_hardware_anchor" not in request.keywords:
+        monkeypatch.setattr(_gpu_owner, "gpu_owner_anchor_path", lambda: anchor)
+        monkeypatch.setattr(
+            _gpu_admission,
+            "load_window_lock_path",
+            lambda: tmp_path / "gpu-load-window.lock",
+        )
     yield anchor
     with _gpu_owner._guard:
         descriptor = _gpu_owner._held.pop(str(anchor), None)
     if descriptor is not None:
         release_anchor_claim(descriptor, pid_record=True)
+
+
+@pytest.fixture(autouse=True)
+def no_claim_on_a_machine_anchor() -> Generator[None]:
+    """Fail a test that left this process owning one of the machine's anchors.
+
+    An ownership claim outlives the test that took it, so the damage shows up
+    as an unrelated test being refused the GPU, in another worker, in a run
+    that may be on someone else's machine. This names the test that took it
+    instead, and lets the claim go so the rest of the worker still runs.
+
+    Independent of the redirect above on purpose: a guard that shares its
+    mechanism with the thing it guards reports nothing when that mechanism is
+    removed. It runs before the redirect releases, so what it reads is what
+    the test left.
+
+    Mutation check: resolved the machine directory from whatever the test had
+    claimed rather than from the real anchor, which is how a claim landing
+    outside the test's own anchor looks. The borrow that a refused disk
+    preflight drives then failed this assertion by name, naming the anchor;
+    restoring the real resolution passed. The mutation is the way round it is
+    because claiming the real anchor to provoke the guard is the very thing
+    it exists to stop.
+    """
+    yield
+    from .. import _gpu_owner
+    from .._anchor_claim import hardware_anchor_path, release_anchor_claim
+
+    try:
+        machine = os.path.normcase(hardware_anchor_path("gpu-owner.lock").parent)
+    except OSError:
+        return
+    with _gpu_owner._guard:
+        left = [
+            held
+            for held in _gpu_owner._held
+            if os.path.normcase(str(Path(held).parent)) == machine
+        ]
+        for held in left:
+            release_anchor_claim(_gpu_owner._held.pop(held), pid_record=True)
+    assert not left, (
+        f"this test claimed the machine's own hardware anchor: {left}. "
+        "Every anchor a test reaches must resolve inside its tmp_path."
+    )
 
 
 class RagComponents(TypedDict):

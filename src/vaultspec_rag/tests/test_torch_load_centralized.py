@@ -352,7 +352,6 @@ def test_half_accumulation_leaves_other_backends_alone() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.usefixtures("private_gpu_owner_anchor")
 def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     """The gate returns a supported accelerator or fails hard, without mocks.
 
