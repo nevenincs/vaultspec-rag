@@ -34,7 +34,11 @@ from ._app import (
     PortOption,
     app,
 )
-from ._gpu_errors import _handle_gpu_error, refuse_gpu_owned
+from ._gpu_errors import (
+    _handle_gpu_error,
+    refuse_beside_a_service_of_another_release,
+    refuse_if_gpu_owned,
+)
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
@@ -1374,7 +1378,9 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             # this machine whatever it speaks, and running in-process beside it
             # would load a second model stack.
             if mandate:
-                _refuse_beside_a_service_of_another_release(json_mode)
+                refuse_beside_a_service_of_another_release(
+                    command="search", json_mode=json_mode
+                )
             _display_service_version_error(
                 service.version,
                 command="search",
@@ -1446,16 +1452,7 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             json_mode=json_mode,
         )
 
-    # A mandate authorises local compute, not a second model stack: when
-    # another process owns the GPU - the service this search could not use, or
-    # anyone else - refuse before the store is opened or a model is touched.
-    # The model load asks again, as every load does; this only makes the
-    # refusal immediate and structured.
-    from .._gpu_owner import observe_gpu_owner
-
-    ownership = observe_gpu_owner()
-    if not ownership.state.permits_compute:
-        refuse_gpu_owned(ownership, command="search", json_mode=json_mode)
+    refuse_if_gpu_owned(command="search", json_mode=json_mode)
 
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while
@@ -1481,22 +1478,6 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             from ..registry import get_registry
 
             get_registry().close_project(target)
-
-
-def _refuse_beside_a_service_of_another_release(json_mode: bool) -> NoReturn:
-    """Refuse a mandated local search beside a running daemon of another release.
-
-    The ownership answer names the holder when it can see one. A daemon it
-    cannot see - one configured with another storage directory, from a release
-    that predates the GPU anchor - still answered on its port, so it is reported
-    as the service holding this machine rather than as a free GPU.
-    """
-    from .._gpu_owner import GpuOwnership, GpuOwnerState, observe_gpu_owner
-
-    ownership = observe_gpu_owner()
-    if ownership.state.permits_compute:
-        ownership = GpuOwnership(GpuOwnerState.SERVICE_HOLDS_MACHINE, 0)
-    refuse_gpu_owned(ownership, command="search", json_mode=json_mode)
 
 
 def _validate_search_extra_args(ctx: typer.Context) -> None:

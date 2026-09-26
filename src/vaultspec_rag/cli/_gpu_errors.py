@@ -18,7 +18,9 @@ __all__ = [
     "_handle_gpu_error",
     "_no_gpu_message",
     "_no_torch_message",
+    "refuse_beside_a_service_of_another_release",
     "refuse_gpu_owned",
+    "refuse_if_gpu_owned",
     "warn_if_active_torch_not_accelerator",
 ]
 
@@ -54,6 +56,39 @@ def refuse_gpu_owned(
     )
     _plain(f"Error: {message}\nNext actions:\n{steps}")
     raise typer.Exit(code=1)
+
+
+def refuse_if_gpu_owned(*, command: str, json_mode: bool) -> None:
+    """Refuse *command* up front when another process owns the GPU.
+
+    A local-compute mandate authorises local compute, not a second model
+    stack. Asking before the store is opened or a model is touched makes the
+    refusal immediate and structured; the model load asks again, as every load
+    does.
+    """
+    from .._gpu_owner import observe_gpu_owner
+
+    ownership = observe_gpu_owner()
+    if not ownership.state.permits_compute:
+        refuse_gpu_owned(ownership, command=command, json_mode=json_mode)
+
+
+def refuse_beside_a_service_of_another_release(
+    *, command: str, json_mode: bool
+) -> NoReturn:
+    """Refuse mandated local compute beside a running daemon of another release.
+
+    The ownership answer names the holder when it can see one. A daemon it
+    cannot see - one configured with another storage directory, from a release
+    that predates the GPU anchor - still answered on its port, so it is reported
+    as the service holding this machine rather than as a free GPU.
+    """
+    from .._gpu_owner import GpuOwnership, GpuOwnerState, observe_gpu_owner
+
+    ownership = observe_gpu_owner()
+    if ownership.state.permits_compute:
+        ownership = GpuOwnership(GpuOwnerState.SERVICE_HOLDS_MACHINE, 0)
+    refuse_gpu_owned(ownership, command=command, json_mode=json_mode)
 
 
 def _no_torch_message() -> str:
