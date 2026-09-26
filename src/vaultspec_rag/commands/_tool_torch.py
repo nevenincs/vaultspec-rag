@@ -30,6 +30,7 @@ from ..operator_state._provisioning import (
     ToolReceiptVerdict,
     classify_tool_receipt,
     cuda_remediation,
+    installed_tool_release,
     tool_repair_steps,
 )
 from ..operator_state._topology import (
@@ -69,6 +70,15 @@ _TOOL_DIR_TIMEOUT_SECONDS = 30.0
 
 #: The tool directory entry this package installs as.
 _TOOL_ENTRY_NAME = "vaultspec-rag"
+
+#: Why the product will not run the repair even with consent in hand. The
+#: commands are still handed over: an operator who knows which release they
+#: want can name it themselves, which the product cannot.
+_UNREADABLE_RELEASE = (
+    "the installed release could not be read from this environment or its "
+    "receipt, so the repair would resolve the newest one; run it yourself if "
+    "that is what you want"
+)
 
 CONSENT_PROMPT = (
     "Install the CUDA build of torch into this tool environment and record "
@@ -514,6 +524,13 @@ def _repair_defective_tool(
             capability=need.capability,
             receipt=need.receipt,
         )
+    if installed_tool_release(interpreter) is None:
+        # Neither the installed metadata nor the receipt says which release
+        # this environment is on, so the swap would resolve the newest one.
+        # That is an upgrade nobody asked for, offered under a question
+        # about torch, which the provisioning decision forbids the product
+        # to perform on its own; the operator is handed the commands instead.
+        return _handoff_outcome(interpreter, remediation, need, _UNREADABLE_RELEASE)
     consented, answer = _consented(request.assume_yes, request.confirm)
     if not consented:
         return _handoff_outcome(interpreter, remediation, need, answer)

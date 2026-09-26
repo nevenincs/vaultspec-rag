@@ -31,6 +31,13 @@ def _persistent_tool_env(_root: object) -> RuntimeEnvKind:
     return RuntimeEnvKind.UV_TOOL
 
 
+def _with_a_readable_release(tmp_path: Path, version: str = "0.5.2") -> None:
+    """Record the tool as installed, which a repair must know before it runs."""
+    site = tmp_path / "Lib" / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    (site / f"vaultspec_rag-{version}.dist-info").mkdir(exist_ok=True)
+
+
 def _durable_receipt(_interpreter: str) -> ToolReceiptVerdict:
     return ToolReceiptVerdict.DURABLE
 
@@ -290,6 +297,7 @@ def test_nothing_is_installed_without_consent(
     monkeypatch.setattr(_tool_torch, "_run_repair", _refuse)
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
+    _with_a_readable_release(tmp_path)
 
     outcome = _tool_torch._repair_defective_tool(
         str(interpreter),
@@ -325,6 +333,7 @@ def test_a_consented_repair_runs_and_is_verified_rather_than_assumed(
     )
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
+    _with_a_readable_release(tmp_path)
 
     outcome = _tool_torch._repair_defective_tool(
         str(interpreter),
@@ -356,6 +365,7 @@ def test_a_repair_that_worked_is_reported_as_done(
     monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable_receipt)
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
+    _with_a_readable_release(tmp_path)
 
     outcome = _tool_torch._repair_defective_tool(
         str(interpreter),
@@ -825,3 +835,83 @@ def test_the_refusal_counts_the_processes_it_could_not_inspect(
 
     assert "1 process could not be inspected" in detail
     assert "some processes could not be inspected" not in detail
+
+
+def test_a_repair_without_a_readable_release_is_handed_over(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Guard assertion: naming no release resolves the newest one.
+
+    An environment damaged badly enough to have lost its installed metadata
+    and its receipt pin cannot say which release it is on. The swap would
+    then take whatever is newest, which is an upgrade nobody asked for
+    offered under a question about torch, and the provisioning decision
+    forbids the product to perform it. Consent does not change that: the
+    commands are handed over so an operator who knows the release can name
+    it themselves.
+
+    Mutation check: deleting the release check from `_repair_defective_tool`
+    lets the consented path run, and the subprocess double fires with "an
+    unreadable release must launch nothing".
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> tuple[bool, str]:
+        raise AssertionError("an unreadable release must launch nothing")
+
+    monkeypatch.setattr(_tool_torch, "_run_repair", _refuse)
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(assume_yes=True),
+    )
+
+    assert outcome.blocks_install
+    assert "the installed release could not be read" in outcome.detail
+    assert any("uv pip install" in command for command in outcome.commands)
+
+
+def test_a_receipt_pin_answers_for_lost_installed_metadata(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """The receipt is the second source, and it is the operator's own choice.
+
+    An environment that lost its distributions still carries the request uv
+    was given, so the repair can name the release it is meant to be on
+    rather than refusing or guessing.
+    """
+    launched: list[str] = []
+
+    def _ran(interpreter: str, *, stream: bool) -> tuple[bool, str]:
+        del stream
+        launched.append(interpreter)
+        return True, "uv applied the repair"
+
+    monkeypatch.setattr(_tool_torch, "_run_repair", _ran)
+    monkeypatch.setattr(
+        _environment_probe,
+        "probe_interpreter",
+        _probe_answering(ComputeCapability.READY),
+    )
+    monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable_receipt)
+    (tmp_path / "uv-receipt.toml").write_text(
+        '[tool]\nrequirements = [{ name = "vaultspec-rag", specifier = "==0.4.35" }]\n',
+        encoding="utf-8",
+    )
+    interpreter = tmp_path / "Scripts" / "python.exe"
+    interpreter.parent.mkdir()
+
+    outcome = _tool_torch._repair_defective_tool(
+        str(interpreter),
+        _need(ComputeCapability.CPU_ONLY_BUILD),
+        _tool_torch.ToolRepairRequest(assume_yes=True),
+    )
+
+    assert launched == [str(interpreter)]
+    assert outcome.action is _tool_torch.ToolTorchRepairAction.REPAIRED
+    assert (
+        "vaultspec-rag==0.4.35"
+        in _provisioning.tool_repair_commands(str(interpreter))[0]
+    )

@@ -44,6 +44,7 @@ __all__ = [
     "durable_upgrade_commands",
     "environment_python_request",
     "inplace_cuda_command",
+    "installed_tool_release",
     "published_wheel_platform_tag",
     "read_receipt",
     "release_upgrade_command",
@@ -454,12 +455,12 @@ def tool_swap_arguments(interpreter: str) -> tuple[str, ...]:
     damaged environment regains the distributions it lost without gaining a
     release it did not ask for, and torch is reinstalled at the release it
     already has, from the CUDA index under the strategy that reaches it. A
-    version that cannot be read is left unnamed rather than guessed.
+    version that cannot be read is left unnamed, which resolves the newest;
+    that is why nothing runs this command on the operator's behalf without a
+    release to name (see :func:`installed_tool_release`).
     """
     package = tool_package_requirement(interpreter)
-    installed = environment_distribution_version(
-        interpreter, Requirement(_HOST_TOOL_REQUEST).name
-    )
+    installed = installed_tool_release(interpreter)
     torch_version = _public_version(
         environment_distribution_version(interpreter, "torch")
     )
@@ -478,6 +479,46 @@ def tool_swap_arguments(interpreter: str) -> tuple[str, ...]:
         package if installed is None else f"{package}=={installed}",
         *(() if torch_version is None else (f"torch=={torch_version}",)),
     )
+
+
+def _recorded_tool_release(interpreter: str) -> str | None:
+    """The exact release the receipt pins the tool to, if it pins one.
+
+    uv writes what it was asked to install. An environment whose installed
+    metadata is gone still has this, and it is the release the operator
+    chose rather than whatever is newest today.
+    """
+    data = read_receipt(environment_root(interpreter) / TOOL_RECEIPT_NAME)
+    if data is None:
+        return None
+    package = Requirement(_HOST_TOOL_REQUEST).name
+    for record in _receipt_requirements(data):
+        name = record.get("name")
+        specifier = record.get("specifier")
+        if (
+            isinstance(name, str)
+            and name.lower() == package.lower()
+            and isinstance(specifier, str)
+            and specifier.startswith("==")
+        ):
+            return specifier.removeprefix("==").strip() or None
+    return None
+
+
+def installed_tool_release(interpreter: str) -> str | None:
+    """The release a repair must re-install, from either source that has it.
+
+    The environment's own installed metadata first, because that is what is
+    there now. The receipt's exact pin second, for an environment damaged
+    badly enough to have lost the metadata but not the receipt.
+
+    ``None`` means neither source could answer. A repair that names no
+    release resolves the newest one, which is an upgrade the operator did
+    not ask for under a prompt about torch, so nothing runs it for them.
+    """
+    return environment_distribution_version(
+        interpreter, Requirement(_HOST_TOOL_REQUEST).name
+    ) or _recorded_tool_release(interpreter)
 
 
 def tool_receipt_arguments(interpreter: str) -> tuple[str, ...]:
