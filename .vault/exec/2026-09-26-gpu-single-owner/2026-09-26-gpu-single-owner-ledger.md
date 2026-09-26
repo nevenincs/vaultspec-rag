@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:93cebe3d5787ed5f910e35783b3551cdf76267ab82de03ba439488f08ff38ab7'
+body_hash: 'sha256:5094a79dc0bd4fb86ea23236a951352ccae9303899c53c9f2721cda4b77badee'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -172,6 +172,22 @@ related:
 - `S02` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
 - `S02` `verify:` `pytest -m unit test_hardware_anchor test_gpu_owner test_existing_anchor_observation test_gpu_borrow_lease test_machine_discovery test_lifespan_machine_lock` -> `pass`
 - `S02` `verify:` `WSL Ubuntu mode check: pre-fix widens a 0o600 lock, fix keeps it` -> `pass`
+- `S11` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S11` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_constants.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_lockfile.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_torch_pin_single_source.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S11` `verify:` `ruff check` -> `pass`
+- `S11` `verify:` `ruff format --check` -> `pass`
+- `S11` `verify:` `ty check` -> `pass`
+- `S11` `verify:` `basedpyright` -> `pass`
+- `S11` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_torch_pin_single_source test_doctor_repair_and_holders test_cli_install test_install_torch_config test_process_probe_source_structure` -> `pass`
+- `S11` `verify:` `guard mutations (index accepted without the strategy, repair without --upgrade-package torch, version pin unread) fail then pass` -> `pass`
+- `S11` `by:` `vaultspec-high-executor`
 
 ## Notes
 
@@ -184,3 +200,4 @@ related:
 - `S05` `test_substitution_discipline` fails on `test_storage_maintenance_tick.py` (base commit d18045e8) and on `test_readiness_holders.py` (P02.S10 in progress), both outside this revision
 - `S10` `test_substitution_discipline` still fails on `test_storage_maintenance_tick.py,` a base-branch entry outside this plan
 - `S02` P01 re-review: shared open widened a private lock on POSIX; widening now limited to files the call creates
+- `S11` deleted `TORCH_TOOL_PIN_VERSION` and its mirror test: the wheel URL it fed no longer exists, and the lockfile derivation the build tooling uses stays

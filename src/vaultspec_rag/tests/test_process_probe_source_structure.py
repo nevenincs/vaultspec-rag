@@ -398,6 +398,10 @@ class TestNoStructurallyIdenticalFunctions:
             "operator_state/_topology.py:label",
         ): _ENUM_LABEL_TABLE,
         (
+            "operator_state/_features.py:label",
+            "operator_state/_provisioning.py:label",
+        ): _ENUM_LABEL_TABLE,
+        (
             "indexer/_incremental_commit.py:__init__",
             "server/_stdio_lifetime.py:__init__",
         ): _CONSTRUCTOR_BINDING,

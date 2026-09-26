@@ -5,8 +5,6 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
-from urllib.parse import unquote
 
 from .._process_probe import (
     EnvironmentHolder,
@@ -15,20 +13,12 @@ from .._process_probe import (
 )
 from ..operator_state._holders import holder_role, holder_summary
 from ..operator_state._installation import ComputeCapability
-from ..operator_state._provisioning import (
-    ToolCudaInstallSpec,
-    cuda_remediation,
-    receipt_torch_wheel_url,
-)
+from ..operator_state._provisioning import cuda_remediation
 from ..operator_state._topology import (
-    TOOL_RECEIPT_NAME,
     RuntimeEnvKind,
     classify_environment,
     environment_root,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 #: Holders are listed for an operator to act on, not dumped exhaustively.
 HOLDER_REPORT_LIMIT = 10
@@ -50,14 +40,7 @@ __all__ = [
 
 
 class ToolTorchRepairAction(StrEnum):
-    """One terminal result for a persistent tool environment repair.
-
-    There is no success value. A repair replaces the whole environment, and
-    this process runs inside the only environment it ever targets, so its own
-    interpreter is one of the files the replacement must remove. Every path
-    therefore ends in a refusal that hands the operator a command to run from
-    a shell that holds nothing.
-    """
+    """One terminal result for a persistent tool environment repair."""
 
     NOT_APPLICABLE = "not_applicable"
     ALREADY_READY = "already_ready"
@@ -125,17 +108,6 @@ class ToolTorchRepairOutcome:
         }
 
 
-def _receipt_has_cuda_requirement(receipt: Path, wheel_url: str) -> bool:
-    """Check uv's parsed receipt retains the exact direct CUDA requirement.
-
-    Both URLs are decoded before they are compared: uv re-encodes what it was
-    given, so two spellings of one wheel differ as strings while naming the
-    same file.
-    """
-    recorded = receipt_torch_wheel_url(receipt)
-    return recorded is not None and unquote(recorded) == unquote(wheel_url)
-
-
 def _uninspected_note(found: EnvironmentHolders) -> str | None:
     """Say what the scan could not see, as a count rather than a shrug.
 
@@ -158,33 +130,26 @@ def _uninspected_note(found: EnvironmentHolders) -> str | None:
 
 def _handoff_outcome(
     interpreter: str,
-    spec: ToolCudaInstallSpec,
+    command: str,
     steps: tuple[str, ...],
     *,
     capability: ComputeCapability | None = None,
 ) -> ToolTorchRepairOutcome:
-    """Refuse to replace this environment, and say what has to happen instead.
+    """Hand over the command that repairs this environment, and who is in it.
 
-    The replacement is never run from here. uv removes an environment's
-    contents before writing the new ones, and a file it cannot remove stops it
-    half-way, leaving nothing runnable behind - so the one process guaranteed
-    to be holding this environment is the one that would be issuing the
-    command. Holders are reported because the operator has to clear them
-    first, and a working-directory holder needs different handling from a
-    process to end.
+    The repair changes torch in place and needs nothing stopped, so the
+    holders are reported for what they are: processes that keep the build
+    they loaded at startup until they are restarted.
     """
     root = environment_root(interpreter)
     found = environment_holders(
         root, exclude_launch_chain=True, timeout=HOLDER_SCAN_BUDGET_SECONDS
     )
-    lines = [f"tool CUDA repair must run from outside {root}"]
+    lines = [f"tool CUDA repair for {root}"]
     if found.self_held:
-        lines.append(
-            "  this command is running inside that environment, so the "
-            "replacement has to be issued from a shell that is not"
-        )
+        lines.append("  this command is running inside that environment")
     if found.holders:
-        lines.append("  holders to clear first:")
+        lines.append("  running out of it now, and unchanged until restarted:")
         lines.extend(
             f"    {holder_summary(holder)}"
             for holder in found.holders[:HOLDER_REPORT_LIMIT]
@@ -195,15 +160,13 @@ def _handoff_outcome(
     note = _uninspected_note(found)
     if note is not None:
         lines.append(note)
-    if _receipt_has_cuda_requirement(root / TOOL_RECEIPT_NAME, spec.wheel_url):
-        lines.append("  the receipt already pins this wheel; the environment does not")
     action = (
         ToolTorchRepairAction.HOLDER_DETECTED
         if found.holders
         else ToolTorchRepairAction.HANDOFF_REQUIRED
     )
     return ToolTorchRepairOutcome(
-        action, "\n".join(lines), spec.command, found.holders, steps, capability
+        action, "\n".join(lines), command, found.holders, steps, capability
     )
 
 
@@ -264,7 +227,7 @@ def _repair_defective_tool(
     than as a command that cannot work.
     """
     remediation = cuda_remediation(interpreter, env_kind=RuntimeEnvKind.UV_TOOL)
-    if remediation.spec is None:
+    if not remediation.kind.repairable:
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.CUDA_UNVERIFIED,
             capability.label,
@@ -275,10 +238,13 @@ def _repair_defective_tool(
         return ToolTorchRepairOutcome(
             ToolTorchRepairAction.DRY_RUN,
             f"tool CUDA repair is needed because {capability.label}",
-            remediation.durable_command,
+            remediation.repair_command,
             steps=remediation.steps,
             capability=capability,
         )
     return _handoff_outcome(
-        interpreter, remediation.spec, remediation.steps, capability=capability
+        interpreter,
+        remediation.repair_command,
+        remediation.steps,
+        capability=capability,
     )

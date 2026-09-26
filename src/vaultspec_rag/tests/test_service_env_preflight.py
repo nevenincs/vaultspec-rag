@@ -22,14 +22,15 @@ from ..cli._service_start import (
 )
 from ..cli._status_labels import _status_env_label
 from ..operator_state._provisioning import (
-    HOLDER_PRECONDITION,
+    CU130_INDEX_STRATEGY,
     CudaRepairKind,
-    _wheel_torch_version,
+    ToolReceiptVerdict,
+    classify_tool_receipt,
     cuda_remediation,
     inplace_cuda_command,
     published_wheel_platform_tag,
-    tool_cuda_install_spec,
-    tool_upgrade_command,
+    tool_repair_command,
+    tool_upgrade_commands,
     upgrade_command_for_mode,
 )
 from ..operator_state._topology import (
@@ -154,65 +155,11 @@ class TestRemediationCommands:
         assert "--reinstall" in cmd
         assert cmd.endswith("torch")
 
-    @pytest.mark.torch
-    def test_durable_command_pins_a_cu130_wheel_via_with(self) -> None:
-        import importlib.metadata
-
-        from packaging.version import Version
-
-        spec = tool_cuda_install_spec()
-        assert spec is not None
-        cmd = spec.command
-        assert CU130_INDEX_URL in cmd
-        assert "uv tool install" in cmd
-        assert "vaultspec-rag[gpu,mcp]" in cmd
-        # --index is NOT recorded in uv tool receipts (verified on uv 0.11.x),
-        # so the durable form must be the --with direct wheel URL.
-        assert "--with" in cmd
-        assert "--index" not in cmd
-        # Both tags track the RUNNING interpreter — a hardcoded tag hands a
-        # 3.13 wheel to a 3.14 install and uv rejects it on a tag mismatch.
-        # Compared against packaging rather than a re-derived f-string, so the
-        # assertion cannot restate the same mistake the implementation makes.
-        from packaging.tags import cpython_tags
-
-        tag = next(iter(cpython_tags()))
-        # The version tracks the torch already installed in this env (the CPU
-        # wheel being replaced), read from distribution metadata - an
-        # independent source from whatever the implementation consults.
-        torch_version = Version(importlib.metadata.version("torch")).base_version
-        assert f"torch-{torch_version}%2Bcu130-{tag.interpreter}-{tag.abi}-" in cmd
-        # `uv tool install --force` rebuilds the env with uv's DEFAULT python
-        # request, not the interpreter that printed the command, so the wheel
-        # pin must travel with a matching --python request (uv records it in
-        # the receipt). Derived from sys.version_info here - an independent
-        # source from the packaging tag the implementation parses.
-        assert f"--python {sys.version_info[0]}.{sys.version_info[1]}" in cmd
-
-    def test_wheel_version_strips_the_local_suffix(self) -> None:
-        """The wheel version follows the env's torch, not a baked constant.
-
-        An env whose torch is older than the workspace pin must be offered
-        the same release it already resolved - the cu130 flavour of a version
-        the index may no longer pair with this interpreter otherwise. The
-        local ``+cpu`` suffix must be stripped: the index names ``+cu130``.
-        """
-        assert _wheel_torch_version("2.99.1+cpu") == "2.99.1"
-        assert _wheel_torch_version("2.9.0") == "2.9.0"
-
-    def test_wheel_version_falls_back_when_torch_is_absent(self) -> None:
-        """With no torch installed the pinned fallback version is offered."""
-        from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-
-        assert _wheel_torch_version(None) == TORCH_TOOL_PIN_VERSION
-        assert _wheel_torch_version("not-a-version") == TORCH_TOOL_PIN_VERSION
-
     def test_platform_tag_derives_the_linux_machine(self) -> None:
-        """An aarch64 Linux host is offered the aarch64 wheel, not x86_64.
+        """The CUDA source is offered only where PyTorch publishes one.
 
-        The platform half of the wheel name was a hardcoded x86_64 string;
-        PyTorch publishes ``manylinux_2_28`` wheels per machine architecture,
-        so the machine must be read from the host.
+        PyTorch publishes ``manylinux_2_28`` builds per machine architecture,
+        so the machine is read from the host rather than assumed.
         """
         assert (
             published_wheel_platform_tag("linux", "aarch64") == "manylinux_2_28_aarch64"
@@ -224,13 +171,12 @@ class TestRemediationCommands:
         # to confirm it is that one.
         assert published_wheel_platform_tag("win32", "AMD64") == "win_amd64"
 
-    def test_a_platform_without_a_cuda_wheel_has_no_tag(self) -> None:
-        """Guard assertion: an invented tag names a URL the index refuses.
+    def test_a_platform_without_a_cuda_build_is_not_offered_the_index(self) -> None:
+        """Guard assertion: the index resolves a CPU build for those hosts.
 
-        The tag was derived from the platform family alone, so an ARM64
-        Windows machine and every macOS machine were handed a wheel URL that
-        returns an error - which reads to an operator as a repair they applied
-        wrong rather than one that does not exist.
+        The platform was read by family alone, so an ARM64 Windows machine
+        and every macOS machine were handed a repair that cannot give them a
+        GPU build - which reads to an operator as one they applied wrong.
         """
         assert published_wheel_platform_tag("win32", "ARM64") is None
         assert published_wheel_platform_tag("darwin", "arm64") is None
@@ -244,14 +190,13 @@ class TestRemediationCommands:
 
         assert remediation.kind is CudaRepairKind.NO_PUBLISHED_WHEEL
         assert not remediation.kind.repairable
-        assert remediation.durable_command == ""
-        assert remediation.immediate_command == ""
+        assert remediation.repair_command == ""
         joined = "\n".join(remediation.steps)
         assert CU130_INDEX_URL not in joined
         assert "publishes no CUDA build" in joined
 
-    def test_macos_is_pointed_at_metal_not_at_a_cuda_wheel(self) -> None:
-        """Guard assertion: a cu130 URL on macOS is a repair that cannot work."""
+    def test_macos_is_pointed_at_metal_not_at_a_cuda_index(self) -> None:
+        """Guard assertion: a cu130 source on macOS is a repair that cannot work."""
         remediation = cuda_remediation(
             "/opt/env/bin/python", platform_name="darwin", machine="arm64"
         )
@@ -261,178 +206,188 @@ class TestRemediationCommands:
         assert CU130_INDEX_URL not in joined
         assert "Metal" in joined
 
-    def test_a_tool_environment_gets_both_repairs_and_the_precondition(
+
+def _tool_env(tmp_path: Path, receipt: str) -> str:
+    """A tool environment carrying *receipt*, and the interpreter inside it."""
+    root = tmp_path / "vaultspec-rag"
+    (root / "Scripts").mkdir(parents=True)
+    (root / TOOL_RECEIPT_NAME).write_text(receipt, encoding="utf-8")
+    return str(root / "Scripts" / "python.exe")
+
+
+_DURABLE_RECEIPT = (
+    '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
+    "[tool.options]\n"
+    f'index = [{{ url = "{CU130_INDEX_URL}", explicit = false }}]\n'
+    f'index-strategy = "{CU130_INDEX_STRATEGY}"\n'
+)
+
+
+class TestTheReceiptCarriesTheCudaSource:
+    """A tool installation stays a GPU host through its own receipt.
+
+    Guard assertion: the shipped repair kept CUDA by pinning a direct wheel
+    URL and the installed release into the receipt, which keeps the GPU build
+    only by making the installation unable to move at all.
+    """
+
+    def test_the_repair_records_the_index_and_changes_torch_only(
         self, tmp_path: Path
     ) -> None:
-        """The immediate repair and the durable receipt fix, together, once.
+        """The command uv re-applies on every upgrade is what carries CUDA.
 
-        Guard assertion: one field run printed three different repair commands
-        from three surfaces, because each surface built its own.
+        Without ``--upgrade-package torch`` uv rewrites the receipt and keeps
+        the CPU build it already has, because that build still satisfies the
+        requirement; with ``--force`` it would replace the whole environment,
+        which is the destruction this cycle exists to avoid.
         """
-        interpreter = tmp_path / "Scripts" / "python.exe"
-        interpreter.parent.mkdir()
-
-        remediation = cuda_remediation(
-            str(interpreter),
-            env_kind=RuntimeEnvKind.UV_TOOL,
-            platform_name="win32",
-            machine="AMD64",
+        interpreter = _tool_env(
+            tmp_path,
+            '[tool]\nrequirements = [{ name = "vaultspec-rag", extras = ["gpu"] }]\n',
         )
 
-        assert remediation.kind is CudaRepairKind.TOOL_ENVIRONMENT
-        assert remediation.immediate_command == inplace_cuda_command(str(interpreter))
-        assert remediation.spec is not None
-        assert remediation.durable_command == remediation.spec.command
-        joined = "\n".join(remediation.steps)
-        assert remediation.immediate_command in joined
-        assert remediation.durable_command in joined
-        assert HOLDER_PRECONDITION in remediation.steps
+        command = tool_repair_command(interpreter)
 
-    def test_command_names_the_free_threaded_abi(self) -> None:
-        """A free-threaded host must get the ``t`` wheel, not the GIL one.
+        assert f"--index {CU130_INDEX_URL}" in command
+        assert f"--index-strategy {CU130_INDEX_STRATEGY}" in command
+        assert "--upgrade-package torch" in command
+        assert '"vaultspec-rag[gpu]"' in command
+        assert "--force" not in command
+        assert "==" not in command
+        assert "--with" not in command
 
-        The interpreter and ABI tags differ only on a free-threaded build
-        (``cp314-cp314t``), and ``sys.version_info`` is ``(3, 14)`` for both
-        builds, so an implementation that derives one tag and uses it twice
-        emits ``cp314-cp314`` here and uv refuses it on a tag mismatch. CI runs
-        a GIL interpreter, where the two tags are equal and the bug is
-        invisible, so the free-threaded tag is passed explicitly.
+    def test_a_receipt_with_both_options_and_no_pin_is_durable(
+        self, tmp_path: Path
+    ) -> None:
+        interpreter = _tool_env(tmp_path, _DURABLE_RECEIPT)
+
+        verdict = classify_tool_receipt(interpreter)
+
+        assert verdict is ToolReceiptVerdict.DURABLE
+        assert verdict.durable
+        assert verdict.fix(interpreter) is None
+
+    def test_a_version_pin_is_named_as_the_reason_upgrades_do_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        interpreter = _tool_env(
+            tmp_path,
+            '[tool]\nrequirements = [{ name = "vaultspec-rag", '
+            'specifier = "==0.4.35" }]\n\n'
+            "[tool.options]\n"
+            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n',
+        )
+
+        verdict = classify_tool_receipt(interpreter)
+
+        assert verdict is ToolReceiptVerdict.VERSION_PINNED
+        assert not verdict.durable
+        assert verdict.fix(interpreter) == tool_repair_command(interpreter)
+
+    def test_a_pinned_torch_wheel_is_named_as_its_own_defect(
+        self, tmp_path: Path
+    ) -> None:
+        interpreter = _tool_env(
+            tmp_path,
+            '[tool]\nrequirements = [\n  { name = "vaultspec-rag" },\n'
+            '  { name = "torch", url = "https://example.test/torch.whl" },\n]\n',
+        )
+
+        assert (
+            classify_tool_receipt(interpreter) is ToolReceiptVerdict.TORCH_WHEEL_PINNED
+        )
+
+    def test_a_receipt_without_the_options_will_resolve_a_cpu_build(
+        self, tmp_path: Path
+    ) -> None:
+        interpreter = _tool_env(
+            tmp_path, '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
+        )
+
+        assert classify_tool_receipt(interpreter) is ToolReceiptVerdict.NO_CUDA_SOURCE
+
+    def test_the_default_index_strategy_does_not_count_as_a_cuda_source(
+        self, tmp_path: Path
+    ) -> None:
+        """Guard assertion: the index alone leaves the request unsatisfiable.
+
+        The CUDA mirror carries packages this one depends on at versions it
+        cannot use, and uv's default strategy forbids falling through to
+        PyPI, so an installation recorded that way resolves nothing at all.
         """
-        from packaging.tags import Tag
-
-        spec = tool_cuda_install_spec(
-            torch_version="2.9.0",
-            tag=Tag("cp314", "cp314t", "win_amd64"),
-            platform_tag="win_amd64",
-        )
-        assert spec is not None
-        cmd = spec.command
-
-        assert "-cp314-cp314t-" in cmd, (
-            f"free-threaded host must be offered the cp314t wheel; command was: {cmd}"
-        )
-        assert "-cp314-cp314-" not in cmd, (
-            "the GIL wheel was named for a free-threaded interpreter"
-        )
-        # The --python request must come from the SAME tag as the wheel -
-        # otherwise install resolves on an interpreter the pinned wheel cannot
-        # satisfy. `uv tool install --force` rebuilds the env with uv's DEFAULT
-        # python request, not the interpreter that printed the command, so the
-        # pin only travels if the request travels with it.
-        assert "--python 3.14t " in cmd, (
-            f"--python request must name the free-threaded interpreter; was: {cmd}"
+        interpreter = _tool_env(
+            tmp_path,
+            '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
+            "[tool.options]\n"
+            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n',
         )
 
-    def test_command_names_the_gil_interpreter_without_the_t_suffix(self) -> None:
-        """The ``t`` suffix is the free-threaded signal, not decoration.
+        assert classify_tool_receipt(interpreter) is ToolReceiptVerdict.NO_CUDA_SOURCE
 
-        Pairs with the free-threaded case: an implementation that always
-        appends ``t`` would pass that one and fail here.
-        """
-        from packaging.tags import Tag
+    def test_an_unreadable_receipt_is_not_read_as_durable(self, tmp_path: Path) -> None:
+        """Absence of evidence is not evidence of a working upgrade path."""
+        root = tmp_path / "vaultspec-rag"
+        (root / "Scripts").mkdir(parents=True)
 
-        spec = tool_cuda_install_spec(
-            torch_version="2.9.0",
-            tag=Tag("cp313", "cp313", "win_amd64"),
-            platform_tag="manylinux_2_28_aarch64",
-        )
-        assert spec is not None
-        cmd = spec.command
+        verdict = classify_tool_receipt(str(root / "Scripts" / "python.exe"))
 
-        assert "--python 3.13 " in cmd
-        assert "-cp313-cp313-manylinux_2_28_aarch64.whl" in cmd
-        assert "3.13t" not in cmd
+        assert verdict is ToolReceiptVerdict.UNREADABLE
+        assert not verdict.durable
+
+    def test_every_verdict_has_a_label(self) -> None:
+        for verdict in ToolReceiptVerdict:
+            assert verdict.label
 
 
 class TestUpgradeCommands:
-    """A pinned tool installation is told how to actually take a new release."""
+    """A tool installation is told how to take a new release, and to restart."""
 
-    def test_the_upgrade_keeps_the_extras_and_the_wheel_and_asks_for_latest(
+    def test_a_durable_receipt_upgrades_with_uvs_own_verb_then_restarts(
         self, tmp_path: Path
     ) -> None:
-        """Guard assertion: `uv tool upgrade` is a no-op on a pinned tool.
+        """Guard assertion: an upgraded host keeps serving the old release.
 
-        uv records the exact version the CUDA repair asks for, and answers a
-        later upgrade with "nothing to upgrade", naming a re-install at
-        ``@latest`` itself. Dropping the recorded wheel or the extras from
-        that re-install undoes the GPU build the repair just established.
+        uv replaces the installed package while the daemon keeps running the
+        code it imported at startup, so an upgrade that says nothing about
+        restarting leaves a client refusing a service on the old release.
         """
-        root = tmp_path / "vaultspec-rag"
-        (root / "Scripts").mkdir(parents=True)
-        wheel = f"{CU130_INDEX_URL}/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
-        (root / TOOL_RECEIPT_NAME).write_text(
-            "[tool]\nrequirements = [\n"
-            '  { name = "vaultspec-rag", extras = ["gpu", "mcp"], '
-            'specifier = "==0.5.2" },\n'
-            f'  {{ name = "torch", url = "{wheel}" }},\n'
-            "]\n",
-            encoding="utf-8",
+        interpreter = _tool_env(tmp_path, _DURABLE_RECEIPT)
+
+        upgrade, restart = tool_upgrade_commands(interpreter)
+
+        assert upgrade == "uv tool upgrade vaultspec-rag"
+        assert "server stop" in restart
+        assert "server start" in restart
+
+    def test_a_receipt_that_is_not_durable_upgrades_through_the_repair(
+        self, tmp_path: Path
+    ) -> None:
+        """A bare upgrade of such an installation drops the GPU build."""
+        interpreter = _tool_env(
+            tmp_path, '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
         )
 
-        command = tool_upgrade_command(str(root / "Scripts" / "python.exe"))
+        upgrade = tool_upgrade_commands(interpreter)[0]
 
-        assert "uv tool install --force" in command
-        assert '"vaultspec-rag[gpu,mcp]@latest"' in command
-        assert "==" not in command
-        assert f'"torch @ {wheel}"' in command
-
-    def test_an_unpinned_tool_environment_still_gets_the_reinstall_form(
-        self, tmp_path: Path
-    ) -> None:
-        """No receipt means no recorded wheel, and no invented one."""
-        root = tmp_path / "vaultspec-rag"
-        (root / "Scripts").mkdir(parents=True)
-
-        command = tool_upgrade_command(str(root / "Scripts" / "python.exe"))
-
-        assert '"vaultspec-rag[gpu,mcp]@latest"' in command
-        assert "--with" not in command
+        assert upgrade == tool_repair_command(interpreter, upgrade=True)
+        assert "--upgrade" in upgrade
+        assert f"--index {CU130_INDEX_URL}" in upgrade
 
     def test_a_project_installation_upgrades_through_its_lockfile(self) -> None:
-        """Only a standalone tool needs the receipt-carrying re-installation."""
+        """Only a standalone tool needs the receipt-aware form."""
         for mode in ("dependency", "dev"):
             assert (
                 upgrade_command_for_mode(mode, sys.executable)
                 == "uv sync --upgrade-package vaultspec-rag"
             )
 
-    def test_a_pinned_repair_discloses_the_pin_and_names_the_upgrade(
-        self, tmp_path: Path
-    ) -> None:
-        """The repair says it pins, and what to run instead of the no-op.
-
-        Guard assertion: the repair pins the installed version by decision,
-        and nothing told the operator that their usual upgrade command would
-        silently stop working.
-        """
-        root = tmp_path / "vaultspec-rag"
-        (root / "Scripts").mkdir(parents=True)
-        (root / TOOL_RECEIPT_NAME).write_text(
-            '[tool]\nrequirements = [{ name = "vaultspec-rag", extras = ["gpu"] }]\n',
-            encoding="utf-8",
-        )
-
-        remediation = cuda_remediation(
-            str(root / "Scripts" / "python.exe"),
-            env_kind=RuntimeEnvKind.UV_TOOL,
-            platform_name="win32",
-            machine="AMD64",
-        )
-
-        pinned = [step for step in remediation.steps if "pins the release" in step]
-        assert pinned, "a pinned repair must say that it pins the release"
-        pin_step = pinned[0]
-        assert "uv tool upgrade" in pin_step
-        assert remediation.upgrade_command in pin_step
-        assert "@latest" in remediation.upgrade_command
-        assert "==" in remediation.durable_command
-
 
 def _durable_command_for(interpreter: str) -> str:
-    """The durable request the one builder offers an ephemeral environment."""
+    """The request the one builder offers an ephemeral environment."""
     return cuda_remediation(
         interpreter, env_kind=RuntimeEnvKind.UVX_EPHEMERAL
-    ).durable_command
+    ).repair_command
 
 
 class TestEphemeralEnvWarning:

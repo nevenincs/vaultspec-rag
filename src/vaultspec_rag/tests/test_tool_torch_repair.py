@@ -71,24 +71,6 @@ def test_only_a_broken_torch_merits_a_reinstall(
     assert capability.fixed_by_torch_reinstall is is_installation_defect
 
 
-def test_receipt_requires_the_exact_cuda_wheel(tmp_path: Path) -> None:
-    receipt = tmp_path / "uv-receipt.toml"
-    wheel = "https://example.test/torch-2.9.0%2Bcu130.whl"
-    receipt.write_text(
-        '[tool]\nrequirements = [{ name = "torch", url = "' + wheel + '" }]\n',
-        encoding="utf-8",
-    )
-    assert _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
-    assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel + "-other")
-    receipt.write_text(
-        '[tool]\nrequirements = [{ name = "other", url = "' + wheel + '" }]\n',
-        encoding="utf-8",
-    )
-    assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
-    receipt.write_text('[tool]\nnote = "' + wheel + '"\n', encoding="utf-8")
-    assert not _tool_torch._receipt_has_cuda_requirement(receipt, wheel)
-
-
 def test_a_non_interactive_run_reports_the_handoff_instead_of_stopping(
     tmp_path: Path,
 ) -> None:
@@ -136,7 +118,7 @@ def test_a_defective_tool_is_handed_off_rather_than_replaced(
     }
     assert outcome.blocks_install
     assert "uv tool install" in outcome.command
-    assert "must run from outside" in outcome.detail
+    assert "tool CUDA repair for" in outcome.detail
 
 
 def test_the_repair_module_cannot_launch_a_replacement_at_all() -> None:
@@ -176,42 +158,15 @@ def test_cuda_build_without_a_visible_device_never_reinstalls(
     assert outcome.blocks_install
 
 
-def test_the_handoff_reports_a_receipt_that_already_carries_the_pin(
+def test_the_repair_keeps_the_recorded_extras_and_pins_nothing(
     tmp_path: Path,
 ) -> None:
-    """An operator is told when the receipt is right and the environment is not.
+    """A repair asks for the tool it found, with no version and no new extras.
 
-    The two drift apart exactly once: after a replacement was interrupted, the
-    receipt describes an environment that no longer exists. Saying so is what
-    separates "run this command" from "your pin is missing".
+    Guard assertion: a bare package name imposes this build's extras on an
+    operator who chose otherwise, and a version pin stops every later upgrade
+    from resolving at all - which is what the previous repair did.
     """
-    interpreter = tmp_path / "Scripts" / "python.exe"
-    interpreter.parent.mkdir()
-    spec = _provisioning.tool_cuda_install_spec()
-    assert spec is not None
-    (tmp_path / "uv-receipt.toml").write_text(
-        f"""[tool]
-requirements = [{{ name = "torch", url = "{spec.wheel_url}" }}]
-""",
-        encoding="utf-8",
-    )
-
-    outcome = _tool_torch._handoff_outcome(str(interpreter), spec, ())
-
-    assert "the receipt already pins this wheel" in outcome.detail
-
-
-def test_the_handed_over_command_pins_the_version_and_keeps_recorded_extras(
-    tmp_path: Path,
-) -> None:
-    """A repair asks for the tool it found, not the newest one with new extras.
-
-    Guard assertion: a bare package name resolves to whatever is newest, so
-    the command that fixes a torch wheel would also upgrade the tool and
-    impose this build's extras on an operator who chose otherwise.
-    """
-    import importlib.metadata
-
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir()
     (tmp_path / "uv-receipt.toml").write_text(
@@ -223,8 +178,7 @@ requirements = [{ name = "vaultspec-rag", extras = ["mcp"] }]
 
     requirement = _provisioning.tool_package_requirement(str(interpreter))
 
-    version = importlib.metadata.version("vaultspec-rag")
-    assert requirement == f"vaultspec-rag[mcp]=={version}"
+    assert requirement == "vaultspec-rag[mcp]"
     assert "gpu" not in requirement
 
 
@@ -257,13 +211,16 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
 
     outcome = _tool_torch.ToolTorchRepairOutcome(
         _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
-        "tool CUDA repair must run from outside C:/tools/vaultspec-rag"
+        "tool CUDA repair for C:/tools/vaultspec-rag"
         + chr(10)
-        + "  holders to clear first:"
+        + "  running out of it now, and unchanged until restarted:"
         + chr(10)
         + "    pid 4321 (end this process): C:/tools/vaultspec-rag/Scripts/python.exe",
-        "uv tool install --force ...",
-        steps=("Make upgrades keep the GPU wheel: uv tool install --force ...",),
+        "uv tool install ... --upgrade-package torch",
+        steps=(
+            "Install the CUDA build of torch into this environment: "
+            "uv tool install ... --upgrade-package torch",
+        ),
     )
 
     _render_tool_torch_repair(outcome)
@@ -271,7 +228,7 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
     printed = capsys.readouterr().out
     assert "Tool environment needs a CUDA repair" in printed
     assert "pid 4321" in printed
-    assert "uv tool install --force" in printed
+    assert "uv tool install ... --upgrade-package torch" in printed
 
 
 def test_a_healthy_tool_environment_prints_no_repair_section(
@@ -305,16 +262,19 @@ def test_the_install_report_itself_carries_the_repair_section(
     report = InstallReport(action="install", target=tmp_path)
     report.tool_torch_repair = _tool_torch.ToolTorchRepairOutcome(
         _tool_torch.ToolTorchRepairAction.HANDOFF_REQUIRED,
-        "tool CUDA repair must run from outside " + str(tmp_path),
-        "uv tool install --force ...",
-        steps=("Make upgrades keep the GPU wheel: uv tool install --force ...",),
+        "tool CUDA repair for " + str(tmp_path),
+        "uv tool install ... --upgrade-package torch",
+        steps=(
+            "Install the CUDA build of torch into this environment: "
+            "uv tool install ... --upgrade-package torch",
+        ),
     )
 
     _render_install_report(report)
 
     printed = capsys.readouterr().out
     assert "Tool environment needs a CUDA repair" in printed
-    assert "uv tool install --force" in printed
+    assert "uv tool install ... --upgrade-package torch" in printed
 
 
 def test_a_healthy_tool_interpreter_needs_no_repair(monkeypatch: MonkeyPatch) -> None:
@@ -432,9 +392,9 @@ def test_a_real_holder_is_named_in_the_refusal(tmp_path: Path) -> None:
         interpreter = root / "bin" / "python"
 
     with hold_environment(root, by_image=True) as holder:
-        spec = _provisioning.tool_cuda_install_spec()
-        assert spec is not None
-        outcome = _tool_torch._handoff_outcome(str(interpreter), spec, ())
+        outcome = _tool_torch._handoff_outcome(
+            str(interpreter), _provisioning.tool_repair_command(str(interpreter)), ()
+        )
 
     assert outcome.action is _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED
     # A venv interpreter is a launcher that re-executes the real one, so the
@@ -533,9 +493,9 @@ def _holder_row(
 def _refusal_detail(tmp_path: Path) -> str:
     interpreter = tmp_path / "Scripts" / "python.exe"
     interpreter.parent.mkdir(exist_ok=True)
-    spec = _provisioning.tool_cuda_install_spec()
-    assert spec is not None
-    return _tool_torch._handoff_outcome(str(interpreter), spec, ()).detail
+    return _tool_torch._handoff_outcome(
+        str(interpreter), _provisioning.tool_repair_command(str(interpreter)), ()
+    ).detail
 
 
 def test_the_refusal_names_what_each_holder_is_and_how_to_clear_it(

@@ -129,8 +129,7 @@ def test_doctor_prints_the_exact_repair_for_a_cpu_only_daemon(
 
     result = runner.invoke(app, ["server", "doctor"])
 
-    assert expected.immediate_command in result.stdout
-    assert expected.durable_command in result.stdout
+    assert expected.repair_command in result.stdout
 
 
 def test_doctor_scans_the_daemon_environment_not_its_own(

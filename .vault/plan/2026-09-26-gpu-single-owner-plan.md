@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:0ec39a85894cfc1319524346798472474b77c295b19166e581924f4e89a7dd62'
+body_hash: 'sha256:622acd2f30baae70cde065269102389f0b65286693abd28e5d7d51393b901003'
 ---
 
 # `gpu-single-owner` plan
@@ -78,7 +78,7 @@ Makes install, doctor, status and start give one correct, exact repair per condi
 
 Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool upgrade, with a receipt-carried CUDA source and in-place repair the product can run itself on consent.
 
-- [ ] `P03.S11` - add the typed tool-receipt verdict to operator_state and rebuild the command builder on the receipt-carried CUDA index and first-match strategy: an in-place torch-only repair and a bare upgrade, deleting the direct-wheel and version-pin machinery; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/commands/_tool_torch.py`.
+- [x] `P03.S11` - add the typed tool-receipt verdict to operator_state and rebuild the command builder on the receipt-carried CUDA index and first-match strategy: an in-place torch-only repair and a bare upgrade, deleting the direct-wheel and version-pin machinery; `src/vaultspec_rag/operator_state/, src/vaultspec_rag/commands/_tool_torch.py`.
 - [ ] `P03.S12` - make install treat a non-durable receipt as needing the repair, run the in-place repair itself on consent and verify compute and receipt afterwards, and hand over the command otherwise; `src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/cli/_install.py`.
 - [ ] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
 - [ ] `P03.S14` - prove the cycle against real uv with loopback stand-in wheels: a receipt written with the options is durable, the repair applies in place under a live holder, and a bare upgrade keeps the CUDA build; `src/vaultspec_rag/tests/`.

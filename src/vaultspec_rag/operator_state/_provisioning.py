@@ -6,21 +6,28 @@ service start pre-flight, the ephemeral-environment warnings and the doctor -
 asks here for what to print. They differ in framing, never in the command, and
 never in the precondition that has to hold before the command is safe.
 
+A ``uv tool`` installation keeps its GPU build across upgrades only through
+its receipt, which is the one state uv consults on every upgrade. Recording a
+CUDA index and the strategy that reaches it makes torch resolve accelerated
+each time, while recording a wheel URL or an exact version makes the same
+installation resolve nothing new ever again. So the receipt is a verdict in
+its own right: an environment whose torch works today but whose receipt
+carries no CUDA source is one upgrade away from a CPU build.
+
 Nothing here imports torch, so the service-control paths can use it.
 """
 
 from __future__ import annotations
 
-import importlib.metadata
 import sys
 import tomllib
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
-from packaging.requirements import InvalidRequirement, Requirement
-from packaging.tags import Tag, cpython_tags
+from packaging.requirements import Requirement
 
+from .._operator_commands import server_start_command, server_stop_command
 from ..torch_config._index import CU130_INDEX_URL
 from ._topology import TOOL_RECEIPT_NAME, RuntimeEnvKind, environment_root
 
@@ -28,17 +35,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "CU130_INDEX_STRATEGY",
     "CudaRemediation",
     "CudaRepairKind",
-    "ToolCudaInstallSpec",
+    "ToolReceiptVerdict",
+    "classify_tool_receipt",
     "cuda_remediation",
     "inplace_cuda_command",
     "published_wheel_platform_tag",
     "read_receipt",
-    "receipt_torch_wheel_url",
-    "tool_cuda_install_spec",
     "tool_package_requirement",
-    "tool_upgrade_command",
+    "tool_repair_arguments",
+    "tool_repair_command",
+    "tool_upgrade_commands",
     "upgrade_command_for_mode",
 ]
 
@@ -47,21 +56,75 @@ __all__ = [
 #: inference stack; the MCP adapter's own launch needs only the ``mcp`` extra.
 _HOST_TOOL_REQUEST = "vaultspec-rag[gpu,mcp]"
 
+#: The index strategy that both resolves this package and cannot prefer a CPU
+#: build over an available accelerated one. uv's default stops at the first
+#: index that publishes a name, which the CUDA mirror does for packages it
+#: carries at versions this package cannot use, leaving the request
+#: unsatisfiable; the best-match strategy takes the highest version from any
+#: index, which silently selects PyPI's CPU torch whenever PyPI publishes a
+#: release first.
+CU130_INDEX_STRATEGY = "unsafe-first-match"
+
 #: The machine architectures PyTorch publishes accelerated Linux wheels for.
 _CUDA_LINUX_MACHINES = frozenset({"x86_64", "aarch64"})
 
 #: The machine architectures PyTorch publishes accelerated Windows wheels for.
 _CUDA_WINDOWS_MACHINES = frozenset({"amd64", "x86_64"})
 
-#: What has to be true before a forced reinstall can succeed, said once. uv
-#: removes an environment's contents before writing the new ones, so a file it
-#: cannot remove stops it half-way and leaves nothing runnable behind.
-HOLDER_PRECONDITION = (
-    "Run that command from a shell that holds nothing in this environment, "
-    "with the service stopped and every editor or agent session running an "
-    "MCP stdio transport closed. A held file stops the forced reinstall after "
-    "it has removed the old packages, leaving the environment unrunnable."
+#: What an operator has to know before the repair runs. It is applied in
+#: place, so nothing has to stop, but the processes already running keep the
+#: packages they loaded at startup until they are restarted.
+RESTART_NOTE = (
+    "The repair applies in place, so nothing has to be stopped for it. A "
+    f"service already running keeps the build it started with: restart it "
+    f"with `{server_stop_command()}` then `{server_start_command()}`."
 )
+
+
+class ToolReceiptVerdict(StrEnum):
+    """Whether a tool installation will still be a GPU host after an upgrade.
+
+    The receipt is what uv re-applies on every upgrade, so this is a verdict
+    about the future rather than about the torch build installed now.
+    """
+
+    DURABLE = "durable"
+    VERSION_PINNED = "version_pinned"
+    TORCH_WHEEL_PINNED = "torch_wheel_pinned"
+    NO_CUDA_SOURCE = "no_cuda_source"
+    UNREADABLE = "unreadable"
+
+    @property
+    def label(self) -> str:
+        """Plain-language statement of what the receipt will do next."""
+        return {
+            ToolReceiptVerdict.DURABLE: (
+                "upgrades keep the GPU build and the release moves"
+            ),
+            ToolReceiptVerdict.VERSION_PINNED: (
+                "pinned to one release, so upgrades report nothing to upgrade"
+            ),
+            ToolReceiptVerdict.TORCH_WHEEL_PINNED: (
+                "pinned to one torch wheel, so a release needing a newer "
+                "torch cannot resolve"
+            ),
+            ToolReceiptVerdict.NO_CUDA_SOURCE: (
+                "records no CUDA source, so the next upgrade resolves a CPU-only torch"
+            ),
+            ToolReceiptVerdict.UNREADABLE: (
+                "no readable installation receipt, so what an upgrade would "
+                "resolve cannot be told"
+            ),
+        }[self]
+
+    @property
+    def durable(self) -> bool:
+        """Whether an upgrade of this installation keeps the GPU build."""
+        return self is ToolReceiptVerdict.DURABLE
+
+    def fix(self, interpreter: str) -> str | None:
+        """The one command that makes this receipt durable, if one is needed."""
+        return None if self.durable else tool_repair_command(interpreter)
 
 
 class CudaRepairKind(StrEnum):
@@ -80,19 +143,6 @@ class CudaRepairKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ToolCudaInstallSpec:
-    """The one receipt-carrying CUDA tool installation request."""
-
-    args: tuple[str, ...]
-    wheel_url: str
-
-    @property
-    def command(self) -> str:
-        """Render the request for an operator without reparsing it later."""
-        return _render_command(self.args)
-
-
-@dataclass(frozen=True, slots=True)
 class CudaRemediation:
     """What one environment needs, as the operator should read it.
 
@@ -104,45 +154,8 @@ class CudaRemediation:
 
     kind: CudaRepairKind
     steps: tuple[str, ...]
-    immediate_command: str = ""
-    durable_command: str = ""
-    upgrade_command: str = ""
-    spec: ToolCudaInstallSpec | None = None
-
-
-def _render_command(args: tuple[str, ...]) -> str:
-    """Render an argument list as one line an operator can paste."""
-    return " ".join(
-        f'"{part}"' if " " in part or "[" in part else part for part in args
-    )
-
-
-def _tool_install_args(
-    *, python_request: str, package_spec: str, wheel_url: str | None
-) -> tuple[str, ...]:
-    """The shape of every tool installation this product asks an operator for.
-
-    The repair and the upgrade differ in the package request alone, so they
-    are rendered from one argument list: a divergence in the flags is exactly
-    the drift that had one surface preserving the wheel pin and another
-    dropping it.
-    """
-    args = (
-        "uv",
-        "tool",
-        "install",
-        "--force",
-        "--python",
-        python_request,
-        package_spec,
-    )
-    return args if wheel_url is None else (*args, "--with", f"torch @ {wheel_url}")
-
-
-def _python_request(tag: Tag) -> str:
-    """The ``--python`` request matching a wheel tag, free-threading included."""
-    request = f"{tag.interpreter[2]}.{tag.interpreter[3:]}"
-    return f"{request}t" if tag.abi.endswith("t") else request
+    repair_command: str = ""
+    upgrade_commands: tuple[str, ...] = ()
 
 
 def read_receipt(receipt: Path) -> dict[str, object] | None:
@@ -158,29 +171,15 @@ def read_receipt(receipt: Path) -> dict[str, object] | None:
         return None
 
 
-def _wheel_torch_version(installed: str | None) -> str:
-    """Return the CUDA release matching an installed torch distribution."""
-    from packaging.version import InvalidVersion, Version
-
-    from ..torch_config._constants import TORCH_TOOL_PIN_VERSION
-
-    if installed is None:
-        return TORCH_TOOL_PIN_VERSION
-    try:
-        return Version(installed).base_version
-    except InvalidVersion:
-        return TORCH_TOOL_PIN_VERSION
-
-
 def published_wheel_platform_tag(platform_name: str, machine: str) -> str | None:
     """The published PyTorch CUDA wheel platform segment, or ``None``.
 
     ``None`` means PyTorch publishes no accelerated wheel for this platform at
     all: macOS uses Metal instead, the CUDA index carries no ARM64 Windows
-    wheel, and the accelerated Linux wheels exist for two architectures. A tag
-    invented for any of those names a URL that cannot be fetched, which reads
-    to an operator as a repair they failed to apply rather than one that does
-    not exist.
+    wheel, and the accelerated Linux wheels exist for two architectures.
+    Offering the CUDA index where it publishes nothing for the host resolves
+    to a CPU build anyway, and reads to an operator as a repair they failed to
+    apply rather than one that does not exist.
     """
     normalised = machine.lower()
     if platform_name == "win32":
@@ -194,6 +193,99 @@ def published_wheel_platform_tag(platform_name: str, machine: str) -> str | None
     return None
 
 
+def _receipt_requirements(data: dict[str, object]) -> list[dict[str, object]]:
+    """The parsed requirement records a receipt carries, if any."""
+    tool = data.get("tool")
+    requirements = (
+        cast("dict[str, object]", tool).get("requirements")
+        if isinstance(tool, dict)
+        else None
+    )
+    if not isinstance(requirements, list):
+        return []
+    return [
+        cast("dict[str, object]", entry)
+        for entry in cast("list[object]", requirements)
+        if isinstance(entry, dict)
+    ]
+
+
+def _receipt_options(data: dict[str, object]) -> dict[str, object]:
+    """The resolver options a receipt records and re-applies on upgrade."""
+    tool = data.get("tool")
+    options = (
+        cast("dict[str, object]", tool).get("options")
+        if isinstance(tool, dict)
+        else None
+    )
+    return cast("dict[str, object]", options) if isinstance(options, dict) else {}
+
+
+def _records_cuda_index(options: dict[str, object]) -> bool:
+    """Whether the receipt's own options reach the CUDA index on an upgrade.
+
+    uv writes each index as a table carrying its URL, so the URL is read out
+    of the record rather than compared against a rendered option string.
+    """
+    if options.get("index-strategy") != CU130_INDEX_STRATEGY:
+        return False
+    index = options.get("index")
+    entries = cast("list[object]", index) if isinstance(index, list) else [index]
+    for entry in entries:
+        url = (
+            cast("dict[str, object]", entry).get("url")
+            if isinstance(entry, dict)
+            else entry
+        )
+        if isinstance(url, str) and url.rstrip("/") == CU130_INDEX_URL.rstrip("/"):
+            return True
+    return False
+
+
+def _pins_a_torch_wheel(requirements: list[dict[str, object]]) -> bool:
+    """Whether the receipt names one torch file instead of a source for it."""
+    for record in requirements:
+        name = record.get("name")
+        if isinstance(name, str) and name.lower() == "torch" and record.get("url"):
+            return True
+    return False
+
+
+def _pins_a_version(requirements: list[dict[str, object]], package: str) -> bool:
+    """Whether the receipt pins the tool to the exact release installed now."""
+    for record in requirements:
+        name = record.get("name")
+        specifier = record.get("specifier")
+        if (
+            isinstance(name, str)
+            and name.lower() == package.lower()
+            and isinstance(specifier, str)
+            and "==" in specifier
+        ):
+            return True
+    return False
+
+
+def classify_tool_receipt(interpreter: str) -> ToolReceiptVerdict:
+    """Judge what an upgrade of this tool installation would resolve.
+
+    The two pins are reported before the missing source, because an
+    installation carrying either one cannot move at all and says so for a
+    different reason than one that merely resolves from the wrong index.
+    """
+    data = read_receipt(environment_root(interpreter) / TOOL_RECEIPT_NAME)
+    if data is None:
+        return ToolReceiptVerdict.UNREADABLE
+    requirements = _receipt_requirements(data)
+    if _pins_a_torch_wheel(requirements):
+        return ToolReceiptVerdict.TORCH_WHEEL_PINNED
+    if _pins_a_version(requirements, Requirement(_HOST_TOOL_REQUEST).name):
+        return ToolReceiptVerdict.VERSION_PINNED
+    if not _records_cuda_index(_receipt_options(data)):
+        return ToolReceiptVerdict.NO_CUDA_SOURCE
+    return ToolReceiptVerdict.DURABLE
+
+
 def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | None:
     """Return the extras the receipt records for *package*, if it records any.
 
@@ -204,18 +296,7 @@ def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | No
     data = read_receipt(receipt)
     if data is None:
         return None
-    tool = data.get("tool")
-    requirements = (
-        cast("dict[str, object]", tool).get("requirements")
-        if isinstance(tool, dict)
-        else None
-    )
-    if not isinstance(requirements, list):
-        return None
-    for entry in cast("list[object]", requirements):
-        if not isinstance(entry, dict):
-            continue
-        record = cast("dict[str, object]", entry)
+    for record in _receipt_requirements(data):
         name = record.get("name")
         if not isinstance(name, str) or name.lower() != package.lower():
             continue
@@ -226,19 +307,15 @@ def _receipt_package_extras(receipt: Path, package: str) -> tuple[str, ...] | No
     return None
 
 
-def tool_package_requirement(interpreter: str, *, latest: bool = False) -> str:
-    """Render the package request a repair or an upgrade may ask for.
+def tool_package_requirement(interpreter: str) -> str:
+    """Render the package request a repair may ask for, and no more.
 
-    A bare name resolves to whatever is newest, so the command that repairs a
-    torch wheel would also upgrade the tool and impose this build's extras on
-    an operator who chose otherwise. The installed version is pinned and the
-    receipt's own extras are reused; the host request is the fallback for an
-    environment that records neither.
+    A repair that re-specified the tool would impose this build's extras on
+    an operator who chose otherwise, so the receipt's own extras are reused;
+    the host request is the fallback for an environment that records none.
 
-    ``latest`` asks for the newest release instead of the installed one, which
-    is the only request uv honours once a receipt carries an exact pin: a
-    pinned tool answers ``uv tool upgrade`` with "nothing to upgrade" and
-    names this form itself.
+    No version is pinned. The repair changes the torch build and nothing
+    else, and a pin is what stops every later upgrade from resolving at all.
     """
     fallback = _HOST_TOOL_REQUEST
     package = Requirement(fallback).name
@@ -246,167 +323,98 @@ def tool_package_requirement(interpreter: str, *, latest: bool = False) -> str:
         environment_root(interpreter) / TOOL_RECEIPT_NAME, package
     )
     if extras is None:
-        return f"{fallback}@latest" if latest else fallback
-    rendered = f"{package}[{','.join(sorted(extras))}]" if extras else package
-    if latest:
-        return f"{rendered}@latest"
-    try:
-        version = importlib.metadata.version(package)
-    except importlib.metadata.PackageNotFoundError:
         return fallback
-    return f"{rendered}=={version}"
+    return f"{package}[{','.join(sorted(extras))}]" if extras else package
 
 
-def receipt_torch_wheel_url(receipt: Path) -> str | None:
-    """The direct torch wheel URL a uv receipt records, as written, or ``None``.
-
-    uv stores a ``--with`` requirement either as a parsed record or as the
-    PEP 508 string it was given, and the two spellings appear in different uv
-    releases, so both are read. The URL is returned exactly as recorded,
-    because a caller printing it back is handing an operator a URL to fetch,
-    and the index serves the percent-encoded local version separator. A
-    caller comparing two URLs decodes both itself.
-    """
-    data = read_receipt(receipt)
-    if data is None:
-        return None
-    pending: list[object] = [data]
-    while pending:
-        value = pending.pop()
-        if isinstance(value, dict):
-            record = cast("dict[str, object]", value)
-            name = record.get("name")
-            url = record.get("url")
-            if (
-                isinstance(name, str)
-                and name.lower() == "torch"
-                and isinstance(url, str)
-            ):
-                return url
-            pending.extend(record.values())
-        elif isinstance(value, list):
-            pending.extend(cast("list[object]", value))
-        elif isinstance(value, str):
-            try:
-                requirement = Requirement(value)
-            except InvalidRequirement:
-                continue
-            if requirement.name.lower() == "torch" and requirement.url is not None:
-                return requirement.url
-    return None
-
-
-def tool_upgrade_command(interpreter: str, *, wheel_url: str | None = None) -> str:
-    """The command that moves a tool installation to a newer release.
-
-    ``uv tool upgrade`` cannot do it once the CUDA repair has been applied:
-    that repair pins the installed version, uv records the pin in the receipt,
-    and an upgrade then reports nothing to upgrade. Re-installing at
-    ``@latest`` is the form uv itself names, and it has to carry the wheel URL
-    and the extras, or the upgrade that fixes the version undoes the GPU
-    build.
-
-    ``wheel_url`` is the pin the upgrade must keep. Omitted, it is read from
-    the environment's receipt, which is what an installation that already
-    carries the pin needs; a caller printing this beside a repair passes the
-    wheel that repair is about to write instead.
-    """
-    if wheel_url is None:
-        wheel_url = receipt_torch_wheel_url(
-            environment_root(interpreter) / TOOL_RECEIPT_NAME
-        )
-    return _render_command(
-        _tool_install_args(
-            python_request=_python_request(next(iter(cpython_tags()))),
-            package_spec=tool_package_requirement(interpreter, latest=True),
-            wheel_url=wheel_url,
-        )
+def _render_command(args: tuple[str, ...]) -> str:
+    """Render an argument list as one line an operator can paste."""
+    return " ".join(
+        f'"{part}"' if " " in part or "[" in part else part for part in args
     )
+
+
+def tool_repair_arguments(
+    interpreter: str, *, upgrade: bool = False
+) -> tuple[str, ...]:
+    """The in-place repair, as the argument list the product itself runs.
+
+    It re-installs the tool with the extras and interpreter already recorded,
+    adds the CUDA index and the strategy that reaches it - which uv writes
+    into the receipt and re-applies on every later upgrade - and upgrades
+    torch alone, because uv otherwise keeps a CPU build that still satisfies
+    the requirement. There is no ``--force``: a wholesale replacement is what
+    destroys an environment something is running out of, and nothing in this
+    cycle needs one.
+
+    ``upgrade`` takes the newest release in the same step, for an
+    installation whose receipt cannot carry the CUDA source across a bare
+    upgrade yet.
+    """
+    # ``--python`` names the interpreter itself: uv rebuilds a tool
+    # environment with its own default python request, so an installation
+    # made against another interpreter silently moves without it.
+    args = (
+        "uv",
+        "tool",
+        "install",
+        "--python",
+        interpreter,
+        tool_package_requirement(interpreter),
+        "--index",
+        CU130_INDEX_URL,
+        "--index-strategy",
+        CU130_INDEX_STRATEGY,
+    )
+    return (*args, "--upgrade") if upgrade else (*args, "--upgrade-package", "torch")
+
+
+def tool_repair_command(interpreter: str, *, upgrade: bool = False) -> str:
+    """The in-place repair as one line an operator can paste."""
+    return _render_command(tool_repair_arguments(interpreter, upgrade=upgrade))
+
+
+def tool_upgrade_commands(
+    interpreter: str, verdict: ToolReceiptVerdict | None = None
+) -> tuple[str, ...]:
+    """How to take a newer release of a tool installation, and then serve it.
+
+    A durable receipt upgrades with uv's own verb and keeps the GPU build. A
+    receipt that is not durable yet is brought onto the cycle by the repair
+    with a full upgrade, which does both in one step. Either way the running
+    daemon keeps the release it started with until it is restarted.
+    """
+    if verdict is None:
+        verdict = classify_tool_receipt(interpreter)
+    package = Requirement(_HOST_TOOL_REQUEST).name
+    upgrade = (
+        f"uv tool upgrade {package}"
+        if verdict.durable
+        else tool_repair_command(interpreter, upgrade=True)
+    )
+    return (upgrade, f"{server_stop_command()} && {server_start_command()}")
 
 
 def upgrade_command_for_mode(mode: str, interpreter: str) -> str:
     """The upgrade command for an installation declared in *mode*.
 
     A project installation is upgraded through its own lockfile, whatever
-    group it sits in; only a standalone tool needs the receipt-carrying
-    re-installation. *mode* is the declared provisioning mode as it is
-    recorded in the workspace declaration.
+    group it sits in; only a standalone tool needs the receipt-aware form.
+    *mode* is the declared provisioning mode as it is recorded in the
+    workspace declaration.
     """
     if mode == "tool":
-        return tool_upgrade_command(interpreter)
+        return tool_upgrade_commands(interpreter)[0]
     return f"uv sync --upgrade-package {Requirement(_HOST_TOOL_REQUEST).name}"
 
 
-def tool_cuda_install_spec(
-    *,
-    torch_version: str | None = None,
-    tag: Tag | None = None,
-    platform_tag: str | None = None,
-    package_spec: str | None = None,
-) -> ToolCudaInstallSpec | None:
-    """Build the durable CUDA request from the running interpreter's tags.
-
-    Returns ``None`` when the host has no published CUDA wheel, so a caller
-    cannot hand an operator a URL the index will refuse.
-
-    The wheel URL names one interpreter and one ABI, so both tags are read off
-    the running interpreter rather than written down: hardcoding them hands a
-    3.13 wheel to whoever runs 3.14, and uv rejects the mismatch with a tag
-    error that says nothing about why the command was wrong. The two tags are
-    NOT interchangeable - a free-threaded build is ``cp314-cp314t`` while
-    ``sys.version_info`` is ``(3, 14)`` for both builds - so ``packaging``
-    resolves them from ``Py_GIL_DISABLED`` instead of a rule re-derived here.
-
-    The manylinux level stays hand-picked, because it must match what PyTorch
-    actually publishes rather than the first tag the host offers, while the
-    machine architecture is read from the host.
-
-    The torch version tracks the distribution already installed (the CPU wheel
-    being replaced), with the local suffix stripped: the same release is
-    guaranteed to exist in the CUDA flavour for an interpreter that resolved
-    it, where a baked constant goes stale against an environment that has not
-    caught up with the workspace pin.
-
-    The command carries ``--python`` because ``uv tool install --force``
-    rebuilds the environment with uv's default python request, not the
-    interpreter that printed the command. The request is parsed out of the
-    same tag as the wheel filename so the two cannot diverge, and uv records
-    it in the receipt, so upgrades keep resolving on the matching interpreter.
-    """
-    import platform
-
-    if torch_version is None:
-        try:
-            installed = importlib.metadata.version("torch")
-        except importlib.metadata.PackageNotFoundError:
-            installed = None
-        torch_version = _wheel_torch_version(installed)
-    tag = tag or next(iter(cpython_tags()))
-    platform_tag = platform_tag or published_wheel_platform_tag(
-        sys.platform, platform.machine()
-    )
-    if platform_tag is None:
-        return None
-    wheel_url = (
-        f"{CU130_INDEX_URL}/torch-{torch_version}%2Bcu130"
-        f"-{tag.interpreter}-{tag.abi}-{platform_tag}.whl"
-    )
-    return ToolCudaInstallSpec(
-        args=_tool_install_args(
-            python_request=_python_request(tag),
-            package_spec=package_spec or _HOST_TOOL_REQUEST,
-            wheel_url=wheel_url,
-        ),
-        wheel_url=wheel_url,
-    )
-
-
 def inplace_cuda_command(interpreter: str) -> str:
-    """The in-place CUDA wheel repair for *interpreter*.
+    """The in-place CUDA wheel repair for an environment uv does not own.
 
-    Works in any environment and is undone by the next tool re-resolution
-    (``--torch-backend`` is a ``uv pip`` option and is not recorded in a tool
-    receipt), so a tool environment is offered the durable request as well.
+    ``--torch-backend`` is a ``uv pip`` option and is recorded nowhere, so
+    this repairs the environment in front of it and nothing later. A tool
+    environment is offered the receipt-carrying request instead, which
+    survives the next upgrade.
     """
     backend = CU130_INDEX_URL.rsplit("/", 1)[-1]
     return (
@@ -427,7 +435,7 @@ def _metal_remediation(interpreter: str) -> CudaRemediation:
             'Confirm Metal is usable: python -c "import torch; '
             'print(torch.backends.mps.is_available())"',
         ),
-        immediate_command=command,
+        repair_command=command,
     )
 
 
@@ -456,7 +464,7 @@ def _project_remediation(interpreter: str, *, project: bool) -> CudaRemediation:
             "pyproject.toml and uv sync --reinstall-package torch applies it, "
             "so the build survives a resolve.",
         ),
-        immediate_command=command,
+        repair_command=command,
     )
 
 
@@ -471,8 +479,8 @@ def cuda_remediation(
 
     The platform is asked before the environment, because a host PyTorch
     publishes no accelerated wheel for cannot be repaired by any command and
-    must be told so plainly instead of being handed a URL that returns an
-    error from the index.
+    must be told so plainly instead of being handed an index that resolves a
+    CPU build for it.
     """
     import platform as platform_module
 
@@ -482,8 +490,7 @@ def cuda_remediation(
     machine = platform_module.machine() if machine is None else machine
     if platform_name == "darwin":
         return _metal_remediation(interpreter)
-    platform_tag = published_wheel_platform_tag(platform_name, machine)
-    if platform_tag is None:
+    if published_wheel_platform_tag(platform_name, machine) is None:
         return CudaRemediation(
             kind=CudaRepairKind.NO_PUBLISHED_WHEEL,
             steps=(
@@ -502,41 +509,28 @@ def cuda_remediation(
         return _project_remediation(
             interpreter, project=kind is RuntimeEnvKind.PROJECT_VENV
         )
-    package_spec = tool_package_requirement(interpreter)
-    spec = tool_cuda_install_spec(platform_tag=platform_tag, package_spec=package_spec)
-    if spec is None:  # pragma: no cover - the platform was checked above
-        raise AssertionError("a supported platform yielded no CUDA install spec")
-    durable = spec.command
+    repair = tool_repair_command(interpreter)
+    upgrade, restart = tool_upgrade_commands(interpreter)
     if kind is RuntimeEnvKind.UVX_EPHEMERAL:
         return CudaRemediation(
             kind=CudaRepairKind.EPHEMERAL_ENVIRONMENT,
             steps=(
-                f"Reinstall the tool so its own environment carries the GPU "
-                f"wheel: {durable}",
-                HOLDER_PRECONDITION,
+                "Install the tool itself, so the environment that serves is "
+                f"the one carrying the GPU build: {repair}",
+                RESTART_NOTE,
             ),
-            durable_command=durable,
-            spec=spec,
-        )
-    immediate = inplace_cuda_command(interpreter)
-    upgrade = tool_upgrade_command(interpreter, wheel_url=spec.wheel_url)
-    steps = [
-        f"Repair this environment now, until the next tool upgrade "
-        f"re-resolves torch: {immediate}",
-        f"Make upgrades keep the GPU wheel: {durable}",
-        HOLDER_PRECONDITION,
-    ]
-    if "==" in package_spec:
-        steps.append(
-            "That request pins the release installed now, and uv records the "
-            "pin, so `uv tool upgrade` will answer that there is nothing to "
-            f"upgrade. Take a newer release with: {upgrade}"
+            repair_command=repair,
+            upgrade_commands=(upgrade, restart),
         )
     return CudaRemediation(
         kind=CudaRepairKind.TOOL_ENVIRONMENT,
-        steps=tuple(steps),
-        immediate_command=immediate,
-        durable_command=durable,
-        upgrade_command=upgrade,
-        spec=spec,
+        steps=(
+            f"Install the CUDA build of torch into this environment: {repair}",
+            "It changes torch alone, in place, and records the CUDA index in "
+            "the installation receipt, so later upgrades keep the GPU build.",
+            RESTART_NOTE,
+            f"Take a newer release later with: {upgrade}",
+        ),
+        repair_command=repair,
+        upgrade_commands=(upgrade, restart),
     )
