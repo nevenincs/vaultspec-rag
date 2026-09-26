@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.2...vaultspec-rag-v0.5.3) (2026-09-26)
+
+
+### Features
+
+* answerable, locatable vault search results ([#537](https://github.com/nevenincs/vaultspec-rag/issues/537)) ([1be0d1b](https://github.com/nevenincs/vaultspec-rag/commit/1be0d1b07235596a021a76a497639b0ef3e95e98))
+
+
+### Bug Fixes
+
+* **install:** keep client installations and CI off the inference stack ([#548](https://github.com/nevenincs/vaultspec-rag/issues/548)) ([40a6d1e](https://github.com/nevenincs/vaultspec-rag/commit/40a6d1e24b698dca306c62ccfad41ce589fe3e3f))
+* **jobs:** keep job admission from cold-importing torch ([#539](https://github.com/nevenincs/vaultspec-rag/issues/539)) ([ee062f4](https://github.com/nevenincs/vaultspec-rag/commit/ee062f427a955c58e4419ba62a930087cf9a97fe))
+
 ## [0.5.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.1...vaultspec-rag-v0.5.2) (2026-09-24)
 
 
