@@ -94,8 +94,7 @@ def _repo_root() -> Path:
     """Return the worktree root.
 
     Returns:
-        The directory two levels above this file, which is the repository root
-        for ``dev/init/__main__.py`` in every repository in the fleet.
+        The directory two levels above this file, which is the repository root.
     """
     return Path(__file__).resolve().parents[2]
 

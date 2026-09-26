@@ -83,16 +83,13 @@ value re-runs `init-python`: the stamp digests each phase's resolved commands.
 
 ## Layout
 
-Every file here except `plan.py` is byte-identical in `vaultspec-core`,
-`vaultspec-rag`, `vaultspec-dashboard`, `vaultspec-a2a` and `cadrumo`.
-
 | File          | Role                                                           |
 | ------------- | -------------------------------------------------------------- |
 | `contract.py` | Phases, steps, results, the event stream, the report schema.   |
 | `process.py`  | Running a step, and classifying its failure into an exit code. |
 | `probe.py`    | Host-tool discovery and version comparison.                    |
 | `stamp.py`    | Input digests and the idempotence stamp.                       |
-| `plan.py`     | **This repository's** phases. The only file that differs.      |
+| `plan.py`     | This repository's phases and their steps.                      |
 
 The package imports only the standard library and `dev.exit_codes`. It must
 never import `dev.toolchain`, `dev.runner`, or anything reached through

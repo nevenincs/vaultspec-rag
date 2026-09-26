@@ -1,11 +1,11 @@
 """The shape of an initialization: phases, steps, results, and the report.
 
 Everything a caller can rely on is declared here once, as data. The phases are
-fixed and identical in every repository even where one of them has nothing to
-do, because a caller that must probe which recipes a repository happens to
-define has no contract at all - it has a lookup table. ``just init-node`` in a
-repository with no Node dependency graph reports ``skipped`` with a reason,
-which is an answer; a missing recipe is an error message about `just`.
+fixed even where one of them has nothing to do, because a caller that must
+probe which recipes a repository happens to define has no contract at all - it
+has a lookup table. ``just init-node`` in a repository with no Node dependency
+graph reports ``skipped`` with a reason, which is an answer; a missing recipe
+is an error message about `just`.
 
 Stdlib-only, by the constraint stated in :mod:`dev.init`.
 """

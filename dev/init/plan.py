@@ -1,9 +1,9 @@
 """What initializing THIS repository means.
 
-The only file in :mod:`dev.init` that differs between repositories. Everything
-here is data: the host tools the workstation must already provide, the steps
-each phase runs, and - the part that is easy to get wrong - the inputs whose
-change makes a phase stale and the artifacts whose absence does the same.
+Everything here is data: the host tools the workstation must already provide,
+the steps each phase runs, and - the part that is easy to get wrong - the
+inputs whose change makes a phase stale and the artifacts whose absence does
+the same.
 
 ``vaultspec-rag`` had no bootstrap recipe at all before this: the only way to
 provision a worktree was to know that ``just deps-sync`` happened to be the
