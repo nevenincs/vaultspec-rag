@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:48e72c839cb4ce3b5c21fbb5706e7aa262fe2c2963f505db0376819c351e0709'
+body_hash: 'sha256:0f479c0e2762ca2e5b8abe78130868a1fdc37d929c7e1db92148287e343f4ad0'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -326,6 +326,9 @@ related:
 - `S19` `verify:` `pytest test_tool_torch_repair` -> `pass`
 - `S16` `verify:` `pytest test_tool_torch_repair` -> `pass`
 - `S16` `verify:` `guard mutation (release check removed, the consented path runs) fails then passes` -> `pass`
+- `S18` `M` `src/vaultspec_rag/_process_probe.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_env_holders.py`
+- `S18` `verify:` `pytest test_env_holders` -> `pass`
 
 ## Notes
 
@@ -354,3 +357,4 @@ related:
 - `S17` correction for p04-review-repair-command-property-is-test-only: deleted `CudaRemediation.repair_command` and repointed its two test callers at `repair_commands`
 - `S19` corrections for p04-review-lows: the holder serialiser's command-line claim is scoped to the HTTP shape, which is the one that omits them, while `holder_summary` keeps them for the operator reading locally; HolderRelation's docstring states the restart policy HolderRole.remediation owns; the two renderer fixtures carry the S18 wording; README wrapping restored. The damaged-metadata release pin and the console-script adapter role are left for the user's decision
 - `S16` correction for the damaged-metadata low: the release comes from the environment's installed metadata or, failing that, the receipt's exact pin; with neither the product refuses to run the repair on consent and hands the commands over, because a swap naming no release resolves the newest one
+- `S18` correction for p04-e2e-console-script-adapter-unrecognised: a server launch through its installed console script is recognised as well as the module form, with the names read from entry-point metadata. Caller audit: `is_server_launch` and `server_launch_port` are called only by the holder role and report; the spawn witness, the orphan reap and the spawn itself match `SERVER_LAUNCH_MARKER` directly, so broadening changes nothing that can be reaped or stopped

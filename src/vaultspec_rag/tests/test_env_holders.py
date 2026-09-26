@@ -440,3 +440,68 @@ def test_a_shell_and_the_process_it_started_stay_two_holders(
 
     assert sorted(holder.pid for holder in result.holders) == [5000, 5001]
     assert all(holder.launcher_pid is None for holder in result.holders)
+
+
+class TestTheConsoleScriptAdapterIsRecognised:
+    """A stdio adapter started by its console script is this product's own.
+
+    Guard assertion: the launch shape was matched on ``-m
+    vaultspec_rag.server`` alone, so an adapter an editor started through
+    the installed console script was reported as an unrelated process, and
+    its operator was told to end something their session owns. The names
+    come from entry-point metadata, so a rename cannot leave a stale copy
+    behind here.
+    """
+
+    def test_the_names_come_from_entry_point_metadata(self) -> None:
+        import importlib.metadata
+
+        from .._process_probe import SERVER_LAUNCH_MARKER, server_console_scripts
+
+        expected = {
+            entry.name.casefold()
+            for entry in importlib.metadata.entry_points(group="console_scripts")
+            if entry.value.partition(":")[0].strip() == SERVER_LAUNCH_MARKER[1]
+        }
+
+        assert server_console_scripts() == expected
+        assert expected, "this package declares a server console script"
+
+    def test_both_platforms_launch_shapes_are_recognised(self) -> None:
+        from .._process_probe import is_server_launch, server_console_scripts
+
+        script = next(iter(sorted(server_console_scripts())))
+        windows = (
+            "C:/tools/vaultspec-rag/Scripts/python.exe",
+            f"C:/uv/bin/{script}.exe",
+        )
+        posix = ("/opt/uv/tools/vaultspec-rag/bin/python", f"/opt/uv/bin/{script}")
+        module = ("python", "-m", "vaultspec_rag.server", "--port", "8776")
+
+        assert is_server_launch(windows)
+        assert is_server_launch(posix)
+        assert is_server_launch(module)
+        assert not is_server_launch(("python", "-c", "pass"))
+        assert not is_server_launch(("C:/uv/bin/other-tool.exe",))
+
+    def test_a_console_script_without_a_port_is_the_stdio_adapter(self) -> None:
+        """The port is what separates the two launches of one module."""
+        from .._process_probe import EnvironmentHolder, server_console_scripts
+        from ..operator_state._holders import HolderRole, holder_role
+
+        script = next(iter(sorted(server_console_scripts())))
+
+        def _holder(*argv: str) -> EnvironmentHolder:
+            return EnvironmentHolder(
+                pid=7001,
+                relation=HolderRelation.IMAGE,
+                image="python.exe",
+                working_directory=None,
+                argv=argv,
+            )
+
+        adapter = _holder("python.exe", f"C:/uv/bin/{script}.exe")
+        service = _holder("python.exe", f"C:/uv/bin/{script}.exe", "--port", "8776")
+
+        assert holder_role(adapter) is HolderRole.MCP_ADAPTER
+        assert holder_role(service) is HolderRole.SERVICE

@@ -32,7 +32,8 @@ import time
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path
+from functools import cache
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Final, Literal, cast
 
 if TYPE_CHECKING:
@@ -70,6 +71,7 @@ __all__ = [
     "process_lineage",
     "reap_if_child",
     "send_signal",
+    "server_console_scripts",
     "server_launch_port",
     "wait_for_exit",
     "win_kernel32",
@@ -671,9 +673,67 @@ def argv_contains(argv: Sequence[str], marker: Sequence[str]) -> bool:
     )
 
 
+@cache
+def server_console_scripts() -> frozenset[str]:
+    """The console-script names that start this product's server.
+
+    Read out of installed entry-point metadata rather than written down
+    here. The names are declared once, in the package's own metadata, and a
+    copy of them in this module would go stale exactly where being wrong
+    matters: an adapter nobody recognises is reported as a stranger, and the
+    operator is told to end a process their editor owns.
+
+    Cached because the holder scan asks about every process on the machine
+    and this reads distribution metadata off disk. An installation whose
+    metadata cannot be read yields no names, which costs recognition of a
+    console-script launch and nothing else.
+    """
+    import importlib.metadata
+
+    module = SERVER_LAUNCH_MARKER[1]
+    try:
+        entries = list(importlib.metadata.entry_points(group="console_scripts"))
+    except Exception as exc:  # pragma: no cover - metadata is normally readable
+        logger.debug("console-script entry points unreadable: %s", exc)
+        return frozenset()
+    return frozenset(
+        entry.name.casefold()
+        for entry in entries
+        if entry.value.partition(":")[0].strip() == module
+    )
+
+
+def _names_a_server_console_script(argv: Sequence[str]) -> bool:
+    """Whether *argv* starts one of those console scripts.
+
+    A launcher is observed two ways: as itself, and as the interpreter the
+    trampoline re-executes with the launcher's path as its first argument -
+    ``python.exe <launcher>.exe`` on Windows, ``python <script>`` on POSIX.
+    Both are matched on the basename, with the Windows suffix stripped,
+    because the directory it sits in is uv's to choose.
+    """
+    scripts = server_console_scripts()
+    if not scripts:
+        return False
+    for part in argv[:2]:
+        name = PurePath(part).name.casefold()
+        if name.endswith(".exe"):
+            name = name[: -len(".exe")]
+        if name in scripts:
+            return True
+    return False
+
+
 def is_server_launch(argv: Sequence[str]) -> bool:
-    """Whether *argv* runs this product's server module."""
-    return argv_contains(argv, SERVER_LAUNCH_MARKER)
+    """Whether *argv* runs this product's server, however it was started.
+
+    The module form is what the product spawns for itself. The console-script
+    form is what an editor or agent session starts for a stdio adapter, and
+    it was read as an unrelated process until it was asked for here.
+    """
+    return argv_contains(argv, SERVER_LAUNCH_MARKER) or _names_a_server_console_script(
+        argv
+    )
 
 
 def server_launch_port(argv: Sequence[str]) -> int | None:
