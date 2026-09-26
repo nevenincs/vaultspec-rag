@@ -11,8 +11,8 @@ supersedes:
   - '2026-06-05-cli-mcp-decoupling-adr'
   - '2026-06-07-mcp-server-deconflation-adr'
   - '2026-06-10-install-mcp-dependency-fix-adr'
-modified: '2026-07-27'
-body_hash: 'sha256:38eb1b351dc7a6ce9f5ea4fa07ae5ca712fff5963c52bee7f5d64c5352915e4d'
+modified: '2026-09-26'
+body_hash: 'sha256:68648b93f496143f6dd399e005871573b635b5a2269fcfa0d67d848a93051376'
 ---
 
 # `mcp-service-client` adr: `MCP backend reframed as a thin service client` | (**status:** `accepted`)
@@ -83,6 +83,8 @@ The decisive grounding from research:
 - **Backward compatibility is explicitly NOT a goal.** Consistent with the deconflation
   ADR's "hard, clean cut" intent that was never honored: no shims, shadows, or dual-mode
   fallbacks survive this rework.
+
+**Amendment note, 2026-09-26**: The "`mcp` core dependency stays" claim above no longer holds. `2026-06-30-mcp-optional-dependency-adr` (accepted, later than this record) demotes `mcp` to the optional `[mcp]` extra; `pyproject.toml` confirms it - `mcp` is absent from `[project.dependencies]` (`pyproject.toml:20-41`) and appears only under `[project.optional-dependencies].mcp = ["mcp>=2,<3"]` (`pyproject.toml:90`). See that later record for the governing decision; this ADR's other constraints and D1-D7 decisions are unaffected.
 
 ## Implementation
 

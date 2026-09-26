@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-09-23'
-body_hash: 'sha256:d456d7a0113be895b2378666998001e2ea758b869177f83560c78cae2fb72d4c'
+modified: '2026-09-26'
+body_hash: 'sha256:f44bf25203bc1c82724cfb8fba5cc5026cfd3ab0df4f7f8c927bfc0636b6c775'
 related:
   - '[[2026-04-12-vaultspec-rag-install-research]]'
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
@@ -417,6 +417,8 @@ installed in dev env per pyproject pin). No mocks. Coverage:
 - **CLI integration:** invoke `vaultspec-rag install` and
   `vaultspec-rag uninstall` via Typer's testing client, assert exit
   codes and output panels.
+
+**Amendment note, 2026-09-26**: Neither "100% CLI flag alignment" nor the `vaultspec-core>=0.1.9` pin holds today; recorded here as the actual surface. `pyproject.toml:26` now pins `vaultspec-core>=0.1.45`. rag's install/uninstall flags (`cli/_install.py`, lines noted below) and core's (`vaultspec_core/cli/root_install.py`, installed at `.venv/Lib/site-packages/vaultspec_core/cli/root_install.py:44-95,331-360`) share only `-t`/`--target`, `--upgrade`, `--dry-run`, `--force`, `--skip`, `--mode`, and `--json`. Core-only: the positional `provider` argument and `--no-hints` (`root_install.py:45-50,91-94`); core uninstall's `--remove-vault` has no rag analogue. rag-only: `-y`/`--yes`, `--torch-config`/`--no-torch-config`, `--tool-repair`/`--no-tool-repair`, `--torch-group`, `--sync`, `--provision`/`--no-provision`, `--mcp`/`--no-mcp`, `--local-only`, `--skip-torch`, `--skip-models`, `--skip-qdrant` (`cli/_install.py:100-183`), and uninstall's `--remove-data` (`cli/_install.py:497-501`) - core has no data-removal flag on uninstall beyond `--remove-vault`, a different scope as this record's Implementation table already notes for that pair. The shared-flag contract this record calls for is proposed in vaultspec-core's `2026-09-26-env-parity-adr`, which will own the install-flag contract alongside the shared resolution order, env-file rule, and boolean vocabulary.
 
 ## Required Core Support
 
