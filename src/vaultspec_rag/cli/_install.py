@@ -10,6 +10,7 @@ from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.models import TyperPath
+from vaultspec_core.config import is_unattended
 from vaultspec_core.core.enums import (
     InstallMode,
 )
@@ -20,7 +21,12 @@ from ._app import JSON_OPTION_HELP, _global_target, app
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import TextIO
+
     from typer._click import Context as ClickContext
+
+    from ..commands._models import ConfirmFn
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -342,9 +348,49 @@ def handle_install() -> None:
     """Register the custom command; it dispatches through ``_InstallCommand``."""
 
 
+def _confirmation_hook(
+    confirm: "ConfirmFn",
+    *,
+    json_output: bool,
+    environ: "Mapping[str, str] | None" = None,
+    stdin: "TextIO | None" = None,
+    stdout: "TextIO | None" = None,
+) -> "ConfirmFn | None":
+    """Return the prompt callback, or ``None`` when nobody is watching.
+
+    Whether anybody is watching is one framework question with one answer: a
+    machine envelope on standard output, a session that declares it, or
+    standard streams that are not a terminal. Deciding it from standard input
+    alone got two of those wrong - a run under ``--json`` went on prompting
+    at a terminal nobody was reading the output of, and a continuous-
+    integration run that inherited a terminal prompted into a log.
+
+    Args:
+        confirm: The callback that would ask the operator.
+        json_output: Whether this invocation emits a machine envelope.
+        environ: The environment to read; ``None`` reads the process's own.
+        stdin: The stream an answer would be read from; ``None`` uses the
+            process's own.
+        stdout: The stream a question would be shown on; ``None`` uses the
+            process's own.
+
+    Returns:
+        *confirm* when a person could answer, ``None`` otherwise. ``None`` is
+        what routes the run to the skipped branch, which reports the skip and
+        names the flag that would have granted consent.
+
+    Raises:
+        ConfigurationError: If the session's own marker carries a word the
+            boolean vocabulary does not recognise.
+    """
+    unattended = is_unattended(
+        json_output=json_output, environ=environ, stdin=stdin, stdout=stdout
+    )
+    return None if unattended else confirm
+
+
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
-    import sys as _sys
 
     from rich.prompt import Confirm
 
@@ -363,11 +409,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         # prompt can pass ``--yes`` or ``--force``. CLI3-04.
         return Confirm.ask(prompt, default=False, console=_cli.console)
 
-    # Non-TTY detection lives at the CLI edge: only interactive TTYs
-    # can produce meaningful confirmation answers. In CI / pipes,
-    # leaving confirm=None forces the "skipped-non-tty" branch, which
-    # instructs the user to pass --yes or --no-torch-config.
-    confirm_fn = _confirm if _sys.stdin.isatty() else None
+    confirm_fn = _confirmation_hook(_confirm, json_output=options.json_output)
 
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the

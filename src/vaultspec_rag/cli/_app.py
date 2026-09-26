@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import typer
 from typer.core import TyperGroup, TyperOption
 from typer.models import TyperPath
-from vaultspec_core.config import ConfigurationError, check_environment
+from vaultspec_core.config import (
+    ConfigurationError,
+    check_environment,
+    unattended_declared,
+)
 from vaultspec_core.config.workspace import (
     WorkspaceError,
     WorkspaceLayout,
@@ -523,6 +527,15 @@ def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
     problems: list[str] = []
     try:
         check_environment(package=REGISTRY_PACKAGE)
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        # The session's own marker is the framework's entry and no chain of
+        # this package's reaches it, so the check above never sees it - but
+        # every prompt this package might issue consults it, and a typo
+        # would otherwise surface at the moment a question was about to be
+        # asked, halfway through an install.
+        unattended_declared()
     except ConfigurationError as refusal:
         problems.append(str(refusal))
     try:
