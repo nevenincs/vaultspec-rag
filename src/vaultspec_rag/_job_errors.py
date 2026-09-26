@@ -237,6 +237,14 @@ LOCK_CONTENTION_MARKERS = (
 #: remedy, and falling through to ``other`` buried that remedy at the one moment
 #: an operator needs it.
 INGEST_VERIFICATION_MARKERS = ("ingest verification failed",)
+#: The spelling to use when this project refuses work that only an explicit
+#: rebuild can repair, such as an incremental run over a root with no committed
+#: publication proof. Those refusals cross the job boundary as plain proof
+#: errors, not as ``JobError``; classifying them ``other`` made the watcher treat
+#: them as an ordinary failure and resubmit the same doomed incremental on every
+#: change, instead of refusing with the rebuild remedy.
+FULL_REINDEX_REQUIRED_PHRASE = "an explicit rebuild is required"
+_FULL_REINDEX_REQUIRED_MARKERS = (FULL_REINDEX_REQUIRED_PHRASE,)
 _TIMEOUT_MARKERS = ("timed out", "timeout")
 _UNAVAILABLE_MARKERS = (
     "connection refused",
@@ -255,6 +263,7 @@ _MARKER_CLASSIFICATIONS: Final = (
     (DISK_FULL_MARKERS, JobErrorKind.DISK_FULL),
     (LOCK_CONTENTION_MARKERS, JobErrorKind.LEDGER_CONTENDED),
     (INGEST_VERIFICATION_MARKERS, JobErrorKind.INGEST_VERIFICATION_FAILED),
+    (_FULL_REINDEX_REQUIRED_MARKERS, JobErrorKind.FULL_REINDEX_REQUIRED),
     (_TIMEOUT_MARKERS, JobErrorKind.TIMEOUT),
     (_UNAVAILABLE_MARKERS, JobErrorKind.UNAVAILABLE),
 )

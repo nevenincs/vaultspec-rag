@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 
 from . import store_schema
+from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
 from .indexer._publication_proof import ProofIncompatibleError
@@ -59,7 +60,7 @@ def acquire_publication_snapshot(
         from .indexer._publication_proof import ProofMissingError
 
         raise ProofMissingError(
-            "publication proof does not exist; an explicit rebuild is required"
+            f"publication proof does not exist; {FULL_REINDEX_REQUIRED_PHRASE}"
         )
     ledger = RunLedger(ledger_path)
     proof, token = ledger.acquire_current_publication_snapshot(

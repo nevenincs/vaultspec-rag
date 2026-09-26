@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from .._job_errors import JobError, JobErrorKind
+from .._job_errors import JobError, JobErrorKind, classify_error_text
+from .._publication_state import acquire_publication_snapshot
+from .._source_types import PublicSourceType
+from ..indexer._publication_proof import ProofMissingError
 from ..watcher_durability import (
     _CANCELLATION_DURABILITY_SECONDS,
     _STATE_TRANSACTION_WORKER_SLOTS,
@@ -404,6 +407,28 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     assert renewed.last_error_kind is None
     assert renewed.circuit_state is WatcherCircuitState.CLOSED
     assert policy.admit(now=1001.0).admitted
+
+
+def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
+    tmp_path: Path,
+) -> None:
+    # A watched root that was never built has no committed proof. Its
+    # incremental run raises the proof error, not a JobError, and classifying
+    # that as ``other`` resubmitted the same doomed incremental on every change
+    # instead of refusing with the rebuild remedy. Mutation: dropping the
+    # rebuild phrase from the classifier fails both kind assertions.
+    with pytest.raises(ProofMissingError) as missing:
+        acquire_publication_snapshot(tmp_path / "never-built", PublicSourceType.VAULT)
+    assert classify_error_text(str(missing.value)) is JobErrorKind.FULL_REINDEX_REQUIRED
+
+    policy = _policy(tmp_path / "vault.json", tmp_path, source=WatcherSource.VAULT)
+    policy.mark_convergence_pending(now=0.0)
+    state = _fail_once(policy, missing.value, now=1.0, random_unit=0.5)
+
+    assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    assert not state.convergence_pending
+    assert state.pending_paths == ()
 
 
 def test_half_open_probe_is_single_flight(tmp_path: Path) -> None:

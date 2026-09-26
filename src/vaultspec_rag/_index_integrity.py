@@ -44,6 +44,7 @@ from typing import (
 )
 
 from . import store_schema
+from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
@@ -750,8 +751,8 @@ def audit_index_integrity(
         from .indexer._publication_proof import ProofMissingError
 
         raise ProofMissingError(
-            "canonical publication proof does not exist; an explicit rebuild is "
-            "required"
+            "canonical publication proof does not exist; "
+            f"{FULL_REINDEX_REQUIRED_PHRASE}"
         )
 
     started = time.perf_counter()
