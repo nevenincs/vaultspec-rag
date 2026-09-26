@@ -165,6 +165,23 @@ def _unwrapped(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _refusal_message(result: subprocess.CompletedProcess[str]) -> str:
+    """Return the reason a refused ``--json`` run reported.
+
+    A refusal raised before the command runs answers the channel the
+    invocation asked for, so under ``--json`` it is the shared error
+    envelope on standard output, not a plain line. Reading the message out
+    of it is what keeps these assertions about the reason rather than about
+    the JSON escaping of a Windows path inside it.
+    """
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, f"a refused run printed nothing. stderr={result.stderr!r}"
+    envelope = json.loads(lines[-1])
+    assert envelope["schema"] == "vaultspec.error.v1", result.stdout
+    assert envelope["status"] == "failed", result.stdout
+    return _unwrapped(str(envelope["data"]["message"]))
+
+
 @pytest.mark.timeout(120)
 def test_env_named_root_beats_the_working_directory(workspaces: _Workspaces) -> None:
     """An exported root is honoured when no ``--target`` overrides it.
@@ -225,9 +242,9 @@ def test_a_framework_root_that_is_not_a_workspace_names_its_own_variable(
     result = _run(workspaces, root_env=None, framework_env=str(workspaces.bare))
 
     assert result.returncode == 1, result.stdout
-    combined = _unwrapped(result.stdout + result.stderr)
-    assert VAULTSPEC_TARGET_DIR.env_name in combined, combined
-    assert EnvVar.RAG_ROOT.value not in combined, combined
+    message = _refusal_message(result)
+    assert VAULTSPEC_TARGET_DIR.env_name in message, message
+    assert EnvVar.RAG_ROOT.value not in message, message
 
 
 @pytest.mark.timeout(120)
@@ -271,9 +288,9 @@ def test_env_naming_a_non_workspace_is_refused_not_ignored(
         "a root that cannot be honoured was ignored and the working "
         f"directory's project was addressed. stdout={result.stdout!r}"
     )
-    combined = _unwrapped(result.stdout + result.stderr)
-    assert f"{EnvVar.RAG_ROOT.value} names" in combined, combined
-    assert _unwrapped(str(workspaces.bare)) in combined, combined
+    message = _refusal_message(result)
+    assert f"{EnvVar.RAG_ROOT.value} names" in message, message
+    assert _unwrapped(str(workspaces.bare)) in message, message
 
 
 class TestTheEnvironmentValueItself:

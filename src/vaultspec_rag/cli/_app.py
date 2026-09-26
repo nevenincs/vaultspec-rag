@@ -29,7 +29,6 @@ import vaultspec_rag.cli as _cli
 
 from .._named_root import named_root
 from ..logging_config import configure_logging
-from ._render import _plain
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -300,6 +299,28 @@ class _LiteralArgvGroup(TyperGroup):
             )
         )
 
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: ClickContext | None = None,
+        **extra: Any,
+    ) -> Any:
+        """Build the root context, keeping the invocation's own tokens on it.
+
+        A refusal raised from the root callback fires before the parser has
+        reached the subcommand that declares ``--json``, so there is no
+        parsed flag to ask. The raw tokens are the only signal that exists
+        at that point, and they are read here rather than from
+        ``sys.argv``: an in-process caller hands its arguments to the group
+        instead of the interpreter, and a refusal must render the same way
+        for both. Copied first, because parsing consumes the list.
+        """
+        tokens = tuple(args)
+        ctx = super().make_context(info_name, args, parent=parent, **extra)
+        ctx.meta[_ROOT_ARGV_CONTEXT_KEY] = tokens
+        return ctx
+
     def invoke(self, ctx: ClickContext) -> Any:
         """Invoke the empty registration callback without root option kwargs."""
         # ctx.params is click's untyped dict[str, Any] of parsed option
@@ -394,6 +415,7 @@ app.add_typer(preprocess_app, name="preprocess")
 
 
 _ROOT_OPTIONS_CONTEXT_KEY = "vaultspec_rag.root_options"
+_ROOT_ARGV_CONTEXT_KEY = "vaultspec_rag.root_argv"
 
 
 def _show_group_help_if_no_command(ctx: typer.Context) -> None:
@@ -501,16 +523,65 @@ def main(ctx: typer.Context) -> None:
     _configure_root_context(ctx, options)
 
 
-def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
+def _json_requested(ctx: ClickContext) -> bool:
+    """Report whether this invocation asked for machine output.
+
+    Read from the tokens the root group kept on the context, as an exact
+    whole-token match so a neighbouring option such as ``--json-file``
+    cannot be mistaken for it.
+
+    Args:
+        ctx: The root context the group built for this invocation.
+
+    Returns:
+        ``True`` when ``--json`` appears anywhere in the invocation.
+    """
+    tokens = ctx.meta.get(_ROOT_ARGV_CONTEXT_KEY)
+    return isinstance(tokens, tuple) and "--json" in tokens
+
+
+def _refuse(ctx: ClickContext, *problems: str) -> None:
+    """Report a refusal raised before any command ran, then exit 1.
+
+    A refusal is output like any other, so it answers to the same two
+    channels: a ``--json`` consumer gets core's ``vaultspec.error.v1``
+    envelope on standard output and can parse the reason, and everybody else
+    gets plain lines on standard error, where a diagnostic belongs and where
+    it cannot be mistaken for the result a pipeline is reading. Printing
+    ``Error:`` as plain text on standard output did both jobs badly: it
+    corrupted the machine channel and polluted the human one.
+
+    Args:
+        ctx: The root context, carrying the invocation's own tokens.
+        problems: Every reason this run cannot proceed, reported together.
+
+    Raises:
+        typer.Exit: With status 1, always.
+    """
+    if _json_requested(ctx):
+        from vaultspec_core.envelope import render_error_envelope
+
+        typer.echo(render_error_envelope("; ".join(problems)))
+    else:
+        for problem in problems:
+            typer.echo(f"Error: {problem}", err=True)
+    raise typer.Exit(code=1)
+
+
+def _refuse_unusable_environment(
+    ctx: ClickContext, cli_overrides: dict[str, str]
+) -> None:
     """Stop the run on any value it could not have used, naming all of them.
 
     Delegates the actual checks to
     :func:`~vaultspec_rag.config._settings.collect_environment_problems`, the
     one refusal contract every rag process kind (this CLI, the stdio MCP
-    server, the HTTP daemon) shares, and renders the CLI's own report: every
-    problem printed, then a single non-zero exit.
+    transport, the HTTP daemon) shares, and renders the CLI's own report:
+    every problem reported together, then a single non-zero exit.
 
     Args:
+        ctx: The root context, so the report reaches the channel this
+            invocation asked for.
         cli_overrides: The settings this invocation named on the command
             line, so the report describes the configuration about to be
             built rather than a different one.
@@ -523,9 +594,39 @@ def _refuse_unusable_environment(cli_overrides: dict[str, str]) -> None:
     problems = collect_environment_problems(cli_overrides or None)
     if not problems:
         return
-    for problem in problems:
-        _plain(f"Error: {problem}")
-    raise typer.Exit(code=1)
+    _refuse(ctx, *problems)
+
+
+def _seed_configuration(cli_overrides: dict[str, str], target: Path | None) -> None:
+    """Build this process's one configuration from the invocation's own values.
+
+    The root options ``--data-dir``, ``--storage-dir``, ``--status-dir`` and
+    ``--log-file`` are the invocation rung of the resolution order, and this
+    is the only place that rung is applied: every later reader asks for the
+    process-wide configuration with no arguments, so a run that never seeded
+    it reads the environment alone and writes wherever the environment says -
+    silently, which is how ``--status-dir`` came to name a directory nothing
+    ever used.
+
+    Seeding here rather than inside the refusal probe is deliberate. The
+    probe builds a throwaway so that validating a value cannot decide what a
+    later reader sees; this call runs after the project root is resolved, so
+    the configuration it caches is built for the project the invocation
+    addresses rather than for whichever directory the shell happened to be
+    in.
+
+    Args:
+        cli_overrides: Settings this invocation named on the command line.
+        target: The resolved project root this invocation addresses, or
+            ``None`` when nothing named one and the configuration's own
+            default - the working directory - is the answer.
+    """
+    from ..config._settings import get_config
+
+    seeded: dict[str, Any] = dict(cli_overrides)
+    if target is not None:
+        seeded["target_dir"] = target
+    get_config(seeded)
 
 
 def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
@@ -549,7 +650,7 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     # the other is two rounds for what is one edit. It runs before logging is
     # configured, so a mistyped level joins the report instead of refusing
     # the run on its own.
-    _refuse_unusable_environment(cli_overrides)
+    _refuse_unusable_environment(ctx, cli_overrides)
 
     configure_logging(debug=options.debug, verbose=options.verbose)
 
@@ -569,9 +670,11 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
     try:
         resolved_root = named_root(options.target)
     except ConfigurationError as refusal:
-        _plain(f"Error: {refusal}")
+        _refuse(ctx, str(refusal))
         raise typer.Exit(code=1) from None
     named_target = resolved_root.path
+
+    _seed_configuration(cli_overrides, named_target)
 
     if ctx.invoked_subcommand in (
         "server",
@@ -599,12 +702,13 @@ def _configure_root_context(ctx: ClickContext, options: _RootOptions) -> None:
             # which may be the framework-wide name behind this package's own:
             # somebody who passed no flag has no other way to learn that the
             # environment chose the directory being complained about.
-            _plain(
-                f"Error: {resolved_root.variable} names {named_target}, which "
-                f"is not a usable workspace: {e}"
+            _refuse(
+                ctx,
+                f"{resolved_root.variable} names {named_target}, which "
+                f"is not a usable workspace: {e}",
             )
         else:
-            _plain(f"Error: {e}")
+            _refuse(ctx, str(e))
         raise typer.Exit(code=1) from None
 
 
