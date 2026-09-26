@@ -550,6 +550,31 @@ class JobManagerExecution(JobManagerState):
             or managed.snapshot.resources.pipeline_active
         )
 
+    def undispatched(self) -> tuple[JobSnapshot, ...]:
+        """Return the queued work, while dispatch is open to start it.
+
+        No attempt owns queued work: the attempt that claims a job moves it to
+        running in the same transition. Dispatch claims work the moment it is
+        queued, so work still queued was either queued just now or left behind
+        by a dispatch that failed without failing or deferring it, and nothing
+        will start it. While dispatch is closed - startup restore pending,
+        shutdown under way, or quiesce holding compute admission - the
+        reopening dispatches the held work, so none is listed. Telling the two
+        apart by how long a job has waited is left to the caller.
+        """
+        with self._lock:
+            if (
+                self._lifecycle_state != "running"
+                or self._startup_restore_incomplete
+                or not self._quiesce_controller.snapshot().admissions_open
+            ):
+                return ()
+            return tuple(
+                self._snapshot_locked(managed)
+                for managed in self._active.values()
+                if managed.snapshot.state is JobState.QUEUED
+            )
+
     async def _run_attempt(
         self,
         *,

@@ -26,6 +26,7 @@ match, so it passes whether or not the verdict fired.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -44,7 +45,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def _degrade_reasons() -> list[Degradation]:
-    _health, reasons = _jobs_health()
+    _health, reasons = _jobs_health(now=time.time())
     return reasons
 
 
@@ -209,7 +210,7 @@ class TestDegradedVerdictTracksCurrentState:
             record_finish(failed, error="cuda_memory_ceiling: ceiling exceeded")
             succeeded = record_start(JobSource.CODE, "watcher", project_root=project)
             record_finish(succeeded, result="+1 /0 -0 (100ms)")
-            jobs_health, reasons = _jobs_health()
+            jobs_health, reasons = _jobs_health(now=time.time())
         finally:
             reset()
         assert not _job_failed(reasons)

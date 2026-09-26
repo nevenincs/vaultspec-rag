@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#status-messages'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:e52f13500a5a3aae67c73de1aa37de66f5bd96d859dc00ccb2307a9a8a5b8bbe'
+body_hash: 'sha256:0f8623dbf86178256124d834a4f153cbf71f5e8cb5e34721a6506db49a14184d'
 related:
   - "[[2026-09-23-status-messages-research]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -167,6 +167,7 @@ duplicated: `JobState`, `QuiesceState`, `SearchAvailability`, `SearchFreshness` 
   `DegradationReason` members:
 
   - `JOBS_STALLED` (a count of stalled jobs)
+  - `JOBS_UNDISPATCHED` (a count of queued jobs nothing has started)
   - `JOBS_DEGRADED`
   - `JOB_FAILED`
   - `QUARANTINED`
