@@ -171,11 +171,11 @@ def acquire_code_breadth_snapshot_if_proven(
     answering it with a refusal would make a first search an error rather than
     an empty, actionable result.
     """
-    from .indexer._publication_proof import ProofUnverifiableError
+    from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
 
     try:
         return acquire_code_breadth_snapshot(root)
-    except ProofUnverifiableError:
+    except UNREADABLE_PUBLICATION_ERRORS:
         return None
 
 

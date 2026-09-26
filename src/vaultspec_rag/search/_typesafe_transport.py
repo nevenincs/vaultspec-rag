@@ -12,18 +12,19 @@ import time
 import urllib.error
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
-from http.client import HTTPException
+from http.client import HTTPConnection, HTTPException, HTTPResponse
 
 from ..config._types import EnvVar
 from ..operator_state._features import TypesafeState
 from ..operator_state._models import TypesafeReport
-from ._typesafe_answers import MODEL, Evaluation, validate_evaluation
+from ._typesafe_answers import MODEL, Evaluation, json_mapping, validate_evaluation
 from ._typesafe_cache import ResponseCache
 from ._typesafe_pool import ConnectionPool
 
 _ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 128 * 1024
+_ERROR_BYTES = 4096
 REQUEST_TIMEOUT = 5.0
 _COOLDOWN = 30.0
 _SLOTS = threading.BoundedSemaphore(2)
@@ -156,6 +157,35 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
+def _check_status(
+    response: HTTPResponse, connection: HTTPConnection, deadline: float
+) -> None:
+    """Refuse any answer but success, telling a key refusal from an edge block.
+
+    The provider refuses a missing or invalid key with a JSON 403
+    ``authentication_error``. The proxy in front of it refuses some request
+    bodies with an HTML 403 before authentication runs, which says nothing
+    about the key and must not disable it.
+    """
+    if 300 <= response.status < 400:
+        raise TypesafeUnavailableError("redirect")
+    if response.status == 403:
+        if connection.sock is not None:
+            connection.sock.settimeout(_remaining(deadline))
+        try:
+            detail = json_mapping(
+                json_mapping(json.loads(response.read(_ERROR_BYTES))).get("detail")
+            )
+        except (ValueError, RecursionError):
+            detail = {}
+        if detail.get("error_type") != "authentication_error":
+            raise TypesafeUnavailableError("content_rejected")
+    if response.status != 200:
+        raise urllib.error.HTTPError(
+            _ENDPOINT, response.status, "http", response.headers, None
+        )
+
+
 def _request(
     key: str,
     payload: bytes,
@@ -196,12 +226,7 @@ def _request(
         started = time.monotonic()
         response = connection.getresponse()
         stats["response_wait_ms"] = (time.monotonic() - started) * 1000
-        if 300 <= response.status < 400:
-            raise TypesafeUnavailableError("redirect")
-        if response.status != 200:
-            raise urllib.error.HTTPError(
-                _ENDPOINT, response.status, "http", response.headers, None
-            )
+        _check_status(response, connection, deadline)
         started = time.monotonic()
         chunks: list[bytes] = []
         size = 0
@@ -274,7 +299,12 @@ def _run(
             TypesafeUnavailableError("credential_rejected" if permanent else "http")
         )
     except TypesafeUnavailableError as exc:
-        if exc.reason != "deadline" or not budget.search_limited:
+        # A refused body or a spent search budget belongs to this request, not
+        # to the provider, so the next request stays admitted.
+        request_scoped = exc.reason == "content_rejected" or (
+            exc.reason == "deadline" and budget.search_limited
+        )
+        if not request_scoped:
             _failed(fingerprint)
         outcome.set_exception(TypesafeUnavailableError(exc.reason))
     except (TimeoutError, urllib.error.URLError) as exc:

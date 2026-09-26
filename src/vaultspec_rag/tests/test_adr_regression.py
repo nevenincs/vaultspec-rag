@@ -792,6 +792,34 @@ class TestDeviceTierIsolation:
             f"{subprocess_tier}"
         )
 
+    def test_inference_stack_tests_move_from_the_cpu_lane_to_the_gpu_lane(
+        self,
+    ) -> None:
+        """A ``torch`` test runs exactly where torch is installed.
+
+        Mutation it catches: dropping ``torch`` from ``NEEDS_REAL_INFRA``, which
+        puts these tests back in the accelerator-free lane, whose environment
+        never installs torch - or dropping it from the resident selection,
+        which leaves them running nowhere while every lane stays green.
+        """
+        from _pytest.mark.expression import Expression
+
+        from dev.toolchain import CPU_ONLY
+
+        def carries(*names: str) -> typing.Callable[..., bool]:
+            def matcher(name: str, /, **_kwargs: str | int | bool | None) -> bool:
+                return name in names
+
+            return matcher
+
+        resident, subprocess_tier = self._gpu_recipe_selections()
+        torch_test = carries("unit", "torch")
+
+        assert not Expression.compile(CPU_ONLY).evaluate(torch_test)
+        assert Expression.compile(CPU_ONLY).evaluate(carries("unit"))
+        assert Expression.compile(resident).evaluate(torch_test)
+        assert not Expression.compile(subprocess_tier).evaluate(torch_test)
+
 
 class TestJobErrorTaxonomyStaysLight:
     """The shared job-failure taxonomy must stay torch- and CLI-free.

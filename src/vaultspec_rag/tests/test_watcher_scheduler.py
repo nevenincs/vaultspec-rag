@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,7 @@ import pytest
 
 from ..server._watcher import _WatcherScheduler
 from ..watcher_controller import (
+    ControllerMeasurement,
     ControllerReason,
     ControllerScope,
     ControllerSnapshot,
@@ -253,3 +255,40 @@ async def test_unregister_joins_in_flight_dispatch(tmp_path: Path) -> None:
     release.set()
     assert await joined is True
     await cycle
+
+
+async def test_only_a_changed_state_or_reason_is_logged_as_a_transition(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Every reevaluation stamps a fresh transition record. Logging each record
+    # wrote one line per controller per scheduler turn, which rotated the whole
+    # service log away within seconds. Mutation: comparing transition records
+    # instead of state and reason logs all three reevaluations below.
+    clock = _Clock(10.0)
+    scheduler = _WatcherScheduler(reevaluation_seconds=5.0, monotonic=clock)
+    controller = _controller(
+        tmp_path, clock, state=ControllerState.COLLECTING, deadline=100.0
+    )
+    generations = iter(range(1, 4))
+
+    def reevaluate() -> None:
+        clock.now += 1.0
+        controller.evaluate(
+            ControllerMeasurement(generation=next(generations), observed_at=clock.now)
+        )
+
+    scheduler.register(controller, reevaluate=reevaluate, admit=lambda _selection: None)
+    key = (controller.snapshot.canonical_root, controller.snapshot.source)
+    caplog.set_level(logging.INFO, logger="vaultspec_rag.server")
+
+    for _ in range(3):
+        await scheduler._invoke(key, reevaluate)
+
+    transitions = [
+        record
+        for record in caplog.records
+        if "service.watcher.controller event=transition" in record.getMessage()
+    ]
+    assert len(transitions) == 1
+    assert controller.snapshot.state is ControllerState.CONVERGED

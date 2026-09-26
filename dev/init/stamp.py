@@ -7,10 +7,12 @@ all call it unconditionally. It cannot get there by making each step fast -
 by not running the steps at all when nothing that feeds them has changed.
 
 What decides that is a digest over the phase's declared inputs - the lockfiles,
-the version pins, the manifests - plus this package's own source, so a change
-to what `init` DOES invalidates every stamp that was written by the old
-behaviour. The digest is per phase, so editing ``uv.lock`` re-runs
-``init-python`` and still skips ``init-node``.
+the version pins, the manifests - plus this package's own source and the
+phase's commands as resolved, so a change to what `init` DOES invalidates every
+stamp that was written by the old behaviour. The commands count separately from
+the source because a plan may choose them from the environment, and a stamp
+written under one choice must not vouch for another. The digest is per phase,
+so editing ``uv.lock`` re-runs ``init-python`` and still skips ``init-node``.
 
 A stamp alone is not sufficient and is not trusted alone. It records what the
 inputs were, not whether the result still exists, so each phase also declares
@@ -122,13 +124,16 @@ def phase_digest(repo_root: Path, phase: Phase) -> str:
 
     Returns:
         A hex digest over the contract version, this package's source, the
-        interpreter's major.minor, and the content of every declared input.
+        interpreter's major.minor, the phase's resolved commands, and the
+        content of every declared input.
     """
     digest = hashlib.sha256()
     digest.update(f"v{CONTRACT_VERSION}".encode("ascii"))
     digest.update(_own_source_digest().encode("ascii"))
     digest.update(f"{sys.version_info.major}.{sys.version_info.minor}".encode("ascii"))
     digest.update(phase.name.encode("utf-8"))
+    for step in phase.steps:
+        digest.update(("\0".join(step.argv) + "\n").encode("utf-8"))
     for relative in sorted(phase.inputs):
         digest.update(relative.encode("utf-8"))
         digest.update(_digest_file(repo_root / relative).encode("ascii"))

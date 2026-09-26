@@ -44,6 +44,7 @@ from typing import (
 )
 
 from . import store_schema
+from ._job_errors import FULL_REINDEX_REQUIRED_PHRASE
 from ._source_types import PublicSourceType
 from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
@@ -234,14 +235,14 @@ def acquire_index_integrity_snapshot_if_proven(
     """Acquire the proof token, or ``None`` when no proof can be read.
 
     The serving path needs the fence when there is one and must not fail
-    without it, so the typed rebuild-required outcome is turned into an
-    absence here rather than raised through a read-only request.
+    without it, so every unreadable-proof outcome is turned into an absence
+    here rather than raised through a read-only request.
     """
-    from .indexer._publication_proof import ProofUnverifiableError
+    from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
 
     try:
         return acquire_index_integrity_snapshot(root, source)
-    except ProofUnverifiableError:
+    except UNREADABLE_PUBLICATION_ERRORS:
         return None
 
 
@@ -750,8 +751,8 @@ def audit_index_integrity(
         from .indexer._publication_proof import ProofMissingError
 
         raise ProofMissingError(
-            "canonical publication proof does not exist; an explicit rebuild is "
-            "required"
+            "canonical publication proof does not exist; "
+            f"{FULL_REINDEX_REQUIRED_PHRASE}"
         )
 
     started = time.perf_counter()

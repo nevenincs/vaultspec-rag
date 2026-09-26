@@ -31,6 +31,8 @@ from vaultspec_core.core.workspace_mode import (
     read_package_declaration,
 )
 
+from .._operator_commands import HF_LOGIN_REMEDIATION
+from .._sync_vocabulary import ProvisionAction
 from .._workspace_layout import (
     MCP_OWNERSHIP_MANIFEST,
     PROVIDERS_MANIFEST,
@@ -38,6 +40,8 @@ from .._workspace_layout import (
     WORKSPACE_MANIFEST,
 )
 from ..builtins import list_builtins, seed_builtins
+from ..operator_state import _compute
+from ..operator_state._installation import InstallRole
 from ..torch_config._constants import TorchConfigAction
 from ._mcp_extra import reconcile_mcp_extra
 from ._mcp_topology import (
@@ -82,6 +86,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROJECT_MCP_PROVIDERS = (Tool.CLAUDE, Tool.CODEX)
+
+_CLIENT_SKIP = (
+    "not needed by a client installation; the host installation that runs "
+    "the service provides it"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,9 +986,11 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     ``sync_provider`` to propagate the new sources into ``.mcp.json`` and
     provider dirs.
 
-    When ``configure_torch`` is True (the default), also patches the
+    When ``configure_torch`` is True (the default) and this installation
+    is an inference host (it carries the ``gpu`` extra), also patches the
     consumer's ``pyproject.toml`` with the canonical cu130 torch index
-    and source pin. This step is gated by an interactive confirmation
+    and source pin. A client installation is never prompted or patched.
+    This step is gated by an interactive confirmation
     prompt (bypassed with ``assume_yes=True``). In non-TTY contexts
     without ``assume_yes``, the step is skipped with a warning that
     names the ``--yes`` / ``--no-torch-config`` flags.
@@ -1004,7 +1015,8 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
             ``assume_yes`` gate.
         provision: When True, run the unified provisioning front door
             (models, qdrant binary) after enrollment and thread its
-            heterogeneous per-dependency outcome onto the report. The
+            heterogeneous per-dependency outcome onto the report. A client
+            installation reports every step skipped and persists nothing. The
             operator-facing opt-out polarity lives at the CLI edge, which
             passes ``provision=True`` by default to match the server-first
             default; this orchestrator defaults it ``False`` so existing
@@ -1215,7 +1227,10 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
             torch_group=torch_group,
         ),
     )
-    if not dry_run:
+    # A client downloads no models, so it needs neither credentials nor the
+    # provisioning below; both belong to the host installation.
+    host = _compute.installed_role()[0] is InstallRole.HOST
+    if not dry_run and host:
         _maybe_warn_hf_auth(report)
 
     # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
@@ -1225,8 +1240,13 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     # skipped-eof / error) silently drops the sync. Surface a warning
     # so the user knows their explicit ``--sync`` request did not run.
     # ``torch_sync_action == "skipped"`` is the post-init default
-    # untouched by ``_run_uv_sync_torch``.
-    if sync_after and report.torch_sync_action == "skipped":
+    # untouched by ``_run_uv_sync_torch``. A client has no torch to sync,
+    # so there is nothing to resolve and no advice to give it.
+    if (
+        sync_after
+        and report.torch_sync_action == "skipped"
+        and report.torch_config_action is not TorchConfigAction.NOT_APPLICABLE
+    ):
         report.warnings.append(
             f"--sync requested but skipped: torch-config step did not apply "
             f"and torch direct-dep step did not run "
@@ -1247,20 +1267,9 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
                 assume_yes,
                 sync_after,
                 confirm,
+                host,
             )
         )
-
-        # Persist the local-only runtime selection so the resident service
-        # honours the chosen backend on a later ``server start`` without
-        # the operator re-passing ``--local-only``. Gated on ``provision``
-        # (the setup path) so a plain enrollment-only call never writes
-        # runtime state, and on ``not dry_run`` because a preview must not
-        # touch disk. The explicit choice is persisted either way
-        # (``False`` records a deliberate server-mode selection) so the
-        # marker is unambiguous; env / flag still override it at
-        # resolution time.
-        if not dry_run:
-            _persist_runtime_selection(report, local_only)
 
     return report
 
@@ -1295,10 +1304,16 @@ class _ProvisioningRequest:
     assume_yes: bool
     sync_after: bool
     confirm: ConfirmFn | None
+    host: bool
 
 
 def _run_provisioning(request: _ProvisioningRequest) -> None:
     """Run the provisioning front door and attach its outcome to the report.
+
+    A client installation provisions nothing. It loads no models and never
+    starts the service, and the backend selection this step persists is read by
+    the host installation's ``server start``, so a client writing it would
+    override the host's choice. Every step is reported skipped with that reason.
 
     Torch is already configured by the enrollment torch step above (its
     honest two-phase state lives on ``report.torch_config_action`` and the
@@ -1310,7 +1325,22 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
     surfaced as a warning rather than raised, because enrollment already
     succeeded and provisioning is the recoverable, re-runnable phase.
     """
-    from ._provision import provision_dependencies
+    from ._provision import (
+        ProvisionOutcome,
+        ProvisionStep,
+        ProvisionStepResult,
+        provision_dependencies,
+    )
+
+    if not request.host:
+        request.report.provision_outcome = ProvisionOutcome(
+            steps=[
+                ProvisionStepResult(step, ProvisionAction.SKIPPED, _CLIENT_SKIP)
+                for step in ProvisionStep
+            ],
+            dry_run=request.dry_run,
+        )
+        return
 
     # The enrollment torch step already ran (and is reported on its own
     # report fields); fold "torch" into the front door's skip set so its
@@ -1336,6 +1366,16 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
                 f"provisioning step {result.step} failed: {result.detail}"
             )
 
+    # Persist the local-only runtime selection so the resident service
+    # honours the chosen backend on a later ``server start`` without the
+    # operator re-passing ``--local-only``. Only the setup path reaches here,
+    # so a plain enrollment-only call never writes runtime state, and a
+    # preview must not touch disk. The explicit choice is persisted either way
+    # (``False`` records a deliberate server-mode selection) so the marker is
+    # unambiguous; env / flag still override it at resolution time.
+    if not request.dry_run:
+        _persist_runtime_selection(request.report, request.local_only)
+
 
 def _maybe_warn_hf_auth(report: InstallReport) -> None:
     """Warn when HuggingFace credentials are not configured locally."""
@@ -1351,7 +1391,7 @@ def _maybe_warn_hf_auth(report: InstallReport) -> None:
     if get_token():
         return
     report.warnings.append(
-        "HuggingFace token not found. Run `huggingface-cli login` before "
+        f"HuggingFace token not found. Run {HF_LOGIN_REMEDIATION} before "
         "model warmup, indexing, or search if model downloads require auth."
     )
 

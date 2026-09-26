@@ -1,11 +1,15 @@
 name: RAG Binaries
 
-# WHAT STARTS THIS WORKFLOW: Publish dispatches it only after PyPI and the
-# GitHub wheel/sdist publication have both succeeded. Keeping this workflow
-# dispatch-only makes that ordering enforceable: independent tag triggers can
-# be serialized, but serialization alone cannot say which workflow runs first.
-# A maintainer may still dispatch it explicitly to repair a release; the final
-# gate below independently proves the package and bundle set before promotion.
+# WHAT STARTS THIS WORKFLOW: Publish dispatches it only after the GitHub
+# wheel/sdist publication has succeeded. Keeping this workflow dispatch-only
+# makes that ordering enforceable: independent tag triggers can be serialized,
+# but serialization alone cannot say which workflow runs first. A maintainer
+# may still dispatch it explicitly to repair a release; the final gate below
+# independently proves the package and bundle set before promotion.
+#
+# WHAT THIS WORKFLOW STARTS: PyPI publication. Only a release this workflow has
+# promoted is handed to Publish's package-index stage, because an upload to
+# the index cannot be withdrawn and a promotion can.
 #
 # The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
 # `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
@@ -555,6 +559,10 @@ jobs:
           # inherited copy before appending, so a re-run replaces its own lines
           # instead of duplicating them.
           if gh release download "${TAG}" --repo "$GITHUB_REPOSITORY"                --pattern SHA256SUMS --output inherited.txt 2>/dev/null; then
+            # A manifest written before names were bare lists `./name`. Read
+            # every inherited name bare, or a re-run keeps the stale spelling
+            # and the exact-coverage gate refuses an otherwise complete release.
+            sed -i -E 's#^([0-9a-f]{64})  \./#\1  #' inherited.txt
             while read -r _digest name; do
               [ -n "${name}" ] || continue
               grep -v -- "  ${name}$" inherited.txt > inherited.tmp || true
@@ -815,11 +823,6 @@ jobs:
             fi
           fi
 
-          pypi_problem=()
-          if ! curl --fail --silent --show-error "https://pypi.org/pypi/vaultspec-rag/${version}/json" >/dev/null; then
-            pypi_problem+=("vaultspec-rag ${version} is absent from PyPI")
-          fi
-
           # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
           #
           # Its aarch64 leg failed, so the release attachment was skipped and no
@@ -886,7 +889,6 @@ jobs:
           [ "${RELEASE_RESULT}" = "success" ] || problems+=("release job=${RELEASE_RESULT}")
           [ ${#package_missing[@]} -eq 0 ] || problems+=("missing or duplicate package assets: ${package_missing[*]}")
           [ ${#checksum_problems[@]} -eq 0 ] || problems+=("checksum integrity: ${checksum_problems[*]}")
-          [ ${#pypi_problem[@]} -eq 0 ] || problems+=("package publication: ${pypi_problem[*]}")
           [ ${#missing[@]} -eq 0 ] || problems+=("missing or unexpected target archives: ${missing[*]}")
           [ ${#duplicates[@]} -eq 0 ] || problems+=("duplicate target archives: ${duplicates[*]}")
           [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")
@@ -955,19 +957,27 @@ jobs:
           echo "waiting for acquisition run ${run_id} for ${TAG} at ${TARGET_SHA}"
           gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
 
-      - name: Promote a repaired release back to latest
+      # PyPI is dispatched only here, after promotion, so the index never
+      # carries a version whose release this gate refused. The Publish run
+      # queues behind this one on the shared per-tag lock and re-checks that
+      # the release is a full one before it uploads anything. A tag that names
+      # a prerelease is never promoted, so it never reaches the index.
+      - name: Promote the release, then publish it to the package index
         if: ${{ success() }}
         shell: bash
         run: |
           set -euo pipefail
           case "${TAG}" in
             *-rc*|*-alpha*|*-beta*|*-dev*)
-              echo "${TAG} names a prerelease; leaving its flag alone"
+              echo "${TAG} names a prerelease; leaving its flag alone and it off the package index"
               exit 0
               ;;
           esac
           if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                   --json isPrerelease --jq '.isPrerelease')" = "true" ]; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false
-            echo "::notice::promoted ${TAG} back to a full release"
+            echo "::notice::promoted ${TAG} to a full release"
           fi
+          gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f tag="$TAG" -f stage=package-index
+          echo "::notice::dispatched package-index publication for ${TAG}"

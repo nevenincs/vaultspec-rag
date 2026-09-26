@@ -79,7 +79,7 @@ _TOOL_LAUNCH = (
     "uvx",
     [
         "--from",
-        f"{RAG_DISTRIBUTION_NAME}[gpu,mcp]",
+        f"{RAG_DISTRIBUTION_NAME}[mcp]",
         "python",
         "-m",
         RAG_MCP_MODULE,

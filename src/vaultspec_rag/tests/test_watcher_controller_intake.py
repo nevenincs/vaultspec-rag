@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from watchfiles import Change
 
-from ..job_models import JobSource
+from ..job_manager.manager import JobManager
+from ..job_manager.models import JobAttemptContext, JobExecutionResult
+from ..job_models import JobSource, JobState
 from ..server._watcher_measurements import WatcherServiceMeasurement
 from ..service import ServiceRegistry
+from ..service_quiesce import ServiceQuiesceController
 from ..watcher_controller import (
     ControllerMeasurement,
     ControllerReason,
@@ -18,7 +22,11 @@ from ..watcher_controller import (
     ControllerState,
     WatcherController,
 )
-from ..watcher_execution import controller_scope_from_retry_state, submit_watcher_job
+from ..watcher_execution import (
+    _CreatedWatcherJobRequest,
+    controller_scope_from_retry_state,
+    submit_watcher_job,
+)
 from ..watcher_intake import (
     _ClassifiedWatcherChange,
     _classify_watcher_changes,
@@ -44,7 +52,7 @@ if TYPE_CHECKING:
 
     from ..indexer._codebase_indexer import CodeExecutionPreflight
     from ..indexer._document_indexer import DocumentExecutionPreflight
-    from ..job_models import JobSnapshot
+    from ..job_models import JobInitiator, JobOutcome, JobSnapshot, JobSpec
     from ..watcher_admission import AdmissionSelection
 
 pytestmark = pytest.mark.unit
@@ -327,3 +335,158 @@ async def test_precreation_exception_restores_exact_durable_scope(
     assert state.captured_paths == ()
     assert state.attempt_job_id is None
     assert binding.controller.snapshot.state is ControllerState.COLLECTING
+
+
+async def _no_preflight(
+    *_args: object, **_kwargs: object
+) -> tuple[CodeExecutionPreflight | None, DocumentExecutionPreflight | None]:
+    return None, None
+
+
+def _real_manager(monkeypatch: pytest.MonkeyPatch) -> JobManager:
+    manager = JobManager(
+        quiesce_controller=ServiceQuiesceController(),
+        max_nonterminal=4,
+        state_path=None,
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._preflight_scoped_paths", _no_preflight
+    )
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._jobs.get_job_manager", lambda: manager
+    )
+    return manager
+
+
+async def test_change_observed_during_job_creation_still_dispatches_the_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Creating the job awaits a thread hop, and the intake task observes new
+    # changes meanwhile. That moved the controller off ready, admission raised,
+    # and the created job stayed queued with nothing to dispatch it; every later
+    # admission then joined that job, wedging the source. Mutation: limiting
+    # admission to a ready controller makes the submission raise instead of
+    # dispatching.
+    binding = _ready_binding(tmp_path.resolve())
+    manager = _real_manager(monkeypatch)
+    create = manager.create
+
+    def create_while_a_change_arrives(
+        spec: JobSpec,
+        initiator: JobInitiator,
+        *,
+        job_id: str | None = None,
+    ) -> JobOutcome:
+        outcome = create(spec, initiator, job_id=job_id)
+        binding.controller.observe(
+            controller_scope_from_retry_state(binding.retry_policy.state)
+        )
+        return outcome
+
+    dispatched: list[str] = []
+
+    async def dispatch(request: _CreatedWatcherJobRequest) -> None:
+        dispatched.append(request.snapshot.id)
+
+    monkeypatch.setattr(manager, "create", create_while_a_change_arrives)
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._dispatch_created_watcher_job", dispatch
+    )
+
+    await submit_watcher_job(
+        binding.slot,
+        controller=binding.controller,
+        now=time.monotonic(),
+        secondary_graph_cache=None,
+    )
+
+    assert dispatched == [binding.slot.job_id]
+    assert binding.controller.snapshot.state is ControllerState.ADMITTED
+    assert binding.controller.snapshot.job_id == binding.slot.job_id
+
+
+async def test_failure_after_job_creation_settles_the_created_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Once the slot names the created job, later admissions join it rather than
+    # create another, so a failure before dispatch must fail that job and
+    # release its durable fence. Mutation: removing the post-creation guard
+    # leaves the job queued and fails the state assertion below.
+    binding = _ready_binding(tmp_path.resolve())
+    manager = _real_manager(monkeypatch)
+    created: list[str] = []
+
+    async def dispatch(request: _CreatedWatcherJobRequest) -> None:
+        created.append(request.snapshot.id)
+        raise RuntimeError("dispatch exploded")
+
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._dispatch_created_watcher_job", dispatch
+    )
+
+    with pytest.raises(RuntimeError, match="dispatch exploded"):
+        await submit_watcher_job(
+            binding.slot,
+            controller=binding.controller,
+            now=time.monotonic(),
+            secondary_graph_cache=None,
+        )
+
+    [job_id] = created
+    job = manager.get(job_id)
+    assert job is not None
+    assert job.state is JobState.FAILED
+    state = binding.retry_policy.state
+    assert state.attempt_job_id is None
+    assert [item.relative_path for item in state.pending_paths] == ["src/example.py"]
+
+
+async def test_failure_after_dispatch_leaves_the_running_attempt_to_its_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The post-creation guard also spans the dispatch call. Once the job has a
+    # runtime owner, that owner settles the durable fence when it finishes;
+    # settling it from the guard as well records a failure for work that is
+    # still running. Mutation: dropping the runtime-owned early return clears
+    # the fence and fails the attempt assertion below.
+    binding = _ready_binding(tmp_path.resolve())
+    manager = _real_manager(monkeypatch)
+    release = threading.Event()
+    created: list[str] = []
+
+    def runner(context: JobAttemptContext) -> JobExecutionResult:
+        del context
+        release.wait(timeout=10.0)
+        return JobExecutionResult(summary="ok")
+
+    async def dispatch_then_fail(request: _CreatedWatcherJobRequest) -> None:
+        created.append(request.snapshot.id)
+        manager.bind_dispatch(request.snapshot.id, runner)
+        await manager.dispatch_async(request.snapshot.id)
+        raise RuntimeError("reporting exploded")
+
+    monkeypatch.setattr(
+        "vaultspec_rag.watcher_execution._dispatch_created_watcher_job",
+        dispatch_then_fail,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="reporting exploded"):
+            await submit_watcher_job(
+                binding.slot,
+                controller=binding.controller,
+                now=time.monotonic(),
+                secondary_graph_cache=None,
+            )
+        [job_id] = created
+        assert binding.retry_policy.state.attempt_job_id == job_id
+        job = manager.get(job_id)
+        assert job is not None
+        assert job.state is not JobState.FAILED
+    finally:
+        release.set()
+        for job_id in created:
+            await manager.wait_for_attempt(job_id, timeout_seconds=10.0)

@@ -413,6 +413,60 @@ def test_real_http_response_size_limit(monkeypatch: pytest.MonkeyPatch) -> None:
         transport.evaluate({}, QUESTIONS)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<!DOCTYPE html><html><head><title>Attention Required!</title></head></html>",
+        b"",
+        b'{"detail":{"error_type":"invalid_request_error"}}',
+    ],
+)
+def test_edge_content_block_leaves_the_credential_enrolled(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    """A 403 without the provider's authentication envelope refuses one body only.
+
+    Mutation check: raising every 403 as an HTTP error again failed the
+    ``content_rejected`` match; letting the refusal reach the circuit failed
+    the ``available`` assertion. Both passed once restored.
+    """
+    with _server(monkeypatch, 200, json.dumps(_envelope()).encode()):
+        transport.evaluate({"query": "benign"}, QUESTIONS)
+    with (
+        _server(monkeypatch, 403, body) as received,
+        pytest.raises(transport.TypesafeUnavailableError, match=r"^content_rejected$"),
+    ):
+        transport.evaluate({"query": "run `python -m pytest`"}, QUESTIONS)
+    assert len(received) == 1
+    assert transport.available()
+    assert transport.enrollment_status().state is TypesafeState.ACTIVE
+    with _server(monkeypatch, 200, json.dumps(_envelope()).encode()):
+        assert transport.evaluate({"query": "different"}, QUESTIONS).requests == 1
+
+
+def test_provider_authentication_error_disables_the_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider's own 403 envelope still rejects the key until rotation.
+
+    Mutation check: reading every 403 body as a content refusal failed the
+    ``credential_rejected`` match; restored, it passed.
+    """
+    body = json.dumps(
+        {"detail": {"error_type": "authentication_error", "message": "synthetic"}}
+    ).encode()
+    with (
+        _server(monkeypatch, 403, body),
+        pytest.raises(
+            transport.TypesafeUnavailableError, match=r"^credential_rejected$"
+        ),
+    ):
+        transport.evaluate({}, QUESTIONS)
+    transport._CIRCUIT.retry_at = 0
+    assert not transport.available()
+    assert transport.enrollment_status().state is TypesafeState.REJECTED
+
+
 def test_stale_failure_does_not_disable_rotated_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

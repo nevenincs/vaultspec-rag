@@ -513,6 +513,7 @@ class TestTheUnreadableLedger:
         assert verdicts[-1].admitted is False
         assert verdicts[-1].reason == REASON_DEVICE_UNREADABLE
 
+    @pytest.mark.torch
     def test_a_diagnostic_reading_advances_the_streak_a_load_then_sees(
         self,
         tmp_path: Path,

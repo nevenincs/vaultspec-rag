@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+_PROMOTE = "- name: Promote the release, then publish it to the package index"
+
 
 def _workflow(repo_root: Path) -> str:
     """Read the workflow whose release edge these assertions protect."""
@@ -67,7 +69,7 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     ready = text.index("- name: Assert every declared target archive ready")
     upload = text.index('run: gh release upload "${TAG}" dist-bundles/* --clobber')
     verify = text.index("- name: Require artifacts on the published release")
-    promote = text.index("- name: Promote a repaired release back to latest")
+    promote = text.index(_PROMOTE)
 
     release_gate = text[ready:upload]
     verify_gate = text[verify:promote]
@@ -86,7 +88,6 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     assert 'wheel="vaultspec_rag-${version}-py3-none-any.whl"' in verify_gate
     assert 'sdist="vaultspec_rag-${version}.tar.gz"' in verify_gate
     assert "sha256sum -c SHA256SUMS" in verify_gate
-    assert "https://pypi.org/pypi/vaultspec-rag/${version}/json" in verify_gate
     assert "vaultspec-rag-*|vaultspec-search-mcp-*)" in verify_gate
     assert verify < promote
     assert "if: ${{ success() }}" in text[promote:]
@@ -150,9 +151,6 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     assert publish["jobs"]["smoke-test"]["outputs"]["sha"] == (
         "${{ needs.build.outputs.sha }}"
     )
-    assert publish["jobs"]["publish-pypi"]["outputs"]["sha"] == (
-        "${{ needs.smoke-test.outputs.sha }}"
-    )
     assert publish["jobs"]["github-release"]["outputs"]["sha"] == (
         "${{ needs.smoke-test.outputs.sha }}"
     )
@@ -211,7 +209,7 @@ def test_release_please_holds_then_publish_dispatches_binaries(
     dispatch_section = downstream[dispatch:]
     assert "needs: hold-release" in downstream
     assert "--prerelease" in downstream[hold:dispatch]
-    assert "needs: [resolve-target, publish-pypi, github-release]" in downstream
+    assert "needs: [resolve-target, github-release]" in downstream
     assert "gh workflow run binaries.yml \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
 
@@ -314,7 +312,7 @@ def test_promotion_waits_for_checksum_verified_bundle_acquisition(
     assert "vaultspec-search-mcp-${TRIPLE}" not in acquisition
 
     wait = binaries.index("- name: Require the acquisition check for this release")
-    promote = binaries.index("- name: Promote a repaired release back to latest")
+    promote = binaries.index(_PROMOTE)
     section = binaries[wait:promote]
     assert '-f target_sha="$TARGET_SHA"' in section
     assert "before_id=$(gh run list" in section
@@ -322,3 +320,93 @@ def test_promotion_waits_for_checksum_verified_bundle_acquisition(
     assert 'gh run watch "$run_id"' in section
     assert "--exit-status" in section
     assert wait < promote
+
+
+def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
+    """PyPI receives only a release the final archive gate promoted.
+
+    An index upload cannot be withdrawn, so it must come after the gate and
+    the promotion, never before them in the release chain.
+
+    Mutation proof: pointing ``publish-pypi`` back at ``smoke-test`` failed the
+    ``needs`` assertion; dispatching the package-index stage ahead of the
+    promotion failed the ordering assertion; dropping the full-release check
+    failed the ``isDraft or .isPrerelease`` assertion. Each passed again once
+    restored.
+    """
+    publish = _load(repo_root, "publish.yml")
+    jobs = publish["jobs"]
+    stage = publish.get("on", publish.get(True))["workflow_dispatch"]["inputs"]["stage"]
+    assert stage["type"] == "choice"
+    assert stage["options"] == ["release", "package-index"]
+    assert stage["default"] == "release"
+
+    index = jobs["publish-pypi"]
+    assert index["needs"] == "resolve-target"
+    assert index["if"] == "${{ inputs.stage == 'package-index' }}"
+    assert index["environment"] == {"name": "pypi"}
+    assert index["permissions"]["id-token"] == "write"
+    steps = [str(step.get("run", "")) for step in index["steps"]]
+    promoted = next(i for i, run in enumerate(steps) if "isPrerelease" in run)
+    upload = next(i for i, run in enumerate(steps) if "uv publish" in run)
+    assert "if .isDraft or .isPrerelease then error(" in steps[promoted]
+    assert promoted < upload
+    assert "sha256sum -c ../packages.sha256" in steps[upload]
+
+    # The release stage never waits on the index, and every job in it is
+    # skipped with the hardware gate when only the index stage was requested.
+    assert jobs["hardware-validation"]["if"] == (
+        "${{ inputs.stage != 'package-index' }}"
+    )
+    for job_id in jobs:
+        if job_id in {"resolve-target", "hardware-validation", "publish-pypi"}:
+            continue
+        assert "publish-pypi" not in _upstream(jobs, job_id), job_id
+        assert "hardware-validation" in _upstream(jobs, job_id), job_id
+
+    binaries = _workflow(repo_root)
+    verify = binaries.index("- name: Require artifacts on the published release")
+    promote = binaries.index(_PROMOTE)
+    assert "pypi.org" not in binaries[verify:promote]
+    finalizer = binaries[promote:]
+    assert "if: ${{ success() }}" in finalizer
+    assert finalizer.index("--prerelease=false") < finalizer.index(
+        "gh workflow run publish.yml"
+    )
+    assert "-f stage=package-index" in finalizer
+
+
+#: The inherited-manifest rewrite in a checksum merge, as the workflow spells it.
+_BARE_NAMES = re.compile(
+    r"sed -i -E 's#(?P<pattern>[^#]+)#(?P<replacement>[^#]*)#' inherited\.txt"
+)
+
+
+@pytest.mark.parametrize("workflow", ["publish.yml", "binaries.yml"])
+def test_checksum_merge_reads_legacy_names_bare(repo_root: Path, workflow: str) -> None:
+    """A re-run repairs a manifest that still lists ``./name`` entries.
+
+    Such an entry never equals its release asset name, so unless the merge
+    rewrites it before replacing entries by name, a re-run keeps it and the
+    exact-coverage gate refuses the release again.
+
+    Mutation proof: deleting the rewrite failed the ``found`` assertion, and a
+    rewrite that kept the ``./`` failed the manifest comparison, for both
+    workflows. Each passed again once restored.
+    """
+    text = (repo_root / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    merge = text.index("--pattern SHA256SUMS --output inherited.txt")
+    replace = text.index('grep -v -- "  ${name}$" inherited.txt', merge)
+    found = _BARE_NAMES.search(text, merge, replace)
+    assert found is not None, workflow
+
+    digest = "0" * 64
+    inherited = (
+        f"{digest}  ./vaultspec_rag-1.0.0.tar.gz\n"
+        f"{digest}  vaultspec-rag-v1.0.0-x86_64-pc-windows-msvc.zip\n"
+    )
+    rewritten = re.sub(found["pattern"], found["replacement"], inherited, flags=re.M)
+    assert rewritten == (
+        f"{digest}  vaultspec_rag-1.0.0.tar.gz\n"
+        f"{digest}  vaultspec-rag-v1.0.0-x86_64-pc-windows-msvc.zip\n"
+    )
