@@ -199,33 +199,34 @@ def isolated_singleton_dirs(tmp_path: Path) -> Generator[Path]:
 
 
 def _pin_install_role(monkeypatch: pytest.MonkeyPatch, role: InstallRole) -> None:
-    """Substitute the role reading install's torch-config step gates on.
+    """Substitute the one reading of this installation's role.
 
     The role comes from which distributions the running interpreter holds, and
     the suite can neither add nor remove the inference stack in the shared
-    interpreter, so each lane could otherwise reach only one side of the gate.
-    Only the reading is replaced; the torch-config flow, the real pyproject and
-    the install orchestration run unchanged.
+    interpreter, so each lane could otherwise reach only one side of every
+    role-dependent branch. Only the reading is replaced; every consumer of it -
+    install's torch and provisioning steps, the release-mismatch advice - runs
+    unchanged.
     """
-    from ..commands import _torch_flow
+    from ..operator_state import _compute
 
-    monkeypatch.setattr(_torch_flow, "installed_role", lambda: (role, True))
+    monkeypatch.setattr(_compute, "installed_role", lambda: (role, True))
 
 
 @pytest.fixture
 def inference_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make install's torch-config step see an inference host.
+    """Make this installation read as an inference host.
 
-    Only a host is ever torch-configured, and the accelerator-free lane runs
-    without the ``gpu`` extra, so a test of the patch flow pins the role or it
-    would silently exercise the client skip there instead.
+    The accelerator-free lane runs without the ``gpu`` extra, so a test of a
+    host-only path pins the role or it would silently exercise the client
+    branch there instead.
     """
     _pin_install_role(monkeypatch, InstallRole.HOST)
 
 
 @pytest.fixture
 def client_installation(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make install's torch-config step see a client, whatever this env holds."""
+    """Make this installation read as a client, whatever this env holds."""
     _pin_install_role(monkeypatch, InstallRole.CLIENT)
 
 

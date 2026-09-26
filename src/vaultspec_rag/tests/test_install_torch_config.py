@@ -154,9 +154,14 @@ class TestInstallTorchConfig:
         assert "torch_config_conflicts" in d
         assert d["torch_sync_action"] == "skipped"
 
+    @pytest.mark.torch
     def test_install_warns_when_hf_token_missing(
         self, consumer_workspace: Path, tmp_path: Path
     ) -> None:
+        # Only a host installation is warned, and the child classifies itself
+        # from the distributions it really holds, so this runs where the
+        # inference stack is installed; a pinned role cannot cross into it.
+        #
         # HF_TOKEN is set to the empty string rather than removed. Removing
         # it does not survive the subprocess: ``install_run`` imports
         # ``cli._core``, whose module body calls ``load_dotenv()``, and

@@ -1,10 +1,11 @@
-"""A client installation is never torch-configured.
+"""A client installation is never torch-configured or provisioned.
 
 Without the ``gpu`` extra every search runs in the vaultspec-rag service, so
 install must neither prompt for the cu130 torch index nor add a torch
-dependency to the consumer's ``pyproject.toml``. Real filesystem, real
-``tomlkit``, real install orchestration; the installation role is the one
-pinned input, so the client path is exercised on a GPU workstation too.
+dependency to the consumer's ``pyproject.toml``, and it downloads nothing the
+host installation already provides. Real filesystem, real ``tomlkit``, real
+install orchestration; the installation role is the one pinned input, so the
+client path is exercised on a GPU workstation too.
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from .._sync_vocabulary import ProvisionAction
 from ..commands._install import install_run
+from ..commands._provision import ProvisionStep
+from ..config._paths import persist_local_only, read_persisted_local_only
 from ..torch_config import _direct_dep, _mutate
 from ..torch_config._constants import TorchConfigAction
 from ._cli_helpers import app, runner
@@ -99,6 +103,61 @@ def test_sync_request_gives_a_client_no_torch_advice(client_workspace: Path) -> 
 
     assert report.torch_sync_action == "skipped"
     assert not [w for w in report.warnings if "torch" in w.lower()]
+
+
+def test_a_client_provisions_nothing_and_keeps_the_host_backend_choice(
+    client_workspace: Path, isolated_status_dir: Path
+) -> None:
+    """A client downloads nothing and must not overwrite the host's backend.
+
+    The local-only marker lives in the per-user status directory the host
+    installation's ``server start`` reads, so a client persisting its own run's
+    choice would silently switch the host's storage backend.
+
+    Mutation check: removing the client branch from provisioning runs the front
+    door and persists this run's ``local_only=True`` over the host's ``False``,
+    failing the marker assertion; restoring the branch passes. ``local_only``
+    and the models opt-out also keep that mutated run off the network.
+    """
+    _ = isolated_status_dir
+    persist_local_only(False)
+
+    report = install_run(
+        path=client_workspace,
+        provision=True,
+        local_only=True,
+        provision_skip={"models"},
+        assume_yes=True,
+    )
+
+    assert read_persisted_local_only() is False
+    outcome = report.provision_outcome
+    assert outcome is not None
+    assert {result.step for result in outcome.steps} == set(ProvisionStep)
+    assert all(result.action == ProvisionAction.SKIPPED for result in outcome.steps)
+    assert all("client installation" in result.detail for result in outcome.steps)
+
+
+def test_a_client_is_not_asked_for_hugging_face_credentials(
+    client_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client downloads no models, so a missing token is not its concern.
+
+    The token is forced absent because the real one is machine state: the hub
+    fixes its token file location when it is imported, so a test cannot
+    redirect it in-process, and a developer's stored login would otherwise
+    hide the warning in both directions.
+
+    Mutation check: dropping the role from the credential warning's gate warns
+    this client, failing the assertion; restoring it passes.
+    """
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "get_token", lambda: None)
+
+    report = install_run(path=client_workspace, assume_yes=True)
+
+    assert not [w for w in report.warnings if "HuggingFace" in w]
 
 
 def test_cli_upgrade_reports_torch_as_not_needed(client_workspace: Path) -> None:

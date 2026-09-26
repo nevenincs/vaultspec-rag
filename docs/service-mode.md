@@ -109,13 +109,15 @@ A daemon from another release drops request fields it does not know rather than
 rejecting them, so the answer would be computed over a different candidate set
 with nothing to show it.
 Next actions:
-  1. Restart the service: vaultspec-rag server stop, then vaultspec-rag server start
-  2. Confirm the release:  vaultspec-rag server status
+  1. Restart the service so it runs this install: `vaultspec-rag server stop` then `vaultspec-rag server start`.
+  2. Confirm the release: vaultspec-rag server status
 ```
 
 That happens after an upgrade that left an older daemon running, and the two
 next actions are the whole fix. The wrapping above is unwrapped from the
-terminal's; nothing else is changed.
+terminal's; nothing else is changed. A client installation cannot start the
+service, so it is told instead to pin its project to the service's release, or to
+have the service restarted from a host installation running the client's release.
 
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 

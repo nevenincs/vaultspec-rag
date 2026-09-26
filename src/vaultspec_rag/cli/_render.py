@@ -528,16 +528,18 @@ def _display_service_version_error(
             remediation=remediation,
         )
         return
+    steps = [
+        *verdict.remediation(),
+        f"Confirm the release: {server_status_command()}",
+    ]
+    numbered = "\n".join(f"  {n}. {step}" for n, step in enumerate(steps, start=1))
     _plain(
         f"Refusing to {command} against the running service.\n"
         f"{verdict.reason().capitalize()}.\n"
         f"A daemon from another release drops request fields it does not know "
         f"rather than rejecting them, so the answer would be computed over a "
         f"different candidate set with nothing to show it.\n"
-        f"Next actions:\n"
-        f"  1. Restart the service: vaultspec-rag server stop, then "
-        f"vaultspec-rag server start\n"
-        f"  2. Confirm the release:  {server_status_command()}"
+        f"Next actions:\n{numbered}"
     )
 
 

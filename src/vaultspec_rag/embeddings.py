@@ -16,6 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from ._operator_commands import HF_LOGIN_REMEDIATION
 from .config._types import EnvVar
 from .job_control import timed_gpu_lock
 
@@ -420,7 +421,7 @@ def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
     kind = "gated" if isinstance(exc, GatedRepoError) else "inaccessible or not found"
     raise RuntimeError(
         f"Model '{model_id}' is {kind} on HuggingFace Hub. "
-        f"Set the HF_TOKEN environment variable or run `hf auth login` "
+        f"Set the HF_TOKEN environment variable or run {HF_LOGIN_REMEDIATION} "
         f"to authenticate. Model URL: https://huggingface.co/{model_id}",
     ) from exc
 

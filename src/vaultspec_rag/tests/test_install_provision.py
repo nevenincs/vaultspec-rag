@@ -184,6 +184,7 @@ class TestLocalOnlyResolutionPrecedence:
             reset_config()
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestInstallProvisionWiring:
     def test_no_provision_leaves_outcome_none(
         self, consumer_workspace: Path, isolated_status_dir: Path
@@ -246,7 +247,6 @@ class TestInstallProvisionWiring:
         assert models.action == ProvisionAction.SKIPPED
         assert "opted out" in models.detail
 
-    @pytest.mark.usefixtures("inference_host")
     def test_torch_is_opted_out_of_the_front_door(
         self, consumer_workspace: Path, isolated_status_dir: Path
     ) -> None:
@@ -314,6 +314,7 @@ class TestInstallProvisionWiring:
         assert report.to_dict()["provisioning"] is None
 
 
+@pytest.mark.usefixtures("inference_host")
 class TestInstallCliFlags:
     """The CLI maps its per-dependency opt-out flags onto the skip tokens.
 
