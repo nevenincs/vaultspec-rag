@@ -441,6 +441,10 @@ class TestNoStructurallyIdenticalFunctions:
             "watcher_runtime.py:pending_count",
         ): _SMALL_GUARD,
         (
+            "commands/_install.py:install_run",
+            "commands/_uninstall.py:uninstall_run",
+        ): _SMALL_GUARD,
+        (
             "commands/_provision.py:to_dict",
             "indexer/_drift_owner.py:snapshot",
         ): _SERIALISATION,
