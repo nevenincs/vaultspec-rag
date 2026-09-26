@@ -12,12 +12,21 @@ from .._index_breadth import acquire_code_breadth_snapshot_if_proven
 from .._index_integrity import acquire_index_integrity_snapshot_if_proven
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
-from ..indexer._publication_proof import ProofReadConflictError
+from ..indexer._publication_proof import ProofEvidence
 from ..indexer._run_ledger_models import SCHEMA_VERSION, index_run_ledger_path
+from ..indexer._run_ledger_runtime import RunLedger
+from ..store_runtime import configured_backend_identity
 from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
+from .test_index_run_ledger import (
+    _digest,
+    _proof_key_for_signature,
+    _publish_and_compact,
+    _seed_publication_proof,
+    _signature,
+    _unit,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
 pytestmark = pytest.mark.unit
@@ -53,36 +62,44 @@ def test_an_old_ledger_leaves_a_search_unfenced_rather_than_failing(
     assert_sqlite_unchanged(ledger, before)
 
 
-def _code_integrity_if_proven(root: Path) -> object:
-    return acquire_index_integrity_snapshot_if_proven(root, PublicSourceType.CODE)
+def _root_mid_publication(root: Path) -> None:
+    """Commit a code proof at *root*, then hold a receipt open as a run does."""
+    path = index_run_ledger_path(workspace_volume_path(root))
+    path.parent.mkdir(parents=True)
+    ledger = RunLedger(path)
+    signature = _signature(root, backend_identity=configured_backend_identity(root))
+    parent = ledger.start_generation(signature)
+    _publish_and_compact(ledger, parent.generation_id)
+    key = _proof_key_for_signature(signature)
+    _seed_publication_proof(
+        ledger,
+        generation_id=parent.generation_id,
+        key=key,
+        evidence=(
+            ProofEvidence(
+                "src/a.py", _digest("a-v1"), _unit("src/a.py", 0, 1).point_ids
+            ),
+        ),
+    )
+    successor = ledger.start_generation(signature)
+    ledger.reserve_publication_receipt(
+        key,
+        successor.generation_id,
+        expected_parent_revision=ledger.publication_proof(key).revision,
+    )
 
 
-@pytest.mark.parametrize(
-    ("target", "helper"),
-    [
-        (
-            "vaultspec_rag._index_integrity.acquire_index_integrity_snapshot",
-            _code_integrity_if_proven,
-        ),
-        (
-            "vaultspec_rag._index_breadth.acquire_code_breadth_snapshot",
-            acquire_code_breadth_snapshot_if_proven,
-        ),
-    ],
-)
 def test_an_update_publishing_leaves_a_search_unfenced_rather_than_failing(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    target: str,
-    helper: Callable[[Path], object],
 ) -> None:
     # An index run holds its publication receipt open while it publishes, and
     # certifying proof under an open receipt raises a read conflict. Unhandled,
     # every search issued during an automatic update failed. Mutation: leaving
     # the read conflict out of the unreadable set raises it here.
-    def publishing(*_args: object) -> None:
-        raise ProofReadConflictError("an open receipt prevents proof certification")
+    root = tmp_path.resolve()
+    _root_mid_publication(root)
 
-    monkeypatch.setattr(target, publishing)
-
-    assert helper(tmp_path) is None
+    assert (
+        acquire_index_integrity_snapshot_if_proven(root, PublicSourceType.CODE) is None
+    )
+    assert acquire_code_breadth_snapshot_if_proven(root) is None

@@ -5,29 +5,28 @@ from __future__ import annotations
 import pytest
 
 from .. import jobs as _jobs
+from ..config._types import EnvVar
 from ..job_models import JobSource
 from ..server._lifecycle import _storage_maintenance_tick_sync
+from .conftest import managed_env
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.mark.usefixtures("isolated_singleton_dirs")
-def test_a_cycle_whose_client_cannot_be_built_still_closes_its_record(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Building the Qdrant client loads the CA bundle even for a plain http URL,
-    # so a damaged environment fails right after the record opens. That
-    # construction sat outside the guard, leaving a record running with no
-    # thread behind it, and each hourly cycle added another. Mutation: moving
-    # the construction back above the guard fails the phase assertion.
+def test_a_cycle_whose_client_cannot_be_built_still_closes_its_record() -> None:
+    # Building the Qdrant client can fail outright - the incident was a CA
+    # bundle deleted from under the running service, and a malformed address
+    # fails the same constructor the same way. That construction sat outside
+    # the guard, leaving a record running with no thread behind it, and each
+    # hourly cycle added another. Mutation: moving the construction back above
+    # the guard fails the phase assertion.
     _jobs.reset()
 
-    def unbuildable(*_args: object, **_kwargs: object) -> None:
-        raise FileNotFoundError(2, "No such file or directory", "cacert.pem")
-
-    monkeypatch.setattr("qdrant_client.QdrantClient", unbuildable)
-
-    with pytest.raises(FileNotFoundError):
+    with (
+        managed_env(**{EnvVar.QDRANT_URL.value: "http://127.0.0.1:notaport"}),
+        pytest.raises(ValueError, match="notaport"),
+    ):
         _storage_maintenance_tick_sync()
 
     [record] = [
@@ -36,4 +35,4 @@ def test_a_cycle_whose_client_cannot_be_built_still_closes_its_record(
         if record.get("source") == JobSource.MAINTENANCE.value
     ]
     assert record["phase"] == "error"
-    assert "cacert.pem" in str(record["result"])
+    assert "notaport" in str(record["result"])

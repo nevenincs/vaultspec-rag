@@ -26,11 +26,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..embeddings import EmbeddingModel
-    from ..indexer._content_discovery import CodeIndexPreflight
     from ..store_runtime import VaultStore
 
 type _Run = Callable[[], object]
-type _Build = Callable[[Path, pytest.MonkeyPatch, RunAuthority], _Run]
+type _Build = Callable[[Path, RunAuthority], _Run]
 
 pytestmark = pytest.mark.unit
 
@@ -93,45 +92,45 @@ def test_an_absent_ledger_is_not_created(tmp_path: Path) -> None:
     assert not path.exists()
 
 
-class _ReachedError(Exception):
-    """Raised by the stub standing in for the step after the ledger step."""
+class _StandInReachedError(Exception):
+    """Raised by the first use of the store or model an indexer was given."""
 
 
-def _stop(*_args: object, **_kwargs: object) -> None:
-    raise _ReachedError
+class _StandIn:
+    """A store or model that stops the run at whichever use comes first.
+
+    Every domain's full index reads the root's ledger before it first touches
+    its store or model, so reaching either proves the ledger step already ran.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        raise _StandInReachedError(name)
 
 
-def _code(root: Path, monkeypatch: pytest.MonkeyPatch, authority: RunAuthority) -> _Run:
+def _code(root: Path, authority: RunAuthority) -> _Run:
     indexer = CodebaseIndexer(
-        root, cast("EmbeddingModel", object()), cast("VaultStore", object())
+        root, cast("EmbeddingModel", _StandIn()), cast("VaultStore", _StandIn())
     )
-    monkeypatch.setattr(indexer, "_accept_preflight", _stop)
     return lambda: indexer.full_index(
         reporter=NullProgressReporter(),
-        preflight=cast("CodeIndexPreflight", object()),
+        preflight=indexer.preflight_content(),
         authority=authority,
     )
 
 
-def _document(
-    root: Path, monkeypatch: pytest.MonkeyPatch, authority: RunAuthority
-) -> _Run:
+def _document(root: Path, authority: RunAuthority) -> _Run:
     indexer = DocumentIndexer(
-        root, cast("EmbeddingModel", object()), cast("VaultStore", object())
+        root, cast("EmbeddingModel", _StandIn()), cast("VaultStore", _StandIn())
     )
-    monkeypatch.setattr(indexer, "_accept_preflight", _stop)
     return lambda: indexer.full_index(
         reporter=NullProgressReporter(), authority=authority
     )
 
 
-def _vault(
-    root: Path, monkeypatch: pytest.MonkeyPatch, authority: RunAuthority
-) -> _Run:
+def _vault(root: Path, authority: RunAuthority) -> _Run:
     indexer = VaultIndexer(
-        root, cast("EmbeddingModel", object()), cast("VaultStore", object())
+        root, cast("EmbeddingModel", _StandIn()), cast("VaultStore", _StandIn())
     )
-    monkeypatch.setattr(indexer, "_memory_telemetry", _stop)
     return lambda: indexer.full_index(
         reporter=NullProgressReporter(), authority=authority
     )
@@ -140,21 +139,27 @@ def _vault(
 _INDEXERS = pytest.mark.parametrize("build", [_code, _document, _vault])
 
 
+def _root_with_old_ledger(tmp_path: Path) -> tuple[Path, Path]:
+    root = tmp_path.resolve()
+    (root / "src").mkdir()
+    (root / "src" / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    path = index_run_ledger_path(workspace_volume_path(root))
+    _write_old_ledger(path)
+    return root, path
+
+
 @_INDEXERS
 def test_a_rebuild_sets_the_old_ledger_aside_before_it_reads_it(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     build: _Build,
 ) -> None:
     # Every domain's full index reads the root's ledger before it writes
     # anything, so the set-aside has to come first in each of them. Mutation:
     # removing the call from any one indexer fails its set-aside assertion.
-    root = tmp_path.resolve()
-    path = index_run_ledger_path(workspace_volume_path(root))
-    _write_old_ledger(path)
-    run = build(root, monkeypatch, RunAuthority.REBUILD)
+    root, path = _root_with_old_ledger(tmp_path)
+    run = build(root, RunAuthority.REBUILD)
 
-    with pytest.raises(_ReachedError):
+    with pytest.raises(_StandInReachedError):
         run()
 
     assert not path.exists()
@@ -164,16 +169,13 @@ def test_a_rebuild_sets_the_old_ledger_aside_before_it_reads_it(
 @_INDEXERS
 def test_publication_authority_never_sets_a_ledger_aside(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     build: _Build,
 ) -> None:
-    root = tmp_path.resolve()
-    path = index_run_ledger_path(workspace_volume_path(root))
-    _write_old_ledger(path)
+    root, path = _root_with_old_ledger(tmp_path)
     before = sqlite_contents(path)
-    run = build(root, monkeypatch, RunAuthority.PUBLICATION)
+    run = build(root, RunAuthority.PUBLICATION)
 
-    with pytest.raises(_ReachedError):
+    with pytest.raises(_StandInReachedError):
         run()
 
     # Mutation: dropping the rebuild-authority condition moves the ledger here.
