@@ -548,9 +548,12 @@ class TestInstallExitCodes:
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
         assert result.exit_code == 0, result.output
 
-    def test_install_exit_nonzero_on_skipped_non_tty(self, tmp_path: Path) -> None:
-        """Non-TTY without ``--yes`` / ``--force``: torch-config skipped,
-        exit code 2 so CI fails loudly.
+    def test_install_exit_skipped_code_on_skipped_non_tty(self, tmp_path: Path) -> None:
+        """Non-TTY without ``--yes`` / ``--force``: torch-config skipped.
+
+        Exit 2 is the shared table's "completed with a required step
+        skipped", and it is the only outcome that earns that code - a run
+        that failed exits 1.
         """
         ws = self._make_pyproject(
             tmp_path,
@@ -562,15 +565,20 @@ class TestInstallExitCodes:
         result = runner.invoke(app, ["install", "--target", str(ws)])
         assert result.exit_code == 2, result.output
 
-    def test_install_exit_nonzero_on_error(self, tmp_path: Path) -> None:
-        """Corrupt pyproject → torch_config_action=TorchConfigAction.ERROR → exit 2."""
+    def test_install_exit_failure_code_on_error(self, tmp_path: Path) -> None:
+        """A corrupt pyproject fails the run, so it exits 1, not 2.
+
+        The two non-zero codes are not interchangeable: 2 means the run
+        completed and skipped a required step, which a failed run did not
+        do.
+        """
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             "[project\nname = ", encoding="utf-8"
         )  # malformed
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
 
     def test_install_exit_zero_on_conflict(self, tmp_path: Path) -> None:
         """CUSTOMISED block - user-state, not a runtime failure.
@@ -608,7 +616,7 @@ class TestInstallExitCodes:
             app,
             ["install", "--target", str(ws), "--no-torch-config", "--mcp"],
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
 
 
 class TestInstallTargetValidation:

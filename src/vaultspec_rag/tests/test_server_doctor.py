@@ -263,6 +263,69 @@ def test_doctor_weights_mode_mismatch_as_warning(
     assert result.exit_code == 1
 
 
+def test_doctor_honours_root_target_over_the_working_directory(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root ``--target`` names the workspace the mode axis reads, not cwd.
+
+    The working directory is a real, unrelated, uninstalled directory - not
+    the workspace under test - so a doctor that fell back to ``Path.cwd()``
+    would report no rag declaration at all.
+    """
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(app, ["--target", str(ws), "server", "doctor", "--json"])
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode is not None
+    assert mode["package"] == "vaultspec-rag"
+    assert mode["declared_mode"] == "tool"
+    assert mode["mode_mismatch"] == "clean"
+    assert result.exit_code == 0
+
+
+def test_doctor_honours_rag_root_env_var_over_the_working_directory(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``VAULTSPEC_RAG_ROOT`` names the workspace the mode axis reads, not cwd.
+
+    No ``--target`` flag is passed here; the environment variable is the only
+    thing naming the workspace, carried through the CliRunner's own ``env``
+    mapping rather than ``monkeypatch.setenv``, and the working directory is
+    a real, unrelated, uninstalled directory - not the workspace under test -
+    so a doctor that fell back to ``Path.cwd()`` would report no rag
+    declaration at all.
+    """
+    from ..config._types import EnvVar
+
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(
+        app,
+        ["server", "doctor", "--json"],
+        env={EnvVar.RAG_ROOT.value: str(ws)},
+    )
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode is not None
+    assert mode["package"] == "vaultspec-rag"
+    assert mode["declared_mode"] == "tool"
+    assert mode["mode_mismatch"] == "clean"
+    assert result.exit_code == 0
+
+
 def test_doctor_human_render_labels_mode_axis(
     isolated_status_dir: Path,
     tmp_path: Path,

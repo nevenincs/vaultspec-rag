@@ -40,6 +40,8 @@ from .._workspace_layout import (
     WORKSPACE_MANIFEST,
 )
 from ..builtins import list_builtins, seed_builtins
+from ..config._credentials import workspace_credential
+from ..config._types import EnvVar
 from ..operator_state import _compute
 from ..operator_state._installation import InstallRole
 from ..torch_config._constants import TorchConfigAction
@@ -66,6 +68,7 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
+from ._skip import validate_rag_skip
 from ._tool_torch import ToolRepairRequest, ToolTorchRepairOutcome, repair_tool_torch
 from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
@@ -860,6 +863,7 @@ def install_run(
     path: Path | None = None, **options: Unpack[_InstallRunOptions]
 ) -> InstallReport:
     """Run install behind one required-node topology transaction."""
+    validate_rag_skip(options.get("skip") or set())
     return _install_with_tool_repair(_InstallRunRequest(path=path, **options))
 
 
@@ -1253,7 +1257,6 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
         report=report,
         options=TorchInstallOptions(
             dry_run=dry_run,
-            force=force,
             configure_torch=configure_torch,
             assume_yes=assume_yes,
             sync_after=sync_after,
@@ -1265,7 +1268,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     # provisioning below; both belong to the host installation.
     host = _compute.installed_role()[0] is InstallRole.HOST
     if not dry_run and host:
-        _maybe_warn_hf_auth(report)
+        _maybe_warn_hf_auth(report, target)
 
     # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
     # "applied"`` inside ``_run_torch_config_install``. Any path that
@@ -1411,8 +1414,20 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
         _persist_runtime_selection(request.report, request.local_only)
 
 
-def _maybe_warn_hf_auth(report: InstallReport) -> None:
-    """Warn when HuggingFace credentials are not configured locally."""
+def _maybe_warn_hf_auth(report: InstallReport, target: Path) -> None:
+    """Warn when no Hugging Face credential is reachable for this workspace.
+
+    The library's own lookup covers the session environment and the saved
+    login, which is not the whole of where a token may legitimately come
+    from: this workspace's gated ``.env`` supplies one too, and a run that
+    resolved a key from there is authenticated whatever the library thinks.
+    Warning anyway would tell an operator to log in when they already have.
+
+    Args:
+        report: The install report the warning is recorded on.
+        target: The resolved workspace, whose gated ``.env`` may hold the
+            token.
+    """
     try:
         from huggingface_hub import get_token
     except ImportError:
@@ -1422,7 +1437,7 @@ def _maybe_warn_hf_auth(report: InstallReport) -> None:
         )
         return
 
-    if get_token():
+    if workspace_credential(EnvVar.HF_TOKEN, target) is not None or get_token():
         return
     report.warnings.append(
         f"HuggingFace token not found. Run {HF_LOGIN_REMEDIATION} before "

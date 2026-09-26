@@ -73,7 +73,9 @@ file and line, rather than answering from general knowledge.
 
 MCP reaches vaultspec-rag over stdio only. The client launches
 `vaultspec-search-mcp` as a child process, and that stdio server reads the
-project from `VAULTSPEC_RAG_ROOT`. It loads no models: it forwards every call to
+project from `VAULTSPEC_RAG_ROOT`, falling back to the framework-wide
+`VAULTSPEC_TARGET_DIR` when unset - the same variable a session might already
+export for another vaultspec tool. It loads no models: it forwards every call to
 the HTTP service, which does the compute and serves several projects at once.
 Because the service is multi-tenant, the stdio server tags each forwarded call
 with the project root it resolved.
@@ -190,6 +192,13 @@ pulls the inference stack, whichever extras you installed with. For
 `["run", "--no-sync", "python", "-m", "vaultspec_rag.server"]`.
 
 Add `"args": ["--read-only"]` to either example to withhold the mutating tools.
+
+Every example below sets the project root through `VAULTSPEC_RAG_ROOT` in the
+launch entry's own `env` block, the most explicit choice for a config a client
+owns outright. An unmanaged client that instead inherits its environment from
+a session already exporting the framework-wide `VAULTSPEC_TARGET_DIR` needs no
+entry of its own: the stdio server falls back to that name when
+`VAULTSPEC_RAG_ROOT` is unset.
 
 ### Claude Desktop
 

@@ -48,6 +48,12 @@ def test_mcp_is_not_a_core_dependency() -> None:
     )
 
 
+def test_python_dotenv_is_not_a_dependency() -> None:
+    """The distribution never requires python-dotenv; the CLI reads no ``.env``."""
+    core_names = {req.name for req in _requirements() if _is_core(req)}
+    assert "python-dotenv" not in core_names, core_names
+
+
 def test_mcp_is_declared_in_the_mcp_extra() -> None:
     """`mcp` is available via the `[mcp]` extra for the optional MCP server."""
     extra_mcp = {req.name for req in _requirements() if _in_extra(req, "mcp")}

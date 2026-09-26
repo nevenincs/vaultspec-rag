@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#index-drift-hardening'
 date: '2026-07-13'
-modified: '2026-07-13'
-body_hash: 'sha256:50a02bf50d7cceddbefdcf068a042be7019ed658b8e96fd9ab37484223915f84'
+modified: '2026-09-26'
+body_hash: 'sha256:057dec9db3ccd950c9e3c2d1f5b7f12b18a8c04a16b490defabca6d087850784'
 related:
   - '[[2026-07-13-index-drift-hardening-research]]'
   - '[[2026-04-04-vaultragignore-adr]]'
@@ -134,6 +134,8 @@ Decision set, cited by the plan:
   language map.
 - **D10 - Docs.** README and `server start` help document the tri-state, the trust
   flow, and the drift-epoch self-healing behavior.
+
+**Amendment note, 2026-09-26**: D4's tri-state `preprocess_mode` (`default`/`trust_all`/`off`) and `VAULTSPEC_RAG_PREPROCESS_TRUST_ALL` do not exist in the code today. `2026-07-14-preprocess-sandbox-removal-adr` (accepted, one day later) collapsed the mode to two states (`default`/`off`) and removed the sandbox/trust-store apparatus this D4-D9 trust model depended on; `config/_types.py:15` now declares `VALID_PREPROCESS_MODES: frozenset[str] = frozenset({"default", "off"})` with no `trust_all` member and no `PREPROCESS_TRUST_ALL` `EnvVar`. See that later record for the governing decision; D1-D3 (config-epoch drift sentinel) are unaffected and remain current.
 
 ## Rationale
 

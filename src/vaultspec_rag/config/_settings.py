@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -11,11 +10,16 @@ from vaultspec_core.config import (
     VaultSpecConfig as BaseConfig,
 )
 from vaultspec_core.config import (
+    env_value,
+)
+from vaultspec_core.config import (
     get_config as get_base_config,
 )
+from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
+from vaultspec_core.logging_config import resolve_log_level
 
-from .._env_values import BOOL_SHAPE, parse_bool
 from ._paths import read_persisted_local_only
+from ._registry import entry
 from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
 from ._types import STATUS_DIR_DEFAULT, VALID_PREPROCESS_MODES, EnvVar, PreprocessMode
 
@@ -35,7 +39,8 @@ class VaultSpecConfigWrapper:
     Resolution order for RAG keys:
     1. CLI override (stored via ``overrides`` dict at construction)
     2. Environment variable (via ``ENV_OVERRIDE_MAP``)
-    3. ``_RAG_DEFAULTS`` value
+    3. The persisted local-only marker (``local_only`` only)
+    4. ``_RAG_DEFAULTS`` value
 
     The resolved value is then coerced and range-checked under the module's
     coercion and validation policy, both on construction and on every read.
@@ -766,14 +771,8 @@ class VaultSpecConfigWrapper:
         """Return whether an override source explicitly supplies *name*."""
         if name in self._rag_overrides:
             return True
-        try:
-            getattr(self._base, name)
-        except AttributeError:
-            pass
-        else:
-            return True
         env_key = ENV_OVERRIDE_MAP.get(name)
-        return env_key is not None and os.environ.get(env_key.value) is not None
+        return env_key is not None and env_value(entry(env_key)) is not None
 
     def _legacy_watcher_value(
         self,
@@ -904,41 +903,24 @@ class VaultSpecConfigWrapper:
 
     def _raw_rag_setting(self, name: str) -> tuple[object, EnvVar | None]:
         """Resolve *name* through the precedence chain without validating it."""
+        # 1. CLI override
         if name in self._rag_overrides:
             return self._rag_overrides[name], None
-        # 1. CLI override via base config
-        try:
-            return getattr(self._base, name), None
-        except AttributeError as exc:
-            # Base config doesn't carry RAG-specific knob; fall
-            # through to env var, then to module default. Debug
-            # so the swallow stays observable.
-            logger.debug(
-                "config attr %s not on base; fall through: %s",
-                name,
-                exc,
-            )
 
-        # 2. Env var override
+        # 2. Env var override, read through the registry so the value arrives
+        # stripped, a blank one reads as unset for every key regardless of its
+        # type, and a scoped name that supplies nothing falls through to the
+        # framework name behind it. Blank as unset is what keeps ``VAR="$UNSET"``
+        # from repointing a path-like knob at the working directory, and it is
+        # now the same rule for a number and a flag rather than a carve-out for
+        # strings alone.
         env_key = ENV_OVERRIDE_MAP.get(name)
         if env_key is not None:
-            env_val = os.environ.get(env_key.value)
+            env_val = env_value(entry(env_key))
             if env_val is not None:
-                default = self._RAG_DEFAULTS[name]
-                if isinstance(default, str) and not env_val.strip():
-                    # An empty/whitespace string override for a path-like knob is
-                    # a footgun - e.g. ``VAR="$UNSET"`` exports ``""`` - and
-                    # ``Path("").expanduser()`` is the cwd, which would repoint
-                    # the managed-dir blast radius (delete/clean) into the working
-                    # dir. Treat it as absent (fall through to the module
-                    # default), matching the persistence helpers' ``or DEFAULT``.
-                    # The sole silent-fallback carve-out; every other malformed
-                    # value is rejected.
-                    pass
-                else:
-                    return self._coerce_env(name, env_val, env_key), env_key
+                return self._coerce_env(name, env_val, env_key), env_key
 
-        # 2.5. Persisted runtime selection (local_only only). When
+        # 3. Persisted runtime selection (local_only only). When
         # ``install --local-only`` wrote the marker, a later
         # ``server start`` with no flag and no env honours it. Precedence
         # is explicit env/flag (above) > persisted config (here) >
@@ -949,7 +931,7 @@ class VaultSpecConfigWrapper:
             if persisted is not None:
                 return persisted, None
 
-        # 3. Default
+        # 4. Default
         return self._RAG_DEFAULTS[name], None
 
     def _resolve_rag_default(self, name: str) -> Any:
@@ -997,6 +979,12 @@ class VaultSpecConfigWrapper:
             self._watch_retry_bounds,
             self._watch_policy_relations,
             lambda: self.document_chunk_overlap_chars,
+            # The kill switch carries no settings key of its own, so the
+            # per-key sweep above never reaches it. Resolving it here is what
+            # puts a mistyped switch in the same collective report as every
+            # other unusable value instead of surfacing it on the first
+            # document a run tries to preprocess.
+            lambda: self.preprocess_mode,
         )
         for relation in relations:
             try:
@@ -1030,35 +1018,80 @@ class VaultSpecConfigWrapper:
         return bool(self.qdrant_server) and not bool(self.local_only)
 
     @property
+    def log_level(self) -> str:
+        """Resolve the log-level name through the one validated, chained ladder.
+
+        Delegates to core's ``resolve_log_level`` over the same
+        ``EnvVar.LOG_LEVEL`` registry entry ``configure_logging`` reads,
+        instead of the generic settings-override chain. That generic chain
+        validates nothing for a free-form string key, so a mistyped level
+        would otherwise reach this attribute unrefused while the process it
+        actually configures refuses to start over that exact same value -
+        two declarations of one concept, silently disagreeing. An explicit
+        CLI-supplied override (mirroring every other settings key's
+        precedence) still outranks the chain.
+
+        Returns:
+            The resolved, canonical (upper-case) level name.
+
+        Raises:
+            ConfigurationError: If the configured value names no recognised
+                level.
+        """
+        if "log_level" in self._rag_overrides:
+            return str(self._rag_overrides["log_level"])
+        return resolve_log_level(
+            variable=entry(EnvVar.LOG_LEVEL),
+            default=str(self._RAG_DEFAULTS["log_level"]),
+        )
+
+    @property
     def preprocess_mode(self) -> PreprocessMode:
         """Resolve the two-state document-preprocessing mode.
 
         Kept off the generic override map because this is a transform, not an
         override. ``VAULTSPEC_RAG_PREPROCESS`` is a kill switch: its value is
-        not the setting's value, only ``off`` means anything, and it has to
-        beat a CLI override that the generic path deliberately ranks ABOVE the
-        environment - an operator must always be able to silence a root's
-        rules. Reading it live also lets a flag forwarded into the daemon
-        environment take effect without rebuilding the config. Resolution is:
+        not the setting's value, and it has to beat a CLI override that the
+        generic path deliberately ranks ABOVE the environment - an operator
+        must always be able to silence a root's rules. Reading it live also
+        lets a flag forwarded into the daemon environment take effect without
+        rebuilding the config. Resolution is:
 
-        - ``VAULTSPEC_RAG_PREPROCESS=off`` forces ``off``, beating everything.
-        - otherwise the base-config/CLI override, then the module default
-          (``default``, on).
+        - a false word forces ``off``, beating everything;
+        - a true word, blank or unset leaves the decision below it;
+        - otherwise the CLI override, then the module default (``default``,
+          on).
+
+        It is a boolean because every other switch in the framework is, and a
+        switch that honoured only one of the eight words operators actually
+        type is a switch that silently ignores seven of them: ``=0`` and
+        ``=false`` used to leave preprocessing running.
 
         An unrecognised configured mode degrades to ``default`` with a warning
         instead of being rejected, the one place this module bends its own
-        rule. Rejecting here would refuse to start the daemon over a knob whose
-        safe reading is the shipped one, and the degrade is announced rather
-        than silent. The value cannot arrive from the environment anyway - the
-        kill switch is the only env input - so an operator typo cannot reach
-        this branch.
+        rule. Rejecting there would refuse to start the daemon over a knob
+        whose safe reading is the shipped one, and the degrade is announced
+        rather than silent. The switch itself gets no such latitude: a word it
+        does not recognise is refused with the rest of the unusable settings,
+        because guessing which way an operator meant a kill switch is the
+        guess that matters most.
 
         Returns:
             One of ``"default"`` or ``"off"``.
+
+        Raises:
+            ValueError: If the kill switch carries a word the shared boolean
+                vocabulary does not recognise.
         """
-        off_raw = os.environ.get(EnvVar.PREPROCESS.value)
-        if off_raw is not None and off_raw.strip().lower() == "off":
-            return "off"
+        switch_raw = env_value(entry(EnvVar.PREPROCESS))
+        if switch_raw is not None:
+            switch = parse_bool(switch_raw)
+            if switch is None:
+                raise setting_rejection(
+                    "preprocess_mode", BOOL_SHAPE, switch_raw, EnvVar.PREPROCESS
+                )
+            if not switch:
+                return "off"
         configured = str(self._resolve_rag_default("preprocess_mode"))
         if configured not in VALID_PREPROCESS_MODES:
             logger.warning(
@@ -1141,7 +1174,6 @@ class VaultSpecConfigWrapper:
     index_job_concurrency: int
     index_reuse_enabled: bool
     mcp_port: int
-    log_level: str
     service_idle_ttl_seconds: int
     service_max_projects: int
     service_search_timeout_seconds: float
@@ -1189,9 +1221,13 @@ class VaultSpecConfigWrapper:
         """Return a config attribute, checking env overrides then defaults.
 
         Resolution order for known RAG keys:
-        1. Base config (may contain CLI overrides)
+        1. CLI override (stored via ``overrides`` dict at construction)
         2. Environment variable (via ``ENV_OVERRIDE_MAP``)
-        3. ``_RAG_DEFAULTS`` fallback
+        3. The persisted local-only marker (``local_only`` only)
+        4. ``_RAG_DEFAULTS`` fallback
+
+        A name that is not a known RAG key delegates to the base config
+        instead, unconditionally - the fallback below.
 
         Whichever source wins, the value is coerced and range-checked before it
         is returned, so no access path can hand back an unvalidated setting.
@@ -1292,6 +1328,65 @@ def reset_config() -> None:
     """
     global _cached_config
     _cached_config = None
+
+
+def collect_environment_problems(
+    cli_overrides: dict[str, Any] | None = None,
+) -> list[str]:
+    """Return every reason this process's environment or settings are unusable.
+
+    Every process kind that reads rag's configuration - the CLI, the stdio
+    MCP transport, and the HTTP daemon - shares one refusal contract: a bad
+    product-owned value stops the process before it does anything else, and
+    every problem is reported together rather than one refusal per run. This
+    is the one place that contract is checked, so a process kind that forgot
+    to call it is the only way to drift from it.
+
+    Three sources are asked. The framework variables this package honours
+    (and the level name, which is otherwise read only where it is used and
+    would refuse a command or a daemon startup halfway through its own
+    output); the session's own unattended marker, which every prompt this
+    package might issue consults and would otherwise surface its typo at the
+    moment a question was about to be asked; and this package's own settings.
+
+    The settings check constructs a wrapper directly through
+    :meth:`VaultSpecConfigWrapper.from_environment` rather than populating
+    the cached :func:`get_config` singleton, so a validation probe run before
+    a workspace root is resolved can never leave a config built against the
+    wrong root cached for a later, unrelated ``get_config()`` call to read.
+
+    Args:
+        cli_overrides: The settings this invocation named on the command
+            line, so the report describes the configuration about to be
+            built rather than a different one. ``None`` for a process kind
+            (the daemon, the stdio server) with no CLI overrides of its own.
+
+    Returns:
+        Every problem found, one string per problem, ready to print one per
+        line; empty when the environment and settings are all usable.
+    """
+    from vaultspec_core.config import (
+        ConfigurationError,
+        check_environment,
+        unattended_declared,
+    )
+
+    from ._registry import PACKAGE as REGISTRY_PACKAGE
+
+    problems: list[str] = []
+    try:
+        check_environment(package=REGISTRY_PACKAGE)
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        unattended_declared()
+    except ConfigurationError as refusal:
+        problems.append(str(refusal))
+    try:
+        VaultSpecConfigWrapper.from_environment(cli_overrides)
+    except ValueError as refusal:
+        problems.append(str(refusal))
+    return problems
 
 
 # Every numeric setting must declare its admissible range, and every declared

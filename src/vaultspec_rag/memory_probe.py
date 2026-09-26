@@ -22,9 +22,11 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
-from ._env_values import BOOL_SHAPE, parse_bool, rejection
+from vaultspec_core.env_values import BOOL_SHAPE, is_blank, parse_bool, rejection
+
 from ._job_errors import JobError, JobErrorKind
 from ._units import bytes_to_mib, mib_to_bytes
+from .config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -95,7 +97,7 @@ __all__ = [
 #: guard test asserts this string still equals the settings enum member, so the
 #: copy cannot drift. Only the *name* is restated - the spellings it accepts
 #: come from the shared table, which is stdlib-only and costs a worker nothing.
-ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"
+ENV_VAR = EnvVar.MEMORY_PROBE.value
 
 # Module-level caches for hot-path samplers. ``current_rss_mib`` and
 # ``current_cuda_mib`` are called once per 250 ms by the background
@@ -182,8 +184,11 @@ def is_enabled() -> bool:
     Raises:
         ValueError: If the variable is set to a value spelling neither state.
     """
-    raw = os.environ.get(ENV_VAR, "")
-    enabled = parse_bool(raw)
+    raw = os.environ.get(ENV_VAR)
+    if is_blank(raw):
+        return False
+    # is_blank has already ruled None out.
+    enabled = parse_bool(str(raw))
     if enabled is None:
         raise rejection(ENV_VAR, BOOL_SHAPE, raw)
     return enabled
