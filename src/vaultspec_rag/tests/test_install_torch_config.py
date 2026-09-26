@@ -434,7 +434,7 @@ class TestUninstallTorchConfig:
             newline="",
         )
         sha_before = _sha(ws / "pyproject.toml")
-        report = uninstall_run(path=ws, force=False)  # dry-run path
+        report = uninstall_run(path=ws, dry_run=True)
         assert report.torch_config_action == "skipped"
         assert report.torch_config_conflicts
         assert _sha(ws / "pyproject.toml") == sha_before
@@ -442,8 +442,7 @@ class TestUninstallTorchConfig:
     def test_uninstall_dry_run_does_not_mutate(self, consumer_workspace: Path) -> None:
         install_run(path=consumer_workspace, assume_yes=True)
         sha_before = _sha(consumer_workspace / "pyproject.toml")
-        # dry_run path without --force stays in dry-run mode.
-        report = uninstall_run(path=consumer_workspace, force=False)
+        report = uninstall_run(path=consumer_workspace, dry_run=True)
         assert report.torch_config_action == "dry_run"
         assert _sha(consumer_workspace / "pyproject.toml") == sha_before
 

@@ -205,7 +205,7 @@ None.
 
 ## uninstall
 
-Remove vaultspec-rag setup from a workspace. Without --force, this only previews what would be removed.
+Remove vaultspec-rag setup from a workspace. Requires --force to execute; use --dry-run to preview what would be removed instead.
 
 ```bash
 vaultspec-rag uninstall
@@ -224,7 +224,7 @@ None.
 | `--dry-run` | boolean | no | off | Preview changes without removing. |
 | `--force` | boolean | no | off | Required to execute. Uninstall is destructive. |
 | `--skip` | str | no | () | Skip a component (repeatable). |
-| `--yes`, `-y` | boolean | no | off | Skip confirmation prompts. |
+| `--yes`, `-y` | boolean | no | off | Deprecated: uninstall has no prompt to bypass. Accepted for backward compatibility only. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## status

@@ -629,7 +629,7 @@ def test_uninstall_dry_run_previews_sentinels_without_removing(
     _install(ws, mode=InstallMode.DEPENDENCY)
     (ws / ".qdrant-initialized").write_text("", encoding="utf-8")
 
-    report = uninstall_run(path=ws, force=False)
+    report = uninstall_run(path=ws, dry_run=True)
 
     assert (ws / ".qdrant-initialized").exists()
     assert ".qdrant-initialized" in report.removed

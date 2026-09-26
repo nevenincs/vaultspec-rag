@@ -356,19 +356,22 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
     Args:
         path: Workspace target. Defaults to current working directory.
         remove_data: Also delete ``.vault/data/`` (rag's index).
-        dry_run: Compute changes without writing.
-        force: Required to execute. Without it, returns a dry-run
-            preview. Also passed through to ``sync_provider`` to enable
-            orphan pruning during propagation.
+        dry_run: Compute changes without writing. Alone, previews the
+            removal; with ``force``, is redundant with it.
+        force: Required to execute. Without it and without ``dry_run``,
+            raises rather than silently previewing. Also passed through
+            to ``sync_provider`` to enable orphan pruning during
+            propagation.
         skip: Components to skip (passed through to ``sync_provider``).
-        assume_yes: Present for CLI symmetry with ``install``. Uninstall
-            is already a destructive-by-intent operation (it always
-            attempts symmetric reversal of install), so this flag
-            currently has no prompt to bypass; it is accepted for
-            forward compatibility.
+        assume_yes: Deprecated; uninstall has no prompt to bypass, and
+            passing it now only emits a deprecation warning.
 
     Returns:
         :class:`UninstallReport` with the structured result.
+
+    Raises:
+        ValueError: If *skip* names an unrecognised token, or neither
+            *force* nor *dry_run* is set.
     """
     path, remove_data, dry_run, force, skip, assume_yes = (
         request.path,
@@ -378,16 +381,17 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
         request.skip,
         request.assume_yes,
     )
-    # assume_yes is reserved for future prompts; uninstall currently
-    # has no prompt to bypass. Suppress the unused-argument lint
-    # without ``del`` - keeping the parameter in the public signature
-    # so callers don't churn when the future behaviour lands.
-    _ = assume_yes
     skip = skip or set()
 
-    # Default-safe: refuse to mutate without --force, return preview.
-    if not force:
-        dry_run = True
+    # Uninstall is destructive by default. Without --force, only an
+    # explicit --dry-run preview is allowed; neither flag is an error to
+    # execute nothing at all, matching core's own uninstall gate.
+    if not force and not dry_run:
+        msg = (
+            "Uninstall is destructive. Pass --force to confirm, "
+            "or use --dry-run to preview."
+        )
+        raise ValueError(msg)
 
     # IMPORTANT: uninstall must NEVER create workspace directories.
     # A user running ``vaultspec-rag uninstall --force`` in an empty
@@ -399,6 +403,13 @@ def _uninstall_run(request: _UninstallRequest) -> UninstallReport:
     target = _resolve_target(path, bootstrap=False)
     action = "dry_run" if dry_run else "uninstall"
     report = UninstallReport(action=action, target=target)
+    if assume_yes:
+        # Uninstall has no confirmation prompt to bypass; -y/--yes is a
+        # deprecated no-op kept for CLI symmetry with install.
+        report.warnings.append(
+            "-y/--yes has no effect on uninstall and is deprecated; "
+            "it will be removed in a future release."
+        )
 
     topology: RequiredMcpTopology | None = None
     if "mcp" not in skip:

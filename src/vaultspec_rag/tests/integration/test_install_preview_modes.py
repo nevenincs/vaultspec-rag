@@ -40,7 +40,7 @@ class TestInstallModeTransitions:
         signature = _node_signature(node)
         target_before = linked_target.read_bytes()
 
-        preview = uninstall_run(path=fresh_workspace, force=False)
+        preview = uninstall_run(path=fresh_workspace, dry_run=True)
         applied = uninstall_run(path=fresh_workspace, force=True)
 
         assert preview.mcp_sync_failed and applied.mcp_sync_failed

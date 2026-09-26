@@ -519,7 +519,11 @@ class _UninstallCommand(TyperCommand):
                     param_decls=["--yes", "-y"],
                     default=False,
                     is_flag=True,
-                    help="Skip confirmation prompts.",
+                    hidden=True,
+                    help=(
+                        "Deprecated: uninstall has no prompt to bypass. "
+                        "Accepted for backward compatibility only."
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--json"],
@@ -551,8 +555,8 @@ class _UninstallCommand(TyperCommand):
     "uninstall",
     cls=_UninstallCommand,
     help=(
-        "Remove vaultspec-rag setup from a workspace. Without --force, this "
-        "only previews what would be removed."
+        "Remove vaultspec-rag setup from a workspace. Requires --force to "
+        "execute; use --dry-run to preview what would be removed instead."
     ),
 )
 def handle_uninstall() -> None:
@@ -562,8 +566,9 @@ def handle_uninstall() -> None:
 def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
     """Remove vaultspec-rag setup from a workspace.
 
-    Without --force, this only previews what would be removed. Vault
-    documents and index data are preserved unless --remove-data is set.
+    Requires --force to execute; without it (and without --dry-run to
+    preview), the command refuses to run. Vault documents and index data
+    are preserved unless --remove-data is set.
     """
     from ..commands._uninstall import uninstall_run
 
