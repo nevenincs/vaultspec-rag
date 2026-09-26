@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from vaultspec_core.env_values import parse_bool
+
 from .._content_route_syntax import validate_content_route_pattern
-from .._env_values import parse_bool
 
 PreprocessMode = Literal["default", "off"]
 

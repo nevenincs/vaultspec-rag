@@ -27,8 +27,8 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from vaultspec_core.env_values import FALSE_TOKENS, TRUE_TOKENS
 
-from .._env_values import FALSE_TOKENS, TRUE_TOKENS
 from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import is_enabled

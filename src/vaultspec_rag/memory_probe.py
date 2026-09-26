@@ -22,7 +22,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
-from ._env_values import BOOL_SHAPE, is_blank, parse_bool, rejection
+from vaultspec_core.env_values import BOOL_SHAPE, is_blank, parse_bool, rejection
+
 from ._job_errors import JobError, JobErrorKind
 from ._units import bytes_to_mib, mib_to_bytes
 from .config._types import EnvVar

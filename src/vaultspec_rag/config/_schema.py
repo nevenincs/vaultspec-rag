@@ -6,7 +6,8 @@ import math
 from dataclasses import dataclass
 from typing import cast
 
-from .._env_values import rejection
+from vaultspec_core.env_values import rejection
+
 from ._types import VALID_INDEX_SUPPORT_PROFILES, EnvVar
 
 

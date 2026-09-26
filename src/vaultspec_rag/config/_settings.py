@@ -15,8 +15,8 @@ from vaultspec_core.config import (
 from vaultspec_core.config import (
     get_config as get_base_config,
 )
+from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 
-from .._env_values import BOOL_SHAPE, parse_bool
 from ._paths import read_persisted_local_only
 from ._registry import entry
 from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection

@@ -10,8 +10,8 @@ from typing import cast
 
 import pytest
 import vaultspec_core
+from vaultspec_core.env_values import FALSE_TOKENS, TRUE_TOKENS
 
-from .._env_values import FALSE_TOKENS, TRUE_TOKENS
 from .._job_errors import JobError, JobErrorKind
 from ..config._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS
 from ..config._settings import (

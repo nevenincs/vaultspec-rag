@@ -49,8 +49,8 @@ import threading
 import time
 
 from vaultspec_core.config import env_source, env_value
+from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 
-from .._env_values import BOOL_SHAPE, parse_bool
 from .._process_probe import pid_alive
 from ..config._registry import entry
 from ..config._types import EnvVar

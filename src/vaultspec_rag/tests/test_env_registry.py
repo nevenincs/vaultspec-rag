@@ -256,7 +256,7 @@ def test_the_registry_stays_off_the_spawn_worker_import_chain() -> None:
     """
     assert_fresh_import_excludes(
         import_probe_source(
-            "vaultspec_rag._env_values",
+            "vaultspec_core.env_values",
             "vaultspec_rag.memory_probe",
             forbidden=("vaultspec_core.config", "vaultspec_rag.config._registry"),
         )
