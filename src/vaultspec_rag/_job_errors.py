@@ -32,7 +32,8 @@ __all__ = [
 
 #: A running, non-waiting job whose progress is older than this is
 #: reported ``stalled`` on every surface. Matches the CLI's historical
-#: advisory threshold.
+#: advisory threshold. Queued work that no attempt has claimed for this long
+#: degrades health as undispatched.
 STALL_THRESHOLD_SECONDS = 300.0
 
 #: A running, non-waiting job with no progress tick and no forward-pass

@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from watchfiles import Change
 
-from ..job_manager.manager import JobManager
+from .. import jobs as _jobs
 from ..job_manager.models import JobAttemptContext, JobExecutionResult
 from ..job_models import JobSource, JobState
 from ..server._watcher_measurements import WatcherServiceMeasurement
 from ..service import ServiceRegistry
-from ..service_quiesce import ServiceQuiesceController
 from ..watcher_controller import (
     ControllerMeasurement,
     ControllerReason,
@@ -52,6 +51,7 @@ if TYPE_CHECKING:
 
     from ..indexer._codebase_indexer import CodeExecutionPreflight
     from ..indexer._document_indexer import DocumentExecutionPreflight
+    from ..job_manager.manager import JobManager
     from ..job_models import JobInitiator, JobOutcome, JobSnapshot, JobSpec
     from ..watcher_admission import AdmissionSelection
 
@@ -344,18 +344,16 @@ async def _no_preflight(
 
 
 def _real_manager(monkeypatch: pytest.MonkeyPatch) -> JobManager:
-    manager = JobManager(
-        quiesce_controller=ServiceQuiesceController(),
-        max_nonterminal=4,
-        state_path=None,
-    )
+    """Use the process job manager, fresh, with scoped preflight skipped.
+
+    Resolving a scoped preflight needs the root's compute lease, which loads
+    the GPU models; none of these admission tests depends on its content.
+    """
+    _jobs.reset()
     monkeypatch.setattr(
         "vaultspec_rag.watcher_execution._preflight_scoped_paths", _no_preflight
     )
-    monkeypatch.setattr(
-        "vaultspec_rag.watcher_execution._jobs.get_job_manager", lambda: manager
-    )
-    return manager
+    return _jobs.get_job_manager()
 
 
 async def test_change_observed_during_job_creation_still_dispatches_the_job(

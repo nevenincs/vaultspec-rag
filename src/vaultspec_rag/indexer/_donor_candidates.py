@@ -261,16 +261,17 @@ def read_donor_recorded_state(
     Missing, incompatible, corrupt, or concurrently changing proof makes the
     candidate ineligible.
     """
-    from .._publication_state import acquire_publication_snapshot
-    from ._publication_proof import ProofReadConflictError, ProofUnverifiableError
-    from ._run_ledger_models import RunLedgerError
+    from .._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
+    )
 
     root = Path(donor_root)
     source = PublicSourceType(kind.value)
     try:
         snapshot = acquire_publication_snapshot(root, source)
         snapshot.validate()
-    except (OSError, ProofReadConflictError, ProofUnverifiableError, RunLedgerError):
+    except (OSError, *UNREADABLE_PUBLICATION_ERRORS):
         return None
     key = snapshot.proof.compatibility_key
     return DonorRecordedState(

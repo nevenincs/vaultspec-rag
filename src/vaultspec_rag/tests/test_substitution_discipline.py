@@ -284,13 +284,19 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "postcondition is bypassed",
     ),
     "test_watcher_controller_intake.py": (
-        6,
+        11,
         "the intake durability tests intercept the persistence boundary to prove "
         "commit-before-ack and cancellation ordering; the scheduler wiring test "
         "captures registration and supplies an otherwise host-dependent storage "
         "measurement; and the pre-creation recovery test forces failures at the "
         "preflight and manager boundaries. Real equivalents require crashing or "
-        "changing the service's live storage state at an exact instruction boundary",
+        "changing the service's live storage state at an exact instruction "
+        "boundary. The post-creation admission tests use the real process job "
+        "manager but skip scoped preflight, which needs the root's GPU compute "
+        "lease; they wrap the real create to land an intake observation at the "
+        "instant the job exists, which no real event can be timed to hit; and "
+        "they replace dispatch, which would run a real GPU index attempt, with "
+        "one that records, fails, or really binds and dispatches before failing",
     ),
     "test_watcher_recovery.py": (
         1,

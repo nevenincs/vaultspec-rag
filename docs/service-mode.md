@@ -180,7 +180,7 @@ If the service has stopped or crashed, run `server logs` anyway. It reads retain
 
 Both commands accept `--json`.
 
-Three job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
+Four job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. A job still queued after five minutes, on a service that isn't paused, degrades health with `jobs_undispatched`: the service starts queued work the moment it is queued, so a job still waiting was left behind and won't start on its own. `server jobs` lists it right after running work, and restarting the service starts it again. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
 
 An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
 

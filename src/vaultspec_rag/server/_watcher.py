@@ -260,10 +260,10 @@ class _WatcherScheduler:
         for key, registration in registrations:
             if self._registrations.get(key) is not registration:
                 continue
-            deadline = registration.controller.snapshot.next_decision_at
-            due = deadline is not None and deadline <= now
-            periodic = deadline is None or deadline > now
-            if (due or periodic) and not self._recovery_delayed(registration, now):
+            # Every controller is reevaluated on every turn, due or not: a
+            # measurement such as a cleared backlog can change its decision
+            # before its own deadline arrives.
+            if not self._recovery_delayed(registration, now):
                 try:
                     await self._invoke(key, registration.reevaluate)
                 except Exception:

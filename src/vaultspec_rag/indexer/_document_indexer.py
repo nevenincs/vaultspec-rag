@@ -1111,6 +1111,12 @@ class DocumentIndexer:
     ) -> IndexResult:
         """Reconcile the complete explicitly routed document set."""
         started = time.monotonic()
+        run_control.checkpoint()
+        if authority is RunAuthority.REBUILD:
+            from ._run_ledger_models import index_run_ledger_path
+            from ._run_ledger_runtime import set_aside_unsupported_ledger
+
+            set_aside_unsupported_ledger(index_run_ledger_path(self._data_root))
         policy, paths = self._accept_preflight(
             preflight,
             changed_paths=None,

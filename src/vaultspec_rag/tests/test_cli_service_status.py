@@ -104,6 +104,7 @@ _CODES = {
     "the latest indexing job failed: full_reindex_required": "job_failed",
     "2 indexing job(s) are stalled": "jobs_stalled",
     "1 indexing job(s) are stalled": "jobs_stalled",
+    "1 queued indexing job(s) have nothing to start them": "jobs_undispatched",
     "embedding models are not loaded": "models_not_loaded",
     "the configured vector service is not live": "vector_service_unavailable",
 }
@@ -302,6 +303,29 @@ class TestDegradedStatusExplainsItself:
         assert lines[lines.index("Next action:") + 1] == (
             "vaultspec-rag server jobs --state active"
         )
+
+    def test_undispatched_jobs_point_at_the_unfiltered_jobs_view(
+        self, tmp_path: Path
+    ) -> None:
+        """Queued work has no state filter, so the command must carry none.
+
+        Mutation it catches: pointing the finding at the default active view,
+        which lists running work only and hides the queued job it names.
+        """
+        result = _status_against(
+            tmp_path,
+            _health_payload(
+                reasons=["1 queued indexing job(s) have nothing to start them"],
+                jobs={"undispatched": 1},
+            ),
+            jobs=_jobs_payload(failed=0),
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = _plain_lines(result.output)
+        assert "- 1 queued indexing job(s) have nothing to start them" in lines
+        assert "the service dispatches queued work again when it restarts" in lines
+        assert lines[lines.index("Next action:") + 1] == "vaultspec-rag server jobs"
 
     def test_unloaded_models_point_at_the_readiness_check(self, tmp_path: Path) -> None:
         result = _status_against(
