@@ -13,7 +13,10 @@ session name one workspace for every vaultspec tool at once while still
 letting an operator point this one somewhere else. Neither is discovered from
 the filesystem, and a name that points at a directory which is not there is
 refused rather than quietly discovered past - the operator asked for one
-workspace and would otherwise silently get another.
+workspace and would otherwise silently get another. Home shorthand (``~``,
+``~user``) in either name is expanded by core's own resolver, against the
+running process's own home directory, with the failure to determine one
+raised naming the variable.
 
 The resolution itself belongs to the framework, so the order is one order
 across every package rather than this package's reading of it. What lives
@@ -29,59 +32,19 @@ stripped from its environment when it is spawned rather than read here.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vaultspec_core.config import (
-    VAULTSPEC_TARGET_DIR,
-    ConfigurationError,
-    resolve_target,
-)
+from vaultspec_core.config import resolve_target
 
 from .config._registry import entry
 from .config._types import EnvVar
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from pathlib import Path
 
     from vaultspec_core.config import ResolvedTarget
 
 __all__ = ["named_root"]
-
-#: The two names carrying a root, scoped first and framework second.
-_ROOT_NAMES = (EnvVar.RAG_ROOT.value, VAULTSPEC_TARGET_DIR.env_name)
-
-
-def _home_expanded(environ: Mapping[str, str]) -> Mapping[str, str]:
-    """Return *environ* with home shorthand expanded in the root names.
-
-    ``~`` reaches a variable from a configuration file or a launcher, never
-    from a shell, which expands it before the value is ever exported. Nothing
-    downstream would: a leading tilde is not an absolute path, so it would be
-    taken against the working directory and then refused as a directory that
-    does not exist. Expanding it here keeps a launcher-written root working
-    while the order, the chain and the refusal all stay the framework's.
-
-    Raises:
-        ConfigurationError: If the host has no way to determine a home
-            directory (``Path.expanduser()`` raises ``RuntimeError``), so
-            the failure names the variable that supplied the value instead
-            of propagating an unrelated stdlib exception.
-    """
-    expanded: dict[str, str] = {}
-    for name in _ROOT_NAMES:
-        raw = environ.get(name, "")
-        if not raw.strip().startswith("~"):
-            continue
-        try:
-            expanded[name] = str(Path(raw.strip()).expanduser())
-        except RuntimeError as exc:
-            raise ConfigurationError(
-                f"{name} names {raw!r}, whose ~ could not be expanded "
-                f"(no home directory could be determined): {exc}"
-            ) from exc
-    return {**environ, **expanded} if expanded else environ
 
 
 def named_root(explicit: Path | None = None) -> ResolvedTarget:
@@ -100,10 +63,6 @@ def named_root(explicit: Path | None = None) -> ResolvedTarget:
 
     Raises:
         ConfigurationError: If a name points at a directory that does not
-            exist.
+            exist, or at a home-relative path this process cannot expand.
     """
-    return resolve_target(
-        explicit,
-        package_root=entry(EnvVar.RAG_ROOT),
-        environ=_home_expanded(os.environ),
-    )
+    return resolve_target(explicit, package_root=entry(EnvVar.RAG_ROOT))

@@ -348,9 +348,10 @@ class TestTheEnvironmentValueItself:
     ) -> None:
         """A host with no way to resolve ``~`` refuses, naming the variable.
 
-        ``Path.expanduser()`` itself raises a bare ``RuntimeError`` in this
-        case; the resolver must not let that propagate unrelated to the
-        variable an operator actually set.
+        Core's own ``resolve_target`` does the expansion (and the wrapping):
+        this proves that behaviour actually reaches an operator through this
+        package's thin ``named_root`` wrapper, not a second implementation of
+        it here.
         """
         self._clear(monkeypatch)
         monkeypatch.delenv("USERPROFILE", raising=False)
