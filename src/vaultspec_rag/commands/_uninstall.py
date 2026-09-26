@@ -33,6 +33,7 @@ from ._mcp_topology import (
 )
 from ._mode import resolve_rag_mode
 from ._models import UninstallReport
+from ._skip import validate_rag_skip
 from ._torch_flow import _run_torch_config_uninstall
 from ._workspace import _init_core_context, _resolve_target
 
@@ -334,6 +335,7 @@ def uninstall_run(
     **options: Unpack[_UninstallOptions],
 ) -> UninstallReport:
     """Remove vaultspec-rag enrollment from a workspace."""
+    validate_rag_skip(options.get("skip") or set())
     return _uninstall_run(_UninstallRequest(path=path, **options))
 
 

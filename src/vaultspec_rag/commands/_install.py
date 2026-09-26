@@ -62,6 +62,7 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
+from ._skip import validate_rag_skip
 from ._tool_torch import ToolTorchRepairOutcome, repair_tool_torch
 from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
@@ -849,6 +850,7 @@ def install_run(
     path: Path | None = None, **options: Unpack[_InstallRunOptions]
 ) -> InstallReport:
     """Run install behind one required-node topology transaction."""
+    validate_rag_skip(options.get("skip") or set())
     return _install_with_tool_repair(_InstallRunRequest(path=path, **options))
 
 
