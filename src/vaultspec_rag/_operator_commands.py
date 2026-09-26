@@ -15,6 +15,9 @@ module's business.
 
 from __future__ import annotations
 
+import os
+import re
+import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -44,9 +47,29 @@ class IndexCommandOptions:
     dry_run_limit: object | None = None
     full: bool = False
     port: object | None = None
+    #: The project to act on, for a command shown outside that project.
+    target: str | None = None
 
 
 _DEFAULT_INDEX_COMMAND_OPTIONS = IndexCommandOptions()
+
+#: Characters a path argument may carry unquoted in PowerShell.
+_WINDOWS_BARE_PATH = re.compile(r"[\w.:\\/-]+")
+
+
+def _shell_argument(path: str, *, windows: bool = os.name == "nt") -> str:
+    """Quote *path* as one literal argument for the operator's shell.
+
+    PowerShell takes a single-quoted string literally once its own single
+    quotes are doubled; POSIX shells take ``shlex.quote``. Either way a path
+    holding a quote, a ``$`` or a separator pastes back as the one argument it
+    names.
+    """
+    if not windows:
+        return shlex.quote(path)
+    if _WINDOWS_BARE_PATH.fullmatch(path):
+        return path
+    return "'" + path.replace("'", "''") + "'"
 
 
 def port_option(port: object | None) -> str:
@@ -191,6 +214,8 @@ def index_command(
     names, their order, and which source spellings exist.
     """
     command = "vaultspec-rag index"
+    if options.target:
+        command = f"vaultspec-rag --target {_shell_argument(options.target)} index"
     if options.rebuild:
         command += " --rebuild"
     if source is not None:

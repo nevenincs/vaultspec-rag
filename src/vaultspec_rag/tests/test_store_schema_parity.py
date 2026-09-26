@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from .._markdown_passages import Passage
 from .._store_models import (
     CodeChunk,
     VaultChunk,
@@ -66,6 +67,11 @@ def _vault_chunk(ordinal: int, doc_content: str | None) -> VaultChunk:
         title="Overview",
         status="accepted",
         doc_content=doc_content,
+        body_line=9,
+        line_start=20,
+        line_end=21,
+        section="Decision",
+        passages=(Passage(0, 10, 20, 21, "Decision"),),
     )
 
 
@@ -84,6 +90,19 @@ def test_vault_chunk_payload_non_zero_ordinal_omits_doc_content() -> None:
         "title": "Overview",
         "status": "accepted",
         "content": "chunk text",
+        "body_line": 9,
+        "line_start": 20,
+        "line_end": 21,
+        "section": "Decision",
+        "passages": [
+            {
+                "start": 0,
+                "end": 10,
+                "line_start": 20,
+                "line_end": 21,
+                "section": "Decision",
+            }
+        ],
     }
     assert "doc_content" not in payload
 
@@ -105,6 +124,11 @@ def test_vault_chunk_payload_ordinal_zero_carries_doc_content() -> None:
         "title",
         "status",
         "content",
+        "body_line",
+        "line_start",
+        "line_end",
+        "section",
+        "passages",
         "doc_content",
     }
 

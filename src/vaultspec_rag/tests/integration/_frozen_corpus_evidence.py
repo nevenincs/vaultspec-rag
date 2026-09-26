@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
     from ...embeddings import EmbeddingModel
-    from ...search import SearchResult
+    from ...search import SearchResult, VaultSearcher
 
 #: Depth the intent gate scores to, and the ``top_k`` its searches request.
 NDCG_K = 10
@@ -52,7 +52,12 @@ AUTHORITATIVE_GRADE = 3
 #: Depth a persona actually reads, and the ``top_k`` testimonial searches request.
 TESTIMONIAL_TOP_K = 5
 
-_QUERYSET = Path(__file__).resolve().parents[1] / "quality" / "intent_queries.toml"
+#: The ``top_k`` evidence searches request; the depth an agent's page holds.
+EVIDENCE_TOP_K = 10
+
+_QUALITY_DIR = Path(__file__).resolve().parents[1] / "quality"
+_QUERYSET = _QUALITY_DIR / "intent_queries.toml"
+_EVIDENCE_CASES = _QUALITY_DIR / "evidence_queries.toml"
 
 # A single labeled query: ``text``, ``intent``, and a list of ``{doc_id, grade}``.
 type Query = dict[str, object]
@@ -113,6 +118,45 @@ class TestimonialEvidence(TypedDict):
     observed_top: list[str]
 
 
+class EvidenceGold(TypedDict):
+    """One labelled answer: the record, its nearest heading, the verbatim span."""
+
+    doc_id: str
+    section: str
+    evidence: str
+
+
+class EvidenceCase(TypedDict):
+    """One evidence-labelled query, authored from the documents alone."""
+
+    id: str
+    query: str
+    gold: list[EvidenceGold]
+
+
+class EvidenceHit(TypedDict):
+    """One returned vault hit as a caller sees it.
+
+    ``span_text`` is the materialised file's own text at the reported line
+    span, read independently of the searcher, or ``None`` when the hit
+    reports no span.
+    """
+
+    doc_id: str
+    snippet: str
+    section: str | None
+    line_start: int | None
+    line_end: int | None
+    span_text: str | None
+
+
+class EvidenceObservation(TypedDict):
+    """One evidence case's real result page."""
+
+    case_id: str
+    hits: list[EvidenceHit]
+
+
 class FrozenCorpusEvidence(TypedDict):
     """Serializable evidence produced by the bounded real-GPU worker."""
 
@@ -120,6 +164,7 @@ class FrozenCorpusEvidence(TypedDict):
     indexed_documents: int
     queries: list[QueryEvidence]
     testimonials: list[TestimonialEvidence]
+    evidence: list[EvidenceObservation]
 
 
 def repo_root() -> Path:
@@ -136,6 +181,26 @@ def load_queries() -> list[Query]:
     """Load the labeled query set; each entry has text, intent, and gold."""
     data = tomllib.loads(_QUERYSET.read_text(encoding="utf-8"))
     return cast("list[Query]", data.get("query", []))
+
+
+def load_evidence_cases() -> list[EvidenceCase]:
+    """Load the evidence-labelled cases; each names its gold records and spans."""
+    data = tomllib.loads(_EVIDENCE_CASES.read_text(encoding="utf-8"))
+    return [
+        EvidenceCase(
+            id=str(case["id"]),
+            query=str(case["query"]),
+            gold=[
+                EvidenceGold(
+                    doc_id=str(gold["doc_id"]),
+                    section=str(gold["section"]),
+                    evidence=str(gold["evidence"]),
+                )
+                for gold in case["gold"]
+            ],
+        )
+        for case in data.get("case", [])
+    ]
 
 
 def gold_map(query: Query) -> dict[str, int]:
@@ -199,12 +264,47 @@ def _copy_real_vault_corpus(destination_root: Path) -> int:
     )
     (destination_root / ".vaultspec").mkdir(parents=True, exist_ok=True)
 
-    for query in load_queries():
-        for doc_id in gold_map(query):
-            if not (destination_vault / f"{doc_id}.md").is_file():
-                msg = f"labeled document absent from intent corpus: {doc_id}"
-                raise RuntimeError(msg)
+    labelled = [doc_id for query in load_queries() for doc_id in gold_map(query)]
+    labelled += [
+        gold["doc_id"] for case in load_evidence_cases() for gold in case["gold"]
+    ]
+    for doc_id in labelled:
+        if not (destination_vault / f"{doc_id}.md").is_file():
+            msg = f"labeled document absent from the frozen corpus: {doc_id}"
+            raise RuntimeError(msg)
     return real_vault_document_count(destination_vault)
+
+
+def _span_text(root: Path, result: SearchResult) -> str | None:
+    """Read the file's own lines at a hit's reported span, or ``None``."""
+    if result.line_start is None or result.line_end is None:
+        return None
+    lines = (root / result.path).read_text(encoding="utf-8").splitlines()
+    return "\n".join(lines[result.line_start - 1 : result.line_end])
+
+
+def _observe_evidence(root: Path, searcher: VaultSearcher) -> list[EvidenceObservation]:
+    """Run every evidence case and record each hit as a caller receives it."""
+    observations: list[EvidenceObservation] = []
+    for case in load_evidence_cases():
+        results = searcher.search_vault(case["query"], top_k=EVIDENCE_TOP_K)
+        observations.append(
+            EvidenceObservation(
+                case_id=case["id"],
+                hits=[
+                    EvidenceHit(
+                        doc_id=result.id,
+                        snippet=result.snippet,
+                        section=result.section,
+                        line_start=result.line_start,
+                        line_end=result.line_end,
+                        span_text=_span_text(root, result),
+                    )
+                    for result in results
+                ],
+            )
+        )
+    return observations
 
 
 def build_frozen_corpus_evidence(
@@ -269,6 +369,7 @@ def build_frozen_corpus_evidence(
             indexed_documents=components["index_result"].total,
             queries=query_evidence,
             testimonials=testimonial_evidence,
+            evidence=_observe_evidence(root, searcher),
         )
     finally:
         # Releases the local-Qdrant sqlite handles; on Windows an open handle

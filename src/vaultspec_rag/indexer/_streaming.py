@@ -18,6 +18,7 @@ from ..job_control import NO_RUN_CONTROL
 from ._slicing import (
     code_embed_text,
     document_embed_text,
+    vault_embed_text,
 )
 from ._streaming_types import (
     CodebaseStreamRequest,
@@ -580,9 +581,7 @@ def _encode_and_upsert_vault_slice(request: _VaultSliceRequest) -> None:
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
                 chunks=request.slice_chunks,
-                slice_texts=[
-                    f"{chunk.title}\n\n{chunk.text}" for chunk in request.slice_chunks
-                ],
+                slice_texts=[vault_embed_text(chunk) for chunk in request.slice_chunks],
                 model=request.model,
                 gpu_lock=request.gpu_lock,
                 sparse_enabled=request.sparse_enabled,
@@ -783,10 +782,7 @@ def _stream_encode_and_upsert_vault(request: VaultStreamRequest) -> dict[str, in
     # slice's worst-case padding cost.
     chunks = split_documents(request.docs, chunk_chars, run_control=request.run_control)
     chunk_counts = {c.doc_id: c.chunk_count for c in chunks}
-    sorted_chunks = sorted(
-        chunks,
-        key=lambda c: -(len(c.title) + len(c.text)),
-    )
+    sorted_chunks = sorted(chunks, key=lambda c: -len(vault_embed_text(c)))
 
     # Same fail-fast contract as the codebase path: refuse a run the
     # store volume cannot absorb before any encoding starts.

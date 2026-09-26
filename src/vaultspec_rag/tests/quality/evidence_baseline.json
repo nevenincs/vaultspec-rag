@@ -1,0 +1,28 @@
+{
+  "note": "Floors for the vault evidence gate over the frozen corpus and the blind evidence query set. Each floor sits one case (1/36) below the latest measurement, to absorb run-to-run GPU nondeterminism; a floor only ever rises.",
+  "floors": {
+    "hit_at_1": 0.5,
+    "mrr": 0.63,
+    "evidence_in_snippet": 0.38,
+    "section_match": 0.47
+  },
+  "measurements": {
+    "chunk_head_snippet": {
+      "note": "Snippet = first 200 characters of the winning chunk; vault hits carry no line span.",
+      "cases": 36,
+      "hit_at_1": 0.5278,
+      "mrr": 0.6651,
+      "evidence_in_snippet": 0.0,
+      "hits_with_span": 0
+    },
+    "query_selected_passage": {
+      "note": "Snippet = the reranker's best passage from each result's winning and runner-up chunks, with its file line span and section; fp16 reranker.",
+      "cases": 36,
+      "hit_at_1": 0.5278,
+      "mrr": 0.6651,
+      "evidence_in_snippet": 0.4167,
+      "section_match": 0.5,
+      "hits_with_span": 360
+    }
+  }
+}

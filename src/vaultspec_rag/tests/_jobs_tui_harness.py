@@ -588,6 +588,18 @@ def _requested_state(handler: http.server.BaseHTTPRequestHandler) -> object:
     return fields.get("state")
 
 
+class _HarnessWatchApp(ServerWatchApp):
+    """The production interface, with toasts held for the whole paint wait.
+
+    A toast is removed on a timer that runs from when it was raised, and a
+    loaded runner can stall this loop past the shipped timeout between the
+    keypress and the next sampled frame. The toast is then gone before any
+    frame saw it, and a refusal that was answered reads as never painted.
+    """
+
+    NOTIFICATION_TIMEOUT = _HANDOFF_TIMEOUT
+
+
 def _app(
     service: _JobService,
     jobs: list[dict[str, object]] | None = None,
@@ -605,7 +617,7 @@ def _app(
 
     # A long interval keeps the periodic refresh out of the way; every test
     # drives the first load explicitly.
-    return ServerWatchApp(
+    return _HarnessWatchApp(
         fetch=fetch,
         port=service.port,
         interval=interval,

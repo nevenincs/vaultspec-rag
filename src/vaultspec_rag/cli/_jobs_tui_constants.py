@@ -101,16 +101,16 @@ ACTION_REASONS: dict[str, str] = {
 # not go dead just because the pane is not on screen.
 LOG_CLOSED_REASON = "The log pane is closed - press l to open it."
 
-# Header counters, as (label, the canonical state they count). The service
-# tallies these over every record matching the filter; the same names index
-# both its summary and a record's own ``state``, so the fallback tally of the
-# page on screen is the same reading of the same field.
-SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
-    ("running", "running"),
-    ("queued", "queued"),
-    ("paused", "paused"),
-    ("failed", "failed"),
-    ("succeeded", "succeeded"),
+# Header counters, as the canonical states they count. The service tallies
+# these over every record matching the filter; the same names index both its
+# summary and a record's own ``state``, so the fallback tally of the page on
+# screen is the same reading of the same field.
+SUMMARY_BUCKETS: tuple[JobState, ...] = (
+    JobState.RUNNING,
+    JobState.QUEUED,
+    JobState.PAUSED,
+    JobState.FAILED,
+    JobState.SUCCEEDED,
 )
 
 # Header pills. One anatomy for every pill - glyph, count, then (width
@@ -126,7 +126,7 @@ SUMMARY_BUCKETS: tuple[tuple[str, str], ...] = (
 # while the job-health tallies use an escalating warning-triangle family
 # (△ hollow for degraded, ▲ solid for stalled) that cannot be misread as a
 # state.
-STATE_PILLS: dict[str, tuple[str, str, str, str, bool]] = {
+STATE_PILLS: dict[JobState, tuple[str, str, str, str, bool]] = {
     # state -> (glyph, ASCII fallback, label, tone, bold)
     JobState.RUNNING: ("▶", ">", "running", "good", True),
     JobState.QUEUED: ("⋯", "..", "queued", "neutral", False),
@@ -134,8 +134,8 @@ STATE_PILLS: dict[str, tuple[str, str, str, str, bool]] = {
     JobState.FAILED: ("✖", "x", "failed", "bad", True),
     JobState.SUCCEEDED: ("✓", "v", "succeeded", "good", False),
 }
-# The residue bucket for states without a pill of their own; the label is
-# the state name the tally reported.
+# The residue bucket for states without a pill of their own, labelled
+# "other".
 OTHER_PILL_GLYPHS = ("□", "?")
 
 # Job-health tallies the service publishes beside the state counts. Shown

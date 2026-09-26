@@ -682,6 +682,13 @@ class _UnhealthyHandler(QuietHandler):
         self.end_headers()
 
 
+# Bound for a probe whose stub answers at once. The shipped health bound is a few
+# seconds, and a loaded runner can stall a stub's reply thread past that, which
+# turns an answered probe into the timeout outcome and fails the assertion on
+# the answer. A stub that answers never waits this long, so it costs nothing.
+_ANSWERED_PROBE_TIMEOUT_SECONDS = 60.0
+
+
 @pytest.mark.usefixtures("isolated_status_dir")
 class TestHealthProbeContract:
     """The health owner reports four outcomes and raises for none of them.
@@ -697,13 +704,13 @@ class TestHealthProbeContract:
 
         server, port = _serve(_HealthyHandler)
         try:
-            result = _try_http_health(port)
+            result = _try_http_health(port, timeout=_ANSWERED_PROBE_TIMEOUT_SECONDS)
         finally:
             server.shutdown()
             server.server_close()
 
         assert result is not None
-        assert result["status"] == "ready"
+        assert result["status"] == "ready", result
         assert result["service_token"] == "live-token"
 
     def test_unhealthy_service_is_distinguished_from_unreachable(self) -> None:
@@ -711,7 +718,7 @@ class TestHealthProbeContract:
 
         server, port = _serve(_UnhealthyHandler)
         try:
-            result = _try_http_health(port)
+            result = _try_http_health(port, timeout=_ANSWERED_PROBE_TIMEOUT_SECONDS)
         finally:
             server.shutdown()
             server.server_close()
@@ -719,8 +726,8 @@ class TestHealthProbeContract:
         # Answered, so not the unreachable sentinel - a caller must be able to
         # tell a sick daemon from an absent one.
         assert result is not None
-        assert result["status"] == "error"
-        assert result["http_code"] == 503
+        assert result["status"] == "error", result
+        assert result.get("http_code") == 503, result
 
     def test_unreachable_service_returns_the_sentinel(self, refused_port: int) -> None:
         from ..serviceclient._transport import _try_http_health

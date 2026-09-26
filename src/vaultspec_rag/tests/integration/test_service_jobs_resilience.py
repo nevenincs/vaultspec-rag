@@ -260,6 +260,7 @@ def _assert_resilience_health(
         return
     last_failed = cast("dict[str, object]", health_jobs["last_failed"])
     assert last_failed["id"] == job_id
+    assert last_failed["source"] == "code"
     assert last_failed["error_kind"] == error_kind.value
 
 

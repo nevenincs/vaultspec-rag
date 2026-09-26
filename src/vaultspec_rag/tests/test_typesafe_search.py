@@ -201,7 +201,9 @@ def test_zero_or_filter_only_search_never_attempts_classification(
 def test_classification_widens_and_scores_full_content_before_truncation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, surface: str
 ) -> None:
-    full_content = "# context\n" * 40 + "useful retry implementation"
+    # Longer than any snippet bound (a vault passage runs to 1,200 characters),
+    # so text the classifier saw beyond it cannot also be in the snippet.
+    full_content = "# context\n" * 130 + "useful retry implementation"
     rows = [_row(i) for i in range(5)] + [_row(5, content=full_content)]
     searcher, _store = _searcher(monkeypatch, tmp_path, rows)
     session = _Session()

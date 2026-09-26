@@ -20,9 +20,10 @@ from vaultspec_core.vaultcore import (
     parse_vault_metadata,
 )
 
+from .._markdown_passages import parse_markdown
 from .._store_models import VaultChunk, VaultDocument
 from ..job_control import NO_RUN_CONTROL
-from ._chunking import TextSplitter
+from ._chunking import TextSplitter, locate_pieces
 
 if TYPE_CHECKING:
     import pathlib
@@ -195,6 +196,11 @@ def split_document(
     document findable by its title and metadata. The ordinal-0 chunk
     carries the full body so retrieval-by-id stays byte-exact.
 
+    Each chunk also carries where it sits in the file - its line span and
+    the section it opens under - and the answer-sized passages inside it,
+    taken from one pass over the whole body so fence and heading state is
+    known at every chunk boundary.
+
     Args:
         doc: Prepared document (vector fields are ignored).
         chunk_chars: Maximum characters per chunk.
@@ -207,28 +213,43 @@ def split_document(
         chunk_overlap=0,
         language="markdown",
     )
-    pieces = [p for p in splitter.split_text(doc.content) if p.strip()]
-    if not pieces:
-        pieces = [doc.content]
-    chunk_count = len(pieces)
-    return [
-        VaultChunk(
-            doc_id=doc.id,
-            ordinal=ordinal,
-            chunk_count=chunk_count,
-            text=piece,
-            path=doc.path,
-            doc_type=doc.doc_type,
-            feature=doc.feature,
-            date=doc.date,
-            tags=doc.tags,
-            related=doc.related,
-            title=doc.title,
-            status=doc.status,
-            doc_content=doc.content if ordinal == 0 else None,
+    split = splitter.split_text(doc.content)
+    located = [
+        (piece, offset)
+        for piece, offset in zip(
+            split, locate_pieces(doc.content, split, label=doc.path), strict=True
         )
-        for ordinal, piece in enumerate(pieces)
-    ]
+        if piece.strip()
+    ] or [(doc.content, 0)]
+    structure = parse_markdown(doc.content, first_line=doc.body_line)
+    chunks: list[VaultChunk] = []
+    for ordinal, (piece, offset) in enumerate(located):
+        end = offset + len(piece)
+        passages = structure.clip(offset, end)
+        lines = structure.span_lines(offset, end) or (doc.body_line, doc.body_line)
+        chunks.append(
+            VaultChunk(
+                doc_id=doc.id,
+                ordinal=ordinal,
+                chunk_count=len(located),
+                text=piece,
+                path=doc.path,
+                doc_type=doc.doc_type,
+                feature=doc.feature,
+                date=doc.date,
+                tags=doc.tags,
+                related=doc.related,
+                title=doc.title,
+                status=doc.status,
+                doc_content=doc.content if ordinal == 0 else None,
+                body_line=doc.body_line,
+                line_start=lines[0],
+                line_end=lines[1],
+                section=passages[0].section if passages else structure.section_at(end),
+                passages=passages,
+            )
+        )
+    return chunks
 
 
 def _split_document_batch(
@@ -410,6 +431,7 @@ def vault_document_from_text(
     title = _extract_title(body)
     if not title:
         title = path.stem
+    stripped = body.strip()
 
     feature = _extract_feature(metadata.tags)
 
@@ -427,6 +449,21 @@ def vault_document_from_text(
         related=metadata.related,
         title=title,
         status=_extract_status(body),
-        content=body.strip(),
+        content=stripped,
+        body_line=_body_first_line(content, body, stripped),
         vector=[],  # filled during embedding step
     )
+
+
+def _body_first_line(content: str, body: str, stripped: str) -> int:
+    """Return the 1-based file line on which the stripped body begins.
+
+    The body is the file's tail after the frontmatter, so its start is found
+    from the end; a body that is not a suffix (a leading byte-order mark
+    dropped by the parser) is located by search instead.
+    """
+    if content.endswith(body):
+        start = len(content) - len(body) + (len(body) - len(body.lstrip()))
+    else:
+        start = max(content.find(stripped), 0)
+    return content.count("\n", 0, start) + 1

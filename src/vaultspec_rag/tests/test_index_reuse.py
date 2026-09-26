@@ -539,6 +539,49 @@ class TestVaultChunkIdentity:
         assert fresh.vector == []
         assert context.stats.reuse_misses == 1
 
+    def test_identical_text_under_another_title_is_a_miss(
+        self, store: VaultStore
+    ) -> None:
+        # The document title shapes a vault vector as much as the text does,
+        # so a donor that shares only the text was encoded from other input.
+        # Comparing the text alone adopts it, and this assertion is what fails.
+        donor = VaultChunk(
+            doc_id="adr/2026-01-01-x-adr",
+            ordinal=1,
+            chunk_count=2,
+            text="shared paragraph text",
+            path="adr/2026-01-01-x-adr.md",
+            doc_type="adr",
+            feature="x",
+            date="2026-01-01",
+            tags=["#adr", "#x"],
+            related=[],
+            title="renamed adr",
+            vector=_donor_dense(23),
+            sparse_indices=[23],
+            sparse_values=[1.0],
+        )
+        store.upsert_document_chunks([donor], write_policy=None)
+        fresh = VaultChunk(
+            doc_id=donor.doc_id,
+            ordinal=1,
+            chunk_count=2,
+            text=donor.text,
+            path=donor.path,
+            doc_type=donor.doc_type,
+            feature=donor.feature,
+            date=donor.date,
+            tags=list(donor.tags),
+            related=[],
+            title="x adr",
+        )
+        context = _context(store, store.TABLE_NAME)
+
+        adopted = context.adopt_verified_vectors([fresh], sparse_required=True)
+
+        assert adopted == [False]
+        assert fresh.vector == []
+
 
 class TestResolveTelemetry:
     def test_knob_on_with_no_donors_records_donor_absent(

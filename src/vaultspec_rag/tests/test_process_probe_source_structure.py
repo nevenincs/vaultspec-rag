@@ -420,6 +420,10 @@ class TestNoStructurallyIdenticalFunctions:
             "serviceclient/_compat.py:to_dict",
         ): _OWN_FIELDS_AS_JSON,
         (
+            "_store_models.py:vault_indexed_metadata",
+            "job_models.py:_runtime_to_dict",
+        ): _SERIALISATION,
+        (
             "_readiness.py:dimension",
             "cli/_jobs_tui_status.py:seat_pool",
             "commands/_provision.py:result_for",

@@ -28,6 +28,7 @@ __all__ = [
     "ParserSelection",
     "TextSplitter",
     "_is_binary",
+    "locate_pieces",
     "select_parser",
 ]
 
@@ -160,6 +161,31 @@ class TextSplitter:
             else:
                 processed.append(c)
         return processed
+
+
+def locate_pieces(source: str, pieces: list[str], *, label: str) -> list[int]:
+    """Return the offset of each zero-overlap splitter piece within *source*.
+
+    Pieces are found verbatim, in order, each at or after the end of the one
+    before, which is what makes line numbers and passage spans derivable from
+    them. A piece absent from that position means the splitter no longer
+    reproduces its input, and every span computed from it would be wrong.
+
+    Raises:
+        RuntimeError: When a piece is not found verbatim after its predecessor.
+    """
+    offsets: list[int] = []
+    cursor = 0
+    for piece in pieces:
+        offset = source.find(piece, cursor)
+        if offset == -1:
+            raise RuntimeError(
+                "zero-overlap TextSplitter returned a chunk absent from "
+                f"{label} at or after offset {cursor}"
+            )
+        offsets.append(offset)
+        cursor = offset + len(piece)
+    return offsets
 
 
 # ---------------------------------------------------------------------------

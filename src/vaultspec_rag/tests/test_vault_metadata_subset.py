@@ -15,6 +15,7 @@ digest.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,7 +28,10 @@ from .._store_models import (
     vault_indexed_metadata,
     vault_metadata_digest,
 )
-from ..indexer._vault_prep import split_document
+from ..indexer._vault_prep import split_document, vault_document_from_text
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -112,6 +116,7 @@ class TestSubsetPartitionsThePayload:
             "related": replace(_doc(), related=[]),
             "title": replace(_doc(), title="renamed adr"),
             "status": replace(_doc(), status="superseded"),
+            "body_line": replace(_doc(), body_line=12),
         }
         assert set(mutated) == set(vault_indexed_metadata(_doc())), (
             "the subset gained or lost a field this test does not mutate"
@@ -146,3 +151,21 @@ class TestCanonicalisation:
         baseline = vault_metadata_digest(_doc())
         reordered = replace(_doc(), tags=["#sample-feature", "#adr"])
         assert vault_metadata_digest(reordered) != baseline
+
+    def test_a_frontmatter_line_over_an_unchanged_body_moves_the_digest(
+        self, tmp_path: Path
+    ) -> None:
+        """Stored line spans shift with the frontmatter, so a refresh must run."""
+        path = tmp_path / ".vault" / "adr" / "2026-07-25-sample-adr.md"
+        path.parent.mkdir(parents=True)
+        head = "---\ntags:\n  - '#adr'\n  - '#sample'\ndate: '2026-07-25'\n"
+        body = "---\n\n# sample adr\n\nA body that stays put.\n"
+        before = vault_document_from_text(path, tmp_path, head + body)
+        after = vault_document_from_text(
+            path, tmp_path, head + "body_hash: 'sha256:0'\n" + body
+        )
+        assert before is not None
+        assert after is not None
+        assert after.content == before.content
+        assert after.body_line == before.body_line + 1
+        assert vault_metadata_digest(after) != vault_metadata_digest(before)

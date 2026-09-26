@@ -31,7 +31,7 @@ from ._streaming_types import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-    from .._store_models import CodeChunk, DocumentChunk
+    from .._store_models import CodeChunk, DocumentChunk, VaultChunk
     from ..job_control import RunControl
 
 
@@ -555,3 +555,22 @@ def document_embed_text(chunk: DocumentChunk) -> str:
     if payload.section:
         context.append(payload.section)
     return _embed_text(context, payload.content)
+
+
+def vault_embed_input(title: str, text: str) -> str:
+    """Compose a vault chunk's embedding input: its document title, then its text.
+
+    Built from plain values so donor verification can rebuild the same input
+    from a stored payload and compare it exactly.
+
+    The chunk's section path is deliberately left out. It improves no ranking
+    or evidence measure, full or leaf, and its words compete with the record's
+    own text for the reranked candidate window: on a small page they can push
+    the record a query is about out of that window entirely.
+    """
+    return f"{title}\n\n{text}"
+
+
+def vault_embed_text(chunk: VaultChunk) -> str:
+    """Build the embedding input for a vault chunk."""
+    return vault_embed_input(chunk.title, chunk.text)

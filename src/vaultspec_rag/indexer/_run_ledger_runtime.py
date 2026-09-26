@@ -337,7 +337,20 @@ class RunLedger(
         self,
         connection: sqlite3.Connection,
     ) -> None:
-        """Refuse non-current durable state before journal-mode mutation."""
+        """Refuse non-current durable state before journal-mode mutation.
+
+        The version and the schema objects are read from one snapshot. Read
+        separately, a peer creating the schema can commit between them, and a
+        fresh file then reads as tables without a version: a pre-proof database
+        demanding a rebuild it does not need.
+        """
+        connection.execute("BEGIN")
+        try:
+            self._check_current_or_empty_schema(connection)
+        finally:
+            connection.rollback()
+
+    def _check_current_or_empty_schema(self, connection: sqlite3.Connection) -> None:
         version_row: sqlite3.Row | None = fetch_one(connection, "PRAGMA user_version")
         assert version_row is not None
         version = column_int(version_row, 0)
@@ -375,21 +388,15 @@ class RunLedger(
         if version == SCHEMA_VERSION:
             self._verify_schema(connection)
             return
-        object_row: sqlite3.Row | None = fetch_one(
-            connection,
-            "SELECT 1 FROM sqlite_master LIMIT 1",
-        )
-        if version != 0 or object_row is not None:
-            raise RunLedgerRebuildRequiredError(
-                "run ledger changed before current-schema creation; "
-                "an explicit rebuild is required"
-            )
+        # Everything else is decided under the write lock: a peer may finish
+        # creating the schema at any moment before it, and only a read inside
+        # the lock sees the version and the tables together.
         connection.execute("BEGIN IMMEDIATE")
         try:
             version_row = fetch_one(connection, "PRAGMA user_version")
             assert version_row is not None
             version = column_int(version_row, 0)
-            object_row = fetch_one(
+            object_row: sqlite3.Row | None = fetch_one(
                 connection,
                 "SELECT 1 FROM sqlite_master LIMIT 1",
             )

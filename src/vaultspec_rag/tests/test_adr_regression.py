@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import ast
 import typing
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from ._import_probe import assert_fresh_import_excludes
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -185,6 +182,52 @@ class TestEmbeddingModelLoadArguments:
         ]
         assert "torch_dtype" in keys
         assert "use_safetensors" not in keys
+
+
+def _constructs(path: Path, class_name: str) -> bool:
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id == class_name) or (
+            isinstance(func, ast.Attribute) and func.attr == class_name
+        ):
+            return True
+    return False
+
+
+@pytest.mark.unit
+class TestRerankerConstruction:
+    """The reranker has one construction site, and it loads in half precision."""
+
+    def test_reranker_loads_in_half_precision(self):
+        import inspect
+        import textwrap
+
+        from ..embeddings import load_reranker
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(load_reranker)))
+        kwargs = TestEmbeddingModelLoadArguments._call_kwargs(tree, "CrossEncoder")
+        model_kwargs = kwargs["model_kwargs"]
+        assert isinstance(model_kwargs, ast.Dict)
+        dtypes = [
+            ast.unparse(value)
+            for key, value in zip(model_kwargs.keys, model_kwargs.values, strict=True)
+            if isinstance(key, ast.Constant) and key.value == "torch_dtype"
+        ]
+        assert dtypes == ["torch.float16"]
+
+    def test_only_one_module_constructs_the_reranker(self):
+        package = Path(__file__).resolve().parents[1]
+        constructors = sorted(
+            path.relative_to(package).as_posix()
+            for path in package.rglob("*.py")
+            if "tests" not in path.relative_to(package).parts
+            and _constructs(path, "CrossEncoder")
+        )
+        # A second site is how the service and a standalone searcher once
+        # loaded the reranker at different precisions.
+        assert constructors == ["embeddings.py"]
 
 
 class TestThreadingLock:

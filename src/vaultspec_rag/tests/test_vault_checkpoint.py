@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from .._job_errors import JobError, JobErrorKind
 from .._store_models import VaultChunk
+from ..indexer import _vault_checkpoint
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
 from ..indexer._run_ledger_publication import compatibility_for_signature
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
@@ -51,6 +53,57 @@ def test_vault_rebuild_establishes_proof_from_confirmed_chunk_units(
     assert proof.aggregate.indexed_identities == 1
     assert proof.aggregate.retained_points == 2
     checkpoint.publish_generation()
+
+
+def test_an_incremental_run_without_a_compatible_proof_asks_for_a_rebuild(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(JobError) as refused:
+        VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity="backend-v1",
+            authority=RunAuthority.PUBLICATION,
+            operation=RunOperation.INCREMENTAL,
+            run_control=NO_RUN_CONTROL,
+        )
+    assert refused.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert "vaultspec-rag index --rebuild --type vault" in str(refused.value)
+
+
+def test_a_proof_from_an_older_point_schema_asks_for_a_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An index built before the current chunk payload shape is not carried on."""
+    # Only an older build writes an older-schema proof; lowering the constant
+    # for this one rebuild lets the real ledger record it and then refuse it.
+    monkeypatch.setattr(
+        _vault_checkpoint,
+        "VAULT_POINT_SCHEMA",
+        _vault_checkpoint.VAULT_POINT_SCHEMA - 1,
+    )
+    older = VaultRunCheckpoint.open(
+        tmp_path,
+        backend_identity="backend-v1",
+        authority=RunAuthority.REBUILD,
+        operation=RunOperation.FULL,
+        run_control=NO_RUN_CONTROL,
+    )
+    older.record_confirmed_chunks(
+        [_chunk("docs/a", 0, 1)], {"docs/a": hashlib.blake2b(b"docs/a").hexdigest()}
+    )
+    assert older.publish_proof_transition() == 1
+    older.publish_generation()
+    monkeypatch.undo()
+
+    with pytest.raises(JobError) as refused:
+        VaultRunCheckpoint.open(
+            tmp_path,
+            backend_identity="backend-v1",
+            authority=RunAuthority.PUBLICATION,
+            operation=RunOperation.INCREMENTAL,
+            run_control=NO_RUN_CONTROL,
+        )
+    assert refused.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
 def test_vault_rebuild_accepts_length_sorted_chunk_batches(tmp_path: Path) -> None:
