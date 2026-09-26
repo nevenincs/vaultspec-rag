@@ -817,6 +817,36 @@ def test_the_refusal_names_what_each_holder_is_and_how_to_clear_it(
     assert "-m vaultspec_rag.server" in detail
 
 
+def test_a_holder_under_a_long_path_still_shows_what_it_is_running(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """The arguments identify a holder; the interpreter path does not.
+
+    An environment nested deep enough pushed every argument past the point
+    where the line was cut, leaving a list of identical interpreter paths and
+    an operator with no way to tell the service from a stranger's script.
+
+    Mutation check: cut the line at the head again. Observed this assertion
+    fail on the module arguments being absent from the refusal, with the line
+    ending in the middle of the interpreter's directory.
+    """
+    deep = tmp_path.joinpath(*[f"a-long-directory-component-{n}" for n in range(6)])
+    image = str(deep / "Scripts" / "python.exe")
+    monkeypatch.setattr(
+        "vaultspec_rag._process_probe.iter_process_info",
+        _process_table(
+            _holder_row(
+                901, image, [image, "-m", "vaultspec_rag.server", "--port", "8776"]
+            )
+        ),
+    )
+
+    detail = _refusal_detail(tmp_path)
+
+    assert len(image) > 160, "this case only bites when the path is long"
+    assert "-m vaultspec_rag.server --port 8776" in detail
+
+
 def test_the_refusal_counts_the_processes_it_could_not_inspect(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:

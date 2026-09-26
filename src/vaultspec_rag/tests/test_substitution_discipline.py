@@ -298,7 +298,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "contract, and passed against a real load added one frame down",
     ),
     "test_tool_torch_repair.py": (
-        28,
+        29,
         "the persistent uv tool interpreter and machine singleton cannot be "
         "safely forced through a CUDA repair during a test: that would install "
         "packages into the developer's own tool environment, which is how a "
