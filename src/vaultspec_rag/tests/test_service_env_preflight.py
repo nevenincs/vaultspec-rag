@@ -29,7 +29,7 @@ from ..operator_state._provisioning import (
     published_wheel_platform_tag,
     tool_repair_commands,
     tool_upgrade_commands,
-    upgrade_command_for_mode,
+    upgrade_commands_for_mode,
 )
 from ..operator_state._topology import (
     TOOL_RECEIPT_NAME,
@@ -312,7 +312,7 @@ class TestTheReceiptCarriesTheCudaSource:
             *remediation.repair_commands,
             *remediation.upgrade_commands,
             str(classify_tool_receipt(interpreter).fix(interpreter)),
-            upgrade_command_for_mode("tool", interpreter),
+            *upgrade_commands_for_mode("tool", interpreter),
         )
 
         for command in offered:
@@ -525,9 +525,8 @@ class TestUpgradeCommands:
     def test_a_project_installation_upgrades_through_its_lockfile(self) -> None:
         """Only a standalone tool needs the receipt-aware form."""
         for mode in ("dependency", "dev"):
-            assert (
-                upgrade_command_for_mode(mode, sys.executable)
-                == "uv sync --upgrade-package vaultspec-rag"
+            assert upgrade_commands_for_mode(mode, sys.executable) == (
+                "uv sync --upgrade-package vaultspec-rag",
             )
 
 

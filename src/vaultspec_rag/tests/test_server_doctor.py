@@ -222,16 +222,17 @@ def test_doctor_floor_advice_names_a_command_that_upgrades(
     result = runner.invoke(app, ["server", "doctor"])
     envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
 
-    # This installation's receipt carries no CUDA source, so the bare verb
-    # would move the release and drop the GPU build; the repair with a full
-    # upgrade does both at once.
-    assert "uv tool upgrade vaultspec-rag" not in result.stdout
+    # This installation's receipt carries no CUDA source, so the sequence
+    # records it first and then upgrades: the bare verb alone would move the
+    # release and drop the GPU build with it.
+    commands = envelope["data"]["mode"]["upgrade_commands"]
+    assert "--index-strategy unsafe-first-match" in commands[0]
+    assert commands[1] == "uv tool upgrade vaultspec-rag"
+    assert "server stop" in commands[-1]
+    # The envelope carries what the human output shows, so a broker is not
+    # left reading a floor error it cannot act on.
     assert "--index-strategy unsafe-first-match" in result.stdout
-    assert "--upgrade" in result.stdout
-    # The envelope carries the same command, so a broker is not left reading
-    # a floor error it cannot act on.
-    command = envelope["data"]["mode"]["upgrade_command"]
-    assert "--index-strategy unsafe-first-match" in command
+    assert "uv tool upgrade vaultspec-rag" in result.stdout
 
 
 def test_doctor_weights_mode_mismatch_as_warning(

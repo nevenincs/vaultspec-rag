@@ -52,7 +52,7 @@ __all__ = [
     "tool_repair_steps",
     "tool_swap_arguments",
     "tool_upgrade_commands",
-    "upgrade_command_for_mode",
+    "upgrade_commands_for_mode",
 ]
 
 #: The tool request a CUDA repair falls back to when the receipt records none.
@@ -546,17 +546,18 @@ def restart_service_command() -> str:
     return f"{server_stop_command()} && {server_start_command()}"
 
 
-def upgrade_command_for_mode(mode: str, interpreter: str) -> str:
-    """The upgrade command for an installation declared in *mode*.
+def upgrade_commands_for_mode(mode: str, interpreter: str) -> tuple[str, ...]:
+    """The commands that upgrade an installation declared in *mode*, in order.
 
     A project installation is upgraded through its own lockfile, whatever
-    group it sits in; only a standalone tool needs the receipt-aware form.
-    *mode* is the declared provisioning mode as it is recorded in the
-    workspace declaration.
+    group it sits in; only a standalone tool needs the receipt-aware
+    sequence, which is more than one command whenever its receipt does not
+    yet carry the CUDA source. *mode* is the declared provisioning mode as it
+    is recorded in the workspace declaration.
     """
     if mode == "tool":
-        return tool_upgrade_commands(interpreter)[0]
-    return f"uv sync --upgrade-package {Requirement(_HOST_TOOL_REQUEST).name}"
+        return tool_upgrade_commands(interpreter)
+    return (f"uv sync --upgrade-package {Requirement(_HOST_TOOL_REQUEST).name}",)
 
 
 def inplace_cuda_command(interpreter: str) -> str:

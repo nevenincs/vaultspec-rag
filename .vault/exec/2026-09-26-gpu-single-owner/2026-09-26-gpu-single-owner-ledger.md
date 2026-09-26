@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:e79eb7b4a5cc1a48361e72e085db1fc9a321864220221231bf04dab7fa52795b'
+body_hash: 'sha256:6b0dfcee18acb6f7aa7b77ebfef734eeab4145cc77dbdf7b868bd454fa558b98'
 related:
   - "[[2026-09-26-gpu-single-owner-plan]]"
 ---
@@ -305,6 +305,10 @@ related:
 - `S20` `verify:` `tools/check_docs_version.py` -> `pass`
 - `S20` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
 - `S20` `by:` `vaultspec-high-executor`
+- `S16` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S16` `verify:` `pytest test_server_doctor test_service_env_preflight test_doctor_repair_and_holders` -> `pass`
+- `S16` `verify:` `guard mutation (floor advice reduced to the bare upgrade verb) fails then passes` -> `pass`
 
 ## Notes
 
@@ -327,3 +331,4 @@ related:
 - `S12` correction: the repair runner read uv's output under the ambient encoding, which the shipped-module decoding guard forbids; both subprocess reads now state utf-8 with replacement. The full unit tier was what caught it, not the covering-test selection
 - `S18` no production caller targets an environment other than the running one: `repair_tool_torch` defaults the interpreter to sys.executable and install passes none, so the running-interpreter predicate was added rather than reported as a conflict
 - `S19` the destruction proof carries a Windows-only skip marker, approved by the orchestrator: POSIX unlink semantics let uv replace a running launcher, so the behaviour does not exist there. The product's own argument tuples are driven through the sandbox because the runner refuses any target that is not the environment it runs out of; its guards are unit-proved
+- `S16` correction: the doctor's version-floor advice named only the first step of the tool upgrade, which for a non-durable receipt is the receipt install and not an upgrade. It now carries every step in order, in both the human output and the envelope; the full unit tier caught it

@@ -30,7 +30,7 @@ from ..operator_state._holders import HolderRole, holder_line
 from ..operator_state._provisioning import (
     classify_tool_receipt,
     cuda_remediation,
-    upgrade_command_for_mode,
+    upgrade_commands_for_mode,
 )
 from ..operator_state._service import ServiceLifecycle
 from ..operator_state._topology import (
@@ -297,8 +297,8 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         "version_floor_minimum": minimum,
         # Computed here so the envelope and the rendered block read one
         # value, and so the daemon interpreter is resolved once.
-        "upgrade_command": upgrade_command_for_mode(
-            declared_mode, _resolve_daemon_interpreter()
+        "upgrade_commands": list(
+            upgrade_commands_for_mode(declared_mode, _resolve_daemon_interpreter())
         ),
     }
 
@@ -453,13 +453,16 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
         detail = "ok - artifacts match the declared mode"
     _plain(f"  install mode: {detail}")
     if mode.get("version_floor") == "below":
-        upgrade = str(mode.get("upgrade_command", ""))
         _plain(
             f"  version floor: error - running {mode.get('version_floor_running')} "
             f"is below the declared floor {mode.get('version_floor_minimum')}"
         )
-        # Soft-wrapped: a folded command is not one an operator can paste.
-        _plain(f"    upgrade with: {upgrade}", soft_wrap=True)
+        _plain("    upgrade with, in order:")
+        raw = mode.get("upgrade_commands")
+        commands = cast("list[object]", raw) if isinstance(raw, list) else []
+        for command in commands:
+            # Soft-wrapped: a folded command is not one an operator can paste.
+            _plain(f"      {command}", soft_wrap=True)
     else:
         _plain("  version floor: ok")
 
