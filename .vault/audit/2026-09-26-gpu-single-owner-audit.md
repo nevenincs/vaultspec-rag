@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:1f386bd7ab9edd0e8f3d80e217eccadca72b55f5905e244f064c0b1fd279c88f'
+body_hash: 'sha256:721754feb6c8b8fe2e6894b94f5c0316c33e6b811f8b3870e47a58aff0745521'
 related: []
 ---
 
@@ -219,6 +219,16 @@ descriptors. The temporary-directory fallback remains weaker than the two
 preferred locations - a per-account `1777` `TMPDIR` passes the shared test, and
 `/tmp` is swept by age - and is reached only on a host with neither preferred
 directory; whether such a host should refuse instead is a follow-on decision.
+
+### p01-review-verdict | low | Phase P01 passed its close review after three rounds
+
+Final re-review of `bdcc8dc3` over the Phase range `5c5b4088` to `bdcc8dc3`: the
+Phase meets `2026-09-26-gpu-single-owner-adr`. Four high and eight lower findings
+closed across the rounds, each with a test naming the mutation it catches. One
+observation: `test_gpu_borrow_cli.py::test_borrowed_work_runs_only_during_safe_pause_then_resumes_and_releases`
+failed once in a loaded 216-test run and passed in three repeats and alone; if it
+recurs, the borrow coordinator's waits should be bounded and reported, and the
+new claim inside the pause route timed first.
 
 ### p02-review-verdict | low | Phase P02 passed its close review
 
