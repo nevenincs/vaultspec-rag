@@ -13,7 +13,7 @@ related:
   - '[[2026-09-26-tool-upgrade-cycle-adr]]'
 modified: '2026-09-26'
 body_schema: body-v2
-body_hash: 'sha256:5ec3361a13bd22dc9bf030520f320432774e2d0d4cd6db86bf7ff5d60faefecb'
+body_hash: 'sha256:57df17a72e3c4bce0f8429659ad7bc03ee6e8617749a80f261217ea286a263b1'
 ---
 
 # `gpu-single-owner` plan
@@ -52,6 +52,14 @@ implements `2026-09-26-tool-upgrade-cycle-adr`, grounded in
 (`2026-09-04-cuda-provisioning-adr` D3) that P02.S06 and P02.S07 built on; the
 remaining decisions of both records stand.
 
+Phase P04 added 2026-09-26 under the same direction and the earlier "Fix all
+high and medium". An end-to-end run of the P03 build destroyed a sandbox tool
+environment through its own launcher
+(`2026-09-26-gpu-single-owner-audit` p03-e2e-running-launcher-deletes-env), and
+the P03 review returned three high and three medium findings. P04 implements the
+amended repair mechanism of `2026-09-26-tool-upgrade-cycle-adr`, grounded in
+`2026-09-26-tool-upgrade-cycle-research` F8 and F9, and resolves those findings.
+
 ## Steps
 
 ### Phase `P01` - one GPU owner per machine
@@ -83,6 +91,16 @@ Makes a uv tool GPU host stay on CUDA and stay upgradable across every uv tool u
 - [x] `P03.S13` - report the receipt verdict and its one command in doctor and status, and derive every upgrade recommendation, including the restart it needs, from the builder; `src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/cli/_status.py, src/vaultspec_rag/cli/_service_start.py`.
 - [x] `P03.S14` - prove the cycle against real uv with loopback stand-in wheels: a receipt written with the options is durable, the repair applies in place under a live holder, and a bare upgrade keeps the CUDA build; `src/vaultspec_rag/tests/`.
 - [x] `P03.S15` - install uv tool hosts with the CUDA index and first-match strategy in the documentation, and document upgrading as uv tool upgrade followed by a service restart; `docs/, README.md`.
+
+### Phase `P04` - a repair that survives running launchers
+
+Makes the product's own consented repair and every command it hands over leave a tool environment whole while any launcher of the tool is running, and resolves the P03 review's high and medium findings.
+
+- [ ] `P04.S16` - split the tool repair into a swap through uv's pip interface of the recorded request at its installed release with torch reinstalled from the CUDA index, followed by an options-only receipt install, and make the non-durable upgrade the options-only install followed by a bare uv tool upgrade; `src/vaultspec_rag/operator_state/_provisioning.py, src/vaultspec_rag/commands/_tool_torch.py`.
+- [ ] `P04.S17` - name the restart after an applied repair, take consent only from --yes or a prompt, never prompt on the JSON path, and serialise holders once, bounded, with a total; `src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/commands/_install.py, src/vaultspec_rag/cli/_install.py, src/vaultspec_rag/_readiness.py`.
+- [ ] `P04.S18` - state holder remedies as restarts after an in-place repair, correct the doctor holder wording, enforce the running-interpreter predicate, and treat a path or specifier torch pin as pinned; `src/vaultspec_rag/operator_state/_holders.py, src/vaultspec_rag/cli/_service_doctor.py, src/vaultspec_rag/commands/_tool_torch.py, src/vaultspec_rag/operator_state/_provisioning.py`.
+- [ ] `P04.S19` - prove against real uv on Windows with a running launcher that the repair and the upgrade leave the environment whole, and that a package-changing tool install removes it; `src/vaultspec_rag/tests/`.
+- [ ] `P04.S20` - document the two-step repair and the in-use launcher report of an upgrade, and restore the installation guide's support section; `docs/installation.md, README.md`.
 
 ## Parallelization
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:c4084f6411a8bbaf49ce04aa99279069179eb4233a574fc6e9fffa47ef8ff663'
+body_hash: 'sha256:56ffb8a9dfda12c098e692efc10b0df8e0a83914053e744a069639597beeae9e'
 related: []
 ---
 
@@ -274,9 +274,8 @@ taken from the canonical builder.
 ### p03-incident-real-tool-env-rebuilt | critical | a consenting unit test rebuilt the machine's real tool installation
 
 During P03.S12, before its commit at 18:04, a unit test that consented to the
-in-place repair ran real uv against
-`C:\Users\hello\scoop\persist\uv\tools\versions\vaultspec-rag`, the installation
-hosting the machine's shared service. The test had forced the tool classification
+in-place repair ran real uv against the machine's real `vaultspec-rag` tool
+installation, the one hosting the machine's shared service. The test had forced the tool classification
 onto the project interpreter, so the command named that interpreter's Python and
 not the tool environment's. uv then ignored the existing environment, deleted its
 `Lib`, and failed on the held `Scripts` at 17:48. The running service survived on
@@ -288,6 +287,86 @@ before P03 resumes: the repair runner refuses under pytest outside the
 containment root, and refuses anywhere when uv's tool entry for the package is
 not the environment the running interpreter belongs to; commands name the target
 environment's own interpreter.
+
+### p03-e2e-running-launcher-deletes-env | critical | a consented repair run through the tool's own launcher deletes the tool environment
+
+End to end on Windows with uv 0.12.12, from a wheel built at `9d067c0f`: a tool
+environment in the field shape (CPU torch, no receipt options) and
+`vaultspec-rag install --upgrade --yes` run through the tool's `bin` launcher.
+uv swapped torch to the CUDA build in place, then failed on
+`failed to remove directory ...\Scripts: Access is denied`; `Lib` was gone and
+the command crashed rendering its report. The interpreter request matched the
+environment. The cause is the launcher: `uv tool install` re-installs every
+entry-point launcher after any package change, cannot replace one that is
+running, and then removes the whole tool environment
+(`2026-09-26-tool-upgrade-cycle-research` F8). The product's own consented run
+always holds its launcher on Windows, so `src/vaultspec_rag/commands/_tool_torch.py`
+destroys the environment it repairs whenever it is invoked by name. An operator
+running the handed-over command while any `vaultspec-rag` command or adapter
+started through a launcher is alive gets the same result. The accepted
+constraint that nothing replaces an environment wholesale is not met, and the
+rationale that in-place application needs nothing stopped is incomplete.
+
+### p03-e2e-holder-remedy-contradicts-in-place | medium | holders are told to end or stop beside a repair that says nothing has to stop
+
+The repair handoff lists holders under "running out of it now, and unchanged
+until restarted" with the role remedies of `src/vaultspec_rag/operator_state/_holders.py:50-59`
+("end this process", "stop it with ..."), and its steps say the repair "applies
+in place, so nothing has to be stopped". Doctor renders the same remedies under
+a docstring that still describes a repair replacing the environment
+(`src/vaultspec_rag/cli/_service_doctor.py:378-384`). The remedy for a process
+running the old build is a restart after the repair, and after F8 a running
+launcher is a blocker of a different kind; neither is what the lines say.
+
+### p03-review-post-repair-omits-restart | high | a repair the product applies never tells the operator to restart the service
+
+`src/vaultspec_rag/commands/_tool_torch.py:503` takes `remediation.steps[-1]`,
+which for a tool environment is the upgrade-later line, not `RESTART_NOTE`. A
+successful repair leaves the running daemon on CPU torch with no instruction to
+restart it. The covering test asserts action and receipt only.
+
+### p03-review-force-is-taken-as-consent | high | `--force` authorises the repair against the accepted constraint
+
+`src/vaultspec_rag/commands/_install.py:1000-1006` passes
+`assume_yes=request.assume_yes or request.force`; the accepted decision limits
+consent to an interactive confirmation or `--yes`. A scripted
+`install --force` launches a multi-gigabyte reinstall nobody asked for.
+
+### p03-review-support-section-deleted | high | the installation guide lost its escalation section
+
+`0d5419e0` deleted the `### Ask for help` subsection of `docs/installation.md`,
+outside S15's scope; it carried the three outputs a maintainer needs and the
+tracker link.
+
+### p03-review-consent-prompt-on-the-json-path | medium | `install --json` prints a prompt before its envelope
+
+`src/vaultspec_rag/cli/_install.py:373` derives the confirmer from
+`stdin.isatty()` alone, and the prompt renders on the stdout console. Observed
+end to end: with stdin redirected from `NUL`, which Windows reports as a
+terminal, the envelope was preceded by the consent prompt, so the output was
+not one JSON document.
+
+### p03-review-two-holder-serialisations | medium | the repair report serialises every holder while readiness bounds the list
+
+`src/vaultspec_rag/commands/_tool_torch.py:152-163` and
+`src/vaultspec_rag/_readiness.py:317-332` serialise the same probe result with
+different keys and bounds.
+
+### p03-review-target-check-is-not-the-running-interpreter | medium | the implemented target predicate differs from the recorded constraint
+
+The constraint names the running interpreter's environment; the code compares
+uv's tool entry with the requested target (`src/vaultspec_rag/commands/_tool_torch.py:396-428`).
+No production caller passes a divergent target, so the text and the code
+disagree without a demonstrated hazard.
+
+### p03-review-receipt-pin-detection-is-url-only | low | a torch pin recorded as a path or specifier reads as durable
+
+`src/vaultspec_rag/operator_state/_provisioning.py:246-267`. No shape the
+product produces reaches it.
+
+### p03-review-second-uv-launcher-unbounded | low | the project sync launch has no timeout or containment
+
+`src/vaultspec_rag/commands/_uv_sync.py:31-42`; predates the branch.
 
 ## Recommendations
 

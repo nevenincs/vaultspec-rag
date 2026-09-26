@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:35e9993895e5e1bb7cd365242502a77b922c69d555f8c3b5559ba83aebcb4dac'
+body_hash: 'sha256:197cea3f6ca46e04011b94e27208d0724d5177b79f619b3858eee1ff5c2d707b'
 related: []
 ---
 
@@ -40,8 +40,7 @@ resolve until the command is rebuilt by hand.
 
 ### F2 - uv persists the index and the index strategy in the receipt
 
-`uv tool install ... --index https://download.pytorch.org/whl/cu130
---index-strategy unsafe-first-match` writes both under `[tool.options]` in
+`uv tool install ... --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match` writes both under `[tool.options]` in
 `uv-receipt.toml`. The same two lines were written by uv 0.9.0, 0.10.0, 0.11.0
 and 0.12.0 (each run through `uvx uv@<version>`), so the premise behind O-A1 -
 that the receipt carries no index options - does not hold for any uv release in
@@ -92,14 +91,15 @@ requested Python interpreter does not match the environment interpreter" and
 rebuilt wholesale: it deleted `Lib` and then failed on the held `Scripts`,
 leaving the environment unrunnable. A plain `uv tool install` is therefore a
 wholesale replacement whenever its interpreter request differs, `--force` or not.
+The holders in this finding ran the environment's interpreter; a holder started
+through one of the tool's launchers is F8.
 The same failure occurred on 2026-09-26 against the machine's real tool
 installation, recorded in `2026-09-26-gpu-single-owner-audit`.
 
 ### F6 - one in-place command repairs an existing installation
 
 From the field state - an unpinned receipt with no options and CPU torch -
-`uv tool install --python <X> "vaultspec-rag[gpu,mcp]" --index <cu130>
---index-strategy unsafe-first-match --upgrade-package torch` replaced only
+`uv tool install --python <X> "vaultspec-rag[gpu,mcp]" --index <cu130> --index-strategy unsafe-first-match --upgrade-package torch` replaced only
 torch (CPU to `+cu130`), kept the installed release, and left a receipt with no
 pin and both options; a later bare `uv tool upgrade` then moved the release and
 kept CUDA. Without `--upgrade-package torch` uv rewrites the receipt but keeps
@@ -119,10 +119,57 @@ but its cached environment is resolved independently of the host's release and
 can drift from it, which the release-compatibility guard reports as a
 mismatch. Not investigated further here.
 
+### F8 - a running launcher turns `uv tool install` into an environment removal
+
+F5 held a process running the environment's own `Scripts\python.exe`. A
+process started through one of the tool's entry-point launchers in uv's
+executable directory (`bin`) is a different case. Observed with `uv 0.12.12`
+on Windows 11, with a two-launcher test package and again with the real
+package from a wheel built at `9d067c0f`:
+
+- `uv tool install` that changes any package, in place and with the
+  environment's own interpreter, applies the packages, fails to replace the
+  running launcher, and then removes the tool environment: `Lib` is deleted
+  and the removal stops at the held `Scripts` with "failed to remove directory
+  ... Access is denied". The same happened with `--upgrade`. The product's
+  consented repair, run as `vaultspec-rag install --upgrade --yes` through its
+  own launcher, did exactly this.
+- `uv tool install` that changes no package, only the index options, prints
+  "is already installed", writes both options into the receipt, and touches
+  neither the environment nor the launchers, with a launcher running.
+- `uv tool upgrade` across a release applies the packages and then fails with
+  "Failed to install entrypoint ... being used by another process (os error
+  32)"; the environment stays whole at the new release and the running
+  launcher, left in place, runs the new release. A later upgrade with nothing
+  running reports nothing to upgrade and does not refresh the launcher.
+- `uv tool upgrade` does not persist `--index` or `--index-strategy` into the
+  receipt, with or without a running launcher.
+- A running `Scripts\<entry point>.exe` of the environment makes an upgrade or
+  reinstall of that package fail at uninstall, before anything is installed;
+  the old release stays importable, a sibling script executable may be
+  removed, and the same upgrade after the process exits completes.
+- Renaming a running launcher aside before the install worked for the test
+  package and was refused for the real package's launchers with os error 32:
+  the MCP launcher at 2, 8, 20 and 40 seconds after it started, and the CLI
+  launcher during a short verb. It is not a precondition the product can
+  establish.
+
+### F9 - a torch swap through uv's pip interface plus an options-only install repair in place
+
+Against the field shape (CPU torch, no receipt options) with the real
+package's MCP launcher running and a second process holding `torch` and
+`pydantic_core` loaded: `uv tool install --python 3.14 "vaultspec-rag[gpu,mcp]" --index <cu130> --index-strategy unsafe-first-match` wrote both options and
+changed nothing else; `uv pip install --python <environment python> --index <cu130> --index-strategy unsafe-first-match --reinstall-package torch "torch==2.14.0"` replaced torch with `2.14.0+cu130` and left `Lib`, the
+launchers and the receipt intact; a bare `uv tool upgrade vaultspec-rag` then
+moved 0.5.2 to 0.5.3 with torch still `+cu130`, reporting only the running
+launcher. Neither repair step re-installs a launcher, so neither can reach the
+removal in F8.
+
 ### Not investigated
 
 POSIX in-place replacement semantics, cross-account tool directories, and uv
-releases older than 0.9.0.
+releases older than 0.9.0. What holds the real MCP launcher open against a
+rename (F8) was not isolated.
 
 ## Sources
 

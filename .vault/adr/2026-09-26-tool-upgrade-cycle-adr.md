@@ -5,7 +5,7 @@ tags:
 date: '2026-09-26'
 modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:c94c9dc5ae045eeac5992410c04322e376a0f18d90f44106a721a9e486bc055d'
+body_hash: 'sha256:fd6ce4a2877323880426c603d9a366b9eb1d70305b297fdd8b00e59c9fb5bea1'
 related:
   - "[[2026-09-26-tool-upgrade-cycle-research]]"
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
@@ -51,6 +51,13 @@ be a persistent and dependable automanagement cycle.
   because it believed no index option survives in the receipt.
 - `2026-09-23-status-messages-adr` makes typed operator-state enums own labels
   and remediation, consumed by install, doctor and status alike.
+- A process started through one of the tool's launchers turns any
+  `uv tool install` that changes a package into a removal of the whole
+  environment on Windows, and the product's own consented run is such a
+  process. An options-only `uv tool install`, a torch swap through uv's pip
+  interface and `uv tool upgrade` never re-install a launcher that way and
+  leave the environment whole (`2026-09-26-tool-upgrade-cycle-research` F8,
+  F9).
 
 ## Considered options
 
@@ -84,6 +91,10 @@ be a persistent and dependable automanagement cycle.
   (`2026-09-26-tool-upgrade-cycle-research` F5), every command names the target
   environment's own interpreter, and the product runs one only when uv's tool
   entry for the package is the environment the running interpreter belongs to.
+  No command the product runs or hands over is a `uv tool install` that
+  changes a package: packages change through uv's pip interface or through
+  `uv tool upgrade`, and the receipt is written by an install the preceding
+  step has left nothing to change.
 - Under pytest the repair runner refuses any tool environment outside the
   containment root, so no test can mutate a real installation whatever it
   consents to.
@@ -103,12 +114,21 @@ wheel), version-pinned, torch-wheel-pinned, carrying no CUDA source, or
 unreadable. Each verdict owns its label and the one command that makes the
 receipt durable.
 
-The single command builder produces two commands. The repair re-installs the
-tool in place with its recorded extras and interpreter, the CUDA index, the
-first-match strategy and an upgrade of torch alone. The upgrade is a bare
-`uv tool upgrade` of the tool once the receipt is durable, and the repair with
-a full upgrade otherwise; either is followed by restarting the service so the
-running daemon matches the installed release. The direct-wheel machinery and
+The single command builder produces the repair and the upgrade. The repair is
+two steps. uv's pip interface first brings the environment to the recorded
+request at its installed release, reinstalling torch at its installed version
+from the CUDA index under the first-match strategy. An options-only
+`uv tool install` with the recorded extras and the environment's interpreter
+then records the index and strategy in the receipt; the first step has left it
+no package to change, so it re-installs no launcher. The upgrade is a bare
+`uv tool upgrade` of the tool, preceded by that options-only install while the
+receipt is not durable; either is followed by restarting the service so the
+running daemon matches the installed release.
+
+Amended 2026-09-26 from a single `uv tool install --upgrade-package torch`
+repair, which F8 showed removes the environment whenever a launcher is
+running, under the user's direction that the install and upgrade cycle be a
+dependable automanagement cycle. The direct-wheel machinery and
 the version pin are deleted rather than kept beside the new commands.
 
 `install` treats a tool environment whose receipt is not durable as needing
@@ -139,6 +159,15 @@ only describing it.
 - An upgrade leaves the running service on the previous release until it is
   restarted; the release-compatibility refusal already names the restart, and
   the upgrade command is printed together with it.
+- An upgrade run while a command or adapter started through a launcher is
+  alive applies the release and reports that launcher as in use; the launcher
+  keeps working and is refreshed by a later upgrade of a newer release. One run
+  while an environment script executable is alive fails before installing and
+  completes when repeated after that process exits (F8).
+- The torch swap writes into a uv-managed environment through uv's pip
+  interface. The receipt records requirements and options, not the torch
+  build, so it stays accurate, and the next upgrade re-resolves torch from the
+  recorded CUDA source.
 - First-match trusts the PyTorch index for every package it mirrors, and a
   mirrored package may resolve to an older version that still satisfies its
   requirement. The index is already trusted for torch.
