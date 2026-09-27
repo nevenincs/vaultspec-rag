@@ -22,22 +22,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from ..indexer._run_ledger_models import RunAuthority
-from ..job_models import (
-    DesiredJobState,
-    JobAttempt,
-    JobCapabilities,
-    JobInitiator,
-    JobMode,
-    JobOperation,
-    JobResourceSnapshot,
-    JobRuntimeSnapshot,
-    JobSnapshot,
-    JobSource,
-    JobSpec,
-    JobState,
-    JobTimestamps,
-)
+from ..job_models import JobSource, JobState
 from ..service import ServiceRegistry
 from ..watcher_retry import (
     WatcherSource,
@@ -51,6 +36,7 @@ from ..watcher_runtime import (
     _log_managed_transition,
     _TransitionLogContext,
 )
+from ._watcher_job_snapshot import watcher_job_snapshot
 
 pytestmark = [pytest.mark.unit]
 
@@ -65,49 +51,6 @@ _NON_TERMINAL = (
 
 #: The only states that genuinely mean the run did not deliver.
 _FAILED = (JobState.FAILED, JobState.INTERRUPTED)
-
-
-def _snapshot(state: JobState, root: Path) -> JobSnapshot:
-    return JobSnapshot(
-        id="job-1",
-        revision=1,
-        spec=JobSpec(
-            operation=JobOperation.INDEX,
-            source=JobSource.CODE,
-            project_root=str(root),
-            mode=JobMode.INCREMENTAL,
-            authority=RunAuthority.PUBLICATION,
-        ),
-        state=state,
-        desired_state=DesiredJobState.RUNNING,
-        capabilities=JobCapabilities(
-            pausable=False,
-            resumable=False,
-            cancellable=False,
-            retryable=False,
-            deletable=False,
-        ),
-        attempt=JobAttempt(number=1),
-        timestamps=JobTimestamps(created_at=0.0, state_changed_at=0.0),
-        progress=None,
-        result=None,
-        error_kind=None,
-        initiator=JobInitiator(
-            kind="watcher",
-            command="watcher_code_index",
-            project_root=str(root),
-        ),
-        runtime=JobRuntimeSnapshot(
-            pid=1,
-            parent_pid=0,
-            user="u",
-            executable="python",
-            prefix="p",
-            base_prefix="p",
-            virtual_env=None,
-        ),
-        resources=JobResourceSnapshot(started=None, finished=None),
-    )
 
 
 def _events(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int]]:
@@ -157,7 +100,7 @@ def _log(
     with caplog.at_level(logging.DEBUG, logger=_log_managed_transition.__module__):
         _log_managed_transition(
             slot,
-            _snapshot(state, root),
+            watcher_job_snapshot(root, state),
             _TransitionLogContext(
                 watcher_owned=True,
                 pending_count=0,

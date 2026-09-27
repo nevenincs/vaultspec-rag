@@ -39,6 +39,7 @@ from ...config._settings import reset_config
 from ...config._types import EnvVar
 from ...server import ServerRouteRuntime, create_http_app
 from ...service import ServiceRegistry
+from ...serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from .._http_stubs import QuietHandler
 from .._ports import free_loopback_port
 
@@ -156,6 +157,7 @@ def _canonical_resilience_server(
                     "pid": os.getpid(),
                     "port": port,
                     "service_token": token,
+                    SERVICE_VERSION_FIELD: local_package_version(),
                 }
             ),
             encoding="utf-8",

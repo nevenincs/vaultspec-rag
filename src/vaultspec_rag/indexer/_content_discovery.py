@@ -271,6 +271,24 @@ class CodeContentDiscovery:
             raise ValueError("code index scope contains a path outside its root")
         return tuple(sorted(normalized, key=lambda path: path.as_posix()))
 
+    @staticmethod
+    def _validate_full_preflight(preflight: CodeIndexPreflight) -> None:
+        """Verify a full scan's policy identity and admitted paths before mutation."""
+        if preflight.scan.policy_fingerprint != preflight.policy.fingerprints.snapshot:
+            raise ValueError("code index preflight policy fingerprint is inconsistent")
+        root = preflight.root_dir
+        if any(
+            not path.resolve().is_relative_to(root) for path in preflight.scan.files
+        ):
+            raise ValueError("code index preflight contains a path outside its root")
+        for path in preflight.scan.files:
+            rel = path.relative_to(root).as_posix()
+            disposition = preflight.policy.classify(rel).disposition
+            if not (disposition.admitted and disposition.kind is ContentKind.CODE):
+                raise ValueError(
+                    "code index preflight contains a path not admitted as code"
+                )
+
     def accept_preflight(
         self,
         preflight: CodeExecutionPreflight,
@@ -287,27 +305,7 @@ class CodeContentDiscovery:
         if isinstance(preflight, CodeIndexPreflight):
             if changed_paths is not None:
                 raise ValueError("full code preflight cannot authorize scoped work")
-            if (
-                preflight.scan.policy_fingerprint
-                != preflight.policy.fingerprints.snapshot
-            ):
-                raise ValueError(
-                    "code index preflight policy fingerprint is inconsistent"
-                )
-            root = preflight.root_dir
-            if any(
-                not path.resolve().is_relative_to(root) for path in preflight.scan.files
-            ):
-                raise ValueError(
-                    "code index preflight contains a path outside its root"
-                )
-            for path in preflight.scan.files:
-                rel = path.relative_to(root).as_posix()
-                disposition = preflight.policy.classify(rel).disposition
-                if not (disposition.admitted and disposition.kind is ContentKind.CODE):
-                    raise ValueError(
-                        "code index preflight contains a path not admitted as code"
-                    )
+            self._validate_full_preflight(preflight)
             return preflight.policy, preflight.scan.files
         if changed_paths is None:
             raise ValueError("scoped code preflight requires changed paths")
