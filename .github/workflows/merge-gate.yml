@@ -358,9 +358,12 @@ jobs:
     # would pass a commit nothing measured.
     if: always()
     timeout-minutes: 10
-    # Reads results and edits a label, and never runs the pull request's
-    # code, so a hosted runner serves every pull request.
-    runs-on: ubuntu-24.04
+    # Reads results and edits a label, and never checks out or runs the pull
+    # request's code. It is the one fleet job a fork's pull request reaches
+    # without a same-repository clause, because it must: it is the required
+    # check, and a skipped required check reads as passed. Its verdict refuses
+    # a fork before reading any result.
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
       # The draft/unrelated-label path asks this workflow for its newest

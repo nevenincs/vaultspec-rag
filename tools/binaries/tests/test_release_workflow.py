@@ -239,8 +239,12 @@ def _release_request_findings(document: dict, resolver: str) -> list[str]:
     jobs = document["jobs"]
     findings: list[str] = []
     resolving = jobs[resolver]
-    if resolving.get("runs-on") != "ubuntu-24.04":
-        findings.append(f"{resolver} does not run on a hosted runner")
+    runner = resolving.get("runs-on")
+    if not isinstance(runner, list) or "self-hosted" not in runner:
+        findings.append(f"{resolver} does not run on the self-hosted fleet")
+    for step in resolving.get("steps") or []:
+        if "${{" in str(step.get("run", "")):
+            findings.append(f"{resolver} interpolates an expression into its script")
     if any("uses" in step for step in resolving.get("steps") or []):
         findings.append(f"{resolver} runs an action before the request is proven")
     for job_id, body in jobs.items():
@@ -257,10 +261,14 @@ def _release_request_findings(document: dict, resolver: str) -> list[str]:
     ("workflow", "resolver"),
     [("publish.yml", "resolve-target"), ("binaries.yml", "validate")],
 )
-def test_a_release_request_is_proven_on_a_hosted_runner_first(
+def test_a_release_request_is_proven_before_anything_runs(
     repo_root: Path, workflow: str, resolver: str
 ) -> None:
-    """The dispatched tag is validated before any fleet job can see it.
+    """The dispatched tag is validated before any other job can see it.
+
+    The resolver runs on the fleet like every other job, so what keeps free
+    text from executing there is what it never does: check out, run an
+    action, or interpolate the input into its script.
 
     Mutation proof: pointing the binaries ``wheel`` job's ``needs`` away from
     ``validate`` made this fail naming ``wheel``; restoring it made it pass.

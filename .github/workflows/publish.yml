@@ -32,15 +32,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The dispatch input is free text from anyone who can run a workflow, and
-  # every later job runs on the self-hosted fleet. So the tag is validated and
-  # resolved to its commit HERE, on a hosted runner, and only that validated
-  # pair reaches the fleet. The public remote is read without a checkout, so
-  # nothing from the requested ref executes before it is proven a release tag.
+  # The dispatch input is free text from anyone who can run a workflow. So the
+  # tag is validated and resolved to its commit HERE, first, and only that
+  # validated pair reaches any later job. The public remote is read without a
+  # checkout or an action, and the input reaches the script only through
+  # `env`, so nothing from the requested ref executes before it is proven a
+  # release tag.
   resolve-target:
     name: "Check: Release commit (Linux)"
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
       tag: ${{ steps.commit.outputs.tag }}

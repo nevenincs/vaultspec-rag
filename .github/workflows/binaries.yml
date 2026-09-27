@@ -39,14 +39,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Both inputs are free text from anyone who can dispatch, and every later job
-  # but one runs on the self-hosted fleet. So they are proven HERE, on a hosted
-  # runner, before anything is checked out: the tag must be a release tag, and
-  # it must resolve on the public remote to exactly the commit requested.
+  # Both inputs are free text from anyone who can dispatch. So they are proven
+  # HERE, before anything is checked out or any action runs: the tag must be a
+  # release tag, and it must resolve on the public remote to exactly the commit
+  # requested. The inputs reach the script only through `env`, never through
+  # expression interpolation, so this job executes nothing a request names.
   validate:
     name: "Check: Release request (Linux)"
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Require a release tag that resolves to the requested commit
         shell: bash
@@ -338,7 +339,7 @@ jobs:
           # `tools/binaries/build_pyapp.py` records what that is. Raising the
           # floor is a support decision, not a build detail: it is asserted
           # against the produced artifact and checked again by the acquisition
-          # lane's oldest distro image.
+          # lane against the published bundle.
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu

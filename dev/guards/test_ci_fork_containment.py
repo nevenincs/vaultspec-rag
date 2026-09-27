@@ -44,12 +44,22 @@ PULL_REQUEST_EVENTS = frozenset({"pull_request", "pull_request_target"})
 #: A runs-on expression that picks a different runner for a fork.
 _FORK_RUNNER_SWITCH = re.compile(r"head\.repo\.full_name\s*!=")
 
+#: The one fleet job a fork's pull request reaches without the same-repository
+#: clause, and why it must. It is the required check, and a skipped required
+#: check reads as passed, so a clause that skipped it for a fork would turn this
+#: repository's refusal into a green verdict. What a fork reaches instead is a
+#: job that checks nothing out and refuses it before reading any result -
+#: :func:`test_the_gate_refuses_a_forks_pull_request` and
+#: :func:`test_the_gate_never_checks_out_the_pull_request` hold both.
+_REFUSES_FORKS = frozenset({(Workflow.MERGE_GATE, GATE_JOB)})
+
 
 def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
-    """A fork's pull request never reaches the self-hosted fleet.
+    """A fork's pull request reaches no fleet job but the gate refusing it.
 
     Guard assertion: every self-hosted job either skips `pull_request`
-    entirely or carries :data:`SAME_REPO_CLAUSE` in its `if:`.
+    entirely or carries :data:`SAME_REPO_CLAUSE` in its `if:`, except the
+    gate named in :data:`_REFUSES_FORKS`.
     A self-hosted job with neither runs a fork's own workflow on this
     hardware, which is the exposure the trust boundary exists to close.
     """
@@ -57,7 +67,8 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
         f"{job.workflow}:{job.job_id}": job.condition
         for workflow in MERGE_BOX
         for job in workflows.load_jobs(workflow)
-        if job.self_hosted
+        if (job.workflow, job.job_id) not in _REFUSES_FORKS
+        and job.self_hosted
         and job.reaches("pull_request")
         and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
     }
@@ -132,6 +143,23 @@ def test_the_gate_refuses_a_forks_pull_request() -> None:
     refusal = script.index(opening)
     assert "exit 1" in script[refusal : script.index("fi", refusal)]
     assert refusal < script.index('echo "lint=${LINT}')
+
+
+def test_the_gate_never_checks_out_the_pull_request() -> None:
+    """The gate a fork reaches on the fleet runs nothing the fork wrote.
+
+    Mutation proof: adding an ``actions/checkout`` step to the gate made this
+    fail naming it; removing it made this pass.
+    """
+    gate = next(
+        job
+        for job in workflows.load_jobs(Workflow.MERGE_GATE)
+        if job.job_id == GATE_JOB
+    )
+    assert gate.self_hosted, "the gate left the fleet; drop its fork exemption"
+    actions = [str(step["uses"]) for step in gate.steps if "uses" in step]
+    assert actions == [], f"the gate runs actions a fork could reach: {actions}"
+    assert gate.recipes() == (), "the gate runs a recipe from the checked-out tree"
 
 
 def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:

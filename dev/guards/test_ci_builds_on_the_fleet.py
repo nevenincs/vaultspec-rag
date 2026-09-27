@@ -1,16 +1,17 @@
-"""Work that builds or tests this product runs on runners this project owns.
+"""Every job runs on runners this project owns. None runs GitHub-hosted.
 
 A hosted runner is not a neutral substitute. It has no GPU, no resident
 service, no warmed model cache and no pinned Qdrant binary, so a lane that
 drifts onto one silently stops measuring the thing it was written to measure -
 and a binary built there is built on a machine nobody here controls.
 
-Hosted runners keep exactly one job: handling input this project does not
-trust, away from the fleet. A fork's pull request and a dispatch's free-text
-tag are both attacker-controlled, and both are resolved on a hosted runner so
-that only a validated result reaches a machine on this network. That is a
-security boundary, not a convenience, so those jobs are named here rather than
-pattern-matched - a new hosted job has to be added deliberately, with a reason.
+There is no exemption. Handling input this project does not trust used to be
+one: a dispatch's free-text tag was resolved on a hosted runner before the
+fleet saw it. Those resolvers now run on the fleet, and what keeps them safe is
+what they never do - check out, run an action, or interpolate the input into a
+script - which `tools/binaries/tests/test_release_workflow.py` holds. A job
+container no fleet host can start was the other exemption; such a job now runs
+natively instead of leaving the fleet.
 """
 
 from __future__ import annotations
@@ -29,29 +30,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.repo]
 #: `macos-15`, `ubuntu-24.04-arm`. Fleet labels carry no version or channel
 #: suffix, which is what separates the two without naming every fleet label.
 _HOSTED = re.compile(r"^(ubuntu|windows|macos)-(latest|\d[\w.]*)(-arm)?$")
-
-#: `workflow.yml::job` pairs that MUST stay hosted, each with why. Two reasons
-#: qualify and no others: untrusted input resolved before it reaches the fleet,
-#: and a job container no fleet host can start.
-_BOUNDARY: dict[tuple[str, str], str] = {
-    ("acquisition.yml", "acquire"): (
-        "runs the published binary inside pinned distro images to prove it "
-        "starts on the distributions the docs claim; no fleet host exposes a "
-        "container runtime, so these legs cannot move"
-    ),
-    ("publish.yml", "resolve-target"): (
-        "validates a dispatch's free-text tag and resolves it to a commit "
-        "before the fleet sees either"
-    ),
-    ("binaries.yml", "validate"): (
-        "resolves a dispatch's free-text tag against the public remote and "
-        "proves it names the requested commit, before anything is checked out"
-    ),
-    ("merge-gate.yml", "gate"): (
-        "reads check results and edits a label; never runs a pull request's "
-        "code, and must answer for a fork's pull request too"
-    ),
-}
 
 
 def _runner_labels(raw: Any, matrix: list[dict[str, Any]]) -> list[list[str]]:
@@ -90,25 +68,48 @@ def _jobs() -> list[tuple[str, str, list[list[str]]]]:
     return found
 
 
-def test_no_job_outside_the_trust_boundary_runs_hosted() -> None:
-    """Every build and test job selects a runner this project owns."""
-    offenders = [
-        f"{workflow}::{job} -> {labels}"
-        for workflow, job, label_sets in _jobs()
-        if (workflow, job) not in _BOUNDARY
-        for labels in label_sets
-        if any(_HOSTED.match(label) for label in labels)
+def _offenders(jobs: list[tuple[str, str, list[list[str]]]]) -> list[str]:
+    """Name every job or matrix leg that does not select a fleet label set.
+
+    A `runs-on` that resolves to no label set at all is named too: an
+    unreadable selector is not evidence of a fleet one.
+    """
+    return [
+        f"{workflow}::{job} -> {labels or '<unresolved>'}"
+        for workflow, job, label_sets in jobs
+        for labels in (label_sets or [[]])
+        if "self-hosted" not in {label.lower() for label in labels}
+        or any(_HOSTED.match(label) for label in labels)
     ]
+
+
+def test_no_job_runs_on_a_github_hosted_runner() -> None:
+    """Every job and every matrix leg selects a `self-hosted` label set."""
+    offenders = _offenders(_jobs())
     assert not offenders, (
-        "these jobs run on GitHub-hosted runners; builds and tests belong on "
-        f"the fleet: {offenders}"
+        "these jobs select a GitHub-hosted runner, or no self-hosted label "
+        f"set; every job runs on the fleet: {offenders}"
     )
 
 
-def test_every_boundary_job_still_exists() -> None:
-    """A stale exemption would quietly re-admit a hosted job under its name."""
-    present = {(workflow, job) for workflow, job, _ in _jobs()}
-    missing = [f"{w}::{j}" for (w, j) in _BOUNDARY if (w, j) not in present]
-    assert not missing, (
-        f"these hosted exemptions name jobs that no longer exist: {missing}"
-    )
+def test_a_hosted_leg_is_named() -> None:
+    """Mutation proof: a hosted leg hidden in a self-hosted matrix is caught.
+
+    Matrix legs are resolved one by one, so one hosted leg among fleet legs is
+    named, as are a literal hosted label and a selector that cannot be read.
+    """
+    legs = [
+        {"runner": ["self-hosted", "Linux", "X64"]},
+        {"runner": "ubuntu-24.04-arm"},
+    ]
+    jobs = [
+        ("w.yml", "build", _runner_labels("${{ matrix.runner }}", legs)),
+        ("w.yml", "gate", _runner_labels("ubuntu-24.04", [])),
+        ("w.yml", "lint", _runner_labels(["self-hosted", "Linux", "X64"], [])),
+        ("w.yml", "odd", _runner_labels("${{ fromJSON(inputs.runner) }}", [])),
+    ]
+    assert _offenders(jobs) == [
+        "w.yml::build -> ['ubuntu-24.04-arm']",
+        "w.yml::gate -> ['ubuntu-24.04']",
+        "w.yml::odd -> ['${{ fromJSON(inputs.runner) }}']",
+    ]
