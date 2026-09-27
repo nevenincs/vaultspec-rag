@@ -444,6 +444,40 @@ def test_edge_content_block_leaves_the_credential_enrolled(
         assert transport.evaluate({"query": "different"}, QUESTIONS).requests == 1
 
 
+def test_model_facing_state_preserves_original_evidence_and_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing state normalization failed received-state equality; restored passed."""
+    state: dict[str, object] = {
+        "query": "Find `python -m <module>`",
+        "candidates": {
+            "c0": {
+                "content": "Run `python -m pytest` and inspect <result>.",
+                "score": 0.5,
+                "aliases": ["<module>", None, True],
+            }
+        },
+    }
+    original = copy.deepcopy(state)
+    with _server(monkeypatch, 200, json.dumps(_envelope()).encode()) as received:
+        evaluated = transport.evaluate(state, QUESTIONS)
+    assert evaluated.answers.keys() == QUESTIONS.keys()
+    assert state == original
+    assert received[0]["questions"] == QUESTIONS
+    assert received[0]["state"] == {
+        "query": "Find \u2018python -m \u2039module\u203a\u2018",
+        "candidates": {
+            "c0": {
+                "content": (
+                    "Run \u2018python -m pytest\u2018 and inspect \u2039result\u203a."
+                ),
+                "score": 0.5,
+                "aliases": ["\u2039module\u203a", None, True],
+            }
+        },
+    }
+
+
 def test_provider_authentication_error_disables_the_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

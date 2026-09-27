@@ -117,6 +117,7 @@ class TestVaultIndexerProgress:
             expected = [
                 "scan vault",
                 "parse documents",
+                "hash documents",
                 "prepare collection",
                 "embed + upsert documents",
                 # Two distinct purges, and the order between them is the
@@ -144,6 +145,7 @@ class TestVaultIndexerProgress:
                     current = None
 
             assert phase_totals["parse documents"] >= n_docs
+            assert phase_totals["hash documents"] == n_docs
             assert phase_totals["prepare collection"] == 1
             assert phase_totals["embed + upsert documents"] == n_docs
             # Fresh collection - no stale IDs to purge.
