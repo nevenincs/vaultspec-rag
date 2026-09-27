@@ -626,19 +626,30 @@ class TestLargeIndexSearchHeadroom:
         store = VaultStore(root)
         gpu_lock = threading.Lock()
         try:
+            bootstrap_indexer = CodebaseIndexer(
+                root,
+                embedding_model,
+                store,
+                options=CodebaseIndexer.Options(
+                    gpu_lock=gpu_lock,
+                    extra_excludes=[
+                        "src/acceptance_workload/**/module_*.py",
+                        "!src/acceptance_workload/000/module_000000.py",
+                    ],
+                ),
+            )
+            # Incremental indexing requires a served publication. Seed one
+            # file explicitly before exercising search during the full build.
+            seeded = bootstrap_indexer.full_index(
+                reporter=NullProgressReporter(),
+                preflight=bootstrap_indexer.preflight_content(),
+            )
+            assert seeded.total == spec.chunks_per_file
             indexer = CodebaseIndexer(
                 root,
                 embedding_model,
                 store,
                 options=CodebaseIndexer.Options(gpu_lock=gpu_lock),
-            )
-            bootstrap = (
-                root / "src" / "acceptance_workload" / "000" / ("module_000000.py")
-            )
-            indexer.incremental_index(
-                reporter=NullProgressReporter(),
-                changed_paths=[bootstrap],
-                preflight=indexer.preflight_changed_paths([bootstrap]),
             )
             searcher = VaultSearcher(
                 root,

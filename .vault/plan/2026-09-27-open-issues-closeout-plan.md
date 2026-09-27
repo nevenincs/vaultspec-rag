@@ -10,7 +10,7 @@ related:
   - '[[2026-09-23-status-messages-adr]]'
 modified: '2026-09-27'
 body_schema: body-v2
-body_hash: 'sha256:a440e3bae31c00769712791a4d39d420b3d57713029ce828f53bd3e8bf213bfc'
+body_hash: 'sha256:9fea30d17a503c0bcd72898fa5c7389c916eddf27c106fd23c610e8db9be3663'
 ---
 
 # `open-issues-closeout` plan
@@ -21,11 +21,13 @@ Approved 2026-09-27
 
 The user authorized all three open GitHub issues in one PR and exactly one complete local live campaign after implementation, with timing evidence audited after green. Earlier merged PR #548 already contains the primary fixes. This follow-up covers the remaining checksum uniqueness gap, model-facing punctuation normalization, and executable documentation regression coverage. Existing accepted hosted-classification, binary-release and operator-vocabulary decisions govern; no new protocol, persisted schema, or dependency is introduced.
 
+After that campaign exposed three existing integration-test contract mismatches, the user explicitly authorized fixing all failures and completing live, integration and static verification. S03 corrects the progress guard and stamp-refresh fixture against existing production behavior. Preserve the original campaign reports and record subsequent verification separately. The user separately authorized the gated historical release repair. Another session owns `just audit-duplication`, `just check-complexity`, `just check-nesting`, `just audit-complexity` and `just health-report`; consume their results without editing those commands.
+
 ## Steps
 
 - [x] `S01` - Sanitize model-facing text and cover content-rejection recovery; `src/vaultspec_rag/search/_typesafe_transport.py, src/vaultspec_rag/tests/test_typesafe_transport.py`.
 - [x] `S02` - Require exact package checksum coverage and validate troubleshooting commands; `.github/workflows/publish.yml, tools/binaries/tests/test_release_workflow.py, src/vaultspec_rag/tests/integration/test_service_jobs_cli_basics.py`.
-- [ ] `S03` - Run one local campaign, audit timing evidence, and prepare one pull request; `dev/, .vault/audit/, .vault/exec/`.
+- [ ] `S03` - Repair campaign-discovered test contracts, verify live coverage, audit timing evidence, and finish one pull request; `src/vaultspec_rag/tests/integration/test_indexer_progress_integration.py, src/vaultspec_rag/tests/integration/test_vault_true_incremental.py, src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py, .vault/audit/, .vault/exec/`.
 
 ## Parallelization
 
