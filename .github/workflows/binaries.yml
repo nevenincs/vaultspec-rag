@@ -88,8 +88,10 @@ jobs:
   derive-selectors:
     name: "Check: Runner selectors (Linux)"
     needs: validate
-    timeout-minutes: 10
+    timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     outputs:
       selectors: ${{ steps.derive.outputs.selectors }}
     steps:
@@ -139,8 +141,10 @@ jobs:
   preflight:
     name: "Check: Runner availability (Linux)"
     needs: derive-selectors
-    timeout-minutes: 15
+    timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 15
     steps:
       - name: Every required selector has an online runner
         shell: bash
@@ -262,9 +266,11 @@ jobs:
 
   wheel:
     needs: [validate, preflight]
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Build: Binary wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -368,8 +374,10 @@ jobs:
     # longest-running jobs in the fleet, so the six-hour default ceiling was
     # in force exactly where it costs the most. `dev/guards/
     # test_ci_jobs_reach_a_verdict.py` resolves the matrix and holds this.
-    timeout-minutes: 90
+    timeout-minutes: 210
     runs-on: ${{ matrix.runner }}
+    env:
+      CI_EXEC_BUDGET_MINUTES: 90
     # Empty for the Windows leg, which GitHub reads as "no container".
     container: ${{ matrix.container }}
     steps:
@@ -453,10 +461,12 @@ jobs:
         run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
 
   release:
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Build: Release attachment (Linux)"
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
     permissions:
       contents: write
     steps:
@@ -747,7 +757,7 @@ jobs:
   # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Check: Release proven (Linux)"
     needs: release
     if: ${{ always() }}
@@ -763,6 +773,7 @@ jobs:
       # Dispatching the acquisition check is a write to the Actions API.
       actions: write
     env:
+      CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
       TARGET_SHA: ${{ inputs.target_sha }}
