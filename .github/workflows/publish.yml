@@ -377,7 +377,9 @@ jobs:
           # pass by checking nothing.
           awk -v wheel="${wheel}" -v sdist="${sdist}" '$2 == wheel || $2 == sdist' \
             "${work}/SHA256SUMS" > "${work}/packages.sha256"
-          if [ "$(wc -l < "${work}/packages.sha256")" -ne 2 ]; then
+          if [ "$(wc -l < "${work}/packages.sha256")" -ne 2 ] ||
+             [ "$(awk -v name="${wheel}" '$2 == name { count++ } END { print count+0 }' "${work}/packages.sha256")" -ne 1 ] ||
+             [ "$(awk -v name="${sdist}" '$2 == name { count++ } END { print count+0 }' "${work}/packages.sha256")" -ne 1 ]; then
             echo "::error::SHA256SUMS on ${TAG} does not list exactly ${wheel} and ${sdist}"
             exit 1
           fi

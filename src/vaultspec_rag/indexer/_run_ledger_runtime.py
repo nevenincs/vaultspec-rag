@@ -45,11 +45,13 @@ from ._run_ledger_models import (
     open_ledger_connection,
     raise_if_lock_contention,
 )
-from ._run_ledger_publication import (
-    RunLedgerPublicationMethods,
+from ._run_ledger_publication_identity import (
     compatibility_for_signature,
     publication_compatibility_from_row,
 )
+from ._run_ledger_publication_proofs import RunLedgerPublicationProofMethods
+from ._run_ledger_publication_reads import RunLedgerPublicationReadMethods
+from ._run_ledger_publication_receipts import RunLedgerPublicationReceiptMethods
 
 if TYPE_CHECKING:
     from ._content_policy import ContentKind
@@ -80,7 +82,9 @@ def _execute_schema_statements(
 
 
 class RunLedger(
-    RunLedgerPublicationMethods,
+    RunLedgerPublicationProofMethods,
+    RunLedgerPublicationReadMethods,
+    RunLedgerPublicationReceiptMethods,
     RunLedgerCommitMethods,
     RunLedgerFileMethods,
     RunLedgerFinalizationMethods,

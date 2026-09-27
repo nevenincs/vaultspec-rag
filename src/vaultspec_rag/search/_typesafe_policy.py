@@ -60,6 +60,42 @@ def _choice(evaluation: Evaluation, name: str) -> str | None:
     return None
 
 
+def _query_preferences(
+    evaluation: Evaluation, constraints: dict[str, object]
+) -> tuple[str | None, str | None]:
+    """Suggest defaults only when explicit constraints leave them undecided."""
+    intent = _choice(evaluation, "intent")
+    domain = _choice(evaluation, "domain")
+    vault_intent = {"architecture": "orientation", "debugging": "debugging"}.get(
+        intent or ""
+    )
+    if any(constraints.get(key) for key in ("intent", "doc_type", "type", "status")):
+        vault_intent = None
+    prefer = domain if domain in PREFER_DOMAINS else None
+    if intent == "cross_reference" or domain == "mixed" or any(constraints.values()):
+        prefer = None
+    return vault_intent, prefer
+
+
+def _query_timings(evaluation: Evaluation, started: float) -> dict[str, float]:
+    """Capture query cost and confidence separately from preference selection."""
+    timings = {
+        "typesafe_query_ms": (time.monotonic() - started) * 1000,
+        "typesafe_requests": float(evaluation.requests),
+        "typesafe_cache_hits": float(evaluation.cache_hits),
+        "typesafe_coalesced": float(evaluation.coalesced),
+        "typesafe_input_tokens": float(evaluation.input_tokens),
+        "typesafe_output_tokens": float(evaluation.output_tokens),
+    }
+    timings.update(
+        {f"typesafe_query_{name}": value for name, value in evaluation.timings.items()}
+    )
+    for name, answer in evaluation.answers.items():
+        if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
+            timings[f"typesafe_{name}_confidence"] = answer.confidence
+    return timings
+
+
 def prepare_query(
     query: str, surface: str, filters: dict[str, object] | None = None
 ) -> ClassificationSession | None:
@@ -80,35 +116,12 @@ def prepare_query(
         evaluation = transport.evaluate(context, questions, deadline=deadline)
     except transport.TypesafeUnavailableError:
         return None
-    intent = _choice(evaluation, "intent")
-    domain = _choice(evaluation, "domain")
     context["query_assessment"] = {
         name: _choice(evaluation, name) or "unknown"
         for name in ("intent", "wording", "evidence", "domain")
     }
-    constraints = filters or {}
-    vault_intent = {"architecture": "orientation", "debugging": "debugging"}.get(
-        intent or ""
-    )
-    if any(constraints.get(key) for key in ("intent", "doc_type", "type", "status")):
-        vault_intent = None
-    prefer = domain if domain in PREFER_DOMAINS else None
-    if intent == "cross_reference" or domain == "mixed" or any(constraints.values()):
-        prefer = None
-    timings = {
-        "typesafe_query_ms": (time.monotonic() - started) * 1000,
-        "typesafe_requests": float(evaluation.requests),
-        "typesafe_cache_hits": float(evaluation.cache_hits),
-        "typesafe_coalesced": float(evaluation.coalesced),
-        "typesafe_input_tokens": float(evaluation.input_tokens),
-        "typesafe_output_tokens": float(evaluation.output_tokens),
-    }
-    timings.update(
-        {f"typesafe_query_{name}": value for name, value in evaluation.timings.items()}
-    )
-    for name, answer in evaluation.answers.items():
-        if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
-            timings[f"typesafe_{name}_confidence"] = answer.confidence
+    vault_intent, prefer = _query_preferences(evaluation, filters or {})
+    timings = _query_timings(evaluation, started)
     return ClassificationSession(
         query=query,
         context=context,
@@ -199,6 +212,29 @@ class ClassificationSession:
             batches.append(({**self.context, "candidates": candidates}, indices))
         return batches
 
+    def _record_evaluation(
+        self, evaluation: Evaluation, indices: list[int], clause_count: int
+    ) -> dict[int, tuple[bool, float]]:
+        """Account for an acknowledged batch before validating its judgments."""
+        judgments: dict[int, tuple[bool, float]] = {}
+        self.evaluated += len(indices)
+        self.timings["typesafe_requests"] = (
+            self.timings.get("typesafe_requests", 0.0) + evaluation.requests
+        )
+        for name, count in (
+            ("typesafe_input_tokens", evaluation.input_tokens),
+            ("typesafe_output_tokens", evaluation.output_tokens),
+            ("typesafe_cache_hits", evaluation.cache_hits),
+            ("typesafe_coalesced", evaluation.coalesced),
+        ):
+            self.timings[name] = self.timings.get(name, 0.0) + count
+        for name, value in evaluation.timings.items():
+            metric = f"typesafe_rank_{name}"
+            self.timings[metric] = self.timings.get(metric, 0.0) + value
+        for index in indices:
+            judgments[index] = _judgment(evaluation, index, clause_count)
+        return judgments
+
     def rank[T: (SearchResult, DocumentSearchResult)](
         self, results: list[T]
     ) -> list[T]:
@@ -228,25 +264,9 @@ class ClassificationSession:
                     ]
                     for indices, future in pending:
                         evaluation = future.result()
-                        self.evaluated += len(indices)
-                        self.timings["typesafe_requests"] = (
-                            self.timings.get("typesafe_requests", 0.0)
-                            + evaluation.requests
+                        judgments.update(
+                            self._record_evaluation(evaluation, indices, len(clauses))
                         )
-                        for name, count in (
-                            ("typesafe_input_tokens", evaluation.input_tokens),
-                            ("typesafe_output_tokens", evaluation.output_tokens),
-                            ("typesafe_cache_hits", evaluation.cache_hits),
-                            ("typesafe_coalesced", evaluation.coalesced),
-                        ):
-                            self.timings[name] = self.timings.get(name, 0.0) + count
-                        for name, value in evaluation.timings.items():
-                            metric = f"typesafe_rank_{name}"
-                            self.timings[metric] = self.timings.get(metric, 0.0) + value
-                        for index in indices:
-                            judgments[index] = _judgment(
-                                evaluation, index, len(clauses)
-                            )
         except transport.TypesafeUnavailableError as exc:
             self.failed = True
             self.timings["typesafe_abstained"] = float(len(results))
