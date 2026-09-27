@@ -45,12 +45,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "provider cannot be made to emit those failures safely or repeatably; "
         "the separate live spike checks the hosted path",
     ),
-    "test_cli_index.py": (
-        9,
+    "test_cli_index_disk_preflight.py": (
+        1,
         "the disk floor is a per-profile compile-time constant with no config "
         "override, so a real run cannot be driven under it; production's own "
-        "ensure_disk_headroom raises, classifies and words the refusal. The "
-        "rest belong to the audit verb, and are one of three kinds. Most are "
+        "ensure_disk_headroom raises, classifies and words the refusal",
+    ),
+    "test_cli_index.py": (
+        8,
+        "audit substitutions are one of three kinds. Most are "
         "tripwires that only ever raise - the audit must not reach the "
         "publication transport, and must reject a bad scope before reaching "
         "any transport at all - so none of them can make a regressed verb "
@@ -265,7 +268,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "a real owner while every durable scope and job-history transition remains "
         "real",
     ),
-    "test_index_run_ledger.py": (
+    "_run_ledger_test_support.py": (
         1,
         "a peer's schema commit must land between two particular reads of one "
         "opener to prove those reads share a snapshot; the read helper is wrapped "

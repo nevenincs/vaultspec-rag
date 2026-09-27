@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from .._store_models import VaultChunk
     from ..embeddings import EmbeddingModel
 
 pytestmark = [pytest.mark.unit]
@@ -130,6 +131,24 @@ def _forward_block(
     }
 
 
+def _encode_slice_chunk() -> VaultChunk:
+    from .._store_models import VaultChunk
+
+    return VaultChunk(
+        doc_id="doc",
+        ordinal=0,
+        chunk_count=1,
+        text="body",
+        path="adr/doc.md",
+        doc_type="adr",
+        feature="search",
+        date="2026-01-01",
+        tags=[],
+        related=[],
+        title="doc",
+    )
+
+
 class TestForwardTelemetry:
     """The encode path publishes forward boundaries into the job record."""
 
@@ -162,7 +181,6 @@ class TestForwardTelemetry:
         ``_encode_slice_vector_fields`` after the encode (or dropping it)
         makes this fail on the event-order assertion below, not on an import.
         """
-        from .._store_models import VaultChunk
         from ..indexer._streaming import (
             _encode_slice_vector_fields,
             _VectorEncodeRequest,
@@ -184,19 +202,7 @@ class TestForwardTelemetry:
                 events.append("forward")
                 return [[0.0, 1.0] for _ in texts]
 
-        chunk = VaultChunk(
-            doc_id="doc",
-            ordinal=0,
-            chunk_count=1,
-            text="body",
-            path="adr/doc.md",
-            doc_type="adr",
-            feature="search",
-            date="2026-01-01",
-            tags=[],
-            related=[],
-            title="doc",
-        )
+        chunk = _encode_slice_chunk()
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
                 chunks=[chunk],
@@ -230,7 +236,6 @@ class TestForwardTelemetry:
         no callback and publishes nothing - and restoring it returns the
         test to green.
         """
-        from .._store_models import VaultChunk
         from ..embeddings import EncodeBucketProgress
         from ..indexer._streaming import (
             _encode_slice_vector_fields,
@@ -279,19 +284,7 @@ class TestForwardTelemetry:
                     on_bucket("after", _bucket_progress("sparse", 1))
                 return [None for _ in texts]
 
-        chunk = VaultChunk(
-            doc_id="doc",
-            ordinal=0,
-            chunk_count=1,
-            text="body",
-            path="adr/doc.md",
-            doc_type="adr",
-            feature="search",
-            date="2026-01-01",
-            tags=[],
-            related=[],
-            title="doc",
-        )
+        chunk = _encode_slice_chunk()
         _encode_slice_vector_fields(
             _VectorEncodeRequest(
                 chunks=[chunk],

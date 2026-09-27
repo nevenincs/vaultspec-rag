@@ -4,19 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import threading
-import time
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 import pytest
-import uvicorn
 from typer.testing import CliRunner
 
 from ...cli import app
-from ...config._settings import reset_config
-from ...config._types import EnvVar
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_models import (
     DesiredJobState,
@@ -27,12 +20,8 @@ from ...job_models import (
     JobSpec,
 )
 from ...jobs import get_job_manager
-from ...jobs import reset as reset_jobs
 from ...mcp._mcp import mcp
 from ...mcp._tools import reindex_vault
-from ...server import ServerRouteRuntime, create_http_app
-from ...service import ServiceRegistry
-from ...serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
 from ...serviceclient._transport import (
     _try_http_create_job,
     _try_http_delete_job,
@@ -41,91 +30,15 @@ from ...serviceclient._transport import (
     _try_http_set_job_desired_state,
 )
 from .._import_probe import assert_fresh_import_excludes, import_probe_source
-from .._ports import free_loopback_port
 from .._scaffold import make_workspace
+from ._service_jobs_support import _canonical_resilience_server
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from pathlib import Path
 
 runner = CliRunner()
 
 pytestmark = [pytest.mark.unit]
-
-
-@contextmanager
-def _real_job_control_server(tmp_path: Path) -> Generator[int]:
-    """Run the production route table over a real loopback HTTP socket."""
-    status_dir = tmp_path / "status"
-    port = free_loopback_port()
-    token = "real-job-control-token"
-    prior_status_dir = os.environ.get(EnvVar.STATUS_DIR)
-    prior_watch_enabled = os.environ.get(EnvVar.WATCH_ENABLED)
-    server: uvicorn.Server | None = None
-    thread: threading.Thread | None = None
-    stopped = True
-    try:
-        status_dir.mkdir()
-        os.environ[EnvVar.STATUS_DIR] = str(status_dir)
-        os.environ[EnvVar.WATCH_ENABLED] = "false"
-        reset_config()
-        reset_jobs()
-        (status_dir / "service.json").write_text(
-            json.dumps(
-                {
-                    "pid": os.getpid(),
-                    "port": port,
-                    "service_token": token,
-                    # A real daemon stamps its release here, and a client
-                    # refuses a data-plane call to one that does not. Omitting
-                    # it would model a service this fixture never stands up.
-                    SERVICE_VERSION_FIELD: local_package_version(),
-                }
-            ),
-            encoding="utf-8",
-        )
-
-        server = uvicorn.Server(
-            uvicorn.Config(
-                create_http_app(
-                    ServerRouteRuntime(
-                        token=token,
-                        registry=ServiceRegistry(),
-                        port=port,
-                    ),
-                    lifespan=None,
-                ),
-                host="127.0.0.1",
-                port=port,
-                log_config=None,
-                access_log=False,
-                lifespan="off",
-            )
-        )
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 5.0
-        while not server.started and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert server.started
-        yield port
-    finally:
-        if server is not None:
-            server.should_exit = True
-        if thread is not None:
-            thread.join(timeout=5.0)
-            stopped = not thread.is_alive()
-        reset_jobs()
-        if prior_status_dir is None:
-            os.environ.pop(EnvVar.STATUS_DIR, None)
-        else:
-            os.environ[EnvVar.STATUS_DIR] = prior_status_dir
-        if prior_watch_enabled is None:
-            os.environ.pop(EnvVar.WATCH_ENABLED, None)
-        else:
-            os.environ[EnvVar.WATCH_ENABLED] = prior_watch_enabled
-        reset_config()
-        assert stopped
 
 
 def _seed_paused_job(project_root: Path, job_id: str) -> dict[str, object]:
@@ -247,7 +160,7 @@ def test_typed_job_control_transport_uses_real_http_methods_and_conflicts(
     project_root = tmp_path / "project"
     (project_root / ".vault").mkdir(parents=True)
 
-    with _real_job_control_server(tmp_path) as port:
+    with _canonical_resilience_server(tmp_path) as (port, _token):
         job_id, revision = _create_paused_transport_job(port, project_root)
         _assert_transport_conflicts(port, job_id)
         _complete_transport_lifecycle(port, job_id, revision)
@@ -344,7 +257,7 @@ def test_human_cli_job_controls_resolve_unique_prefixes_before_exact_mutation(
     first_id = "abcdef01-0000-4000-8000-000000000001"
     second_id = "abcdef02-0000-4000-8000-000000000002"
 
-    with _real_job_control_server(tmp_path) as port:
+    with _canonical_resilience_server(tmp_path) as (port, _token):
         _seed_paused_job(tmp_path / "first", first_id)
         _seed_paused_job(tmp_path / "second", second_id)
         port_arg = str(port)
@@ -408,7 +321,7 @@ def test_json_cli_job_controls_use_full_ids_and_one_stable_outcome(
 ) -> None:
     job_id = "12345678-0000-4000-8000-000000000001"
 
-    with _real_job_control_server(tmp_path) as port:
+    with _canonical_resilience_server(tmp_path) as (port, _token):
         _seed_paused_job(tmp_path / "json", job_id)
         port_arg = str(port)
         _assert_json_lookup(port_arg, job_id)
@@ -461,7 +374,7 @@ def test_reindex_compatibility_keeps_mcp_refresh_distinct_from_clean(
         assert tool.annotations.destructive_hint is False
         assert tool.annotations.idempotent_hint is True
 
-    with _real_job_control_server(tmp_path):
+    with _canonical_resilience_server(tmp_path):
         get_job_manager().begin_shutdown()
         response = asyncio.run(reindex_vault(project_root=str(project_root)))
 

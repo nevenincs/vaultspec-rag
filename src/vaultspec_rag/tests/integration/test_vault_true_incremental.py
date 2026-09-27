@@ -152,7 +152,11 @@ def _stored_tags(store: VaultStore, point_key: str) -> list[str]:
 
 
 def _build_vault(
-    root: Path, model: EmbeddingModel, *, n_docs: int = 6
+    root: Path,
+    model: EmbeddingModel,
+    *,
+    n_docs: int = 6,
+    initial_stamp: str | None = None,
 ) -> tuple[VaultStore, VaultIndexer]:
     """Build and fully index a small synthetic vault at *root*."""
     from ... import VaultIndexer
@@ -161,6 +165,9 @@ def _build_vault(
     reset_config()
     reset_rag_config()
     build_synthetic_vault(root, n_docs=n_docs, seed=13)
+    if initial_stamp is not None:
+        for path in scan_vault(root):
+            _bump_stamp(path, initial_stamp)
     store = VaultStore(root)
     indexer = VaultIndexer(root, model, store)
     indexer.full_index(reporter=NullProgressReporter())
@@ -180,7 +187,9 @@ class TestStampOnlyChangeIsFree:
         then fails with ``updated == 6``, because every stamped document reads
         as modified.
         """
-        store, indexer = _build_vault(tmp_path, embedding_model)
+        store, indexer = _build_vault(
+            tmp_path, embedding_model, initial_stamp="2026-07-25"
+        )
         try:
             paths = sorted(scan_vault(tmp_path))
             docs_dir = tmp_path / get_config().docs_dir
@@ -212,7 +221,9 @@ class TestStampOnlyChangeIsFree:
         self, embedding_model: EmbeddingModel, tmp_path: Path
     ) -> None:
         """Volatile frontmatter leaves the served content identity unchanged."""
-        store, indexer = _build_vault(tmp_path, embedding_model)
+        store, indexer = _build_vault(
+            tmp_path, embedding_model, initial_stamp="2026-07-25"
+        )
         try:
             paths = sorted(scan_vault(tmp_path))
             docs_dir = tmp_path / get_config().docs_dir

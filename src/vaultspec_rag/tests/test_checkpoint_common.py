@@ -40,7 +40,7 @@ from ..indexer._run_ledger_models import (
     RunTerminalState,
     index_run_ledger_path,
 )
-from ..indexer._run_ledger_publication import compatibility_for_signature
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._run_ledger_runtime import RunLedger
 
 if TYPE_CHECKING:

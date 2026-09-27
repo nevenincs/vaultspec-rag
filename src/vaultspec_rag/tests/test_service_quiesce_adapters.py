@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
-import uvicorn
 
 from ..config._types import EnvVar
 from ..service_quiesce import (
@@ -21,15 +17,10 @@ from ..service_quiesce import (
     QuiesceSnapshot,
     QuiesceState,
 )
-from ._ports import free_loopback_port
+from ._production_service import production_service
 from .conftest import managed_env
 
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
 pytestmark = [pytest.mark.unit]
-
-_SERVICE_TOKEN = "quiesce-adapter-route-token"
 
 # Bounds the in-thread server's start and graceful exit. A runner executing a
 # dozen workers can stall a thread for many seconds; a hung server still fails.
@@ -219,70 +210,6 @@ def test_mcp_service_state_preserves_the_production_quiesce_block(
     assert quiesce["safe_to_borrow_gpu"] is True
 
 
-def _publish_service_discovery(status_dir: Path, *, port: int) -> None:
-    """Publish the route host through the production discovery writer."""
-    from ..config._paths import SERVICE_STATUS_FILENAME
-    from ..serviceclient._compat import SERVICE_VERSION_FIELD, local_package_version
-    from ..serviceclient._discovery import (
-        SERVICE_DISCOVERY_SCHEMA,
-        SERVICE_DISCOVERY_VERSION,
-        _replace_service_status,
-    )
-
-    _replace_service_status(
-        {
-            "pid": os.getpid(),
-            "port": port,
-            "schema": SERVICE_DISCOVERY_SCHEMA,
-            "version": SERVICE_DISCOVERY_VERSION,
-            SERVICE_VERSION_FIELD: local_package_version(),
-            "service_token": _SERVICE_TOKEN,
-        },
-        path=status_dir / SERVICE_STATUS_FILENAME,
-    )
-
-
-@contextlib.contextmanager
-def _production_routes(status_dir: Path) -> Generator[int]:
-    """Serve the real route table without starting the daemon lifespan."""
-    from ..server import ServerRouteRuntime, create_http_app
-    from ..service import ServiceRegistry
-    from ..serviceclient._transport import _try_http_admin
-
-    port = free_loopback_port()
-    server = uvicorn.Server(
-        uvicorn.Config(
-            create_http_app(
-                ServerRouteRuntime(
-                    token=_SERVICE_TOKEN,
-                    registry=ServiceRegistry(),
-                    port=port,
-                ),
-                lifespan=None,
-            ),
-            host="127.0.0.1",
-            port=port,
-            log_config=None,
-            access_log=False,
-            lifespan="off",
-        )
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        deadline = time.monotonic() + _SERVER_THREAD_TIMEOUT_SECONDS
-        while not server.started and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert server.started
-        _publish_service_discovery(status_dir, port=port)
-        yield port
-    finally:
-        _try_http_admin("resume_service", {}, port)
-        server.should_exit = True
-        thread.join(timeout=_SERVER_THREAD_TIMEOUT_SECONDS)
-        assert not thread.is_alive()
-
-
 async def _paint_quiesce_jobs_tui(
     *,
     port: int,
@@ -335,8 +262,9 @@ async def test_jobs_tui_renders_production_quiesce_controller_evidence(
                 EnvVar.LOCAL_ONLY.value: "true",
             }
         ),
-        _production_routes(status_dir) as port,
+        production_service(status_dir) as service,
     ):
+        port = service.port
         from ..serviceclient._transport import _try_http_admin
 
         pause = _try_http_admin("pause_service", {}, port)
@@ -372,8 +300,9 @@ async def test_jobs_tui_shows_quiesce_unavailable_after_a_route_error(
                 EnvVar.LOCAL_ONLY.value: "true",
             }
         ),
-        _production_routes(status_dir) as port,
+        production_service(status_dir) as service,
     ):
+        port = service.port
         retained, painted, fetch_error = await _paint_quiesce_jobs_tui(
             port=port,
             job_args={"controllable": "not-a-boolean"},

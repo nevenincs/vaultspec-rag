@@ -16,9 +16,30 @@ from .conftest import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ... import VaultSearcher
     from ..conftest import RagComponentsWithManifest
 
 pytestmark = [pytest.mark.integration]
+
+
+def _indexed_searcher_with_test_sample(code_project: _CodeProject) -> VaultSearcher:
+    """Index the sample test file and return the production code searcher."""
+    from ... import VaultSearcher
+
+    tests_dir = code_project["src_dir"].parent / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
+    indexer = code_project["code_indexer"]
+    indexer.full_index(
+        reporter=NullProgressReporter(),
+        preflight=indexer.preflight_content(),
+    )
+    return VaultSearcher(
+        code_project["root"],
+        code_project["model"],
+        code_project["store"],
+        reranker=code_project["reranker"],
+    )
 
 
 class TestCodebaseSearch:
@@ -47,24 +68,7 @@ class TestCodebaseSearch:
         self, code_project: _CodeProject
     ) -> None:
         """--exclude-path drops matching files post-query."""
-        from ... import VaultSearcher
-
-        # Add a second file under tests/ that would otherwise rank high
-        # for the query, so we can prove exclude really prunes.
-        tests_dir = code_project["src_dir"].parent / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_project["code_indexer"].preflight_content(),
-        )
-
-        searcher = VaultSearcher(
-            code_project["root"],
-            code_project["model"],
-            code_project["store"],
-            reranker=code_project["reranker"],
-        )
+        searcher = _indexed_searcher_with_test_sample(code_project)
 
         # Without exclude: tests/ paths should appear in the candidate set.
         unfiltered = searcher.search_codebase("calculator add", top_k=10)
@@ -89,22 +93,7 @@ class TestCodebaseSearch:
         self, code_project: _CodeProject
     ) -> None:
         """--include-path keeps only matching files post-query."""
-        from ... import VaultSearcher
-
-        tests_dir = code_project["src_dir"].parent / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_project["code_indexer"].preflight_content(),
-        )
-
-        searcher = VaultSearcher(
-            code_project["root"],
-            code_project["model"],
-            code_project["store"],
-            reranker=code_project["reranker"],
-        )
+        searcher = _indexed_searcher_with_test_sample(code_project)
 
         results = searcher.search_codebase(
             "calculator",
@@ -128,22 +117,7 @@ class TestCodebaseSearch:
         indexed path, so matching it literally returned nothing at all while
         reading as a working narrow.
         """
-        from ... import VaultSearcher
-
-        tests_dir = code_project["src_dir"].parent / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_project["code_indexer"].preflight_content(),
-        )
-
-        searcher = VaultSearcher(
-            code_project["root"],
-            code_project["model"],
-            code_project["store"],
-            reranker=code_project["reranker"],
-        )
+        searcher = _indexed_searcher_with_test_sample(code_project)
 
         results = searcher.search_codebase(
             "calculator",
@@ -166,22 +140,7 @@ class TestCodebaseSearch:
         into a keyword equality match no indexed path can satisfy, so the
         search returned nothing and reported a plain no-match.
         """
-        from ... import VaultSearcher
-
-        tests_dir = code_project["src_dir"].parent / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "test_sample.py").write_text(SAMPLE_PYTHON, encoding="utf-8")
-        code_project["code_indexer"].full_index(
-            reporter=NullProgressReporter(),
-            preflight=code_project["code_indexer"].preflight_content(),
-        )
-
-        searcher = VaultSearcher(
-            code_project["root"],
-            code_project["model"],
-            code_project["store"],
-            reranker=code_project["reranker"],
-        )
+        searcher = _indexed_searcher_with_test_sample(code_project)
 
         results = searcher.search_codebase("calculator path:src/", top_k=10)
         paths = {r.path for r in results}

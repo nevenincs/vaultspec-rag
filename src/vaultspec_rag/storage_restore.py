@@ -385,6 +385,52 @@ def _refuse_unnamed_snapshots(
         )
 
 
+def _rollback_restore(
+    client: QdrantClient,
+    request: RestoreRequest,
+    archive: ArchiveRead,
+    restored: list[str],
+) -> None:
+    """Clear restored proof authority before deleting partially recovered storage."""
+    backend_identity = configured_backend_identity(request.destination_root.resolve())
+    for proof in archive.publication_proofs:
+        with suppress(OSError, RuntimeError):
+            clear_publication_state(
+                request.destination_root,
+                proof.signature.source_type,
+                backend_identity,
+            )
+    for name in reversed(restored):
+        with suppress(OSError, RuntimeError):
+            client.delete_collection(collection_name=name)
+
+
+def _restore_disposition(
+    client: QdrantClient,
+    request: RestoreRequest,
+    destination: str,
+    names: tuple[str, ...],
+) -> RestoreResult | None:
+    """Resolve occupied, preview and unsupported targets before storage mutation."""
+    existing = tuple(
+        collection.name
+        for collection in client.get_collections().collections
+        if collection.name.startswith(destination)
+    )
+    if existing:
+        return RestoreResult("refused", destination, names, "destination_exists")
+    if request.dry_run:
+        return RestoreResult("would_restore", destination, names)
+    if sys.platform == "win32":
+        return RestoreResult(
+            "refused",
+            destination,
+            names,
+            WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
+        )
+    return None
+
+
 def restore_archive(
     client: QdrantClient,
     request: RestoreRequest,
@@ -406,24 +452,9 @@ def restore_archive(
         return RestoreResult(
             "refused", destination, names, "invalid_archive_collection"
         )
-    existing = tuple(
-        collection.name
-        for collection in client.get_collections().collections
-        if collection.name.startswith(destination)
-    )
-    if existing:
-        return RestoreResult("refused", destination, names, "destination_exists")
-    if request.dry_run or sys.platform == "win32":
-        return (
-            RestoreResult("would_restore", destination, names)
-            if request.dry_run
-            else RestoreResult(
-                "refused",
-                destination,
-                names,
-                WINDOWS_SERVER_ARCHIVE_RESTORE_UNSUPPORTED_REASON,
-            )
-        )
+    disposition = _restore_disposition(client, request, destination, names)
+    if disposition is not None:
+        return disposition
     restored: list[str] = []
     try:
         from qdrant_client.http import models
@@ -456,18 +487,6 @@ def restore_archive(
             identities=identities,
         )
     except Exception:
-        backend_identity = configured_backend_identity(
-            request.destination_root.resolve()
-        )
-        for proof in archive.publication_proofs:
-            with suppress(OSError, RuntimeError):
-                clear_publication_state(
-                    request.destination_root,
-                    proof.signature.source_type,
-                    backend_identity,
-                )
-        for name in reversed(restored):
-            with suppress(OSError, RuntimeError):
-                client.delete_collection(collection_name=name)
+        _rollback_restore(client, request, archive, restored)
         raise
     return RestoreResult("restored", destination, names)

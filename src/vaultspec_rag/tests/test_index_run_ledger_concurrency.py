@@ -33,12 +33,12 @@ from ..indexer._run_ledger_models import (
     with_contention_retry,
 )
 from ..indexer._run_ledger_runtime import RunLedger
-from .test_index_run_ledger import (
-    _digest,
-    _seal_publication_receipt,
-    _seeded_publication_lineage,
-    _signature,
-    _unit,
+from ._run_ledger_test_support import (
+    ledger_test_digest,
+    ledger_test_seal_publication_receipt,
+    ledger_test_seeded_publication_lineage,
+    ledger_test_signature,
+    ledger_test_unit,
 )
 
 pytestmark = [pytest.mark.unit]
@@ -55,7 +55,7 @@ def _seed_units(ledger: RunLedger, generation_id: str, *, files: int) -> None:
         path = f"src/seeded-{index:04d}.py"
         ledger.record_storage_confirmed_units(
             generation_id,
-            tuple(_unit(path, ordinal, 3) for ordinal in range(3)),
+            tuple(ledger_test_unit(path, ordinal, 3) for ordinal in range(3)),
         )
 
 
@@ -111,7 +111,7 @@ def _commit_replacement(
         content_identity=source_digest,
         point_ids=mutation.point_ids,
     )
-    _seal_publication_receipt(
+    ledger_test_seal_publication_receipt(
         writer,
         receipt,
         mutation=mutation,
@@ -134,10 +134,10 @@ def test_independent_connection_observes_an_active_publication_receipt(
     rel_path = "src/a.py"
     evidence = ProofEvidence(
         rel_path=rel_path,
-        content_identity=_digest("a-v1"),
-        point_ids=_unit(rel_path, 0, 1).point_ids,
+        content_identity=ledger_test_digest("a-v1"),
+        point_ids=ledger_test_unit(rel_path, 0, 1).point_ids,
     )
-    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+    ledger, key, _parent_id, successor_id = ledger_test_seeded_publication_lineage(
         tmp_path,
         (evidence,),
     )
@@ -209,13 +209,13 @@ def test_read_token_rejects_a_revision_committed_by_an_independent_writer(
 ) -> None:
     """Mutation: accepting a changed revision after the backend read makes this red."""
     rel_path = "src/a.py"
-    mutation = _unit(rel_path, 0, 1, digest=_digest("a-v2"))
+    mutation = ledger_test_unit(rel_path, 0, 1, digest=ledger_test_digest("a-v2"))
     old = ProofEvidence(
         rel_path=rel_path,
-        content_identity=_digest("a-v1"),
+        content_identity=ledger_test_digest("a-v1"),
         point_ids=mutation.point_ids,
     )
-    ledger, key, _parent_id, successor_id = _seeded_publication_lineage(
+    ledger, key, _parent_id, successor_id = ledger_test_seeded_publication_lineage(
         tmp_path,
         (old,),
     )
@@ -297,9 +297,9 @@ def test_a_long_reader_cannot_fail_a_concurrent_ledger_commit(tmp_path: Path) ->
     any reader holds a shared lock - so the commit, not the read, is what dies.
     """
     ledger = RunLedger(tmp_path / "index" / INDEX_RUN_LEDGER_FILENAME)
-    generation = ledger.start_generation(_signature(tmp_path))
+    generation = ledger.start_generation(ledger_test_signature(tmp_path))
     _seed_units(ledger, generation.generation_id, files=120)
-    late = _unit("src/committed-under-contention.py", 0, 1)
+    late = ledger_test_unit("src/committed-under-contention.py", 0, 1)
 
     holding = threading.Event()
     release = threading.Event()
@@ -372,7 +372,7 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
     """
     ledger_path = tmp_path / "index" / INDEX_RUN_LEDGER_FILENAME
     ledger = RunLedger(ledger_path)
-    code = ledger.start_generation(_signature(tmp_path))
+    code = ledger.start_generation(ledger_test_signature(tmp_path))
     _seed_units(ledger, code.generation_id, files=120)
 
     holding = threading.Event()
@@ -387,14 +387,14 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
             assert (
                 ledger.record_storage_confirmed_units(
                     code.generation_id,
-                    (_unit(f"src/concurrent-{index:03d}.py", 0, 1),),
+                    (ledger_test_unit(f"src/concurrent-{index:03d}.py", 0, 1),),
                 )
                 == 1
             )
 
         document = ledger.start_generation(
             replace(
-                _signature(tmp_path),
+                ledger_test_signature(tmp_path),
                 source_type=PublicSourceType.DOCUMENT,
                 collection_identity="document-v1",
             )
@@ -402,7 +402,7 @@ def test_a_held_read_blocks_neither_kind_on_the_shared_ledger(
         assert (
             ledger.record_storage_confirmed_units(
                 document.generation_id,
-                (_unit("docs/guide.md", 0, 1),),
+                (ledger_test_unit("docs/guide.md", 0, 1),),
             )
             == 1
         )
@@ -468,7 +468,7 @@ def test_separate_processes_commit_to_one_ledger_without_starving(
     """
     ledger_path = tmp_path / "index" / INDEX_RUN_LEDGER_FILENAME
     ledger = RunLedger(ledger_path)
-    generation = ledger.start_generation(_signature(tmp_path))
+    generation = ledger.start_generation(ledger_test_signature(tmp_path))
     _seed_units(ledger, generation.generation_id, files=60)
     before = ledger.committed_unit_count(generation.generation_id)
 

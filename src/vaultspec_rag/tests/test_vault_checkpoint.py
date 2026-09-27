@@ -9,7 +9,7 @@ from .._job_errors import JobError, JobErrorKind
 from .._store_models import VaultChunk
 from ..indexer import _vault_checkpoint
 from ..indexer._run_ledger_models import RunAuthority, RunOperation
-from ..indexer._run_ledger_publication import compatibility_for_signature
+from ..indexer._run_ledger_publication_identity import compatibility_for_signature
 from ..indexer._vault_checkpoint import VaultRunCheckpoint
 from ..job_control import NO_RUN_CONTROL
 

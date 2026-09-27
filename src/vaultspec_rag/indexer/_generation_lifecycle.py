@@ -450,7 +450,7 @@ class CodeGenerationLifecycle:
         """Return bounded deterministic point evidence grouped by path."""
         result: dict[str, set[str]] = {rel: set() for rel in rel_paths}
         if retained:
-            from ._run_ledger_publication import compatibility_for_signature
+            from ._run_ledger_publication_identity import compatibility_for_signature
 
             key = (
                 checkpoint.receipt.compatibility_key

@@ -368,6 +368,31 @@ def _distinct_texts(count: int, length: int = 200) -> list[str]:
     return [alphabet[i] * length for i in range(count)]
 
 
+def _assert_bucket_retry_progress(
+    events: list[tuple[str, EncodeBucketProgress]],
+    *,
+    kind: str,
+) -> None:
+    phases = [phase for phase, _progress in events]
+    assert phases == [
+        "before",
+        "after",
+        "before",
+        "before",
+        "after",
+        "before",
+        "after",
+    ]
+    done = [progress.items_done for phase, progress in events if phase == "after"]
+    assert done == [2, 3, 4]
+    assert events[0][1].token_budget == 100
+    assert events[0][1].oom_count == 0
+    assert events[3][1].token_budget == 50
+    assert events[3][1].oom_count == 1
+    assert {progress.kind for _phase, progress in events} == {kind}
+    assert all(progress.items_total == 4 for _phase, progress in events)
+
+
 class TestBucketedDenseEncode:
     """The dense encode path plans buckets and scopes OOM retry to one bucket."""
 
@@ -528,27 +553,7 @@ class TestBucketedDenseEncode:
             retain_on_device=False,
             on_bucket=observe,
         )
-        phases = [phase for phase, _progress in events]
-        # The failing [t2, t3] attempt fires "before" without an "after";
-        # its replanned single-item retries each fire a full pair.
-        assert phases == [
-            "before",
-            "after",
-            "before",
-            "before",
-            "after",
-            "before",
-            "after",
-        ]
-        done = [progress.items_done for phase, progress in events if phase == "after"]
-        assert done == [2, 3, 4]
-        assert events[0][1].token_budget == 100
-        assert events[0][1].oom_count == 0
-        # After the OOM the live budget halves and the counter advances.
-        assert events[3][1].token_budget == 50
-        assert events[3][1].oom_count == 1
-        assert {progress.kind for _phase, progress in events} == {"dense"}
-        assert all(progress.items_total == 4 for _phase, progress in events)
+        _assert_bucket_retry_progress(events, kind="dense")
 
 
 class TestBucketedSparseEncode:
@@ -662,27 +667,7 @@ class TestBucketedSparseEncode:
             events.append((phase, progress))
 
         model.encode_documents_sparse(texts, on_bucket=observe)
-        phases = [phase for phase, _progress in events]
-        # The failing [t2, t3] attempt fires "before" without an "after";
-        # its replanned single-item retries each fire a full pair.
-        assert phases == [
-            "before",
-            "after",
-            "before",
-            "before",
-            "after",
-            "before",
-            "after",
-        ]
-        done = [progress.items_done for phase, progress in events if phase == "after"]
-        assert done == [2, 3, 4]
-        assert events[0][1].token_budget == 100
-        assert events[0][1].oom_count == 0
-        # After the OOM the live budget halves and the counter advances.
-        assert events[3][1].token_budget == 50
-        assert events[3][1].oom_count == 1
-        assert {progress.kind for _phase, progress in events} == {"sparse"}
-        assert all(progress.items_total == 4 for _phase, progress in events)
+        _assert_bucket_retry_progress(events, kind="sparse")
 
 
 #: Fixed worst-case calibration corpus: token-dense shapes a code or

@@ -276,7 +276,7 @@ class RunCheckpointBase:
         authority: RunAuthority,
     ) -> PublicationReceipt | None:
         """Bind an incremental generation to its canonical parent revision."""
-        from ._run_ledger_publication import compatibility_for_signature
+        from ._run_ledger_publication_identity import compatibility_for_signature
 
         signature = generation.signature
         if authority is RunAuthority.REBUILD:
@@ -408,7 +408,7 @@ class RunCheckpointBase:
             return len(evidence)
         if self.receipt is not None:
             return self.seal_incremental_proof()
-        from ._run_ledger_publication import compatibility_for_signature
+        from ._run_ledger_publication_identity import compatibility_for_signature
 
         proof = self.ledger.publication_proof(
             compatibility_for_signature(self.generation.signature)
@@ -439,22 +439,13 @@ class RunCheckpointBase:
                 )
         return evidence
 
-    def seal_incremental_proof(self) -> int:
-        """Freeze an incremental receipt's exact delta before stale deletion."""
-        if self.receipt is None:
-            raise RunLedgerStateError("incremental publication has no receipt")
-        receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)
-        if receipt is None or receipt.receipt_id != self.receipt.receipt_id:
-            raise RunLedgerStateError("incremental publication receipt disappeared")
-        paths = tuple(sorted({item.unit.rel_path for item in receipt.mutations}))
-        old_by_path: dict[str, ProofEvidence] = {}
-        for start in range(0, len(paths), FETCH_BATCH):
-            old_by_path.update(
-                self.ledger.publication_evidence_for_paths(
-                    receipt.compatibility_key,
-                    paths[start : start + FETCH_BATCH],
-                )
-            )
+    def _publication_deltas(
+        self,
+        receipt: PublicationReceipt,
+        paths: tuple[str, ...],
+        old_by_path: dict[str, ProofEvidence],
+    ) -> list[PathDelta]:
+        """Derive changed heads from confirmed mutations and the exact parent proof."""
         deltas: list[PathDelta] = []
         for rel_path in paths:
             upserts = tuple(
@@ -477,6 +468,25 @@ class RunCheckpointBase:
             deltas.append(
                 PathDelta(outcome, receipt.parent_revision, rel_path, old=old, new=new)
             )
+        return deltas
+
+    def seal_incremental_proof(self) -> int:
+        """Freeze an incremental receipt's exact delta before stale deletion."""
+        if self.receipt is None:
+            raise RunLedgerStateError("incremental publication has no receipt")
+        receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)
+        if receipt is None or receipt.receipt_id != self.receipt.receipt_id:
+            raise RunLedgerStateError("incremental publication receipt disappeared")
+        paths = tuple(sorted({item.unit.rel_path for item in receipt.mutations}))
+        old_by_path: dict[str, ProofEvidence] = {}
+        for start in range(0, len(paths), FETCH_BATCH):
+            old_by_path.update(
+                self.ledger.publication_evidence_for_paths(
+                    receipt.compatibility_key,
+                    paths[start : start + FETCH_BATCH],
+                )
+            )
+        deltas = self._publication_deltas(receipt, paths, old_by_path)
         if not deltas:
             if receipt.mutations:
                 raise RunLedgerStateError(

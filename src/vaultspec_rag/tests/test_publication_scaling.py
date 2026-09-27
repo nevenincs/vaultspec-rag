@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._source_types import PublicSourceType
-from ..indexer import _run_ledger_models, _run_ledger_publication
+from ..indexer import (
+    _run_ledger_models,
+    _run_ledger_publication_proofs,
+    _run_ledger_publication_reads,
+)
 from ..indexer._publication_proof import (
     PathDelta,
     PathOutcome,
@@ -104,16 +108,20 @@ def _install_traced_connection(
     monkeypatch: pytest.MonkeyPatch,
     traced: object,
 ) -> None:
-    """Route every ledger connection through *traced*, on both seams.
+    """Route every proof read and transaction connection through *traced*.
 
     ``ledger_connection`` is defined in the models module and imported by name
-    into the publication module, so the two hold separate bindings to one
-    function. Reads open through the publication module's; writes open through
+    into the proof/read owners, so each holds a binding to one function.
+    Reads open through those owners; writes open through
     ``ledger_transaction``, which resolves the models module's. Patching only
     one leaves the other untraced, and a statement counter that observes
     nothing reports every budget as met.
     """
-    for module in (_run_ledger_publication, _run_ledger_models):
+    for module in (
+        _run_ledger_publication_reads,
+        _run_ledger_publication_proofs,
+        _run_ledger_models,
+    ):
         monkeypatch.setattr(module, "ledger_connection", traced)
 
 
@@ -142,7 +150,7 @@ def _measured(
     """
     cost = _ReadCost(vm_steps=0, selects=[])
     statements: list[str] = []
-    original = _run_ledger_publication.ledger_connection
+    original = _run_ledger_models.ledger_connection
 
     def count() -> None:
         cost.vm_steps += 1
@@ -298,7 +306,7 @@ def test_the_read_production_issues_seeks_every_table_it_touches(
 
     assert cost.selects, "production issued no SELECT to plan"
     details: list[str] = []
-    with _run_ledger_publication.ledger_connection(ledger.path) as connection:
+    with _run_ledger_models.ledger_connection(ledger.path) as connection:
         for statement in cost.selects:
             plan = connection.execute(f"EXPLAIN QUERY PLAN {statement}").fetchall()
             assert plan, f"the captured statement produced no plan: {statement}"
@@ -387,7 +395,7 @@ def test_single_identity_commit_has_bounded_statement_count(
         FinalizationPhase.STALE_RECONCILED,
     )
     statements: list[str] = []
-    original = _run_ledger_publication.ledger_connection
+    original = _run_ledger_models.ledger_connection
 
     @contextmanager
     def traced(path: Path) -> Generator[sqlite3.Connection]:

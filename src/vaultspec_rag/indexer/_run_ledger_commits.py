@@ -34,10 +34,10 @@ from ._run_ledger_models import (
     ledger_transaction,
     with_contention_retry,
 )
-from ._run_ledger_publication import (
-    _hydrate_receipt,  # pyright: ignore[reportPrivateUsage]  # sibling receipt codec
-    _receipt_corrupt,  # pyright: ignore[reportPrivateUsage]  # sibling receipt codec
-    _receipt_row_by_id,  # pyright: ignore[reportPrivateUsage]  # sibling receipt codec
+from ._run_ledger_publication_storage import (
+    hydrate_receipt,
+    receipt_corrupt,
+    receipt_row_by_id,
 )
 
 if TYPE_CHECKING:
@@ -237,14 +237,14 @@ def _row_optional_text(row: sqlite3.Row, key: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        _receipt_corrupt(f"stored publication mutation {key} is not text")
+        receipt_corrupt(f"stored publication mutation {key} is not text")
     return value
 
 
 def _row_number(row: sqlite3.Row, key: str) -> float:
     value = row[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        _receipt_corrupt(f"stored publication mutation {key} is not numeric")
+        receipt_corrupt(f"stored publication mutation {key} is not numeric")
     return float(value)
 
 
@@ -258,13 +258,13 @@ def _receipt_state(
     connection: sqlite3.Connection,
     receipt_id: str,
 ) -> ProofReceiptState:
-    row = _receipt_row_by_id(connection, receipt_id)
+    row = receipt_row_by_id(connection, receipt_id)
     if row is None:
         raise KeyError(receipt_id)
     try:
         return ProofReceiptState(column_text(row, "state"))
     except ValueError as exc:
-        _receipt_corrupt("stored publication receipt state is malformed", exc)
+        receipt_corrupt("stored publication receipt state is malformed", exc)
 
 
 def _publication_mutation(
@@ -321,7 +321,7 @@ def _publication_mutation(
             sealed_ordinal=sealed_ordinal,
         )
     except (KeyError, TypeError, ValueError) as exc:
-        _receipt_corrupt("stored publication mutation unit is malformed", exc)
+        receipt_corrupt("stored publication mutation unit is malformed", exc)
 
 
 def _assert_exact_mutation(
@@ -420,7 +420,7 @@ def _persist_sealed_receipt_body(
             ),
         )
         if cursor.rowcount != 1:
-            _receipt_corrupt("publication mutation changed while sealing receipt")
+            receipt_corrupt("publication mutation changed while sealing receipt")
     for ordinal, delta in enumerate(candidate.deltas):
         connection.execute(
             """
@@ -522,7 +522,7 @@ def _require_mutation_cursor(
         (receipt_id, next_ordinal - 1),
     )
     if predecessor is None:
-        _receipt_corrupt("publication mutation cursor has no predecessor")
+        receipt_corrupt("publication mutation cursor has no predecessor")
 
 
 class RunLedgerCommitMethods:
@@ -578,7 +578,7 @@ class RunLedgerCommitMethods:
                 raise RunLedgerStateError(
                     f"cannot prepare a mutation for a {state.value} receipt"
                 )
-            receipt_row = _receipt_row_by_id(connection, receipt_id)
+            receipt_row = receipt_row_by_id(connection, receipt_id)
             assert receipt_row is not None
             _validate_mutation_point_authority(connection, receipt_row, unit)
             generation = self._require_mutable_generation(
@@ -753,10 +753,10 @@ class RunLedgerCommitMethods:
         sealed_at = time.time()
 
         def body(connection: sqlite3.Connection) -> PublicationReceipt:
-            row = _receipt_row_by_id(connection, receipt_id)
+            row = receipt_row_by_id(connection, receipt_id)
             if row is None:
                 raise KeyError(receipt_id)
-            receipt = _hydrate_receipt(connection, row)
+            receipt = hydrate_receipt(connection, row)
             if receipt.state in {
                 ProofReceiptState.SEALED,
                 ProofReceiptState.COMMITTED,
@@ -802,9 +802,9 @@ class RunLedgerCommitMethods:
                 raise RunLedgerStateError(
                     "publication receipt changed while it was being sealed"
                 )
-            result_row = _receipt_row_by_id(connection, receipt_id)
+            result_row = receipt_row_by_id(connection, receipt_id)
             assert result_row is not None
-            return _hydrate_receipt(connection, result_row)
+            return hydrate_receipt(connection, result_row)
 
         return in_ledger_transaction(self.path, body)
 
@@ -817,10 +817,10 @@ class RunLedgerCommitMethods:
         rollback_started_at = time.time()
 
         def body(connection: sqlite3.Connection) -> PublicationReceipt:
-            row = _receipt_row_by_id(connection, receipt_id)
+            row = receipt_row_by_id(connection, receipt_id)
             if row is None:
                 raise KeyError(receipt_id)
-            receipt = _hydrate_receipt(connection, row)
+            receipt = hydrate_receipt(connection, row)
             if receipt.state in {
                 ProofReceiptState.ROLLING_BACK,
                 ProofReceiptState.ROLLED_BACK,
@@ -865,9 +865,9 @@ class RunLedgerCommitMethods:
                 raise RunLedgerStateError(
                     "publication receipt changed while rollback began"
                 )
-            result_row = _receipt_row_by_id(connection, receipt_id)
+            result_row = receipt_row_by_id(connection, receipt_id)
             assert result_row is not None
-            return _hydrate_receipt(connection, result_row)
+            return hydrate_receipt(connection, result_row)
 
         return in_ledger_transaction(self.path, body)
 
@@ -889,10 +889,10 @@ class RunLedgerCommitMethods:
         rolled_back_at = time.time()
 
         def body(connection: sqlite3.Connection) -> PublicationReceipt:
-            row = _receipt_row_by_id(connection, receipt_id)
+            row = receipt_row_by_id(connection, receipt_id)
             if row is None:
                 raise KeyError(receipt_id)
-            receipt = _hydrate_receipt(connection, row)
+            receipt = hydrate_receipt(connection, row)
             expected_by_id = {
                 mutation.identity: mutation.unit for mutation in receipt.mutations
             }
@@ -927,9 +927,9 @@ class RunLedgerCommitMethods:
             )
             if cursor.rowcount != 1:
                 raise RunLedgerStateError("publication receipt changed during rollback")
-            result_row = _receipt_row_by_id(connection, receipt_id)
+            result_row = receipt_row_by_id(connection, receipt_id)
             assert result_row is not None
-            return _hydrate_receipt(connection, result_row)
+            return hydrate_receipt(connection, result_row)
 
         return in_ledger_transaction(self.path, body)
 

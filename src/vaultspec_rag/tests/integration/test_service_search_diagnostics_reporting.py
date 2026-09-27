@@ -72,6 +72,50 @@ def test_cli_json_preserves_shared_readiness_scenario(
     ]
 
 
+def _assert_source_facts(output: str, scenario: SearchReadinessScenario) -> None:
+    for fact in scenario.source_facts:
+        assert f"{fact.source}: {fact.availability.value}, {fact.freshness.value}" in (
+            output
+        )
+        assert len(fact.reason_code or "") <= 256
+        assert all(len(item) <= 256 for item in fact.evidence)
+        for wait in fact.waits:
+            assert f"Wait {fact.source} {wait.cause.value}:" in output
+
+
+def _assert_result_locations(output: str, scenario: SearchReadinessScenario) -> None:
+    for witness in scenario.results:
+        if witness.section is not None:
+            located = f"{witness.result_id}:{witness.line_start}-{witness.line_end}"
+            assert located in output
+            assert f"section: {witness.section}" in output
+
+
+def _assert_scenario_content(output: str, scenario: SearchReadinessScenario) -> None:
+    if scenario.failure is not None:
+        assert f"Code: {scenario.failure.code}" in output
+        assert scenario.failure.remediation in output
+        assert output.count(scenario.failure.remediation) == 1
+    elif scenario.name == "authoritative_empty":
+        assert "No source code results found" in output
+    elif scenario.name in {"updating", "mixed_combined"}:
+        assert scenario.results[0].text in output
+
+
+def _assert_human_readiness_report(
+    output: str,
+    scenario: SearchReadinessScenario,
+) -> None:
+    aggregate = scenario.aggregate
+    assert (
+        f"Readiness: {aggregate.availability.value} / {aggregate.freshness.value} / "
+        f"{aggregate.absence_authority.value}"
+    ) in output
+    _assert_source_facts(output, scenario)
+    _assert_result_locations(output, scenario)
+    _assert_scenario_content(output, scenario)
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "scenario", SEARCH_READINESS_SCENARIOS.values(), ids=lambda item: item.name
@@ -87,32 +131,7 @@ def test_cli_human_renders_shared_readiness_scenario(
         result = _invoke_readiness_search(tmp_path, port)
 
     assert result.exit_code == (0 if scenario.failure is None else 1)
-    aggregate = scenario.aggregate
-    assert (
-        f"Readiness: {aggregate.availability.value} / {aggregate.freshness.value} / "
-        f"{aggregate.absence_authority.value}"
-    ) in result.output
-    for fact in scenario.source_facts:
-        assert f"{fact.source}: {fact.availability.value}, {fact.freshness.value}" in (
-            result.output
-        )
-        assert len(fact.reason_code or "") <= 256
-        assert all(len(item) <= 256 for item in fact.evidence)
-        for wait in fact.waits:
-            assert f"Wait {fact.source} {wait.cause.value}:" in result.output
-    for witness in scenario.results:
-        if witness.section is not None:
-            located = f"{witness.result_id}:{witness.line_start}-{witness.line_end}"
-            assert located in result.output
-            assert f"section: {witness.section}" in result.output
-    if scenario.failure is not None:
-        assert f"Code: {scenario.failure.code}" in result.output
-        assert scenario.failure.remediation in result.output
-        assert result.output.count(scenario.failure.remediation) == 1
-    elif scenario.name == "authoritative_empty":
-        assert "No source code results found" in result.output
-    elif scenario.name in {"updating", "mixed_combined"}:
-        assert scenario.results[0].text in result.output
+    _assert_human_readiness_report(result.output, scenario)
 
 
 @pytest.mark.subprocess_gpu

@@ -289,6 +289,42 @@ def schedule_replacement(
     )
 
 
+def _observe_active_attempt(
+    slot: WatcherConvergenceSlot, snapshot: JobSnapshot
+) -> None:
+    """Update active state and discard paths from retired attempts under the lock."""
+    slot.observed_state = snapshot.state
+    if snapshot.state is JobState.PAUSED:
+        slot.attempt_paths.pop(snapshot.attempt.number, None)
+    elif snapshot.state is JobState.QUEUED:
+        for attempt in tuple(slot.attempt_paths):
+            if attempt < snapshot.attempt.number:
+                slot.attempt_paths.pop(attempt, None)
+
+
+def _settle_terminal_job(
+    slot: WatcherConvergenceSlot, snapshot: JobSnapshot, *, now: float
+) -> float:
+    """Release a terminal attempt's captured scope under the slot lock."""
+    captured = slot.attempt_paths.pop(snapshot.attempt.number, frozenset())
+    slot.attempt_paths.clear()
+    if slot.watcher_owned and snapshot.state is JobState.SUCCEEDED:
+        slot.held_paths.difference_update(captured)
+        slot.last_success = now
+        slot.replacement_not_before = 0.0
+        slot.replacement_streak = 0
+    else:
+        slot.pending_paths.update(slot.held_paths)
+        slot.held_paths.clear()
+    replacement_delay = (
+        slot.defer_replacement(now) if snapshot.state.is_retryable else 0.0
+    )
+    slot.job_id = None
+    slot.watcher_owned = False
+    slot.observed_state = snapshot.state
+    return replacement_delay
+
+
 def observe_managed_job(
     slot: WatcherConvergenceSlot,
     snapshot: JobSnapshot,
@@ -303,38 +339,14 @@ def observe_managed_job(
         if slot.job_id != snapshot.id:
             return False
         previous_state = slot.observed_state
-        if not terminal:
-            slot.observed_state = snapshot.state
-            if snapshot.state is JobState.PAUSED:
-                slot.attempt_paths.pop(snapshot.attempt.number, None)
-            elif snapshot.state is JobState.QUEUED:
-                for attempt in tuple(slot.attempt_paths):
-                    if attempt < snapshot.attempt.number:
-                        slot.attempt_paths.pop(attempt, None)
-            changed = previous_state is not snapshot.state
-            pending_count = len(slot.held_paths | slot.pending_paths)
-            watcher_owned = slot.watcher_owned
-        else:
-            watcher_owned = slot.watcher_owned
-            captured = slot.attempt_paths.pop(snapshot.attempt.number, frozenset())
-            slot.attempt_paths.clear()
-            if watcher_owned and snapshot.state is JobState.SUCCEEDED:
-                slot.held_paths.difference_update(captured)
-                slot.last_success = now
-                slot.replacement_not_before = 0.0
-                slot.replacement_streak = 0
-            else:
-                slot.pending_paths.update(slot.held_paths)
-                slot.held_paths.clear()
-
-            if snapshot.state.is_retryable:
-                replacement_delay = slot.defer_replacement(now)
-
-            slot.job_id = None
-            slot.watcher_owned = False
-            slot.observed_state = snapshot.state
-            pending_count = len(slot.held_paths | slot.pending_paths)
+        watcher_owned = slot.watcher_owned
+        if terminal:
+            replacement_delay = _settle_terminal_job(slot, snapshot, now=now)
             changed = True
+        else:
+            _observe_active_attempt(slot, snapshot)
+            changed = previous_state is not snapshot.state
+        pending_count = len(slot.held_paths | slot.pending_paths)
 
     if not changed:
         return False
