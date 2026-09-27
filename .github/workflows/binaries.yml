@@ -179,34 +179,33 @@ jobs:
             exit 1
           fi
 
-          # GitHub-HOSTED runners are not in `actions/runners`, which lists only
-          # self-hosted ones. A hosted label is therefore indistinguishable from
-          # a self-hosted label nobody registered, so checking one would fail
-          # every run for a runner that is always available. Two legs on this
-          # fleet are hosted BY DECISION - the aarch64 Linux builds, because the
-          # ARM machine cannot host a `container:` job - and this check must not
-          # contradict that decision.
-          #
-          # The prefixes are GitHub's hosted-image vocabulary, not ours, and a
-          # hosted image label always carries a version or channel suffix
-          # (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-2022`, `macos-15`).
-          # Fleet labels carry no such suffix and are checked normally. Never
-          # name a fleet label `windows-<something>`: it would be skipped here
-          # and go unchecked.
-          checkable=""
+          # GitHub-HOSTED runners are forbidden. Every job runs on the self-hosted
+          # fleet, so a selector without `self-hosted` is a violation, never a leg
+          # to skip. It used to be skipped here as "not in the runner list", which
+          # let a hosted leg pass this check silently; it now fails the run.
+          hosted=0
+          checkable=0
           while IFS= read -r selector; do
             [ -n "${selector}" ] || continue
-            case "${selector}" in
-              ubuntu-*|windows-*|macos-*)
-                echo "hosted    [${selector}] -> GitHub-hosted, not in the self-hosted list; not checked"
+            checkable=$((checkable + 1))
+            want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            case ",${want}," in
+              *",self-hosted,"*) ;;
+              *)
+                echo "::error::[${want}] is not self-hosted. GitHub-hosted runners are forbidden; run this job on the fleet." >&2
+                hosted=1
                 ;;
-              *) checkable+="${selector}"$'\n' ;;
             esac
           done <<< "${SELECTORS}"
 
-          if [ -z "${checkable}" ]; then
-            echo "every selector is GitHub-hosted; nothing to check against the fleet."
-            exit 0
+          if [ "${hosted}" -ne 0 ]; then
+            echo "::error::preflight refused a GitHub-hosted runner: GitHub-hosted runners are forbidden" >&2
+            exit 1
+          fi
+
+          if [ "${checkable}" -eq 0 ]; then
+            echo "::error::no self-hosted selectors supplied; refusing an empty preflight" >&2
+            exit 1
           fi
 
           runners=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${TARGET_REPO}/actions/runners" \
@@ -251,7 +250,7 @@ jobs:
               echo "::error::[${want}] matches ${registered} registered runner(s) but NONE are online. On this fleet that usually means the power-gated host is on battery; a job dispatched now would queue rather than fail." >&2
               failed=1
             fi
-          done <<< "${checkable}"
+          done <<< "${SELECTORS}"
 
           if [ "${failed}" -ne 0 ]; then
             echo "::error::preflight refused to start work that cannot be scheduled" >&2
