@@ -1224,6 +1224,7 @@ def _undispatched_job_count(now: float) -> int:
 
 def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     """Build the bounded job rollup and its service degradation reasons."""
+    from .._job_errors import JobErrorKind
     from ._routes_jobs import _job_summary, job_state
 
     canonical_records, job_records = _health_job_records()
@@ -1236,8 +1237,16 @@ def _jobs_health(*, now: float) -> tuple[dict[str, object], list[Degradation]]:
     # serving is unimpaired and it must not degrade here - whether the index
     # that run was building is complete is a separate question with its own
     # answer, and folding it in would report a healthy service as broken.
+    # A missing or rebuild-required index is normal repository readiness, not
+    # a broken service. Keep refusals in job history, but exclude them before
+    # selecting a failure so a newer refusal cannot hide a real service fault.
     last_failed = _latest_job_record(
-        [record for record in job_records if job_state(record) == "failed"]
+        [
+            record
+            for record in job_records
+            if job_state(record) == "failed"
+            and record.get("error_kind") != JobErrorKind.FULL_REINDEX_REQUIRED
+        ]
     )
     latest_resilience = _latest_job_record(
         [
