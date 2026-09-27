@@ -10,7 +10,7 @@ related:
   - '[[2026-09-23-status-messages-adr]]'
 modified: '2026-09-27'
 body_schema: body-v2
-body_hash: 'sha256:82870b241fa1af42925d8b2ff9dcb680ce62f5e53ce172f8dc298bc5580db661'
+body_hash: 'sha256:a440e3bae31c00769712791a4d39d420b3d57713029ce828f53bd3e8bf213bfc'
 ---
 
 # `open-issues-closeout` plan
@@ -24,7 +24,7 @@ The user authorized all three open GitHub issues in one PR and exactly one compl
 ## Steps
 
 - [x] `S01` - Sanitize model-facing text and cover content-rejection recovery; `src/vaultspec_rag/search/_typesafe_transport.py, src/vaultspec_rag/tests/test_typesafe_transport.py`.
-- [ ] `S02` - Require exact package checksum coverage and validate troubleshooting commands; `.github/workflows/publish.yml, tools/binaries/tests/test_release_workflow.py, src/vaultspec_rag/tests/integration/test_service_jobs_cli_basics.py`.
+- [x] `S02` - Require exact package checksum coverage and validate troubleshooting commands; `.github/workflows/publish.yml, tools/binaries/tests/test_release_workflow.py, src/vaultspec_rag/tests/integration/test_service_jobs_cli_basics.py`.
 - [ ] `S03` - Run one local campaign, audit timing evidence, and prepare one pull request; `dev/, .vault/audit/, .vault/exec/`.
 
 ## Parallelization
