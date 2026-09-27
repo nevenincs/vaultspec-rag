@@ -121,10 +121,7 @@ jobs:
     # what "everything" means.
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))) }}
     timeout-minutes: 160
     runs-on: [self-hosted, Linux, X64, build]
     env:
@@ -172,11 +169,7 @@ jobs:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') || (github.event.action != 'labeled' && github.event.pull_request.draft == false)))) }}
     timeout-minutes: 165
     runs-on: [self-hosted, Linux, X64]
     strategy:
@@ -240,11 +233,7 @@ jobs:
     name: "Test: Full suite (Windows)"
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') || (github.event.action != 'labeled' && github.event.pull_request.draft == false)))) }}
     timeout-minutes: 60
     runs-on: [self-hosted, Windows, X64]
     env:
@@ -311,11 +300,7 @@ jobs:
     # advisories published against a lock that has not changed.
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') || (github.event.action != 'labeled' && github.event.pull_request.draft == false)))) }}
     timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
     env:
@@ -360,11 +345,9 @@ jobs:
     needs: [lint, tests, tests-windows, dependency-audit]
     # `always()`, never `!cancelled()`: see the header on why a skipped gate
     # would pass a commit nothing measured.
-    if: always()
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (always()) }}
     timeout-minutes: 10
-    # Reads results and edits a label, and never runs the pull request's
-    # code, so a hosted runner can refuse forks without exposing the fleet.
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     permissions:
       contents: read
       # The draft/unrelated-label path asks this workflow for its newest

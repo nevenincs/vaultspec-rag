@@ -46,7 +46,7 @@ jobs:
   validate:
     name: "Check: Release request (Linux)"
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Require a release tag that resolves to the requested commit
         shell: bash
@@ -175,52 +175,40 @@ jobs:
           #   TARGET_REPO  repository name, without the owner
           #   SELECTORS    newline-separated, each a comma-joined label set
           #   ALLOW_GATED  "true" tolerates registered-but-offline runners
-
+          
           set -euo pipefail
-
+          
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::fleet_token is empty. This check needs a PAT with Administration:read; GITHUB_TOKEN cannot read actions/runners." >&2
             exit 1
           fi
-
-          # GitHub-HOSTED runners are not in `actions/runners`, which lists only
-          # self-hosted ones. A hosted label is therefore indistinguishable from
-          # a self-hosted label nobody registered, so checking one would fail
-          # every run for a runner that is always available. Two legs on this
-          # fleet are hosted BY DECISION - the aarch64 Linux builds, because the
-          # ARM machine cannot host a `container:` job - and this check must not
-          # contradict that decision.
-          #
-          # The prefixes are GitHub's hosted-image vocabulary, not ours, and a
-          # hosted image label always carries a version or channel suffix
-          # (`ubuntu-latest`, `ubuntu-24.04-arm`, `windows-2022`, `macos-15`).
-          # Fleet labels carry no such suffix and are checked normally. Never
-          # name a fleet label `windows-<something>`: it would be skipped here
-          # and go unchecked.
+          
           checkable=""
           while IFS= read -r selector; do
             [ -n "${selector}" ] || continue
-            case "${selector}" in
-              ubuntu-*|windows-*|macos-*)
-                echo "hosted    [${selector}] -> GitHub-hosted, not in the self-hosted list; not checked"
+            normalized=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            case ",${normalized}," in
+              *,self-hosted,*) checkable+="${normalized}"$'\n' ;;
+              *)
+                echo "::error::[${selector}] is not self-hosted; hosted runners are forbidden, with no exceptions" >&2
+                exit 1
                 ;;
-              *) checkable+="${selector}"$'\n' ;;
             esac
           done <<< "${SELECTORS}"
-
+          
           if [ -z "${checkable}" ]; then
-            echo "every selector is GitHub-hosted; nothing to check against the fleet."
-            exit 0
+            echo "::error::no self-hosted selectors supplied; refusing an empty preflight" >&2
+            exit 1
           fi
-
+          
           runners=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${TARGET_REPO}/actions/runners" \
             --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv')
-
+          
           if [ -z "${runners}" ]; then
             echo "::error::${TARGET_REPO} has no registered self-hosted runners at all" >&2
             exit 1
           fi
-
+          
           failed=0
           while IFS= read -r selector; do
             [ -n "${selector}" ] || continue
@@ -228,7 +216,7 @@ jobs:
             # case-insensitively, and a selector written `Linux` must match a
             # runner advertising `linux`.
             want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-
+          
             online=0; registered=0
             while IFS=$'\t' read -r status labels; do
               missing=0
@@ -243,7 +231,7 @@ jobs:
               registered=$((registered + 1))
               [ "${status}" = "online" ] && online=$((online + 1))
             done <<< "${runners}"
-
+          
             if [ "${online}" -gt 0 ]; then
               echo "ok        [${want}] -> ${online} online"
             elif [ "${registered}" -eq 0 ]; then
@@ -256,7 +244,7 @@ jobs:
               failed=1
             fi
           done <<< "${checkable}"
-
+          
           if [ "${failed}" -ne 0 ]; then
             echo "::error::preflight refused to start work that cannot be scheduled" >&2
             exit 1
