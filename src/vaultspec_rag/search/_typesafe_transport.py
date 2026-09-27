@@ -13,6 +13,7 @@ import urllib.error
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from http.client import HTTPConnection, HTTPException, HTTPResponse
+from typing import cast
 
 from ..config._types import EnvVar
 from ..operator_state._features import TypesafeState
@@ -25,6 +26,7 @@ _ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 128 * 1024
 _ERROR_BYTES = 4096
+_MODEL_PUNCTUATION = str.maketrans({"`": "\u2018", "<": "\u2039", ">": "\u203a"})
 REQUEST_TIMEOUT = 5.0
 _COOLDOWN = 30.0
 _SLOTS = threading.BoundedSemaphore(2)
@@ -340,12 +342,29 @@ def _run(
                 flight.future.set_result(outcome.result())
 
 
+def _model_state(value: object) -> object:
+    """Soften edge-sensitive punctuation without changing local evidence or IDs."""
+    if isinstance(value, str):
+        return value.translate(_MODEL_PUNCTUATION)
+    if isinstance(value, dict):
+        return {
+            key: _model_state(item)
+            for key, item in cast("dict[str, object]", value).items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _model_state(item)
+            for item in cast("list[object] | tuple[object, ...]", value)
+        ]
+    return value
+
+
 def _payload(
     state: dict[str, object], questions: dict[str, dict[str, object]]
 ) -> bytes:
     try:
         payload = json.dumps(
-            {"model": MODEL, "state": state, "questions": questions},
+            {"model": MODEL, "state": _model_state(state), "questions": questions},
             allow_nan=False,
             sort_keys=True,
         ).encode()
