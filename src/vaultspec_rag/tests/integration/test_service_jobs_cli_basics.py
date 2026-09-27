@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import shlex
 import urllib.parse
+from pathlib import Path
 
 import pytest
+
+from tools.check_docs_conventions import FENCE_RE
 
 from ...cli import app
 from ._service_jobs_support import (
@@ -99,6 +103,34 @@ def test_jobs_help_uses_operator_language() -> None:
     )
     leaked = [phrase for phrase in forbidden_phrases if phrase in normalized]
     assert not leaked, f"internal phrasing leaked into help: {leaked}"
+
+
+@pytest.mark.unit
+def test_convergence_troubleshooting_jobs_command_reaches_automatic_jobs() -> None:
+    """Exercise the documented command through parsing and HTTP filter submission.
+
+    Mutation proof: restoring the removed trigger flag failed the exit-code
+    assertion; changing the fence to text failed its language assertion.
+    Each passed immediately after restoring the page.
+    """
+    page = Path(__file__).resolve().parents[4] / "docs/automatic-convergence.md"
+    section = page.read_text(encoding="utf-8").split("## Troubleshooting lookups", 1)[1]
+    language, block = FENCE_RE.findall(section)[0]
+    assert language == "bash", "troubleshooting commands must be an executable fence"
+    commands = [shlex.split(line) for line in block.splitlines() if line.strip()]
+    jobs = next(
+        args for args in commands if args[:3] == ["vaultspec-rag", "server", "jobs"]
+    )
+    with _jobs_http_server(
+        [{"jobs": [], "filters": {}, "total": 0, "returned": 0}]
+    ) as (_, port):
+        result = runner.invoke(app, [*jobs[1:], "--port", str(port)])
+    assert result.exit_code == 0, result.stdout
+    assert _JobsHTTPHandler.paths
+    query = urllib.parse.parse_qs(
+        urllib.parse.urlsplit(_JobsHTTPHandler.paths[-1]).query
+    )
+    assert query["trigger"] == ["watcher"]
 
 
 @pytest.mark.unit

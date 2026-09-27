@@ -28,7 +28,8 @@ class TestFinalizationPhaseWalkHasOneCopy:
     def test_only_canonical_owners_advance_the_finalization_phase(self) -> None:
         owners = {
             "_checkpoint_common.py",
-            "_run_ledger_publication.py",
+            "_run_ledger_publication_proofs.py",
+            "_run_ledger_publication_receipts.py",
             "storage_restore.py",
         }
         find_offenders = [

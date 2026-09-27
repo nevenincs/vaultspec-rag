@@ -8,21 +8,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import (
-    DesiredJobState,
-    JobAttempt,
-    JobCapabilities,
-    JobInitiator,
     JobMode,
-    JobOperation,
-    JobResourceSnapshot,
-    JobRuntimeSnapshot,
     JobSnapshot,
     JobSource,
-    JobSpec,
     JobState,
-    JobTimestamps,
 )
 from ..service import ServiceRegistry
 from ..watcher_retry import (
@@ -38,6 +28,7 @@ from ..watcher_retry_policy import (
     _WatcherRetryOptions,
 )
 from ..watcher_runtime import WatcherConvergenceSlot, reconcile_restarted_slot
+from ._watcher_job_snapshot import watcher_job_snapshot
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,49 +99,6 @@ def _owner_is_not_live(_state: WatcherRetryState) -> bool:
     return False
 
 
-def _snapshot(root: Path, state: JobState) -> JobSnapshot:
-    return JobSnapshot(
-        id="job-1",
-        revision=1,
-        spec=JobSpec(
-            operation=JobOperation.INDEX,
-            source=JobSource.CODE,
-            project_root=str(root),
-            mode=JobMode.INCREMENTAL,
-            authority=RunAuthority.PUBLICATION,
-        ),
-        state=state,
-        desired_state=DesiredJobState.RUNNING,
-        capabilities=JobCapabilities(
-            pausable=False,
-            resumable=False,
-            cancellable=False,
-            retryable=False,
-            deletable=False,
-        ),
-        attempt=JobAttempt(number=1),
-        timestamps=JobTimestamps(created_at=1.0, state_changed_at=2.0),
-        progress=None,
-        result=None,
-        error_kind=None,
-        initiator=JobInitiator(
-            kind="watcher",
-            command="watcher_code_index",
-            project_root=str(root),
-        ),
-        runtime=JobRuntimeSnapshot(
-            pid=1,
-            parent_pid=0,
-            user="u",
-            executable="python",
-            prefix="p",
-            base_prefix="p",
-            virtual_env=None,
-        ),
-        resources=JobResourceSnapshot(started=None, finished=None),
-    )
-
-
 def _slot(root: Path, policy: WatcherRetryPolicy) -> WatcherConvergenceSlot:
     return WatcherConvergenceSlot(
         JobSource.CODE, root.resolve(), ServiceRegistry(), policy
@@ -165,7 +113,18 @@ async def test_restart_recognizes_already_succeeded_generation(
     slot = _slot(tmp_path, policy)
 
     await reconcile_restarted_slot(
-        slot, cast("Any", _History(_snapshot(tmp_path, JobState.SUCCEEDED)))
+        slot,
+        cast(
+            "Any",
+            _History(
+                watcher_job_snapshot(
+                    tmp_path,
+                    JobState.SUCCEEDED,
+                    created_at=1.0,
+                    state_changed_at=2.0,
+                )
+            ),
+        ),
     )
 
     assert not policy.state.convergence_pending
@@ -185,7 +144,18 @@ async def test_restart_restores_exact_scope_after_unsuccessful_terminal_job(
     slot = _slot(tmp_path, policy)
 
     await reconcile_restarted_slot(
-        slot, cast("Any", _History(_snapshot(tmp_path, state)))
+        slot,
+        cast(
+            "Any",
+            _History(
+                watcher_job_snapshot(
+                    tmp_path,
+                    state,
+                    created_at=1.0,
+                    state_changed_at=2.0,
+                )
+            ),
+        ),
     )
 
     assert [item.relative_path for item in policy.state.pending_paths] == ["src/a.py"]
@@ -201,7 +171,18 @@ async def test_restart_reattaches_live_job_and_blocks_duplicate_admission(
     slot = _slot(tmp_path, policy)
 
     await reconcile_restarted_slot(
-        slot, cast("Any", _History(_snapshot(tmp_path, JobState.RUNNING)))
+        slot,
+        cast(
+            "Any",
+            _History(
+                watcher_job_snapshot(
+                    tmp_path,
+                    JobState.RUNNING,
+                    created_at=1.0,
+                    state_changed_at=2.0,
+                )
+            ),
+        ),
     )
 
     assert slot.job_id == "job-1"
@@ -216,13 +197,23 @@ def _no_history(_root: Path) -> JobSnapshot | None:
 
 def _rebuild_history(root: Path) -> JobSnapshot | None:
     """A recorded job whose last run was a full rebuild, not an increment."""
-    succeeded = _snapshot(root, JobState.SUCCEEDED)
+    succeeded = watcher_job_snapshot(
+        root,
+        JobState.SUCCEEDED,
+        created_at=1.0,
+        state_changed_at=2.0,
+    )
     return replace(succeeded, spec=replace(succeeded.spec, mode=JobMode.REBUILD))
 
 
 def _foreign_root_history(root: Path) -> JobSnapshot | None:
     """A recorded job belonging to a different project root."""
-    succeeded = _snapshot(root, JobState.SUCCEEDED)
+    succeeded = watcher_job_snapshot(
+        root,
+        JobState.SUCCEEDED,
+        created_at=1.0,
+        state_changed_at=2.0,
+    )
     return replace(
         succeeded,
         spec=replace(succeeded.spec, project_root=str(root / "foreign")),

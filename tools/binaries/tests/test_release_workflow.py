@@ -341,6 +341,8 @@ def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
     promotion failed the ordering assertion; dropping the full-release check
     failed the ``isDraft or .isPrerelease`` assertion. Each passed again once
     restored.
+    Removing the per-package uniqueness checks failed the exact-entry
+    assertion; it passed immediately after restoration.
     """
     publish = _load(repo_root, "publish.yml")
     jobs = publish["jobs"]
@@ -360,6 +362,11 @@ def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
     assert "if .isDraft or .isPrerelease then error(" in steps[promoted]
     assert promoted < upload
     assert "sha256sum -c ../packages.sha256" in steps[upload]
+    for package in ("wheel", "sdist"):
+        assert (
+            f'awk -v name="${{{package}}}" \'$2 == name {{ count++ }} '
+            "END { print count+0 }'"
+        ) in steps[upload], "each package needs exactly one checksum entry"
 
     # The release stage never waits on the index, and every job in it is
     # skipped with the hardware gate when only the index stage was requested.
