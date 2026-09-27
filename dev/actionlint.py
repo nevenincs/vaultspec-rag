@@ -231,7 +231,7 @@ def ensure() -> Path:
 
     root.mkdir(parents=True, exist_ok=True)
     artefact = f"{RELEASE_PATH}/v{VERSION}/actionlint_{VERSION}_{suffix}"
-    with tempfile.TemporaryDirectory() as scratch:
+    with tempfile.TemporaryDirectory(dir=root) as scratch:
         archive = Path(scratch) / suffix
         _download(artefact, archive)
         _verify(archive, expected)

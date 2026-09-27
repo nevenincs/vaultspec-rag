@@ -12,6 +12,7 @@ import urllib.error
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from http.client import HTTPConnection, HTTPException, HTTPResponse
+from typing import cast
 
 from vaultspec_core.config import env_value
 
@@ -27,6 +28,7 @@ _ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MAX_REQUEST_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 128 * 1024
 _ERROR_BYTES = 4096
+_MODEL_PUNCTUATION = str.maketrans({"`": "\u2018", "<": "\u2039", ">": "\u203a"})
 REQUEST_TIMEOUT = 5.0
 _COOLDOWN = 30.0
 _SLOTS = threading.BoundedSemaphore(2)
@@ -291,6 +293,30 @@ def _successful_response(
     return body, stats
 
 
+def _complete_flight(
+    flight: _Flight, outcome: Future[tuple[bytes, dict[str, float]]]
+) -> None:
+    """Release admission before delivering the completed outcome to followers."""
+    with _LOCK:
+        _FLIGHTS.pop(flight.cache_key, None)
+        _SLOTS.release()
+    if outcome.done():
+        error = outcome.exception()
+        if error is not None:
+            flight.future.set_exception(error)
+        else:
+            flight.future.set_result(outcome.result())
+
+
+def _is_request_scoped_failure(
+    error: TypesafeUnavailableError, budget: _RequestBudget
+) -> bool:
+    """Distinguish rejected content and search deadlines from provider failure."""
+    return error.reason == "content_rejected" or (
+        error.reason == "deadline" and budget.search_limited
+    )
+
+
 def _run(
     credential: tuple[str, bytes],
     payload: bytes,
@@ -315,9 +341,7 @@ def _run(
     except TypesafeUnavailableError as exc:
         # A refused body or a spent search budget belongs to this request, not
         # to the provider, so the next request stays admitted.
-        request_scoped = exc.reason == "content_rejected" or (
-            exc.reason == "deadline" and budget.search_limited
-        )
+        request_scoped = _is_request_scoped_failure(exc, budget)
         if not request_scoped:
             _failed(fingerprint)
         outcome.set_exception(TypesafeUnavailableError(exc.reason))
@@ -343,15 +367,24 @@ def _run(
         _failed(fingerprint)
         outcome.set_exception(TypesafeUnavailableError("invalid_or_unreachable"))
     finally:
-        with _LOCK:
-            _FLIGHTS.pop(flight.cache_key, None)
-            _SLOTS.release()
-        if outcome.done():
-            error = outcome.exception()
-            if error is not None:
-                flight.future.set_exception(error)
-            else:
-                flight.future.set_result(outcome.result())
+        _complete_flight(flight, outcome)
+
+
+def _model_state(value: object) -> object:
+    """Soften edge-sensitive punctuation without changing local evidence or IDs."""
+    if isinstance(value, str):
+        return value.translate(_MODEL_PUNCTUATION)
+    if isinstance(value, dict):
+        return {
+            key: _model_state(item)
+            for key, item in cast("dict[str, object]", value).items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _model_state(item)
+            for item in cast("list[object] | tuple[object, ...]", value)
+        ]
+    return value
 
 
 def _payload(
@@ -359,7 +392,7 @@ def _payload(
 ) -> bytes:
     try:
         payload = json.dumps(
-            {"model": MODEL, "state": state, "questions": questions},
+            {"model": MODEL, "state": _model_state(state), "questions": questions},
             allow_nan=False,
             sort_keys=True,
         ).encode()
