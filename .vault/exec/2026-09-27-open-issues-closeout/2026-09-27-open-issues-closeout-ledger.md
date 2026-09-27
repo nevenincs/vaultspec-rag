@@ -5,7 +5,7 @@ tags:
 date: '2026-09-27'
 modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:bcf1e514fd922b86a4cfb00d36801815f0debe5ac2a9e180f5c933f0368d2e70'
+body_hash: 'sha256:552ab3d3c234cb52a1f1e0c1ef1a5a5dee3b3e2f47b1d1bfdd82b9fe569e0e4a'
 related:
   - "[[2026-09-27-open-issues-closeout-plan]]"
 ---
@@ -41,6 +41,7 @@ related:
 - `S03` `verify:` `repaired stress performance test` -> `pass`
 - `S03` `verify:` `final Python lint/format, ty, configured basedpyright` -> `pass`
 - `S03` `verify:` `read-only duplication and test complexity audits` -> `pass`
+- `S03` `M` `.vault/plan/2026-09-27-open-issues-closeout-plan.md`
 
 ## Notes
 
@@ -52,3 +53,4 @@ related:
 - `S03` Authorized performance lane ran on quiet host samples 13.5, 16.0, 11.2 percent: 13 passed, one fixture failed before benchmarking because it attempted incremental indexing without a publication. Repaired setup to establish one-file canonical publication through explicit full index with declared discovery exclusions; preserve headroom and concurrent-search assertions. All 73 competing test/build processes resumed. Initial preflight failure started no performance tests and resumed all 34 build processes. Security advisory: 41 low, 30 medium, zero high, none on changed files. Dead-code advisory: one existing unused Protocol parameter.
 - `S03` Original campaign remains red; user authorized repairs and targeted verification. Latest outcomes: 6245 passed, 6 accounted skips. Global 0.4.35 daemon restored. Historical release retry and full PR CI remain external gates.
 - `S03` Checkpoint commit enables same-PR CI on repaired fixtures; leave S03 open until release and PR gates conclude. Eight baseline clones, one unchanged rank-D test, no changed-file findings.
+- `S03` User explicitly authorized including the separate code-health cleanup in PR #552; final combined live verification waits for its committed stable source. Earlier failed CI size gate remains recorded; use its broader concurrency-test split rather than the isolated duplicate extraction.

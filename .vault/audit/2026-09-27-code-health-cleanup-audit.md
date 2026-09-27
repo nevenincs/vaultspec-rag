@@ -9,6 +9,7 @@ body_hash: 'sha256:5395a48bee9f3b88df4eecedc254a690c892e8b26d5610fd5b11035dd2c64
 related:
   - "[[2026-09-27-code-health-cleanup-plan]]"
 ---
+
 # `code-health-cleanup` audit: integrated maintainability remediation
 
 ## Scope
