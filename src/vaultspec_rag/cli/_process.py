@@ -38,7 +38,9 @@ from .._process_probe import (
     pid_listens_on_loopback_port,
     pid_matches_start_time,
     pid_start_time,
+    pid_terminated,
     send_signal,
+    wait_for_exit,
 )
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
@@ -951,10 +953,10 @@ def _terminate_pid(
     # its zombie record as a live process that still needs SIGKILL.
     remaining = max(0.0, deadline - time.monotonic())
     graceful_wait = min(graceful_drain, remaining / 2.0)
-    if _wait_for_child_exit(pid, timeout=graceful_wait):
+    if wait_for_exit(pid, timeout=graceful_wait):
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return TerminationResult(alive=False, signal_denied=False)
-    if pid_alive(pid):
+    if not pid_terminated(pid):
         if sys.platform == "win32":
             escalation = signal.SIGTERM  # TerminateProcess on Windows
         else:
@@ -964,30 +966,13 @@ def _terminate_pid(
         # failed for an unrelated reason (a console event that could never
         # reach a detached daemon).
         denied = send_signal(pid, escalation) or denied
-        _wait_for_child_exit(
+        wait_for_exit(
             pid,
             timeout=max(0.0, deadline - time.monotonic()),
         )
     _reap_owned_qdrant(qdrant_identity, deadline=deadline)
-    alive = pid_alive(pid)
+    alive = not pid_terminated(pid)
     return TerminationResult(alive=alive, signal_denied=denied and alive)
-
-
-def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
-    """Wait boundedly for process exit, reaping a POSIX child when applicable."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if sys.platform != "win32":
-            try:
-                waited, _status = os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                waited = 0
-            if waited == pid:
-                return True
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return False
 
 
 def _owned_qdrant_identity(
