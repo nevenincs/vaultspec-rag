@@ -5,7 +5,7 @@ tags:
 date: '2026-09-27'
 modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:552ab3d3c234cb52a1f1e0c1ef1a5a5dee3b3e2f47b1d1bfdd82b9fe569e0e4a'
+body_hash: 'sha256:48681d70895490e613960ae00cfa0bd1f19e1ec14dba4a8330c4bbb14eb392b7'
 related:
   - "[[2026-09-27-open-issues-closeout-plan]]"
 ---
@@ -42,6 +42,11 @@ related:
 - `S03` `verify:` `final Python lint/format, ty, configured basedpyright` -> `pass`
 - `S03` `verify:` `read-only duplication and test complexity audits` -> `pass`
 - `S03` `M` `.vault/plan/2026-09-27-open-issues-closeout-plan.md`
+- `S03` `M` `.vault/audit/2026-09-27-open-issues-closeout-audit.md`
+- `S03` `M` `.vault/audit/2026-09-27-code-health-cleanup-audit.md`
+- `S03` `verify:` `final combined CPU CUDA subprocess-GPU performance lanes 6245 passed 6 native skips` -> `pass`
+- `S03` `verify:` `five real funded hosted requests enrollment remains active` -> `pass`
+- `S03` `verify:` `post-green source reconciliation and timing audit` -> `pass`
 
 ## Notes
 
@@ -54,3 +59,4 @@ related:
 - `S03` Original campaign remains red; user authorized repairs and targeted verification. Latest outcomes: 6245 passed, 6 accounted skips. Global 0.4.35 daemon restored. Historical release retry and full PR CI remain external gates.
 - `S03` Checkpoint commit enables same-PR CI on repaired fixtures; leave S03 open until release and PR gates conclude. Eight baseline clones, one unchanged rank-D test, no changed-file findings.
 - `S03` User explicitly authorized including the separate code-health cleanup in PR #552; final combined live verification waits for its committed stable source. Earlier failed CI size gate remains recorded; use its broader concurrency-test split rather than the isolated duplicate extraction.
+- `S03` Raw campaign integrity report remains red: a separate runner-policy session changed workflow and CI-contract files after CPU tests. Preserve the raw report. Isolated PR source Git blobs match the tested initial commit exactly; live runtime never changed. Exclude unrelated policy changes; no further live rerun. All 33 suspended processes resumed.

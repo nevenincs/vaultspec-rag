@@ -11,7 +11,7 @@ related:
   - '[[2026-06-01-module-split-adr]]'
 modified: '2026-09-27'
 body_schema: body-v2
-body_hash: 'sha256:ac1885fcacb925b86066860c767ebb936886b58f92264de2ee546e1b49049f91'
+body_hash: 'sha256:b671034477f1d3898bdd4474e9c66bf8b5ab16ae79a691656c77c952833d1df7'
 ---
 
 # `open-issues-closeout` plan
@@ -30,7 +30,7 @@ The user subsequently authorized including the other session's complete code-hea
 
 - [x] `S01` - Sanitize model-facing text and cover content-rejection recovery; `src/vaultspec_rag/search/_typesafe_transport.py, src/vaultspec_rag/tests/test_typesafe_transport.py`.
 - [x] `S02` - Require exact package checksum coverage and validate troubleshooting commands; `.github/workflows/publish.yml, tools/binaries/tests/test_release_workflow.py, src/vaultspec_rag/tests/integration/test_service_jobs_cli_basics.py`.
-- [ ] `S03` - Repair campaign-discovered test contracts, verify live coverage, audit timing evidence, and finish one pull request; `src/vaultspec_rag/tests/integration/test_indexer_progress_integration.py, src/vaultspec_rag/tests/integration/test_vault_true_incremental.py, src/vaultspec_rag/tests/integration/test_server_index_concurrency.py, src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py, combined src/tools/dev verification, .vault/audit/, .vault/exec/`.
+- [x] `S03` - Repair campaign-discovered test contracts, verify live coverage, audit timing evidence, and finish one pull request; `src/vaultspec_rag/tests/integration/test_indexer_progress_integration.py, src/vaultspec_rag/tests/integration/test_vault_true_incremental.py, src/vaultspec_rag/tests/integration/test_server_index_concurrency.py, src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py, combined src/tools/dev verification, .vault/audit/, .vault/exec/`.
 
 ## Parallelization
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-09-27'
 modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:a024fbd7aa1c7490525a1640acd3007e1ebc44cd8791429d4c762eb9ade30093'
+body_hash: 'sha256:f5f21a59ddcccfffe63b7815981e40b6e10701ccb662351b265a8c9f45bf8470'
 related:
   - '[[2026-09-27-open-issues-closeout-plan]]'
 ---
@@ -101,6 +101,69 @@ After GPU verification, the temporary checkout 0.5.2 service was stopped and the
 
 The duplication report scanned 705 files and found eight existing test clones (187 lines, 0.08%). None intersects this PR's changed files. The cognitive test-tree audit found no function above 20; the cyclomatic advisory reported the existing rank-D shared-readiness test in `test_service_search_diagnostics_reporting.py:79`, outside this diff. These findings remain visible and are not a claim that the repository has zero duplication or advisory complexity findings.
 
+### ci-size-followup | medium | Final fixture addition crossed the module limit after the earlier size gate
+
+PR CI at `7307962d` passed Windows and both Linux correctness jobs plus dependency advisories, but pylint rejected the stress test module at 1506 lines against the unchanged 1500-line bound. The prior local size check preceded the final fixture addition. This verification gap is corrected by the subsequent cleanup's behavior-based concurrency split and the passing final size gate. The original failure is preserved. The isolated duplicate headroom extraction is excluded from the PR.
+
+### combined-preservation | low | Issue regressions survive the completed cleanup
+
+The user explicitly authorized including the completed code-health cleanup in this same PR. Its structural findings and review remain in `2026-09-27-code-health-cleanup-audit`. Final verification uses the committed implementation `6395caeb` and its later metadata-only review `2503c0de`; the source digest is `ce47dac5c6b7be9073a001c5b8ad1e3ddec975377eb0612599378c57e9ae0f72`. AST comparison proves `_model_state`, `_payload`, `_check_status`, the complete headroom class and its integration marker unchanged from `7307962d`. The full combined campaign exercises the moved headroom class at its new owner. No duplicate extraction or compatibility shim is included.
+
+### combined-live-campaign | low | The final settled campaign is green without retries
+
+The final complete campaign reports 6245 unique passed tests, 6 existing platform skips and zero failures. All four test lanes exit zero. The raw campaign integrity guard remains red because an unrelated session edited workflow/CI-contract files after the CPU lane. `combined-source-reconciliation.json` establishes the subsequent green signal: every scoped Git blob in this isolated PR checkout matches the campaign initial committed source; live runtime files never changed. Checkout byte hashes differ under Git line-ending conversion. No raw result is overwritten; automatic retries and further live reruns are zero. End-to-end campaign wall time is 2802.884834 seconds, including preflights, lane startup, resource sampling and hosted probes. Original failed attempts and prior authorized repairs remain separate.
+
+| Lane       | Passed | Skipped | Pytest seconds | Driver seconds | Peak sampled RSS MiB |
+| ---------- | -----: | ------: | -------------: | -------------: | -------------------: |
+| `python-1` |   5431 |       6 |         118.08 |     119.894825 |            12313.367 |
+| `gpu-1`    |    725 |       0 |        1051.69 |    1059.545315 |             4958.805 |
+| `gpu-2`    |     75 |       0 |        1510.67 |    1515.677725 |             6306.406 |
+| `perf-1`   |     14 |       0 |          93.95 |      98.318205 |             4036.480 |
+
+### combined-timing-audit | low | Timing and resource evidence was audited after the final green signal
+
+`combined-audit-analysis.json` was generated only after asserting the reconciled green signal for the isolated PR scope. It rejects duplicate test execution and failed phases, hashes the raw artifacts and instrumentation, and writes `combined-live-campaign/test-timings.csv` with one row per test and separate setup/call/teardown seconds. Phase sums can exceed wall time in the parallel CPU lane. Median and p95 values describe heterogeneous cases; a single campaign establishes no speedup or confidence interval.
+
+- `gpu-1.jsonl` setup/call/teardown sums: 176.500/842.955/9.752s. Longest calls: `src/vaultspec_rag/tests/integration/test_service_job_control_pause_restart.py::test_large_corpus_pause_resume_cancel_releases_and_converges` 39.279s; `src/vaultspec_rag/tests/integration/test_index_job_control_managed.py::test_managed_code_pause_releases_pipeline_and_resume_reconciles` 37.953s; `src/vaultspec_rag/tests/integration/test_server_stress_and_watcher.py::test_watcher_converges_code_create_modify_rename_delete_and_active_edits` 26.501s.
+
+- `gpu-2.jsonl` setup/call/teardown sums: 225.618/1243.848/20.127s. Longest calls: `src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py::test_reconcile_recovers_discovery_without_touching_the_daemon` 73.675s; `src/vaultspec_rag/tests/integration/test_service_lifecycle_discovery.py::test_deleted_discovery_views_self_heal_on_the_next_heartbeat` 71.881s; `src/vaultspec_rag/tests/integration/test_storage_maintenance.py::test_maintenance_cycle_reclaims_only_time_confirmed_orphans` 68.413s.
+
+- `performance\performance.jsonl` setup/call/teardown sums: 14.131/58.890/0.443s. Longest calls: `src/vaultspec_rag/tests/integration/test_indexer_integration.py::TestLargeCodeIndexHighWater::test_rss_and_cuda_high_water_remain_bounded_as_corpus_doubles` 33.823s; `src/vaultspec_rag/tests/integration/test_server_index_concurrency.py::TestLargeIndexSearchHeadroom::test_search_completes_while_large_index_retains_cuda_headroom` 15.579s; `src/vaultspec_rag/tests/integration/test_performance.py::TestPerformance::test_batch_query_latency` 3.478s.
+
+- `python-1.jsonl` setup/call/teardown sums: 12.090/1037.877/25.650s. Longest calls: `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py::test_captured_target_uses_original_lease_after_singleton_paths_redirect` 23.013s; `src/vaultspec_rag/tests/test_citation_gate.py::test_the_checkout_carries_no_active_citation_or_identity_leak` 20.154s; `src/vaultspec_rag/tests/test_citation_gate.py::test_the_gates_own_file_is_exempt_from_path_literals_not_from_identity` 16.451s.
+
+- `gpu-1-resources.json` actual sampler intervals: median 122.971ms, p95 138.244ms, maximum 224.255ms.
+
+- `gpu-2-resources.json` actual sampler intervals: median 121.021ms, p95 127.539ms, maximum 151.149ms.
+
+- `python-1-resources.json` actual sampler intervals: median 129.946ms, p95 142.880ms, maximum 165.060ms.
+
+- `performance\resources.json` actual sampler intervals: median 119.103ms, p95 123.806ms, maximum 140.554ms.
+
+Summed process-tree RSS can double-count shared pages and sampling can miss spikes; it is neither VRAM nor physical host usage. Device headroom is established by the performance test's own CUDA metrics and unchanged assertions. Correctness lanes ran under recorded contention; performance requires three CPU samples at or below 20 percent. Every temporarily suspended process is resumed with PID/creation identity verification: 33/33. The Windows host provides no native MPS proof. Successful funded hosted probes do not reproduce a real Cloudflare 403; the loopback HTTP and guard-mutation evidence establishes that branch.
+
+### combined-static-audit | low | Configured gates pass and existing security findings are reconciled
+
+All configured lint targets pass after vault-owned formatting repairs. The dependency advisory gate scans 157 Python coordinates and one binary without an unaccepted advisory; deptry finds no issue in 313 files. Bandit remains at 41 low, 30 medium and zero high findings. Comparing finding signatures across the completed refactor yields no new finding after the explicit owner-symbol migrations and the reviewed `_owners_for_points` key-argument extraction at `src/vaultspec_rag/indexer/_run_ledger_publication_receipts.py:521`. SQL text, placeholders and parameter values remain unchanged. The existing abstract lock parameter remains Vulture's sole report. These advisory findings are visible and are not asserted to be zero.
+
+### combined-evidence-integrity | low | Final reports have durable digest anchors
+
+- `combined-live-campaign/summary.json`: `7da6e79b2eeb17c0da4af9ace28a68c45356ce5f7319109b255a733255b04338`.
+- `combined-live-campaign/test-timings.csv`: `03352b849bff562049067a3c7da76e971198d3dc30a56eddaac1493a66056be9`.
+- `combined-audit-analysis.json`: `6fad576f73bfb87009e14dc8d61c8ccb05738531397d6881a745e9bfe393979b`.
+- `combined-preservation.json`: `e196a81086cf453d21b0d56511798627bc9677a2c92ae2a2cbbeb044c823cbc0`.
+- `combined-security-comparison.json`: `53c067f68c37cd8906daaa6850cadee635d1c2da7cdf205164cf71ccd75442fe`.
+
+### combined-performance-evidence | low | Concurrent indexing and search retain measured CUDA headroom
+
+The fixed 256-file/768-chunk corpus indexes in 14.912294s. All 8 searches return nonempty results; 8 complete before indexing. Peak process RSS is 2601.535MiB, peak CUDA allocated/reserved memory is 2671.787/2914.000MiB, and retained reserved headroom is 13461.375MiB against the unchanged 3275.075MiB requirement on a 16375.375MiB device. This is one controlled performance observation, with no repetition-based estimate.
+
+Final funded hosted probe wall times: `benign-before` 313.889ms, 1 request(s), enrollment `active`; `quoted-command` 422.658ms, 1 request(s), enrollment `active`; `sensitive-path` 207.575ms, 1 request(s), enrollment `active`; `relative-traversal` 217.532ms, 1 request(s), enrollment `active`; `benign-after` 206.261ms, 1 request(s), enrollment `active`.
+
+### final-source-and-service | low | Isolated scope and restored service are independently verified
+
+The scoped Git-blob digest is `dfaf075b9ec244dc5e35d6452a05845d254f72f0510e96f188c98ed9915e0425` and matches every source blob from the campaign initial commit. The original campaign byte digests and false integrity result remain untouched. `combined-source-reconciliation.json` is anchored by SHA256 `8172a242dc5610d0506ddd672a2f81656d9cdcff300720eb1c0516a212ab5493`. The installed service was restored through its explicit global shim; redacted start/status reports confirm success and ready health. Separate runner-policy changes remain in the original worktree and are excluded from this PR.
+
 ## Recommendations
 
-Local integrated review: **PASS**, no unresolved high or critical finding. Preserve the failed original campaign and authorized follow-ups. Keep the existing test contracts and bounds. Required PR CI and gated historical release promotion remain external completion conditions; do not equate local green with release promotion or mark the release disagreement repaired before its archive/acquisition gates pass.
+Final local integrated review: **PASS**, with no unresolved high or critical finding. Preserve all raw attempts and the settled source digest. Historical release repair must pass its archive/acquisition gates and latest-head PR CI must pass before completion is reported. Do not merge this PR from the author session.
