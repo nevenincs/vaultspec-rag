@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.3](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.2...vaultspec-rag-v0.5.3) (2026-09-27)
+
+
+### Features
+
+* answerable, locatable vault search results ([#537](https://github.com/nevenincs/vaultspec-rag/issues/537)) ([1be0d1b](https://github.com/nevenincs/vaultspec-rag/commit/1be0d1b07235596a021a76a497639b0ef3e95e98))
+
+
+### Bug Fixes
+
+* **ci:** download actionlint into its tool cache, never the system temp dir ([#553](https://github.com/nevenincs/vaultspec-rag/issues/553)) ([4981478](https://github.com/nevenincs/vaultspec-rag/commit/4981478eff8792e7cfe3d54ffa52db4bde51b1b2))
+* complete issue regressions and code-health remediation ([#552](https://github.com/nevenincs/vaultspec-rag/issues/552)) ([247c668](https://github.com/nevenincs/vaultspec-rag/commit/247c66813600f1e90930cd17ccdc50561ec80b92))
+* **install:** keep client installations and CI off the inference stack ([#548](https://github.com/nevenincs/vaultspec-rag/issues/548)) ([40a6d1e](https://github.com/nevenincs/vaultspec-rag/commit/40a6d1e24b698dca306c62ccfad41ce589fe3e3f))
+* **jobs:** keep job admission from cold-importing torch ([#539](https://github.com/nevenincs/vaultspec-rag/issues/539)) ([ee062f4](https://github.com/nevenincs/vaultspec-rag/commit/ee062f427a955c58e4419ba62a930087cf9a97fe))
+
 ## [0.5.2](https://github.com/nevenincs/vaultspec-rag/compare/vaultspec-rag-v0.5.1...vaultspec-rag-v0.5.2) (2026-09-24)
 
 
