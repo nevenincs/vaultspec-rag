@@ -5,16 +5,14 @@ tags:
 date: '2026-09-27'
 modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:08332a7e3a918dc0ee3f4d6f7704f0e00d235c041d0c1d2c239ee5ef66d0ae8c'
+body_hash: 'sha256:e4e49f8c0368c3fd1bcb0a519932351b69a8d994eb5a0cd625fdc1d4103bf8c3'
 related:
   - "[[2026-09-27-code-health-cleanup-plan]]"
 ---
 
-
 # `code-health-cleanup` ledger
 
 ## Changes
-
 
 - `S01` `M` `src/vaultspec_rag/_public_search.py`
 - `S01` `M` `src/vaultspec_rag/cli/_process.py`
@@ -87,6 +85,25 @@ related:
 - `S01` `verify:` `just audit-duplication` -> `pass`
 - `S01` `verify:` `just audit-complexity` -> `pass`
 - `S01` `by:` `vaultspec-team`
+- `S05` `A` `.vault/audit/2026-09-27-code-health-cleanup-audit.md`
+- `S05` `A` `.vault/index/code-health-cleanup.index.md`
+- `S05` `verify:` `integrated Luna 6 max review` -> `pass`
+- `S05` `verify:` `just check-size` -> `pass`
+- `S05` `verify:` `just health-report` -> `pass`
+- `S05` `verify:` `publication-owner guard intentional fail then restored pass` -> `pass`
+- `S05` `verify:` `substitution guard intentional fail then restored pass` -> `pass`
+- `S05` `by:` `vaultspec-code-reviewer`
+- `S05` `verify:` `just test-fast 5190 passed 5 existing skipped 779 deselected` -> `pass`
+- `S05` `verify:` `just check-python` -> `pass`
+- `S05` `verify:` `just check-type` -> `pass`
+- `S05` `verify:` `just check-type-strict` -> `pass`
+- `S05` `verify:` `just check-complexity` -> `pass`
+- `S05` `verify:` `just check-nesting` -> `pass`
+- `S05` `verify:` `just audit-duplication zero clones` -> `pass`
+- `S05` `verify:` `just audit-complexity no rank-D or cognitive violations` -> `pass`
+- `S05` `verify:` `just health-report 785 files zero errors` -> `pass`
+- `S05` `verify:` `GPU resident integration and performance 55 passed` -> `pass`
+- `S05` `verify:` `subprocess GPU diagnostics 3 passed` -> `pass`
 
 ## Notes
 
