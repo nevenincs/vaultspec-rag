@@ -70,13 +70,13 @@ jobs:
             distro: almalinux-10
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: x86_64
-            runner: ubuntu-24.04
+            runner: [self-hosted, Linux, X64, build]
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/almalinux@sha256:957738702313e6ee452cdb17bc1431542c467be9a4e2f4da3b8e551b0ebb9677
             distro: almalinux-10
             setup: dnf install -y -q curl ca-certificates unzip jq
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, Linux, ARM64]
             triple: aarch64-unknown-linux-gnu
           # Above the floor, which is the band a user on a current release is
           # most likely to be in. trixie is 2.41.
@@ -84,25 +84,25 @@ jobs:
             distro: debian-13
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
-            runner: ubuntu-24.04
+            runner: [self-hosted, Linux, X64, build]
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
             distro: debian-13
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, Linux, ARM64]
             triple: aarch64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
             distro: ubuntu-24.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: x86_64
-            runner: ubuntu-24.04
+            runner: [self-hosted, Linux, X64, build]
             triple: x86_64-unknown-linux-gnu
           - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
             distro: ubuntu-24.04
             setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
             arch: aarch64
-            runner: ubuntu-24.04-arm
+            runner: [self-hosted, Linux, ARM64]
             triple: aarch64-unknown-linux-gnu
     # A matrix job names its runner through `${ matrix.runner }`, which is
     # invisible to any check grepping for `self-hosted` - and these are the
