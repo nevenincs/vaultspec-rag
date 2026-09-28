@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ._search_state import SearchSourceFact
     from .search import DocumentSearchResult, SearchFilterOptions
     from .search._outcomes import AnySearchResult
+    from .search._searcher import VaultSearcher
     from .service import ServiceRegistry
 
 __all__ = [
@@ -361,6 +362,68 @@ def _combined_filter_options(request: CombinedSearchRequest) -> SearchFilterOpti
     )
 
 
+def _search_combined_domains(
+    request: CombinedSearchRequest,
+    searcher: VaultSearcher,
+    counts: dict[PublicSourceType, int],
+    failures: dict[PublicSourceType, SearchDomainOutcome],
+    facts: dict[PublicSourceType, SearchSourceFact],
+) -> tuple[SearchDomainOutcome, SearchDomainOutcome, SearchDomainOutcome]:
+    """Execute each domain against its independently counted readiness fact."""
+    vault = _indexed_domain_outcome(
+        PublicSourceType.VAULT,
+        counts,
+        failures,
+        facts,
+        lambda: searcher.search_vault(
+            request.query,
+            top_k=request.top_k,
+            doc_type=request.vault_filters.doc_type,
+            feature=request.vault_filters.feature,
+            date=request.vault_filters.date,
+            tag=request.vault_filters.tag,
+            intent=request.vault_filters.intent,
+        ),
+    )
+    code = _indexed_domain_outcome(
+        PublicSourceType.CODE,
+        counts,
+        failures,
+        facts,
+        lambda: searcher.search_codebase(
+            request.query,
+            top_k=request.top_k,
+            language=request.code_filters.language,
+            path=request.code_filters.path,
+            node_type=request.code_filters.node_type,
+            function_name=request.code_filters.function_name,
+            class_name=request.code_filters.class_name,
+            include_paths=list(request.code_filters.include_paths) or None,
+            exclude_paths=list(request.code_filters.exclude_paths) or None,
+            dedup_locales=request.code_filters.dedup_locales,
+            prefer=request.code_filters.prefer,
+            exclude_domains=list(request.code_filters.exclude_domains) or None,
+            only_domains=list(request.code_filters.only_domains) or None,
+            include_domains=list(request.code_filters.include_domains) or None,
+        ),
+    )
+    document = _indexed_domain_outcome(
+        PublicSourceType.DOCUMENT,
+        counts,
+        failures,
+        facts,
+        lambda: searcher.search_document(
+            request.query,
+            top_k=request.top_k,
+            source_path=request.document_filters.source_path,
+            extractor_id=request.document_filters.extractor_id,
+            extractor_version=request.document_filters.extractor_version,
+            locator_kind=request.document_filters.locator_kind,
+        ),
+    )
+    return vault, code, document
+
+
 def search_combined_timed(
     request: CombinedSearchRequest,
     *,
@@ -409,56 +472,8 @@ def search_combined_timed(
         session = scope.session
         timings["typesafe_query_attempt_ms"] = scope.query_attempt_ms
         for _attempt in range(2):
-            vault = _indexed_domain_outcome(
-                PublicSourceType.VAULT,
-                counts,
-                count_failures,
-                source_facts,
-                lambda: lease.searcher.search_vault(
-                    request.query,
-                    top_k=request.top_k,
-                    doc_type=request.vault_filters.doc_type,
-                    feature=request.vault_filters.feature,
-                    date=request.vault_filters.date,
-                    tag=request.vault_filters.tag,
-                    intent=request.vault_filters.intent,
-                ),
-            )
-            code = _indexed_domain_outcome(
-                PublicSourceType.CODE,
-                counts,
-                count_failures,
-                source_facts,
-                lambda: lease.searcher.search_codebase(
-                    request.query,
-                    top_k=request.top_k,
-                    language=request.code_filters.language,
-                    path=request.code_filters.path,
-                    node_type=request.code_filters.node_type,
-                    function_name=request.code_filters.function_name,
-                    class_name=request.code_filters.class_name,
-                    include_paths=list(request.code_filters.include_paths) or None,
-                    exclude_paths=list(request.code_filters.exclude_paths) or None,
-                    dedup_locales=request.code_filters.dedup_locales,
-                    prefer=request.code_filters.prefer,
-                    exclude_domains=list(request.code_filters.exclude_domains) or None,
-                    only_domains=list(request.code_filters.only_domains) or None,
-                    include_domains=list(request.code_filters.include_domains) or None,
-                ),
-            )
-            document = _indexed_domain_outcome(
-                PublicSourceType.DOCUMENT,
-                counts,
-                count_failures,
-                source_facts,
-                lambda: lease.searcher.search_document(
-                    request.query,
-                    top_k=request.top_k,
-                    source_path=request.document_filters.source_path,
-                    extractor_id=request.document_filters.extractor_id,
-                    extractor_version=request.document_filters.extractor_version,
-                    locator_kind=request.document_filters.locator_kind,
-                ),
+            vault, code, document = _search_combined_domains(
+                request, lease.searcher, counts, count_failures, source_facts
             )
             if scope.session is None or not scope.session.failed:
                 break

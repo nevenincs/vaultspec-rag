@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -403,36 +403,10 @@ class WatcherInitializationError(RuntimeError):
     """
 
 
-async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
-    """Watch for file changes and trigger incremental re-indexing.
-
-    Runs until stop_event is set. Accepted path evidence is durable before it
-    reaches the legacy execution slot. Each source controller owns adaptive
-    collection deadlines, while the service scheduler owns fair admission.
-
-    Args:
-        root_dir: Project root directory to watch.
-        vault_dir: Path to the .vault/ documentation directory.
-        stop_event: Set this event to stop the watcher gracefully.
-        debounce: Milliseconds to wait for additional changes
-            before processing.
-        cooldown: Compatibility input retained by the watcher configuration;
-            adaptive policy bounds govern scheduling.
-        graph_cache: GraphCache to invalidate after a successful vault
-            reindex.
-        registry: Service registry that owns the watched project's stores.
-            Standalone callers default to the process singleton; the resident
-            server passes its rebindable registry explicitly.
-
-    Raises:
-        WatcherInitializationError: Retry-state initialization failed
-            deterministically; the owner terminally removes the watcher.
-        This coroutine does not propagate exceptions from indexing.
-        Indexing errors are caught and logged via ``logger.exception``.
-    """
-    # Only the two the ``watch_filter`` closure reads on every path event are
-    # bound locally; every other input is read off the configuration where it
-    # is used.
+async def _initialize_watcher_bindings(
+    configuration: WatcherConfiguration,
+) -> tuple[WatcherChangeRouting, tuple[_ControllerBinding, ...]]:
+    """Recover durable source slots before registering their scheduler controllers."""
     root_dir = configuration.root_dir
     vault_dir = configuration.vault_dir
     try:
@@ -529,6 +503,53 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
     )
     for binding in bindings:
         _register_controller_binding(binding)
+    return (
+        WatcherChangeRouting(
+            root_dir=resolved_root,
+            vault_dir=vault_dir,
+            policy=None,
+            vault_slot=vault_slot,
+            code_slot=code_slot,
+            document_slot=document_slot,
+        ),
+        bindings,
+    )
+
+
+async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
+    """Watch for file changes and trigger incremental re-indexing.
+
+    Runs until stop_event is set. Accepted path evidence is durable before it
+    reaches the legacy execution slot. Each source controller owns adaptive
+    collection deadlines, while the service scheduler owns fair admission.
+
+    Args:
+        root_dir: Project root directory to watch.
+        vault_dir: Path to the .vault/ documentation directory.
+        stop_event: Set this event to stop the watcher gracefully.
+        debounce: Milliseconds to wait for additional changes
+            before processing.
+        cooldown: Compatibility input retained by the watcher configuration;
+            adaptive policy bounds govern scheduling.
+        graph_cache: GraphCache to invalidate after a successful vault
+            reindex.
+        registry: Service registry that owns the watched project's stores.
+            Standalone callers default to the process singleton; the resident
+            server passes its rebindable registry explicitly.
+
+    Raises:
+        WatcherInitializationError: Retry-state initialization failed
+            deterministically; the owner terminally removes the watcher.
+        This coroutine does not propagate exceptions from indexing.
+        Indexing errors are caught and logged via ``logger.exception``.
+    """
+    # Only the two the ``watch_filter`` closure reads on every path event are
+    # bound locally; every other input is read off the configuration where it
+    # is used.
+    root_dir = configuration.root_dir
+    vault_dir = configuration.vault_dir
+    routing, bindings = await _initialize_watcher_bindings(configuration)
+    resolved_root = routing.root_dir
     # One immutable snapshot governs ordinary watcher intake until an
     # index-shaping control event advances the watcher generation. The list is
     # a closure cell shared with ``watch_filter``; invalid policy edits retain
@@ -558,14 +579,7 @@ async def watch_and_reindex(configuration: WatcherConfiguration) -> None:
                 code_policy[0] = _refresh_policy_snapshot(root_dir, code_policy[0])
             batch = _classify_watcher_changes(
                 changes,
-                routing=WatcherChangeRouting(
-                    root_dir=resolved_root,
-                    vault_dir=vault_dir,
-                    policy=code_policy[0],
-                    vault_slot=vault_slot,
-                    code_slot=code_slot,
-                    document_slot=document_slot,
-                ),
+                routing=replace(routing, policy=code_policy[0]),
             )
 
             cancellation_requested = await _persist_and_observe_batch(

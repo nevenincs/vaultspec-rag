@@ -16,15 +16,15 @@ from ..indexer._publication_proof import ProofEvidence
 from ..indexer._run_ledger_models import SCHEMA_VERSION, index_run_ledger_path
 from ..indexer._run_ledger_runtime import RunLedger
 from ..store_runtime import configured_backend_identity
-from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
-from .test_index_run_ledger import (
-    _digest,
-    _proof_key_for_signature,
-    _publish_and_compact,
-    _seed_publication_proof,
-    _signature,
-    _unit,
+from ._run_ledger_test_support import (
+    ledger_test_digest,
+    ledger_test_proof_key_for_signature,
+    ledger_test_publish_and_compact,
+    ledger_test_seed_publication_proof,
+    ledger_test_signature,
+    ledger_test_unit,
 )
+from ._sqlite_state import assert_sqlite_unchanged, sqlite_contents
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -67,17 +67,21 @@ def _root_mid_publication(root: Path) -> None:
     path = index_run_ledger_path(workspace_volume_path(root))
     path.parent.mkdir(parents=True)
     ledger = RunLedger(path)
-    signature = _signature(root, backend_identity=configured_backend_identity(root))
+    signature = ledger_test_signature(
+        root, backend_identity=configured_backend_identity(root)
+    )
     parent = ledger.start_generation(signature)
-    _publish_and_compact(ledger, parent.generation_id)
-    key = _proof_key_for_signature(signature)
-    _seed_publication_proof(
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
+    key = ledger_test_proof_key_for_signature(signature)
+    ledger_test_seed_publication_proof(
         ledger,
         generation_id=parent.generation_id,
         key=key,
         evidence=(
             ProofEvidence(
-                "src/a.py", _digest("a-v1"), _unit("src/a.py", 0, 1).point_ids
+                "src/a.py",
+                ledger_test_digest("a-v1"),
+                ledger_test_unit("src/a.py", 0, 1).point_ids,
             ),
         ),
     )
