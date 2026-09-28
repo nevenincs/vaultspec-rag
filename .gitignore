@@ -180,7 +180,9 @@ actions-runner-*.tar.gz
 /.gitignore.lock
 /.mcp.json.lock
 /.pre-commit-config.yaml
-/.pre-commit-config.yaml.lock
+/.pre-commit-config.yml
+/.vaultspec/.env
+/.vaultspec/.env.*
 # <<< vaultspec-managed <<<
 
 # stray provider-mirror lock artifacts
