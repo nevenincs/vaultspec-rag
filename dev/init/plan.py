@@ -49,8 +49,9 @@ REQUIREMENTS: Final[tuple[Requirement, ...]] = (
 
 #: Steps that run before any phase, on every entry point. Materializing `.env`
 #: belongs here rather than in `init-tools` because a worktree without one is
-#: under-configured for tools that read it, including `just` itself in the
-#: repositories that set `dotenv-load`. The rule is uniform across the fleet.
+#: under-configured for tools that read it, including `just` itself when
+#: `dotenv-load` is set. Running it before any phase keeps that guarantee
+#: unconditional rather than tied to that setting.
 PREFLIGHT: Final[tuple[Step, ...]] = (
     Step(
         name="dotenv",

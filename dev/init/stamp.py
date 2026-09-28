@@ -39,9 +39,9 @@ if TYPE_CHECKING:
     from dev.init.contract import Phase
 
 #: Where the stamp lives. Inside the virtual environment on purpose: `.venv` is
-#: already ignored in every repository, it is per-worktree, and destroying the
-#: environment destroys the claim that it was provisioned - which is exactly
-#: the coupling wanted.
+#: already gitignored, it is per-worktree, and destroying the environment
+#: destroys the claim that it was provisioned - which is exactly the coupling
+#: wanted.
 STAMP_NAME: Final = ".init-stamp.json"
 
 #: The report's name, written beside the stamp.
@@ -105,7 +105,7 @@ def _own_source_digest() -> str:
         A hex digest over every ``.py`` file in :mod:`dev.init`, so a change to
         what a phase does invalidates the stamps written by the old behaviour.
         Without this, editing ``plan.py`` would leave every already-initialized
-        worktree on the fleet silently running the previous plan.
+        worktree silently running the previous plan.
     """
     here = Path(__file__).resolve().parent
     digest = hashlib.sha256()

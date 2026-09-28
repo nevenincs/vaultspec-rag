@@ -12,7 +12,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 __all__ = [
-    "FLEET_OWNED",
     "FULL_RUN_LABEL",
     "GATE_CHECK",
     "GATE_JOB",
@@ -40,11 +39,9 @@ class Workflow(StrEnum):
     ACQUISITION = "acquisition.yml"
     PUBLISH = "publish.yml"
     CODE_HEALTH = "code-health.yml"
-    RUNNER_POLICY = "runner-policy.yml"
 
 
-#: The product every workflow name starts with, so this repository's runs
-#: group together beside its siblings' in a fleet-wide view.
+#: The product every workflow name starts with, so its runs group together.
 PRODUCT = "RAG"
 
 #: The workflow that measures pull requests and reports merge readiness.
@@ -56,20 +53,13 @@ MERGE_BOX = (Workflow.MERGE_GATE,)
 #: running the same gate is.
 MEASURING_GROUPS = frozenset({"check", "audit", "test"})
 
-#: The gate job's key under ``jobs:`` in :attr:`Workflow.MERGE_GATE`. The runner
-#: admission policy recognises the job by this id and grants it the no-slot
-#: class, so a rename also makes the gate queue behind the jobs it judges.
+#: The gate job's key under ``jobs:`` in :attr:`Workflow.MERGE_GATE`.
 GATE_JOB = "gate"
 
 #: The label that starts a full run. A momentary pushbutton, not a toggle:
 #: adding a label that is already present fires no ``labeled`` event, so the
 #: gate releases it again and pressing it twice means adding it twice.
 FULL_RUN_LABEL = "ci:full"
-
-#: Workflows the fleet generates and deploys into this repository. They are
-#: kept byte-for-byte as rendered, so this repository's own naming rules do
-#: not apply to them; the fleet's drift check does.
-FLEET_OWNED = frozenset({Workflow.RUNNER_POLICY})
 
 #: The clause that excludes a fork's pull request. Present so that a job in
 #: THIS repository's copy of a workflow cannot quietly lose it; it is not what

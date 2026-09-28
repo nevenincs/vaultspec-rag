@@ -24,13 +24,13 @@ if TYPE_CHECKING:
 
 #: Bumped whenever the report schema, the stamp format, or the meaning of a
 #: phase changes. It is part of the stamp digest, so bumping it re-initializes
-#: every worktree on the fleet exactly once.
+#: every worktree exactly once.
 CONTRACT_VERSION: Final = 1
 
 #: The phases, in the order `init` runs them. The order is a dependency order,
 #: not a preference: `tools` installs git hooks and enrolls the framework out
-#: of the environment `python` creates, and in one repository those hooks lint
-#: the SPA that `node` restores.
+#: of the environment `python` creates, and runs after `node` so a repository
+#: whose hooks reach into a restored dependency graph gets it in place first.
 PHASES: Final[tuple[str, ...]] = ("python", "node", "tools")
 
 #: The environment variable that turns on the NDJSON event stream, so the

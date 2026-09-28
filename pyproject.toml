@@ -184,7 +184,7 @@ exclude = ["src/vaultspec_rag/tests"]
 "assets/logo.png" = "assets/logo.png"
 
 [tool.pytest.ini_options]
-# The fleet-standard invocation, stated once here rather than retyped on every
+# The standard invocation, stated once here rather than retyped on every
 # `just test` lane. A lane passes only what SELECTS it - paths, a marker
 # expression, `-x`, xdist distribution - never how pytest reports.
 #
@@ -274,9 +274,6 @@ tmp_path_retention_policy = "failed"
 [tool.ruff]
 line-length = 88
 target-version = "py313"
-# Deployed byte-for-byte from the runner fleet's source; reformatting them
-# here would make every redeploy a local edit the deployment refuses.
-extend-exclude = ["dev/actionlint.py", "dev/ci_contract.py"]
 
   [tool.ruff.lint]
   # NOTE: preview is deliberately OFF here — enabling it globally changes the

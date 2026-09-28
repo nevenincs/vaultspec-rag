@@ -9,13 +9,10 @@ platform it lands on, and what its recipes FINALLY run.
 Each of those is a place a naive reader gets it wrong, which is why they are
 answered once here:
 
-- **The matrix hides the runner.** A job whose ``runs-on`` is
-  ``${{ matrix.runner }}`` is invisible to anything grepping for
-  ``self-hosted``, and the matrix jobs are exactly the long-running ones - the
-  binary builds and the acquisition legs - so a naive check misses precisely
-  the jobs whose six-hour default ceiling costs the most.
+- **The matrix hides the platform.** A job whose ``runs-on`` is
+  ``${{ matrix.runner }}`` names no platform until its matrix is resolved.
 
-- **The event decides who is running.** Half this fleet's jobs carry an ``if:``
+- **The event decides who is running.** Half these jobs carry an ``if:``
   on ``github.event_name``, so two jobs naming the same recipe are only
   duplicating work when some ONE event reaches both. Comparing them without
   that partition reports every deliberate pull-request/push split as a repeat.
@@ -163,14 +160,6 @@ class Job:
             )
         return frozenset(found or {"unknown"})
 
-    @property
-    def self_hosted(self) -> bool:
-        """Whether any resolved runner draws from the self-hosted fleet."""
-        return any(
-            "self-hosted" in {label.lower() for label in labels}
-            for labels in self.runners
-        )
-
     def recipes(self) -> tuple[tuple[str, str], ...]:
         """Return ``(step name, recipe)`` for every ``just <recipe>`` step."""
         return tuple((name, recipe) for name, recipe, _ in self._recipe_steps())
@@ -288,9 +277,9 @@ def workflow_names() -> tuple[tuple[str, str], ...]:
 def _matrix_legs(job: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     """Return one variable mapping per matrix leg, or a single empty leg.
 
-    Handles both matrix shapes, because ``runs-on`` is expressed through each
-    in this fleet: an ``include:`` list of complete mappings (the binary
-    builds), and plain key/value axes (the interpreter matrix).
+    Handles both matrix shapes the workflows use: an ``include:`` list of
+    complete mappings (the binary builds), and plain key/value axes (the
+    interpreter matrix).
     """
     matrix = (job.get("strategy") or {}).get("matrix")
     if not isinstance(matrix, dict):
@@ -320,9 +309,7 @@ def _resolve_runs_on(raw: Any, leg: dict[str, Any]) -> tuple[str, ...]:
     """Return the label tuple *raw* names once *leg*'s matrix values are in.
 
     A ``runs-on`` naming ``${{ matrix.runner }}`` is the case this exists for:
-    unresolved, it is one opaque string that matches no platform and no
-    ``self-hosted`` label, so the longest-running jobs in the fleet read as
-    jobs with no runner at all.
+    unresolved, it is one opaque string that matches no platform.
     """
     if isinstance(raw, str):
         reference = _MATRIX_REFERENCE.fullmatch(raw.strip())
@@ -457,7 +444,7 @@ def _or_values(left: object, right: object) -> object:
 
 
 class _Parser:
-    """A recursive-descent reader for the expression subset this fleet uses.
+    """A recursive-descent reader for the expression subset the workflows use.
 
     Only what the workflows actually contain: string and boolean literals,
     dotted context references, ``==``/``!=``/``&&``/``||``/``!``, parentheses

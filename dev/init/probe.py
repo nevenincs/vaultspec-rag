@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 #: Matches the first dotted version in a `--version` banner. Every tool this
-#: fleet requires prints one, in among a varying amount of other text.
+#: repository requires prints one, in among a varying amount of other text.
 _VERSION = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
 
 

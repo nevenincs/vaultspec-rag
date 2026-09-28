@@ -90,9 +90,9 @@ def justfiles() -> list[Path]:
     if root_file.exists():
         found.append(root_file)
     assert found, (
-        f"no justfile found under {ROOT}. Every repository in this fleet has "
-        "at least a root `justfile`; finding none means this guard is looking "
-        "in the wrong place, not that the tree is clean."
+        f"no justfile found under {ROOT}. This repository has a root "
+        "`justfile`; finding none means this guard is looking in the wrong "
+        "place, not that the tree is clean."
     )
     return sorted(found)
 

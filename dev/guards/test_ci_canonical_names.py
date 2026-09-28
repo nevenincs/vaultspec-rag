@@ -63,8 +63,8 @@ def test_every_workflow_file_on_disk_is_in_the_canon() -> None:
     """Every workflow file is named by the canon.
 
     The other direction, and the one that matters for a NEW workflow: a file
-    the canon does not know is a file no guard reaches by name, so it joins
-    the fleet without the naming, boundedness and repeat checks.
+    the canon does not know is a file no guard reaches by name, so it runs
+    without the naming, boundedness and repeat checks.
 
     Mutation proof: adding an empty ``scratch.yml`` made this fail naming it;
     deleting the file made this pass.

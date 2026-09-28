@@ -1,10 +1,7 @@
 """Nothing in the merge box runs twice.
 
-THE GROUND TRUTH THIS IS WRITTEN AGAINST. The fleet has one Linux runner and
-one Windows runner, shared across every repository in the account. Every job
-is serial. Splitting work across more jobs buys parallelism on a hosted fleet;
-here it buys latency and nothing else, and a repeat is not a wasted core but a
-wasted PLACE IN THE QUEUE that every other repository is waiting behind.
+A command that runs in two jobs of the same run answers the same question
+twice: it costs CI time and buys nothing.
 
 WHY REPEATS SURVIVE REVIEW. Each is spelled differently from the thing it
 duplicates, so no two lines in the workflow look alike:
@@ -136,10 +133,8 @@ def test_no_command_runs_in_two_jobs(workflow: str) -> None:
             findings.append(f"on {event}: `{command}` runs in {where}")
 
     assert not findings, (
-        "The same command runs in more than one job of the same run.\n"
-        "The fleet is one Linux runner and one Windows runner, serial, shared "
-        "across every repository: a repeat costs a place in that queue and "
-        "buys nothing.\n"
+        "The same command runs in more than one job of the same run, which "
+        "costs CI time and buys nothing.\n"
         "Fold the jobs together, or - only when the platform genuinely changes "
         "the answer - declare the recipe in PLATFORM_SENSITIVE with what it "
         "changes.\n\n" + "\n".join(findings)

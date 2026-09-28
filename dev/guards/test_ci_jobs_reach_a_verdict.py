@@ -2,23 +2,15 @@
 
 TWO WAYS A RUN ENDS WITHOUT A VERDICT, AND BOTH LOOK LIKE SILENCE.
 
-**It never ends.** A job with no ``timeout-minutes`` inherits a SIX HOUR
-ceiling, on a machine every repository in the account queues behind. And the
-jobs most likely to hang are the ones a naive reader cannot even find: a job
-whose ``runs-on`` is ``${{ matrix.runner }}`` matches no grep for
-``self-hosted``, and those are the binary builds and the acquisition legs -
-the longest-running jobs in the fleet. So the matrix is resolved before the
-question is asked.
+**It never ends.** A job with no ``timeout-minutes`` inherits a six-hour
+ceiling, so a hung job reports nothing for six hours.
 
 **It is cancelled before it starts.** ``cancel-in-progress: false`` protects a
 run that has STARTED. It says nothing about a run that is still PENDING, and
 GitHub cancels a previously pending run in the same concurrency group with no
-switch to turn that off. On a saturated fleet a main run sits pending for a
-long time: the last merge before this guard existed ran for 2h23m, and four of
-its jobs were cancelled after sitting between 12 and 30 minutes each without
-ever being assigned a runner. So each push to main kills the verdict on the
-push before it - and the result reports as ``cancelled``, not ``failed``, so a
-destroyed backstop raises no alarm at all.
+switch to turn that off. So a push to main can kill the verdict on the push
+before it - and the result reports as ``cancelled``, not ``failed``, so the
+lost verdict raises no alarm at all.
 
 The fix is to stop main's runs from sharing a group: put the COMMIT in the
 group, and only on main, so pull requests keep the supersede-the-previous-push
@@ -114,66 +106,20 @@ def _merge_box_jobs() -> tuple[workflows.Job, ...]:
     return tuple(job for workflow in MERGE_BOX for job in workflows.load_jobs(workflow))
 
 
-def test_every_self_hosted_job_is_bounded() -> None:
-    """Every job landing on the fleet declares its own ceiling.
+def test_every_job_is_bounded() -> None:
+    """Every job that runs steps declares its own ceiling.
 
-    The default is six hours on a machine the whole estate queues behind, and
-    a job that never gets a runner sits until GitHub's 24-hour queue timeout
-    retires it as ``cancelled`` - a word that reads as "somebody stopped this"
-    rather than "the fleet is down". A tight ceiling converts that silence
-    into a failure someone sees.
-
-    The fleet audits the same rule, but only when an operator runs it; this
-    copy fails the commit that drops a ceiling.
+    The default is six hours, so a hung job without one stays silent for six
+    hours. A tight ceiling converts that silence into a failure someone sees.
+    A job that only calls a reusable workflow is bounded by the jobs it calls.
     """
     findings = [
-        f"{job.workflow}:{job.job_id} runs on "
-        f"{' | '.join('+'.join(labels) for labels in job.runners)} with no "
-        "timeout-minutes"
+        f"{job.workflow}:{job.job_id} has no timeout-minutes"
         for job in workflows.load_jobs()
-        if job.self_hosted and job.timeout is None
+        if job.steps and job.timeout is None
     ]
     assert not findings, (
-        "A self-hosted job has no ceiling, so its default is six hours.\n"
-        "Note that a matrix job names its runner through `${{ matrix.runner }}`: "
-        "these are found by resolving the matrix, and they are the "
-        "longest-running jobs in the fleet.\n\n" + "\n".join(findings)
-    )
-
-
-def test_merge_box_does_not_export_its_persistent_uv_cache() -> None:
-    """setup-uv never transfers the runner's already-persistent cache.
-
-    Every merge-box runner keeps ``UV_CACHE_DIR`` on runner-owned storage.
-    Enabling the Actions cache archives that same multi-gigabyte directory in
-    each job, then downloads it onto a host where the local copy was already
-    warm. The transfer is both duplicate storage and the long pole of the job.
-
-    Mutation proof: changing one ``enable-cache`` value to true makes this fail
-    naming that job; restoring false makes this test pass again.
-    """
-    setups: list[str] = []
-    offenders: list[str] = []
-    for job in _merge_box_jobs():
-        for step in job.steps:
-            if not str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
-                continue
-            setups.append(job.job_id)
-            options = step.get("with")
-            enabled = (
-                cast("dict[str, object]", options).get("enable-cache")
-                if isinstance(options, dict)
-                else None
-            )
-            if enabled is not False:
-                offenders.append(
-                    f"{job.workflow}:{job.job_id}: enable-cache={enabled!r}"
-                )
-
-    assert setups, "the merge box has no setup-uv steps to verify"
-    assert not offenders, (
-        "Persistent self-hosted runners must use their local UV_CACHE_DIR "
-        "without exporting it through the Actions cache.\n\n" + "\n".join(offenders)
+        "A job has no ceiling, so its default is six hours.\n\n" + "\n".join(findings)
     )
 
 
@@ -242,8 +188,8 @@ def test_the_merge_box_groups_every_job_it_runs() -> None:
 
     A job with no concurrency at all is never cancelled, which is safe - but
     it is also never superseded on a pull request, so a branch pushed five
-    times queues five copies of it on a serial fleet. Declaring the group is
-    what makes the main-only exemption above meaningful.
+    times runs five copies of it. Declaring the group is what makes the
+    main-only exemption above meaningful.
     """
     grouped = {
         workflow
@@ -256,6 +202,6 @@ def test_the_merge_box_groups_every_job_it_runs() -> None:
         if job.workflow not in grouped and job.concurrency is None
     ]
     assert not findings, (
-        "A merge-box job is not in a concurrency group, so pushes to a branch "
-        "queue one copy of it each on a serial fleet.\n\n" + "\n".join(findings)
+        "A merge-box job is not in a concurrency group, so every push to a "
+        "branch runs another copy of it.\n\n" + "\n".join(findings)
     )

@@ -11,9 +11,9 @@ permissions:
 concurrency:
   # The commit is in the group, and only on main. `cancel-in-progress: false`
   # governs runs that have STARTED; GitHub separately cancels a previously
-  # PENDING run in the same group with no switch to stop it, and on a
-  # saturated serial fleet a main run sits pending long enough for the next
-  # push to reach it. Without the commit here, a burst of merges leaves only
+  # PENDING run in the same group with no switch to stop it, so a queued main
+  # run can be cancelled by the next push. Without the commit here, a burst of
+  # merges leaves only
   # the last one with a release proposal - and the ones it cancelled report
   # `cancelled`, not `failed`, so nothing raises an alarm.
   group: release-please-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
@@ -22,7 +22,7 @@ concurrency:
 jobs:
   release-please:
     name: "Build: Release proposal (Linux)"
-    timeout-minutes: 180
+    timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
     # Opens the release PR, pushes its lock refresh, edits the release and
     # dispatches Publish: the only job here, and the only one that writes.
@@ -62,10 +62,8 @@ jobs:
             echo "uv.lock is already up to date"
           else
             git add uv.lock
-            # Scoped to the commit, never written to the checkout's config:
-            # see the note in binaries.yml - a persisted identity outlives the
-            # run on a reused self-hosted checkout and poisons the citation
-            # gate's machine-identity detection.
+            # Scoped to the commit, never written to the checkout's config,
+            # so the bot identity never outlives this commit.
             git \
               -c user.name="github-actions[bot]" \
               -c user.email="github-actions[bot]@users.noreply.github.com" \

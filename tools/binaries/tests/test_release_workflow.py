@@ -235,7 +235,7 @@ def _upstream(jobs: dict, job_id: str) -> set[str]:
 
 
 def _release_request_findings(document: dict, resolver: str) -> list[str]:
-    """Name every way *document* lets an unproven release request reach the fleet."""
+    """Name every way *document* lets an unproven release request reach a job."""
     jobs = document["jobs"]
     findings: list[str] = []
     if any("uses" in step for step in jobs[resolver].get("steps") or []):

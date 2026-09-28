@@ -12,19 +12,19 @@ The recipes are argument-free, so the two modifiers are environment variables
 as well as flags: ``VAULTSPEC_INIT_JSON=1`` for the NDJSON event stream and
 ``VAULTSPEC_INIT_FORCE=1`` to ignore the stamp.
 
-Why `init` is fail-fast, when the fleet's `-all` aggregates are not
---------------------------------------------------------------------
+Why `init` is fail-fast, when this repository's `-all` aggregates are not
+---------------------------------------------------------------------------
 
-The fleet rule is that an ``-all`` aggregate runs every step and exits with the
-first non-zero status, because those aggregates chain INDEPENDENT INSPECTORS: a
-type error does not stop the markdown linter from having something true to say,
-and a developer wants the whole list in one pass.
+The rule for those aggregates is that an ``-all`` aggregate runs every step
+and exits with the first non-zero status, because those aggregates chain
+INDEPENDENT INSPECTORS: a type error does not stop the markdown linter from
+having something true to say, and a developer wants the whole list in one
+pass.
 
 `init` is the opposite shape, and follows the opposite rule deliberately. Its
 phases are a DEPENDENCY CHAIN that builds one artifact. ``init-tools`` installs
 git hooks and enrolls the framework by running executables out of the
-environment ``init-python`` creates; in ``vaultspec-dashboard`` those same hooks
-lint the SPA that ``init-node`` restores. Running ``init-tools`` after
+environment ``init-python`` creates. Running ``init-tools`` after
 ``init-python`` failed does not produce a second independent finding - it
 produces a cascade of "command not found" that buries the one real cause, and
 it produces it slowly.

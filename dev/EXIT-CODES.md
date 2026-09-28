@@ -1,11 +1,9 @@
 # The exit-code contract
 
 A command's exit code is its contract with CI and with the developer. This
-document is the canonical statement of that contract. It is identical in
-`vaultspec-core`, `vaultspec-rag`, `vaultspec-dashboard`, `vaultspec-a2a` and
-`cadrumo`, and the numbers it names live in `dev/exit_codes.py`, which is the
-machine-readable form of this page. `dev/guards/test_exit_code_contract.py`
-enforces both.
+document is the canonical statement of that contract, and the numbers it
+names live in `dev/exit_codes.py`, which is the machine-readable form of this
+page. `dev/guards/test_exit_code_contract.py` enforces both.
 
 ## The governing distinction
 
@@ -20,7 +18,8 @@ looks.
 
 Advisory intent is legitimate. The mechanism must be structural: the target
 declares `advisory=True`, and the runner suppresses only the statuses that mean
-"findings" (`FINDINGS_CODES`, which is `{1}` for every scanner in this fleet).
+"findings" (`FINDINGS_CODES`, which is `{1}` for every scanner this
+repository runs).
 Anything else propagates as `TOOL_BROKEN` (7), which `ADVISORY_BROKEN` is the
 advisory-facing name for. One code serves gates and advisories alike: "the
 scanner did not run" means the same thing whichever kind of target hit it, and
@@ -42,27 +41,19 @@ between them, and it is why `fix` may not be used as a gate. A `fix` that
 exited non-zero because it changed a file would make every clean local
 development loop red.
 
-### The `audit` collision, resolved
-
-`vaultspec-dashboard` treated `audit-*` as gating; `vaultspec-core`,
-`vaultspec-rag` and `cadrumo` treated it as advisory-exit-0. Same verb,
-opposite meaning. The resolution is not to move recipes but to state the rule
-the fleet already half-followed:
+### The `audit` rule
 
 > **`audit` is advisory, except the DEPENDENCY audit, which gates.**
 
 A published advisory against a version this repository has pinned is a verdict
 about a specific artefact, and the remedy is mechanical: change the pin. A
 duplication, dead-code, complexity or shadowing scan yields a lead to confirm
-by hand. Dashboard's `audit` verb is *entirely* supply-chain — python, rust and
-node dependency trees — so it gates in full and never collided; it was
-undocumented, not wrong. Its `node-tooling` target audits build tooling that
-never reaches a user, and is advisory.
+by hand, so it stays advisory.
 
-Lane L8 owns the dependency gate's implementation. It gates with `FAILED` (1)
-and must fail CLOSED: `uv audit` is a preview feature that has historically
-exited 0 while printing advisories, so the verdict is derived from the printed
-summary AND the exit code, never from the exit code alone.
+The dependency audit gates with `FAILED` (1) and must fail CLOSED: `uv audit`
+is a preview feature that has historically exited 0 while printing advisories,
+so the verdict is derived from the printed summary AND the exit code, never
+from the exit code alone.
 
 ## The numbers
 
@@ -70,20 +61,19 @@ summary AND the exit code, never from the exit code alone.
 |---|---|---|
 | 0 | `OK` | ran; nothing that gates |
 | 1 | `FAILED` | ran; reported a gating result |
-| 2 | `INIT_HOST_TOOL_MISSING` | `just init`: a required host tool is absent (L6) |
-| 3 | `INIT_STALE` | `just init`: environment stale relative to its inputs (L6) |
-| 4 | `INIT_STEP_FAILED` | `just init`: one bootstrap step failed (L6) |
-| 5 | `DRIFT` | managed content differs from its generated form (L6; also `fix` under `VAULTSPEC_FIX_STRICT`) |
-| 6 | `INIT_LOCKED` | `just init`: the environment is held open by another process (L6) |
+| 2 | `INIT_HOST_TOOL_MISSING` | `just init`: a required host tool is absent |
+| 3 | `INIT_STALE` | `just init`: environment stale relative to its inputs |
+| 4 | `INIT_STEP_FAILED` | `just init`: one bootstrap step failed |
+| 5 | `DRIFT` | managed content differs from its generated form (also `fix` under `VAULTSPEC_FIX_STRICT`) |
+| 6 | `INIT_LOCKED` | `just init`: the environment is held open by another process |
 | 7 | `TOOL_BROKEN` (`ADVISORY_BROKEN`) | the tool failed to RUN: it started and could not do its job |
 | 8 | `NOTHING_SELECTED` | nothing ran: empty selection, or every test skipped |
 | 127 | `TOOL_MISSING` | required tool absent, no fallback |
 
-2–6 are L6's `just init` codes, adopted unchanged. Outside `init`, an absent
-executable found at dispatch time is `127` — the shell's own
-command-not-found status, legible without a lookup table. `init` keeps `2`
-because its report distinguishes *which* host tool, and callers of `init`
-already read that report.
+2–6 are `just init`'s own codes. Outside `init`, an absent executable found at
+dispatch time is `127` — the shell's own command-not-found status, legible
+without a lookup table. `init` keeps `2` because its report distinguishes
+*which* host tool, and callers of `init` already read that report.
 
 ## Aggregators: one rule
 
@@ -91,10 +81,10 @@ already read that report.
 step and report, and exit with the first non-zero status they saw.** They do
 not stop at the first failure.
 
-`cadrumo` previously had four rules in one justfile — `check-all` ran
-everything, `fix-all` was fail-fast `just` dependencies, `audit-all` always
-exited 0, `test-all` iterated fifteen lanes continue-on-failure — which made
-"what does `-all` mean here" unanswerable without reading the body.
+One `-all` recipe that runs everything, one that is fail-fast `just`
+dependencies, one that always exits 0, and one that iterates its lanes
+continue-on-failure would make "what does `-all` mean here" unanswerable
+without reading the body of each recipe.
 
 Run-all is the rule because an aggregate's purpose is a complete picture per
 invocation. Fail-fast costs one CI round-trip per defect and hides the
@@ -131,12 +121,12 @@ the verb.
 
 **`audit-all` fails only when a dimension that GATES found something, and the
 only dimension that gates is the dependency audit.** That is the whole
-guarantee, and it is the same in all five repositories.
+guarantee.
 
-`vaultspec-core` had `advisory=True` on its `audit all` while `vaultspec-a2a`
-did not, so a published CVE against a pinned version failed `audit-all` in one
-repository and passed it in the other — same recipe name, same composition,
-opposite consequence.
+Setting `advisory=True` on the aggregate itself instead of on its leaves would
+make a published CVE against a pinned version pass `audit-all` whenever the
+aggregate's own flag said so, regardless of what any individual dimension
+found — same recipe, opposite consequence depending on where the flag landed.
 
 The rule that settles it: `advisory` describes ONE TOOL and what its findings
 are worth. It belongs on a leaf. Setting it on an aggregate overrides the
@@ -154,7 +144,7 @@ alone under-reports:
 
 1. **`advisory=True` on a target**, with `findings_codes` defaulting to `{1}`.
    The dispatcher applies `advisory_result`.
-2. **A per-invocation wrapper**, as in `vaultspec-rag`'s
+2. **A per-invocation wrapper**, as in this repository's
    `_advisory(finding_exit, ...)`, which states the finding status at the call
    site and needs no flag on the target at all.
 
@@ -176,11 +166,11 @@ A run that proved nothing must not read as a run that proved everything.
 - A lane legitimately permitted to be empty sets
   `VAULTSPEC_ALLOW_EMPTY_SELECTION=1`, which is a declaration in the toolchain
   table, not a flag typed at a prompt.
-- A hardware-gated lane whose tests all skip — `rag`'s GPU tiers on a host with
-  no CUDA — is the case this rule exists for. pytest exits 0 for an all-skipped
-  run, so `-ra` (lane L3) makes the skips visible in the log, and a lane that
-  can skip *wholesale* is declared advisory rather than gating, so it cannot
-  contribute a green verdict it did not earn.
+- A hardware-gated lane whose tests all skip — this repository's GPU tiers on
+  a host with no CUDA — is the case this rule exists for. pytest exits 0 for
+  an all-skipped run, so `-ra` makes the skips visible in the log, and a lane
+  that can skip *wholesale* is declared advisory rather than gating, so it
+  cannot contribute a green verdict it did not earn.
 - An optional tool that is simply absent is reported and skipped by
   `ToolOrSkip`, which only an advisory target may use. A gate that silently
   passes when its tool is missing is not a gate — it resolves to `127`.
@@ -195,6 +185,7 @@ A run that proved nothing must not read as a run that proved everything.
   swallow (`; exit 0`, a trailing bare `exit 0`, `|| true`,
   `continue-on-error` inside a recipe body).
 
-`dev/guards/` is why `vaultspec-core` and `vaultspec-dashboard` held their
-shape while the other three drifted. The guard is the durable part of this
-contract; the prose is only its explanation.
+A guard that only asserts the mapping functions is not enough: without the
+recipe-body scan, a justfile recipe could reintroduce a swallow the mapping
+functions never see. The guard is the durable part of this contract; the
+prose is only its explanation.

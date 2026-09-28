@@ -1,29 +1,26 @@
 """Workflow and job names stay addressable.
 
-Every workflow this repository authors is named ``<Product> <Purpose>`` so its
-runs group together beside sibling products'. Every row a workflow run shows
-carries a distinct label, so a required check names exactly one row.
+Every workflow is named ``<Product> <Purpose>`` so its runs group together.
+Every row a workflow run shows carries a distinct label, so a required check
+names exactly one row.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from dev.ci_names import FLEET_OWNED, PRODUCT
+from dev.ci_names import PRODUCT
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
 
 def test_every_workflow_name_starts_with_the_product() -> None:
-    """Every authored workflow is ``<Product> <Purpose>``.
-
-    Fleet-generated workflows keep the name the fleet renders.
-    """
+    """Every workflow is ``<Product> <Purpose>``."""
     findings = [
         f"{workflow}: {name!r}"
         for workflow, name in workflows.workflow_names()
-        if workflow not in FLEET_OWNED and not name.startswith(f"{PRODUCT} ")
+        if not name.startswith(f"{PRODUCT} ")
     ]
     assert not findings, (
         f"A workflow is not named `{PRODUCT} <Purpose>`.\n\n" + "\n".join(findings)
