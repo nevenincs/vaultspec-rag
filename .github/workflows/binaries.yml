@@ -39,13 +39,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Both inputs are free text from anyone who can dispatch, and every later job
-  # but one runs on the self-hosted fleet. So they are proven HERE, on a hosted
-  # runner, before anything is checked out: the tag must be a release tag, and
+  # Both inputs are free text from anyone who can dispatch. So they are proven
+  # HERE, before anything is checked out: the tag must be a release tag, and
   # it must resolve on the public remote to exactly the commit requested.
   validate:
     name: "Check: Release request (Linux)"
-    timeout-minutes: 10
+    timeout-minutes: 180
     runs-on: [self-hosted, Linux, X64, build]
     steps:
       - name: Require a release tag that resolves to the requested commit
@@ -88,10 +87,8 @@ jobs:
   derive-selectors:
     name: "Check: Runner selectors (Linux)"
     needs: validate
-    timeout-minutes: 130
+    timeout-minutes: 180
     runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 10
     outputs:
       selectors: ${{ steps.derive.outputs.selectors }}
     steps:
@@ -141,10 +138,8 @@ jobs:
   preflight:
     name: "Check: Runner availability (Linux)"
     needs: derive-selectors
-    timeout-minutes: 135
+    timeout-minutes: 180
     runs-on: [self-hosted, Linux, X64]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 15
     steps:
       - name: Every required selector has an online runner
         shell: bash
@@ -175,40 +170,51 @@ jobs:
           #   TARGET_REPO  repository name, without the owner
           #   SELECTORS    newline-separated, each a comma-joined label set
           #   ALLOW_GATED  "true" tolerates registered-but-offline runners
-          
+
           set -euo pipefail
-          
+
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::fleet_token is empty. This check needs a PAT with Administration:read; GITHUB_TOKEN cannot read actions/runners." >&2
             exit 1
           fi
-          
-          checkable=""
+
+          # GitHub-HOSTED runners are forbidden. Every job runs on the self-hosted
+          # fleet, so a selector without `self-hosted` is a violation, never a leg
+          # to skip. It used to be skipped here as "not in the runner list", which
+          # let a hosted leg pass this check silently; it now fails the run.
+          hosted=0
+          checkable=0
           while IFS= read -r selector; do
             [ -n "${selector}" ] || continue
-            normalized=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-            case ",${normalized}," in
-              *,self-hosted,*) checkable+="${normalized}"$'\n' ;;
+            checkable=$((checkable + 1))
+            want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            case ",${want}," in
+              *",self-hosted,"*) ;;
               *)
-                echo "::error::[${selector}] is not self-hosted; hosted runners are forbidden, with no exceptions" >&2
-                exit 1
+                echo "::error::[${want}] is not self-hosted. GitHub-hosted runners are forbidden; run this job on the fleet." >&2
+                hosted=1
                 ;;
             esac
           done <<< "${SELECTORS}"
-          
-          if [ -z "${checkable}" ]; then
+
+          if [ "${hosted}" -ne 0 ]; then
+            echo "::error::preflight refused a GitHub-hosted runner: GitHub-hosted runners are forbidden" >&2
+            exit 1
+          fi
+
+          if [ "${checkable}" -eq 0 ]; then
             echo "::error::no self-hosted selectors supplied; refusing an empty preflight" >&2
             exit 1
           fi
-          
+
           runners=$(gh api "repos/${GITHUB_REPOSITORY_OWNER}/${TARGET_REPO}/actions/runners" \
             --jq '.runners[] | [.status, ([.labels[].name] | map(ascii_downcase) | join(","))] | @tsv')
-          
+
           if [ -z "${runners}" ]; then
             echo "::error::${TARGET_REPO} has no registered self-hosted runners at all" >&2
             exit 1
           fi
-          
+
           failed=0
           while IFS= read -r selector; do
             [ -n "${selector}" ] || continue
@@ -216,7 +222,7 @@ jobs:
             # case-insensitively, and a selector written `Linux` must match a
             # runner advertising `linux`.
             want=$(printf '%s' "${selector}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-          
+
             online=0; registered=0
             while IFS=$'\t' read -r status labels; do
               missing=0
@@ -231,7 +237,7 @@ jobs:
               registered=$((registered + 1))
               [ "${status}" = "online" ] && online=$((online + 1))
             done <<< "${runners}"
-          
+
             if [ "${online}" -gt 0 ]; then
               echo "ok        [${want}] -> ${online} online"
             elif [ "${registered}" -eq 0 ]; then
@@ -243,8 +249,8 @@ jobs:
               echo "::error::[${want}] matches ${registered} registered runner(s) but NONE are online. On this fleet that usually means the power-gated host is on battery; a job dispatched now would queue rather than fail." >&2
               failed=1
             fi
-          done <<< "${checkable}"
-          
+          done <<< "${SELECTORS}"
+
           if [ "${failed}" -ne 0 ]; then
             echo "::error::preflight refused to start work that cannot be scheduled" >&2
             exit 1
@@ -254,11 +260,9 @@ jobs:
 
   wheel:
     needs: [validate, preflight]
-    timeout-minutes: 150
+    timeout-minutes: 180
     name: "Build: Binary wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -336,15 +340,12 @@ jobs:
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu
-            container: ""
           - name: windows-x86_64
             runner: [self-hosted, Windows, X64]
             target: x86_64-pc-windows-msvc
-            container: ""
           - name: linux-aarch64
             runner: [self-hosted, Linux, ARM64]
             target: aarch64-unknown-linux-gnu
-            container: ""
           # Apple silicon is a supported accelerator, not an absent one: the
           # MPS backend carries the dense, sparse and reranker models, and the
           # hardware tiers gate every release on an MPS acceptance guard that
@@ -355,7 +356,6 @@ jobs:
           - name: macos-arm64
             runner: [self-hosted, macOS, ARM64]
             target: aarch64-apple-darwin
-            container: ""
     # Artifact builds run only for release events and explicit release repair.
     # A matrix job names its runner through `${ matrix.runner }`, which is
     # invisible to any check grepping for `self-hosted` - and these are the
@@ -364,10 +364,6 @@ jobs:
     # test_ci_jobs_reach_a_verdict.py` resolves the matrix and holds this.
     timeout-minutes: 210
     runs-on: ${{ matrix.runner }}
-    env:
-      CI_EXEC_BUDGET_MINUTES: 90
-    # Empty for the Windows leg, which GitHub reads as "no container".
-    container: ${{ matrix.container }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -432,29 +428,11 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
-      # A containerised leg runs as root, and its workspace is the SAME
-      # directory this runner reuses for every other job on the machine. Left
-      # alone it hands the next job a tree it has no permission to clean, and
-      # that job dies in `Checkout` on `failed to remove
-      # dist-bin/vaultspec-rag-x86_64-unknown-linux-gnu: Permission denied` -
-      # which is how every job on this runner went red after the Linux leg was
-      # first put in a pinned image.
-      #
-      # `/__w` is created by the runner and keeps the runner's ownership, so it
-      # is the reference for what the tree should look like on the way out.
-      # Runs on failure too: a leg that dies mid-build poisons the tree just as
-      # thoroughly as one that succeeds.
-      - name: Return the workspace to the runner's user
-        if: ${{ always() && matrix.container != '' }}
-        run: chown -R --reference=/__w "$GITHUB_WORKSPACE"
-
   release:
-    timeout-minutes: 150
+    timeout-minutes: 180
     name: "Build: Release attachment (Linux)"
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
-    env:
-      CI_EXEC_BUDGET_MINUTES: 30
     permissions:
       contents: write
     steps:
@@ -745,7 +723,7 @@ jobs:
   # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
-    timeout-minutes: 150
+    timeout-minutes: 180
     name: "Check: Release proven (Linux)"
     needs: release
     if: ${{ always() }}
@@ -761,7 +739,6 @@ jobs:
       # Dispatching the acquisition check is a write to the Actions API.
       actions: write
     env:
-      CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
       TARGET_SHA: ${{ inputs.target_sha }}
@@ -922,9 +899,9 @@ jobs:
       # tag push, and this is the same move for the same reason.
       #
       # Promotion waits for the public acquisition path. The build cannot
-      # prove that a checksum-verified bundle loads inside each supported
-      # hosted x64/ARM container; treating dispatch as best-effort promoted the
-      # release before that distinct guarantee existed.
+      # prove that a checksum-verified bundle loads on each supported x64/ARM
+      # distribution; treating dispatch as best-effort promoted the release
+      # before that distinct guarantee existed.
       - name: Require the acquisition check for this release
         if: ${{ success() }}
         env:

@@ -9,10 +9,8 @@
 # Acts on the MACHINE, not the product, so there is no local recipe it could
 # be hiding. These belong with the runner fleet's own job hooks and
 # operations.
-binaries.yml:Return the workspace to the runner's user
 acquisition.yml:Return the workspace to the runner's user
 acquisition.yml:Install what acquisition itself needs
-hardware.yml:Put Homebrew and user binaries on PATH
 
 # --- pending ----------------------------------------------------------------
 # The three interpreter heredocs and the raw vault check that stood here are
@@ -83,8 +81,8 @@ merge-gate.yml:Every full check passed on this commit
 
 # These steps bind release validation to the commit selected from the tag.
 # They are Git identity bookkeeping, not a reusable source validation command.
-# The two resolvers run on a hosted runner with no checkout, so no recipe
-# exists there to call: they read the public remote before anything executes.
+# The two resolvers run with no checkout, so no recipe exists there to call:
+# they read the public remote before anything executes.
 publish.yml:Resolve exact release SHA
 binaries.yml:Require a release tag that resolves to the requested commit
 hardware.yml:Require the exact commit

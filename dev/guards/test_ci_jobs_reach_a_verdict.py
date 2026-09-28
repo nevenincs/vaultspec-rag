@@ -33,7 +33,6 @@ import re
 from typing import cast
 
 import pytest
-import yaml
 
 from dev.ci_names import MERGE_BOX
 from dev.guards import _workflows as workflows
@@ -70,12 +69,7 @@ def _reaches_default_branch(workflow: str) -> bool:
     """
     if workflow in MERGE_BOX:
         return True
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        return False
-    document = cast("dict[object, object]", loaded)
-    triggers = document.get("on", document.get(True))
+    triggers = workflows.triggers(workflows.document(workflow))
     push = (
         cast("dict[object, object]", triggers).get("push")
         if isinstance(triggers, dict)
@@ -97,26 +91,21 @@ def _concurrency_declarations() -> list[tuple[str, str, dict[str, object]]]:
     shared group and they cancel each other.
     """
     found: list[tuple[str, str, dict[str, object]]] = []
-    directory = workflows.repository_root() / ".github" / "workflows"
-    for path in sorted(directory.glob("*.yml")):
-        if not _reaches_default_branch(path.name):
+    for name, document in workflows.documents():
+        if not _reaches_default_branch(name):
             continue
-        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            continue
-        document = cast("dict[object, object]", loaded)
         workflow_level = document.get("concurrency")
         if isinstance(workflow_level, dict):
             found.append(
                 (
-                    path.name,
+                    name,
                     "workflow",
                     cast("dict[str, object]", workflow_level),
                 )
             )
-        for job in workflows.load_jobs(path.name):
+        for job in workflows.load_jobs(name):
             if job.concurrency is not None:
-                found.append((path.name, job.job_id, job.concurrency))
+                found.append((name, job.job_id, job.concurrency))
     return found
 
 
@@ -133,6 +122,9 @@ def test_every_self_hosted_job_is_bounded() -> None:
     retires it as ``cancelled`` - a word that reads as "somebody stopped this"
     rather than "the fleet is down". A tight ceiling converts that silence
     into a failure someone sees.
+
+    The fleet audits the same rule, but only when an operator runs it; this
+    copy fails the commit that drops a ceiling.
     """
     findings = [
         f"{job.workflow}:{job.job_id} runs on "

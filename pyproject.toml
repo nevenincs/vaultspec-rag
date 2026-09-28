@@ -274,6 +274,9 @@ tmp_path_retention_policy = "failed"
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+# Deployed byte-for-byte from the runner fleet's source; reformatting them
+# here would make every redeploy a local edit the deployment refuses.
+extend-exclude = ["dev/actionlint.py", "dev/ci_contract.py"]
 
   [tool.ruff.lint]
   # NOTE: preview is deliberately OFF here — enabling it globally changes the

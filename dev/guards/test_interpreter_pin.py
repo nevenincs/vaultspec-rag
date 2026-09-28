@@ -77,9 +77,7 @@ def _development_pin() -> str:
 
 def _matrix_versions(workflow: str, job_id: str) -> tuple[str, ...]:
     """Return the ``python-version`` axis a job's matrix declares."""
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    job = (document.get("jobs") or {}).get(job_id) or {}
+    job = (workflows.document(workflow).get("jobs") or {}).get(job_id) or {}
     matrix = (job.get("strategy") or {}).get("matrix") or {}
     return tuple(str(value) for value in matrix.get("python-version", ()))
 

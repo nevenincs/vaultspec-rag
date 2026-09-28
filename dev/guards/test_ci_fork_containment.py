@@ -31,7 +31,6 @@ import re
 from typing import cast
 
 import pytest
-import yaml
 
 from dev.ci_names import GATE_JOB, MERGE_BOX, SAME_REPO_CLAUSE, Workflow
 from dev.guards import _workflows as workflows
@@ -127,13 +126,7 @@ def test_the_gate_refuses_a_forks_pull_request() -> None:
         for step in gate.steps
         if step.get("name") == "Every full check passed on this commit"
     )
-    document = yaml.safe_load(
-        (workflows.repository_root() / ".github" / "workflows" / workflow).read_text(
-            encoding="utf-8"
-        )
-    )
-    assert isinstance(document, dict)
-    raw_gate = document["jobs"][job_id]
+    raw_gate = workflows.document(workflow)["jobs"][job_id]
     assert raw_gate["env"]["HEAD_REPO"] == (
         "${{ github.event.pull_request.head.repo.full_name }}"
     )
@@ -152,12 +145,8 @@ def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:
     """Return ``(caller workflow, job)`` for every job that calls *workflow*."""
     target = f"./.github/workflows/{workflow}"
     found: list[tuple[str, workflows.Job]] = []
-    directory = workflows.repository_root() / ".github" / "workflows"
-    for path in sorted(directory.glob("*.yml")):
-        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            continue
-        raw_jobs = cast("dict[object, object]", loaded).get("jobs")
+    for name, loaded in workflows.documents():
+        raw_jobs = loaded.get("jobs")
         if not isinstance(raw_jobs, dict):
             continue
         calling = {
@@ -167,9 +156,7 @@ def _callers(workflow: str) -> list[tuple[str, workflows.Job]]:
             and cast("dict[object, object]", body).get("uses") == target
         }
         found.extend(
-            (path.name, job)
-            for job in workflows.load_jobs(path.name)
-            if job.job_id in calling
+            (name, job) for job in workflows.load_jobs(name) if job.job_id in calling
         )
     return found
 

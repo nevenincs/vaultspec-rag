@@ -95,17 +95,6 @@ jobs:
       # still resolves inside one.
       - uses: ./.github/actions/contain-writes
 
-      # The runner's environment does not necessarily carry Homebrew's prefix:
-      # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
-      # pwsh sits under ~/.local/bin. Without this every recipe fails with
-      # "uv: command not found" on a machine where an interactive shell finds
-      # it perfectly well. `just` needs pwsh on POSIX too - the justfile's
-      # `windows-shell` is the override, not the rule.
-      - name: Put Homebrew and user binaries on PATH
-        run: |
-          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -165,7 +154,7 @@ jobs:
     # the acknowledged service lease, fails closed on unavailable service,
     # lease, or device evidence, and resumes before release.
     if: inputs.tier == 'gpu' || inputs.tier == 'macos-and-gpu'
-    timeout-minutes: 90
+    timeout-minutes: 120
     runs-on: [self-hosted, windows, gpu, cuda]
     env:
       # requires-python admits a range, so uv would otherwise pick whichever

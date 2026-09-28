@@ -19,10 +19,9 @@ and `issues: write` does not.
 from __future__ import annotations
 
 import re
-from typing import Any, cast
+from typing import Any
 
 import pytest
-import yaml
 
 from dev.guards import _workflows as workflows
 
@@ -47,15 +46,6 @@ _BOARD_WRITES = re.compile(
 )
 
 
-def _documents() -> list[tuple[str, dict[str, Any]]]:
-    """Return every workflow as ``(filename, parsed document)``."""
-    root = workflows.repository_root() / ".github" / "workflows"
-    return [
-        (path.name, cast("dict[str, Any]", yaml.safe_load(path.read_text("utf-8"))))
-        for path in sorted([*root.glob("*.yml"), *root.glob("*.yaml")])
-    ]
-
-
 def _permission_blocks(node: Any) -> list[dict[str, Any]]:
     """Return every ``permissions:`` mapping anywhere in *node*."""
     found: list[dict[str, Any]] = []
@@ -75,7 +65,7 @@ def test_no_workflow_takes_issue_write() -> None:
     """A token that cannot write the board cannot pollute it."""
     offenders = [
         f"{name}: issues: {block['issues']}"
-        for name, document in _documents()
+        for name, document in workflows.documents()
         for block in _permission_blocks(document)
         if str(block.get("issues", "")).strip() == ISSUE_WRITE
     ]

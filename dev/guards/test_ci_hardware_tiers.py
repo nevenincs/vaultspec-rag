@@ -234,9 +234,7 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     hardware job makes this fail naming ``publish.yml``; restoring it makes
     this pass.
     """
-    document = workflows.document(Workflow.HARDWARE)
-    # YAML 1.1 reads a bare `on` key as the boolean True.
-    triggers = document.get("on", document.get(True))
+    triggers = workflows.triggers(workflows.document(Workflow.HARDWARE))
     call = (
         cast("dict[object, object]", triggers).get("workflow_call")
         if isinstance(triggers, dict)

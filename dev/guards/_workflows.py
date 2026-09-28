@@ -50,7 +50,7 @@ from dev.ci_names import MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 __all__ = [
     "FALSE",
@@ -59,6 +59,7 @@ __all__ = [
     "Job",
     "Tri",
     "document",
+    "documents",
     "evaluate",
     "final_commands",
     "load_jobs",
@@ -66,6 +67,7 @@ __all__ = [
     "recipe_bodies",
     "recipe_groups",
     "repository_root",
+    "triggers",
     "workflow_events",
     "workflow_names",
 ]
@@ -248,21 +250,30 @@ def _document(path: Path) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def workflow_events(workflow: str) -> tuple[str, ...]:
-    """Return the event names *workflow* triggers on.
+def documents() -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Return ``(file name, parsed mapping)`` for every workflow, sorted."""
+    return tuple((path.name, _document(path)) for path in _workflow_files())
+
+
+def triggers(document: Mapping[Any, Any]) -> object:
+    """Return a parsed workflow's ``on:`` value.
 
     ``on`` is the YAML 1.1 boolean ``True`` once parsed, which is the single
     most common way a workflow reader silently finds nothing.
     """
+    return document.get("on", document.get(True))
+
+
+def workflow_events(workflow: str) -> tuple[str, ...]:
+    """Return the event names *workflow* triggers on."""
     for path in _workflow_files():
         if path.name != workflow:
             continue
-        document = _document(path)
-        triggers = document.get("on", document.get(True))
-        if isinstance(triggers, dict | list):
-            return tuple(str(key) for key in triggers)
-        if isinstance(triggers, str):
-            return (triggers,)
+        declared = triggers(_document(path))
+        if isinstance(declared, dict | list):
+            return tuple(str(key) for key in declared)
+        if isinstance(declared, str):
+            return (declared,)
     return ()
 
 
@@ -454,7 +465,7 @@ class _Parser:
     reads as MAYBE.
     """
 
-    def __init__(self, tokens: Sequence[str], context: dict[str, str]) -> None:
+    def __init__(self, tokens: Sequence[str], context: Mapping[str, object]) -> None:
         """Read *tokens*, resolving context references out of *context*."""
         self._tokens = list(tokens)
         self._index = 0
@@ -542,18 +553,22 @@ class _Parser:
                     return
 
 
-def evaluate(expression: str, event: str) -> Tri:
+def evaluate(
+    expression: str, event: str, bindings: Mapping[str, object] | None = None
+) -> Tri:
     """Return whether *expression* holds for *event*.
 
-    Only ``github.event_name`` is bound. Everything else - a dispatch input, a
-    ref, a payload predicate - is deliberately left unknown, so a condition
-    resting on one resolves to MAYBE and its job stays visible to the guards.
+    ``github.event_name`` is bound, plus any context reference *bindings*
+    names. Everything else - a dispatch input, a ref, a payload predicate - is
+    deliberately left unknown, so a condition resting on one resolves to MAYBE
+    and its job stays visible to the guards.
     """
     inner = expression.strip()
     wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", inner, flags=re.DOTALL)
     if wrapped is not None:
         inner = wrapped.group(1)
-    value = _Parser(_tokenize(inner), {"github.event_name": event}).parse()
+    context = {**(bindings or {}), "github.event_name": event}
+    value = _Parser(_tokenize(inner), context).parse()
     if value is _UNKNOWN:
         return MAYBE
     return TRUE if _truthy(value) else FALSE

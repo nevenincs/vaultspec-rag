@@ -250,9 +250,7 @@ def _local_action_texts(text: str, root: Path) -> list[str]:
     return texts
 
 
-HOSTED_FORBIDDEN = (
-    "GitHub-hosted runners are forbidden; " + "run the job on [self-hosted, ...]"
-)
+HOSTED_FORBIDDEN = "GitHub-hosted runners are forbidden; " + "run the job on [self-hosted, ...]"
 PLACEMENT = "runner-placement"
 
 #: GitHub's hosted image vocabulary: an OS family plus a version or channel,
@@ -311,9 +309,7 @@ def _job_header(lines: list[str], index: int) -> int:
     return 0
 
 
-def _matrix_values(
-    lines: list[str], index: int, keys: set[str]
-) -> list[tuple[int, str]]:
+def _matrix_values(lines: list[str], index: int, keys: set[str]) -> list[tuple[int, str]]:
     """Return `(line index, value)` for every matrix entry of `keys` in this job.
 
     Only the job's `strategy:` block is read, so a step input that happens to
@@ -322,12 +318,7 @@ def _matrix_values(
     own = _indent(lines[index])
     job = _block(lines, _job_header(lines, index))
     strategy = next(
-        (
-            n
-            for n in job
-            if _indent(lines[n]) == own and lines[n].strip() == "strategy:"
-        ),
-        None,
+        (n for n in job if _indent(lines[n]) == own and lines[n].strip() == "strategy:"), None
     )
     if strategy is None:
         return []
@@ -379,8 +370,7 @@ def _closed_mapping(value: str) -> bool:
     arrays = re.findall(r"'(\[[^']+\])'", value)
     try:
         return bool(arrays) and all(
-            _names_self_hosted([str(label) for label in json.loads(array)])
-            for array in arrays
+            _names_self_hosted([str(label) for label in json.loads(array)]) for array in arrays
         )
     except (ValueError, TypeError):
         return False
@@ -437,15 +427,12 @@ def _runner_placement_lines(path: Path, text: str) -> list[Finding]:
     findings: list[Finding] = []
 
     def refuse(index: int, detail: str) -> None:
-        findings.append(
-            Finding(path, index + 1, PLACEMENT, f"{detail}. {HOSTED_FORBIDDEN}")
-        )
+        findings.append(Finding(path, index + 1, PLACEMENT, f"{detail}. {HOSTED_FORBIDDEN}"))
 
     for index, target in _external_reusable_jobs(lines):
         refuse(
             index,
-            f"`{target}` is an external reusable workflow; "
-            + "its placement is unobservable",
+            f"`{target}` is an external reusable workflow; " + "its placement is unobservable",
         )
 
     for index, line in enumerate(lines):
@@ -493,9 +480,7 @@ def _matrix_proven(matrix, key, depth):
             values.append(row[key])
         elif not isinstance(axis, list):
             return False
-    return bool(values) and all(
-        _selector_proven(value, {}, depth + 1) for value in values
-    )
+    return bool(values) and all(_selector_proven(value, {}, depth + 1) for value in values)
 
 
 def _selector_proven(raw, matrix, depth=0):
@@ -534,9 +519,7 @@ def runner_placement(path: Path, text: str) -> list[Finding]:
             return fail(f"{name}: invalid job mapping")
         if "uses" in job and "runs-on" not in job:
             target = job["uses"]
-            if not isinstance(target, str) or not target.startswith(
-                "./.github/workflows/"
-            ):
+            if not isinstance(target, str) or not target.startswith("./.github/workflows/"):
                 return fail(
                     f"{name}: {target} is an external reusable workflow; "
                     + "placement is unobservable"
@@ -547,10 +530,7 @@ def runner_placement(path: Path, text: str) -> list[Finding]:
             return fail(f"{name}: invalid strategy mapping")
         if not _selector_proven(job.get("runs-on"), strategy.get("matrix")):
             findings.extend(
-                fail(
-                    f"{name}: unresolved expression or "
-                    + "selector names no self-hosted label"
-                )
+                fail(f"{name}: unresolved expression or " + "selector names no self-hosted label")
             )
     # Preserve original source locations when the ordinary block form supplies them.
     return (_runner_placement_lines(path, text) or findings) if findings else []
@@ -574,13 +554,9 @@ def audit(root: Path) -> list[Finding]:
         for needle, why in BANNED_INSTALLS:
             for number, line in enumerate(text.splitlines(), start=1):
                 if needle in line and not line.lstrip().startswith("#"):
-                    findings.append(
-                        Finding(path, number, "install", f"{needle}: {why}")
-                    )
+                    findings.append(Finding(path, number, "install", f"{needle}: {why}"))
 
-        calls_just = any(
-            _first_word(command) == "just" for _, _, command in _run_commands(text)
-        )
+        calls_just = any(_first_word(command) == "just" for _, _, command in _run_commands(text))
         if calls_just:
             provisioning = "\n".join([text, *_local_action_texts(text, root)])
             if JUST_INSTALL_USES not in provisioning:
@@ -604,11 +580,7 @@ def audit(root: Path) -> list[Finding]:
 
         for number, step, command in _run_commands(text):
             key = f"{name}:{step}"
-            if (
-                command.strip() == RUNNER_POLICY_COMMAND
-                or key in allowlist
-                or name in allowlist
-            ):
+            if command.strip() == RUNNER_POLICY_COMMAND or key in allowlist or name in allowlist:
                 continue
             word = _first_word(command)
             if word == "just":
