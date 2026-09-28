@@ -5,7 +5,7 @@ tags:
 date: '2026-09-27'
 modified: '2026-09-27'
 body_schema: 'body-v2'
-body_hash: 'sha256:a024fbd7aa1c7490525a1640acd3007e1ebc44cd8791429d4c762eb9ade30093'
+body_hash: 'sha256:0a3d14a83be8a078f601168554b5f9d4efa1c0d0447c1ef64e4bc74e62421293'
 related:
   - '[[2026-09-27-open-issues-closeout-plan]]'
 ---
@@ -100,6 +100,16 @@ After GPU verification, the temporary checkout 0.5.2 service was stopped and the
 ### supplementary-audits | low | Existing advisory reports identify no changed-file finding
 
 The duplication report scanned 705 files and found eight existing test clones (187 lines, 0.08%). None intersects this PR's changed files. The cognitive test-tree audit found no function above 20; the cyclomatic advisory reported the existing rank-D shared-readiness test in `test_service_search_diagnostics_reporting.py:79`, outside this diff. These findings remain visible and are not a claim that the repository has zero duplication or advisory complexity findings.
+
+### ci-size-followup | medium | The final fixture correction crossed the module length limit
+
+CI run 36310251233 passed Windows and Linux 3.13 tests, but its Linux lint job reported `test_server_stress_and_watcher.py` at 1,506/1,500 lines. The local full size gate preceded the final fixture correction; subsequent scoped lint and type checks did not include size. This is a verification gap, not a reason to relax the limit. Move the already live-tested headroom class into `test_server_index_headroom.py` under the accepted module-split decision. The remaining module is 1,374 lines and the new module 151. Pylint, Python lint/format, ty with the explicit project interpreter, and configured basedpyright pass after extraction.
+
+`tmp/open-issues-evidence/headroom-extraction.json` proves the moved class AST is identical (SHA256 `7704e09cc650f6730da8188d693ab948e7c4b7ebaf04ad18d470c51a41bc14b4`), the module integration marker is identical, and the remaining module AST is unchanged apart from imports and the moved class. Normal pytest collection still finds all 15 tests across both modules. The performance and 900-second timeout decorators remain on the unchanged test method. Its successful real GPU benchmark evidence remains under the historical node path; the extraction record maps that node to the new module. The reported 6,245 passes count logical tests, not duplicate old/new collection paths. No new inference run is claimed for this structural move.
+
+### external-progress | low | CI and release operations remain separately observable
+
+The ready PR run preserved 5,432 passed/5 skipped in Windows (107.83 seconds pytest) and 5,417 passed/21 skipped on Linux 3.13 (267.97 seconds). Its lint failure and later replacement run remain visible. The historical repair's first runner-setup cancellation refused promotion; a stale queued retry was cancelled before a fresh dispatch, run 36310719639. The Linux runner was recovered only while GitHub reported it offline and idle; its registration and labels were checked and it reconnected successfully. PyPI and GitHub already have identical 0.4.35 wheel and sdist hashes. Full archive/acquisition proof and promotion remain required. Observation logs and job logs are preserved under the original fixes worktree's `tmp/open-issues-evidence` directory.
 
 ## Recommendations
 
