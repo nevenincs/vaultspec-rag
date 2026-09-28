@@ -136,7 +136,7 @@ jobs:
           # GLIBC_FLOOR in `tools/binaries/build_pyapp.py` records the
           # supported floor. Raising it is a support decision, not a build
           # detail: it is asserted against the produced artifact and checked
-          # again by the acquisition lane's oldest distro image.
+          # again against the published binary by the acquisition lane.
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu
