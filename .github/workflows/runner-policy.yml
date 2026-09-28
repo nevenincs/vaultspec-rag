@@ -1,4 +1,4 @@
-name: Self-hosted runner policy
+name: RAG Runner Policy
 on:
   push:
   pull_request:
@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   runner-policy:
-    name: 'Check: Self-hosted runners'
+    name: 'Check: Runner placement (Linux)'
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]

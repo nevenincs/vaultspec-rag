@@ -104,6 +104,7 @@ class Workflow(StrEnum):
     ACQUISITION = "acquisition.yml"
     PUBLISH = "publish.yml"
     CODE_HEALTH = "code-health.yml"
+    RUNNER_POLICY = "runner-policy.yml"
 
 
 #: The product every workflow name starts with, so this repository's runs

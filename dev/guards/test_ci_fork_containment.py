@@ -45,13 +45,26 @@ PULL_REQUEST_EVENTS = frozenset({"pull_request", "pull_request_target"})
 _FORK_RUNNER_SWITCH = re.compile(r"head\.repo\.full_name\s*!=")
 
 
+def _refuses_without_running_code(job: workflows.Job) -> bool:
+    """Whether *job* is the gate and runs no action, so it checks nothing out.
+
+    The gate must run on a fork's pull request to refuse it: a skipped
+    required check reads as a pass. It stays on the fleet only while no step
+    can bring the pull request's code onto the runner.
+    """
+    return job.job_id == GATE_JOB and not any("uses" in step for step in job.steps)
+
+
 def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
-    """A fork's pull request never reaches the self-hosted fleet.
+    """A fork's pull request never runs its code on the self-hosted fleet.
 
     Guard assertion: every self-hosted job either skips `pull_request`
-    entirely or carries :data:`SAME_REPO_CLAUSE` in its `if:`.
-    A self-hosted job with neither runs a fork's own workflow on this
-    hardware, which is the exposure the trust boundary exists to close.
+    entirely, carries :data:`SAME_REPO_CLAUSE` in its `if:`, or is the gate
+    running no action. Any other self-hosted job runs a fork's own workflow on
+    this hardware, which is the exposure the trust boundary exists to close.
+
+    Mutation proof: adding an ``actions/checkout`` step to the gate made this
+    fail naming ``merge-gate.yml:gate``; removing it made this pass.
     """
     offenders = {
         f"{job.workflow}:{job.job_id}": job.condition
@@ -60,6 +73,7 @@ def test_no_self_hosted_job_is_reachable_from_a_forks_pull_request() -> None:
         if job.self_hosted
         and job.reaches("pull_request")
         and (job.condition is None or SAME_REPO_CLAUSE not in job.condition)
+        and not _refuses_without_running_code(job)
     }
     assert not offenders, f"self-hosted jobs reachable from a fork PR: {offenders}"
 
