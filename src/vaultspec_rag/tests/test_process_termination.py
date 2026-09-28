@@ -1,4 +1,10 @@
-"""Termination must recognize a zombie without exhausting child-cleanup time."""
+"""Termination must recognize a zombie without exhausting child-cleanup time.
+
+The process states these tests need - an acknowledged child exit, a non-child
+zombie, a reused PID - cannot be produced on demand, so the probes that report
+them are substituted. Most substitutes are tripwires that fail the test when a
+forbidden probe or sleep is reached.
+"""
 
 from __future__ import annotations
 

@@ -350,6 +350,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "it lets the real ledger record and then refuse that proof, with every "
         "ledger, signature and publication step left real",
     ),
+    "test_process_termination.py": (
+        16,
+        "the states under test - a child whose exit waitpid acknowledges, a "
+        "zombie that is not this process's child, a PID reused after exit - "
+        "are kernel states that cannot be produced on demand, and a zombie "
+        "cannot exist on Windows at all. Most substitutes are tripwires that "
+        "only fail the test when a forbidden probe or sleep is reached, so "
+        "none can make a regressed path pass",
+    ),
 }
 
 

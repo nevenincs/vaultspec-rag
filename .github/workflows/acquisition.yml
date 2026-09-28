@@ -11,10 +11,10 @@ run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'la
 # the floor it claims loads fine everywhere it is built and tested, and fails on
 # a user's machine with a missing symbol version. That gap was found by reading
 # ELF sections by hand, at v0.4.14, three releases after it appeared. Two
-# checks close it. The loader is asked on the runner, whose libc sits at the
-# declared floor. And the symbol versions the published binary requires are
-# read back and compared with the floor its own manifest declares, which holds
-# whatever libc the runner carries.
+# checks close it. The loader is asked whether it accepts the binary. And the
+# symbol versions the published binary requires are read back and compared
+# with the floor its own manifest declares, which holds whatever libc the job
+# happens to run on.
 #
 # WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
 #
