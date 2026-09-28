@@ -68,6 +68,7 @@ __all__ = [
     "pid_listens_on_loopback_port",
     "pid_matches_start_time",
     "pid_start_time",
+    "pid_terminated",
     "process_lineage",
     "reap_if_child",
     "send_signal",
@@ -495,6 +496,15 @@ def pid_is_zombie(pid: int) -> bool:
     except psutil.Error as exc:
         logger.debug("zombie check failed for pid %d: %s", pid, exc)
         return False
+
+
+def pid_terminated(pid: int) -> bool:
+    """Confirm exit even when a POSIX parent has not reaped its zombie.
+
+    An unreadable process remains a possible survivor; permission denial
+    must never authorize cleanup of a live owner's state.
+    """
+    return not pid_alive(pid) or pid_is_zombie(pid)
 
 
 def pid_listens_on_loopback_port(
@@ -1123,32 +1133,34 @@ def send_signal(pid: int, sig: int) -> bool:
     return False
 
 
-def reap_if_child(pid: int) -> None:
-    """Collapse a zombie child we parent so liveness stops reading it as alive.
+def reap_if_child(pid: int) -> bool:
+    """Reap an exited child and report its confirmed exit.
 
     When the target happens to be a direct child of this process - the only
-    case in which a signalled process lingers as an un-reaped zombie -
-    ``waitpid`` clears its process-table entry, so a subsequent liveness probe
-    correctly reports it gone. When the target is not our child (the normal
+    case in which we can reap its zombie - ``waitpid`` clears its process-table
+    entry. Its return proves exit without a later PID lookup, which could see
+    a different process after PID reuse. When the target is not our child (the normal
     case: an orphan reparented to init), ``waitpid`` raises
     ``ChildProcessError`` (ECHILD), which is expected. ``WNOHANG`` never
     blocks.
     """
     if sys.platform == "win32":
-        return
+        return False
     with contextlib.suppress(ChildProcessError, OSError):
-        os.waitpid(pid, os.WNOHANG)
+        waited, _status = os.waitpid(pid, os.WNOHANG)
+        return waited == pid
+    return False
 
 
 def wait_for_exit(pid: int, *, timeout: float, poll_seconds: float = 0.05) -> bool:
     """Wait boundedly for *pid* to exit, reaping a POSIX child when applicable.
 
-    Returns whether the process is gone by the deadline.
+    Returns whether the process has terminated by the deadline. A zombie
+    owned by another parent is terminated even though this caller cannot reap it.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        reap_if_child(pid)
-        if not pid_alive(pid):
+        if reap_if_child(pid) or pid_terminated(pid):
             return True
         time.sleep(poll_seconds)
-    return not pid_alive(pid)
+    return pid_terminated(pid)
