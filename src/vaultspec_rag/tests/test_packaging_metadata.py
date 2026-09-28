@@ -159,6 +159,11 @@ def test_canonical_mcp_builtin_is_installed() -> None:
 
 
 def test_published_core_floor_carries_native_mcp_contract() -> None:
-    """The distribution cannot resolve against a pre-native-MCP Core release."""
+    """The distribution cannot resolve against a Core release it cannot run on.
+
+    The floor carries Core's native MCP contract and its shared settings
+    chain (``vaultspec_core.env_values`` and ``ConfigurationError``), which
+    this package imports at startup.
+    """
     core = next(req for req in _requirements() if req.name == "vaultspec-core")
-    assert str(core.specifier) == ">=0.1.45"
+    assert str(core.specifier) == ">=0.3.2"

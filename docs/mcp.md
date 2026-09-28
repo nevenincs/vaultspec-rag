@@ -139,23 +139,10 @@ tool will eventually call it.
 Where the flag goes depends on who owns the file. On a project with
 `vaultspec-core` installed, `.mcp.json` belongs to its installer, which has
 already written an entry for this server: add `--read-only` to that entry
-rather than replacing it. On affected Core releases, that hand edit does not
-persist; see the known limitation below. The shape below is for a client you
-configure yourself, and [Configure a client by hand](#configure-a-client-by-hand)
-covers both cases in full.
-
-> **Known limitation on Core releases before 0.2.0.** On every vaultspec-core
-> release before 0.2.0, a hand-added `--read-only` on an installer-owned entry
-> does not persist: the next `vaultspec-core spec mcps sync` reports the entry
-> skipped because it differs from its definition, and the sync after that
-> rewrites it back to the installer's shape, so the edit is gone within two
-> ordinary runs. This is
-> [nevenincs/vaultspec-core#404](https://github.com/nevenincs/vaultspec-core/issues/404),
-> fixed on Core's `main` branch by
-> [nevenincs/vaultspec-core#428](https://github.com/nevenincs/vaultspec-core/pull/428)
-> and queued for the 0.2.0 release. On vaultspec-core 0.2.0 or later, a
-> hand-added `--read-only` persists across syncs and this limitation no longer
-> applies - delete this note once 0.2.0 is your supported floor.
+rather than replacing it; the edit persists across syncs. The shape below is
+for a client you configure yourself, and
+[Configure a client by hand](#configure-a-client-by-hand) covers both cases in
+full.
 
 Launch with `--read-only` to serve only the six read tools:
 
@@ -233,10 +220,8 @@ there before you write it.
 > belongs to its installer, which has written an entry for this server already.
 > Keep the written one. To withhold the mutating tools from an installed
 > project, add `--read-only` to the entry that is already there rather than
-> replacing it. Pasting the block below over it does not hold, and on Core
-> releases before 0.2.0 a hand-added `--read-only` on that entry does not
-> persist either; see the [known limitation](#withholding-the-mutating-tools)
-> above. Use this block only where nothing has written the file for you:
+> replacing it. Pasting the block below over it does not hold. Use this block
+> only where nothing has written the file for you:
 
 ```json
 {

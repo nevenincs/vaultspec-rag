@@ -250,17 +250,9 @@ POSIX_PATH_RE = re.compile(r"\b(?:command -v|which) vaultspec-search-mcp\b")
 POWERSHELL_PATH_MARKER = "Get-Command vaultspec-search-mcp"
 CMD_PATH_MARKER = "where.exe vaultspec-search-mcp"
 
-#: The read-only persistence caveat must stay legible as conditional on an
-#: affected Core release, with the tracking issue and its fix linked, rather
-#: than reading as a permanent limitation.
-CORE_ISSUE_MARKER = "vaultspec-core#404"
-CORE_FIX_MARKER = "vaultspec-core#428"
-CORE_SCOPE_MARKER = "no longer applies"
 
-
-def check_mcp_path_and_version_scope(path: Path, text: str) -> list[str]:
+def check_mcp_path_checks(path: Path, text: str) -> list[str]:
     rel = path.relative_to(REPO_ROOT).as_posix()
-    normalized = _normalize_prose(text)
     problems: list[str] = []
     if POSIX_PATH_RE.search(text) is None:
         problems.append(f"{rel}: missing a POSIX PATH check (`command -v`/`which`)")
@@ -271,16 +263,6 @@ def check_mcp_path_and_version_scope(path: Path, text: str) -> list[str]:
     if CMD_PATH_MARKER not in text:
         problems.append(
             f"{rel}: missing the Command Prompt PATH check (`{CMD_PATH_MARKER}`)"
-        )
-    if CORE_ISSUE_MARKER not in normalized or CORE_FIX_MARKER not in normalized:
-        problems.append(
-            f"{rel}: the read-only persistence caveat must cite both "
-            f"{CORE_ISSUE_MARKER} and its fix {CORE_FIX_MARKER}"
-        )
-    if CORE_SCOPE_MARKER not in normalized:
-        problems.append(
-            f"{rel}: the read-only persistence caveat must state the condition "
-            f"under which it stops applying (expected {CORE_SCOPE_MARKER!r})"
         )
     return problems
 
@@ -306,9 +288,7 @@ def main() -> int:
     )
 
     mcp = DOCS_DIR / "mcp.md"
-    problems.extend(
-        check_mcp_path_and_version_scope(mcp, mcp.read_text(encoding="utf-8"))
-    )
+    problems.extend(check_mcp_path_checks(mcp, mcp.read_text(encoding="utf-8")))
 
     if problems:
         print("[docs-conventions] found issues:")
