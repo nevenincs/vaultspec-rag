@@ -351,7 +351,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "ledger, signature and publication step left real",
     ),
     "test_process_termination.py": (
-        16,
+        19,
         "the states under test - a child whose exit waitpid acknowledges, a "
         "zombie that is not this process's child, a PID reused after exit - "
         "are kernel states that cannot be produced on demand, and a zombie "

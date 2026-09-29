@@ -1160,7 +1160,15 @@ def wait_for_exit(pid: int, *, timeout: float, poll_seconds: float = 0.05) -> bo
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if reap_if_child(pid) or pid_terminated(pid):
+        if reap_if_child(pid):
+            return True
+        if pid_terminated(pid):
+            # A child can exit between the reap and the check, leaving a
+            # zombie this process still owns; reap it before reporting exit.
+            reap_if_child(pid)
             return True
         time.sleep(poll_seconds)
-    return pid_terminated(pid)
+    if pid_terminated(pid):
+        reap_if_child(pid)
+        return True
+    return False

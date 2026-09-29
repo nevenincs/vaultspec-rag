@@ -84,6 +84,7 @@ def test_install_json_envelope_reports_updated_on_upgrade(tmp_path: Path) -> Non
     assert envelope["status"] == "updated"
 
 
+@pytest.mark.usefixtures("inference_host")
 def test_install_json_envelope_reports_skipped_on_unattended_torch_prompt(
     tmp_path: Path,
 ) -> None:

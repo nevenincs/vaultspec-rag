@@ -52,6 +52,27 @@ def test_reaped_child_does_not_probe_a_reused_pid(
     assert probe.wait_for_exit(2_000_000_000, timeout=45.0)
 
 
+def test_child_that_exits_between_reap_and_check_is_still_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child turning zombie after the first reap must not be left unreaped.
+
+    Mutation proof: returning on the zombie check without reaping made this
+    fail with one reap attempt; reaping before returning made it pass.
+    """
+    attempts: list[int] = []
+
+    def reap(pid: int) -> bool:
+        attempts.append(pid)
+        return len(attempts) > 1
+
+    monkeypatch.setattr(probe, "reap_if_child", reap)
+    monkeypatch.setattr(probe, "pid_alive", _present)
+    monkeypatch.setattr(probe, "pid_is_zombie", _present)
+    assert probe.wait_for_exit(2_000_000_000, timeout=45.0)
+    assert attempts == [2_000_000_000, 2_000_000_000]
+
+
 def test_non_child_zombie_exits_without_sleeping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
