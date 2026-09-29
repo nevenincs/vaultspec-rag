@@ -1,8 +1,9 @@
 """One automatic pull-request workflow owns merge readiness.
 
 Draft state selects cheap feedback; ready state selects every merge gate. A
-release dispatch reaches the same workflow, so the required context has one
-implementation for contributor and bot-authored branches.
+release pull request reaches the same workflow through the same pull-request
+events, so the required context has one implementation for contributor and
+bot-authored branches.
 """
 
 from __future__ import annotations
@@ -68,11 +69,10 @@ def test_pull_request_heads_start_the_gate_automatically() -> None:
     )
 
 
-def test_the_gate_is_reusable_and_never_runs_on_push() -> None:
-    """Release automation can call the gate while main does not rerun it."""
+def test_the_gate_never_runs_on_push() -> None:
+    """Main does not rerun the gate; a maintainer can still dispatch it."""
     triggers = _triggers()
     assert "push" not in triggers
-    assert "workflow_call" in triggers
     assert "workflow_dispatch" in triggers
 
 
