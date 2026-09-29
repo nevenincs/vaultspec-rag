@@ -18,12 +18,7 @@
         { "type": "test", "section": "Tests", "hidden": true }
       ],
       "extra-files": [
-        "docs/installation.md",
-        {
-          "type": "toml",
-          "path": "uv.lock",
-          "jsonpath": "$.package[?(@.name.value=='vaultspec-rag')].version"
-        }
+        "docs/installation.md"
       ]
     }
   }
