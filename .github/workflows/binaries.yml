@@ -44,8 +44,10 @@ jobs:
   # it must resolve on the public remote to exactly the commit requested.
   validate:
     name: "Check: Release request (Linux)"
-    timeout-minutes: 10
+    timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     steps:
       - name: Require a release tag that resolves to the requested commit
         shell: bash
@@ -81,9 +83,11 @@ jobs:
   # the package index.
   wheel:
     needs: validate
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Build: Binary wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -157,8 +161,10 @@ jobs:
             runner: [self-hosted, macOS, ARM64]
             target: aarch64-apple-darwin
     # Artifact builds run only for release events and explicit release repair.
-    timeout-minutes: 90
+    timeout-minutes: 210
     runs-on: ${{ matrix.runner }}
+    env:
+      CI_EXEC_BUDGET_MINUTES: 90
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -224,10 +230,12 @@ jobs:
           retention-days: 5
 
   release:
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Build: Release attachment (Linux)"
     needs: build
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
     permissions:
       contents: write
     steps:
@@ -513,7 +521,7 @@ jobs:
   # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
   # and the URL reachable, and only stops that release answering as `latest`.
   verify-release-assets:
-    timeout-minutes: 30
+    timeout-minutes: 150
     name: "Check: Release proven (Linux)"
     needs: release
     if: ${{ always() }}
@@ -523,6 +531,7 @@ jobs:
       # Dispatching the acquisition check is a write to the Actions API.
       actions: write
     env:
+      CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
       TARGET_SHA: ${{ inputs.target_sha }}

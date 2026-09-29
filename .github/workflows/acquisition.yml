@@ -70,8 +70,10 @@ jobs:
           - arch: aarch64
             runner: [self-hosted, Linux, ARM64]
             triple: aarch64-unknown-linux-gnu
-    timeout-minutes: 30
+    timeout-minutes: 150
     runs-on: ${{ matrix.runner }}
+    env:
+      CI_EXEC_BUDGET_MINUTES: 30
     steps:
       # No checkout and no install: curl, jq, unzip and ldd are all this needs,
       # and the job may not be able to install anything.
