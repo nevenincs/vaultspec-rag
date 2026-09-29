@@ -40,6 +40,36 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # GITHUB_TOKEN never holds the `workflows` permission, and without it
+      # GitHub refuses a new tag on a commit whose workflow files differ from
+      # the branch head. When a workflow change merges before a release
+      # commit's own run gets a runner, release-please fails "Resource not
+      # accessible by integration" on every later run. The API error names
+      # neither the tag nor the cause, so this step does.
+      - name: Name a release this token cannot tag
+        if: failure() && steps.release.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tip=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)
+          gh pr list --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_REF_NAME}" \
+            --state merged --label "autorelease: pending" \
+            --json number,mergeCommit --jq '.[] | "\(.number) \(.mergeCommit.oid)"' |
+            while read -r number sha; do
+              version=$(gh api "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=${sha}" \
+                --jq '.content | @base64d | fromjson | ."."')
+              tag="vaultspec-rag-v${version}"
+              if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+                continue
+              fi
+              changed=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${sha}...${tip}" \
+                --jq '[.files[]?.filename | select(startswith(".github/workflows/"))] | join(", ")')
+              if [ -n "${changed}" ]; then
+                echo "::error::${tag} cannot be created by this job: #${number} merged it at ${sha}, and ${GITHUB_REF_NAME} has since changed ${changed}. Rerunning will not help; create it with maintainer credentials as RELEASING.md describes."
+              fi
+            done
+
       # These three steps together refresh uv.lock on the release branch: the
       # version bump release-please writes to pyproject.toml leaves the lock
       # stale, and a stale lock fails `uv sync --locked` for anyone who checks

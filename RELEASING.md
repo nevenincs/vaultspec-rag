@@ -239,6 +239,40 @@ gh run list --repo "$REPO" --workflow Binaries --limit 20
 gh run list --repo "$REPO" --workflow Publish --limit 20
 ```
 
+### A merged release that was never tagged
+
+`RAG Release Please` fails in `Run release-please` with
+`Resource not accessible by integration` on create-a-release, and its
+`Name a release this token cannot tag` step names the tag. The workflow token
+never holds the `workflows` permission, and without it GitHub refuses a new tag
+on a commit whose workflow files differ from `main`. A workflow change that
+merged before the release commit's own run started therefore blocks the tag
+for good: every rerun and every later push fails the same way.
+
+Create the Release on the release commit with your own credentials, exactly as
+release-please would have. Relabel the release pull request first, so no
+release-please run creates the same Release and dispatches a second Publish:
+
+```sh
+PR=<release pull request number>
+VERSION=<version>
+TAG="vaultspec-rag-v$VERSION"
+SHA=$(gh pr view "$PR" --repo "$REPO" --json mergeCommit --jq .mergeCommit.oid)
+
+gh pr edit "$PR" --repo "$REPO" \
+  --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+git fetch origin "$SHA"
+git show "$SHA:CHANGELOG.md" \
+  | awk -v h="## [$VERSION]" 'index($0, "## [") == 1 { p = index($0, h) == 1 } p' \
+  > release-notes.md
+gh release create "$TAG" --repo "$REPO" --target "$SHA" --prerelease \
+  --title "vaultspec-rag: v$VERSION" --notes-file release-notes.md
+```
+
+The new tag starts `RAG Publish` from its tag trigger, which holds the Release
+as a prerelease and continues the normal chain. Do not dispatch Publish as
+well.
+
 ### Missing or incomplete binary archives
 
 Read the failed matrix leg first. Restore the runner or correct the build
