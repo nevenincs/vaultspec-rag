@@ -24,28 +24,71 @@ jobs:
     name: "Build: Release proposal (Linux)"
     timeout-minutes: 10
     runs-on: [self-hosted, Linux, X64, build]
-    # Tags and edits the release, dispatches Publish and opens the release PR:
-    # the only job here, and the only one that writes.
+    # Opens the release PR, pushes its lock refresh, edits the release and
+    # dispatches Publish: the only job here, and the only one that writes.
     permissions:
       contents: write
       pull-requests: write
       actions: write
     steps:
-      # TWO IDENTITIES, ONE PER KIND OF WRITE. Releases come first, as
-      # release-please itself orders them: it refuses to propose a new version
-      # while a merged proposal is still untagged.
-      #
-      # The tag and the release are created with the default token on purpose.
-      # GitHub raises no workflow event for a ref or release that token
-      # creates, so Publish starts only from the explicit dispatch below and
-      # never a second time from its tag trigger.
-      - name: Create releases for merged release pull requests
+      - name: Run release-please
         id: release
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          skip-github-pull-request: true
+
+      # These three steps together refresh uv.lock on the release branch: the
+      # version bump release-please writes to pyproject.toml leaves the lock
+      # stale, and a stale lock fails `uv sync --locked` for anyone who checks
+      # the release branch out. Each step is named for what it DOES.
+      - name: Check out the release branch
+        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2  # zizmor: ignore[artipacked] -- the next step pushes the refreshed lock with it
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+
+      - name: Set up uv
+        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Regenerate and push uv.lock
+        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        run: |
+          uv lock
+          if git diff --quiet uv.lock; then
+            echo "uv.lock is already up to date"
+          else
+            git add uv.lock
+            # Scoped to the commit, never written to the checkout's config,
+            # so the bot identity never outlives this commit.
+            git \
+              -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore: update uv.lock for release"
+            git push
+          fi
+
+      # Changes pushed with GITHUB_TOKEN do not start pull-request workflows.
+      # Dispatch the one required gate after the lock refresh so its check run
+      # measures and attaches to the final release-branch head.
+      - name: Dispatch the merge gate for the release pull request
+        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ steps.release.outputs.pr && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HEAD_BRANCH}" ]; then
+            echo "::error::release-please returned a pull request without a head branch"
+            exit 1
+          fi
+          gh workflow run merge-gate.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "${HEAD_BRANCH}" \
+            --field ref="${HEAD_BRANCH}"
 
       # Release Please creates the GitHub Release before either artifact
       # workflow finishes. Hold that release out of `latest` until the binary
@@ -82,32 +125,3 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
             --field tag="${TAG}"
-
-      # The release pull request is written by the release App, never the
-      # default token. A pull request that token opens or pushes to starts its
-      # workflows only once a maintainer approves them in the Actions tab, and
-      # the pull request's own checks never show that pending approval, so the
-      # merge gate silently never runs. The App's writes start the gate like any
-      # other push. There is no fallback to the default token: it would restore
-      # exactly that silent stall. Minted after publication so a broken App can
-      # hold up the next proposal but never a release already merged.
-      - name: Mint the release pull request token
-        id: proposal-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
-      # The version bump in pyproject.toml would leave uv.lock stale. The
-      # `uv.lock` entry in release-please-config.json bumps the lock in the
-      # same commit, so every proposal head is one commit the gate measures
-      # once, rather than a second push that restarts it.
-      - name: Open or update the release pull request
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
-        with:
-          token: ${{ steps.proposal-token.outputs.token }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-          skip-github-release: true

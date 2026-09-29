@@ -7,9 +7,8 @@ name: RAG Merge Gate
 # requests run every gating dimension, both Linux interpreters, the full
 # Windows suite and the dependency audit on every new head. `ci:full` is an
 # optional way to prove a draft; it is never required for the normal merge
-# path. A manual dispatch always runs the full gate. Release pull requests are
-# ordinary pull requests here: the release App writes them, so their events
-# start this workflow like anyone else's.
+# path. Calls and dispatches always run the full gate, including the dispatch
+# release-please sends after its final branch mutation.
 #
 # WHY ONE REQUIRED CHECK HOLDS. Branch protection requires only
 # `Check: Merge gate (Linux)` on the pull request's head commit.
@@ -43,6 +42,12 @@ on:
   pull_request:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review, labeled]
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to validate
+        required: true
+        type: string
   schedule:
     - cron: '47 5 * * 3'
   workflow_dispatch:
@@ -58,8 +63,7 @@ permissions:
 concurrency:
   # A new push supersedes the previous pull-request run. Label events use the
   # label in their group, so an unrelated label cannot cancel a full run.
-  # Dispatches and main schedules group apart, so neither cancels a pull
-  # request's run.
+  # Calls, dispatches and main schedules never cancel release validation.
   group: merge-gate-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ github.event.label.name || github.event_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 

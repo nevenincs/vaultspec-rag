@@ -5,15 +5,22 @@ tags:
 date: '2026-09-29'
 modified: '2026-09-29'
 body_schema: 'body-v2'
-body_hash: 'sha256:e09e4ead7364a373ba1c5f27a2798c4e4fa6f1a2dbbbdf41e40c08a300bf2121'
+body_hash: 'sha256:c429a996abbc8a0738e4bbaab9d8bf6ab8a90825ca95d1d2e661c07aa2e9a92e'
 related:
   - "[[2026-09-29-release-pr-identity-research]]"
   - "[[2026-09-21-automatic-merge-gate-adr]]"
 ---
 
-# `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `accepted`)
+# `release-pr-identity` adr: `release pull requests are written by the release App` | (**status:** `rejected`)
 
 ## Problem Statement
+
+Rejected 2026-09-29 by the maintainer after a brief rollout: a new App
+credential with write access is not justified when the default-token
+dispatch in `2026-09-21-automatic-merge-gate-adr` already produces the
+required check, and no other repository in the fleet uses one. The held
+runs are left unapproved instead. The record below is the proposal as it
+stood.
 
 A pull request the default token opens or updates now starts its workflows only
 after a maintainer approves them in the Actions tab, and the pull request's
