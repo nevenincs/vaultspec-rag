@@ -308,14 +308,18 @@ def test_typesafe_secret_reaches_service_and_gpu_integration_tier() -> None:
     assert "$env:RESIDENT_START_OUTCOME -notin" in _run(stop)
 
 
-def test_resident_service_binds_a_free_port_not_the_default() -> None:
-    """The CUDA tier's resident never claims the fixed default service port.
+def test_resident_service_binds_free_ports_not_the_defaults() -> None:
+    """The CUDA tier's resident claims neither fixed default port.
 
-    Another installation of the product can hold the default port, and a
-    start that loses that race fails the whole release.
+    Another installation of the product can hold the default service port or
+    the default Qdrant port, and a start that loses either race fails the
+    whole release: the service refuses to spawn a Qdrant beside one it does
+    not manage.
 
-    Mutation proof: deleting the ``VAULTSPEC_RAG_PORT`` assignment from the
-    resident step made this fail on the port assertion; restoring it passed.
+    Mutation proof: deleting the ``VAULTSPEC_RAG_PORT`` assignment made this
+    fail on the service-port assertion, and deleting the
+    ``VAULTSPEC_RAG_QDRANT_PORT`` assignment made it fail on the Qdrant-port
+    assertion; restoring each passed.
     """
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
@@ -323,9 +327,11 @@ def test_resident_service_binds_a_free_port_not_the_default() -> None:
     resident = next(step for step in job.steps if step.get("id") == "resident")
     start = _run(resident)
     probe = start.find("TcpListener]::new([System.Net.IPAddress]::Loopback, 0)")
-    assign = start.find("$env:VAULTSPEC_RAG_PORT = ")
+    service = start.find("$env:VAULTSPEC_RAG_PORT = ")
+    qdrant = start.find("$env:VAULTSPEC_RAG_QDRANT_PORT = ")
     launch = start.find("vaultspec-rag server start")
-    assert -1 < probe < assign < launch, (probe, assign, launch)
+    assert -1 < probe < service < launch, ("service port", probe, service, launch)
+    assert -1 < probe < qdrant < launch, ("qdrant port", probe, qdrant, launch)
     assert "--port" not in start
 
 

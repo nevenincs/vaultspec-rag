@@ -203,12 +203,18 @@ jobs:
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
           # Another installation of the product may hold the default service
-          # port. The coordinator and the stop step find this daemon through
-          # its status file, so it binds whatever loopback port is free.
+          # and Qdrant ports. The coordinator and the stop step find this daemon
+          # through its status file, so both bind whatever loopback port is
+          # free. Both probes stay open until both ports are read, so the two
+          # can never be handed the same port.
           $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $qdrantProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
           $probe.Start()
+          $qdrantProbe.Start()
           $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
+          $env:VAULTSPEC_RAG_QDRANT_PORT = "$($qdrantProbe.LocalEndpoint.Port)"
           $probe.Stop()
+          $qdrantProbe.Stop()
           uv run --no-sync vaultspec-rag server start --json
           $startExit = $LASTEXITCODE
           # A dead daemon says only `start_died` on stdout; the reason is in its
