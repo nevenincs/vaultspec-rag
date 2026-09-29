@@ -366,7 +366,9 @@ def test_load_accelerator_contract_holds_for_the_real_interpreter() -> None:
     card in the interval, and refusing then is the gate working - so both are
     accepted here while everything else stays a failure: another exception type,
     a refusal that is not the contention one, or anything returned that is not
-    the torch module.
+    the torch module. GPU ownership is asked of a private anchor, so a live
+    service on the host running this suite neither refuses this call nor has
+    its own anchor taken by it.
     """
     from .._gpu import detect_accelerator_backend, load_accelerator
 

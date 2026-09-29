@@ -10,6 +10,7 @@ from tomlkit.exceptions import ParseError
 from typer._types import TyperChoice
 from typer.core import TyperCommand, TyperOption
 from typer.models import TyperPath
+from vaultspec_core.config import is_unattended
 from vaultspec_core.core.enums import (
     InstallMode,
 )
@@ -20,7 +21,12 @@ from ._app import JSON_OPTION_HELP, _global_target, app
 from ._render import _plain, _render_install_report, _render_uninstall_report
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import TextIO
+
     from typer._click import Context as ClickContext
+
+    from ..commands._models import ConfirmFn, InstallReport, UninstallReport
 
     # Click types ``Context.params`` as ``dict[str, Any]`` because the keys
     # and value types are only known once a command's options are parsed at
@@ -47,6 +53,7 @@ if TYPE_CHECKING:
         skip_models: bool
         skip_qdrant: bool
         json: bool
+        no_hints: bool
 
     class _UninstallParams(TypedDict):
         target: Path | None
@@ -90,6 +97,7 @@ class _InstallOptions:
     skip_models: bool
     skip_qdrant: bool
     json_output: bool
+    no_hints: bool
 
 
 class _InstallCommand(TyperCommand):
@@ -143,11 +151,8 @@ class _InstallCommand(TyperCommand):
                     param_decls=["--force"],
                     default=False,
                     is_flag=True,
-                    help=(
-                        "Override existing files. Also bypasses the torch-config "
-                        "confirmation prompt (implies --yes for that step). "
-                        "--no-torch-config still wins."
-                    ),
+                    help="Override existing files. Never answers the torch-config "
+                    "confirmation prompt; use --yes for that.",
                 ),
                 TyperOption(
                     param_decls=["--skip"],
@@ -176,7 +181,7 @@ class _InstallCommand(TyperCommand):
                     is_flag=True,
                     help=(
                         "Configure the CUDA PyTorch package source in pyproject.toml. "
-                        "--no-torch-config takes precedence over --force / --yes."
+                        "--no-torch-config takes precedence over --yes."
                     ),
                 ),
                 TyperOption(
@@ -281,6 +286,12 @@ class _InstallCommand(TyperCommand):
                     is_flag=True,
                     help=JSON_OPTION_HELP,
                 ),
+                TyperOption(
+                    param_decls=["--no-hints"],
+                    default=False,
+                    is_flag=True,
+                    help="Suppress next-step advisory hints.",
+                ),
             )
         )
         for param in self.params:
@@ -318,6 +329,7 @@ class _InstallCommand(TyperCommand):
                 skip_models=params["skip_models"],
                 skip_qdrant=params["skip_qdrant"],
                 json_output=params["json"],
+                no_hints=params["no_hints"],
             ),
         )
 
@@ -345,9 +357,158 @@ def handle_install() -> None:
     """Register the custom command; it dispatches through ``_InstallCommand``."""
 
 
+def _confirmation_hook(
+    confirm: "ConfirmFn",
+    *,
+    json_output: bool,
+    environ: "Mapping[str, str] | None" = None,
+    stdin: "TextIO | None" = None,
+    stdout: "TextIO | None" = None,
+) -> "ConfirmFn | None":
+    """Return the prompt callback, or ``None`` when nobody is watching.
+
+    Whether anybody is watching is one framework question with one answer: a
+    machine envelope on standard output, a session that declares it, or
+    standard streams that are not a terminal. Deciding it from standard input
+    alone got two of those wrong - a run under ``--json`` went on prompting
+    at a terminal nobody was reading the output of, and a continuous-
+    integration run that inherited a terminal prompted into a log.
+
+    Args:
+        confirm: The callback that would ask the operator.
+        json_output: Whether this invocation emits a machine envelope.
+        environ: The environment to read; ``None`` reads the process's own.
+        stdin: The stream an answer would be read from; ``None`` uses the
+            process's own.
+        stdout: The stream a question would be shown on; ``None`` uses the
+            process's own.
+
+    Returns:
+        *confirm* when a person could answer, ``None`` otherwise. ``None`` is
+        what routes the run to the skipped branch, which reports the skip and
+        names the flag that would have granted consent.
+
+    Raises:
+        ConfigurationError: If the session's own marker carries a word the
+            boolean vocabulary does not recognise.
+    """
+    unattended = is_unattended(
+        json_output=json_output, environ=environ, stdin=stdin, stdout=stdout
+    )
+    return None if unattended else confirm
+
+
+def _report_command_failure(
+    exc: BaseException, *, prefix: str, json_output: bool
+) -> None:
+    """Report a failure that stopped install or uninstall before any report.
+
+    Under ``--json`` this is core's ``vaultspec.error.v1`` envelope rather
+    than a plain line, so a scripted caller parsing every ``--json`` run the
+    same way sees a failure rather than empty stdout and a bare exit code.
+
+    Args:
+        exc: The exception that stopped the run.
+        prefix: ``"Install failed"`` or ``"Uninstall failed"``.
+        json_output: Whether this invocation requested ``--json``.
+    """
+    message = f"{prefix}: {exc}"
+    if json_output:
+        from vaultspec_core.envelope import render_error_envelope
+
+        typer.echo(render_error_envelope(message))
+    else:
+        _plain(message, soft_wrap=True)
+
+
+def _install_outcome(
+    report: "InstallReport", *, configure_torch: bool
+) -> tuple[str, int]:
+    """Classify a completed install run into its envelope status and exit code.
+
+    Both outcomes below exit non-zero so CI fails loudly (issue #83 finding
+    3: an operator who wanted the torch-config patch and did not get it must
+    not read a green run), but they are not the same outcome and the shared
+    exit-code table keeps them apart: 1 is a failure, and 2 is a run that
+    completed with a required step skipped for lack of consent. The envelope
+    status word says the same thing in words. ``DECLINED`` (the user's own
+    answer to a prompt) and ``CONFLICT`` (the user's own customised state,
+    the warning is the signal) stay a plain completed status; so do
+    ``ABSENT`` and ``DISABLED``, both intentional opt-outs.
+
+    Args:
+        report: The completed run's report.
+        configure_torch: Whether this run asked to configure PyTorch at all;
+            an explicit opt-out never turns its own absence into a failure.
+
+    Returns:
+        ``(status, exit_code)``: the canonical outcome word for the
+        envelope, and the process exit code that outcome carries.
+    """
+    from ..torch_config._constants import TorchConfigAction
+
+    torch_errored = (
+        configure_torch and report.torch_config_action is TorchConfigAction.ERROR
+    )
+    # The one place this run declined a required step for lack of consent
+    # rather than failing outright - the shared exit-code table's "completed
+    # with a required step skipped" (e.g. an unattended run with nobody to
+    # answer the torch-config prompt).
+    torch_skipped = configure_torch and report.torch_config_action in {
+        TorchConfigAction.SKIPPED_EOF,
+        TorchConfigAction.SKIPPED_NON_TTY,
+    }
+    hard_failure = (
+        report.mcp_extra_action == "error"
+        or report.mcp_sync_failed
+        or (
+            report.tool_torch_repair is not None
+            and report.tool_torch_repair.blocks_install
+        )
+        or torch_errored
+    )
+    if hard_failure:
+        return "failed", 1
+    if torch_skipped:
+        return "skipped", 2
+    if report.action == "dry_run":
+        return "unchanged", 0
+    if report.action == "upgrade":
+        return "updated", 0
+    return "created", 0
+
+
+def _install_next_step_hint(status: str, *, no_hints: bool) -> dict[str, object] | None:
+    """Return the install envelope's next-step hint, or ``None`` when withheld.
+
+    Withheld under ``--no-hints`` or ``VAULTSPEC_NO_HINTS`` (core's shared
+    :func:`~vaultspec_core.envelope.hints_suppressed`, so the one suppression
+    contract holds here too), inside a git commit hook (the same function),
+    and for every status but a completed enrollment: a dry run previewed
+    nothing to check, and a failed or skipped run has a warning to read
+    first, not a follow-up command.
+
+    Args:
+        status: The envelope's own outcome word for this run.
+        no_hints: Whether the invocation passed ``--no-hints``.
+
+    Returns:
+        The structured hint, or ``None``.
+    """
+    from vaultspec_core.envelope import hints_suppressed
+
+    from .._operator_commands import server_status_command
+
+    if status not in {"created", "updated"} or hints_suppressed(no_hints=no_hints):
+        return None
+    return {
+        "text": "Check the resident server and provisioning state",
+        "command": server_status_command(),
+    }
+
+
 def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     """Enrol the workspace and provision dependencies for one install request."""
-    import sys as _sys
 
     from rich.prompt import Confirm
 
@@ -366,11 +527,7 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
         # prompt can pass ``--yes`` or ``--force``. CLI3-04.
         return Confirm.ask(prompt, default=False, console=_cli.console)
 
-    # Non-TTY detection lives at the CLI edge: only interactive TTYs
-    # can produce meaningful confirmation answers. In CI / pipes,
-    # leaving confirm=None forces the "skipped-non-tty" branch, which
-    # instructs the user to pass --yes or --no-torch-config.
-    confirm_fn = _confirm if _sys.stdin.isatty() else None
+    confirm_fn = _confirmation_hook(_confirm, json_output=options.json_output)
 
     # Map the per-dependency opt-out flags onto the front door's skip
     # token set. ``--local-only`` already drops the qdrant binary in the
@@ -402,31 +559,20 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
             install_mcp=options.install_mcp,
             mode=options.mode,
             repair_tool_torch=options.tool_repair,
+            # A multi-gigabyte download with no output reads as a hang, and a
+            # broker reading JSON must see one envelope and nothing else.
+            stream_repair=not options.json_output,
         )
     except ParseError as exc:
-        _plain(f"Install failed: {exc}", soft_wrap=True)
-        raise typer.Exit(code=2) from exc
-    except Exception as exc:
-        _plain(f"Install failed: {exc}", soft_wrap=True)
-        raise typer.Exit(code=1) from exc
-
-    if options.json_output:
-        import json as _json
-
-        _cli.console.print_json(
-            _json.dumps(report.to_dict(), default=str), highlight=False
+        _report_command_failure(
+            exc, prefix="Install failed", json_output=options.json_output
         )
-    else:
-        _render_install_report(report)
-        # The report's "PyTorch configuration" line describes pyproject.toml,
-        # not the wheel in the active interpreter. When torch was meant to be
-        # provisioned (not an explicit opt-out), probe the real wheel and warn
-        # loudly if it is CPU-only or absent - a GPU-only project must never
-        # report success over a CPU torch. An explicit opt-out is respected.
-        if options.configure_torch:
-            from ._gpu_errors import warn_if_active_torch_not_accelerator
-
-            warn_if_active_torch_not_accelerator()
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        _report_command_failure(
+            exc, prefix="Install failed", json_output=options.json_output
+        )
+        raise typer.Exit(code=1) from exc
 
     # Issue #83 finding 3 ("Bonus: exit non-zero when the patch was
     # wanted but couldn't be applied"). The configure_torch=True path
@@ -438,26 +584,42 @@ def _run_install(ctx: "ClickContext", options: _InstallOptions) -> None:
     # ``CONFLICT`` is by-definition the user's own customised state -
     # keep that 0 too (the warning is the signal). ``ABSENT`` and
     # ``DISABLED`` are intentional opt-outs; both 0.
-    from ..torch_config._constants import TorchConfigAction
+    status, exit_code = _install_outcome(
+        report, configure_torch=options.configure_torch
+    )
 
-    if (
-        report.mcp_extra_action == "error"
-        or report.mcp_sync_failed
-        or (
-            report.tool_torch_repair is not None
-            and report.tool_torch_repair.blocks_install
+    if options.json_output:
+        from vaultspec_core.envelope import render_install_envelope
+
+        hints = _install_next_step_hint(status, no_hints=options.no_hints)
+        typer.echo(
+            render_install_envelope(
+                "rag.install", status, report.to_dict(), hints=hints
+            )
         )
-        or (
-            options.configure_torch
-            and report.torch_config_action
-            in {
-                TorchConfigAction.ERROR,
-                TorchConfigAction.SKIPPED_EOF,
-                TorchConfigAction.SKIPPED_NON_TTY,
-            }
-        )
-    ):
-        raise typer.Exit(code=2)
+    else:
+        _render_install_report(report)
+        # The report's "PyTorch configuration" line describes pyproject.toml,
+        # not the wheel in the active interpreter. When torch was meant to be
+        # provisioned (not an explicit opt-out), probe the real wheel and warn
+        # loudly if it is CPU-only or absent - a GPU-only project must never
+        # report success over a CPU torch. An explicit opt-out is respected.
+        #
+        # A refused run has already described that interpreter, in the repair
+        # section, from the same verdict: saying it again in different words
+        # is what made one run print two diagnoses and three commands. Where
+        # the run did proceed, the repair's verdict is handed over so the
+        # child-interpreter probe runs at most once per command.
+        if options.configure_torch and not report.refused:
+            from ._gpu_errors import warn_if_active_torch_not_accelerator
+
+            repair = report.tool_torch_repair
+            warn_if_active_torch_not_accelerator(
+                capability=repair.capability if repair is not None else None
+            )
+
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,7 +684,11 @@ class _UninstallCommand(TyperCommand):
                     param_decls=["--yes", "-y"],
                     default=False,
                     is_flag=True,
-                    help="Skip confirmation prompts.",
+                    hidden=True,
+                    help=(
+                        "Deprecated: uninstall has no prompt to bypass. "
+                        "Accepted for backward compatibility only."
+                    ),
                 ),
                 TyperOption(
                     param_decls=["--json"],
@@ -554,8 +720,8 @@ class _UninstallCommand(TyperCommand):
     "uninstall",
     cls=_UninstallCommand,
     help=(
-        "Remove vaultspec-rag setup from a workspace. Without --force, this "
-        "only previews what would be removed."
+        "Remove vaultspec-rag setup from a workspace. Requires --force to "
+        "execute; use --dry-run to preview what would be removed instead."
     ),
 )
 def handle_uninstall() -> None:
@@ -565,8 +731,9 @@ def handle_uninstall() -> None:
 def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
     """Remove vaultspec-rag setup from a workspace.
 
-    Without --force, this only previews what would be removed. Vault
-    documents and index data are preserved unless --remove-data is set.
+    Requires --force to execute; without it (and without --dry-run to
+    preview), the command refuses to run. Vault documents and index data
+    are preserved unless --remove-data is set.
     """
     from ..commands._uninstall import uninstall_run
 
@@ -584,17 +751,39 @@ def _run_uninstall(ctx: "ClickContext", options: _UninstallOptions) -> None:
             assume_yes=options.yes,
         )
     except Exception as exc:
-        _plain(f"Uninstall failed: {exc}", soft_wrap=True)
+        _report_command_failure(
+            exc, prefix="Uninstall failed", json_output=options.json_output
+        )
         raise typer.Exit(code=1) from exc
 
-    if options.json_output:
-        import json as _json
+    status = _uninstall_status(report)
 
-        _cli.console.print_json(
-            _json.dumps(report.to_dict(), default=str), highlight=False
-        )
+    if options.json_output:
+        from vaultspec_core.envelope import render_install_envelope
+
+        typer.echo(render_install_envelope("rag.uninstall", status, report.to_dict()))
     else:
         _render_uninstall_report(report)
 
     if report.mcp_sync_failed:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=1)
+
+
+def _uninstall_status(report: "UninstallReport") -> str:
+    """Return the envelope's canonical outcome word for a completed uninstall.
+
+    Args:
+        report: The completed run's report.
+
+    Returns:
+        ``"failed"`` when any requested MCP lifecycle operation failed,
+        ``"unchanged"`` for a preview or a run that removed nothing,
+        ``"removed"`` otherwise.
+    """
+    if report.mcp_sync_failed:
+        return "failed"
+    if report.action == "dry_run":
+        return "unchanged"
+    if report.removed:
+        return "removed"
+    return "unchanged"

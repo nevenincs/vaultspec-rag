@@ -72,6 +72,7 @@ def _run_core(
         timeout=timeout,
         encoding="utf-8",
         errors="replace",
+        check=True,
     )
 
 
@@ -90,13 +91,20 @@ def _build_workspace(root: Path) -> Path:
     # Step 2: seed RAG companion files at the flat fold via rag's seeder
     _seed_rag(root)
 
-    # Step 3: sync (CLI display may crash due to core#54 but sync completes)
+    # Step 3: sync
     _run_core("sync", target=root)
 
-    # Also run MCP sync explicitly in case the main sync crashed before it
+    # Exercise explicit MCP propagation as well as the aggregate sync.
     _run_core("spec", "mcps", "sync", target=root)
 
     return root
+
+
+def test_failed_core_command_does_not_reuse_fixture_state(tmp_path: Path) -> None:
+    """Dropping subprocess success checking must fail this expected refusal."""
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        _run_core("not-a-command", target=tmp_path)
+    assert failure.value.returncode != 0
 
 
 def _clone_workspace(source: Path, destination: Path) -> Path:
@@ -245,40 +253,59 @@ class TestWorkspaceStructure:
         ).exists()
 
 
+@pytest.fixture(scope="class")
+def reinstalled(
+    base_workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    """Workspace that went through install → seed → uninstall → reinstall."""
+    # The installed-and-seeded starting state is the shared base; cloning it
+    # re-anchors MCP ownership at this root, so the uninstall below resolves
+    # and removes only this workspace's provider artifacts.
+    root = _clone_workspace(
+        base_workspace,
+        tmp_path_factory.mktemp("reinstall") / "workspace",
+    )
+    created = _run_core(
+        "vault",
+        "add",
+        "research",
+        "--feature",
+        "ecosystem-preservation",
+        "--json",
+        target=root,
+    )
+    preserved = Path(json.loads(created.stdout)["data"]["path"])
+    preserved_bytes = preserved.read_bytes()
+
+    # Uninstall (preserves .vault/)
+    _run_core("uninstall", "--force", target=root)
+    assert preserved.read_bytes() == preserved_bytes, "uninstall changed vault content"
+
+    # Reinstall + re-seed
+    _run_core("install", target=root)
+    _seed_rag(root)
+    _run_core("sync", target=root)
+    _run_core("spec", "mcps", "sync", target=root)
+    assert preserved.read_bytes() == preserved_bytes, "reinstall changed vault content"
+
+    return root
+
+
 class TestCoreUninstallReinstallCycle:
     """Verify RAG companion files survive core uninstall/reinstall."""
-
-    @pytest.fixture(scope="class")
-    def reinstalled(
-        self,
-        base_workspace: Path,
-        tmp_path_factory: pytest.TempPathFactory,
-    ) -> Path:
-        """Workspace that went through install → seed → uninstall → reinstall."""
-        # The installed-and-seeded starting state is the shared base; cloning it
-        # re-anchors MCP ownership at this root, so the uninstall below resolves
-        # and removes only this workspace's provider artifacts.
-        root = _clone_workspace(
-            base_workspace,
-            tmp_path_factory.mktemp("reinstall") / "workspace",
-        )
-
-        # Uninstall (preserves .vault/)
-        _run_core("uninstall", "--force", target=root)
-
-        # Reinstall + re-seed
-        _run_core("install", target=root)
-        _seed_rag(root)
-        _run_core("sync", target=root)
-        _run_core("spec", "mcps", "sync", target=root)
-
-        return root
 
     def test_vault_preserved_after_uninstall(
         self,
         reinstalled: Path,
     ) -> None:
-        assert (reinstalled / ".vault").is_dir()
+        records = list(
+            (reinstalled / ".vault" / "research").glob(
+                "*-ecosystem-preservation-research.md"
+            )
+        )
+        assert len(records) == 1
+        assert "ecosystem-preservation" in records[0].read_text(encoding="utf-8")
 
     def test_providers_restored_after_reinstall(
         self,
@@ -308,31 +335,31 @@ class TestCoreUninstallReinstallCycle:
         assert "vaultspec-core" in data["mcpServers"]
 
 
+@pytest.fixture(scope="class")
+def vault_workspace(
+    base_workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    """Workspace with vault documents for testing core vault commands."""
+    root = _clone_workspace(
+        base_workspace,
+        tmp_path_factory.mktemp("vault-mgmt") / "workspace",
+    )
+
+    # Create test vault documents
+    research_dir = root / ".vault" / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    (research_dir / "2026-04-11-cohabitation-research.md").write_text(
+        '---\ntags:\n  - "#research"\n  - "#cohabitation"\n'
+        "date: 2026-04-11\nrelated: []\n---\n\n"
+        "# cohabitation research\n\nTest document.\n",
+        encoding="utf-8",
+    )
+    return root
+
+
 class TestCoreVaultManagement:
     """Verify core vault CRUD works alongside RAG companion files."""
-
-    @pytest.fixture(scope="class")
-    def vault_workspace(
-        self,
-        base_workspace: Path,
-        tmp_path_factory: pytest.TempPathFactory,
-    ) -> Path:
-        """Workspace with vault documents for testing core vault commands."""
-        root = _clone_workspace(
-            base_workspace,
-            tmp_path_factory.mktemp("vault-mgmt") / "workspace",
-        )
-
-        # Create test vault documents
-        research_dir = root / ".vault" / "research"
-        research_dir.mkdir(parents=True, exist_ok=True)
-        (research_dir / "2026-04-11-cohabitation-research.md").write_text(
-            '---\ntags:\n  - "#research"\n  - "#cohabitation"\n'
-            "date: 2026-04-11\nrelated: []\n---\n\n"
-            "# cohabitation research\n\nTest document.\n",
-            encoding="utf-8",
-        )
-        return root
 
     def test_core_vault_list(self, vault_workspace: Path) -> None:
         result = _run_core("vault", "list", target=vault_workspace)
@@ -370,25 +397,25 @@ class TestCoreVaultManagement:
         assert "vaultspec-rag" in result.stdout
 
 
+@pytest.fixture(scope="class")
+def double_synced(
+    base_workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    # The base is already installed, seeded, and synced once; this second
+    # full round is the repeat whose output must match the first.
+    root = _clone_workspace(
+        base_workspace,
+        tmp_path_factory.mktemp("idempotent") / "workspace",
+    )
+    _run_core("sync", target=root)
+    _run_core("spec", "mcps", "sync", target=root)
+
+    return root
+
+
 class TestIdempotentSync:
     """Verify sync is idempotent - running twice produces same result."""
-
-    @pytest.fixture(scope="class")
-    def double_synced(
-        self,
-        base_workspace: Path,
-        tmp_path_factory: pytest.TempPathFactory,
-    ) -> Path:
-        # The base is already installed, seeded, and synced once; this second
-        # full round is the repeat whose output must match the first.
-        root = _clone_workspace(
-            base_workspace,
-            tmp_path_factory.mktemp("idempotent") / "workspace",
-        )
-        _run_core("sync", target=root)
-        _run_core("spec", "mcps", "sync", target=root)
-
-        return root
 
     def test_no_duplicate_mcp_entries(
         self,

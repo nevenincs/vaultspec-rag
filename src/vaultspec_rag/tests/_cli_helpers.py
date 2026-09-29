@@ -54,6 +54,30 @@ if typing.TYPE_CHECKING:
 runner = CliRunner()
 
 
+def usage_metavar(help_output: str) -> str:
+    """Return the positional argument named in a ``--help`` usage line.
+
+    The name is what the CLI promises; the styling around it is not. Typer
+    dresses an inferred metavar differently across releases (``NAME`` in one,
+    ``{name}`` in the next) and the class that decides it is a module global
+    any importer of another vaultspec package's command tree may rebind for
+    the whole process. An assertion written against the dressing therefore
+    reports what else the process imported rather than what the command
+    says, and fails in a full lane while passing alone. This strips the
+    dressing and hands back the name, which is the part a test means.
+
+    Args:
+        help_output: The command's full ``--help`` text.
+
+    Returns:
+        The positional's name, lowercased, or ``""`` when the command takes
+        no positional argument.
+    """
+    usage = help_output.splitlines()[0]
+    _, _, tail = usage.partition("[OPTIONS]")
+    return tail.strip().strip("{}[]").rstrip(".").lower()
+
+
 @contextlib.contextmanager
 def _isolated_status_dir(status_dir: Path) -> typing.Generator[Path]:
     """Point the CLI's service discovery at a temp directory for one block.
@@ -1047,6 +1071,7 @@ __all__ = [
     "runner",
     "search_records",
     "try_http_search",
+    "usage_metavar",
 ]
 
 

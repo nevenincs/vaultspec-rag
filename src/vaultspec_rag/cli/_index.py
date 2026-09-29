@@ -1026,7 +1026,7 @@ def _try_in_process_indexing(request: _IndexRunRequest) -> None:
             _plain(f"Error: {exc}")
             raise typer.Exit(code=1) from None
         except (ImportError, RuntimeError) as e:
-            _handle_gpu_error(e)
+            _handle_gpu_error(e, command="index", json_mode=request.json_mode)
 
     in_process_sources = _collect_index_rows(v_res, c_res, d_res, all_outcomes)
 

@@ -906,6 +906,7 @@ class TestTheLoadWindow:
             assert refused.admitted is False
             assert refused.reason == REASON_BELOW_FLOOR
 
+    @pytest.mark.real_hardware_anchor
     def test_the_machine_anchor_is_configuration_independent(
         self,
         tmp_path: Path,

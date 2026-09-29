@@ -26,10 +26,19 @@ pytestmark = [pytest.mark.integration]
 
 
 class TestUninstallSafety:
-    def test_uninstall_without_force_is_dry_run(
+    def test_uninstall_without_force_or_dry_run_is_refused(
         self, installed_workspace: Path
     ) -> None:
-        report = uninstall_run(path=installed_workspace)
+        with pytest.raises(ValueError, match="--force"):
+            uninstall_run(path=installed_workspace)
+        # Nothing was removed.
+        assert (installed_workspace / _RAG_RULE_REL).is_file()
+        assert (installed_workspace / _RAG_MCP_REL).is_file()
+
+    def test_uninstall_dry_run_previews_without_force(
+        self, installed_workspace: Path
+    ) -> None:
+        report = uninstall_run(path=installed_workspace, dry_run=True)
         assert report.action == "dry_run"
         # Files still present
         assert (installed_workspace / _RAG_RULE_REL).is_file()

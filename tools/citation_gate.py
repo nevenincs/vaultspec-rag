@@ -493,12 +493,15 @@ PATH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # operator where their own home directory sits, and a stand-in that the
     # reader is expected to substitute reveals no identity - which is the whole
     # point of this pattern - so the placeholders are excluded by name rather
-    # than by anchoring individual documentation lines that will move.
+    # than by anchoring individual documentation lines that will move. macOS's
+    # ``/Users/Shared`` is excluded the same way: it is the folder every account
+    # on a machine shares, and names no account at all. A placeholder may also
+    # end the scanned value, since string values are matched unescaped.
     (
         "user-home-path",
         re.compile(
             r"[\\/](?:Users|home)[\\/]"
-            r"(?!(?:me|you|user|username|USER|HOME)[\\/\s\"'`]|[<{$])"
+            r"(?!(?:me|you|user|username|USER|HOME|Shared)(?:[\\/\s\"'`]|$)|[<{$])"
             r"[A-Za-z0-9_.-]+"
         ),
     ),

@@ -29,7 +29,9 @@ import re
 from typing import TYPE_CHECKING
 
 import pytest
+from vaultspec_core.config import VariableScope
 
+from ..config._registry import entry
 from ..config._schema import ENV_OVERRIDE_MAP
 from ..config._settings import VaultSpecConfigWrapper
 from ..config._types import EnvVar
@@ -107,8 +109,21 @@ def _config_only_rows(doc: Path) -> dict[str, list[str]]:
 
 
 def _declared() -> set[str]:
-    """Every ``VAULTSPEC_RAG_*`` name the settings enum declares."""
-    return {m.value for m in EnvVar if m.value.startswith(_PREFIX)}
+    """Every ``VAULTSPEC_RAG_*`` name an operator may set.
+
+    Internal scope is excluded, and that is a claim about what this page is
+    for rather than a convenience: a marker this package sets on its own
+    child processes configures nothing an operator could configure, so a row
+    describing it would advertise a knob and invite somebody to turn it.
+    The registry is what decides, so a name cannot be quietly kept off the
+    page without also being declared unsettable.
+    """
+    return {
+        member.value
+        for member in EnvVar
+        if member.value.startswith(_PREFIX)
+        and entry(member).scope is not VariableScope.INTERNAL
+    }
 
 
 def _default_agrees(documented: str, actual: object) -> bool:

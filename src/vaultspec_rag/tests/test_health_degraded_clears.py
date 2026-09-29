@@ -22,6 +22,10 @@ no-``JOB_FAILED`` assertions, and fails nothing else here. Restoring it returns
 the file to green. The assertions read the typed reason, not the detail text:
 a substring test against the model itself iterates its fields and can never
 match, so it passes whether or not the verdict fired.
+
+Removing the full-reindex exclusion from the failure selector fails all four
+rebuild-refusal cases: three on the empty degradation assertion and one on the
+reported failure ID. Restoring it passes all eleven tests in this module.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from .._job_errors import JobError, JobErrorKind
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start, reset, snapshot
 from ..operator_state._service import DegradationReason
@@ -68,6 +73,56 @@ def _succeeded(source: JobSource) -> str:
 
 class TestDegradedVerdictTracksCurrentState:
     """One failure must not outlive the runs that followed it."""
+
+    @pytest.mark.parametrize(
+        "source", [JobSource.CODE, JobSource.VAULT, JobSource.DOCUMENT]
+    )
+    def test_rebuild_refusal_is_repository_readiness(
+        self, isolated_status_dir: Path, tmp_path: Path, source: JobSource
+    ) -> None:
+        """A refused incremental stays visible without degrading the service."""
+        del isolated_status_dir
+        reset()
+        try:
+            job_id = record_start(
+                source, "watcher", project_root=tmp_path / "unindexed"
+            )
+            record_finish(
+                job_id,
+                error=str(
+                    JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "no committed index")
+                ),
+            )
+            jobs_health, reasons = _jobs_health(now=time.time())
+            records = {str(record["id"]): record for record in snapshot()}
+        finally:
+            reset()
+        assert records[job_id]["error_kind"] == JobErrorKind.FULL_REINDEX_REQUIRED
+        assert records[job_id]["phase"] == "error"
+        assert reasons == []
+        assert jobs_health["last_failed"] is None
+
+    def test_rebuild_refusal_does_not_hide_a_real_failure(
+        self, isolated_status_dir: Path
+    ) -> None:
+        """Filtering must precede selection of the latest service failure."""
+        del isolated_status_dir
+        reset()
+        try:
+            failed_id = _failed(JobSource.CODE)
+            refused_id = record_start(JobSource.VAULT, "watcher")
+            record_finish(
+                refused_id,
+                error=str(
+                    JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "no committed index")
+                ),
+            )
+            jobs_health, reasons = _jobs_health(now=time.time())
+        finally:
+            reset()
+        assert _job_failed(reasons)
+        last_failed = cast("dict[str, object]", jobs_health["last_failed"])
+        assert last_failed["id"] == failed_id
 
     def test_a_failure_with_nothing_after_it_still_degrades(
         self,

@@ -21,6 +21,8 @@ from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 from ._production_service import production_service
 
+# Borrowing pauses a served registry, which lends its GPU through the owner
+# anchor; every test here gets a private one, so none claims the machine's.
 pytestmark = [pytest.mark.unit]
 
 runner = CliRunner()

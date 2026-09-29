@@ -27,8 +27,8 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from vaultspec_core.env_values import FALSE_TOKENS, TRUE_TOKENS
 
-from .._env_values import FALSE_TOKENS, TRUE_TOKENS
 from ..config._settings import get_config, reset_config
 from ..config._types import EnvVar, hf_cache_only
 from ..memory_probe import is_enabled
@@ -278,14 +278,17 @@ def test_memory_probe_import_stays_free_of_the_settings_package() -> None:
     """Reading the shared table must not cost a spawn worker its import chain.
 
     The probe is reachable from spawn workers, which re-import everything.
-    Importing the settings module for the boolean vocabulary would pull the
-    vaultspec-core config package into every one of them, which is why the
-    table lives in a stdlib-only module and the variable's name is restated
-    rather than imported.
+    What must stay out is the framework's CONFIGURATION package, which is an
+    order of magnitude dearer than the vocabulary module and is what pulling
+    in the settings module would cost every worker. The vocabulary itself is
+    now a framework module by design - one table for every vaultspec tool -
+    and it imports nothing beyond the standard library, which is the property
+    that makes sharing it affordable here.
 
-    Mutation: added ``from .config._types import EnvVar`` at module scope in
-    ``memory_probe``. Observed this guard fail with ``vaultspec_core`` and its
-    submodules named in the child's assertion payload.
+    Mutation: added ``from .config._settings import get_config`` at module
+    scope in ``memory_probe``. Observed this guard fail with
+    ``vaultspec_core.config`` and its submodules named in the child's
+    assertion payload.
     """
     assert_fresh_import_excludes("""
 import sys
@@ -294,8 +297,8 @@ import vaultspec_rag.memory_probe  # noqa: F401
 
 loaded = sorted(
     m for m in sys.modules
-    if m in {"torch", "vaultspec_core"}
-    or m.startswith(("torch.", "vaultspec_core."))
+    if m in {"torch", "vaultspec_core.config"}
+    or m.startswith(("torch.", "vaultspec_core.config."))
 )
 assert not loaded, loaded
 """)

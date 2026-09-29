@@ -98,6 +98,19 @@ class TestLocalConcurrencyLocks:
         store.close()
 
 
+class _IndexForwardWitness(NullProgressReporter):
+    """Admit searches only after the index completes real model work."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.completed_forwards = 0
+
+    def forward_finished(self, *, ordinal: int, items: int) -> None:
+        del ordinal, items
+        self.completed_forwards += 1
+        self.started.set()
+
+
 class TestLargeIndexSearchHeadroom:
     """Concurrent code search remains live under bounded production load."""
 
@@ -152,16 +165,16 @@ class TestLargeIndexSearchHeadroom:
                 gpu_lock=gpu_lock,
                 reranker=shared_reranker,
             )
-            index_started = threading.Event()
+            witness = _IndexForwardWitness()
             index_finished = threading.Event()
 
             def _index():
-                index_started.set()
                 try:
                     return measure_full_index(
                         indexer,
                         indexer.preflight_content(),
                         clean=False,
+                        reporter=witness,
                     )
                 finally:
                     index_finished.set()
@@ -175,7 +188,16 @@ class TestLargeIndexSearchHeadroom:
 
             with ThreadPoolExecutor(max_workers=5) as pool:
                 index_future = pool.submit(_index)
-                assert index_started.wait(timeout=10.0)
+                assert witness.started.wait(timeout=60.0), (
+                    "the index never completed a model forward pass"
+                )
+                forwards_before_search = witness.completed_forwards
+                assert forwards_before_search > 0, (
+                    "search was admitted before any index model forward completed"
+                )
+                assert not index_finished.is_set(), (
+                    "indexing finished before the search workload was admitted"
+                )
                 search_futures = [pool.submit(_search, task) for task in range(8)]
                 search_outcomes = [future.result() for future in search_futures]
                 measured = index_future.result()
@@ -202,6 +224,7 @@ class TestLargeIndexSearchHeadroom:
                     "wall_seconds": measured.wall_seconds,
                     "resources": asdict(measured.resources),
                     "searches": len(search_outcomes),
+                    "index_forwards_before_search": forwards_before_search,
                     "nonempty_searches": sum(
                         count > 0 for count, _finished in search_outcomes
                     ),

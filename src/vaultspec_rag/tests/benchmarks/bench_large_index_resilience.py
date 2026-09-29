@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ...indexer import CodebaseIndexer
     from ...indexer._codebase_indexer import CodeIndexPreflight
     from ...indexer._vault_prep import IndexResult
+    from ...progress import ProgressReporter
 
     # The subset of ``torch.cuda`` this harness's native peak reset/read
     # needs. The accelerator context carries a runtime module (whose attribute
@@ -427,6 +428,7 @@ def measure_full_index(
     *,
     clean: bool,
     sample_interval_seconds: float = 0.1,
+    reporter: ProgressReporter | None = None,
 ) -> MeasuredIndexRun:
     """Measure one real production full-index run at a bounded cadence."""
     from ...progress import NullProgressReporter
@@ -435,7 +437,7 @@ def measure_full_index(
     with _ResourceSampler(sample_interval_seconds) as sampler:
         result = indexer.full_index(
             clean=clean,
-            reporter=NullProgressReporter(),
+            reporter=reporter if reporter is not None else NullProgressReporter(),
             preflight=preflight,
         )
     return MeasuredIndexRun(

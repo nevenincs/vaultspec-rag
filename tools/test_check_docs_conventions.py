@@ -125,30 +125,17 @@ def test_version_mismatch_flags_page_wide_inconsistency() -> None:
 
 def test_mcp_path_checks_require_all_three_platforms() -> None:
     text = "```bash\nwhich vaultspec-search-mcp\n```\n"
-    problems = gate.check_mcp_path_and_version_scope(_DUMMY_PATH, text)
+    problems = gate.check_mcp_path_checks(_DUMMY_PATH, text)
     messages = "\n".join(problems)
     assert "missing the PowerShell PATH check" in messages
     assert "missing the Command Prompt PATH check" in messages
     assert "missing a POSIX PATH check" not in messages
 
 
-def test_mcp_version_scope_caveat_must_state_its_own_expiry() -> None:
-    text = (
-        "```bash\nwhich vaultspec-search-mcp\n```\n"
-        "```powershell\nGet-Command vaultspec-search-mcp\n```\n"
-        "```\nwhere.exe vaultspec-search-mcp\n```\n"
-        "This is vaultspec-core#404, fixed by vaultspec-core#428.\n"
-    )
-    problems = gate.check_mcp_path_and_version_scope(_DUMMY_PATH, text)
-    assert any("state the condition" in problem for problem in problems)
-
-
-def test_mcp_platform_and_version_scope_all_present_passes() -> None:
+def test_mcp_path_checks_for_every_platform_pass() -> None:
     text = (
         "```bash\ncommand -v vaultspec-search-mcp\n```\n"
         "```powershell\nGet-Command vaultspec-search-mcp\n```\n"
         "```\nwhere.exe vaultspec-search-mcp\n```\n"
-        "This is vaultspec-core#404, fixed by vaultspec-core#428, and no "
-        "longer applies on 0.2.0.\n"
     )
-    assert gate.check_mcp_path_and_version_scope(_DUMMY_PATH, text) == []
+    assert gate.check_mcp_path_checks(_DUMMY_PATH, text) == []

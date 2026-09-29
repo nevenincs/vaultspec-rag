@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-__all__ = ["_exception_caused_by"]
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ._models import ConfirmFn
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["_exception_caused_by", "confirmation_outcome"]
 
 
 def _exception_caused_by(exc: BaseException, target_type: type) -> bool:
@@ -22,3 +30,26 @@ def _exception_caused_by(exc: BaseException, target_type: type) -> bool:
             return True
         cur = cur.__cause__ or cur.__context__
     return False
+
+
+def confirmation_outcome(confirm: ConfirmFn, prompt: str) -> str:
+    """Run one interactive confirmation without exposing callback failures.
+
+    The four ways an answer can fail to arrive need different words from the
+    caller: a decline is the operator's choice, an end of input is a
+    non-interactive run that has to be told about ``--yes``, an interrupt is
+    an abandoned command, and a raising callback is a defect. Collapsing them
+    into a boolean is how a script that never had a terminal came to read as
+    a user who said no.
+    """
+    try:
+        return "approved" if confirm(prompt) else "declined"
+    except KeyboardInterrupt:
+        return "interrupted"
+    except EOFError:
+        return "eof"
+    except Exception as exc:
+        if _exception_caused_by(exc, EOFError):
+            return "eof"
+        logger.warning("confirm() raised %s: %s", type(exc).__name__, exc)
+        return f"error:{type(exc).__name__}"

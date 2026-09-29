@@ -27,6 +27,7 @@ from ._install_helpers import (
     _install,
     _node_signature,
     create_windows_junction,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_file_bytes,
@@ -193,7 +194,7 @@ class TestDryRunInstall:
             catch_exceptions=False,
         )
         assert add_result.exit_code == 0, add_result.output
-        add_report = json.loads(add_result.output)
+        add_report = install_report(add_result.output)
         assert add_report["sync_providers"]["claude"]["added"] == 1
         assert add_report["sync_providers"]["codex"]["added"] == 1
         assert workspace_file_bytes(fresh_workspace) == fresh_before
@@ -217,7 +218,7 @@ class TestDryRunInstall:
             catch_exceptions=False,
         )
         assert remove_result.exit_code == 0, remove_result.output
-        remove_report = json.loads(remove_result.output)
+        remove_report = install_report(remove_result.output)
         assert remove_report["sync_providers"]["claude"]["pruned"] == 1
         assert remove_report["sync_providers"]["codex"]["pruned"] == 1
         assert workspace_file_bytes(installed_workspace) == installed_before

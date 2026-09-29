@@ -1010,3 +1010,79 @@ def test_only_a_service_that_cannot_serve_lifts_the_exit_code(
 
     assert state.value == expected
     assert state.exit_code == (4 if verdict == "error" else 0)
+
+
+class TestTheReceiptLineOnStatus:
+    """Status says when this installation will stop being a GPU host.
+
+    Guard assertion: a tool installation whose receipt records no CUDA source
+    runs perfectly until the next upgrade resolves a CPU build over it, and
+    status reported only the build in front of it - so the one moment an
+    operator could have acted passed in silence.
+    """
+
+    @staticmethod
+    def _tool_environment(tmp_path: Path, receipt: str) -> str:
+        root = tmp_path / "tool-env"
+        (root / "Scripts").mkdir(parents=True)
+        (root / "uv-receipt.toml").write_text(receipt, encoding="utf-8")
+        return str(root / "Scripts" / "python.exe")
+
+    def test_a_receipt_without_a_cuda_source_is_named_with_its_fix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..cli import _status
+
+        interpreter = self._tool_environment(
+            tmp_path, '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n'
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._process._resolve_daemon_interpreter",
+            lambda: interpreter,
+        )
+
+        lines = _status._receipt_lines()
+
+        assert any(line.startswith("Upgrades: ") for line in lines)
+        # Both commands, in order: the first alone leaves a receipt the next
+        # upgrade resolves back to a CPU-only build.
+        assert any("Fix, in order:" in line for line in lines)
+        assert sum("uv pip install" in line for line in lines) == 1
+        assert sum("uv tool install" in line for line in lines) == 1
+
+    def test_a_durable_receipt_adds_no_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing to act on is nothing to say."""
+        from ..cli import _status
+        from ..operator_state._provisioning import CU130_INDEX_STRATEGY
+        from ..torch_config._index import CU130_INDEX_URL
+
+        interpreter = self._tool_environment(
+            tmp_path,
+            '[tool]\nrequirements = [{ name = "vaultspec-rag" }]\n\n'
+            "[tool.options]\n"
+            f'index = [{{ url = "{CU130_INDEX_URL}" }}]\n'
+            f'index-strategy = "{CU130_INDEX_STRATEGY}"\n',
+        )
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._process._resolve_daemon_interpreter",
+            lambda: interpreter,
+        )
+
+        assert _status._receipt_lines() == []
+
+    def test_an_environment_with_no_receipt_is_not_judged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only a uv tool installation has a receipt to read."""
+        from ..cli import _status
+
+        venv = tmp_path / ".venv" / "Scripts"
+        venv.mkdir(parents=True)
+        monkeypatch.setattr(
+            "vaultspec_rag.cli._process._resolve_daemon_interpreter",
+            lambda: str(venv / "python.exe"),
+        )
+
+        assert _status._receipt_lines() == []

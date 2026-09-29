@@ -6,11 +6,10 @@ name: RAG CI
 #
 # CONCURRENCY, AND WHY THE COMMIT IS IN THE GROUP ON MAIN. `cancel-in-progress:
 # false` governs runs that have STARTED. GitHub separately cancels a
-# previously PENDING run in the same group, and offers no switch for it. On a
-# saturated serial fleet a run sits pending for a long time, so a scheduled
-# run and a dispatch against main would otherwise cancel each other and
-# report `cancelled` rather than `failed`. Putting the commit in the group, on
-# main only, gives every main commit its own group.
+# previously PENDING run in the same group, and offers no switch for it, so a
+# scheduled run and a dispatch against main would otherwise cancel each other
+# and report `cancelled` rather than `failed`. Putting the commit in the
+# group, on main only, gives every main commit its own group.
 #
 # The rule and its guards live in `dev/guards/`:
 # `test_ci_no_repeated_work.py` expands every recipe to the commands it
@@ -23,12 +22,8 @@ on:
     - cron: '17 5 * * 3'
   workflow_dispatch:
     inputs:
-      # The two tiers that cannot simply run on a schedule: the GPU tier is
-      # expensive and contends for the single card with a live service, and
-      # the macOS tier targets a laptop that is deliberately out of the fleet
-      # on battery. Both are opt-in per dispatch, so exercising one never
-      # forces the other - before this, any manual run paid for the GPU tier
-      # whether or not that was the point of the run.
+      # Each tier is opt-in per dispatch, so exercising one never forces the
+      # other.
       tier:
         description: "Tier to run"
         type: choice
@@ -37,13 +32,6 @@ on:
           - macos
           - gpu
           - macos-and-gpu
-      cache_mode:
-        description: "Runner-local cache namespace"
-        type: choice
-        default: normal
-        options:
-          - normal
-          - isolated
 
 permissions:
   contents: read
@@ -58,20 +46,10 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
-  CI_CACHE_MODE: ${{ inputs.cache_mode || 'normal' }}
-
-# Every runner in this workflow is persistent, and `contain-writes` points
-# `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
-# archive that same multi-gigabyte directory after every job and download it
-# again before the next one, making the remote cache slower than the warm local
-# cache it duplicates. Each setup therefore keeps Actions caching explicitly
-# disabled; uv still reads and populates the persistent runner cache normally.
 
 jobs:
   # The accelerator tiers are defined once, in `hardware.yml`, and shared
-  # with the release. A dispatch picks the tier: the GPU tier contends for the
-  # single card with a live service, and the macOS tier needs a laptop that is
-  # out of the fleet on battery, so exercising one never forces the other.
+  # with the release.
   hardware:
     name: "Test: Accelerator tiers"
     if: >-
@@ -82,7 +60,6 @@ jobs:
       target_sha: ${{ github.sha }}
       tier: ${{ inputs.tier || 'macos-and-gpu' }}
       macos_full_suite: true
-      cache_mode: ${{ inputs.cache_mode || 'normal' }}
     secrets:
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}

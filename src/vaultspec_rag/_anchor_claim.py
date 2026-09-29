@@ -34,6 +34,13 @@ no owner in it. Truncate-then-write would leave the anchor momentarily empty,
 and an empty record read as "nobody owns this" is how a live holder gets
 reported as nothing running.
 
+An anchor standing for a piece of machine hardware - the GPU - is SHARED: it
+lives in one directory every process on the machine resolves identically
+(:func:`hardware_anchor_path`), and every account must be able to contend for
+it. A process refused write access to such an anchor, because another account
+created it, locks it read-only instead: the lock is what excludes, and a
+read-only holder simply cannot publish its pid.
+
 Claims return ``HELD``, ``CONTENDED``, or ``UNAVAILABLE``. Existing-anchor
 observations add ``ABSENT`` and ``FREE`` without ever retaining a descriptor.
 ``UNAVAILABLE`` is not an ownership answer: the anchor could not be opened, or
@@ -50,19 +57,21 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
 __all__ = [
     "AnchorClaim",
     "AnchorOutcome",
     "claim_anchor",
+    "hardware_anchor_path",
     "observe_existing_anchor",
     "probe_existing_anchor_holder",
     "publish_anchor_record",
@@ -95,6 +104,128 @@ _OWNER_RECORD_WIDTH = 64
 # absent - which is the whole failure this exists to prevent.
 _OWNER_RECORD_WAIT_SECONDS = 1.0
 _OWNER_RECORD_POLL_SECONDS = 0.002
+
+# Every hardware anchor's name carries this prefix, as a directory on Windows
+# and as a filename prefix where the anchors share a machine-wide directory.
+_HARDWARE_ANCHOR_PREFIX = "vaultspec-rag"
+
+# A shared anchor's mode: every account may open it for writing, so whichever
+# account creates it first does not lock the others out of publishing a pid.
+_SHARED_ANCHOR_MODE = 0o666
+
+
+def hardware_anchor_path(name: str) -> Path:
+    """Return where the anchor *name* for a piece of machine hardware lives.
+
+    The directory is the same for every process on the machine, whatever it
+    was configured with, whichever account runs it, and whatever its
+    temporary directory is: a hardware anchor resolved through anything a
+    process can change would be private to whoever changed it and would
+    exclude nothing. Windows asks the shell for the ProgramData folder, whose
+    default permissions let every account create files beneath it.
+
+    Elsewhere the directory must be one every account shares, which a POSIX
+    host marks the same way everywhere: world-writable with the sticky bit.
+    ``/dev/shm`` (Linux) and ``/Users/Shared`` (macOS) are preferred because
+    the age-based cleaners that empty temporary directories leave them alone,
+    so an anchor held for weeks is never deleted from under its holder - which
+    would let the next claimant create a fresh file and hold it alongside. The
+    temporary directory is the last resort, for a host - a container, say -
+    that mounts neither; it is accepted only when it too is shared by every
+    account, because a per-account ``TMPDIR`` would give each account a lock of
+    its own.
+
+    Raises:
+        OSError: No machine-shared directory exists, or the shell could not
+            resolve ProgramData.
+    """
+    if sys.platform == "win32":
+        from ._win32 import program_data_directory
+
+        return Path(program_data_directory()) / _HARDWARE_ANCHOR_PREFIX / name
+    import tempfile
+
+    for directory in (
+        Path("/dev/shm"),
+        Path("/Users/Shared"),
+        Path(tempfile.gettempdir()),
+    ):
+        if _shared_by_every_account(directory):
+            return directory / f"{_HARDWARE_ANCHOR_PREFIX}-{name}"
+    raise OSError("this host has no directory every account shares for an anchor")
+
+
+def _shared_by_every_account(directory: Path) -> bool:
+    """Whether *directory* is a POSIX directory every account may create in."""
+    import stat
+
+    try:
+        mode = directory.stat().st_mode
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(mode) and bool(mode & stat.S_IWOTH) and bool(mode & stat.S_ISVTX)
+    )
+
+
+def _open_anchor(anchor: Path, *, create: bool, shared: bool) -> int:
+    """Open *anchor* for claiming, read-only when a shared one refuses writes.
+
+    A shared anchor created by another account can be denied to this one for
+    writing - by the creator's permissions, or on Linux by the protected-files
+    rule that refuses ``O_CREAT`` on another account's file in a sticky
+    directory. A lock needs only a readable descriptor, so the claim falls back
+    to one rather than reading "not writable" as "cannot contend". The mode is
+    widened after creation because the process umask narrows the one passed to
+    ``open``; widening someone else's anchor is refused and needs no widening.
+
+    Raises:
+        OSError: The anchor could not be opened at all.
+        ValueError: The path is not a usable filename.
+    """
+    if create and shared:
+        created = _create_shared_anchor(anchor)
+        if created is not None:
+            return created
+    flags = os.O_RDWR | (os.O_CREAT if create else 0)
+    try:
+        return os.open(anchor, flags, _SHARED_ANCHOR_MODE if shared else 0o600)
+    except PermissionError:
+        if not shared:
+            raise
+        return os.open(anchor, os.O_RDONLY)
+
+
+def _create_shared_anchor(anchor: Path) -> int | None:
+    """Create *anchor* writable by every account, or ``None`` if it exists.
+
+    Only a file this call created is widened. An existing file keeps the mode
+    its creator gave it: a shared anchor already carries it, and a private one
+    - a service lock observed through the shared path - must not be made
+    writable by other accounts merely because someone looked at it. ``None``
+    also covers a directory this account cannot create in, which the ordinary
+    open then reports.
+
+    Windows carries the same widening as an access list rather than a mode:
+    the file otherwise inherits full control for its creator and read-only for
+    everyone else, and the next account to claim it holds the lock but cannot
+    publish a record. The directory needs no such treatment, because the
+    shared root it is created under already lets every account create beneath
+    it, and widening a directory would let one account delete another's
+    anchor out from under its holder.
+    """
+    try:
+        fd = os.open(anchor, os.O_RDWR | os.O_CREAT | os.O_EXCL, _SHARED_ANCHOR_MODE)
+    except (FileExistsError, PermissionError):
+        return None
+    if sys.platform == "win32":
+        from ._win32 import grant_every_account_access
+
+        grant_every_account_access(str(anchor))
+        return fd
+    with contextlib.suppress(OSError):
+        os.fchmod(fd, _SHARED_ANCHOR_MODE)
+    return fd
 
 
 class AnchorOutcome(Enum):
@@ -188,6 +319,7 @@ def claim_anchor(
     *,
     pid_record: bool = False,
     create_parent: bool = False,
+    shared: bool = False,
 ) -> AnchorClaim:
     """Attempt one non-blocking exclusive claim on *anchor*. Never raises.
 
@@ -200,6 +332,9 @@ def claim_anchor(
             zero and reports no holder.
         create_parent: Create the anchor's directory first. A configured root
             may not exist yet; a system temp directory always does.
+        shared: Every account on the machine contends for this anchor. It is
+            created writable by all of them, and locked through a read-only
+            descriptor when another account's copy refuses this one writes.
 
     Returns:
         A ``HELD`` claim carrying the locked descriptor, a ``CONTENDED`` claim
@@ -212,7 +347,7 @@ def claim_anchor(
     try:
         if create_parent:
             anchor.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(anchor, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = _open_anchor(anchor, create=True, shared=shared)
     except (OSError, ValueError) as exc:
         return AnchorClaim(
             outcome=AnchorOutcome.UNAVAILABLE,
@@ -259,6 +394,7 @@ def observe_existing_anchor(
     anchor: Path,
     *,
     pid_record: bool = False,
+    shared: bool = False,
 ) -> AnchorClaim:
     """Observe one existing anchor without creating or retaining it.
 
@@ -267,12 +403,14 @@ def observe_existing_anchor(
     successful lock before returning. ``ABSENT`` is therefore a trustworthy
     refusal after deletion; ``CONTENDED`` carries the readable current holder
     PID when ``pid_record`` is set; and ``UNAVAILABLE`` preserves a real open
-    failure rather than treating it as absence.
+    failure rather than treating it as absence. A *shared* anchor another
+    account created is observed through a read-only descriptor, as it is
+    claimed.
     """
     from ._fd_lock import lock_fd_exclusive
 
     try:
-        fd = os.open(anchor, os.O_RDWR)
+        fd = _open_anchor(anchor, create=False, shared=shared)
     except FileNotFoundError:
         return AnchorClaim(
             outcome=AnchorOutcome.ABSENT,

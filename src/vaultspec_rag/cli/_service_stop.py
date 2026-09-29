@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
-import time
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
@@ -21,7 +20,15 @@ import vaultspec_rag.cli as _cli
 
 from .._loopback_http import probe_loopback_connect
 from .._operator_commands import server_status_command
-from .._process_probe import iter_process_info, pid_alive, pid_is_zombie
+from .._process_probe import (
+    SERVER_LAUNCH_MARKER,
+    argv_contains,
+    argv_of,
+    iter_process_info,
+    pid_alive,
+    pid_terminated,
+    wait_for_exit,
+)
 from ..serviceclient._discovery import _delete_service_status, read_service_status
 from ..serviceclient._transport import _try_http_health
 from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
@@ -269,13 +276,9 @@ def _terminate_and_confirm(
         console_group_signal=console_group_signal,
     )
 
-    # Wait briefly for process to exit
-    for _ in range(50):
-        if not pid_alive(pid):
-            break
-        time.sleep(0.1)
+    wait_for_exit(pid, timeout=5.0, poll_seconds=0.1)
 
-    if pid_alive(pid):
+    if not pid_terminated(pid):
         # Nothing below applies to a survivor. Its discovery records still
         # describe a live daemon, so removing them would strand it, and a
         # shutdown attribution line for a termination that never happened is a
@@ -568,7 +571,7 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
             daemon that loses the singleton race to the orphan the scan never
             saw. An unachieved reap must be a fault, never a quiet zero.
     """
-    marker = ["-m", "vaultspec_rag.server", "--port", str(port)]
+    marker = (*SERVER_LAUNCH_MARKER, "--port", str(port))
     found: dict[int, int] = {}
     for info in iter_process_info(["pid", "ppid", "name", "cmdline"]):
         # The image is the cheapest discriminator and is asked first; see
@@ -576,14 +579,7 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
         # line of every process on the machine instead.
         if not _may_carry_launch_witness(info.get("name")):
             continue
-        raw = info.get("cmdline")
-        if not isinstance(raw, list):
-            continue
-        argv = [str(item) for item in cast("list[object]", raw)]
-        if not any(
-            argv[index : index + len(marker)] == marker
-            for index in range(len(argv) - len(marker) + 1)
-        ):
+        if not argv_contains(argv_of(info.get("cmdline")), marker):
             continue
         pid = info.get("pid")
         ppid = info.get("ppid")
@@ -592,23 +588,6 @@ def _orphan_daemon_pids(port: int) -> dict[int, int]:
                 ppid if isinstance(ppid, int) and not isinstance(ppid, bool) else 0
             )
     return found
-
-
-def _pid_terminated(pid: int) -> bool:
-    """True if *pid* is gone or a POSIX zombie (dead, awaiting parent reap).
-
-    A force-killed orphan whose parent has not yet ``waitpid``'d it lingers as a
-    zombie: ``os.kill(pid, 0)`` still succeeds so ``pid_alive`` reports it
-    live, yet the process is terminated and holds no GPU, port, or machine lock.
-    The reap must count such a defunct process as reaped, not as a survivor -
-    otherwise a killed orphan whose supervisor is still running (which reparents
-    to init only once that supervisor exits) reads as ``orphan_reap_incomplete``
-    despite being dead. Windows has no zombie state (``TerminateProcess`` removes
-    the process), so this only refines the POSIX case.
-    """
-    if not pid_alive(pid):
-        return True
-    return pid_is_zombie(pid)
 
 
 def _guard_unconfirmed_port_holder(
@@ -697,7 +676,7 @@ def _reap_unprotected(
         # console-group CTRL_BREAK that could reach the operator's own console.
         result = _terminate_and_confirm(pid, console_group_signal=False)
         denied = denied or result.signal_denied
-        (reaped if _pid_terminated(pid) else survivors).append(pid)
+        (reaped if pid_terminated(pid) else survivors).append(pid)
     return reaped, survivors, denied
 
 

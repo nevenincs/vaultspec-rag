@@ -44,12 +44,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "HOLD_MARKER_ENV",
+    "HOLD_SECONDS_ENV",
     "UvSandbox",
+    "WheelContents",
     "WheelTags",
     "build_wheel",
     "hold_environment",
+    "hold_launcher",
     "index_arguments",
     "installed_distributions",
+    "publish_index",
     "receipt_text",
     "sandbox_from",
     "serve_wheels",
@@ -106,6 +111,20 @@ class UvSandbox:
 
 
 @dataclass(frozen=True, slots=True)
+class WheelContents:
+    """What a stand-in distribution declares about itself.
+
+    Grouped rather than passed loose: a wheel's tags, its entry point and
+    its requirements are three facets of one description, and the builder's
+    argument list is otherwise longer than the thing it builds.
+    """
+
+    tags: WheelTags | None = None
+    console_script: bool = True
+    requires: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class WheelTags:
     """A wheel's compatibility tags.
 
@@ -124,6 +143,29 @@ class WheelTags:
         return f"{self.python}-{self.abi}-{self.platform}"
 
 
+#: Environment variables the stand-in console script reads. A launcher that
+#: exits immediately locks nothing, so the script is asked to announce itself
+#: and then wait; the marker is what a caller waits on rather than a sleep.
+HOLD_SECONDS_ENV = "VAULTSPEC_TEST_HOLD_SECONDS"
+HOLD_MARKER_ENV = "VAULTSPEC_TEST_HOLD_MARKER"
+
+_CONSOLE_SCRIPT = (
+    "import os\n"
+    "import pathlib\n"
+    "import time\n"
+    "\n"
+    "\n"
+    "def main() -> int:\n"
+    f"    seconds = float(os.environ.get({HOLD_SECONDS_ENV!r}, '0'))\n"
+    f"    marker = os.environ.get({HOLD_MARKER_ENV!r})\n"
+    "    if marker:\n"
+    "        pathlib.Path(marker).write_text('held', encoding='utf-8')\n"
+    "    if seconds:\n"
+    "        time.sleep(seconds)\n"
+    "    return 0\n"
+).encode()
+
+
 def wheel_filename(name: str, version: str, tags: WheelTags | None = None) -> str:
     """Render a wheel filename, including a deliberately wrong tag when asked."""
     return f"{name}-{version}-{(tags or WheelTags()).suffix}.whl"
@@ -140,8 +182,7 @@ def build_wheel(
     *,
     name: str,
     version: str,
-    console_script: bool = True,
-    tags: WheelTags | None = None,
+    contents: WheelContents | None = None,
 ) -> Path:
     """Build a minimal but real wheel into *destination* and return its path.
 
@@ -150,7 +191,8 @@ def build_wheel(
     depends on what they do once imported - only on uv resolving, fetching,
     installing and recording them the way it does the real ones.
     """
-    resolved_tags = tags or WheelTags()
+    described = contents or WheelContents()
+    resolved_tags = described.tags or WheelTags()
     destination.mkdir(parents=True, exist_ok=True)
     module = name.replace("-", "_")
     dist_info = f"{module}-{version}.dist-info"
@@ -158,12 +200,15 @@ def build_wheel(
 
     members: dict[str, bytes] = {
         f"{module}/__init__.py": f'__version__ = "{version}"\n'.encode(),
-        f"{module}/__main__.py": b"def main() -> int:\n    return 0\n",
+        f"{module}/__main__.py": _CONSOLE_SCRIPT,
         f"{dist_info}/METADATA": (
             "Metadata-Version: 2.1\n"
             f"Name: {name}\n"
             f"Version: {version}\n"
             "Summary: provisioning test stand-in\n"
+            + "".join(
+                f"Requires-Dist: {requirement}\n" for requirement in described.requires
+            )
         ).encode(),
         f"{dist_info}/WHEEL": (
             "Wheel-Version: 1.0\n"
@@ -172,7 +217,7 @@ def build_wheel(
             f"Tag: {resolved_tags.suffix}\n"
         ).encode(),
     }
-    if console_script:
+    if described.console_script:
         members[f"{dist_info}/entry_points.txt"] = (
             f"[console_scripts]\n{module} = {module}.__main__:main\n"
         ).encode()
@@ -187,6 +232,22 @@ def build_wheel(
         for archive_name, payload in members.items():
             archive.writestr(archive_name, payload)
     return path
+
+
+def publish_index(wheels: Path, root: Path) -> Path:
+    """Lay wheels out as an index uv can resolve a named package from.
+
+    A flat directory answers ``--find-links``; an index option needs a page
+    per package, which is what the product records in the receipt and what
+    uv re-applies on every upgrade. The directory listing the loopback server
+    renders for each package directory is that page.
+    """
+    for wheel in sorted(wheels.glob("*.whl")):
+        package = wheel.name.split("-", 1)[0].replace("_", "-").lower()
+        target = root / package
+        target.mkdir(parents=True, exist_ok=True)
+        (target / wheel.name).write_bytes(wheel.read_bytes())
+    return root
 
 
 @contextlib.contextmanager
@@ -245,6 +306,48 @@ def hold_environment(
         process.wait(timeout=30)
 
 
+@contextlib.contextmanager
+def hold_launcher(
+    sandbox: UvSandbox, name: str, *, timeout: float = 60.0
+) -> Generator[subprocess.Popen[bytes]]:
+    """Run one of the tool's own bin launchers, and release it on the way out.
+
+    This is the process that matters: uv re-installs every entry-point
+    launcher after any package change, and a running launcher cannot be
+    replaced on Windows. Holding the environment's interpreter is a different
+    and weaker condition, which is why the harness offers both.
+
+    The launcher announces itself by writing a marker before it waits, so a
+    caller never races a starting process.
+    """
+    executable = sandbox.bin_dir / f"{name}.exe"
+    if not executable.exists():
+        executable = sandbox.bin_dir / name
+    marker = sandbox.bin_dir.parent / f"{name}.held"
+    environment = sandbox.env | {
+        HOLD_SECONDS_ENV: str(timeout + 60.0),
+        HOLD_MARKER_ENV: str(marker),
+    }
+    process = subprocess.Popen([str(executable)], env=environment)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if marker.exists():
+                break
+            if process.poll() is not None:
+                raise AssertionError(
+                    f"the launcher {executable} exited before it took hold"
+                )
+            time.sleep(0.2)
+        else:
+            raise TimeoutError(f"the launcher {executable} never announced itself")
+        yield process
+    finally:
+        process.terminate()
+        process.wait(timeout=30)
+        marker.unlink(missing_ok=True)
+
+
 def _await_hold(root: Path, pid: int, *, timeout: float) -> None:
     """Block until the holder is visible, so no caller races a starting child.
 
@@ -254,12 +357,19 @@ def _await_hold(root: Path, pid: int, *, timeout: float) -> None:
     from .._process_probe import environment_holders
 
     deadline = time.monotonic() + timeout
+    seen: list[tuple[int, int | None]] = []
     while time.monotonic() < deadline:
         found = environment_holders(root, timeout=timeout)
-        if any(holder.pid == pid for holder in found.holders):
+        # A launcher and the interpreter it re-executed are reported as one
+        # entry carrying both pids, and which of the two Popen returned
+        # depends on the platform's virtual environment layout.
+        if any(pid in {holder.pid, holder.launcher_pid} for holder in found.holders):
             return
+        seen = [(holder.pid, holder.launcher_pid) for holder in found.holders]
         time.sleep(0.5)
-    raise TimeoutError(f"holder pid {pid} never took hold of {root}")
+    raise TimeoutError(
+        f"holder pid {pid} never took hold of {root}; last seen holders: {seen}"
+    )
 
 
 def sandbox_from(tmp_path: Path) -> UvSandbox:

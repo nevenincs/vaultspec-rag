@@ -5,28 +5,43 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
+from .._test_isolation import enforce_pytest_singleton_containment
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ._models import InstallReport
 
 __all__ = [
+    "UV_SYNC_TIMEOUT_SECONDS",
     "_classify_uv_sync_result",
     "_run_uv_sync_torch",
 ]
+
+#: How long this sync may run before it is abandoned. It resolves a project
+#: and downloads an accelerated torch build, which is gigabytes over a link
+#: the product does not control, so the bound is generous and matches the
+#: tool repair's. What it exists for is a uv that never returns: without it,
+#: an install waits on a child forever with nothing to say.
+UV_SYNC_TIMEOUT_SECONDS = 1800.0
 
 
 def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
     """Shell out to ``uv sync --reinstall-package torch``.
 
-    Non-fatal: failures are recorded as warnings, never raised. Runs
-    with ``check=False`` so we can surface uv's own stderr in the
-    report without a Python traceback. Result-classification logic
-    lives in :func:`_classify_uv_sync_result` so it can be exercised
-    by tests without going through ``subprocess`` PATH resolution
-    (Windows ``CreateProcess`` only auto-tries ``.exe``, which makes
-    ``.cmd`` / ``.bat`` stubs unreliable cross-platform).
+    Non-fatal: failures are recorded as warnings, never raised, including
+    the one where uv never returns. Runs with ``check=False`` so we can
+    surface uv's own stderr in the report without a Python traceback.
+    Result-classification logic lives in :func:`_classify_uv_sync_result` so
+    it can be exercised by tests without going through ``subprocess`` PATH
+    resolution (Windows ``CreateProcess`` only auto-tries ``.exe``, which
+    makes ``.cmd`` / ``.bat`` stubs unreliable cross-platform).
     """
+    # This writes into the workspace it is pointed at. Under pytest that
+    # must be the session's own temporary tree: a test reaching a real
+    # project would re-resolve and reinstall packages in it. Inert outside
+    # pytest, where the operator's own project is the point.
+    enforce_pytest_singleton_containment(target, operation="sync a project environment")
     try:
         proc = subprocess.run(
             ["uv", "sync", "--reinstall-package", "torch"],
@@ -40,7 +55,16 @@ def _run_uv_sync_torch(*, target: Path, report: InstallReport) -> None:
             # non-ASCII byte in a path uv echoes back is enough.
             encoding="utf-8",
             errors="replace",
+            timeout=UV_SYNC_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired:
+        report.torch_sync_action = "timed-out"
+        report.warnings.append(
+            f"uv sync --reinstall-package torch did not finish within "
+            f"{UV_SYNC_TIMEOUT_SECONDS:.0f}s; run it yourself and check the "
+            "network or index it is waiting on"
+        )
+        return
     except FileNotFoundError:
         report.torch_sync_action = "uv-not-found"
         report.warnings.append(

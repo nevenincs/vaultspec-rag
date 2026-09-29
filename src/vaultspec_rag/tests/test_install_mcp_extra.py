@@ -160,7 +160,7 @@ class TestMcpExtraPlacement:
         managed = pyproject.read_bytes()
         assert managed != original
 
-        preview = uninstall_run(path=tmp_path, skip={"core"})
+        preview = uninstall_run(path=tmp_path, dry_run=True, skip={"core"})
         assert preview.action == "dry_run"
         assert pyproject.read_bytes() == managed
 

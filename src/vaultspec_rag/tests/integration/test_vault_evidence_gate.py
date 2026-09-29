@@ -125,12 +125,12 @@ class TestVaultEvidenceGate:
     def test_metric_meets_floor(
         self,
         frozen_corpus_evidence: FrozenCorpusEvidence,
-        record_property: Callable[[str, object], None],
+        record_testsuite_property: Callable[[str, object], None],
         metric: str,
     ) -> None:
         """Each rate stays at or above the floor recorded for it."""
         summary = _summarize(frozen_corpus_evidence)
-        record_property("evidence_summary", json.dumps(summary))
+        record_testsuite_property(f"evidence_summary_{metric}", json.dumps(summary))
         rates = {
             "hit_at_1": summary["hit_at_1"],
             "mrr": summary["mrr"],
@@ -147,11 +147,13 @@ class TestVaultEvidenceGate:
     ) -> None:
         """A hit's line span covers its snippet verbatim and nothing wider."""
         offenders: list[str] = []
+        checked = 0
         for obs in frozen_corpus_evidence["evidence"]:
             for hit in obs["hits"]:
                 span = hit["span_text"]
                 if span is None:
                     continue
+                checked += 1
                 snippet = hit["snippet"].strip("\n")
                 # The line-count comparison is what rejects a span shifted or
                 # widened by a line: containment alone passes either. Reporting
@@ -161,4 +163,5 @@ class TestVaultEvidenceGate:
                         f"{obs['case_id']} {hit['doc_id']} "
                         f"L{hit['line_start']}-{hit['line_end']}"
                     )
+        assert checked > 0, "no returned hit carries a usable source span"
         assert not offenders, f"spans that do not hold their snippet: {offenders}"

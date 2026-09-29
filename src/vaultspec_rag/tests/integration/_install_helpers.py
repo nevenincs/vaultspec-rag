@@ -55,6 +55,19 @@ _CONSUMER_PYPROJECT = (
 )
 
 
+def install_report(output: str) -> dict[str, Any]:
+    """Return the install or uninstall report out of the shared JSON envelope.
+
+    Both verbs print core's ``{schema, status, data}`` envelope, so the
+    report a caller asserts against is the ``data`` member. Reading it
+    through one helper keeps every acceptance test on the same shape rather
+    than each re-deriving where the payload sits.
+    """
+    envelope: dict[str, Any] = json.loads(output)
+    report: dict[str, Any] = envelope["data"]
+    return report
+
+
 def read_mcp_json(target: Path) -> dict[str, Any]:
     return json.loads((target / ".mcp.json").read_text(encoding="utf-8"))
 

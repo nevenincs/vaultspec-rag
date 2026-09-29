@@ -36,10 +36,15 @@ from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 from vaultspec_core.logging_config import (
     configure_logging as _core_configure_logging,
 )
+from vaultspec_core.logging_config import (
+    resolve_log_level,
+)
 
 from ._managed_log_sink import RawRotatingLogSink
 from ._test_isolation import enforce_pytest_singleton_containment
+from .config._registry import entry
 from .config._settings import managed_status_dir
+from .config._types import EnvVar
 
 __all__ = [
     "DEFAULT_MANAGED_LOG_LINES",
@@ -799,38 +804,45 @@ def configure_logging(
     level: str | int | None = None,
     debug: bool = False,
     quiet: bool = False,
+    *,
+    verbose: bool = False,
+    default: str = "WARNING",
 ) -> None:
     """Configure the root logger via core's RichHandler setup.
 
-    Honors the configured ``log_level`` setting (``WARNING`` by default) when
-    no explicit ``level``/``debug``/``quiet`` is provided, then delegates to
-    :func:`vaultspec_core.logging_config.configure_logging`. An unrecognised
-    level name degrades to the shipped default rather than raising, and says
-    so, so a typo never makes the process quietly noisier than requested.
+    When nothing names a level outright, the framework's one ladder decides:
+    the invocation first, then this package's own level variable, then the
+    framework-wide name behind it, then *default*. Every process kind takes
+    the same ladder, and each declares its own last rung - a daemon whose
+    output is a managed log nobody is watching legitimately ships a more
+    verbose one than a command somebody is reading.
+
+    An unrecognised level name is refused rather than degraded to a default.
+    Degrading was the wrong trade in both directions: too quiet and the
+    operator never sees the diagnostics they asked for, too loud and they
+    read new output as a change in behaviour. Neither outcome tells them the
+    value was rejected, and a level is not worth guessing.
 
     Args:
-        level: Explicit log level (e.g. ``logging.INFO`` or ``"DEBUG"``).
-        debug: When ``True``, forces level to ``DEBUG`` and enables rich
-            tracebacks with local variables.
-        quiet: When ``True``, forces level to ``WARNING``.
+        level: Explicit log level (e.g. ``logging.INFO`` or ``"DEBUG"``),
+            bypassing the ladder entirely.
+        debug: When ``True``, forces ``DEBUG`` and enables rich tracebacks
+            with local variables.
+        quiet: When ``True``, forces ``WARNING``.
+        verbose: When ``True``, asks for ``INFO``. ``debug`` outranks it.
+        default: The level to use when neither the invocation nor the
+            environment names one.
+
+    Raises:
+        ConfigurationError: If a level variable names a level that does not
+            exist.
     """
     if level is None and not debug and not quiet:
-        from .config._settings import get_config, rag_default
-
-        configured = str(get_config().log_level).upper()
-        level = getattr(logging, configured, None)
-        if not isinstance(level, int):
-            # Degrade to the shipped default, not to something noisier. An
-            # unreadable level name is a typo, and the surprising outcome is
-            # a quiet service that suddenly logs more than it was asked to -
-            # the operator sees new output and reads it as a change in
-            # behaviour rather than as a rejected setting. Say what happened
-            # and use the default the documentation promises.
-            fallback = str(rag_default("log_level")).upper()
-            level = getattr(logging, fallback, logging.WARNING)
-            logging.getLogger(__name__).warning(
-                "ignoring unrecognised log level %r; using %s", configured, fallback
-            )
+        level = resolve_log_level(
+            verbose=verbose,
+            variable=entry(EnvVar.LOG_LEVEL),
+            default=default,
+        )
 
     _core_configure_logging(level=level, debug=debug, quiet=quiet)
 

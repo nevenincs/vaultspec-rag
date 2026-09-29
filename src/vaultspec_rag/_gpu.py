@@ -7,10 +7,14 @@ The import remains function-local so importing this module is torch-free.
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+from vaultspec_core.config import env_value
+
+from .config._registry import entry
+from .config._types import EnvVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -110,8 +114,14 @@ class AcceleratorContext:
 
 
 def _mps_fallback_enabled() -> bool:
-    """Whether PyTorch's documented MPS-to-CPU fallback switch is enabled."""
-    return os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK", "").strip() == "1"
+    """Whether PyTorch's documented MPS-to-CPU fallback switch is enabled.
+
+    Read with PyTorch's reading of it, the exact value ``1``, rather than
+    this project's boolean vocabulary: the switch belongs to PyTorch, and
+    answering a word PyTorch ignores would describe a fallback that is not
+    actually in place.
+    """
+    return env_value(entry(EnvVar.PYTORCH_ENABLE_MPS_FALLBACK)) == "1"
 
 
 def detect_accelerator_backend(
@@ -162,9 +172,19 @@ def _import_accelerator_for_compute() -> AcceleratorContext:
 
 
 def load_accelerator() -> AcceleratorContext:
-    """Resolve and admit the accelerator for a local compute path."""
-    from ._gpu_admission import admit_accelerator_load
+    """Resolve and admit the accelerator for a local compute path.
 
+    Ownership is asked first, before torch is even imported: one model stack
+    runs per machine, so a process that may not bring one up learns it without
+    touching the device, and no compute path can reach the card around it.
+
+    Raises:
+        GpuOwnedError: Another process owns the GPU and has not lent it here.
+    """
+    from ._gpu_admission import admit_accelerator_load
+    from ._gpu_owner import require_gpu_ownership
+
+    require_gpu_ownership()
     accelerator = _import_accelerator_for_compute()
 
     def configure() -> AcceleratorContext:

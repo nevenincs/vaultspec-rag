@@ -1,4 +1,4 @@
-"""Shared CLI runtime state: console, logger, and dotenv bootstrap.
+"""Shared CLI runtime state: console and logger.
 
 Split out of the original ``cli.py`` monolith. Every CLI submodule imports the
 shared :data:`console` and :data:`logger` from here so the assembled
@@ -33,10 +33,6 @@ if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")  # pyright: ignore[reportUnknownMemberType]  # TextIOWrapper stubs leave _BufferT_co unbound after isinstance
     if isinstance(sys.stderr, TextIOWrapper):
         sys.stderr.reconfigure(encoding="utf-8")  # pyright: ignore[reportUnknownMemberType]  # same
-
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Logger name pinned to ``vaultspec_rag.cli`` (not ``__name__``) so the
 # package and every submodule share one logger; tests filter caplog on

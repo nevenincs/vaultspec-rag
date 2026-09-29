@@ -293,46 +293,36 @@ def binary_version_info(binary: Binary, version: str, target: str) -> VersionInf
 
 # --- platform floor ---------------------------------------------------------
 #
-# Ported from vaultspec-core's dev/binaries/build_pyapp.py, which settled this
-# for that product. rag had no floor check at all, and the consequence is
-# measurable: vaultspec-rag#409 read `.gnu.version_r` off the PUBLISHED v0.4.11
-# artifacts and found both Linux binaries require GLIBC_2.39 - Ubuntu 24.04 and
-# newer. They do not start on Debian 12 (2.36), Ubuntu 22.04 (2.35), RHEL 9 or
-# Amazon Linux 2023 (2.34), while docs/installation.md promises "Linux" with no
-# floor stated, and neither the Homebrew formula nor the Scoop manifest declares
-# one either.
-#
-# The cause is that the Linux legs built directly on their runners, so each
-# artifact inherited whatever glibc its build host happened to have. Container
-# pins fixed that; this check is what stops it returning silently the next time
-# a runner is upgraded or an image is bumped.
+# There was no floor check at all before this landed, and the consequence was
+# measurable: reading `.gnu.version_r` off the PUBLISHED v0.4.11 artifacts
+# found both Linux binaries require GLIBC_2.39. They do not start on Debian 12
+# (2.36), Ubuntu 22.04 (2.35), RHEL 9 or Amazon Linux 2023 (2.34), while
+# docs/installation.md promised "Linux" with no floor stated, and neither the
+# Homebrew formula nor the Scoop manifest declared one either.
 #
 # Verified against the real published v0.4.14 x86_64 asset before this landed:
-# reports GLIBC_2.39 and refuses it against the 2.28 floor.
+# reports GLIBC_2.39 and refuses it against a 2.28 floor.
 #
-# THE FLOOR IS THE FLEET'S, AND IT IS 2.39. Both Linux legs build natively on
-# fleet hosts running Ubuntu 24.04, so each artifact takes that host's libc.
-# The pinned manylinux images that previously held 2.28 are gone, because no
-# fleet host can start a job container.
+# THE SUPPORTED FLOOR IS 2.39. Both Linux artifacts are built on Ubuntu 24.04,
+# so each one takes that build host's libc.
 #
 # 2.28 was not lowered to reach it - it was the wrong number to publish. This
-# product supports current distributions, and the table in
+# project supports current distributions, and the table in
 # docs/installation.md that advertised Debian 10+, Ubuntu 20.04+ and RHEL 8+
 # described a reach it does not have. The floor here now states what the
 # artifact actually requires, and the docs state the same.
 #
 # The check has not weakened: `check_platform_floor` still reads the
-# requirement back out of the produced artifact, so a runner image that moves
-# again fails the build and names the symbol versions rather than shipping a
-# binary the loader will refuse.
+# requirement back out of the produced artifact, so a change to the build
+# host's libc fails the build and names the symbol versions rather than
+# shipping a binary the loader will refuse.
 
 GLIBC_FLOOR: dict[str, tuple[int, ...]] = {
-    # Built natively on the fleet's x86_64 Linux host, an Ubuntu 24.04 machine
-    # measured at glibc 2.39.
+    # Built on an Ubuntu 24.04 x86_64 host, measured at glibc 2.39.
     "x86_64-unknown-linux-gnu": (2, 39),
-    # Built natively in the fleet's ARM64 Linux runner, a container on the same
-    # Ubuntu 24.04 base. It matches x86_64 because both take their floor from
-    # the same fleet image, not because either is pinned to the other.
+    # Built on an Ubuntu 24.04 ARM64 host. It matches x86_64 because both take
+    # their floor from the same build image, not because either is pinned to
+    # the other.
     "aarch64-unknown-linux-gnu": (2, 39),
 }
 
@@ -459,8 +449,8 @@ def write_checksum(asset: Path) -> Path:
     downstream readers break on exactly the Windows rows: ``sha256sum -c``
     refuses to verify them, and a field-splitting reader sees the asset name
     with a trailing carriage return, so a lookup by name finds nothing. That
-    is how vaultspec-core-v0.1.60 published a Scoop manifest with empty
-    hashes out of a green run.
+    is how a green release run can still publish a package manifest with
+    empty hashes.
     """
     digest = hashlib.sha256(asset.read_bytes()).hexdigest()
     checksum = asset.with_name(asset.name + ".sha256")

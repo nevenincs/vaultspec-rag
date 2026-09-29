@@ -33,12 +33,17 @@ _ROOT_UNRESOLVED = "project_root_unresolved"
 
 
 def _requested_root(project_root: str | None) -> Path | None:
-    """Return the explicitly named root, from the argument or the env var."""
-    from .._named_root import env_named_root
+    """Return the named root: the tool argument, then the session environment.
+
+    The same two rungs the command line reads, in the same order, so a host
+    that launches this adapter with a root in its session gets the project it
+    named - and a call that names its own still outranks it.
+    """
+    from .._named_root import named_root
 
     if project_root and project_root.strip():
         return Path(project_root.strip()).expanduser()
-    return env_named_root()
+    return named_root().path
 
 
 def _resolve_project_root(project_root: str | None) -> str:

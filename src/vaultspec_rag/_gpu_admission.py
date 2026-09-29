@@ -52,17 +52,17 @@ of an exception. Every torch import stays inside the guarded device probe this
 module delegates to, so importing this module pulls no torch and the call paths
 that must stay torch-free do.
 
-The lock file is anchored machine-globally in the system temp directory,
-independent of every configured directory. That is deliberate: the device is
-machine hardware rather than per-instance state, so a lock resolved through
-configuration would be private to whichever tree the caller happened to be
-pointed at and would exclude nothing.
+The lock file is a shared hardware anchor, in the one directory every process
+on the machine resolves identically - independent of every configured
+directory, of the temporary directory, and of the account. That is deliberate:
+the device is machine hardware rather than per-instance state, so a lock
+resolved through anything a caller can change would be private to whichever
+tree the caller happened to be pointed at and would exclude nothing.
 """
 
 from __future__ import annotations
 
 import logging
-import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -165,7 +165,7 @@ UNREADABLE_ADMISSION_LIMIT = 3
 
 #: The machine-global lock file's name. One name for the whole machine is the
 #: point: the device it guards is singular.
-_LOCK_FILENAME = "vaultspec-rag-gpu-load-window.lock"
+_LOCK_FILENAME = "gpu-load-window.lock"
 
 _REASON_PHRASES = {
     REASON_BELOW_FLOOR: "free device memory is below the admission floor",
@@ -564,12 +564,39 @@ def device_load_reading() -> dict[str, object] | None:
 def load_window_lock_path() -> Path:
     """Path of the machine-global model-load window lock.
 
-    Anchored in the system temp directory rather than through configuration,
-    because the device is one piece of machine hardware: a lock relocated with
-    a configured directory would be private to each caller's tree and would
-    serialise nothing.
+    A hardware anchor rather than a configured path, because the device is one
+    piece of machine hardware: a lock relocated with a configured directory, a
+    temporary directory or an account would be private to each caller and
+    would serialise nothing.
+
+    Raises:
+        OSError: The machine's hardware-anchor directory could not be resolved.
     """
-    return Path(tempfile.gettempdir()) / _LOCK_FILENAME
+    from ._anchor_claim import hardware_anchor_path
+
+    return hardware_anchor_path(_LOCK_FILENAME)
+
+
+def _claim_load_window(anchor: Path | None) -> AnchorClaim:
+    """Claim the load window, reporting an unresolvable anchor as unavailable.
+
+    An anchor that cannot even be located is the same coordination fault as
+    one that cannot be opened, so it takes the same degraded path rather than
+    escaping as an exception that would refuse every load.
+    """
+    from ._anchor_claim import AnchorClaim, AnchorOutcome, claim_anchor
+
+    try:
+        target = anchor or load_window_lock_path()
+    except OSError as exc:
+        return AnchorClaim(
+            outcome=AnchorOutcome.UNAVAILABLE,
+            anchor=Path(_LOCK_FILENAME),
+            descriptor=None,
+            holder_pid=0,
+            fault=exc,
+        )
+    return claim_anchor(target, create_parent=True, shared=True)
 
 
 def _warn_unserialised_window(claim: AnchorClaim) -> None:
@@ -630,9 +657,9 @@ def device_load_window(
     the ledger would let a guard pass against a predicate production does not
     run, which is the failure a guard exists to catch.
     """
-    from ._anchor_claim import AnchorOutcome, claim_anchor, release_anchor_claim
+    from ._anchor_claim import AnchorOutcome, release_anchor_claim
 
-    claim = claim_anchor(anchor or load_window_lock_path(), create_parent=True)
+    claim = _claim_load_window(anchor)
     if claim.outcome is AnchorOutcome.CONTENDED:
         yield DeviceAdmission(
             admitted=False,

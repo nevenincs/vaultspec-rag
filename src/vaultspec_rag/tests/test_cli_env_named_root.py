@@ -44,8 +44,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from vaultspec_core.config import VAULTSPEC_TARGET_DIR, ConfigurationError
 
-from .._named_root import env_named_root
+from .._named_root import named_root
 from ..config._types import EnvVar
 
 if TYPE_CHECKING:
@@ -92,6 +93,7 @@ def _run(
     workspaces: _Workspaces,
     *args: str,
     root_env: str | None,
+    framework_env: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Report the resolved root, running from the ``elsewhere`` workspace.
 
@@ -120,6 +122,10 @@ def _run(
         env.pop(EnvVar.RAG_ROOT.value, None)
     else:
         env[EnvVar.RAG_ROOT.value] = root_env
+    if framework_env is None:
+        env.pop(VAULTSPEC_TARGET_DIR.env_name, None)
+    else:
+        env[VAULTSPEC_TARGET_DIR.env_name] = framework_env
     return subprocess.run(
         [
             sys.executable,
@@ -159,6 +165,23 @@ def _unwrapped(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _refusal_message(result: subprocess.CompletedProcess[str]) -> str:
+    """Return the reason a refused ``--json`` run reported.
+
+    A refusal raised before the command runs answers the channel the
+    invocation asked for, so under ``--json`` it is the shared error
+    envelope on standard output, not a plain line. Reading the message out
+    of it is what keeps these assertions about the reason rather than about
+    the JSON escaping of a Windows path inside it.
+    """
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, f"a refused run printed nothing. stderr={result.stderr!r}"
+    envelope = json.loads(lines[-1])
+    assert envelope["schema"] == "vaultspec.error.v1", result.stdout
+    assert envelope["status"] == "failed", result.stdout
+    return _unwrapped(str(envelope["data"]["message"]))
+
+
 @pytest.mark.timeout(120)
 def test_env_named_root_beats_the_working_directory(workspaces: _Workspaces) -> None:
     """An exported root is honoured when no ``--target`` overrides it.
@@ -173,6 +196,55 @@ def test_env_named_root_beats_the_working_directory(workspaces: _Workspaces) -> 
         "the exported root was discarded and the working directory's project "
         f"was addressed instead. stdout={result.stdout!r}"
     )
+
+
+@pytest.mark.timeout(120)
+def test_the_framework_root_beats_the_working_directory(
+    workspaces: _Workspaces,
+) -> None:
+    """A session that names one workspace for every vaultspec tool names this one.
+
+    The run starts in a different, equally valid project, so falling through
+    to the working directory produces a successful envelope about the wrong
+    one - the same wrong answer the scoped name was added to prevent, one
+    rung further down the chain.
+    """
+    result = _run(workspaces, root_env=None, framework_env=str(workspaces.named))
+
+    assert _reported_root(result) == workspaces.named.resolve(), (
+        "the shared root was discarded and the working directory's project "
+        f"was addressed instead. stdout={result.stdout!r}"
+    )
+
+
+@pytest.mark.timeout(120)
+def test_the_scoped_root_beats_the_framework_root(workspaces: _Workspaces) -> None:
+    """Pointing this tool elsewhere does not mean unsetting the shared name."""
+    result = _run(
+        workspaces,
+        root_env=str(workspaces.named),
+        framework_env=str(workspaces.elsewhere),
+    )
+
+    assert _reported_root(result) == workspaces.named.resolve()
+
+
+@pytest.mark.timeout(120)
+def test_a_framework_root_that_is_not_a_workspace_names_its_own_variable(
+    workspaces: _Workspaces,
+) -> None:
+    """The refusal names the variable the operator actually set.
+
+    Naming this package's own variable here would send somebody looking for
+    a setting they never made, while the one that chose the directory went
+    unmentioned.
+    """
+    result = _run(workspaces, root_env=None, framework_env=str(workspaces.bare))
+
+    assert result.returncode == 1, result.stdout
+    message = _refusal_message(result)
+    assert VAULTSPEC_TARGET_DIR.env_name in message, message
+    assert EnvVar.RAG_ROOT.value not in message, message
 
 
 @pytest.mark.timeout(120)
@@ -216,26 +288,31 @@ def test_env_naming_a_non_workspace_is_refused_not_ignored(
         "a root that cannot be honoured was ignored and the working "
         f"directory's project was addressed. stdout={result.stdout!r}"
     )
-    combined = _unwrapped(result.stdout + result.stderr)
-    assert f"{EnvVar.RAG_ROOT.value} names" in combined, combined
-    assert _unwrapped(str(workspaces.bare)) in combined, combined
+    message = _refusal_message(result)
+    assert f"{EnvVar.RAG_ROOT.value} names" in message, message
+    assert _unwrapped(str(workspaces.bare)) in message, message
 
 
 class TestTheEnvironmentValueItself:
     """What counts as a named root, asserted where the answer is observable.
 
-    These read the variable directly rather than through a run. A blank value
+    These read the variables directly rather than through a run. A blank value
     is indistinguishable end-to-end on Windows, which trims a whitespace path
     down to the working directory anyway - so a CLI-level assertion about it
     would hold whether the rule existed or not.
     """
 
+    @staticmethod
+    def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(EnvVar.RAG_ROOT.value, raising=False)
+        monkeypatch.delenv(VAULTSPEC_TARGET_DIR.env_name, raising=False)
+
     def test_an_unset_variable_names_nothing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv(EnvVar.RAG_ROOT.value, raising=False)
+        self._clear(monkeypatch)
 
-        assert env_named_root() is None
+        assert named_root().path is None
 
     def test_a_blank_variable_names_nothing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -246,22 +323,108 @@ class TestTheEnvironmentValueItself:
         without this rule the blank value survives as ``Path("   ")`` and is
         handed to the workspace resolver as a root the operator never named.
         """
+        self._clear(monkeypatch)
         monkeypatch.setenv(EnvVar.RAG_ROOT.value, "   ")
 
-        assert env_named_root() is None
+        assert named_root().path is None
 
     def test_a_set_variable_names_that_root(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        self._clear(monkeypatch)
         monkeypatch.setenv(EnvVar.RAG_ROOT.value, f"  {tmp_path}  ")
 
-        assert env_named_root() == tmp_path
+        resolved = named_root()
+        assert resolved.path == tmp_path.resolve()
+        assert resolved.variable == EnvVar.RAG_ROOT.value
 
     def test_home_shorthand_is_expanded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``~`` reaches this from a config file or a launcher, never a shell."""
+        """``~`` reaches this from a config file or a launcher, never a shell.
+
+        Nothing downstream would expand it: a leading tilde is not absolute,
+        so the root would be taken against the working directory and then
+        refused as a directory that is not there.
+        """
+        self._clear(monkeypatch)
+        monkeypatch.setenv(EnvVar.RAG_ROOT.value, "~")
+
+        resolved = named_root()
+        assert resolved.path == Path("~").expanduser().resolve()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason=(
+            "ntpath.expanduser only raises past pathlib's RuntimeError guard "
+            "when neither USERPROFILE nor HOMEPATH/HOMEDRIVE is set; "
+            "posixpath.expanduser falls back to the pwd database, which a "
+            "real account under test typically still resolves."
+        ),
+    )
+    def test_a_root_whose_home_cannot_be_determined_names_its_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A host with no way to resolve ``~`` refuses, naming the variable.
+
+        Core's own ``resolve_target`` does the expansion (and the wrapping):
+        this proves that behaviour actually reaches an operator through this
+        package's thin ``named_root`` wrapper, not a second implementation of
+        it here.
+        """
+        self._clear(monkeypatch)
+        monkeypatch.delenv("USERPROFILE", raising=False)
+        monkeypatch.delenv("HOMEPATH", raising=False)
+        monkeypatch.delenv("HOMEDRIVE", raising=False)
         monkeypatch.setenv(EnvVar.RAG_ROOT.value, "~/somewhere")
 
-        resolved = env_named_root()
-        assert resolved is not None
-        assert "~" not in str(resolved)
-        assert resolved == Path("~/somewhere").expanduser()
+        with pytest.raises(ConfigurationError, match=EnvVar.RAG_ROOT.value):
+            named_root()
+
+    def test_the_framework_name_answers_behind_the_scoped_one(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A session naming one workspace for every tool names this one too."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv(VAULTSPEC_TARGET_DIR.env_name, str(tmp_path))
+
+        resolved = named_root()
+        assert resolved.path == tmp_path.resolve()
+        assert resolved.variable == VAULTSPEC_TARGET_DIR.env_name
+
+    def test_the_scoped_name_outranks_the_framework_one(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Pointing this tool elsewhere does not require unsetting the shared name."""
+        scoped = tmp_path / "scoped"
+        scoped.mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        self._clear(monkeypatch)
+        monkeypatch.setenv(EnvVar.RAG_ROOT.value, str(scoped))
+        monkeypatch.setenv(VAULTSPEC_TARGET_DIR.env_name, str(shared))
+
+        assert named_root().path == scoped.resolve()
+
+    def test_the_invocation_outranks_both(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._clear(monkeypatch)
+        monkeypatch.setenv(EnvVar.RAG_ROOT.value, str(tmp_path))
+
+        resolved = named_root(tmp_path / "named-by-the-call")
+        assert resolved.path == (tmp_path / "named-by-the-call").resolve()
+        assert resolved.variable is None
+
+    def test_a_root_that_is_not_there_is_refused_naming_its_variable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A missing directory cannot be discovered past.
+
+        The operator asked for one workspace, so falling through to discovery
+        would silently answer about another - and the refusal has to name
+        whichever of the two names actually carried the value.
+        """
+        self._clear(monkeypatch)
+        monkeypatch.setenv(VAULTSPEC_TARGET_DIR.env_name, str(tmp_path / "absent"))
+
+        with pytest.raises(ConfigurationError, match=VAULTSPEC_TARGET_DIR.env_name):
+            named_root()

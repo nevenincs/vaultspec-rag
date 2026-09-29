@@ -130,6 +130,12 @@ _BORROWER_REFUSAL_MESSAGES: Final = {
         "asked to pause it, so borrower ownership was not granted and the GPU "
         "must not be used. Wait for that pause to be released, then retry."
     ),
+    "borrower_gpu_not_lendable": (
+        "The service paused for this borrower but could not lend it the GPU, "
+        "because another process owns the GPU or the loan could not be "
+        "recorded, so the GPU must not be used. Resume the service, and retry "
+        "once that process has exited."
+    ),
 }
 
 
@@ -303,7 +309,13 @@ def _post_pause_binding_error(
         return "borrower_pause_not_owned"
     if not registry.bind_borrower_capability(capability):
         return "borrower_lease_mismatch"
-    return None
+    # A bound borrower must also be lent the GPU; a pause whose loan was not
+    # recorded must not tell the borrower the device is its to use.
+    return (
+        None
+        if registry.lend_gpu_to_borrower(capability)
+        else "borrower_gpu_not_lendable"
+    )
 
 
 async def _quiesce_route(request: Request, *, pause: bool) -> JSONResponse:

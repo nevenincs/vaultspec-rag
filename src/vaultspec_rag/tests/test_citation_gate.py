@@ -709,6 +709,35 @@ def test_a_documentation_placeholder_account_is_not_a_leak(
     assert leaks == []
 
 
+def test_the_machine_wide_shared_folder_is_not_an_identity_leak(
+    gate: _GateModule, tmp_path: Path
+) -> None:
+    """macOS's folder shared by every account names nobody.
+
+    Machine-wide state that every account must reach lives there, so code has
+    to name it. The exclusion is for that exact segment: an account whose name
+    merely starts with it is still somebody.
+
+    Mutation proving this can fail: drop ``Shared`` from the placeholder
+    lookahead, and the first file reports a leak.
+    """
+    shared = _write(
+        tmp_path,
+        "anchor.py",
+        'P = "/Users/Shared/vaultspec-rag-x"\nQ = Path("/Users/Shared")\n',
+    )
+    # Assembled, like the account path above: written out whole, the lookalike
+    # would be a leak in this very file.
+    account = "Shared" + "with"
+    lookalike = _write(tmp_path, "lookalike.py", f'P = "/Users/{account}/code"\n')
+
+    shared_leaks, _smells = gate.scan_file_paths(shared, repo_root=tmp_path)
+    lookalike_leaks, _smells = gate.scan_file_paths(lookalike, repo_root=tmp_path)
+
+    assert shared_leaks == []
+    assert _slugs(lookalike_leaks) == ["user-home-path"]
+
+
 def test_a_citation_exempt_subtree_is_still_scanned_for_identity(
     gate: _GateModule, tmp_path: Path
 ) -> None:

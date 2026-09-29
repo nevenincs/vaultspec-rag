@@ -27,7 +27,9 @@ import re
 from pathlib import Path
 
 import pytest
+from vaultspec_core.config import VariableScope
 
+from ..config._registry import entry
 from ..config._types import EnvVar
 
 pytestmark = [pytest.mark.unit]
@@ -54,8 +56,21 @@ def test_env_example_exists() -> None:
 
 
 def test_env_example_documents_every_env_var() -> None:
+    """Every variable an operator may set has a line of its own.
+
+    Internal scope is exempt, and not as a convenience: a marker this project
+    sets on its own child processes is not something an operator sets, so a
+    template line for it would advertise a knob and invite somebody to turn
+    it. The registry decides which is which, so a name cannot be kept off the
+    template without also being declared unsettable.
+    """
     documented = _documented_variables()
-    missing = sorted(var.value for var in EnvVar if var.value not in documented)
+    missing = sorted(
+        var.value
+        for var in EnvVar
+        if var.value not in documented
+        and entry(var).scope is not VariableScope.INTERNAL
+    )
     assert not missing, (
         "the operator env template documents no default for "
         f"{len(missing)} recognised environment variable(s): "

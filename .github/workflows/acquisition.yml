@@ -10,8 +10,11 @@ run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'la
 # vaultspec-rag#409 is why. A Linux binary built on a host with newer glibc than
 # the floor it claims loads fine everywhere it is built and tested, and fails on
 # a user's machine with a missing symbol version. That gap was found by reading
-# ELF sections by hand, at v0.4.14, three releases after it appeared. Running
-# the artifact on a distribution older than the build host closes it.
+# ELF sections by hand, at v0.4.14, three releases after it appeared. Two
+# checks close it. The loader is asked whether it accepts the binary. And the
+# symbol versions the published binary requires are read back and compared
+# with the floor its own manifest declares, which holds whatever libc the job
+# happens to run on.
 #
 # WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
 #
@@ -28,13 +31,13 @@ run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'la
 # human-published release, but the path that actually reaches this workflow is
 # the explicit dispatch from `binaries.yml`, plus the weekly schedule. The
 # schedule matters on its own: acquisition rots for reasons no commit causes -
-# a yanked release, a renamed asset, a base image whose glibc moves.
+# a yanked release or a renamed asset.
 
 on:
   release:
     types: [published]
   schedule:
-    # Weekly, off the hour: nothing here is urgent and the fleet is shared.
+    # Weekly, off the hour: nothing here is urgent.
     - cron: '41 6 * * 1'
   workflow_dispatch:
     inputs:
@@ -56,69 +59,33 @@ concurrency:
 
 jobs:
   acquire:
-    name: "Test: Binary acquisition (Linux, ${{ matrix.arch }}, ${{ matrix.distro }})"
+    name: "Test: Binary acquisition (Linux, ${{ matrix.arch }})"
     strategy:
       fail-fast: false
       matrix:
         include:
-          # AT the declared floor, on both architectures. RHEL 10's glibc is
-          # 2.39 exactly - the same number the fleet's build hosts carry - so
-          # these are the legs that fail first if an artifact ever needs more
-          # than the floor claims. The Debian images below sit above it and
-          # would keep passing through a slip of a version or two.
-          - image: docker.io/library/almalinux@sha256:957738702313e6ee452cdb17bc1431542c467be9a4e2f4da3b8e551b0ebb9677
-            distro: almalinux-10
-            setup: dnf install -y -q curl ca-certificates unzip jq
-            arch: x86_64
-            runner: ubuntu-24.04
+          - arch: x86_64
+            runner: [self-hosted, Linux, X64, build]
             triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/almalinux@sha256:957738702313e6ee452cdb17bc1431542c467be9a4e2f4da3b8e551b0ebb9677
-            distro: almalinux-10
-            setup: dnf install -y -q curl ca-certificates unzip jq
-            arch: aarch64
-            runner: ubuntu-24.04-arm
+          - arch: aarch64
+            runner: [self-hosted, Linux, ARM64]
             triple: aarch64-unknown-linux-gnu
-          # Above the floor, which is the band a user on a current release is
-          # most likely to be in. trixie is 2.41.
-          - image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
-            distro: debian-13
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
-            arch: x86_64
-            runner: ubuntu-24.04
-            triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
-            distro: debian-13
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
-            arch: aarch64
-            runner: ubuntu-24.04-arm
-            triple: aarch64-unknown-linux-gnu
-          - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
-            distro: ubuntu-24.04
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
-            arch: x86_64
-            runner: ubuntu-24.04
-            triple: x86_64-unknown-linux-gnu
-          - image: docker.io/library/ubuntu@sha256:b3cc40b72b93588182b5410f723c7aaf142363311c2aa993d8a453ddcbb3ae15
-            distro: ubuntu-24.04
-            setup: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates unzip jq
-            arch: aarch64
-            runner: ubuntu-24.04-arm
-            triple: aarch64-unknown-linux-gnu
-    # A matrix job names its runner through `${ matrix.runner }`, which is
-    # invisible to any check grepping for `self-hosted` - and these are the
-    # longest-running jobs in the fleet, so the six-hour default ceiling was
-    # in force exactly where it costs the most. `dev/guards/
-    # test_ci_jobs_reach_a_verdict.py` resolves the matrix and holds this.
     timeout-minutes: 30
     runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
     steps:
-      - name: Install what acquisition itself needs
-        env:
-          SETUP: ${{ matrix.setup }}
+      # No checkout and no install: curl, jq, unzip and ldd are all this needs,
+      # and the job may not be able to install anything.
+      - name: Require what acquisition itself needs
         run: |
-          set -eux
-          sh -c "${SETUP}"
+          set -eu
+          for tool in curl jq unzip tar sha256sum ldd; do
+            command -v "${tool}" >/dev/null || { echo "::error::${tool} is not on this runner"; exit 1; }
+          done
+          # The job's own temp directory, never a fixed path: the job owns
+          # nothing outside it.
+          acq="${RUNNER_TEMP}/acq"
+          rm -rf "${acq}"
+          echo "ACQ=${acq}" >> "$GITHUB_ENV"
 
       - name: Acquire the published binaries
         env:
@@ -142,11 +109,11 @@ jobs:
             || { echo "::error::refusing unexpected release tag: ${tag}"; exit 1; }
           echo "TAG=${tag}" >> "$GITHUB_ENV"
 
-          mkdir -p /opt/acq
+          mkdir -p "${ACQ}"
           release_url="https://github.com/${REPO}/releases/download/${tag}"
           archive="${tag}-${TRIPLE}${ARCHIVE_SUFFIX}"
-          checksum_manifest=/opt/acq/SHA256SUMS
-          archive_path="/opt/acq/${archive}"
+          checksum_manifest="${ACQ}/SHA256SUMS"
+          archive_path="${ACQ}/${archive}"
 
           # The archive and its checksum manifest are the public release
           # contract. A raw target-qualified executable is a private build
@@ -168,7 +135,14 @@ jobs:
             echo "::error::SHA256SUMS has no unique entry for ${archive}"; exit 1;
           }
           printf '%s\n' "${checksum_line}" > "${archive_path}.sha256"
-          (cd /opt/acq && sha256sum -c "${archive}.sha256")
+          (cd "${ACQ}" && sha256sum -c "${archive}.sha256")
+
+          # The manifest is read only after the checksum has passed, and the
+          # loader step below takes the floor it declares from here.
+          case "${ARCHIVE_SUFFIX}" in
+            .tar.gz) tar -xOzf "${archive_path}" manifest.json > "${ACQ}/manifest.json" ;;
+            .zip) unzip -p "${archive_path}" manifest.json > "${ACQ}/manifest.json" ;;
+          esac
 
           # A matching archive checksum proves integrity, but not which source
           # commit produced the bytes. Release-gated dispatches name the exact
@@ -181,11 +155,7 @@ jobs:
             [ "${#TARGET_SHA}" -eq 40 ] || {
               echo "::error::target_sha is not a 40-character commit ID"; exit 1;
             }
-            case "${ARCHIVE_SUFFIX}" in
-              .tar.gz) tar -xOzf "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
-              .zip) unzip -p "${archive_path}" manifest.json > /opt/acq/manifest.json ;;
-            esac
-            producer_sha=$(jq -er '.source_revision | select(type == "string")' /opt/acq/manifest.json)
+            producer_sha=$(jq -er '.source_revision | select(type == "string")' "${ACQ}/manifest.json")
             [ "${producer_sha}" = "${TARGET_SHA}" ] || {
               echo "::error::bundle producer ${producer_sha} does not match requested ${TARGET_SHA}"; exit 1;
             }
@@ -199,8 +169,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="/opt/acq/${TAG}-${TRIPLE}${ARCHIVE_SUFFIX}"
-          destination=/opt/acq/extracted
+          archive="${ACQ}/${TAG}-${TRIPLE}${ARCHIVE_SUFFIX}"
+          destination="${ACQ}/extracted"
           mkdir -p "${destination}"
 
           case "${ARCHIVE_SUFFIX}" in
@@ -238,44 +208,65 @@ jobs:
         env:
           ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
           EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
-          IMAGE: ${{ matrix.image }}
         run: |
           set -eu
           if [ "${ARCHIVE_SUFFIX}" = ".zip" ]; then
             echo "extracted Windows executables are present and executable"
             exit 0
           fi
-          echo "distribution glibc: $(ldd --version | head -1)"
+          host="$(ldd --version | head -1)"
+          echo "runner glibc: ${host}"
+          floor=$(jq -er '.platform.glibc_floor | select(type == "string")' "${ACQ}/manifest.json") || {
+            echo "::error::the published manifest declares no platform.glibc_floor for a Linux bundle"; exit 1;
+          }
+          echo "declared floor: GLIBC_${floor}"
 
           failed=0
           for name in vaultspec-rag vaultspec-search-mcp; do
-            binary="/opt/acq/extracted/${name}${EXECUTABLE_SUFFIX}"
+            binary="${ACQ}/extracted/${name}${EXECUTABLE_SUFFIX}"
             [ -x "${binary}" ] || {
               echo "::error::extracted executable is not runnable: ${binary}"; failed=1; continue;
             }
 
             # `ldd` resolves every symbol version the binary requires against
-            # this distribution's libc and reports what it cannot satisfy. It
+            # this runner's libc and reports what it cannot satisfy. It
             # answers the loader question directly and in milliseconds, without
             # launching anything - which matters here, because launching would
             # start a multi-gigabyte bootstrap that has nothing to do with what
             # is being tested.
-            if ! out=$(ldd "${binary}" 2>&1); then
-              printf '::error::%s: ldd failed on %s\n%s\n' "${name}" "${IMAGE}" "${out}"
+            if ! out=$(ldd -v "${binary}" 2>&1); then
+              printf '::error::%s: ldd failed on %s\n%s\n' "${name}" "${host}" "${out}"
               failed=1
               continue
             fi
             if printf '%s' "${out}" | grep -q 'not found'; then
-              printf '::error::%s does not load on %s. Unsatisfied by this distribution:\n%s\n' \
-                "${name}" "${IMAGE}" "$(printf '%s' "${out}" | grep 'not found')"
-              printf '::error::This is vaultspec-rag#409 recurring: the artifact was built against a newer libc than the floor it claims. Check the container pin for this target in binaries.yml.\n'
+              printf '::error::%s does not load on %s. Unsatisfied here:\n%s\n' \
+                "${name}" "${host}" "$(printf '%s' "${out}" | grep 'not found')"
+              printf '::error::This is vaultspec-rag#409 recurring: the artifact was built against a newer libc than GLIBC_FLOOR in tools/binaries/build_pyapp.py claims.\n'
               failed=1
               continue
             fi
-            echo "ok: ${name} resolves every required symbol version here"
+
+            # The loader above only proves this runner's libc. The binary's
+            # own block of `ldd -v` lists every GLIBC version it requires, and
+            # the highest of them may not exceed the floor the manifest
+            # declares - on any host, whatever libc it carries.
+            required=$(printf '%s\n' "${out}" \
+              | awk -v own="\t${binary}:" '$0 == own { inside = 1; next } inside && /^\t[^\t]/ { exit } inside' \
+              | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+            [ -n "${required}" ] || {
+              echo "::error::${name}: read no GLIBC requirement from ldd -v; refusing to pass vacuously"; failed=1; continue;
+            }
+            if [ "$(printf '%s\n%s\n' "${required}" "${floor}" | sort -V | tail -1)" != "${floor}" ]; then
+              printf '::error::%s requires GLIBC_%s but its manifest declares a floor of GLIBC_%s. This is vaultspec-rag#409 recurring.\n' \
+                "${name}" "${required}" "${floor}"
+              failed=1
+              continue
+            fi
+            echo "ok: ${name} loads here and requires GLIBC_${required}, within the declared GLIBC_${floor}"
           done
           [ "${failed}" -eq 0 ] || exit 1
 
-      - name: Return the workspace to the runner's user
+      - name: Clean up
         if: always()
-        run: chown -R --reference=/__w "$GITHUB_WORKSPACE" || true
+        run: rm -rf "${RUNNER_TEMP}/acq" || true

@@ -25,11 +25,23 @@ Related guides: the [installation guide](installation.md) for where to set varia
 
 ## Resolution order
 
-Each setting resolves through a fixed precedence, highest first: CLI flag, environment variable, persisted local-only marker, then the built-in default.
+Each setting resolves through a fixed precedence, highest first: invocation (a CLI flag), the session environment, a workspace `.env` (credentials only, see below), persisted configuration where a knob has one, then the built-in default. This is the one order every vaultspec package follows, not a rule specific to this page.
+
+Three settings chain the session-environment rung to a shared framework name read behind this package's own scoped name, so a session that exports only the shared name configures every vaultspec tool at once:
+
+| This package's variable          | Falls back to (framework-wide) |
+| --------------------------------- | ------------------------------- |
+| `VAULTSPEC_RAG_ROOT`               | `VAULTSPEC_TARGET_DIR`          |
+| `VAULTSPEC_RAG_LOG_LEVEL`          | `VAULTSPEC_LOG_LEVEL`           |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG`     | `VAULTSPEC_STDIO_WATCHDOG`      |
+
+No other variable on this page reads a shared framework name; every other row resolves against its own scoped name alone.
+
+A workspace-root `.env` is read for exactly two names - `VAULTSPEC_RAG_TYPESAFE_API_KEY` and `HF_TOKEN` - and only when both hold: the running interpreter lives inside that workspace, and this package's resolved install mode there is dependency or dev, never a globally installed tool. No other variable on this page is ever read from a `.env`, and no variant (`.env.local` and the like) is read at all. This is a settings file, not a repository surface: repository content may hand you a credential, never reconfigure the tool.
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
-Some variables sit outside this chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
+Some variables sit outside the CLI/environment/default chain and resolve their values their own way. See [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
 
 ## Type coercion
 
@@ -38,7 +50,7 @@ The loader parses and validates every value as it builds the settings. It report
 - Booleans: `1`, `true`, `yes` and `on` parse as true; `0`, `false`, `no` and `off` parse as false (case-insensitive). These spellings are the same for **every** boolean vaultspec-rag reads, including the ones in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules) - no variable reads `off` as on. Any other value is rejected with a message naming the variable and listing the accepted spellings, so a typo such as `treu` is refused instead of silently reading as false and turning the feature off.
 - Integers and floats: parsed with `int()` and `float()`; a non-numeric value is rejected the same way.
 - Paths: relative paths resolve against the project root; absolute paths are used as given. Use forward slashes on Windows.
-- Empty values: for a setting whose default is a string or a path, an empty or whitespace-only value is treated as unset and falls back to the default. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory. A boolean does **not** share that protection: an empty value reads as false, so an unexpanded `VAR="$UNSET"` on a boolean turns that setting off rather than leaving its default in place. `VAULTSPEC_RAG_STDIO_WATCHDOG` is the single exception, and says why in its own row.
+- Empty values: an empty or whitespace-only value is treated as unset and falls back to the next rung, for every setting on this page regardless of type - a boolean included. This keeps an unexpanded `VAR="$UNSET"` from repointing a managed directory at the working directory, or from silently turning a switch off. `VAULTSPEC_RAG_STDIO_WATCHDOG` is the single exception: a blank value there leaves the protective switch **armed** rather than falling through, and says why in its own row.
 
 An unset variable falls back to the built-in default.
 
@@ -46,17 +58,18 @@ The variables in [Variables with their own parsing rules](#variables-with-their-
 
 ## Variables with their own parsing rules
 
-These variables do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses.
+These variables do not resolve through the chain in [Resolution order](#resolution-order). Each is read at its own call site with the rule stated here. `VAULTSPEC_RAG_ROOT` is not a tuning knob at all: it selects the project every entry point addresses, and chains to the framework-wide `VAULTSPEC_TARGET_DIR` as described above.
 
-The two booleans among them accept the same spellings as every other boolean. They differ only in how they resolve an empty value and a word that spells neither state. The Controls column states each one's rule and the reason for it.
+The booleans among them accept the same spellings as every other boolean. They differ only in how they resolve a blank value and a word that spells neither state. The Controls column states each one's rule and the reason for it.
 
 | Variable                       | Type    | Default           | Controls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | CLI flag          |
 | ------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `VAULTSPEC_RAG_PREPROCESS`     | string  | unset             | `off` disables all preprocessing and wins over every other source; any other value, including unset, leaves rules enabled                                                                                                                                                                                                                                                                                                                                                                                     | `--no-preprocess` |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, empty, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                                                                                      | -                 |
-| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and empty leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
-| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so the variable is stripped from its environment at spawn | `--target`        |
-| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. Read only from the executing server's environment, never project configuration or a CLI flag; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
+| `VAULTSPEC_RAG_PREPROCESS`     | boolean | unset             | Kill switch for a root's preprocessing rules. A false word (`0`, `false`, `no`, `off`) disables all preprocessing and wins over every other source; a true word, blank, or unset leaves rules enabled; anything else is rejected                                                                                                                                                                                                                                                                              | `--no-preprocess` |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Chains to the framework-wide `VAULTSPEC_STDIO_WATCHDOG`. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, blank, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                             | -                 |
+| `VAULTSPEC_RAG_LOG_LEVEL`      | string  | `WARNING`         | Root logger level, honoured by the CLI, the stdio MCP server, and the resident daemon alike. It resolves over the logging ladder rather than the generic chain, so every process reads one validated answer: `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default - `WARNING` for the CLI and the stdio server, `INFO` for the daemon, whose output is a managed log nobody is watching live. A name no level spells is refused rather than degraded; an invocation-supplied level still outranks the whole ladder | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and blank leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
+| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so both root variables are stripped from its environment at spawn | `--target`        |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. A credential, not a setting: read from the executing server's own process environment first, never a CLI flag; a workspace-root `.env` supplies it only under the credential gate described above, and the resident service is handed the resolved value through its own environment rather than reading a file itself; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
 
 ### Typesafe enrollment
 
@@ -70,11 +83,13 @@ vaultspec-rag server status
 ```
 
 For a shell on Linux or macOS, use `export VAULTSPEC_RAG_TYPESAFE_API_KEY='<your-key>'`
-before starting the service. Keep the key out of committed files. A project `.env`
-file is not automatically loaded for this setting. If the server is already running,
-changing a client shell's environment does not change that server: restart it from
-the intended service environment. Scheduled services need the variable in their own
-launch environment.
+before starting the service. Keep the key out of committed files. A workspace-root
+`.env` supplies this credential only under the gate described in
+[Resolution order](#resolution-order): the running interpreter inside that workspace,
+and this package's resolved mode there dependency or dev. It is never read for a
+globally installed tool. If the server is already running, changing a client shell's
+environment does not change that server: restart it from the intended service
+environment. Scheduled services need the variable in their own launch environment.
 
 Enrollment authorizes paid external processing of search queries and full candidate
 content. Successful classification can reorder hits and drop confidently irrelevant
@@ -168,8 +183,8 @@ These variables choose between the supervised Qdrant server (the default) and th
 | ------------------------------- | ---- | ------------------------- | ------------------------------------------------------ | --------------- |
 | `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata | `--data-dir`    |
 | `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir         | `--storage-dir` |
-| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Vault index metadata filename inside the data dir      | -               |
-| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Codebase index metadata filename inside the data dir   | -               |
+| `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Declared setting with no reading consumer today; setting it has no effect | -               |
+| `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Declared setting with no reading consumer today; setting it has no effect | -               |
 
 ### Service runtime and logging
 
@@ -178,7 +193,6 @@ These variables choose between the supervised Qdrant server (the default) and th
 | `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files                        | `--status-dir`                        |
 | `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir                                | `--log-file`                          |
 | `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                                                | `--port`                              |
-| `VAULTSPEC_RAG_LOG_LEVEL`                | string  | `WARNING`          | Root logger level                                                                  | `--verbose` (INFO), `--debug` (DEBUG) |
 | `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction                        | -                                     |
 | `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                                        | -                                     |
 | `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`               | Client connection and read budget for lifecycle and admin calls (seconds)          | -                                     |
@@ -372,10 +386,11 @@ These variables control the daemon's scheduled storage-maintenance cycle. See th
 
 ## Config-only keys
 
-These keys exist in the configuration loader and read no environment variable of their own. Set them through a config source, not the environment.
+These keys exist in the configuration loader and take no direct environment override of their own. Where the environment still reaches one, it does so through a variable that resolves at its own call site, listed in [Variables with their own parsing rules](#variables-with-their-own-parsing-rules).
 
 | Config key        | Type   | Default   | Controls                                                                                                                  |
 | ----------------- | ------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `log_level`       | string | `WARNING` | Root logger level; the environment reaches it through the `VAULTSPEC_RAG_LOG_LEVEL` ladder rather than a direct override  |
 | `preprocess_mode` | string | `default` | Two-state preprocessing mode; the environment reaches it through `VAULTSPEC_RAG_PREPROCESS` rather than a direct override |
 
 ## Hugging Face cache

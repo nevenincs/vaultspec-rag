@@ -2,12 +2,11 @@
 
 The generators are unit-tested against synthetic input. What that leaves
 untested is the REAL pointer, at the moment it is produced - and that is where
-the failure lives. vaultspec-core shipped a Scoop manifest carrying the right
-version and the right URLs alongside ``"hash": ["", ""]``: the release job was
-green, the unit tests were green, and nothing looked at what had been written.
+the failure lives. A Scoop manifest can carry the right version and the right
+URLs alongside ``"hash": ["", ""]``: the release job green, the unit tests
+green, and nothing looked at what had been written.
 
-This repository is exposed to the same class of failure and had no equivalent
-check at all.
+This repository had no check for that class of failure at all.
 
 It runs between GENERATING the pointers and COMMITTING them, which is the only
 point where a bad pointer can still be stopped rather than reported after it
@@ -64,9 +63,9 @@ def buildable_targets(repo_root: Path) -> tuple[str, ...]:
     targets and the module names five, so a pointer at a macOS asset - a
     platform this product does not support at all - validated clean.
 
-    Derived instead, like the release guard's target list (#422) and for the
-    same reason: a second copy of the matrix drifts from it, and every instance
-    of that in this fleet was invisible until something shipped broken.
+    Derived instead, like the release guard's target list, and for the same
+    reason: a second copy of the matrix drifts from it, and every instance of
+    that here was invisible until something shipped broken.
     """
     try:
         text = (repo_root / _WORKFLOW).read_text(encoding="utf-8")

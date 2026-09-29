@@ -48,7 +48,7 @@ _MISSING_COMPUTE_DEPENDENCIES_MESSAGE = (
 # weights materialise single-threaded and deterministically; an explicit
 # operator-set value still wins. Linux (CI) keeps the faster parallel path.
 if sys.platform == "win32":
-    os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
+    os.environ.setdefault(EnvVar.HF_DEACTIVATE_ASYNC_LOAD.value, "1")
 
 __all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult", "load_reranker"]
 

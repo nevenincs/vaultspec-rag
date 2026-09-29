@@ -24,8 +24,9 @@ this package's own source — matches the one recorded in `.venv/.init-stamp.jso
 the digest catches a changed lockfile, the artifact check catches a `.venv`
 somebody deleted. A no-op run does not invoke `uv`, `npm`, or anything else.
 
-**Fail-fast, and complete in what it reports.** Unlike the fleet's `-all`
-aggregates, which run every step because they chain independent inspectors,
+**Fail-fast, and complete in what it reports.** Unlike this repository's
+`-all` aggregates, which run every step because they chain independent
+inspectors,
 `init`'s phases are a dependency chain building one artifact — `init-tools`
 runs executables out of the environment `init-python` created. So it stops at
 the first failing phase, and records the phases it did not attempt as `skipped`
@@ -35,7 +36,7 @@ with the upstream cause named. A non-zero `init` names exactly one cause.
 `.init-report.json` when the environment does not exist yet — the path is
 always printed). `VAULTSPEC_INIT_JSON=1`, or `--json`, additionally streams
 NDJSON events on stdout while human prose stays on stderr. Exit codes come from
-`dev/exit_codes.py` and are identical fleet-wide:
+`dev/exit_codes.py`:
 
 | Code | Meaning                                                                  |
 | ---- | ------------------------------------------------------------------------ |

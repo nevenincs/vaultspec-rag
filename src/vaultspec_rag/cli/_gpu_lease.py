@@ -325,6 +325,9 @@ def _pause_refusal_message(result: dict[str, object] | None) -> str:
                 "the device yet. This clears on its own once that work drains; "
                 "retry the borrow, or wait for the service to report idle."
             )
+        named = _named_refusal(result)
+        if named is not None:
+            return named
         if quiesce["state"] != QuiesceState.QUIESCED.value:
             return (
                 "The service did not reach a quiesced state for the borrower "
@@ -334,7 +337,26 @@ def _pause_refusal_message(result: dict[str, object] | None) -> str:
             "The service reached a quiesced state but did not acknowledge the "
             "borrower's pause."
         )
-    return "The service did not acknowledge borrower pause."
+    return _named_refusal(result) or "The service did not acknowledge borrower pause."
+
+
+def _named_refusal(result: dict[str, object] | None) -> str | None:
+    """Return the sentence the service sent for a refusal it named, if any.
+
+    A service that reaches a quiesced state and still refuses has a reason,
+    and it is one this side cannot derive: a loan it could not record on an
+    anchor another account owns reads, from the snapshot alone, exactly like
+    an unacknowledged pause. The service already says which; repeating its
+    sentence is what puts the condition in front of the operator instead of
+    only in the daemon's log.
+    """
+    if result is None:
+        return None
+    error = result.get("error")
+    message = result.get("message")
+    if isinstance(error, str) and error and isinstance(message, str) and message:
+        return message
+    return None
 
 
 def _reject_unrecognised_quiesce(

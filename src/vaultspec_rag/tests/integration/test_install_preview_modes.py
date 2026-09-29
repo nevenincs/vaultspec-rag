@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -19,6 +18,7 @@ from ._install_helpers import (
     _RAG_MCP_REL,
     _install,
     _node_signature,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_file_bytes,
@@ -40,7 +40,7 @@ class TestInstallModeTransitions:
         signature = _node_signature(node)
         target_before = linked_target.read_bytes()
 
-        preview = uninstall_run(path=fresh_workspace, force=False)
+        preview = uninstall_run(path=fresh_workspace, dry_run=True)
         applied = uninstall_run(path=fresh_workspace, force=True)
 
         assert preview.mcp_sync_failed and applied.mcp_sync_failed
@@ -493,8 +493,8 @@ class TestInstallModeTransitions:
             ],
             catch_exceptions=False,
         )
-        assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        assert result.exit_code == 1, result.output
+        data = install_report(result.output)
         assert data["mcp_extra_action"] == "conflict"
         assert data["mcp_failed"] is True
         assert workspace_file_bytes(fresh_workspace) == before

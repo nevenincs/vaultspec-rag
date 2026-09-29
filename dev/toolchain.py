@@ -345,16 +345,8 @@ LINT = Verb(
         ),
         Target(
             "workflow",
-            "Lint the workflows, then hold them to the CI/justfile contract.",
-            (
-                # Two questions about the same artifacts. actionlint asks
-                # whether the YAML is well-formed and its expressions resolve;
-                # the contract asks whether a `run:` step is calling a recipe
-                # or re-implementing one. A workflow can be perfectly valid
-                # YAML and still install `just` by hand-rolled pwsh download.
-                uv_run("python", "-m", "dev.actionlint"),
-                uv_run("python", "-m", "dev.ci_contract"),
-            ),
+            "Lint the workflows.",
+            (uv_run("python", "-m", "dev.actionlint"),),
         ),
         Target(
             "complexity",

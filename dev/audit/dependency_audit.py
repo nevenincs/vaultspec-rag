@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 """Multi-ecosystem dependency vulnerability audit gate.
 
-This is the fleet's single dependency-audit implementation; the copy in every
-repository is identical. It is the ONE audit that GATES: a published advisory
-against a pinned version is a verdict, not a lead.
+This is this repository's dependency-audit implementation. It is the ONE
+audit that GATES: a published advisory against a pinned version is a verdict,
+not a lead.
 
 Why it does not simply shell out to ``uv audit``
 ------------------------------------------------
 ``uv audit`` is a preview feature that exits ``0`` even when it prints
-advisories, so three repositories in this fleet shipped a "GATE" that could not
-fail. Deriving a gate's verdict from a preview tool's text summary keeps the
-gate one release note away from breaking again, and it covers only Python --
-while these repositories also lock npm and cargo dependencies and vendor
-binaries.
+advisories, so a gate built by shelling out to it and trusting its exit code
+would be a "GATE" that could not fail. Deriving a gate's verdict from a
+preview tool's text summary keeps the gate one release note away from
+breaking again, and it covers only Python -- while this repository also locks
+npm and cargo dependencies and vendors binaries.
 
 So the gate resolves the pinned coordinates itself, out of the lockfiles that
 are actually committed, and asks OSV (the same database ``uv audit`` queries)
@@ -29,20 +29,20 @@ of anybody's exit code. Consequences that are deliberate:
 Exit codes
 ----------
 ``0`` clean, ``1`` findings (or an expired suppression), ``7`` the audit could
-not complete. Only ``0`` is a pass. The numbers are lane L9's fleet-wide
-contract (``dev/exit_codes.py``): ``OK``, ``FAILED``, and the "the scanner did
-not actually run" code -- used here on a GATING target because a gate that
-could not run must not be readable either as a pass or as a finding. The values
-are restated rather than imported so this file stays standalone and stdlib-only
-in every repository.
+not complete. Only ``0`` is a pass. The numbers are this repository's
+exit-code contract (``dev/exit_codes.py``): ``OK``, ``FAILED``, and the "the
+scanner did not actually run" code -- used here on a GATING target because a
+gate that could not run must not be readable either as a pass or as a
+finding. The values are restated rather than imported so this file stays
+standalone and stdlib-only.
 
 Output
 ------
 A human summary on stdout always. ``--json`` writes the machine-readable report
 to stdout instead; when ``VAULTSPEC_CI_REPORTS`` names a directory the same
 report is additionally written to ``<dir>/dependency-audit.json``. With the
-variable unset nothing is written anywhere, which preserves cadrumo's
-deliberate zero-artifact posture.
+variable unset nothing is written anywhere, which keeps the default a
+zero-artifact run.
 
 Self-test
 ---------
@@ -66,7 +66,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-#: See the module docstring: these mirror ``dev/exit_codes.py`` (lane L9).
+#: See the module docstring: these mirror ``dev/exit_codes.py``.
 EXIT_OK = 0
 EXIT_FINDINGS = 1
 EXIT_BROKEN = 7
@@ -329,8 +329,9 @@ def _open(url: str, body: bytes | None) -> dict[str, Any]:
     Speaks HTTPS directly rather than going through ``urllib.request``: the
     scheme is then fixed by construction -- no ``file:`` or custom scheme can
     ever be reached, and no linter suppression is needed to say so. That
-    matters because this file is the same file in five repositories with five
-    different rule sets.
+    matters because the guarantee then holds regardless of which lint rules
+    are configured, rather than depending on a suppression comment nobody
+    revisits.
     """
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname:
@@ -621,8 +622,8 @@ def write_artifact(report: Report, destination: str | None = None) -> Path | Non
 
     Returns:
         The path written, or ``None`` when no destination was named. With
-        ``VAULTSPEC_CI_REPORTS`` unset nothing is written anywhere: cadrumo
-        adopts the whole standard and simply never sets it.
+        ``VAULTSPEC_CI_REPORTS`` unset nothing is written anywhere, which
+        keeps a plain local run artifact-free by default.
     """
     if destination is None:
         destination = os.environ.get("VAULTSPEC_CI_REPORTS", "")

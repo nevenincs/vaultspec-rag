@@ -146,7 +146,7 @@ class TestInstallTransactionRollback:
                 ],
                 catch_exceptions=False,
             )
-            assert result.exit_code == 2, result.output
+            assert result.exit_code == 1, result.output
             assert workspace_inventory(fresh_workspace) == before
 
     @pytest.mark.parametrize("repair_flag", ["force", "upgrade"])

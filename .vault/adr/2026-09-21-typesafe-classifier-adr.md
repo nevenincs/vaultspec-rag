@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#typesafe-classifier'
 date: '2026-09-21'
-modified: '2026-09-23'
+modified: '2026-09-26'
 body_schema: 'body-v2'
-body_hash: 'sha256:9262b500ecf041e77c08413174094b8fa0b20ef73fbbfa11e5e077e762658308'
+body_hash: 'sha256:cb5d0b1bb10b48437bf2b76c1aee1645af1486db23d856b27e5540c5d804b0d5'
 related:
   - "[[2026-09-21-typesafe-classifier-research]]"
   - "[[2026-09-21-typesafe-classifier-reference]]"
@@ -42,6 +42,8 @@ The internal classification policy was refined under the user's subsequent expli
 Enrollment reads only the dedicated environment variable; no key in root-controlled configuration, request payloads or serialized diagnostics. A successful typed query evaluation establishes current usability. Authentication or payment rejection disables calls for that credential until rotation or process restart; transient failures use a bounded cooldown. No undocumented balance endpoint is assumed.
 
 All network work stays outside GPU and storage locks, with bounded request size, concurrency and elapsed budget. Full candidate content is required; unavailable or oversized evidence abstains instead of substituting a display snippet. Never log response bodies, credentials or source content.
+
+**Amendment note, 2026-09-26**: The enrollment boundary above is violated today. `search/_typesafe_transport.py:71,106` reads only `os.environ[EnvVar.TYPESAFE_API_KEY]`, matching the intent, but `cli/_core.py:37,39` calls unconditional, no-path `load_dotenv()` at module-import time; its default `find_dotenv()` walks from the CLI module's directory to the filesystem root with `override=False`, so a workspace `.env`, a source checkout's `.env`, or a `.env` above a uv tool directory can silently supply the key (and any other setting) to every CLI invocation and to the daemon it spawns, which inherits the resulting `os.environ` (`cli/_process.py:359`). The stdio MCP server does not import `cli._core` and is unaffected. The correction - dropping the unscoped `load_dotenv()` and resolving credentials through a shared gated reader - is tracked in vaultspec-core's proposed `2026-09-26-env-parity-adr`, which will own the shared resolution order, env-file rule, boolean vocabulary and install-flag contract.
 
 ## Implementation
 

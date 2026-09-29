@@ -183,8 +183,8 @@ def test_adaptive_watcher_policy_reads_environment_bounds() -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    ["0", "false", "False", "no", "off", ""],
-    ids=["zero", "false-lower", "false-title", "no", "off", "empty"],
+    ["0", "false", "False", "no", "off"],
+    ids=["zero", "false-lower", "false-title", "no", "off"],
 )
 def test_watch_enabled_env_falsey(raw: str) -> None:
     prev = set_env(EnvVar.WATCH_ENABLED, raw)
@@ -194,6 +194,20 @@ def test_watch_enabled_env_falsey(raw: str) -> None:
         value = cfg.watch_enabled
         assert value is False
         assert isinstance(value, bool)
+    finally:
+        restore_env(EnvVar.WATCH_ENABLED, prev)
+        reset_config()
+
+
+@pytest.mark.parametrize("raw", ["", "   "], ids=["empty", "whitespace"])
+def test_watch_enabled_env_blank_is_unset(raw: str) -> None:
+    # Blank is how a shell spells a missed expansion, not how it spells off.
+    # Reading it as off would silently turn the watcher into a pull-only
+    # service for anyone whose deployment template exports an unfilled knob.
+    prev = set_env(EnvVar.WATCH_ENABLED, raw)
+    try:
+        reset_config()
+        assert get_config().watch_enabled is True
     finally:
         restore_env(EnvVar.WATCH_ENABLED, prev)
         reset_config()

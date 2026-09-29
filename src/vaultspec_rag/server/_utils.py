@@ -151,9 +151,9 @@ def _default_root() -> Path:
             "the multi-tenant service has no default project"
         )
         raise ProjectRootRequiredError(msg)
-    from .._named_root import env_named_root
+    from .._named_root import named_root
 
-    return _validate_vault_root((env_named_root() or Path.cwd()).resolve())
+    return _validate_vault_root((named_root().path or Path.cwd()).resolve())
 
 
 def _is_sensitive_path(rel_path: str) -> bool:

@@ -192,19 +192,6 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     terminalreporter.write_line(f"fsync: {total} call(s) suppressed this session.")
 
 
-def _load_dotenv_if_available() -> None:
-    """Load .env file from project root if python-dotenv is available."""
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
-
-_load_dotenv_if_available()
-
-
 def _capture_host_provisioned_qdrant() -> tuple[Path, Path] | None:
     """Capture the real managed Qdrant install before pytest redirects it.
 
@@ -516,9 +503,8 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
     if tiers & (GPU_MARKERS | {SUBPROCESS_GPU}) and not _has_hf_token():
         pytest.exit(
             "Hugging Face authentication is required for GPU "
-            "tests (gated model naver/splade-v3). Set HF_TOKEN, "
-            "put it in .env, or run `hf auth login` before running "
-            "tests.",
+            "tests (gated model naver/splade-v3). Set HF_TOKEN "
+            "or run `hf auth login` before running tests.",
             returncode=1,
         )
     if not tiers & SLOW_TIERS:

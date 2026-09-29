@@ -9,13 +9,10 @@ platform it lands on, and what its recipes FINALLY run.
 Each of those is a place a naive reader gets it wrong, which is why they are
 answered once here:
 
-- **The matrix hides the runner.** A job whose ``runs-on`` is
-  ``${{ matrix.runner }}`` is invisible to anything grepping for
-  ``self-hosted``, and the matrix jobs are exactly the long-running ones - the
-  binary builds and the acquisition legs - so a naive check misses precisely
-  the jobs whose six-hour default ceiling costs the most.
+- **The matrix hides the platform.** A job whose ``runs-on`` is
+  ``${{ matrix.runner }}`` names no platform until its matrix is resolved.
 
-- **The event decides who is running.** Half this fleet's jobs carry an ``if:``
+- **The event decides who is running.** Half these jobs carry an ``if:``
   on ``github.event_name``, so two jobs naming the same recipe are only
   duplicating work when some ONE event reaches both. Comparing them without
   that partition reports every deliberate pull-request/push split as a repeat.
@@ -50,7 +47,7 @@ from dev.ci_names import MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 __all__ = [
     "FALSE",
@@ -59,6 +56,7 @@ __all__ = [
     "Job",
     "Tri",
     "document",
+    "documents",
     "evaluate",
     "final_commands",
     "load_jobs",
@@ -66,6 +64,7 @@ __all__ = [
     "recipe_bodies",
     "recipe_groups",
     "repository_root",
+    "triggers",
     "workflow_events",
     "workflow_names",
 ]
@@ -161,14 +160,6 @@ class Job:
             )
         return frozenset(found or {"unknown"})
 
-    @property
-    def self_hosted(self) -> bool:
-        """Whether any resolved runner draws from the self-hosted fleet."""
-        return any(
-            "self-hosted" in {label.lower() for label in labels}
-            for labels in self.runners
-        )
-
     def recipes(self) -> tuple[tuple[str, str], ...]:
         """Return ``(step name, recipe)`` for every ``just <recipe>`` step."""
         return tuple((name, recipe) for name, recipe, _ in self._recipe_steps())
@@ -248,21 +239,30 @@ def _document(path: Path) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def workflow_events(workflow: str) -> tuple[str, ...]:
-    """Return the event names *workflow* triggers on.
+def documents() -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Return ``(file name, parsed mapping)`` for every workflow, sorted."""
+    return tuple((path.name, _document(path)) for path in _workflow_files())
+
+
+def triggers(document: Mapping[Any, Any]) -> object:
+    """Return a parsed workflow's ``on:`` value.
 
     ``on`` is the YAML 1.1 boolean ``True`` once parsed, which is the single
     most common way a workflow reader silently finds nothing.
     """
+    return document.get("on", document.get(True))
+
+
+def workflow_events(workflow: str) -> tuple[str, ...]:
+    """Return the event names *workflow* triggers on."""
     for path in _workflow_files():
         if path.name != workflow:
             continue
-        document = _document(path)
-        triggers = document.get("on", document.get(True))
-        if isinstance(triggers, dict | list):
-            return tuple(str(key) for key in triggers)
-        if isinstance(triggers, str):
-            return (triggers,)
+        declared = triggers(_document(path))
+        if isinstance(declared, dict | list):
+            return tuple(str(key) for key in declared)
+        if isinstance(declared, str):
+            return (declared,)
     return ()
 
 
@@ -277,9 +277,9 @@ def workflow_names() -> tuple[tuple[str, str], ...]:
 def _matrix_legs(job: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     """Return one variable mapping per matrix leg, or a single empty leg.
 
-    Handles both matrix shapes, because ``runs-on`` is expressed through each
-    in this fleet: an ``include:`` list of complete mappings (the binary
-    builds), and plain key/value axes (the interpreter matrix).
+    Handles both matrix shapes the workflows use: an ``include:`` list of
+    complete mappings (the binary builds), and plain key/value axes (the
+    interpreter matrix).
     """
     matrix = (job.get("strategy") or {}).get("matrix")
     if not isinstance(matrix, dict):
@@ -309,9 +309,7 @@ def _resolve_runs_on(raw: Any, leg: dict[str, Any]) -> tuple[str, ...]:
     """Return the label tuple *raw* names once *leg*'s matrix values are in.
 
     A ``runs-on`` naming ``${{ matrix.runner }}`` is the case this exists for:
-    unresolved, it is one opaque string that matches no platform and no
-    ``self-hosted`` label, so the longest-running jobs in the fleet read as
-    jobs with no runner at all.
+    unresolved, it is one opaque string that matches no platform.
     """
     if isinstance(raw, str):
         reference = _MATRIX_REFERENCE.fullmatch(raw.strip())
@@ -446,7 +444,7 @@ def _or_values(left: object, right: object) -> object:
 
 
 class _Parser:
-    """A recursive-descent reader for the expression subset this fleet uses.
+    """A recursive-descent reader for the expression subset the workflows use.
 
     Only what the workflows actually contain: string and boolean literals,
     dotted context references, ``==``/``!=``/``&&``/``||``/``!``, parentheses
@@ -454,7 +452,7 @@ class _Parser:
     reads as MAYBE.
     """
 
-    def __init__(self, tokens: Sequence[str], context: dict[str, str]) -> None:
+    def __init__(self, tokens: Sequence[str], context: Mapping[str, object]) -> None:
         """Read *tokens*, resolving context references out of *context*."""
         self._tokens = list(tokens)
         self._index = 0
@@ -542,18 +540,22 @@ class _Parser:
                     return
 
 
-def evaluate(expression: str, event: str) -> Tri:
+def evaluate(
+    expression: str, event: str, bindings: Mapping[str, object] | None = None
+) -> Tri:
     """Return whether *expression* holds for *event*.
 
-    Only ``github.event_name`` is bound. Everything else - a dispatch input, a
-    ref, a payload predicate - is deliberately left unknown, so a condition
-    resting on one resolves to MAYBE and its job stays visible to the guards.
+    ``github.event_name`` is bound, plus any context reference *bindings*
+    names. Everything else - a dispatch input, a ref, a payload predicate - is
+    deliberately left unknown, so a condition resting on one resolves to MAYBE
+    and its job stays visible to the guards.
     """
     inner = expression.strip()
     wrapped = re.fullmatch(r"\$\{\{(.*)\}\}", inner, flags=re.DOTALL)
     if wrapped is not None:
         inner = wrapped.group(1)
-    value = _Parser(_tokenize(inner), {"github.event_name": event}).parse()
+    context = {**(bindings or {}), "github.event_name": event}
+    value = _Parser(_tokenize(inner), context).parse()
     if value is _UNKNOWN:
         return MAYBE
     return TRUE if _truthy(value) else FALSE

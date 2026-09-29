@@ -8,7 +8,6 @@ repair is attempted - not to fail a health check.
 from __future__ import annotations
 
 import subprocess
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -81,7 +80,6 @@ def test_the_snapshot_never_publishes_a_command_line(
     if not interpreter.exists():
         interpreter = root / "bin" / "python"
 
-    monkeypatch.setattr(sys, "prefix", str(root))
     # The production budget is sized for an HTTP route, and a scan walking a
     # thousand processes does not fit inside it on a runner hosting a dozen
     # parallel workers. What this test proves is the SHAPE of the snapshot, so
@@ -97,10 +95,10 @@ def test_the_snapshot_never_publishes_a_command_line(
         started = time.monotonic()
         deadline = started + _WAIT_SECONDS
         attempts = 1
-        snapshot = _environment_holders_readiness()
+        snapshot = _environment_holders_readiness(root)
         while time.monotonic() < deadline and not snapshot.held:
             time.sleep(_POLL_SECONDS)
-            snapshot = _environment_holders_readiness()
+            snapshot = _environment_holders_readiness(root)
             attempts += 1
         waited = time.monotonic() - started
     finally:
@@ -115,10 +113,14 @@ def test_the_snapshot_never_publishes_a_command_line(
         f"{attempts} scans over {waited:.1f}s (certain={snapshot.certain}, "
         f"scanned={snapshot.scanned})"
     )
-    assert any(holder["pid"] == child.pid for holder in snapshot.holders)
+    assert any(
+        child.pid in {holder["pid"], holder["launcher_pid"]}
+        for holder in snapshot.holders
+    )
     assert all("cmdline" not in holder for holder in snapshot.holders)
     assert all(
-        set(holder) == {"pid", "relation", "image"} for holder in snapshot.holders
+        set(holder) == {"pid", "launcher_pid", "relation", "role", "port", "image"}
+        for holder in snapshot.holders
     )
 
 

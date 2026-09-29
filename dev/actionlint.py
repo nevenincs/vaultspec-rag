@@ -1,39 +1,27 @@
-"""THE canonical actionlint provisioner. One implementation, five repos.
+"""The actionlint provisioner for this repository's workflow lint gate.
 
 Deployed, not called: same constraint as the CI contract checker and the
-runner preflight - their source repository is private, every consumer is
-public.
+runner preflight - it has no import-time dependency on anything the project
+installs, so it can run before `uv sync` has done anything.
 
-WHY THIS EXISTS. The fleet acquired actionlint four different ways, one per
-repo, and each way was wrong in its own direction:
+WHY THIS EXISTS. Piping a `curl` of the upstream install script to `bash`
+gates workflows on whatever the script happens to download that day: unpinned
+and unverified. Running actionlint through `uses: docker://rhysd/actionlint`
+makes the gate depend on a daemon being available at the moment it runs, and a
+lint gate that reddens for a reason unrelated to the workflow it is checking
+is a gate people learn to ignore. Pinning the version and a verified digest
+per platform, as reviewed code constants, removes both failure modes: the
+binary a developer runs before pushing is the exact binary CI runs, and a
+platform this file does not have a digest for is refused rather than guessed
+at.
 
-  vaultspec-core        `curl` the upstream install script, pipe it to bash,
-                        run the result. Unpinned and unverified: whatever the
-                        script downloads today is what gates the workflows.
-  vaultspec-rag         `bash <(curl -sSfL .../download-actionlint.bash)`.
-                        The same, with process substitution.
-  vaultspec-dashboard   a pinned per-architecture tarball with a verified
-                        digest - correct, and 30 lines of YAML nobody can run
-                        before pushing.
-  cadrumo               a second copy of the dashboard's block, with its own
-                        copy of the digests, already at a different version.
-  vaultspec-a2a         `uses: docker://rhysd/actionlint` - a daemon dependency
-                        on a fleet where a lint gate that reddens because
-                        nobody opened Docker Desktop is a gate people learn to
-                        ignore.
-
-The dashboard's approach is the right one and is what this file generalises,
-with the property that made it hard to reuse removed: it now runs from a
-recipe, so the gate a developer runs before pushing is the gate CI runs.
-
-THE ARCHITECTURE PIN IS THE POINT, not tidiness. The dashboard block reached
-its current shape after naming `linux_amd64.tar.gz` unconditionally with a
-single digest. On an ARM64 runner that does not fail - it PASSES, because the
-downloaded file really is the amd64 archive the digest names - and then dies
-at `Exec format error` one line later. A verification step that reports
-success while handing back an unusable binary is worse than none, because it
-reads as assurance. So the digest is per platform, and an unlisted platform is
-refused rather than guessed at.
+THE ARCHITECTURE PIN IS THE POINT, not tidiness. Naming a single archive
+unconditionally with one digest does not fail on a platform the archive was
+not built for - it PASSES, because the downloaded file really is the archive
+the digest names - and then dies at `Exec format error` one line later. A
+verification step that reports success while handing back an unusable binary
+is worse than none, because it reads as assurance. So the digest is per
+platform, and an unlisted platform is refused rather than guessed at.
 
 Stdlib only, so it behaves identically on every platform and needs nothing
 installed to install something.
@@ -282,9 +270,10 @@ def main(argv: list[str] | None = None) -> int:
     # whether a runner happens to carry them. actionlint silently skips a
     # missing external linter, so leaving them implicit means the gate checks
     # a different set of things on every machine and nobody can tell which.
-    # Runner labels are provisioned by infrastructure outside this codebase.
-    # Keep actionlint's workflow parsing and all code-owned checks without
-    # turning this project into a registry for fleet topology.
+    # Runner labels used in workflow YAML are not declared anywhere in this
+    # codebase, so actionlint's own label registry cannot know them; the
+    # ignore below keeps actionlint's workflow parsing and all code-owned
+    # checks without maintaining a duplicate label list here.
     command = [
         str(binary),
         "-no-color",

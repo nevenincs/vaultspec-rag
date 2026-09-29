@@ -1,11 +1,10 @@
 """The dependency audit is the one audit that GATES, so prove it can fail.
 
-Three repositories in this fleet shipped a dependency "GATE" built on a bare
-``uv audit``, which exits 0 even when it prints advisories -- so none of them
-could ever fail. These tests pin the replacement's verdict as a pure function of
-the finding set, with no network call: a finding fails, an expired suppression
-fails, a live suppression passes, and an audit that could not run is never a
-pass.
+A dependency "GATE" built on a bare ``uv audit`` call would exit 0 even when
+it prints advisories, so it could never actually fail. These tests pin this
+audit's verdict as a pure function of the finding set, with no network call: a
+finding fails, an expired suppression fails, a live suppression passes, and an
+audit that could not run is never a pass.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from dev.audit import dependency_audit as da
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: Every repository in the fleet tiers its tests; this gate is a pure unit.
+#: This repository tiers its tests; this gate is a pure unit.
 pytestmark = pytest.mark.unit
 
 TODAY = dt.date(2026, 9, 8)
@@ -114,7 +113,7 @@ def test_every_ecosystem_with_a_lockfile_is_scanned() -> None:
 
 
 def test_no_artifact_without_a_destination() -> None:
-    """cadrumo's zero-artifact posture: no destination, nothing written.
+    """The default posture is zero-artifact: no destination, nothing written.
 
     The destination is passed as a value rather than patched into the
     environment, so this asserts the behaviour itself and not the plumbing

@@ -81,31 +81,29 @@ sections cover what comes after.
 
 Install the host once, as a standalone tool; it serves every repository on the machine.
 The `[gpu]` extra adds PyTorch and the model libraries, and `[mcp]` adds the MCP adapter
-that AI assistants launch. The Windows and Linux commands pin the CUDA build of PyTorch,
-so later tool upgrades keep it.
+that AI assistants launch. The Windows and Linux commands record the CUDA package index
+in the tool's installation receipt, so `uv tool upgrade` keeps resolving the GPU build.
 
-Windows x64:
-
-```powershell
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
-```
-
-Linux x86_64 (glibc 2.28 or newer):
+Windows x64 and Linux x86_64 or aarch64 (glibc 2.28 or newer):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl"
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
 ```
 
-Apple silicon macOS:
+Apple silicon macOS, which uses Metal rather than CUDA:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-For other Python versions or Linux architectures, see
-[GPU wheel selection](docs/installation.md#pin-the-gpu-build). If uv reports that its
-executables directory isn't on your `PATH`, run `uv tool update-shell` and open a new
-terminal.
+Upgrade later with `uv tool upgrade vaultspec-rag`, then restart the service so it runs
+the new release; if uv reports an entry point it could not overwrite because the file is
+in use, the release is installed and the running launcher keeps working. An installation
+made without the two index options resolves a CPU-only PyTorch at its next upgrade;
+`vaultspec-rag server doctor` reports that and prints the two commands that repair it in
+place, which [pin the GPU build](docs/installation.md#pin-the-gpu-build) describes. If
+uv reports that its executables directory isn't on your `PATH`, run
+`uv tool update-shell` and open a new terminal.
 
 By default, search needs access to the sparse model. If you can't accept its licence,
 set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in your user environment and skip to the

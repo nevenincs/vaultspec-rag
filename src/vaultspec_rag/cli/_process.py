@@ -28,7 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack, cast
 
+from vaultspec_core.config import VAULTSPEC_TARGET_DIR, child_environment
+
 from .._process_probe import (
+    SERVER_LAUNCH_MARKER,
+    argv_contains,
+    argv_of,
     bounded_call,
     iter_process_info,
     pid_alive,
@@ -38,7 +43,9 @@ from .._process_probe import (
     pid_listens_on_loopback_port,
     pid_matches_start_time,
     pid_start_time,
+    pid_terminated,
     send_signal,
+    wait_for_exit,
 )
 from .._win32 import (
     WIN_CREATE_BREAKAWAY_FROM_JOB,
@@ -46,6 +53,7 @@ from .._win32 import (
     WIN_CREATE_NO_WINDOW,
     WIN_DETACHED_PROCESS,
 )
+from ..config._credentials import credential_assignments
 from ..config._types import EnvVar
 from ..serviceclient._transport import _try_http_health
 from ._core import logger
@@ -303,6 +311,7 @@ class _ServiceChildEnvOptions(TypedDict, total=False):
     qdrant: bool | None
     local_only: bool | None
     preprocess_mode: Literal["off"] | None
+    root: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,13 +322,21 @@ class _ServiceChildEnvRequest:
     qdrant: bool | None = None
     local_only: bool | None = None
     preprocess_mode: Literal["off"] | None = None
+    root: Path | None = None
 
 
 def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]:
     """Build the environment for the detached daemon process.
 
     The daemon inherits configuration only through the environment (it
-    parses no argv beyond ``--port``), so watcher flags passed to
+    parses no argv beyond ``--port``), which is also why the credentials it
+    may need are resolved HERE and assigned into that environment. The daemon
+    serves every root at once, so it must never open a workspace's own ``.env``
+    itself; this process has one resolved workspace and is the only one
+    entitled to read it. A key the session already exported is inherited
+    unchanged, and assigning the resolved value over it is a no-op.
+
+    Watcher flags passed to
     ``service start`` are translated into ``VAULTSPEC_RAG_WATCH*`` here,
     the qdrant server-mode flag into ``VAULTSPEC_RAG_QDRANT_SERVER``, the
     local-only opt-out into ``VAULTSPEC_RAG_LOCAL_ONLY`` so the daemon's
@@ -339,6 +356,9 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
         preprocess_mode: ``"off"`` forwards ``VAULTSPEC_RAG_PREPROCESS=off``.
             ``None`` leaves it unset so an operator-set preprocess env
             survives.
+        root: The workspace this command line resolved, whose ``.env`` may
+            supply a credential under the framework's gate. ``None`` resolves
+            nothing, leaving the inherited environment as the only source.
 
     Returns:
         The child-process environment mapping.
@@ -351,12 +371,15 @@ def _build_service_child_env(request: _ServiceChildEnvRequest) -> dict[str, str]
         request.local_only,
         request.preprocess_mode,
     )
-    # Strip VAULTSPEC_RAG_ROOT from the daemon env - the HTTP service is
-    # multi-tenant and must not fall back to a baked-in project root.
+    # Strip every name that could pin a root - this package's own and the
+    # framework name behind it, which the same chain reads. The HTTP service
+    # is multi-tenant and must not fall back to a baked-in project: leaving
+    # either one in would answer one root's question about another.
     # Case-insensitive compare: Windows os.environ stores original case
     # but is case-insensitive for lookups.
-    _excluded = str(EnvVar.RAG_ROOT).upper()
-    env = {k: v for k, v in os.environ.items() if k.upper() != _excluded}
+    _excluded = {EnvVar.RAG_ROOT.value.upper(), VAULTSPEC_TARGET_DIR.env_name.upper()}
+    inherited = child_environment(*credential_assignments(request.root))
+    env = {k: v for k, v in inherited.items() if k.upper() not in _excluded}
     if watch is not None:
         env[EnvVar.WATCH_ENABLED.value] = "1" if watch else "0"
     if watch_debounce_ms is not None:
@@ -477,6 +500,7 @@ def _spawn_service(
                 qdrant=options.get("qdrant"),
                 local_only=options.get("local_only"),
                 preprocess_mode=options.get("preprocess_mode"),
+                root=options.get("root"),
             ),
             options.get("timeout"),
             float(options.get("cleanup_timeout", 15.0)),
@@ -524,8 +548,7 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
     interpreter = _resolve_daemon_interpreter()
     cmd = [
         interpreter,
-        "-m",
-        "vaultspec_rag.server",
+        *SERVER_LAUNCH_MARKER,
         "--port",
         str(port),
         "--launch-token",
@@ -807,20 +830,9 @@ def _is_service_command(
     launch_token: str,
 ) -> bool:
     """Return whether argv carries this exact resident-server launch witness."""
-    if not isinstance(raw_cmdline, list):
-        return False
-    argv = [str(item) for item in cast("list[object]", raw_cmdline)]
-    expected = [
-        "-m",
-        "vaultspec_rag.server",
-        "--port",
-        str(port),
-        "--launch-token",
-        launch_token,
-    ]
-    return any(
-        argv[index : index + len(expected)] == expected
-        for index in range(len(argv) - len(expected) + 1)
+    return argv_contains(
+        argv_of(raw_cmdline),
+        (*SERVER_LAUNCH_MARKER, "--port", str(port), "--launch-token", launch_token),
     )
 
 
@@ -951,10 +963,10 @@ def _terminate_pid(
     # its zombie record as a live process that still needs SIGKILL.
     remaining = max(0.0, deadline - time.monotonic())
     graceful_wait = min(graceful_drain, remaining / 2.0)
-    if _wait_for_child_exit(pid, timeout=graceful_wait):
+    if wait_for_exit(pid, timeout=graceful_wait):
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return TerminationResult(alive=False, signal_denied=False)
-    if pid_alive(pid):
+    if not pid_terminated(pid):
         if sys.platform == "win32":
             escalation = signal.SIGTERM  # TerminateProcess on Windows
         else:
@@ -964,30 +976,13 @@ def _terminate_pid(
         # failed for an unrelated reason (a console event that could never
         # reach a detached daemon).
         denied = send_signal(pid, escalation) or denied
-        _wait_for_child_exit(
+        wait_for_exit(
             pid,
             timeout=max(0.0, deadline - time.monotonic()),
         )
     _reap_owned_qdrant(qdrant_identity, deadline=deadline)
-    alive = pid_alive(pid)
+    alive = not pid_terminated(pid)
     return TerminationResult(alive=alive, signal_denied=denied and alive)
-
-
-def _wait_for_child_exit(pid: int, *, timeout: float) -> bool:
-    """Wait boundedly for process exit, reaping a POSIX child when applicable."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if sys.platform != "win32":
-            try:
-                waited, _status = os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                waited = 0
-            if waited == pid:
-                return True
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return False
 
 
 def _owned_qdrant_identity(

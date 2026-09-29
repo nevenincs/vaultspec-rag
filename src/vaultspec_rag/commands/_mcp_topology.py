@@ -29,6 +29,7 @@ from .._workspace_layout import (
     workspace_directories,
 )
 from ..builtins import list_builtins
+from ..config._types import EnvVar
 
 #: What an operator is told when the required-MCP topology refuses a run.
 #:
@@ -876,13 +877,13 @@ def _restore_junction(path: Path, target: str) -> None:
         powershell_target = target[4:]
     environment = {
         **os.environ,
-        "VAULTSPEC_JUNCTION_PATH": str(path),
-        "VAULTSPEC_JUNCTION_TARGET": powershell_target,
+        EnvVar.RAG_JUNCTION_PATH.value: str(path),
+        EnvVar.RAG_JUNCTION_TARGET.value: powershell_target,
     }
     command = (
         "$ErrorActionPreference = 'Stop'; "
-        "New-Item -ItemType Junction -Path $env:VAULTSPEC_JUNCTION_PATH "
-        "-Target $env:VAULTSPEC_JUNCTION_TARGET | Out-Null"
+        f"New-Item -ItemType Junction -Path $env:{EnvVar.RAG_JUNCTION_PATH.value} "
+        f"-Target $env:{EnvVar.RAG_JUNCTION_TARGET.value} | Out-Null"
     )
     completed = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],

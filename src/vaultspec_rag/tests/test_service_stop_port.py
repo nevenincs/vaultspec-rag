@@ -22,6 +22,7 @@ import pytest
 from typer.testing import CliRunner
 
 from .._machine_lock import probe_machine_lock
+from .._process_probe import pid_terminated
 from ..cli import app
 from ..cli._service_status import _write_service_status
 from ..cli._service_stop import (
@@ -203,39 +204,9 @@ def _pair_of(launcher_pid: int, matched: dict[int, int]) -> set[int]:
     }
 
 
-def _pid_terminated(pid: int) -> bool:
-    """True if *pid* is gone or a POSIX zombie (dead, awaiting its parent's reap).
-
-    The reap runs out-of-process and is not the witnesses' parent, so on POSIX a
-    force-killed orphan lingers as a zombie until this test (its parent) waits on
-    it. A zombie is terminated - it holds no port, lock, or GPU - so 'reaped'
-    means gone-or-zombie, matching the production reap's own liveness check.
-    Windows has no zombie state, so this reduces to ``not pid_exists`` there.
-    """
-    if not psutil.pid_exists(pid):
-        return True
-    try:
-        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return True
-
-
-def _pid_live(pid: int) -> bool:
-    """True only if *pid* is a live process - NOT gone and NOT a zombie.
-
-    A spared singleton must be genuinely alive; a zombie would pass a bare
-    ``pid_exists``, so a predicate mutation that wrongly kills the singleton would
-    read as spared. Checking non-zombie liveness keeps the spare assertion honest.
-    """
-    try:
-        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return False
-
-
 def _await_all_terminated(pids: set[int]) -> None:
     for _ in range(100):
-        if all(_pid_terminated(pid) for pid in pids):
+        if all(pid_terminated(pid) for pid in pids):
             return
         time.sleep(0.1)
 
@@ -388,14 +359,14 @@ class TestOrphanReapSafety:
             )
 
             _await_all_terminated(orphan_pair)
-            assert all(_pid_terminated(pid) for pid in orphan_pair), (
+            assert all(pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(_pid_live(pid) for pid in singleton_pair), (
+            assert all(not pid_terminated(pid) for pid in singleton_pair), (
                 f"the singleton pair {singleton_pair} (pointer plus shim) "
                 "must be spared"
             )
-            assert _pid_live(foreign.pid), (
+            assert not pid_terminated(foreign.pid), (
                 "a daemon launched for a different port must be spared"
             )
         finally:
@@ -441,10 +412,10 @@ class TestOrphanReapSafety:
             assert envelope["ok"] is True, envelope
 
             _await_all_terminated(orphan_pair)
-            assert all(_pid_terminated(pid) for pid in orphan_pair), (
+            assert all(pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(_pid_live(pid) for pid in singleton_pair), (
+            assert all(not pid_terminated(pid) for pid in singleton_pair), (
                 f"the singleton pair {singleton_pair} (worker + shim launcher) "
                 "must be spared"
             )
@@ -488,10 +459,10 @@ class TestOrphanReapSafety:
             assert envelope["ok"] is True, envelope
 
             _await_all_terminated(orphan_pair)
-            assert all(_pid_terminated(pid) for pid in orphan_pair), (
+            assert all(pid_terminated(pid) for pid in orphan_pair), (
                 f"the whole orphan pair {orphan_pair} must be reaped"
             )
-            assert all(_pid_live(pid) for pid in singleton_pair), (
+            assert all(not pid_terminated(pid) for pid in singleton_pair), (
                 f"the lock-holding singleton pair {singleton_pair} must be "
                 "spared by the machine-lock anchor alone"
             )

@@ -206,7 +206,7 @@ def _startup_load_multiplier() -> float:
     """Stretch the default startup envelope when the host is oversubscribed.
 
     Returns a factor in ``[1.0, _MAX_STARTUP_LOAD_MULTIPLIER]`` from the
-    one-minute load average per logical core, so a busy fleet grants a
+    one-minute load average per logical core, so a busy host grants a
     proportionally longer whole-startup hang-guard instead of racing a fixed
     default. It only ever grows the envelope (floor 1.0), so it can make a
     previously-passing startup more tolerant, never less; any probe failure

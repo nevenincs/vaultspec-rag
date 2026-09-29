@@ -341,6 +341,14 @@ class TestNoStructurallyIdenticalFunctions:
         "which is the enumeration these properties exist to remove."
     )
 
+    _WIRE_PROJECTION = (
+        "Two records projecting their own fields into their own wire dict. "
+        "The shape they share is `return {key: self.field}`, and the whole "
+        "content is which fields each publishes - sharing it would mean one "
+        "projection keyed by every record's attribute names, which trades a "
+        "checked reference for a string."
+    )
+
     _ENUM_LABEL_TABLE = (
         "An enum's own label table: `return {member: sentence}[self]`. The "
         "whole content is which sentence belongs to which member, so sharing "
@@ -384,17 +392,27 @@ class TestNoStructurallyIdenticalFunctions:
 
     _ALLOWED_SHAPES: ClassVar[dict[tuple[str, ...], str]] = {
         (
+            "_gpu_owner.py:permits_compute",
             "indexer/_publication_proof.py:is_open",
             "job_models.py:is_live_attempt",
             "job_models.py:is_retryable",
             "operator_state/_installation.py:fixed_by_torch_reinstall",
         ): _NAMED_SUBSET,
         (
-            "cli/_gpu_errors.py:label",
             "operator_state/_features.py:label",
+            "operator_state/_holders.py:label",
             "operator_state/_installation.py:label",
             "operator_state/_service.py:label",
+            "operator_state/_topology.py:label",
         ): _ENUM_LABEL_TABLE,
+        (
+            "operator_state/_features.py:label",
+            "operator_state/_provisioning.py:label",
+        ): _ENUM_LABEL_TABLE,
+        (
+            "_gpu_admission.py:device_load_wire",
+            "_readiness.py:to_dict",
+        ): _WIRE_PROJECTION,
         (
             "indexer/_incremental_commit.py:__init__",
             "server/_stdio_lifetime.py:__init__",
@@ -443,6 +461,10 @@ class TestNoStructurallyIdenticalFunctions:
         (
             "watcher_runtime.py:dirty_paths",
             "watcher_runtime.py:pending_count",
+        ): _SMALL_GUARD,
+        (
+            "commands/_install.py:install_run",
+            "commands/_uninstall.py:uninstall_run",
         ): _SMALL_GUARD,
         (
             "commands/_provision.py:to_dict",

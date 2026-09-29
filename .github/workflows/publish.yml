@@ -32,15 +32,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The dispatch input is free text from anyone who can run a workflow, and
-  # every later job runs on the self-hosted fleet. So the tag is validated and
-  # resolved to its commit HERE, on a hosted runner, and only that validated
-  # pair reaches the fleet. The public remote is read without a checkout, so
-  # nothing from the requested ref executes before it is proven a release tag.
   resolve-target:
     name: "Check: Release commit (Linux)"
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
       tag: ${{ steps.commit.outputs.tag }}
@@ -122,10 +117,6 @@ jobs:
     needs: hold-release
     outputs:
       sha: ${{ needs.hold-release.outputs.sha }}
-    # Release artifacts build on the self-hosted fleet, on the same runners
-    # CI's lint and test jobs use. The wheel is therefore built on a machine
-    # that also runs agent sessions and a live service; the build's own
-    # isolation is what keeps that honest, not the choice of runner.
     runs-on: [self-hosted, Linux, X64, build]
     env:
       # Building the sdist and wheel imports nothing from the local inference
@@ -229,8 +220,7 @@ jobs:
     needs: [resolve-target, smoke-test]
     outputs:
       sha: ${{ needs.smoke-test.outputs.sha }}
-    # On the fleet, like every other job in this workflow. It needs `gh` and
-    # `sha256sum`, both of which the Linux build runners provide.
+    # Needs `gh` and `sha256sum`.
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
       contents: write
@@ -332,8 +322,6 @@ jobs:
     timeout-minutes: 15
     needs: resolve-target
     if: ${{ inputs.stage == 'package-index' }}
-    # OIDC trusted publishing works from self-hosted runners: the id-token
-    # comes from GitHub's OIDC provider, not from the runner host.
     runs-on: [self-hosted, Linux, X64, build]
     environment:
       name: pypi
@@ -366,7 +354,7 @@ jobs:
           version="${TAG#vaultspec-rag-v}"
           wheel="vaultspec_rag-${version}-py3-none-any.whl"
           sdist="vaultspec_rag-${version}.tar.gz"
-          # RUNNER_TEMP is emptied per job; a reused fleet workspace is not.
+          # RUNNER_TEMP is emptied per job; the workspace is not.
           work="${RUNNER_TEMP}/package-index"
           mkdir -p "${work}/dist"
           gh release download "${TAG}" --repo "$GITHUB_REPOSITORY" \

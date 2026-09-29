@@ -23,6 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from .._store_models import DocumentLocatorKind
+from ..config._types import EnvVar
 
 __all__ = [
     "PREPROCESS_INVOCATION_ENV",
@@ -42,7 +43,7 @@ __all__ = [
 #: still constructs, which for v1 is every valid document.
 SUPPORTED_SCHEMA_VERSION = 1
 PREPROCESS_INVOCATION_SCHEMA_VERSION = 1
-PREPROCESS_INVOCATION_ENV = "VAULTSPEC_PREPROCESS_INVOCATION"
+PREPROCESS_INVOCATION_ENV = EnvVar.PREPROCESS_INVOCATION.value
 
 PreprocessInvocationMode = Literal["single", "batch"]
 

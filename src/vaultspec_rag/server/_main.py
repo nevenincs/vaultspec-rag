@@ -152,8 +152,33 @@ def _resolve_daemon_argv() -> tuple[int | None, int | None, bool]:
     return args.port, args.parent_pid, args.read_only
 
 
+def _refuse_unusable_server_environment() -> None:
+    """Stop the process before any output if the environment is unusable.
+
+    The daemon and the stdio MCP transport share the CLI's refusal contract
+    (:func:`~vaultspec_rag.config._settings.collect_environment_problems`)
+    but not its rendering: there is no Typer context here, and stdio's
+    stdout is the MCP protocol channel itself, so a refusal must reach
+    stderr only, never stdout. Runs before ``configure_logging`` so a bad
+    log-level name is reported as one plain line here instead of raising a
+    bare ``ConfigurationError`` from inside ``resolve_log_level`` mid-setup.
+    """
+    import sys
+
+    from ..config._settings import collect_environment_problems
+
+    problems = collect_environment_problems()
+    if not problems:
+        return
+    for problem in problems:
+        print(f"Error: {problem}", file=sys.stderr)
+    sys.exit(1)
+
+
 def _run_http_daemon(port: int) -> None:
     """Run the standalone HTTP daemon and enforce its shutdown contract."""
+    _refuse_unusable_server_environment()
+
     import uvicorn
 
     from ..config._settings import get_config
@@ -166,7 +191,12 @@ def _run_http_daemon(port: int) -> None:
 
     # Install ordering (CRITICAL): argparse → configure_logging → capture →
     # fault dump → uvicorn.
-    configure_logging(level="INFO")
+    #
+    # INFO is the daemon's declared last rung, not a fixed level: its output
+    # is a managed log nobody is watching live, so it ships more verbose than
+    # a command an operator is reading. A level named in the environment
+    # still outranks it, which is what a hard-coded level denied.
+    configure_logging(default="INFO")
     cfg = get_config()
     log_capture = install_daemon_log_capture(
         _m._resolve_log_path(),
@@ -232,6 +262,8 @@ def _run_stdio_mcp(parent_pid: int | None, *, read_only: bool = False) -> None:
     listing is served, so they are absent from the surface rather than
     present and refusing.
     """
+    _refuse_unusable_server_environment()
+
     try:
         from ..mcp import mcp
     except ImportError as exc:
@@ -242,7 +274,14 @@ def _run_stdio_mcp(parent_pid: int | None, *, read_only: bool = False) -> None:
 
         restrict_to_read_only_tools()
 
+    from ..logging_config import configure_logging
     from ._stdio_lifetime import install_stdio_lifetime_watchdog
+
+    # Stdout is the protocol channel here, so this configures stderr logging
+    # and nothing else. It used to configure nothing at all, which left the
+    # level variable unread in the one process kind whose diagnostics are
+    # hardest to get at.
+    configure_logging()
 
     install_stdio_lifetime_watchdog(parent_pid)
     _m._registry._on_close_project = _m._stop_watcher  # pyright: ignore[reportPrivateUsage]

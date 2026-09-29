@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
+from vaultspec_core.env_values import parse_bool
+
 from .._content_route_syntax import validate_content_route_pattern
-from .._env_values import parse_bool
 
 PreprocessMode = Literal["default", "off"]
 
@@ -251,15 +252,46 @@ class EnvVar(StrEnum):
     # on-disk store regardless of the server-mode default.
     LOCAL_ONLY = "VAULTSPEC_RAG_LOCAL_ONLY"
 
+    # Markers this project sets on its own child processes. Transport
+    # channels rather than knobs, but declared for the same reason every
+    # other name is: the literal lives in one place, and a rename cannot
+    # leave the reader on the other side of the process boundary behind.
+    # The junction pair carries a path and a target to a PowerShell child
+    # through its environment, so neither enters the command string where
+    # it would be subject to injection. Prefixed like the rest of this
+    # project's names, because this project both sets and reads them.
+    RAG_JUNCTION_PATH = "VAULTSPEC_RAG_JUNCTION_PATH"
+    RAG_JUNCTION_TARGET = "VAULTSPEC_RAG_JUNCTION_TARGET"
+    # The execution envelope handed to a preprocessor child. Unprefixed and
+    # staying that way: the readers are user-authored extractors, which this
+    # project does not get to rename out from under.
+    PREPROCESS_INVOCATION = "VAULTSPEC_PREPROCESS_INVOCATION"
+
     # Third-party env vars referenced in the codebase - defined here so
     # the string literal lives in exactly one place.
     HF_ENDPOINT = "HF_ENDPOINT"
     HF_HOME = "HF_HOME"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
+    # Access token for gated model repositories, honoured by huggingface_hub.
+    # A credential, so it is resolved and passed explicitly rather than read
+    # off the ambient environment wherever a download happens.
+    HF_TOKEN = "HF_TOKEN"
     TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"
     DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
+    HF_DEACTIVATE_ASYNC_LOAD = "HF_DEACTIVATE_ASYNC_LOAD"
+    HF_HUB_DISABLE_PROGRESS_BARS = "HF_HUB_DISABLE_PROGRESS_BARS"
+    TRANSFORMERS_NO_ADVISORY_WARNINGS = "TRANSFORMERS_NO_ADVISORY_WARNINGS"
+    TRANSFORMERS_VERBOSITY = "TRANSFORMERS_VERBOSITY"
+    PYTORCH_ENABLE_MPS_FALLBACK = "PYTORCH_ENABLE_MPS_FALLBACK"
+    UV_CACHE_DIR = "UV_CACHE_DIR"
+    UV_TOOL_DIR = "UV_TOOL_DIR"
     VIRTUAL_ENV = "VIRTUAL_ENV"
+    # The operating system's temporary-directory conventions, read to decide
+    # whether an indexed root was throwaway.
+    TEMP = "TEMP"
+    TMP = "TMP"
+    TMPDIR = "TMPDIR"
 
 
 #: Default for ``EnvVar.STATUS_DIR``, declared beside the env var it defaults

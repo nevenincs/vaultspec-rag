@@ -13,6 +13,7 @@ suite as well.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -20,8 +21,11 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from vaultspec_core.config import VAULTSPEC_STDIO_WATCHDOG
 
+from ..config._types import EnvVar
 from ..server import _stdio_lifetime as lifetime
+from ..server._stdio_lifetime import watchdog_disabled
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -457,3 +461,75 @@ def _reap_stray(pid: int) -> None:
         os.kill(pid, 9)
     except OSError:
         return
+
+
+class TestTheWatchdogSwitchChain:
+    """Which name disarms the backstop, and what an unusable one does.
+
+    The switch is shared with the rest of the framework, so a session that
+    turns the backstop off for the vaultspec tools turns it off here too -
+    and a session that wants it off for this one alone still can. What must
+    not change with the chain is the fail-safe: every reading that is not an
+    unambiguous request to disarm leaves the guard armed.
+    """
+
+    @staticmethod
+    def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(EnvVar.STDIO_WATCHDOG.value, raising=False)
+        monkeypatch.delenv(VAULTSPEC_STDIO_WATCHDOG.env_name, raising=False)
+
+    def test_the_framework_switch_disarms_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._clear(monkeypatch)
+        monkeypatch.setenv(VAULTSPEC_STDIO_WATCHDOG.env_name, "off")
+
+        assert watchdog_disabled() is True
+
+    def test_the_scoped_switch_outranks_the_framework_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Keeping this one armed does not mean rearming every other tool."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv(EnvVar.STDIO_WATCHDOG.value, "on")
+        monkeypatch.setenv(VAULTSPEC_STDIO_WATCHDOG.env_name, "off")
+
+        assert watchdog_disabled() is False
+
+    def test_a_blank_scoped_switch_falls_through_to_the_framework_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Blank is unset here as everywhere, not a silent veto of the chain."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv(EnvVar.STDIO_WATCHDOG.value, "   ")
+        monkeypatch.setenv(VAULTSPEC_STDIO_WATCHDOG.env_name, "off")
+
+        assert watchdog_disabled() is True
+
+    def test_neither_name_set_leaves_it_armed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._clear(monkeypatch)
+
+        assert watchdog_disabled() is False
+
+    def test_a_typo_leaves_it_armed_and_names_the_variable_that_carried_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The warning names the name the operator set, not the one asked first.
+
+        Refusing the process is not the safer outcome for a protective
+        switch, so the guard stays armed and says so - but pointing at this
+        package's variable when the shared one carried the typo sends the
+        operator to edit something they never wrote.
+        """
+        self._clear(monkeypatch)
+        monkeypatch.setenv(VAULTSPEC_STDIO_WATCHDOG.env_name, "offf")
+
+        with caplog.at_level(logging.WARNING, logger="vaultspec_rag.server"):
+            assert watchdog_disabled() is False
+
+        assert VAULTSPEC_STDIO_WATCHDOG.env_name in caplog.text
+        assert EnvVar.STDIO_WATCHDOG.value not in caplog.text

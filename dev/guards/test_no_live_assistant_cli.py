@@ -2,8 +2,8 @@
 
 A test that shells out to ``claude``, ``codex`` or ``gemini`` asserts whatever
 happens to be installed, logged in and on PATH for the account running it.
-That is a property of a workstation, not of this package: the same commit
-passes on one host and fails on a runner whose service account cannot see the
+That is a property of the machine, not of this package: the same commit
+passes on one machine and fails on another whose account cannot see the
 user's profile. What this package owns is the configuration it writes for
 those tools, and that is asserted by reading the written files.
 """

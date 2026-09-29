@@ -119,7 +119,7 @@ def tail(text: str, lines: int = TAIL_LINES) -> str:
 
 
 def classify(code: int, output: str) -> int:
-    """Map a failed step onto the fleet exit-code contract.
+    """Map a failed step onto the repository's exit-code contract.
 
     Args:
         code: The status the step exited with.

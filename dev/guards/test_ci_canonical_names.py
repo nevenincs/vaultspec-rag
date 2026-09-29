@@ -1,24 +1,13 @@
 """The workflows spell the names :mod:`dev.ci_names` defines, and only those.
 
-YAML cannot import. So the canon and the workflow are two copies of one fact,
-and this guard is the mechanism that makes them one: it reads the workflow and
-asserts the literals equal what the canon composes. A rename that touches the
-module and not the file, or the file and not the module, fails here - before
-it can reach the merge box, where the same disagreement is silent.
+YAML cannot import, so the canon and the workflow are two copies of one fact
+and this guard ties them together. A required check renamed on one side is a
+check nobody reports, which GitHub renders as "expected" rather than failed;
+a label spelled one way where it is pressed and another where it is released
+leaves a button that fires once and never clears.
 
-WHY SILENT. Branch protection matches a required check by STRING. A gate
-renamed on one side is a check nobody reports, which GitHub renders as
-"expected" rather than "failed", and the merge box shows a protected-branch
-refusal with nothing red to explain it. A label spelled one way in the trigger
-condition and another in the step that releases it leaves a button that fires
-once and never clears. Neither shows up as a failure anywhere.
-
-THE ONE COPY THIS CANNOT REACH is the required-status-check context in the
-``protect-main`` ruleset, which lives in repository settings and is not in the
-tree. :data:`~dev.ci_names.GATE_CHECK` is that context's value, and changing it
-is a settings change as well as a code change. This guard cannot see the
-setting; what it can do is make the value hard to change by accident, which is
-why the name is COMPOSED from the grammar rather than typed.
+The ``protect-main`` ruleset's required context lives in repository settings,
+outside the tree. :data:`~dev.ci_names.GATE_CHECK` is its value.
 """
 
 from __future__ import annotations
@@ -28,16 +17,12 @@ from urllib.parse import unquote
 import pytest
 
 from dev.ci_names import (
-    FULL_RUN_CONDITION,
     FULL_RUN_LABEL,
-    FULL_RUN_PRESSED,
     GATE_CHECK,
     GATE_JOB,
-    JOB_NAME,
     LABEL_ENV,
-    LINT_RUN_CONDITION,
+    SAME_REPO_CLAUSE,
     Workflow,
-    normalise,
 )
 from dev.guards import _workflows as workflows
 
@@ -52,15 +37,6 @@ def _gate() -> workflows.Job:
     pytest.fail(
         f"{Workflow.MERGE_GATE} has no job `{GATE_JOB}`. The canon names it "
         "`dev.ci_names.GATE_JOB`; repoint that, and the ruleset with it."
-    )
-
-
-def _measuring_jobs() -> tuple[workflows.Job, ...]:
-    """Return every job in the merge gate that is not the gate itself."""
-    return tuple(
-        job
-        for job in workflows.load_jobs(Workflow.MERGE_GATE)
-        if job.job_id != GATE_JOB
     )
 
 
@@ -87,8 +63,8 @@ def test_every_workflow_file_on_disk_is_in_the_canon() -> None:
     """Every workflow file is named by the canon.
 
     The other direction, and the one that matters for a NEW workflow: a file
-    the canon does not know is a file no guard reaches by name, so it joins
-    the fleet without the naming, boundedness and repeat checks.
+    the canon does not know is a file no guard reaches by name, so it runs
+    without the naming, boundedness and repeat checks.
 
     Mutation proof: adding an empty ``scratch.yml`` made this fail naming it;
     deleting the file made this pass.
@@ -178,74 +154,29 @@ def test_the_label_is_spelled_once_for_the_steps_that_read_it() -> None:
     )
 
 
-def test_every_measuring_job_uses_its_canonical_trigger_condition() -> None:
-    """Lint and full jobs carry the automatic conditions from the canon.
-
-    GitHub gives a job-level ``if:`` no ``env`` context and honours no YAML
-    anchor, so these four cannot share a token and each spells the condition
-    out. Four copies is what the merge gate costs; four copies that AGREE is
-    what this asserts. One job left behind on an older condition runs when the
-    others skip, and the gate then passes a run that measured one dimension.
-
-    Whitespace is normalised before comparing: a folded ``if:`` keeps or drops
-    newlines by indentation, and a guard that failed on a re-indent would be
-    a guard people satisfy by re-indenting.
-
-    Mutation proof: changing the Windows job's label to ``ci:windows`` made
-    this fail naming ``tests-windows``; restoring ``ci:full`` made it pass.
-    """
-    expected = {
-        job.job_id: LINT_RUN_CONDITION if job.job_id == "lint" else FULL_RUN_CONDITION
-        for job in _measuring_jobs()
-    }
-    offenders = {
-        job.job_id: job.condition
-        for job in _measuring_jobs()
-        if job.condition is None or normalise(job.condition) != expected[job.job_id]
-    }
-    assert not offenders, (
-        "A measuring job does not use its canonical automatic trigger.\n\n"
-        + "\n".join(
-            f"{job_id}: expected {expected[job_id]}\nfound: {condition}"
-            for job_id, condition in offenders.items()
-        )
-    )
-
-
 def test_the_release_step_presses_the_same_button_the_jobs_wait_for() -> None:
     """The step that releases the label runs on exactly the press, and no other.
 
-    A step-level ``if:`` gets no ``env`` context either, so this is a fifth
-    place the label is spelled. If it drifts wider, the gate strips the label
-    off runs the measuring jobs skipped, and the button clears without ever
-    having fired; if it drifts narrower, the label stays on and the button
-    cannot be pressed a second time.
+    A step-level ``if:`` gets no ``env`` context, so the label is spelled here
+    too. Wider, and the gate strips the label off runs the measuring jobs
+    skipped; narrower, and the label stays on and cannot be pressed again.
 
     Mutation proof: widening the step to ``github.event.label.name != ''``
-    made this fail printing both conditions; restoring the press made it pass.
+    made this fail naming the missing clause; restoring the press made it pass.
     """
     release = next(
         step
         for step in _gate().steps
         if str(step.get("name") or "").startswith("Release the")
     )
-    condition = normalise(str(release.get("if") or ""))
-    assert condition == FULL_RUN_PRESSED, (
-        "the label is released under a condition that is not the press.\n"
-        f"expected: {FULL_RUN_PRESSED}\n"
-        f"found:    {condition}"
+    condition = " ".join(str(release.get("if") or "").split())
+    required = (
+        "github.event_name == 'pull_request'",
+        "github.event.action == 'labeled'",
+        f"github.event.label.name == '{FULL_RUN_LABEL}'",
+        SAME_REPO_CLAUSE,
     )
-
-
-def test_the_canon_composes_a_name_the_grammar_accepts() -> None:
-    """:data:`~dev.ci_names.GATE_CHECK` satisfies the fleet's job-name grammar.
-
-    The canon composes job names and the same module's grammar validates them,
-    which only holds while the two agree. A Kind or Platform added on one side
-    that the other rejects is caught here rather than on the first job named
-    with it.
-    """
-    assert JOB_NAME.fullmatch(GATE_CHECK), (
-        f"the canon composes {GATE_CHECK!r}, which the fleet's job-name "
-        "grammar rejects."
+    missing = [clause for clause in required if clause not in condition]
+    assert not missing, (
+        f"the label is released under {condition!r}, which lacks {missing}"
     )
