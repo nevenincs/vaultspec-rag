@@ -63,16 +63,6 @@ CU130_MARKER: Final[str] = "sys_platform == 'linux' or sys_platform == 'win32'"
 # ``_handle_dry_run_state`` emit. Extracting the value as a single constant
 # keeps those surfaces in lockstep when PyTorch drops a major version.
 TORCH_MIN_VERSION: Final[str] = "2.4"
-# Last-resort torch version for the tool-env remediation command, used only
-# when NO torch distribution is present in the env to read a version from.
-# The lockfile is the single source of this fact - see
-# ``torch_config._lockfile.locked_torch_version`` - but a published wheel
-# ships neither uv.lock nor pyproject.toml, so a runtime cannot derive it and
-# this mirror exists. It is not hand-maintained in the usual sense: a test
-# asserts it equals the lockfile's value wherever the lockfile is reachable,
-# so a lock bump that forgets this line fails the suite rather than shipping a
-# stale wheel URL to an operator.
-TORCH_TOOL_PIN_VERSION: Final[str] = "2.14.0"
 DIRECT_TORCH_REQUIREMENT: Final[str] = f"torch>={TORCH_MIN_VERSION}"
 _MANAGED_DIRECT_DEP_KEY: Final[str] = "managed-torch-direct-dependency"
 

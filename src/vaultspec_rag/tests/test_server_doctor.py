@@ -199,6 +199,42 @@ def test_doctor_weights_below_floor_as_error(
     assert result.exit_code == 2
 
 
+def test_doctor_floor_advice_names_a_command_that_upgrades(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor error hands over a command that can actually raise the version.
+
+    Guard assertion: the advice was `uv tool upgrade vaultspec-rag`, which a
+    tool environment pinned by the CUDA repair answers with "nothing to
+    upgrade". An operator following it sees no change and no reason why.
+    """
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    write_package_declaration(
+        ws,
+        "vaultspec-rag",
+        PackageDeclaration(install_mode=InstallMode.TOOL, minimum_version="99.0.0"),
+    )
+    monkeypatch.chdir(ws)
+
+    result = runner.invoke(app, ["server", "doctor"])
+    envelope = json.loads(runner.invoke(app, ["server", "doctor", "--json"]).stdout)
+
+    # This installation's receipt carries no CUDA source, so the sequence
+    # records it first and then upgrades: the bare verb alone would move the
+    # release and drop the GPU build with it.
+    commands = envelope["data"]["mode"]["upgrade_commands"]
+    assert "--index-strategy unsafe-first-match" in commands[0]
+    assert commands[1] == "uv tool upgrade vaultspec-rag"
+    assert "server stop" in commands[-1]
+    # The envelope carries what the human output shows, so a broker is not
+    # left reading a floor error it cannot act on.
+    assert "--index-strategy unsafe-first-match" in result.stdout
+    assert "uv tool upgrade vaultspec-rag" in result.stdout
+
+
 def test_doctor_weights_mode_mismatch_as_warning(
     isolated_status_dir: Path,
     tmp_path: Path,
@@ -225,6 +261,69 @@ def test_doctor_weights_mode_mismatch_as_warning(
     assert mode["mode_mismatch"] == "mismatch"
     assert mode["version_floor"] == "ok"
     assert result.exit_code == 1
+
+
+def test_doctor_honours_root_target_over_the_working_directory(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root ``--target`` names the workspace the mode axis reads, not cwd.
+
+    The working directory is a real, unrelated, uninstalled directory - not
+    the workspace under test - so a doctor that fell back to ``Path.cwd()``
+    would report no rag declaration at all.
+    """
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(app, ["--target", str(ws), "server", "doctor", "--json"])
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode is not None
+    assert mode["package"] == "vaultspec-rag"
+    assert mode["declared_mode"] == "tool"
+    assert mode["mode_mismatch"] == "clean"
+    assert result.exit_code == 0
+
+
+def test_doctor_honours_rag_root_env_var_over_the_working_directory(
+    isolated_status_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``VAULTSPEC_RAG_ROOT`` names the workspace the mode axis reads, not cwd.
+
+    No ``--target`` flag is passed here; the environment variable is the only
+    thing naming the workspace, carried through the CliRunner's own ``env``
+    mapping rather than ``monkeypatch.setenv``, and the working directory is
+    a real, unrelated, uninstalled directory - not the workspace under test -
+    so a doctor that fell back to ``Path.cwd()`` would report no rag
+    declaration at all.
+    """
+    from ..config._types import EnvVar
+
+    _ = isolated_status_dir
+    ws = _install_rag_workspace(tmp_path, InstallMode.TOOL)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = runner.invoke(
+        app,
+        ["server", "doctor", "--json"],
+        env={EnvVar.RAG_ROOT.value: str(ws)},
+    )
+
+    mode = json.loads(result.stdout)["data"]["mode"]
+    assert mode is not None
+    assert mode["package"] == "vaultspec-rag"
+    assert mode["declared_mode"] == "tool"
+    assert mode["mode_mismatch"] == "clean"
+    assert result.exit_code == 0
 
 
 def test_doctor_human_render_labels_mode_axis(

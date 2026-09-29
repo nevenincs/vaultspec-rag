@@ -17,10 +17,12 @@ from .._operator_commands import (
     index_command,
     server_start_command,
     server_status_command,
+    server_stop_command,
 )
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
 from ..api import CodebaseSearchRequest, VaultSearchRequest
+from ..config._types import EnvVar
 from ..serviceclient._compat import resolve_data_plane_service
 from ..serviceclient._search_transport import (
     document_search_filters,
@@ -33,7 +35,11 @@ from ._app import (
     PortOption,
     app,
 )
-from ._gpu_errors import _handle_gpu_error
+from ._gpu_errors import (
+    _handle_gpu_error,
+    refuse_beside_a_service_of_another_release,
+    refuse_if_gpu_owned,
+)
 from ._render import (
     _display_port_unreachable_error,
     _display_search_results,
@@ -85,9 +91,9 @@ def _suppress_hf_progress() -> None:
     before model construction so the env reaches every downstream
     import.
     """
-    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
-    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault(EnvVar.HF_HUB_DISABLE_PROGRESS_BARS.value, "1")
+    os.environ.setdefault(EnvVar.TRANSFORMERS_NO_ADVISORY_WARNINGS.value, "1")
+    os.environ.setdefault(EnvVar.TRANSFORMERS_VERBOSITY.value, "error")
 
 
 def _attach_result_collapse(
@@ -373,7 +379,7 @@ def _handle_vaultstore_locked_error(
                 "Wait for the other command or update to finish.",
                 "vaultspec-rag search ... --port 8766",
                 server_status_command(),
-                "vaultspec-rag server stop",
+                server_stop_command(),
                 "Stop any orphaned Python process that is still using this workspace.",
             ],
         )
@@ -391,9 +397,9 @@ def _handle_vaultstore_locked_error(
         "service on a port, e.g.:\n"
         "         vaultspec-rag search ... --port 8766\n"
         "    3. Check the service:\n"
-        "         vaultspec-rag server status\n"
+        f"         {server_status_command()}\n"
         "    4. Stop the running service:\n"
-        "         vaultspec-rag server stop\n"
+        f"         {server_stop_command()}\n"
         "    5. If no vaultspec-rag process is alive, look for an "
         "orphaned Python process using the index and stop it manually."
     )
@@ -664,7 +670,7 @@ def _try_in_process_search(
         _handle_vaultstore_locked_error(exc, json_mode)
         return []
     except (ImportError, RuntimeError) as e:
-        _handle_gpu_error(e)
+        _handle_gpu_error(e, command="search", json_mode=request.json_mode)
         return []
 
 
@@ -1368,18 +1374,21 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
         if service.reachable and not service.version.is_compatible:
             # A discovered daemon of another release cannot answer this search
             # faithfully - it drops filter fields it does not know rather than
-            # rejecting them. With a local mandate the operator has already
-            # authorised the in-process path, so the foreign daemon is left
-            # alone; without one this is a refusal, never a silent local run.
-            if not mandate:
-                _display_service_version_error(
-                    service.version,
-                    command="search",
-                    json_mode=json_mode,
+            # rejecting them - so without a mandate the release is the refusal.
+            # With one, the release is no longer what blocks: that daemon holds
+            # this machine whatever it speaks, and running in-process beside it
+            # would load a second model stack.
+            if mandate:
+                refuse_beside_a_service_of_another_release(
+                    command="search", json_mode=json_mode
                 )
-                raise typer.Exit(code=1)
-        else:
-            port = service.port
+            _display_service_version_error(
+                service.version,
+                command="search",
+                json_mode=json_mode,
+            )
+            raise typer.Exit(code=1)
+        port = service.port
 
     if port is not None:
         service_results = try_http_search(
@@ -1443,6 +1452,8 @@ def handle_search(  # noqa: PLR0913 - Typer exposes each supported filter explic
             2,
             json_mode=json_mode,
         )
+
+    refuse_if_gpu_owned(command="search", json_mode=json_mode)
 
     # A local mandate is present; run the in-process search under a wall-clock
     # deadline so a degraded local store or wedged model load cannot hang while

@@ -14,7 +14,7 @@ from ..torch_config._constants import (
     TorchConfigAction,
     TorchConfigState,
 )
-from ._util import _exception_caused_by
+from ._util import confirmation_outcome
 from ._uv_sync import _run_uv_sync_torch
 
 if TYPE_CHECKING:
@@ -32,7 +32,6 @@ class TorchInstallOptions:
     """One install invocation's torch configuration controls."""
 
     dry_run: bool
-    force: bool
     configure_torch: bool
     assume_yes: bool
     sync_after: bool
@@ -40,43 +39,23 @@ class TorchInstallOptions:
     torch_group: str | None = None
 
 
-def _torch_confirmation_outcome(
-    confirm: ConfirmFn,
-    prompt: str,
-) -> str:
-    """Run one interactive confirmation without exposing callback failures."""
-    try:
-        return "approved" if confirm(prompt) else "declined"
-    except KeyboardInterrupt:
-        return "interrupted"
-    except EOFError:
-        return "eof"
-    except Exception as exc:
-        if _exception_caused_by(exc, EOFError):
-            return "eof"
-        logger.warning("torch-config confirm() raised %s: %s", type(exc).__name__, exc)
-        return f"error:{type(exc).__name__}"
-
-
 def _confirm_torch_patch(
     pyproject: Path,
     report: InstallReport,
     assume_yes: bool,
-    force: bool,
     confirm: ConfirmFn | None,
 ) -> bool:
-    effective_assume_yes = assume_yes or force
-    if effective_assume_yes:
+    if assume_yes:
         return True
     if confirm is None:
         report.torch_config_action = TorchConfigAction.SKIPPED_NON_TTY
         report.warnings.append(
             "torch-config patch requires confirmation - pass --yes "
-            "(or --force) to apply, or --no-torch-config to opt out. "
+            "to apply, or --no-torch-config to opt out. "
             "See pyproject.toml shape in `vaultspec-rag install --help`."
         )
         return False
-    outcome = _torch_confirmation_outcome(
+    outcome = confirmation_outcome(
         confirm,
         f"Patch {pyproject} with the cu130 torch index? "
         "This lets uv resolve the CUDA torch wheel.",
@@ -87,7 +66,7 @@ def _confirm_torch_patch(
         report.torch_config_action = TorchConfigAction.SKIPPED_EOF
         report.warnings.append(
             "torch-config patch skipped: confirmation prompt hit EOF "
-            "(non-interactive stdin). Re-run with --yes or --force "
+            "(non-interactive stdin). Re-run with --yes "
             "to apply, or --no-torch-config to opt out."
         )
     elif outcome == "interrupted":
@@ -98,13 +77,13 @@ def _confirm_torch_patch(
         report.torch_config_action = TorchConfigAction.DECLINED
         report.warnings.append(
             f"torch-config patch skipped: confirm prompt raised {error_type}. "
-            "Re-run with --yes or --force to bypass the prompt, or "
+            "Re-run with --yes to bypass the prompt, or "
             "--no-torch-config to opt out."
         )
     else:
         report.torch_config_action = TorchConfigAction.DECLINED
         report.warnings.append(
-            "torch-config patch declined; re-run with --yes or --force to apply, "
+            "torch-config patch declined; re-run with --yes to apply, "
             "or --no-torch-config to opt out."
         )
     return False
@@ -211,7 +190,6 @@ def _apply_torch_install_state(
         pyproject,
         report,
         options.assume_yes,
-        options.force,
         options.confirm,
     ):
         _handle_confirmed_patch(pyproject, target, report, options)

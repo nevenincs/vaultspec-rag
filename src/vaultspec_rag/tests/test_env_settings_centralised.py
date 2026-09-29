@@ -22,22 +22,17 @@ from pathlib import Path
 
 import pytest
 
+from .. import memory_probe
 from ..config._types import EnvVar
-from ..memory_probe import ENV_VAR as MEMORY_PROBE_ENV_VAR
 
 pytestmark = [pytest.mark.unit]
 
-#: Names that are deliberately not settings. The preprocess invocation carries
-#: a JSON payload to a hook subprocess - it is a transport channel, not a knob -
-#: and the pytest singleton markers are test-harness internals.
+#: Names that are deliberately not settings. The transport channels the enum
+#: now declares are no longer among them - a name this project both sets and
+#: reads belongs in the one list whether or not an operator may set it - so
+#: what is left here is the test harness's own markers.
 _NOT_SETTINGS = frozenset(
     {
-        "VAULTSPEC_PREPROCESS_INVOCATION",
-        # Arguments handed to a PowerShell child through its environment so the
-        # path and target never enter the command string, where they would be
-        # subject to injection. A transport channel, not a knob.
-        "VAULTSPEC_JUNCTION_PATH",
-        "VAULTSPEC_JUNCTION_TARGET",
         "_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT",
         "_VAULTSPEC_RAG_PYTEST_SINGLETON_ACTIVE",
         "_VAULTSPEC_RAG_PYTEST_SINGLETON_BOOTSTRAP",
@@ -52,17 +47,24 @@ _ENV_LITERAL = re.compile(r"\"(_?VAULTSPEC(?:_RAG)?_[A-Z0-9_]+)\"")
 #: admission rules, which the enum's own docstring states.
 _FIRST_PARTY_PREFIX = "VAULTSPEC_RAG_"
 
-#: The single member exempt from needing an ``EnvVar.<NAME>`` reference in
-#: production. The probe module is reachable from spawn workers and must not
-#: import this module, so it restates the bare name - a restatement that is
-#: itself pinned by ``test_memory_probe_env_name_matches_the_settings_enum``.
-#: Nothing else may join this set without the same kind of pin.
-_READ_WITHOUT_THE_ENUM = frozenset({"MEMORY_PROBE"})
+#: Members exempt from needing an ``EnvVar.<NAME>`` reference in production.
+#: Empty, and worth keeping empty: the memory probe was the one restatement,
+#: and it now takes its name from the enum like everything else.
+_READ_WITHOUT_THE_ENUM: frozenset[str] = frozenset()
 
 
-def test_memory_probe_env_name_matches_the_settings_enum() -> None:
-    """The one deliberate restatement must equal the enum member it copies."""
-    assert EnvVar.MEMORY_PROBE.value == MEMORY_PROBE_ENV_VAR
+def test_the_memory_probe_takes_its_name_from_the_settings_enum() -> None:
+    """The probe reads the enum rather than restating the literal.
+
+    Restating it was a real cost, not a style preference: the two spellings
+    could drift, and the drift would look like a switch that had quietly
+    stopped working. Comparing the two values would now compare a name with
+    itself, so what is checked is that the string literal is gone.
+    """
+    probe = Path(memory_probe.__file__).read_text(encoding="utf-8")
+
+    assert f'"{EnvVar.MEMORY_PROBE.value}"' not in probe
+    assert f"EnvVar.{EnvVar.MEMORY_PROBE.name}" in probe
 
 
 def test_every_first_party_variable_is_read_somewhere_in_production() -> None:

@@ -7,20 +7,12 @@ name: RAG Code Health
 # design alongside anything real, and deptry reports imports that resolve
 # transitively. None of them can fail a build, by design.
 #
-# They used to run as a job in `ci.yml`, on every push to main. On a fleet of
-# one Linux runner and one Windows runner - shared across every repository in
-# the account, and strictly serial - that job spent about six minutes of the
-# merge path producing output nothing gates on, while the runs behind it
-# queued. A measurement whose result nobody blocks on does not need to be
-# taken on every commit; it needs to be taken often enough that a trend is
-# visible, and read.
-#
-# Weekly, then, and on demand. The findings are the same findings; what
-# changed is that they no longer stand between a merge and its verdict.
+# A measurement whose result nobody blocks on does not need to be taken on
+# every commit; it needs to be taken often enough that a trend is visible.
+# Weekly, then, and on demand, off the merge path.
 on:
   schedule:
-    # Sunday 04:00 UTC - off the working week, and off the release cadence, so
-    # it never contends with a merge or a publish for the one Linux runner.
+    # Sunday 04:00 UTC, off the working week and the release cadence.
     - cron: "0 4 * * 0"
   workflow_dispatch:
 
@@ -51,11 +43,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

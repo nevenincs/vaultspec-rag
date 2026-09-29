@@ -680,6 +680,8 @@ _TOOL_REPAIR_HEADINGS = {
     "dry_run": "Tool environment needs a CUDA repair (preview)",
     "handoff_required": "Tool environment needs a CUDA repair",
     "holder_detected": "Tool environment needs a CUDA repair",
+    "repaired": "Tool environment CUDA repair applied",
+    "repair_failed": "Tool environment CUDA repair did not succeed",
 }
 
 
@@ -704,14 +706,45 @@ def _render_tool_torch_repair(outcome: object) -> None:
     for line in str(getattr(outcome, "detail", "")).splitlines():
         if line.strip():
             _plain(f"  {line}" if not line.startswith(" ") else line)
-    command = str(getattr(outcome, "command", ""))
-    if command:
-        _plain("  run this from a shell that holds nothing in that environment:")
-        _plain(f"    {command}", soft_wrap=True)
+    steps = getattr(outcome, "steps", ())
+    if isinstance(steps, tuple):
+        for step in cast("tuple[object, ...]", steps):
+            _plain(f"  {step}", soft_wrap=True)
+
+
+#: What the run was, for a sentence that has to name it without claiming it
+#: happened. The past-tense titles beside this one are outcomes; these are
+#: the run itself, which is all a refusal can honestly report.
+_INSTALL_ACTION_NOUNS = {
+    "install": "install",
+    "upgrade": "upgrade",
+    "dry_run": "install preview",
+}
+
+
+def _render_refused_install(report: InstallReport) -> None:
+    """Render a run that stopped before its first step.
+
+    Nothing ran, so nothing is reported as having run: no sync summary, no
+    provisioning rows, and no "PyTorch configuration" line, each of which
+    would otherwise print the default of a step that was never reached. The
+    repair section carries the detail and the commands, and it is printed
+    once.
+    """
+    noun = _INSTALL_ACTION_NOUNS.get(report.action, "install")
+    _plain(f"vaultspec-rag {noun} refused - nothing was changed")
+    _plain(f"Target: {report.target}")
+    _plain(f"Reason: {report.refused}")
+    _render_tool_torch_repair(report.tool_torch_repair)
+    for warning in report.warnings:
+        _print_warning_or_note(warning)
 
 
 def _render_install_report(report: InstallReport) -> None:
     """Render an install report as plain CLI lines."""
+    if report.refused:
+        _render_refused_install(report)
+        return
     title = {
         "install": "vaultspec-rag installed",
         "upgrade": "vaultspec-rag upgraded",

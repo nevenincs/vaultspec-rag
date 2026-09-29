@@ -1,13 +1,9 @@
 """One statement of which interpreters this project supports.
 
-WHY THIS IS A TEST AND NOT THREE WORKFLOW STEPS. It used to be three copies of
-one Python heredoc pasted into ``run:`` blocks - one asserting the venv
-matches ``.python-version``, two asserting a matrix leg runs the interpreter it
-claims - each carried in the CI-contract allowlist as debt with the note
-"Recipe needed: check-interpreter". A check that only READS committed files is
-not a job: it needs no runner, it costs a place in a serial fleet's queue, and
-it can only ever run where somebody remembered to paste it. As a test it holds
-on every platform, on every matrix leg, and on a laptop before the push.
+WHY THIS IS A TEST AND NOT WORKFLOW STEPS. A check that only READS committed
+files is not a job: as a workflow step it runs only where somebody pasted it.
+As a test it holds on every platform, on every matrix leg, and locally before
+the push.
 
 WHAT IT ACTUALLY ASSERTS, WHICH IS MORE THAN THE STEPS DID. The steps compared
 a running interpreter to a string. The interesting failure is upstream of
@@ -77,9 +73,7 @@ def _development_pin() -> str:
 
 def _matrix_versions(workflow: str, job_id: str) -> tuple[str, ...]:
     """Return the ``python-version`` axis a job's matrix declares."""
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    job = (document.get("jobs") or {}).get(job_id) or {}
+    job = (workflows.document(workflow).get("jobs") or {}).get(job_id) or {}
     matrix = (job.get("strategy") or {}).get("matrix") or {}
     return tuple(str(value) for value in matrix.get("python-version", ()))
 

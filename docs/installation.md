@@ -163,30 +163,29 @@ reference.
 ### Install as a standalone tool
 
 Choose this route by default. The following commands install the host and the Model
-Context Protocol (MCP) adapter that AI assistants launch. The Windows and Linux commands
-pin the CUDA build of PyTorch in the tool's receipt, so later upgrades keep it.
+Context Protocol (MCP) adapter that AI assistants launch. The Windows and Linux command
+records the CUDA package index and its resolution strategy in the tool's installation
+receipt, which uv re-applies on every later upgrade, so the GPU build survives them.
 
-Windows x86-64:
-
-```powershell
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-win_amd64.whl"
-```
-
-Linux x86-64 (glibc 2.28 or newer):
+Windows x86-64, Linux x86-64 and Linux aarch64 (glibc 2.28 or newer):
 
 ```bash
-uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --with "torch @ https://download.pytorch.org/whl/cu130/torch-2.14.0%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl"
+uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
 ```
 
-Apple silicon macOS:
+Apple silicon macOS, which uses Metal rather than CUDA:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-For other Python versions or Linux architectures, install without the `--with` pin,
-then [pin the GPU build](#pin-the-gpu-build). If uv reports its executables directory
-isn't on your `PATH`, run `uv tool update-shell` and open a new terminal.
+Both options are needed. The index alone leaves the request unsatisfiable, because the
+CUDA index mirrors packages this one depends on at versions it cannot use and uv's
+default strategy forbids falling through to PyPI. Choose a Python version your platform
+has a CUDA build for; PyTorch publishes them for Windows x86-64 and Linux x86-64 and
+aarch64 only. An installation made without the two options is repaired in place by
+[pin the GPU build](#pin-the-gpu-build). If uv reports its executables directory isn't
+on your `PATH`, run `uv tool update-shell` and open a new terminal.
 
 Run every later command as `vaultspec-rag`. Continue with
 [set up each repository](#set-up-each-repository).
@@ -356,6 +355,11 @@ project:
    uv run vaultspec-rag install
    ```
 
+   `--force` overwrites existing files but never answers this prompt; only `--yes`
+   does. A run with nobody to answer it, such as CI, a non-TTY session, or `--json`,
+   never prompts. It skips the patch, reports the skip, and exits non-zero, so the gap
+   is visible rather than silent.
+
 1. Install the CUDA build and the `mcp` extra the setup adds:
 
    ```sh
@@ -386,6 +390,31 @@ These flags change it:
 The repository setup detects how the repository declares vaultspec-rag and records it in
 `.vaultspec/workspace.json`. If the detection is wrong, correct it with `--mode`; see
 the [install command reference](cli.md#install) for every flag and exit code.
+
+#### Machine-readable output
+
+`install --json` and `uninstall --json` print one line: the shared vaultspec envelope
+`{"schema", "status", "data"}`, plus `"hints"` when the run has a next step to advise.
+The run's own report is the `data` member, and `status` is one word from the shared
+vocabulary:
+
+| Status      | Meaning                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `created`   | The workspace was enrolled                                    |
+| `updated`   | An existing installation was upgraded                         |
+| `unchanged` | A preview (`--dry-run`), or a run that changed nothing        |
+| `removed`   | Uninstall removed the installation                            |
+| `skipped`   | The run completed but a required step was skipped for consent |
+| `failed`    | The run failed                                                |
+
+A run that can't start at all prints the `vaultspec.error.v1` envelope with its reason
+instead, so every `--json` run is parsed the same way.
+
+The exit codes are the shared ones: `0` for success, `1` for a failure, and `2` for the
+`skipped` status above, a run that completed with a required step skipped, such as the
+PyTorch configuration patch nobody was there to approve. A tool environment that needs
+the CUDA repair, and wasn't authorised to have it applied, is a failure rather than a
+skip: nothing was installed, so the requested state wasn't reached.
 
 <p id="verify-the-install"></p>
 
@@ -538,10 +567,32 @@ installation and every client together.
    | Homebrew           | `brew upgrade vaultspec-rag`                                  |
    | Downloaded archive | Verify and extract the new release in place of the old folder |
 
-   uv upgrades respect version constraints, and a standalone tool keeps the Python
-   version and [GPU build pin](#pin-the-gpu-build) from its receipt. For a temporary
-   run, follow [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
+   uv upgrades respect version constraints, and a standalone tool re-applies the Python
+   version, the extras and the [CUDA index](#install-as-a-standalone-tool) its receipt
+   records, so the GPU build survives the upgrade. For a temporary run, follow
+   [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
    and keep your extras.
+
+   A standalone tool installed before this mechanism, or installed without the two index
+   options, records no CUDA source: a plain upgrade then resolves a CPU-only PyTorch.
+   `vaultspec-rag server doctor` says so and prints the one command that repairs it,
+   which is the same command [pin the GPU build](#pin-the-gpu-build) describes. Nothing
+   needs to be stopped for it.
+
+1. Start the service again from the host installation, so it runs the release you just
+   installed:
+
+   ```bash
+   vaultspec-rag server start
+   ```
+
+   An upgrade replaces the installed package while the running daemon keeps the code it
+   imported at startup, so clients refuse it as a different release until it restarts.
+
+   If uv reports that it could not install an entry point because the file is in use,
+   the release is installed and the environment is intact: only the launcher it could
+   not overwrite was left alone, and that launcher keeps working. Restarting the
+   service, and any assistant session holding one, is what clears the report.
 
 1. Read the new release from the upgraded host installation with
    `vaultspec-rag --version`. Move every client project to that release, keeping its
@@ -563,6 +614,13 @@ installation and every client together.
    ```
 
    A client runs it as `uv run vaultspec-rag install --upgrade`.
+
+   A repository set up before its placement was recorded, with no vaultspec-rag entry
+   in `.vaultspec/workspace.json`, has its placement inferred rather than reset. A
+   `pyproject.toml` runtime dependency or dev-group entry counts only when the
+   repository's existing MCP launch already matches it, so `--upgrade` can't move a
+   working `tool`-mode setup onto `dependency` mode just because the package is also
+   listed.
 
 1. If you ran the host's repository setup with `--local-only`, `--skip-qdrant`, or
    `--no-provision`, it skipped the Qdrant download. When the
@@ -657,10 +715,14 @@ The repository setup needs consent it doesn't have, so it exits non-zero. Rerun 
 
 ### `install` prints a repair command instead of repairing the tool
 
-The repository setup prints a repair command rather than replacing the environment it's
-running in, and exits non-zero without setting up the repository. Follow
-[pin the GPU build](#pin-the-gpu-build) to stop the service and its assistant sessions,
-then run the saved command from outside the tool environment. See the
+The repository setup found a tool environment that cannot run the GPU stack, or whose
+installation receipt records no CUDA source, and it was not authorised to change
+anything. It prints the command that repairs it and exits non-zero without setting up
+the repository.
+
+Run the repository setup again with `--yes` to let it apply the repair itself, or run
+the printed command. Either way the change is made in place and nothing has to be
+stopped; see [pin the GPU build](#pin-the-gpu-build) for the whole sequence and the
 [install command reference](cli.md#install) for configuration flags.
 
 <p id="a-tool-environment-is-missing-packages-after-a-failed-reinstall"></p>
@@ -672,10 +734,13 @@ An interrupted reinstall can leave `vaultspec-rag` unable to run, reporting
 
 [Report the failed command](https://github.com/nevenincs/vaultspec-rag/issues) with the
 error, operating system, Python version, and output of
-`uv tool list --show-paths --show-python --show-with`. Include any saved pinned install
-command. While the service or assistant sessions still use the tool environment, don't
-force another reinstall; [pin the GPU build](#pin-the-gpu-build) requires them to stop
-first.
+`uv tool list --show-paths --show-python --show-with`. Include the command that was
+interrupted. Don't force another reinstall while the service or an assistant session
+still uses the tool environment: `uv tool install --force` removes the environment's
+contents before writing the new ones, and a file it cannot remove leaves the
+installation in exactly this state. The repair in
+[pin the GPU build](#pin-the-gpu-build) is not a forced reinstall and does not have
+this failure mode.
 
 <p id="server-start-cannot-find-the-qdrant-binary"></p>
 
@@ -700,48 +765,59 @@ file. Retry. On an air-gapped machine, register your own executable with
 
 ### Pin the GPU build
 
-Use these steps to repair missing or CPU-only PyTorch in a standalone tool on Linux or
-Windows. Apple silicon uses the standard wheel's MPS support.
+Use these steps when a standalone tool on Linux or Windows has a missing or CPU-only
+PyTorch, or when `server doctor` reports that its receipt records no CUDA source. Apple
+silicon uses the standard wheel's Metal support and needs none of this.
 
-A pin saves the direct `torch` wheel URL in the tool's installation receipt through
-`--with`. Unpinned upgrades can select a CPU build. Project `pyproject.toml` settings
-and `uv sync` don't configure tool environments.
+The repair is two commands, in order. The first installs the CUDA build of PyTorch into
+the environment through uv's pip interface, naming the release the environment already
+has; the second re-runs the tool installation with the CUDA index and its resolution
+strategy, which changes no package and only records those options in the installation
+receipt, so every later upgrade keeps resolving the GPU build. The order matters: an
+install that changes a package re-installs the tool's launchers, and one that is running
+cannot be replaced.
+
+Neither step removes anything, so the service and any assistant session may keep running
+throughout. The installed release, the extras and the Python version all stay as they
+are. Project `pyproject.toml` settings and `uv sync` do not configure tool environments.
 
 If `ModuleNotFoundError` prevents `vaultspec-rag` from running, see
 [the interrupted reinstall entry](#a-tool-environment-is-missing-packages-after-an-interrupted-reinstall)
 before attempting these steps.
 
-1. If `vaultspec-rag` runs, preview the repair:
+1. Ask what this installation needs:
 
    ```sh
-   vaultspec-rag install --dry-run --no-torch-config
+   vaultspec-rag server doctor
    ```
 
-   For a missing or CPU-only PyTorch build, this prints a pinned, platform-specific
-   `uv tool install` command. Save it. The preview neither replaces the tool nor checks
-   for processes holding its files. If no command appears, follow the diagnosis and
-   rerun the checks in [start and verify](#start-and-verify).
+   It names the compute build, what the next upgrade would resolve, and the two commands
+   for this installation. `vaultspec-rag install --dry-run --no-torch-config` prints the
+   same commands without changing anything.
 
-1. Before running the saved command, locate the tool environment and stop its service:
+1. Let the installer apply them, or run them yourself in the order given:
 
    ```sh
-   uv tool list --show-paths --show-python --show-with
+   vaultspec-rag install --yes --no-torch-config
+   ```
+
+   With a terminal it asks first; `--yes` answers in advance. `--force` does not: it
+   authorises overwriting this product's own files, not installing packages. The
+   installer then verifies both the installed build and the receipt, and reports a
+   failure rather than a repair if either is wrong.
+
+1. Restart the service so it uses the new build:
+
+   ```sh
    vaultspec-rag server stop
+   vaultspec-rag server start
    ```
 
-1. Prepare the tool environment for replacement:
+   A process that was already running keeps the PyTorch it imported at startup. Restart
+   any assistant session that runs the MCP adapter for the same reason.
 
-   1. If the stop command reports a failure, resolve it first.
-   1. Close assistant sessions that use the tool.
-   1. Move shells and editors outside its environment directory. Open file handles can
-      leave an incomplete installation on Windows.
-
-1. Run the saved command from a shell outside the tool environment. Preserve its
-   `--python` selection and wheel URL; Python must match the wheel's compatibility tags.
-
-1. Run the tool listing again and confirm it shows the direct `torch` URL. Rerun
-   `vaultspec-rag install --no-torch-config` in each repository whose setup was
-   refused, then rerun the checks in [start and verify](#start-and-verify).
+1. Confirm with `vaultspec-rag server doctor` that compute is ready and the receipt
+   keeps it, then rerun the checks in [start and verify](#start-and-verify).
 
 ### Ask for help
 
@@ -758,12 +834,13 @@ reports, and it's the only support channel.
 Removing a repository's setup removes its integration, not the package, and it keeps
 indexed data by default. Read the [uninstall flags](cli.md#uninstall) before choosing
 data removal. If vaultspec-rag is a project dependency, prefix each command with
-`uv run`.
+`uv run`. Uninstall is destructive by default: without `--force`, or `--dry-run` to
+preview instead, the command refuses to run rather than silently previewing.
 
 1. From the repository root, preview the changes:
 
    ```sh
-   vaultspec-rag uninstall
+   vaultspec-rag uninstall --dry-run
    ```
 
 1. Review the preview, then apply it. If you use the local-only backend and want to

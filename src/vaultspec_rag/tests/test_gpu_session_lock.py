@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
+# Borrowing pauses a served registry, which lends its GPU through the owner
+# anchor; every test here gets a private one, so none claims the machine's.
 pytestmark = [pytest.mark.unit]
 
 _SERVICE_TOKEN = "gpu-pytest-session-route-token"

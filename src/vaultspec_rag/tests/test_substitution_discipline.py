@@ -130,15 +130,29 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "diagnostic and load paths share is only observable across a run of "
         "them and no real device yields one on demand",
     ),
+    "test_hardware_anchor.py": (
+        1,
+        "forces the machine anchor directory to be unresolvable, to prove the "
+        "load window then degrades rather than refusing every load. A host "
+        "with no directory every account shares does exist, but it cannot be "
+        "staged on a runner: the suite cannot remove /dev/shm, /Users/Shared "
+        "and the shared temporary directory, nor make the Windows known-folder "
+        "API fail",
+    ),
     "test_env_holders.py": (
-        2,
-        "drives the two fail-closed branches of the holder query - a process "
-        "whose image and directory both read as unknown, and a process table "
-        "that cannot be enumerated at all. Neither can be provoked on demand "
-        "from a live table: the first needs a process this user may not "
-        "inspect, the second needs the operating system to refuse the walk. "
-        "Every relation the query actually reports is driven for real, "
-        "against real environments held by real child processes",
+        6,
+        "drives the fail-closed branches of the holder query and the shapes a "
+        "live table cannot be made to contain: a process whose image and "
+        "directory both read as unknown, a table that cannot be enumerated at "
+        "all, a launcher paired with the interpreter it re-executed, a shell "
+        "that must not be paired with its child, and this process itself "
+        "holding the tree so the launch-chain exclusion can be asked about. "
+        "None can be provoked on demand - the first needs a process this user "
+        "may not inspect, the second needs the operating system to refuse the "
+        "walk, and the rest need a parentage the test cannot arrange around "
+        "its own pid. Every relation the query reports is still driven for "
+        "real elsewhere in the file, against real environments held by real "
+        "child processes",
     ),
     "test_job_progress_durability.py": (
         1,
@@ -167,18 +181,48 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "function of the results, and is driven through the renderer itself "
         "with nothing substituted",
     ),
+    "test_tool_env_provisioning_hostile.py": (
+        1,
+        "points the production CUDA-index constant at the loopback index the "
+        "proofs serve. What is being proved is what uv records in a receipt "
+        "and re-applies on a later upgrade, not which host the accelerated "
+        "index lives on; resolving against the real one would put a network "
+        "dependency and a multi-gigabyte download in a commit-gating test",
+    ),
+    "test_cli_status.py": (
+        3,
+        "redirects the daemon interpreter at a purpose-built tool "
+        "environment. The receipt verdict is a fact about the environment "
+        "that would serve, and a test cannot make the interpreter running it "
+        "into a uv tool installation; asserting against whatever this "
+        "developer's own daemon interpreter happens to be would assert "
+        "nothing",
+    ),
     "test_readiness_holders.py": (
-        2,
-        "points the readiness scan at a purpose-built environment by "
-        "substituting the running interpreter's own prefix, which the "
-        "reporter reads to decide what to scan. A test cannot relaunch itself "
-        "from inside a temporary virtual environment, and asserting on "
-        "whatever happens to hold the developer's own prefix would assert "
-        "nothing. The second widens the scan budget, which production sizes "
-        "for an HTTP route: a walk of every process on a runner hosting a "
-        "dozen parallel workers does not finish inside it, and the snapshot "
-        "then honestly reports that it could not tell - indistinguishable, to "
-        "an assertion about content, from finding no holder",
+        1,
+        "widens the scan budget, which production sizes for an HTTP route: a "
+        "walk of every process on a runner hosting a dozen parallel workers "
+        "does not finish inside it, and the snapshot then honestly reports "
+        "that it could not tell - indistinguishable, to an assertion about "
+        "content, from finding no holder",
+    ),
+    "test_doctor_repair_and_holders.py": (
+        16,
+        "substitutes the interpreter probe, the daemon interpreter and the "
+        "holder scan across three cases. The probe starts a child "
+        "interpreter and imports torch in it, so a CPU-only build cannot be "
+        "provoked on a GPU host and the defect branch would never run. The "
+        "daemon interpreter is redirected at a purpose-built environment "
+        "because the point of the assertion is that the verb asks about that "
+        "environment rather than its own, which is untestable while the two "
+        "are the same directory. The holder scan is substituted so the roots "
+        "it is asked about can be observed and so a service-shaped holder "
+        "exists at all; spawning one would mean starting a real daemon in a "
+        "unit test. The later cases add the receipt verdict, the bounded "
+        "holder list and a role from another release, each of which needs the "
+        "same three boundaries staged again. Everything else is the real "
+        "verb, including the whole render and envelope path the assertions "
+        "read",
     ),
     "test_install_torch_config.py": (
         1,
@@ -190,6 +234,13 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "the install itself runs for real and nothing about its behaviour is "
         "replaced",
     ),
+    "test_uv_sync.py": (
+        2,
+        "stands in for the uv the project sync launches: a uv that never "
+        "returns cannot be staged with a real one, and the "
+        "workspace-containment refusal must be observed without any uv "
+        "running at all",
+    ),
     "test_jobs_device_load.py": (
         5,
         "asserts the jobs-listing cache's call count and its handling of a "
@@ -199,12 +250,20 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "runner",
     ),
     "test_cli_install.py": (
-        2,
+        10,
         "the post-install warning classifies the running interpreter in a child "
         "process, and a client or an MPS-refused environment cannot be made on "
         "the test host without replacing its installed torch; only the child "
         "probe's verdict is substituted, and the real warning renderer, its "
-        "defect gate and its topology remediation run unchanged",
+        "defect gate and its topology remediation run unchanged. The refusal "
+        "cases substitute the tool repair itself for the same reason the "
+        "repair's own tests do - running it would reinstall packages in a real "
+        "tool environment - and the consent cases observe what the install "
+        "hands it, because the flag's whole effect is which authorisation "
+        "arrives there. The run that counts interpreter probes also pins the "
+        "environment's classification and its receipt verdict, so the count "
+        "is of one known state rather than of whatever this host happens to "
+        "be",
     ),
     "test_install_client_role.py": (
         1,
@@ -216,7 +275,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "replaced",
     ),
     "conftest.py": (
-        1,
+        3,
         "install's torch and provisioning steps and the release-mismatch advice "
         "all branch on whether this is a host or a client installation, and the "
         "role is read from the distributions the running interpreter holds. The "
@@ -224,7 +283,12 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "always does, and the suite can neither add nor remove the inference "
         "stack in the shared interpreter, so each lane would otherwise reach "
         "only one side of every branch. Only the role reading is substituted; "
-        "every consumer of it runs unchanged",
+        "every consumer of it runs unchanged. Separately, both machine "
+        "hardware anchors are pointed at private files for every test, "
+        "because the machine's own anchors may be held by a live service, a "
+        "test must never contend for them, and an ownership claim outlives "
+        "the test that took it; only their location is substituted, and "
+        "claiming, lending and refusing run unchanged",
     ),
     "test_server.py": (
         3,
@@ -237,14 +301,18 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "contract, and passed against a real load added one frame down",
     ),
     "test_tool_torch_repair.py": (
-        8,
+        29,
         "the persistent uv tool interpreter and machine singleton cannot be "
-        "safely forced through a defective-CUDA reinstall during a test: that "
-        "would replace the developer's installed tool and can disrupt a live "
-        "machine service. The tests retain the real repair transaction and "
-        "substitute only its externally-owned observations, with sentinels "
-        "that fail if a holder, no-device diagnosis, CUDA re-probe, or receipt "
-        "postcondition is bypassed",
+        "safely forced through a CUDA repair during a test: that would install "
+        "packages into the developer's own tool environment, which is how a "
+        "live installation was once emptied. The tests retain the real repair "
+        "transaction and substitute only its externally-owned observations - "
+        "the child interpreter probe, the environment classification, the "
+        "receipt verdict, the process table and the uv launch itself - with "
+        "sentinels that fail if consent, a foreign target, an unreadable "
+        "release, a holder, a no-device diagnosis, the CUDA re-probe or the "
+        "receipt postcondition is bypassed. The count is high because each "
+        "guard stages the same boundaries again for the one branch it proves",
     ),
     "test_watcher_controller_intake.py": (
         11,
@@ -281,6 +349,15 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "older build; lowering the schema constant for the one rebuild that writes "
         "it lets the real ledger record and then refuse that proof, with every "
         "ledger, signature and publication step left real",
+    ),
+    "test_process_termination.py": (
+        19,
+        "the states under test - a child whose exit waitpid acknowledges, a "
+        "zombie that is not this process's child, a PID reused after exit - "
+        "are kernel states that cannot be produced on demand, and a zombie "
+        "cannot exist on Windows at all. Most substitutes are tripwires that "
+        "only fail the test when a forbidden probe or sleep is reached, so "
+        "none can make a regressed path pass",
     ),
 }
 

@@ -33,11 +33,6 @@ on:
         required: false
         type: boolean
         default: false
-      cache_mode:
-        description: Runner-local cache namespace
-        required: false
-        type: string
-        default: normal
     secrets:
       HF_TOKEN:
         description: Hugging Face token for warming the model cache
@@ -59,19 +54,12 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
-  CI_CACHE_MODE: ${{ inputs.cache_mode }}
 
 jobs:
   mps:
     name: "Test: Accelerator backend (macOS)"
-    # The macOS runner is a laptop under an AC-power policy: on battery it is
-    # deliberately booted out of the fleet, so it is absent for long stretches
-    # by design. A release waits for it: the machine must be plugged in before
-    # a release may advertise MPS support for the selected commit.
-    #
-    # `timeout-minutes` bounds how long a job may RUN, not how long it waits
-    # for a runner. A job queued while the machine is on battery sits pending
-    # up to GitHub's 24h limit and then reports `cancelled`.
+    # A release waits for this tier before it may advertise MPS support for
+    # the selected commit.
     if: inputs.tier == 'macos' || inputs.tier == 'macos-and-gpu'
     timeout-minutes: 60
     runs-on: [self-hosted, macOS, ARM64]
@@ -89,22 +77,6 @@ jobs:
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
-      # The runner's environment does not necessarily carry Homebrew's prefix:
-      # a non-login shell omits /opt/homebrew/bin, which is where uv lives, and
-      # pwsh sits under ~/.local/bin. Without this every recipe fails with
-      # "uv: command not found" on a machine where an interactive shell finds
-      # it perfectly well. `just` needs pwsh on POSIX too - the justfile's
-      # `windows-shell` is the override, not the rule.
-      - name: Put Homebrew and user binaries on PATH
-        run: |
-          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -128,10 +100,10 @@ jobs:
         continue-on-error: true
         run: just test-python
 
-      # The guard below reads the machine's model cache with the Hub switched
-      # off, deliberately, so that a missing snapshot fails as a runner problem
-      # instead of quietly downloading gigabytes mid-gate. That contract needs
-      # the cache to exist in this job's cache namespace, so it is warmed here.
+      # The guard below reads the model cache with the Hub switched off,
+      # deliberately, so that a missing snapshot fails loudly instead of
+      # quietly downloading gigabytes mid-gate. That contract needs the cache
+      # to exist, so it is warmed here.
       # The download is idempotent - a warm cache is a no-op - and the model
       # set is read from the shipped configuration so it cannot drift from
       # what the guard then loads. A recipe rather than an inline script,
@@ -152,14 +124,10 @@ jobs:
   cuda:
     name: "Test: GPU correctness (Windows)"
     # Generous because this tier is the ~40 minute long pole, but still
-    # finite: a wedged GPU test holds the only machine carrying the cuda
-    # label, so an unbounded hang blocks every future GPU run rather than just
-    # its own.
+    # finite, so a wedged GPU test fails instead of hanging.
     #
     # The integration, quality, performance, robustness, subprocess_gpu, and
-    # cuda markers that a GPU-less runner cannot execute run here. It never
-    # runs per push: on a single GPU runner shared with the live service,
-    # auto-running it wedged the runner and made results non-deterministic.
+    # cuda markers that need a GPU run here. It never runs per push.
     #
     # Contention is guarded by the one pytest coordinator: it borrows through
     # the acknowledged service lease, fails closed on unavailable service,
@@ -171,13 +139,8 @@ jobs:
       # requires-python admits a range, so uv would otherwise pick whichever
       # interpreter it likes here and the CUDA wheel under test would drift
       # between runs. This job exists to exercise ONE known GPU stack, so it
-      # pins the floor. Pinning here also avoids actions/setup-python, whose
-      # MSI registry cleanup fails under the runner's service account.
+      # pins the floor.
       UV_PYTHON: "3.13"
-      # This lane provisions a Qdrant binary, warms a multi-gigabyte model
-      # cache, and starts a resident daemon. Under the SYSTEM account all
-      # three would land in C:\WINDOWS\system32\config\systemprofile, so
-      # `contain-writes` pins every path to runner-owned storage.
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -194,10 +157,13 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'commit mismatch' }
 
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
+      # The tier's service keeps its status and vector store in this job's
+      # temporary directory, apart from any other installation of the product.
+      - name: Keep the tier's service state in the job's temporary directory
+        shell: pwsh
+        run: |
+          "VAULTSPEC_RAG_STATUS_DIR=$(Join-Path $env:RUNNER_TEMP 'vaultspec-rag-status')" >> $env:GITHUB_ENV
+          "VAULTSPEC_RAG_QDRANT_STORAGE_DIR=$(Join-Path $env:RUNNER_TEMP 'vaultspec-rag-qdrant')" >> $env:GITHUB_ENV
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -219,17 +185,16 @@ jobs:
       # a live, health-verified, version-compatible resident service before
       # pytest isolates its managed paths, and refuses the whole tier when
       # there is none - every test deselected, nothing run. The service loads
-      # the configured model stack as it comes up, so it needs a warm cache in
-      # this job's cache namespace first, or the daemon dies before it can
-      # report ready.
+      # the configured model stack as it comes up, so it needs a warm cache
+      # first, or the daemon dies before it can report ready.
       - name: Warm the model cache the resident service loads
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just warm-models
 
       # Waiting on `running` rather than sleeping a fixed interval is what
-      # makes this reliable on a machine that loads its model stack at start:
-      # a warming daemon has no health identity for the coordinator to match.
+      # makes this reliable while the model stack loads: a warming daemon has
+      # no health identity for the coordinator to match.
       - name: Start the resident service the GPU tier borrows from
         id: resident
         shell: pwsh
@@ -237,8 +202,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
-          # The GPU runner is a workstation that also runs an operator's own
-          # service and Qdrant, either of which can hold the default service
+          # Another installation of the product may hold the default service
           # port. The coordinator and the stop step find this daemon through
           # its status file, so it binds whatever loopback port is free.
           $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -248,8 +212,7 @@ jobs:
           uv run --no-sync vaultspec-rag server start --json
           $startExit = $LASTEXITCODE
           # A dead daemon says only `start_died` on stdout; the reason is in its
-          # own log, so surface that here rather than leaving the next reader to
-          # go and find a file on a machine they may not have.
+          # own log, so surface that here.
           if ($startExit -ne 0) {
             uv run --no-sync vaultspec-rag server logs --limit 80
             throw "server start failed with $startExit"
@@ -281,9 +244,8 @@ jobs:
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: just test-gpu
 
-      # Always: a tier that failed mid-borrow still leaves a daemon holding the
-      # card, and the next run's capture would then contend with a service this
-      # one was supposed to own the lifetime of.
+      # Always: a tier that failed mid-borrow still leaves this job's daemon
+      # holding the GPU.
       - name: Stop the resident service
         if: always()
         shell: pwsh

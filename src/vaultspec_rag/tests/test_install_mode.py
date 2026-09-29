@@ -504,6 +504,78 @@ def test_infer_upgrade_mode_legacy_tool_shape(tmp_path: Path) -> None:
     assert resolved.mode is InstallMode.TOOL
 
 
+def test_infer_upgrade_mode_legacy_dev_shape(tmp_path: Path) -> None:
+    """A dev-group placement with a dependency-shaped deployed entry infers dev."""
+    ws = _workspace(tmp_path, _PROJECT_RAG_DEV_GROUP)
+    seed_builtins(ws / ".vaultspec", force=True)
+    # Dev mode renders byte-identically to dependency, so the deployed entry
+    # this legacy workspace carries is the dependency-shaped launch.
+    mcp = {
+        "_vaultspecManaged": [RAG_DISTRIBUTION_NAME],
+        "mcpServers": {
+            RAG_DISTRIBUTION_NAME: {
+                "command": _DEP_LAUNCH[0],
+                "args": list(_DEP_LAUNCH[1]),
+            }
+        },
+    }
+    (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
+
+    resolved = infer_rag_upgrade_mode(ws, None)
+
+    assert resolved.mode is InstallMode.DEV
+
+
+def test_infer_upgrade_mode_placement_contradicted_by_uvx_shape_stays_tool(
+    tmp_path: Path,
+) -> None:
+    """A dependency placement whose deployed entry is still uvx-shaped stays tool.
+
+    Regression guard for the shape check the function's docstring used to
+    claim without the code making it: placement detection alone (a runtime
+    dependency in ``pyproject.toml``) must not outrank what the workspace
+    actually launches today.
+    """
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    seed_builtins(ws / ".vaultspec", force=True)
+    mcp = {
+        "_vaultspecManaged": [RAG_DISTRIBUTION_NAME],
+        "mcpServers": {
+            RAG_DISTRIBUTION_NAME: {
+                "command": _TOOL_LAUNCH[0],
+                "args": list(_TOOL_LAUNCH[1]),
+            }
+        },
+    }
+    (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
+
+    resolved = infer_rag_upgrade_mode(ws, None)
+
+    assert resolved.mode is InstallMode.TOOL
+
+
+def test_infer_upgrade_mode_skips_mcp_status_when_disallowed(tmp_path: Path) -> None:
+    """``allow_mcp_status=False`` trusts placement alone, ignoring deployed shape."""
+    ws = _workspace(tmp_path, _PROJECT_WITH_RAG)
+    seed_builtins(ws / ".vaultspec", force=True)
+    # A uvx-shaped deployed entry would flip inference to tool when MCP status
+    # is consulted (the test above); with it disallowed, detection alone wins.
+    mcp = {
+        "_vaultspecManaged": [RAG_DISTRIBUTION_NAME],
+        "mcpServers": {
+            RAG_DISTRIBUTION_NAME: {
+                "command": _TOOL_LAUNCH[0],
+                "args": list(_TOOL_LAUNCH[1]),
+            }
+        },
+    }
+    (ws / ".mcp.json").write_text(json.dumps(mcp), encoding="utf-8")
+
+    resolved = infer_rag_upgrade_mode(ws, None, allow_mcp_status=False)
+
+    assert resolved.mode is InstallMode.DEPENDENCY
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_command", "expected_args"),
     [
@@ -629,7 +701,7 @@ def test_uninstall_dry_run_previews_sentinels_without_removing(
     _install(ws, mode=InstallMode.DEPENDENCY)
     (ws / ".qdrant-initialized").write_text("", encoding="utf-8")
 
-    report = uninstall_run(path=ws, force=False)
+    report = uninstall_run(path=ws, dry_run=True)
 
     assert (ws / ".qdrant-initialized").exists()
     assert ".qdrant-initialized" in report.removed

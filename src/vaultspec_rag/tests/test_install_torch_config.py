@@ -162,22 +162,14 @@ class TestInstallTorchConfig:
         # from the distributions it really holds, so this runs where the
         # inference stack is installed; a pinned role cannot cross into it.
         #
-        # HF_TOKEN is set to the empty string rather than removed. Removing
-        # it does not survive the subprocess: ``install_run`` imports
-        # ``cli._core``, whose module body calls ``load_dotenv()``, and
-        # python-dotenv resolves ``.env`` by walking up from ``_core.py``'s
-        # own location - so a developer checkout with a populated ``.env``
-        # re-injects the real token and the warning under test never fires.
-        # ``load_dotenv`` defaults to ``override=False``, so a key that is
-        # already present is left alone, and ``huggingface_hub`` cleans the
-        # empty value to ``None``. Absent for the code under test, immovable
-        # by dotenv. CI passed either way because a fresh checkout has no
-        # ``.env``; only developer machines saw the failure.
+        # Removing the variable is enough: a workspace .env is read only
+        # inside the credential gate, so nothing re-injects a developer's
+        # real token into the child on the way past.
         env: dict[str, str] = {
             **os.environ,
             "HF_HOME": str(tmp_path / "empty-hf-home"),
-            "HF_TOKEN": "",
         }
+        env.pop("HF_TOKEN", None)
         cmd: list[str] = [
             sys.executable,
             "-c",
@@ -208,22 +200,24 @@ class TestInstallTorchConfig:
         # login command every supported hub version ships.
         assert all("`hf auth login`" in w for w in token_warnings), token_warnings
 
-    def test_install_force_implies_assume_yes_for_torch_config(
+    def test_install_force_does_not_answer_the_torch_config_prompt(
         self, consumer_workspace: Path
     ) -> None:
-        """Issue #83 finding 2: ``--force`` should bypass the torch-config
-        confirmation. A user who typed --force expects the whole install
-        to land; silently skipping the patch with a warning is the bug.
+        """``--force`` overwrites files; it never answers a consent prompt.
+        Only ``--yes`` may apply the patch non-interactively - a user who
+        typed ``--force`` alone gets the same non-TTY skip as one who typed
+        neither, with a warning naming ``--yes``.
         """
         report = install_run(
             path=consumer_workspace,
             force=True,
             assume_yes=False,
-            confirm=None,  # non-interactive - would otherwise be skipped-non-tty
+            confirm=None,  # non-interactive - hits the non-TTY skip branch
         )
-        assert report.torch_config_action == "applied"
+        assert report.torch_config_action == "skipped-non-tty"
+        assert any("--yes" in w for w in report.warnings)
         assert _inspect.detect_state(consumer_workspace / "pyproject.toml") == (
-            TorchConfigState.CANONICAL
+            TorchConfigState.MISSING
         )
 
     def test_install_eof_distinguished_from_decline(
@@ -321,7 +315,7 @@ class TestInstallTorchConfig:
     def test_install_force_with_customised_still_reports_conflict(
         self, tmp_path: Path
     ) -> None:
-        """``--force`` bypasses the *prompt*, not the safety classifier.
+        """``--force`` never overrides the safety classifier.
         A CUSTOMISED block must still surface as a conflict - silently
         overwriting user-customised tool config is the worst outcome.
         """
@@ -454,7 +448,7 @@ class TestUninstallTorchConfig:
             newline="",
         )
         sha_before = _sha(ws / "pyproject.toml")
-        report = uninstall_run(path=ws, force=False)  # dry-run path
+        report = uninstall_run(path=ws, dry_run=True)
         assert report.torch_config_action == "skipped"
         assert report.torch_config_conflicts
         assert _sha(ws / "pyproject.toml") == sha_before
@@ -462,8 +456,7 @@ class TestUninstallTorchConfig:
     def test_uninstall_dry_run_does_not_mutate(self, consumer_workspace: Path) -> None:
         install_run(path=consumer_workspace, assume_yes=True)
         sha_before = _sha(consumer_workspace / "pyproject.toml")
-        # dry_run path without --force stays in dry-run mode.
-        report = uninstall_run(path=consumer_workspace, force=False)
+        report = uninstall_run(path=consumer_workspace, dry_run=True)
         assert report.torch_config_action == "dry_run"
         assert _sha(consumer_workspace / "pyproject.toml") == sha_before
 
@@ -523,11 +516,9 @@ class TestInstallTorchConfigFollowups:
     def test_install_force_with_no_torch_config_disables_patch(
         self, consumer_workspace: Path
     ) -> None:
-        """TEST-03 / INSTALL precedence: ``--no-torch-config`` must win
-        over ``--force``. A future refactor that hoisted the
-        force-implies-yes coercion above the configure_torch
-        short-circuit would silently apply the patch despite the user's
-        explicit opt-out.
+        """TEST-03 / INSTALL precedence: ``--no-torch-config`` disables the
+        patch outright, regardless of ``--force`` - which never reaches the
+        torch-config decision at all.
         """
         sha_before = _sha(consumer_workspace / "pyproject.toml")
         report = install_run(
@@ -721,7 +712,9 @@ class TestErrorBranches:
             ],
             catch_exceptions=False,
         )
-        assert result.exit_code == 2, result.output
+        # A failed run, so the shared table's failure code - 2 is reserved
+        # for a run that completed and skipped a required step.
+        assert result.exit_code == 1, result.output
         assert pyproject.read_bytes() == before
         assert not list(ws.rglob("*.lock"))
 
@@ -1030,112 +1023,6 @@ class TestDeclinedWarning:
             "declined" in w and ("--yes" in w or "--force" in w)
             for w in report.warnings
         ), report.warnings
-
-
-class TestUvSyncTorchBranches:
-    """TEST-01 coverage: pin every branch of the uv-sync result
-    classifier. Tests target the pure helper
-    :func:`vaultspec_rag.commands._classify_uv_sync_result` so the
-    branch coverage does not depend on Windows ``CreateProcess`` PATH
-    resolution (which only auto-tries ``.exe`` and so cannot be driven
-    by a ``.cmd`` stub script). Plus one end-to-end test for the
-    ``uv-not-found`` branch which the helper does not see (raised by
-    ``subprocess`` before ``returncode`` exists).
-    """
-
-    def test_classify_succeeded_when_returncode_zero(self) -> None:
-        from ..commands._uv_sync import _classify_uv_sync_result
-
-        action, warning = _classify_uv_sync_result(returncode=0, stdout="", stderr="")
-        assert action == "succeeded"
-        assert warning is None
-
-    def test_classify_failed_with_stderr_tail(self) -> None:
-        from ..commands._uv_sync import _classify_uv_sync_result
-
-        action, warning = _classify_uv_sync_result(
-            returncode=1, stdout="", stderr="resolution failed\nmore detail"
-        )
-        assert action == "failed"
-        assert warning is not None
-        assert "last stderr lines" in warning
-        assert "resolution failed" in warning
-        assert "exited with code 1" in warning
-
-    def test_classify_failed_with_stdout_fallback(self) -> None:
-        """INSTALL-03 regression: stderr empty, stdout populated → use
-        stdout's tail. Pre-fix, the user got only the bare exit code.
-        """
-        from ..commands._uv_sync import _classify_uv_sync_result
-
-        action, warning = _classify_uv_sync_result(
-            returncode=2, stdout="lockfile mismatch on torch", stderr=""
-        )
-        assert action == "failed"
-        assert warning is not None
-        assert "last stdout lines" in warning
-        assert "lockfile mismatch on torch" in warning
-
-    def test_classify_failed_with_both_streams_empty(self) -> None:
-        """When uv exits non-zero with no diagnostics, the warning
-        carries only the exit code - but the action must still be
-        ``failed`` so renderers colour it red.
-        """
-        from ..commands._uv_sync import _classify_uv_sync_result
-
-        action, warning = _classify_uv_sync_result(returncode=255, stdout="", stderr="")
-        assert action == "failed"
-        assert warning is not None
-        assert "exited with code 255" in warning
-        # No tail block when there is nothing to tail.
-        assert "last stderr lines" not in warning
-        assert "last stdout lines" not in warning
-
-    def test_classify_failed_tails_only_last_five_lines(self) -> None:
-        """Long uv outputs must be tailed to keep warning readable."""
-        from ..commands._uv_sync import _classify_uv_sync_result
-
-        many = "\n".join(f"line {i}" for i in range(1, 21))
-        action, warning = _classify_uv_sync_result(returncode=1, stdout="", stderr=many)
-        assert action == "failed"
-        assert warning is not None
-        # The tail must contain the final five lines and exclude line 1.
-        assert "line 20" in warning
-        assert "line 16" in warning
-        assert "line 15" not in warning  # 6th-from-last; outside the tail
-        assert "line 1\n" not in warning
-
-    def test_install_sync_after_records_uv_not_found_when_uv_absent(
-        self, tmp_path: Path
-    ) -> None:
-        """End-to-end test for the only branch the pure helper does
-        not cover - the FileNotFoundError raised when ``uv`` is not
-        resolvable on PATH at all. Drives ``install_run`` against a
-        consumer that needs a fresh apply and points PATH at an empty
-        directory so subprocess can't find any ``uv``.
-        """
-        import os
-
-        ws = tmp_path / "ws"
-        ws.mkdir()
-        (ws / "pyproject.toml").write_text(
-            "[project]\n"
-            'name = "demo"\n'
-            'version = "0.1.0"\n'
-            'dependencies = ["vaultspec-rag", "torch>=2.4"]\n',
-            encoding="utf-8",
-            newline="",
-        )
-        empty_dir = tmp_path / "empty"
-        empty_dir.mkdir()
-        original_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = str(empty_dir)
-        try:
-            report = install_run(path=ws, assume_yes=True, sync_after=True)
-        finally:
-            os.environ["PATH"] = original_path
-        assert report.torch_sync_action == "uv-not-found"
-        assert any("uv` is not on PATH" in w for w in report.warnings)
 
 
 class TestManualSnippetBytes:

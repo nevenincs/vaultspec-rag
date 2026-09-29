@@ -117,6 +117,11 @@ class GPUResidencyMixin:
         warming = self._quiesce_controller.begin_warming()
         if warming.snapshot.state is not QuiesceState.WARMING:
             return warming
+        # Any loan ends before this service puts models back on the card, so a
+        # borrower's process tree and the rebuilt stack never share the device.
+        from ._gpu_owner import reclaim_gpu
+
+        reclaim_gpu()
         try:
             self._rebuild_gpu_dependencies(
                 admission_epoch=warming.snapshot.admission_epoch,

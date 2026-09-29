@@ -48,6 +48,12 @@ def test_mcp_is_not_a_core_dependency() -> None:
     )
 
 
+def test_python_dotenv_is_not_a_dependency() -> None:
+    """The distribution never requires python-dotenv; the CLI reads no ``.env``."""
+    core_names = {req.name for req in _requirements() if _is_core(req)}
+    assert "python-dotenv" not in core_names, core_names
+
+
 def test_mcp_is_declared_in_the_mcp_extra() -> None:
     """`mcp` is available via the `[mcp]` extra for the optional MCP server."""
     extra_mcp = {req.name for req in _requirements() if _in_extra(req, "mcp")}
@@ -153,6 +159,11 @@ def test_canonical_mcp_builtin_is_installed() -> None:
 
 
 def test_published_core_floor_carries_native_mcp_contract() -> None:
-    """The distribution cannot resolve against a pre-native-MCP Core release."""
+    """The distribution cannot resolve against a Core release it cannot run on.
+
+    The floor carries Core's native MCP contract and its shared settings
+    chain (``vaultspec_core.env_values`` and ``ConfigurationError``), which
+    this package imports at startup.
+    """
     core = next(req for req in _requirements() if req.name == "vaultspec-core")
-    assert str(core.specifier) == ">=0.1.45"
+    assert str(core.specifier) == ">=0.3.2"

@@ -338,8 +338,8 @@ def coscheduled_mps_tiers(
     """Return selected MPS and non-MPS hardware test ids.
 
     An MPS selection runs a real model stack on unified-memory Apple silicon.
-    Every other slow tier is coordinated for the CUDA fleet and must remain in
-    its own pytest session.
+    Every other slow tier is coordinated for shared CUDA access and must
+    remain in its own pytest session.
     """
     mps_ids: list[str] = []
     other_hardware_ids: list[str] = []

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-import yaml
 
 from dev.guards import _workflows as workflows
 
@@ -17,18 +16,9 @@ DISPATCH_STEP = "Dispatch the merge gate for the release pull request"
 REF_EXPRESSION = "${{ inputs.ref || github.sha }}"
 
 
-def _document(workflow: str) -> dict[object, object]:
-    """Return *workflow* parsed as YAML."""
-    path = workflows.repository_root() / ".github" / "workflows" / workflow
-    loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict), f"{workflow} is not a mapping"
-    return cast("dict[object, object]", loaded)
-
-
 def _triggers(workflow: str) -> dict[object, object]:
     """Return one workflow's trigger mapping."""
-    document = _document(workflow)
-    triggers = document.get("on", document.get(True))
+    triggers = workflows.triggers(workflows.document(workflow))
     assert isinstance(triggers, dict), f"{workflow} has no `on:` mapping"
     return cast("dict[object, object]", triggers)
 
@@ -39,7 +29,7 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     Mutation proof: deleting ``--field ref=`` makes this fail on the dispatch
     contract; restoring it makes this pass.
     """
-    jobs = _document(RELEASE_WORKFLOW).get("jobs")
+    jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
     assert isinstance(jobs, dict)
     release = cast("dict[object, object]", jobs).get("release-please")
     assert isinstance(release, dict)

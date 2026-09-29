@@ -20,15 +20,31 @@ nothing - the dependency reporter and the live signals are both read-only.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
+from vaultspec_core.config.workspace import WorkspaceError, resolve_workspace
 
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
+from ..operator_state._holders import HolderRole, holder_line
+from ..operator_state._provisioning import (
+    classify_tool_receipt,
+    cuda_remediation,
+    upgrade_commands_for_mode,
+)
 from ..operator_state._service import ServiceLifecycle
-from ._app import JSON_ENVELOPE_OPTION_HELP, server_root_app
+from ..operator_state._topology import (
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
+)
+from ._app import JSON_ENVELOPE_OPTION_HELP, _global_target, server_root_app
+from ._process import _resolve_daemon_interpreter
 from ._render import _emit_json, _plain
+
+if TYPE_CHECKING:
+    from ..operator_state._installation import ComputeCapability
 
 
 @server_root_app.command(
@@ -40,6 +56,7 @@ from ._render import _emit_json, _plain
     ),
 )
 def service_doctor(
+    ctx: typer.Context,
     json_output: Annotated[
         bool,
         typer.Option(
@@ -61,14 +78,14 @@ def service_doctor(
     """
     from ..operator_state._compute import ProbeDepth
     from ..operator_state._environment_probe import probe_interpreter
-    from ._process import _resolve_daemon_interpreter
 
-    compute = probe_interpreter(
-        _resolve_daemon_interpreter(), ProbeDepth.VERIFY
-    ).compute
-    report = get_readiness(include_holders=True, compute=compute)
+    interpreter = _resolve_daemon_interpreter()
+    compute = probe_interpreter(interpreter, ProbeDepth.VERIFY).compute
+    # The holders that matter are the ones holding the environment the
+    # service would run in, which is not necessarily this command's own.
+    report = get_readiness(holders_root=environment_root(interpreter), compute=compute)
     service = _live_service_axis()
-    mode = _mode_floor_axis(Path.cwd())
+    mode = _mode_floor_axis(_resolve_doctor_target(ctx))
     overall_ready, status = _overall_readiness(report, service)
     if json_output:
         envelope = {
@@ -79,10 +96,17 @@ def service_doctor(
             "dependencies": report.get("dependencies"),
             "service": service,
             "mode": mode,
+            "interpreter": interpreter,
+            "environment_holders": report.get("environment_holders"),
+            "compute_repair": _compute_repair_steps(interpreter, compute.capability),
+            "receipt": _receipt_axis(interpreter),
         }
         _emit_json(overall_ready, "server doctor", data=envelope)
     else:
         _render_readiness(report, service, overall_ready, status)
+        _render_receipt_axis(interpreter)
+        _render_compute_repair(interpreter, compute.capability)
+        _render_environment_holders(report)
         _render_mode_floor_axis(mode)
     raise typer.Exit(code=_doctor_exit_code(service, mode))
 
@@ -219,6 +243,29 @@ def _overall_readiness(
     return deps_ready, ("ready" if deps_ready else "dependencies_not_ready")
 
 
+def _resolve_doctor_target(ctx: typer.Context) -> Path:
+    """Resolve the workspace root the same way the other commands do.
+
+    Root ``--target`` (or the environment variable it falls back to, already
+    stashed on ``ctx.obj`` by the root callback) outranks git/structural
+    discovery, which outranks the working directory - the same chain
+    ``resolve_workspace`` applies for every non-``server``/``install``/
+    ``uninstall`` command. ``server`` short-circuits that resolution at the
+    root callback (it does not always need a workspace), so doctor - the one
+    ``server`` subcommand that reads workspace-scoped state - resolves it
+    here instead of reading ``Path.cwd()`` directly.
+
+    Falls back to the named target (or ``cwd``) rather than raising: the
+    doctor mutates nothing and never crashes on a probe, matching every
+    other axis's failure contract.
+    """
+    named_target = _global_target(ctx)
+    try:
+        return resolve_workspace(target_override=named_target).target_dir
+    except WorkspaceError:
+        return named_target or Path.cwd()
+
+
 def _mode_floor_axis(target: Path) -> dict[str, object] | None:
     """Compute rag's provisioning mode-and-floor axis, read-only.
 
@@ -265,13 +312,19 @@ def _mode_floor_axis(target: Path) -> dict[str, object] | None:
         )
     except Exception:
         return None
+    declared_mode = declaration.install_mode.value
     return {
         "package": RAG_DISTRIBUTION_NAME,
-        "declared_mode": declaration.install_mode.value,
+        "declared_mode": declared_mode,
         "mode_mismatch": mode_mismatch.value,
         "version_floor": floor.value,
         "version_floor_running": running,
         "version_floor_minimum": minimum,
+        # Computed here so the envelope and the rendered block read one
+        # value, and so the daemon interpreter is resolved once.
+        "upgrade_commands": list(
+            upgrade_commands_for_mode(declared_mode, _resolve_daemon_interpreter())
+        ),
     }
 
 
@@ -288,6 +341,127 @@ def _render_readiness(
     _plain(f"Readiness: {_overall_label(overall_ready, status)}")
     _render_live_service_axis(service)
     _render_dependency_axis(report)
+
+
+def _receipt_axis(interpreter: str) -> dict[str, object] | None:
+    """What an upgrade of this installation would resolve, or ``None``.
+
+    Only a uv tool installation has a receipt to judge. Everything else
+    resolves from a project or from nothing, and reporting a verdict about a
+    file that does not exist would be an invented fact.
+    """
+    kind = classify_environment(environment_root(interpreter))
+    if kind is not RuntimeEnvKind.UV_TOOL:
+        return None
+    verdict = classify_tool_receipt(interpreter)
+    return {
+        "verdict": verdict.value,
+        "label": verdict.label,
+        "durable": verdict.durable,
+        "fix": list(verdict.fix(interpreter)),
+    }
+
+
+def _render_receipt_axis(interpreter: str) -> None:
+    """Report what the next upgrade of this installation would resolve."""
+    axis = _receipt_axis(interpreter)
+    if axis is None:
+        return
+    _plain(f"Installation receipt: {axis['label']}")
+    raw = axis["fix"]
+    commands = cast("list[object]", raw) if isinstance(raw, list) else []
+    if not commands:
+        return
+    _plain("  make upgrades keep the GPU build, in order:")
+    for command in commands:
+        # Soft-wrapped: a folded command is not one an operator can paste.
+        _plain(f"    {command}", soft_wrap=True)
+
+
+def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
+    """The repair for this interpreter, or nothing when there is none to run.
+
+    Only a defect a new torch wheel fixes has a provisioning repair. A
+    missing device or a refused accelerator policy is answered by the
+    capability's own remediation, which the readiness line already carries.
+    """
+    if not capability.fixed_by_torch_reinstall:
+        return []
+    return list(cuda_remediation(interpreter).steps)
+
+
+def _render_compute_repair(interpreter: str, capability: ComputeCapability) -> None:
+    """Print the exact repair for the interpreter the service would run in.
+
+    The compute capability's own remediation says this command prints it,
+    and status renders that sentence, so it has to be true here.
+    """
+    steps = _compute_repair_steps(interpreter, capability)
+    if not steps:
+        return
+    _plain(f"Repair for {interpreter}:")
+    for step in steps:
+        _plain(f"  {step}", soft_wrap=True)
+
+
+def _render_environment_holders(report: dict[str, object]) -> None:
+    """Report who is running out of the service environment, and what they are.
+
+    The scan ran for the daemon's environment, so the list is about the
+    environment a repair would change rather than the one this command
+    happens to run in. Nothing here blocks that repair: it is applied in
+    place, and these are the processes that keep the build they imported at
+    startup until they are restarted.
+    """
+    raw = report.get("environment_holders")
+    if not isinstance(raw, dict):
+        return
+    snapshot = cast("dict[str, object]", raw)
+    if not snapshot.get("scanned"):
+        return
+    holders = snapshot.get("holders")
+    entries = cast("list[object]", holders) if isinstance(holders, list) else []
+    if not entries and snapshot.get("certain") and not snapshot.get("self_held"):
+        _plain("Service environment: nothing is running out of it")
+        return
+    _plain("Running out of the service environment:")
+    if snapshot.get("self_held"):
+        _plain("  this command is running inside that environment")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        holder = cast("dict[str, object]", entry)
+        pid = holder.get("pid")
+        port = holder.get("port")
+        launcher = holder.get("launcher_pid")
+        _plain(
+            "  "
+            + holder_line(
+                int(pid) if isinstance(pid, int) else 0,
+                _holder_role(holder.get("role")),
+                launcher_pid=launcher if isinstance(launcher, int) else None,
+                port=port if isinstance(port, int) else None,
+            )
+        )
+    total = snapshot.get("total")
+    if isinstance(total, int) and total > len(entries):
+        _plain(f"  ... and {total - len(entries)} more")
+    if not snapshot.get("certain"):
+        _plain("  the scan was incomplete, so this list may be short")
+
+
+def _holder_role(value: object) -> HolderRole:
+    """Read a reported role, without failing on one this build does not know.
+
+    The snapshot can come from a service of another release, and a role it
+    names that this one does not is still a process an operator has to deal
+    with. Refusing to render the whole block over the word is a worse answer
+    than calling it what it is: something running out of the environment.
+    """
+    try:
+        return HolderRole(str(value))
+    except ValueError:
+        return HolderRole.UNRECOGNISED
 
 
 def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
@@ -310,9 +484,14 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
     if mode.get("version_floor") == "below":
         _plain(
             f"  version floor: error - running {mode.get('version_floor_running')} "
-            f"is below the declared floor {mode.get('version_floor_minimum')}; "
-            f"upgrade with uv tool upgrade vaultspec-rag"
+            f"is below the declared floor {mode.get('version_floor_minimum')}"
         )
+        _plain("    upgrade with, in order:")
+        raw = mode.get("upgrade_commands")
+        commands = cast("list[object]", raw) if isinstance(raw, list) else []
+        for command in commands:
+            # Soft-wrapped: a folded command is not one an operator can paste.
+            _plain(f"      {command}", soft_wrap=True)
     else:
         _plain("  version floor: ok")
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path  # noqa: TC003
 
 import pytest
@@ -19,6 +18,7 @@ from ._install_helpers import (
     _RAG_MCP_REL,
     _RAG_SKILL_REL,
     _install,
+    install_report,
     read_codex_mcp,
     read_mcp_json,
     workspace_inventory,
@@ -71,8 +71,8 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        assert result.exit_code == 1, result.output
+        data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["sync_providers"]["codex"]["errored"] == 1
         assert data["sync_providers"]["codex"]["errors"]
@@ -89,7 +89,7 @@ class TestProviderFailureContract:
             ],
             catch_exceptions=False,
         )
-        assert human_result.exit_code == 2, human_result.output
+        assert human_result.exit_code == 1, human_result.output
         assert "Codex MCP: errored 1" in human_result.output
         assert "error:" in human_result.output
 
@@ -118,8 +118,8 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
-        data = json.loads(result.output)
+        assert result.exit_code == 1, result.output
+        data = install_report(result.output)
         assert data["mcp_failed"] is True
         assert data["mcp_errors"]
         assert "ownership" in " ".join(data["mcp_errors"]).lower()
@@ -182,8 +182,8 @@ class TestProviderFailureContract:
             catch_exceptions=False,
         )
 
-        assert result.exit_code == 2, result.output
-        report = json.loads(result.output)
+        assert result.exit_code == 1, result.output
+        report = install_report(result.output)
         assert report["mcp_failed"] is True
         assert report["mcp_extra_action"] == expected_action
         assert report["mcp_errors"]

@@ -6,7 +6,6 @@ import atexit
 import copy
 import hashlib
 import json
-import os
 import threading
 import time
 import urllib.error
@@ -15,6 +14,9 @@ from dataclasses import dataclass, field, replace
 from http.client import HTTPConnection, HTTPException, HTTPResponse
 from typing import cast
 
+from vaultspec_core.config import env_value
+
+from ..config._registry import entry
 from ..config._types import EnvVar
 from ..operator_state._features import TypesafeState
 from ..operator_state._models import TypesafeReport
@@ -70,8 +72,20 @@ class _RequestBudget:
     search_limited: bool
 
 
+def _enrolled_key() -> str:
+    """Return the key this process is enrolled with, or an empty string.
+
+    Read from the process environment through the registry, which is the
+    whole of it here. This runs in the resident service, which serves every
+    root it holds at once: a key belonging to one of them is not enrolment
+    for the rest, so no file is ever consulted. Whoever started this process
+    resolved the credential and put it in the environment it was given.
+    """
+    return env_value(entry(EnvVar.TYPESAFE_API_KEY)) or ""
+
+
 def _credential() -> tuple[str, bytes]:
-    key = os.environ.get(EnvVar.TYPESAFE_API_KEY, "").strip()
+    key = _enrolled_key()
     fingerprint = hashlib.sha256(key.encode()).digest() if key else b""
     with _LOCK:
         if _CIRCUIT.fingerprint != fingerprint:
@@ -106,7 +120,7 @@ def enrollment_status() -> TypesafeReport:
     which resets it when it first sees a new key. Until then a changed key
     reports ``PENDING``, because nothing has yet been evaluated under it.
     """
-    key = os.environ.get(EnvVar.TYPESAFE_API_KEY, "").strip()
+    key = _enrolled_key()
     fingerprint = hashlib.sha256(key.encode()).digest() if key else b""
     with _LOCK:
         now = time.monotonic()

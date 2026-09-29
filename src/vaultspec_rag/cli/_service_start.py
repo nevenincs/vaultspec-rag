@@ -44,10 +44,17 @@ from .._operator_commands import (
     server_jobs_command,
     server_start_command,
     server_status_command,
+    server_stop_command,
 )
 from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
+from ..operator_state._provisioning import cuda_remediation
+from ..operator_state._topology import (
+    RuntimeEnvKind,
+    classify_environment,
+    environment_root,
+)
 from ..serviceclient._compat import (
     VERSION_ERROR_MISMATCH,
     ServiceVersionVerdict,
@@ -65,12 +72,6 @@ from ._app import (
     server_root_app,
 )
 from ._core import logger
-from ._gpu_errors import (
-    RuntimeEnvKind,
-    classify_interpreter_env,
-    durable_tool_install_command,
-    gpu_escape_hatch_command,
-)
 from ._process import (
     DaemonBreakawayError,
     _call_interruptibly,
@@ -129,6 +130,10 @@ class _PreparedServiceRequest:
     local_only: bool
     preprocess_forward: Literal["off"] | None
     json_mode: bool
+    #: The workspace this invocation resolved. The daemon never opens a
+    #: workspace .env of its own, so any credential one holds has to be
+    #: resolved here and handed over in the child's environment.
+    root: Path
 
 
 #: Everything the start wait must cover BEYOND the qdrant readiness budget:
@@ -550,37 +555,15 @@ def _preflight_daemon_accelerator(interpreter: str, *, json_mode: bool) -> None:
         return
     reason = capability.label + (f" ({compute.detail})" if compute.detail else "")
     if capability.blocks_start:
-        kind = classify_interpreter_env(interpreter)
-        if capability is ComputeCapability.NOT_APPLICABLE:
+        kind = classify_environment(environment_root(interpreter))
+        next_actions: tuple[str, ...]
+        if capability.fixed_by_torch_reinstall:
+            next_actions = cuda_remediation(interpreter, env_kind=kind).steps
+        else:
             remediation = capability.remediation
             if remediation is None:
                 raise AssertionError(f"{capability} blocks a start without a remedy")
-            next_actions: tuple[str, ...] = (remediation,)
-        elif sys.platform == "darwin":
-            next_actions = (
-                "Install/repair the macOS torch build in the service environment",
-                'Confirm MPS is visible: python -c "import torch; '
-                'print(torch.backends.mps.is_available())"',
-            )
-        elif kind is RuntimeEnvKind.PROJECT_VENV:
-            next_actions = (
-                "Install/repair GPU torch in the service environment: "
-                "vaultspec-rag install, then uv sync --reinstall-package torch",
-                "Confirm the GPU is visible: nvidia-smi",
-            )
-        else:
-            next_actions = (
-                "Repair this environment now (undone by the next tool "
-                f"upgrade): {gpu_escape_hatch_command(interpreter)}",
-                "Before the reinstall below, stop everything running out of "
-                "this environment - the service, and every editor or agent "
-                "session running an MCP stdio transport. A held file stops the "
-                "forced "
-                "reinstall after it has removed the old packages, and the "
-                "environment is left unrunnable.",
-                f"Make upgrades keep the GPU wheel: {durable_tool_install_command()}",
-                "Confirm the GPU is visible: nvidia-smi",
-            )
+            next_actions = (remediation,)
         raise _fail_start(
             json_mode,
             error="service_env_no_gpu",
@@ -694,10 +677,33 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
             ),
             next_actions=(
                 server_status_command(),
-                "vaultspec-rag server stop",
+                server_stop_command(),
             ),
             holder_pid=machine_holder,
             **({"holder_phase": "warming"} if warming else {}),
+        )
+
+    # The service lock above is scoped to a storage directory, so a service
+    # configured with another one - or a local run that already loaded models -
+    # is invisible to it. The GPU owner anchor is machine-wide; the daemon
+    # enforces it at its first model load, and asking here refuses in seconds
+    # rather than after Qdrant has been brought up.
+    from .._gpu_owner import (
+        gpu_owned_message,
+        gpu_owned_remediation,
+        gpu_owner_wire,
+        observe_gpu_owner,
+    )
+
+    ownership = observe_gpu_owner()
+    if not ownership.state.permits_compute:
+        raise _fail_start(
+            json_mode,
+            error="gpu_owned",
+            message="Service start failed",
+            human_lines=(gpu_owned_message(ownership),),
+            next_actions=gpu_owned_remediation(ownership, starting_service=True),
+            gpu_owner=gpu_owner_wire(ownership),
         )
 
 
@@ -811,6 +817,7 @@ def _spawn_prepared_service(request: _PreparedServiceRequest) -> int:
             qdrant=request.qdrant,
             local_only=request.local_only,
             preprocess_mode=request.preprocess_forward,
+            root=request.root,
         )
     except DaemonBreakawayError as exc:
         raise _fail_start(
@@ -893,15 +900,14 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
                 progress=progress,
             )
 
+        resolved_root = _global_target(ctx) or Path.cwd()
+
         # Operator visibility for the target root's preprocess rules.
         # Best-effort and human-only so the --json envelope stays a single
         # document.
         if not json_mode:
             effective_mode = preprocess_forward or get_config().preprocess_mode
-            _print_preprocess_start_notice(
-                _global_target(ctx) or Path.cwd(),
-                effective_mode,
-            )
+            _print_preprocess_start_notice(resolved_root, effective_mode)
 
         log_path = _log_file()
         interpreter = _resolve_daemon_interpreter()
@@ -924,6 +930,7 @@ def _run_service_start(ctx: ClickContext, options: _ServiceStartOptions) -> None
             local_only=options.local_only,
             preprocess_forward=preprocess_forward,
             json_mode=json_mode,
+            root=resolved_root,
         )
         pid = _spawn_prepared_service(start_request)
         _write_service_status(pid, options.port)
@@ -950,7 +957,8 @@ def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
     installed tool, so the start surface names it loudly. Returns ``()`` for
     every other environment kind.
     """
-    if classify_interpreter_env(interpreter) is not RuntimeEnvKind.UVX_EPHEMERAL:
+    kind = classify_environment(environment_root(interpreter))
+    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
         return ()
     return (
         "WARNING: the service interpreter is a uvx EPHEMERAL cache "
@@ -958,9 +966,7 @@ def _ephemeral_env_warning(interpreter: str) -> tuple[str, ...]:
         f"  {interpreter}",
         "uvx falls back to a cached environment when the installed tool env "
         "is broken or the request does not match it.",
-        "Reinstall the tool with the service stopped (the Scripts lock during "
-        "a forced reinstall is the running service itself):",
-        f"  {durable_tool_install_command()}",
+        *cuda_remediation(interpreter, env_kind=kind).steps,
     )
 
 
@@ -977,7 +983,8 @@ def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]
     the classification can be exercised against real path shapes.
     """
     resolved = sys.executable if interpreter is None else interpreter
-    if classify_interpreter_env(resolved) is not RuntimeEnvKind.UVX_EPHEMERAL:
+    kind = classify_environment(environment_root(resolved))
+    if kind is not RuntimeEnvKind.UVX_EPHEMERAL:
         return ()
     return (
         "WARNING: this command is running from a uvx EPHEMERAL cache "
@@ -985,9 +992,7 @@ def _caller_ephemeral_warning(interpreter: str | None = None) -> tuple[str, ...]
         f"  {resolved}",
         "The already-running service was started from a different "
         "environment; this env disappears when the uvx run ends.",
-        "Reinstall the tool with the service stopped (the Scripts lock during "
-        "a forced reinstall is the running service itself):",
-        f"  {durable_tool_install_command()}",
+        *cuda_remediation(resolved, env_kind=kind).steps,
     )
 
 

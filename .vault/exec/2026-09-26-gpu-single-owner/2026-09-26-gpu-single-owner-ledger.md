@@ -1,0 +1,400 @@
+---
+tags:
+  - '#exec'
+  - '#gpu-single-owner'
+date: '2026-09-26'
+modified: '2026-09-27'
+body_schema: 'body-v2'
+body_hash: 'sha256:537789780c777c3ee1e35366ae917a13412850af8c76167b010e29edcd2d28be'
+related:
+  - "[[2026-09-26-gpu-single-owner-plan]]"
+---
+
+# `gpu-single-owner` ledger
+
+## Changes
+
+- `S01` `M` `src/vaultspec_rag/_process_probe.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_process_lineage.py`
+- `S01` `verify:` `ruff check` -> `pass`
+- `S01` `verify:` `ruff format --check` -> `pass`
+- `S01` `verify:` `ty check` -> `pass`
+- `S01` `verify:` `basedpyright` -> `pass`
+- `S01` `verify:` `pytest test_process_lineage.py test_process_probe_os_guards.py test_process_probe_source_structure.py` -> `pass`
+- `S01` `by:` `orchestrator`
+- `S02` `M` `src/vaultspec_rag/_anchor_claim.py`
+- `S02` `M` `src/vaultspec_rag/_gpu_admission.py`
+- `S02` `M` `src/vaultspec_rag/_win32.py`
+- `S02` `A` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S02` `verify:` `ruff check` -> `pass`
+- `S02` `verify:` `ruff format --check` -> `pass`
+- `S02` `verify:` `ty check` -> `pass`
+- `S02` `verify:` `basedpyright` -> `pass`
+- `S02` `verify:` `pytest -m unit test_hardware_anchor gpu_admission test_existing_anchor_observation test_gpu_borrow_lease test_gpu_borrow_captured_target` -> `pass`
+- `S02` `verify:` `guard mutations (env-read anchor dir, temp-dir load window, no read-only fallback) fail then pass` -> `pass`
+- `S02` `by:` `orchestrator`
+- `S06` `A` `src/vaultspec_rag/operator_state/_topology.py`
+- `S06` `A` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S06` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S06` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S06` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S06` `M` `src/vaultspec_rag/cli/_render.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S06` `verify:` `ruff check` -> `pass`
+- `S06` `verify:` `ruff format --check` -> `pass`
+- `S06` `verify:` `ty check` -> `pass`
+- `S06` `verify:` `basedpyright` -> `pass`
+- `S06` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_cli_install test_cli_status test_environment_probe test_cli_server_start test_cli_start_outcomes test_install_mode test_install_provision test_install_client_role test_server_doctor test_readiness_holders` -> `pass`
+- `S06` `by:` `vaultspec-high-executor`
+- `S03` `A` `src/vaultspec_rag/_gpu_owner.py`
+- `S03` `M` `src/vaultspec_rag/_gpu.py`
+- `S03` `M` `src/vaultspec_rag/_machine_lock.py`
+- `S03` `M` `src/vaultspec_rag/_operator_commands.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S03` `verify:` `ruff check` -> `pass`
+- `S03` `verify:` `ruff format --check` -> `pass`
+- `S03` `verify:` `ty check` -> `pass`
+- `S03` `verify:` `basedpyright` -> `pass`
+- `S03` `verify:` `pytest -m unit test_gpu_owner test_torch_load_centralized test_lifespan_machine_lock test_machine_discovery gpu_admission` -> `pass`
+- `S03` `verify:` `guard mutations (stranger admitted, loan start time ignored, service lock ignored, unopenable anchor read free, load_accelerator unchecked) fail then pass` -> `pass`
+- `S03` `by:` `orchestrator`
+- `S04` `M` `src/vaultspec_rag/_service_borrower.py`
+- `S04` `M` `src/vaultspec_rag/_service_residency.py`
+- `S04` `M` `src/vaultspec_rag/gpu_borrow_lease.py`
+- `S04` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S04` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_torch_load_centralized.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S04` `verify:` `ruff check` -> `pass`
+- `S04` `verify:` `ruff format --check` -> `pass`
+- `S04` `verify:` `ty check` -> `pass`
+- `S04` `verify:` `basedpyright` -> `pass`
+- `S04` `verify:` `pytest -m unit test_gpu_owner test_gpu_borrow_lease test_cli_qdrant test_torch_load_centralized test_process_probe_source_structure test_cli_server_start test_service_quiesce_controller test_job_manager_quiesce test_lifespan_machine_lock` -> `pass`
+- `S04` `verify:` `guard mutations (bind without lend, resume without reclaim, start ignoring the owner) fail then pass` -> `pass`
+- `S04` `by:` `orchestrator`
+- `S07` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S07` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S07` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S07` `M` `docs/installation.md`
+- `S07` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S07` `verify:` `ruff check` -> `pass`
+- `S07` `verify:` `ruff format --check` -> `pass`
+- `S07` `verify:` `ty check` -> `pass`
+- `S07` `verify:` `basedpyright` -> `pass`
+- `S07` `verify:` `mdformat --check and pymarkdownlnt scan docs/installation.md` -> `pass`
+- `S07` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_server_doctor test_cli_install` -> `pass`
+- `S07` `verify:` `guard mutations (upgrade drops the recorded wheel, pin disclosure removed, doctor advises uv tool upgrade) fail then pass` -> `pass`
+- `S07` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S05` `M` `src/vaultspec_rag/cli/_search.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
+- `S05` `verify:` `ruff check` -> `pass`
+- `S05` `verify:` `ruff format --check` -> `pass`
+- `S05` `verify:` `ty check` -> `pass`
+- `S05` `verify:` `basedpyright` -> `pass`
+- `S05` `verify:` `pytest -m unit test_gpu_owner test_cli_search_safety test_cli_search test_search_service_first test_service_version_compatibility test_cli_install test_qdrant_identity test_service_preflight_cli` -> `pass`
+- `S05` `verify:` `guard mutations (local search beside an owner, mandate exempting a foreign release, load refusal without next actions) fail then pass` -> `pass`
+- `S05` `by:` `orchestrator`
+- `S08` `M` `src/vaultspec_rag/commands/_install.py`
+- `S08` `M` `src/vaultspec_rag/commands/_models.py`
+- `S08` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S08` `M` `src/vaultspec_rag/cli/_install.py`
+- `S08` `M` `src/vaultspec_rag/cli/_render.py`
+- `S08` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S08` `verify:` `ruff check` -> `pass`
+- `S08` `verify:` `ruff format --check` -> `pass`
+- `S08` `verify:` `ty check` -> `pass`
+- `S08` `verify:` `basedpyright` -> `pass`
+- `S08` `verify:` `pytest test_cli_install test_tool_torch_repair test_install_mode test_install_provision test_install_client_role test_install_mcp_extra test_install_torch_config test_service_env_preflight` -> `pass`
+- `S08` `verify:` `guard mutations (hard-coded install action, warnings copies restored, refusal rendered as a full report, second post-install probe) fail then pass` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/_process_probe.py`
+- `S09` `A` `src/vaultspec_rag/operator_state/_holders.py`
+- `S09` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S09` `M` `src/vaultspec_rag/cli/_process.py`
+- `S09` `M` `src/vaultspec_rag/cli/_service_stop.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_env_holders.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S09` `verify:` `ruff check` -> `pass`
+- `S09` `verify:` `ruff format --check` -> `pass`
+- `S09` `verify:` `ty check` -> `pass`
+- `S09` `verify:` `basedpyright` -> `pass`
+- `S09` `verify:` `pytest test_env_holders test_tool_torch_repair test_process_probe_* test_process test_process_lineage test_cli_server_stop test_service_stop_port test_readiness test_readiness_holders` -> `pass`
+- `S09` `verify:` `guard mutations (launch chain not excluded, working-directory ancestor dropped, pairing on parentage alone, every holder unrecognised, uncounted uninspectable note) fail then pass` -> `pass`
+- `S09` `by:` `vaultspec-high-executor`
+- `S05` `M` `src/vaultspec_rag/_gpu_owner.py`
+- `S05` `M` `src/vaultspec_rag/_anchor_claim.py`
+- `S05` `M` `src/vaultspec_rag/_service_borrower.py`
+- `S05` `M` `src/vaultspec_rag/server/_routes_quiesce.py`
+- `S05` `M` `src/vaultspec_rag/cli/_index.py`
+- `S05` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S05` `M` `tools/citation_gate.py`
+- `S05` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_cli.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_session_lock.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_citation_gate.py`
+- `S05` `verify:` `pytest -m unit P01 revision set (394 passed; remaining failures outside P01)` -> `pass`
+- `S05` `verify:` `revision guard mutations (8) fail then pass` -> `pass`
+- `S10` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S10` `M` `src/vaultspec_rag/_readiness.py`
+- `S10` `M` `src/vaultspec_rag/api.py`
+- `S10` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_readiness_holders.py`
+- `S10` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S10` `verify:` `ruff check` -> `pass`
+- `S10` `verify:` `ruff format --check` -> `pass`
+- `S10` `verify:` `ty check` -> `pass`
+- `S10` `verify:` `basedpyright` -> `pass`
+- `S10` `verify:` `pytest test_server_doctor test_doctor_repair_and_holders test_readiness test_readiness_holders test_substitution_discipline` -> `pass`
+- `S10` `verify:` `guard mutations (repair not printed, holders scanned over sys.prefix, holders absent from both outputs) fail then pass` -> `pass`
+- `S10` `by:` `vaultspec-high-executor`
+- `S02` `M` `src/vaultspec_rag/_gpu_owner.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S02` `verify:` `pytest -m unit test_hardware_anchor test_gpu_owner test_existing_anchor_observation test_gpu_borrow_lease test_machine_discovery test_lifespan_machine_lock` -> `pass`
+- `S02` `verify:` `WSL Ubuntu mode check: pre-fix widens a 0o600 lock, fix keeps it` -> `pass`
+- `S11` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S11` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_constants.py`
+- `S11` `M` `src/vaultspec_rag/torch_config/_lockfile.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_torch_pin_single_source.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S11` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S11` `verify:` `ruff check` -> `pass`
+- `S11` `verify:` `ruff format --check` -> `pass`
+- `S11` `verify:` `ty check` -> `pass`
+- `S11` `verify:` `basedpyright` -> `pass`
+- `S11` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_torch_pin_single_source test_doctor_repair_and_holders test_cli_install test_install_torch_config test_process_probe_source_structure` -> `pass`
+- `S11` `verify:` `guard mutations (index accepted without the strategy, repair without --upgrade-package torch, version pin unread) fail then pass` -> `pass`
+- `S11` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/commands/_mode.py`
+- `S09` `verify:` `pytest -m unit test_install_mode test_managed_singleton_isolation test_cli_server_start` -> `pass`
+- `S09` `by:` `orchestrator`
+- `S10` `by:` `orchestrator`
+- `S12` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S12` `M` `src/vaultspec_rag/commands/_install.py`
+- `S12` `M` `src/vaultspec_rag/commands/_models.py`
+- `S12` `M` `src/vaultspec_rag/commands/_util.py`
+- `S12` `M` `src/vaultspec_rag/commands/_torch_flow.py`
+- `S12` `M` `src/vaultspec_rag/cli/_install.py`
+- `S12` `M` `src/vaultspec_rag/cli/_render.py`
+- `S12` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S12` `verify:` `ruff check` -> `pass`
+- `S12` `verify:` `ruff format --check` -> `pass`
+- `S12` `verify:` `ty check` -> `pass`
+- `S12` `verify:` `basedpyright` -> `pass`
+- `S12` `verify:` `pytest test_tool_torch_repair test_cli_install test_install_mode test_install_provision test_install_client_role test_install_torch_config test_service_env_preflight` -> `pass`
+- `S12` `verify:` `guard mutations (repair run without consent, uv exit code trusted, receipt ignored when torch works, --force reintroduced, refused report emitting step defaults) fail then pass` -> `pass`
+- `S12` `by:` `vaultspec-high-executor`
+- `S12` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S12` `verify:` `pytest test_tool_torch_repair test_cli_install test_service_env_preflight` -> `pass`
+- `S12` `verify:` `guard mutations (containment removed, target comparison removed, python request taken from the running process) fail then pass` -> `pass`
+- `S13` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S13` `M` `src/vaultspec_rag/cli/_status.py`
+- `S13` `M` `src/vaultspec_rag/_readiness.py`
+- `S13` `M` `src/vaultspec_rag/serviceclient/_compat.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S13` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S13` `verify:` `ruff check` -> `pass`
+- `S13` `verify:` `ruff format --check` -> `pass`
+- `S13` `verify:` `ty check` -> `pass`
+- `S13` `verify:` `basedpyright` -> `pass`
+- `S13` `verify:` `pytest test_doctor_repair_and_holders test_cli_status test_server_doctor test_readiness_holders test_service_version_compatibility` -> `pass`
+- `S13` `verify:` `guard mutations (receipt axis unrendered, capped holder list without its total, unknown role raising, status receipt line removed) fail then pass` -> `pass`
+- `S13` `by:` `vaultspec-high-executor`
+- `S14` `M` `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`
+- `S14` `M` `src/vaultspec_rag/tests/_uv_env_harness.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S14` `M` `src/vaultspec_rag/tests/test_process_probe_source_structure.py`
+- `S14` `verify:` `ruff check` -> `pass`
+- `S14` `verify:` `ruff format --check` -> `pass`
+- `S14` `verify:` `ty check` -> `pass`
+- `S14` `verify:` `basedpyright` -> `pass`
+- `S14` `verify:` `pytest test_tool_env_provisioning_hostile (11 real-uv proofs) test_substitution_discipline test_process_probe_source_structure` -> `pass`
+- `S14` `verify:` `guard mutation (index recorded without the strategy) fails then passes` -> `pass`
+- `S14` `by:` `vaultspec-high-executor`
+- `S15` `M` `docs/installation.md`
+- `S15` `M` `README.md`
+- `S15` `verify:` `mdformat --check` -> `pass`
+- `S15` `verify:` `pymarkdownlnt scan` -> `pass`
+- `S15` `verify:` `tools/check_docs_conventions.py` -> `pass`
+- `S15` `verify:` `tools/check_docs_version.py` -> `pass`
+- `S15` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
+- `S15` `by:` `vaultspec-high-executor`
+- `S12` `verify:` `pytest dev/guards/test_child_output_decoding.py` -> `pass`
+- `S16` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S16` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S16` `verify:` `ruff check` -> `pass`
+- `S16` `verify:` `ruff format --check` -> `pass`
+- `S16` `verify:` `ty check` -> `pass`
+- `S16` `verify:` `basedpyright` -> `pass`
+- `S16` `verify:` `pytest test_service_env_preflight test_tool_torch_repair test_doctor_repair_and_holders test_cli_install` -> `pass`
+- `S16` `verify:` `guard mutation (receipt step carrying --upgrade-package torch) fails then passes` -> `pass`
+- `S16` `by:` `vaultspec-high-executor`
+- `S17` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S17` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S17` `M` `src/vaultspec_rag/_readiness.py`
+- `S17` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S17` `M` `src/vaultspec_rag/commands/_install.py`
+- `S17` `M` `src/vaultspec_rag/cli/_install.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_cli_install.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S17` `verify:` `ruff check` -> `pass`
+- `S17` `verify:` `ruff format --check` -> `pass`
+- `S17` `verify:` `ty check` -> `pass`
+- `S17` `verify:` `basedpyright` -> `pass`
+- `S17` `verify:` `pytest test_cli_install test_tool_torch_repair test_readiness_holders test_doctor_repair_and_holders test_service_env_preflight` -> `pass`
+- `S17` `verify:` `guard mutations (restart taken by index, --force read as consent, prompt allowed on the JSON path) fail then pass` -> `pass`
+- `S17` `by:` `vaultspec-high-executor`
+- `S18` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S18` `M` `src/vaultspec_rag/operator_state/_provisioning.py`
+- `S18` `M` `src/vaultspec_rag/commands/_tool_torch.py`
+- `S18` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S18` `verify:` `ruff check` -> `pass`
+- `S18` `verify:` `ruff format --check` -> `pass`
+- `S18` `verify:` `ty check` -> `pass`
+- `S18` `verify:` `basedpyright` -> `pass`
+- `S18` `verify:` `pytest test_tool_torch_repair test_service_env_preflight test_doctor_repair_and_holders test_readiness_holders` -> `pass`
+- `S18` `verify:` `guard mutations (url-only pin detection, running-interpreter check removed, holder told to end rather than restart) fail then pass` -> `pass`
+- `S18` `by:` `vaultspec-high-executor`
+- `S19` `M` `src/vaultspec_rag/tests/_uv_env_harness.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py`
+- `S19` `verify:` `ruff check` -> `pass`
+- `S19` `verify:` `ruff format --check` -> `pass`
+- `S19` `verify:` `ty check` -> `pass`
+- `S19` `verify:` `basedpyright` -> `pass`
+- `S19` `verify:` `pytest test_tool_env_provisioning_hostile (14 real-uv proofs)` -> `pass`
+- `S19` `verify:` `guard mutation (repair pointed back at one package-changing tool install) fails on the whole-environment assertion then passes` -> `pass`
+- `S19` `by:` `vaultspec-high-executor`
+- `S20` `M` `docs/installation.md`
+- `S20` `M` `README.md`
+- `S20` `verify:` `mdformat --check` -> `pass`
+- `S20` `verify:` `pymarkdownlnt scan` -> `pass`
+- `S20` `verify:` `tools/check_docs_conventions.py` -> `pass`
+- `S20` `verify:` `tools/check_docs_version.py` -> `pass`
+- `S20` `verify:` `pytest test_docs_cli_surface test_configuration_doc` -> `pass`
+- `S20` `by:` `vaultspec-high-executor`
+- `S16` `M` `src/vaultspec_rag/cli/_service_doctor.py`
+- `S16` `M` `src/vaultspec_rag/tests/test_server_doctor.py`
+- `S16` `verify:` `pytest test_server_doctor test_service_env_preflight test_doctor_repair_and_holders` -> `pass`
+- `S16` `verify:` `guard mutation (floor advice reduced to the bare upgrade verb) fails then passes` -> `pass`
+- `S16` `verify:` `pytest test_service_env_preflight test_tool_torch_repair` -> `pass`
+- `S16` `verify:` `guard mutation (later-upgrade line taken from the sequence by index) fails then passes` -> `pass`
+- `S18` `M` `src/vaultspec_rag/cli/_status.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_doctor_repair_and_holders.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S18` `verify:` `pytest test_doctor_repair_and_holders test_cli_status test_service_env_preflight` -> `pass`
+- `S18` `verify:` `guard mutations (fix rendered as one joined block in status and unordered in doctor) fail then pass` -> `pass`
+- `S17` `M` `src/vaultspec_rag/tests/test_service_env_preflight.py`
+- `S17` `verify:` `pytest test_service_env_preflight` -> `pass`
+- `S19` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S19` `M` `src/vaultspec_rag/_process_probe.py`
+- `S19` `M` `src/vaultspec_rag/tests/test_tool_torch_repair.py`
+- `S19` `M` `README.md`
+- `S19` `verify:` `mdformat --check and pymarkdownlnt scan README.md` -> `pass`
+- `S19` `verify:` `pytest test_tool_torch_repair` -> `pass`
+- `S16` `verify:` `pytest test_tool_torch_repair` -> `pass`
+- `S16` `verify:` `guard mutation (release check removed, the consented path runs) fails then passes` -> `pass`
+- `S18` `M` `src/vaultspec_rag/_process_probe.py`
+- `S18` `M` `src/vaultspec_rag/tests/test_env_holders.py`
+- `S18` `verify:` `pytest test_env_holders` -> `pass`
+- `S17` `M` `src/vaultspec_rag/commands/_uv_sync.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_install_torch_config.py`
+- `S17` `verify:` `pytest test_install_torch_config` -> `pass`
+- `S17` `verify:` `guard mutation (containment removed, the subprocess double fires) fails then passes` -> `pass`
+- `S19` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S19` `verify:` `pytest test_substitution_discipline` -> `pass`
+- `S17` `M` `src/vaultspec_rag/cli/_gpu_errors.py`
+- `S17` `M` `src/vaultspec_rag/cli/_search.py`
+- `S17` `A` `src/vaultspec_rag/tests/test_uv_sync.py`
+- `S17` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S17` `verify:` `uv run --no-sync python -m dev lint all` -> `pass`
+- `S17` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_tool_env_provisioning_hostile.py` -> `pass`
+- `S03` `M` `src/vaultspec_rag/tests/conftest.py`
+- `S03` `M` `pyproject.toml`
+- `S03` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S03` `M` `src/vaultspec_rag/tests/gpu_admission/test_floor_and_window.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_cli_search_safety.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_cli_qdrant.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_borrow_cli.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_session_lock.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_service_version_compatibility.py`
+- `S03` `verify:` `uv run --no-sync pytest -m 'unit and not torch' -n 8` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+- `S02` `M` `src/vaultspec_rag/cli/_gpu_lease.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_gpu_borrow_lease.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_gpu_owner.py`
+- `S02` `verify:` `uv run --no-sync python -m dev lint all` -> `pass`
+- `S02` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_hardware_anchor.py src/vaultspec_rag/tests/test_gpu_borrow_lease.py` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
+- `S09` `M` `src/vaultspec_rag/operator_state/_holders.py`
+- `S09` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S09` `verify:` `uv run --no-sync pytest src/vaultspec_rag/tests/test_tool_torch_repair.py` -> `pass`
+
+## Notes
+
+- `S02` `test_substitution_discipline` fails on the base branch for `test_storage_maintenance_tick.py` (substitution added by d18045e8, outside this plan); left untouched
+- `S06` `test_process_probe_source_structure::test_no_large_duplicate_function_bodies` fails on an uncommitted `_gpu_owner.py:permits_compute` body from the parallel phase, not on this Step's paths
+- `S04` P01.S03 left `test_process_probe_source_structure` failing: `permits_compute` joined the allowed membership-test shape group only here
+- `S04` `test_substitution_discipline` still fails only on `test_storage_maintenance_tick.py` from base commit d18045e8, outside this plan
+- `S07` uv 0.12.x verified in an isolated `UV_TOOL_DIR` sandbox: an == pin makes uv tool upgrade a no-op and uv names uv tool install pkg@latest; `pkg[extras]@latest` with --force, --python and --with installs and records the extras unpinned
+- `S05` P01 phase-close review revision: borrow-lane loan, lent-path cost, citation gate, JSON refusal, envelope shape, start remediation, legacy detection, anchor directory, fixture, foreign-release reason
+- `S05` `test_substitution_discipline` fails on `test_storage_maintenance_tick.py` (base commit d18045e8) and on `test_readiness_holders.py` (P02.S10 in progress), both outside this revision
+- `S10` `test_substitution_discipline` still fails on `test_storage_maintenance_tick.py,` a base-branch entry outside this plan
+- `S02` P01 re-review: shared open widened a private lock on POSIX; widening now limited to files the call creates
+- `S11` deleted `TORCH_TOOL_PIN_VERSION` and its mirror test: the wheel URL it fed no longer exists, and the lockfile derivation the build tooling uses stays
+- `S09` P02 review: the service spawn and `RAG_MCP_MODULE` now derive from `SERVER_LAUNCH_MARKER`
+- `S10` P02 review: `get_readiness` replaced the released `include_holders` keyword with `holders_root;` marked as a breaking change for release
+- `S12` folded in the P02 review findings for the refused JSON envelope, the sys.prefix classification and the project-only `CPU_ONLY` advice in `_handle_gpu_error;` a test that consented reached real uv against the operator's tool installation before it was corrected, and uv refused it without changing anything
+- `S12` correction: the earlier S12 note was wrong. The test that reached real uv did change the machine's tool installation - uv rebuilt it wholesale because the --python request named another interpreter, deleting Lib at 17:48 before failing on the held Scripts; another session rebuilt Lib at 17:58. The repair launcher now enforces pytest containment on the target environment, refuses when uv's tool entry is not the environment in hand, and derives --python from the target environment's own pyvenv.cfg
+- `S13` folded in the P02 review findings for the floor command in the JSON envelope and the holder total and role fallback
+- `S14` the receipt-matcher proofs of the deleted direct-wheel model are removed with it; that import had left this file failing at collection since P03.S11, which this Step closes
+- `S12` correction: the repair runner read uv's output under the ambient encoding, which the shipped-module decoding guard forbids; both subprocess reads now state utf-8 with replacement. The full unit tier was what caught it, not the covering-test selection
+- `S18` no production caller targets an environment other than the running one: `repair_tool_torch` defaults the interpreter to sys.executable and install passes none, so the running-interpreter predicate was added rather than reported as a conflict
+- `S19` the destruction proof carries a Windows-only skip marker, approved by the orchestrator: POSIX unlink semantics let uv replace a running launcher, so the behaviour does not exist there. The product's own argument tuples are driven through the sandbox because the runner refuses any target that is not the environment it runs out of; its guards are unit-proved
+- `S16` correction: the doctor's version-floor advice named only the first step of the tool upgrade, which for a non-durable receipt is the receipt install and not an upgrade. It now carries every step in order, in both the human output and the envelope; the full unit tier caught it
+- `S16` correction for p04-review-upgrade-advice-names-a-command-that-does-not-upgrade: the repair block offered the options-only install as the way to take a release. Every consumer now names what it means through `release_upgrade_command` or `durable_upgrade_commands` rather than indexing the sequence
+- `S18` correction for p04-review-receipt-fix-is-a-newline-blob: ToolReceiptVerdict.fix returns the commands as a sequence, doctor and status list them in order, and the JSON receipt.fix is a list beside the other command fields. It crosses no service boundary: the receipt axis is built in the doctor process and status renders locally
+- `S17` correction for p04-review-repair-command-property-is-test-only: deleted `CudaRemediation.repair_command` and repointed its two test callers at `repair_commands`
+- `S19` corrections for p04-review-lows: the holder serialiser's command-line claim is scoped to the HTTP shape, which is the one that omits them, while `holder_summary` keeps them for the operator reading locally; HolderRelation's docstring states the restart policy HolderRole.remediation owns; the two renderer fixtures carry the S18 wording; README wrapping restored. The damaged-metadata release pin and the console-script adapter role are left for the user's decision
+- `S16` correction for the damaged-metadata low: the release comes from the environment's installed metadata or, failing that, the receipt's exact pin; with neither the product refuses to run the repair on consent and hands the commands over, because a swap naming no release resolves the newest one
+- `S18` correction for p04-e2e-console-script-adapter-unrecognised: a server launch through its installed console script is recognised as well as the module form, with the names read from entry-point metadata. Caller audit: `is_server_launch` and `server_launch_port` are called only by the holder role and report; the spawn witness, the orphan reap and the spawn itself match `SERVER_LAUNCH_MARKER` directly, so broadening changes nothing that can be reaped or stopped
+- `S17` correction for p03-review-second-uv-launcher-unbounded: the project sync gets a named timeout sized like the tool repair's, pytest containment on the workspace it writes into, and a timeout reported as a failure outcome rather than a raise; it already stated utf-8 with replacement
+- `S19` merge correction: main tightened the substitution guard to count per-file sites against an allowance, so the five files this plan added tests to carry raised counts and the reason each new site exists. The red `test_storage_maintenance_tick` entry is gone with main's own fix for that file
+- `S17` Correction: the module size gate failed in CI. The GPU-ownership refusal moved beside `refuse_gpu_owned` and the uv-sync tests to a module named for the launcher they drive. The unit tier reports 5511 passed with two pre-existing environmental failures in `test_cli_index.py` TestDiskPreflightRefusal: the resident daemon owns this machine's GPU, so the borrow never reaches the preflight.
+- `S03` Correction: a unit test lending the GPU claimed the machine's real owner anchor and held it for its worker's life, refusing every other worker's borrow test. The redirect is now unconditional for the suite and a teardown guard fails any test that leaves a claim on a real hardware anchor.
+- `S02` Correction: a shared anchor created on Windows was writable only by its creator, so another account held the lock but could not publish its owner record or a loan. The created file now carries an access list admitting every authenticated account, and a refusal the service named reaches the operator instead of a generic unacknowledged pause.
+- `S09` Correction: a holder line was cut at its head, so an environment under a long directory showed only interpreter paths and no arguments. The elision now takes the middle and keeps the arguments.

@@ -40,6 +40,8 @@ from .._workspace_layout import (
     WORKSPACE_MANIFEST,
 )
 from ..builtins import list_builtins, seed_builtins
+from ..config._credentials import workspace_credential
+from ..config._types import EnvVar
 from ..operator_state import _compute
 from ..operator_state._installation import InstallRole
 from ..torch_config._constants import TorchConfigAction
@@ -66,7 +68,8 @@ from ._mode import (
     resolve_rag_mode,
 )
 from ._models import InstallReport
-from ._tool_torch import ToolTorchRepairOutcome, repair_tool_torch
+from ._skip import validate_rag_skip
+from ._tool_torch import ToolRepairRequest, ToolTorchRepairOutcome, repair_tool_torch
 from ._torch_flow import TorchInstallOptions, _run_torch_config_install
 from ._workspace import (
     _ensure_workspace_dirs,
@@ -833,6 +836,7 @@ class _InstallRunRequest:
     install_mcp: bool = False
     mode: InstallMode | None = None
     repair_tool_torch: bool = True
+    stream_repair: bool = False
     tool_torch_repair_outcome: ToolTorchRepairOutcome | None = None
 
 
@@ -852,12 +856,14 @@ class _InstallRunOptions(TypedDict, total=False):
     install_mcp: bool
     mode: InstallMode | None
     repair_tool_torch: bool
+    stream_repair: bool
 
 
 def install_run(
     path: Path | None = None, **options: Unpack[_InstallRunOptions]
 ) -> InstallReport:
     """Run install behind one required-node topology transaction."""
+    validate_rag_skip(options.get("skip") or set())
     return _install_with_tool_repair(_InstallRunRequest(path=path, **options))
 
 
@@ -871,13 +877,30 @@ def _install_with_tool_repair(request: _InstallRunRequest) -> InstallReport:
                 tool_torch_repair_outcome=outcome,
             )
         )
-    target = _resolve_target(request.path, bootstrap=False)
-    action = "dry_run" if request.dry_run else "install"
-    report = InstallReport(action=action, target=target, tool_torch_repair=outcome)
-    report.warnings.append(outcome.detail)
-    if outcome.command:
-        report.warnings.append(f"tool CUDA repair command: {outcome.command}")
-    return report
+    return _refused_report(request, outcome)
+
+
+def _refused_report(
+    request: _InstallRunRequest, outcome: ToolTorchRepairOutcome
+) -> InstallReport:
+    """Report a run that stopped before its first step, as exactly that.
+
+    No step executed, so the report carries the outcome of none of them: a
+    default "not changed" on a step that never ran reads as a decision the
+    install made. The refusal itself is the whole content, and the repair
+    outcome already holds the detail and the commands, so nothing is copied
+    into the warnings beside it.
+    """
+    action = (
+        "dry_run" if request.dry_run else ("upgrade" if request.upgrade else "install")
+    )
+    reason = outcome.reason or outcome.detail.splitlines()[0].strip()
+    return InstallReport(
+        action=action,
+        target=_resolve_target(request.path, bootstrap=False),
+        refused=reason,
+        tool_torch_repair=outcome,
+    )
 
 
 def _install_run(request: _InstallRunRequest) -> InstallReport:
@@ -971,9 +994,24 @@ def _install_run(request: _InstallRunRequest) -> InstallReport:
 def _tool_repair_outcome(
     request: _InstallRunRequest,
 ) -> ToolTorchRepairOutcome | None:
+    """Assess the tool environment once, before anything else is touched.
+
+    The repair may run from here on consent: it changes torch in place, so
+    nothing has to be stopped and no other install step has happened yet.
+    """
     if not request.repair_tool_torch:
         return request.tool_torch_repair_outcome
-    return repair_tool_torch(dry_run=request.dry_run)
+    return repair_tool_torch(
+        ToolRepairRequest(
+            dry_run=request.dry_run,
+            # ``--force`` authorises overwriting files this product owns.
+            # It is not consent to reinstall packages in an environment it
+            # did not create, which is what this repair does.
+            assume_yes=request.assume_yes,
+            confirm=request.confirm,
+            stream=request.stream_repair,
+        )
+    )
 
 
 def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
@@ -1219,7 +1257,6 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
         report=report,
         options=TorchInstallOptions(
             dry_run=dry_run,
-            force=force,
             configure_torch=configure_torch,
             assume_yes=assume_yes,
             sync_after=sync_after,
@@ -1231,7 +1268,7 @@ def _install_run_unchecked(request: _InstallRunRequest) -> InstallReport:
     # provisioning below; both belong to the host installation.
     host = _compute.installed_role()[0] is InstallRole.HOST
     if not dry_run and host:
-        _maybe_warn_hf_auth(report)
+        _maybe_warn_hf_auth(report, target)
 
     # INSTALL-04: ``--sync`` is gated by ``patch_report.action ==
     # "applied"`` inside ``_run_torch_config_install``. Any path that
@@ -1377,8 +1414,20 @@ def _run_provisioning(request: _ProvisioningRequest) -> None:
         _persist_runtime_selection(request.report, request.local_only)
 
 
-def _maybe_warn_hf_auth(report: InstallReport) -> None:
-    """Warn when HuggingFace credentials are not configured locally."""
+def _maybe_warn_hf_auth(report: InstallReport, target: Path) -> None:
+    """Warn when no Hugging Face credential is reachable for this workspace.
+
+    The library's own lookup covers the session environment and the saved
+    login, which is not the whole of where a token may legitimately come
+    from: this workspace's gated ``.env`` supplies one too, and a run that
+    resolved a key from there is authenticated whatever the library thinks.
+    Warning anyway would tell an operator to log in when they already have.
+
+    Args:
+        report: The install report the warning is recorded on.
+        target: The resolved workspace, whose gated ``.env`` may hold the
+            token.
+    """
     try:
         from huggingface_hub import get_token
     except ImportError:
@@ -1388,7 +1437,7 @@ def _maybe_warn_hf_auth(report: InstallReport) -> None:
         )
         return
 
-    if get_token():
+    if workspace_credential(EnvVar.HF_TOKEN, target) is not None or get_token():
         return
     report.warnings.append(
         f"HuggingFace token not found. Run {HF_LOGIN_REMEDIATION} before "

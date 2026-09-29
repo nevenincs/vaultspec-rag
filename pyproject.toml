@@ -23,10 +23,9 @@ dependencies = [
   "qdrant-client>=1.16.0",
   "pydantic>=2.12.5",
   "rich>=14.3.2",
-  "vaultspec-core>=0.1.45",
+  "vaultspec-core>=0.3.2",
   "typer>=0.26.7",
   "click>=8.1.7",
-  "python-dotenv>=1.0.0",
   "tree-sitter>=0.23",
   # 1.6.2 and 1.6.3 shipped no abi3 wheels, so Python 3.13 could not install
   # them; the floor sits past both.
@@ -185,7 +184,7 @@ exclude = ["src/vaultspec_rag/tests"]
 "assets/logo.png" = "assets/logo.png"
 
 [tool.pytest.ini_options]
-# The fleet-standard invocation, stated once here rather than retyped on every
+# The standard invocation, stated once here rather than retyped on every
 # `just test` lane. A lane passes only what SELECTS it - paths, a marker
 # expression, `-x`, xdist distribution - never how pytest reports.
 #
@@ -254,6 +253,10 @@ markers = [
   # a test looks timing-sensitive. Applied for flakiness instead, the marker
   # hollows out the rule it is an exception to.
   "durable: needs the real fsync, with the evidence recorded at the mark",
+  # Tests that assert where the machine's hardware anchors resolve, and so run
+  # with the real resolvers rather than the per-test redirect. They must not
+  # claim one: reading where it lives is the whole assertion.
+  "real_hardware_anchor: resolves the machine's real hardware anchors",
 ]
 # `tools` joins the library tests so the release-path guards (the binary
 # builder and the Scoop/Homebrew generators) actually run. They are pure

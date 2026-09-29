@@ -48,6 +48,7 @@ __all__ = [
     "acquire_machine_lock",
     "acquire_machine_lock_lease",
     "capture_pre_isolation_machine_lock",
+    "default_machine_lock_path",
     "delete_machine_discovery",
     "machine_discovery_path",
     "machine_lock_path",
@@ -157,6 +158,20 @@ def machine_lock_path() -> Path:
     from .config._settings import get_config
 
     storage = Path(str(get_config().qdrant_storage_dir)).expanduser()
+    return storage.parent / _MACHINE_LOCK_FILENAME
+
+
+def default_machine_lock_path() -> Path:
+    """Path of the service lock a service with no storage override holds.
+
+    Differs from :func:`machine_lock_path` only when this process is configured
+    with its own storage directory. A service started without one - the common
+    case, and the only place a service from a release that predates GPU
+    ownership can be found without being told where - holds this lock.
+    """
+    from .config._settings import rag_default
+
+    storage = Path(str(rag_default("qdrant_storage_dir"))).expanduser()
     return storage.parent / _MACHINE_LOCK_FILENAME
 
 

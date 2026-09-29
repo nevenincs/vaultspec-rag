@@ -27,6 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .._operator_commands import server_start_command, server_stop_command
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -49,7 +51,7 @@ VERSION_ERROR_UNREPORTED = "service_version_unreported"
 #: daemon is not this install's, and only replacing it converges them.
 _RESTART_REMEDIATION = (
     "Restart the service so it runs this install: "
-    "`vaultspec-rag server stop` then `vaultspec-rag server start`.",
+    f"`{server_stop_command()}` then `{server_start_command()}`.",
 )
 
 __all__ = [

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#test-and-paths'
 date: '2026-04-04'
-modified: '2026-07-27'
-body_hash: 'sha256:a96500fcd7aba25e41a8a0db4cf2146f7304ee36a3db99d824d420f6091154c2'
+modified: '2026-09-26'
+body_hash: 'sha256:3973e2e85d04c531d3ccb465debd3c8a506a795917963517b236cb6f567d5ecf'
 related:
   - '[[2026-04-04-test-and-paths-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -61,6 +61,10 @@ couples assertions to hand-maintained content.
   The existing `VAULTSPEC_ROOT` env var MUST be renamed to
   `VAULTSPEC_RAG_ROOT` to prevent collision when both packages are
   installed side-by-side.
+
+**Amendment note, 2026-09-26**: The enum lives at `config/_types.py:51` (`class EnvVar(StrEnum)`), not in a file named `config.py`; settings keys resolve through `VaultSpecConfigWrapper.__getattr__` (`config/_settings.py:1188`) as stated, but the "no bare `os.environ`" rule holds only for settings keys — call-time switches read `os.environ` directly through `EnvVar` members by design, e.g. `search/_typesafe_transport.py:71,106`, `server/_stdio_lifetime.py:57,97` (`STDIO_WATCHDOG_ENV = EnvVar.STDIO_WATCHDOG.value`), and `config/_types.py:287` (`hf_cache_only`). Current exceptions to both this rule and the `VAULTSPEC_RAG_` prefix rule, standing as code to correct rather than as precedent: string-literal `UV_CACHE_DIR`/`UV_TOOL_DIR` reads (`cli/_gpu_errors.py:76,81`), a string-literal `PYTORCH_ENABLE_MPS_FALLBACK` read (`_gpu.py:77`), the undeclared bare-`VAULTSPEC_` `VAULTSPEC_JUNCTION_PATH`/`VAULTSPEC_JUNCTION_TARGET` subprocess-env keys (`commands/_mcp_topology.py:879-880`), the module-local literal `VAULTSPEC_PREPROCESS_INVOCATION` (`indexer/_preprocess_schema.py:45,74`), and `memory_probe.py:98` (`ENV_VAR = "VAULTSPEC_RAG_MEMORY_PROBE"`), which is prefix-correct but read as a bare literal instead of an `EnvVar` member.
+
+**Amendment note, 2026-09-26**: No record states the value vocabulary or invalid-value policy the code applies today; recorded here as the code's current, unamended behavior. `_env_values.py:25,31` defines the one boolean vocabulary - `TRUE_TOKENS = {"1", "true", "yes", "on"}`, `FALSE_TOKENS = {"0", "false", "no", "off", ""}`; `config/_settings.py:959-1012` (`_validate_settings`) rejects invalid values at construction and reports every unusable setting together; `config/_settings.py:925-936` treats a blank string override for a string-typed setting as absent, falling back to the module default; fail-safe readers - the stdio watchdog (`server/_stdio_lifetime.py:100-104`) and other `parse_bool`-based switches that must not block startup - warn and fall through to the safe state instead of raising. The shared resolution order, env-file rule, boolean vocabulary and install-flag contract these facts bear on are proposed for vaultspec-core's `2026-09-26-env-parity-adr`.
 
 ## Implementation
 

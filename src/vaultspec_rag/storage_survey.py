@@ -26,8 +26,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from vaultspec_core.config import env_value
+
 from . import store_schema
 from ._store_models import ROOT_COLLECTION_PREFIX_RE
+from .config._registry import entry
+from .config._types import EnvVar
 from .storage_manifest import ManifestEntry, classify_root
 
 if TYPE_CHECKING:
@@ -65,10 +69,10 @@ def is_temp_rooted(root: str | None) -> bool:
     import tempfile
 
     candidates = {tempfile.gettempdir()}
-    for env_name in ("TEMP", "TMP", "TMPDIR"):
-        env_value = os.environ.get(env_name)
-        if env_value:
-            candidates.add(env_value)
+    for variable in (EnvVar.TEMP, EnvVar.TMP, EnvVar.TMPDIR):
+        named = env_value(entry(variable))
+        if named:
+            candidates.add(named)
     candidates.update(("/tmp", "/var/tmp"))
 
     try:

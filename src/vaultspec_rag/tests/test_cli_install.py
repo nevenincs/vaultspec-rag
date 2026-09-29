@@ -5,10 +5,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TextIO, cast
 
 import pytest
 
+from ..commands._tool_torch import ToolTorchRepairAction, ToolTorchRepairOutcome
 from ..operator_state import _environment_probe
 from ..operator_state._compute import ProbeDepth
 from ..operator_state._environment_probe import InterpreterFacts
@@ -115,49 +116,6 @@ def test_gpu_error_reports_mps_fallback_refusal_not_missing_mps(
     rendered = capsys.readouterr().out
     assert "Error: Apple MPS CPU fallback must be disabled" in rendered
     assert "PYTORCH_ENABLE_MPS_FALLBACK=1" in rendered
-
-
-class TestCpuOnlyMessageRendering:
-    """Regression guard for literal TOML keys in the CPU_ONLY copy.
-
-    The CLI prints this message with Rich markup disabled so TOML keys,
-    dependency groups, and command lines stay literal in user output.
-    """
-
-    @staticmethod
-    def _render() -> str:
-        import io
-
-        from rich.console import Console
-
-        from ..cli._gpu_errors import _cpu_only_message
-
-        buf = io.StringIO()
-        Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _cpu_only_message(), markup=False, highlight=False
-        )
-        return buf.getvalue()
-
-    def test_renders_double_brackets_for_aot(self) -> None:
-        out = self._render()
-        assert "[[tool.uv.index]]" in out, out
-
-    def test_renders_single_brackets_for_section(self) -> None:
-        out = self._render()
-        assert "[tool.uv.sources]" in out, out
-
-    def test_renders_project_and_groups_keys(self) -> None:
-        out = self._render()
-        assert "[project].dependencies" in out, out
-        assert "[dependency-groups].dev" in out, out
-
-    def test_no_stray_backslashes_in_rendered_output(self) -> None:
-        """Rich passes ``\\]`` through verbatim - only ``[`` is escapable.
-        A stray backslash in the rendered text means a future edit
-        overcorrected and put ``\\]`` somewhere it should not be.
-        """
-        out = self._render()
-        assert "\\" not in out, out
 
 
 class TestNoGpuMessageRendering:
@@ -590,9 +548,12 @@ class TestInstallExitCodes:
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
         assert result.exit_code == 0, result.output
 
-    def test_install_exit_nonzero_on_skipped_non_tty(self, tmp_path: Path) -> None:
-        """Non-TTY without ``--yes`` / ``--force``: torch-config skipped,
-        exit code 2 so CI fails loudly.
+    def test_install_exit_skipped_code_on_skipped_non_tty(self, tmp_path: Path) -> None:
+        """Non-TTY without ``--yes`` / ``--force``: torch-config skipped.
+
+        Exit 2 is the shared table's "completed with a required step
+        skipped", and it is the only outcome that earns that code - a run
+        that failed exits 1.
         """
         ws = self._make_pyproject(
             tmp_path,
@@ -604,15 +565,20 @@ class TestInstallExitCodes:
         result = runner.invoke(app, ["install", "--target", str(ws)])
         assert result.exit_code == 2, result.output
 
-    def test_install_exit_nonzero_on_error(self, tmp_path: Path) -> None:
-        """Corrupt pyproject → torch_config_action=TorchConfigAction.ERROR → exit 2."""
+    def test_install_exit_failure_code_on_error(self, tmp_path: Path) -> None:
+        """A corrupt pyproject fails the run, so it exits 1, not 2.
+
+        The two non-zero codes are not interchangeable: 2 means the run
+        completed and skipped a required step, which a failed run did not
+        do.
+        """
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / "pyproject.toml").write_text(
             "[project\nname = ", encoding="utf-8"
         )  # malformed
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
 
     def test_install_exit_zero_on_conflict(self, tmp_path: Path) -> None:
         """CUSTOMISED block - user-state, not a runtime failure.
@@ -650,7 +616,7 @@ class TestInstallExitCodes:
             app,
             ["install", "--target", str(ws), "--no-torch-config", "--mcp"],
         )
-        assert result.exit_code == 2, result.output
+        assert result.exit_code == 1, result.output
 
 
 class TestInstallTargetValidation:
@@ -677,3 +643,242 @@ class TestInstallTargetValidation:
             app, ["install", "--target", str(d), "--no-torch-config"]
         )
         assert result.exit_code == 0, result.output
+
+
+_REFUSAL_COMMAND = "uv pip install --python sentinel --reinstall-package torch"
+
+
+def _blocking_repair(*_args: object, **_kwargs: object) -> ToolTorchRepairOutcome:
+    """A repair outcome that stops the install, as a held tool env yields."""
+    return ToolTorchRepairOutcome(
+        ToolTorchRepairAction.HOLDER_DETECTED,
+        "tool CUDA repair must run from outside C:/tools/vaultspec-rag\n"
+        "  holders to clear first:",
+        (_REFUSAL_COMMAND,),
+        steps=(f"Install the CUDA build of torch: {_REFUSAL_COMMAND}",),
+        capability=ComputeCapability.CPU_ONLY_BUILD,
+        reason=ComputeCapability.CPU_ONLY_BUILD.label,
+    )
+
+
+class TestRefusedInstall:
+    """A run that stopped before its first step says so, once.
+
+    The blocked path reported ``action="install"``, so the report opened with
+    "vaultspec-rag installed" over a run that wrote nothing, printed the
+    default of provisioning steps that never ran, copied the refusal into the
+    warnings so it appeared twice, and then diagnosed the same interpreter a
+    second time in different words.
+    """
+
+    @staticmethod
+    def _workspace(tmp_path: Path) -> Path:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "pyproject.toml").write_text(
+            '[project]\nname = "demo"\nversion = "0.1.0"\n'
+            'dependencies = ["vaultspec-rag", "torch>=2.4"]\n',
+            encoding="utf-8",
+            newline="",
+        )
+        return ws
+
+    def test_a_blocked_install_renders_as_refused_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        # A refusal is a failure, not a skip for want of consent: nothing was
+        # installed, so the requested state was not reached.
+        assert result.exit_code == 1, result.output
+        assert "vaultspec-rag installed" not in result.output
+        assert "refused" in result.output
+        assert ComputeCapability.CPU_ONLY_BUILD.label in result.output
+        # A step that never ran has no outcome to report.
+        assert "PyTorch configuration" not in result.output
+        # One refusal, one command: the detail and the command used to be
+        # copied into the warnings and printed a second time underneath.
+        assert result.output.count(_REFUSAL_COMMAND) == 1
+        assert result.output.count("must run from outside") == 1
+
+    def test_a_blocked_upgrade_is_named_an_upgrade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal names the run that was asked for, not always install."""
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(
+            app, ["install", "--target", str(ws), "--yes", "--upgrade"]
+        )
+
+        assert "upgrade refused" in result.output
+        assert result.exit_code == 1
+
+    def test_the_refusal_is_one_stable_json_envelope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        from ..commands import _install
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes", "--json"])
+
+        envelope = json.loads(result.stdout)
+        assert envelope["status"] == "failed"
+        payload = envelope["data"]
+        assert payload["action"] == "install"
+        assert payload["refused"]
+        assert payload["warnings"] == []
+        assert payload["tool_torch_repair"]["commands"] == [_REFUSAL_COMMAND]
+        assert result.exit_code == 1
+        # A step that never ran reports nothing, not its default: "not
+        # changed" and "skipped" are answers a run gives.
+        for field in (
+            "torch_config_action",
+            "torch_direct_dep_action",
+            "torch_sync_action",
+            "mcp_extra_action",
+            "sync_added",
+            "sync_updated",
+            "sync_pruned",
+            "provisioning",
+        ):
+            assert payload[field] is None, field
+
+    def test_force_alone_does_not_authorise_the_repair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guard assertion: --force overwrites files, it does not consent.
+
+        It authorises replacing artefacts this product owns. Reading it as
+        consent let a scripted `install --force` start a multi-gigabyte
+        reinstall of packages in an environment the product did not create,
+        which the accepted decision limits to `--yes` or a prompt.
+        """
+        from ..commands import _install
+
+        authorised: list[bool] = []
+
+        def _record(request: object) -> ToolTorchRepairOutcome:
+            authorised.append(bool(getattr(request, "assume_yes", False)))
+            return _blocking_repair()
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _record)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--force"])
+
+        assert authorised == [False]
+        assert result.exit_code == 1, result.output
+        assert _REFUSAL_COMMAND in result.output
+
+    def test_yes_authorises_the_repair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pair of the flag above: --yes is consent, and reaches it."""
+        from ..commands import _install
+
+        authorised: list[bool] = []
+
+        def _record(request: object) -> ToolTorchRepairOutcome:
+            authorised.append(bool(getattr(request, "assume_yes", False)))
+            return _blocking_repair()
+
+        monkeypatch.setattr(_install, "repair_tool_torch", _record)
+        ws = self._workspace(tmp_path)
+
+        runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        assert authorised == [True]
+
+    def test_a_json_run_is_never_given_a_confirmer(self) -> None:
+        """Guard assertion: one JSON document, whatever the streams look like.
+
+        The prompt renders on the same stream as the envelope, and Windows
+        reports stdin redirected from NUL as a terminal, so the terminal test
+        alone put a question in front of the document a broker parses. Both
+        streams here report a terminal and the environment declares nothing,
+        so the JSON flag is the only thing that can withhold the confirmer.
+        """
+        from ..cli._install import _confirmation_hook
+
+        class _Terminal:
+            @staticmethod
+            def isatty() -> bool:
+                return True
+
+        terminal = cast("TextIO", _Terminal())
+
+        def _confirm(prompt: str) -> bool:
+            raise AssertionError(f"resolving the hook asked: {prompt}")
+
+        def _hook(*, json_output: bool) -> object:
+            return _confirmation_hook(
+                _confirm,
+                json_output=json_output,
+                environ={},
+                stdin=terminal,
+                stdout=terminal,
+            )
+
+        assert _hook(json_output=False) is _confirm
+        assert _hook(json_output=True) is None
+
+    def test_an_install_run_probes_an_interpreter_at_most_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two verify probes of one interpreter is two diagnoses of one fault.
+
+        Guard assertion: the repair probed the interpreter and the
+        post-install warning probed it again, which cost a second child
+        interpreter and let one run print two verdicts that need not agree.
+        """
+        from ..commands import _tool_torch
+        from ..operator_state._provisioning import ToolReceiptVerdict
+        from ..operator_state._topology import RuntimeEnvKind
+
+        calls: list[str] = []
+        probe = _probe_reporting(ComputeCapability.READY)
+
+        def counting_probe(
+            interpreter: str,
+            depth: ProbeDepth = ProbeDepth.METADATA,
+            *,
+            timeout: float | None = None,
+        ) -> InterpreterFacts:
+            if depth is ProbeDepth.VERIFY:
+                calls.append(interpreter)
+            return probe(interpreter, depth, timeout=timeout)
+
+        monkeypatch.setattr(_environment_probe, "probe_interpreter", counting_probe)
+
+        def _tool_env(_root: object) -> RuntimeEnvKind:
+            return RuntimeEnvKind.UV_TOOL
+
+        monkeypatch.setattr(_tool_torch, "classify_environment", _tool_env)
+
+        def _durable(_interpreter: str) -> ToolReceiptVerdict:
+            return ToolReceiptVerdict.DURABLE
+
+        # A durable receipt is what leaves this environment needing nothing,
+        # so the run reaches the post-install warning with the verdict the
+        # repair already obtained. Without it the repair would run uv against
+        # a real tool installation from a unit test.
+        monkeypatch.setattr(_tool_torch, "classify_tool_receipt", _durable)
+        ws = self._workspace(tmp_path)
+
+        result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
+
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 1, calls

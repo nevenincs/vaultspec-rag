@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.13, <3.15"
 resolution-markers = [
     "(python_full_version >= '3.14' and sys_platform == 'linux') or (python_full_version >= '3.14' and sys_platform == 'win32')",
-    "(python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')",
     "python_full_version >= '3.14' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "(python_full_version < '3.14' and sys_platform == 'linux') or (python_full_version < '3.14' and sys_platform == 'win32')",
     "python_full_version < '3.14' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 
@@ -1701,15 +1701,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-dotenv"
-version = "1.2.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/53/ed9d74092561d4b01a2ef1349d52cdbc135e526c245f366b089cfca6de49/python_dotenv-1.2.3.tar.gz", hash = "sha256:a20a594dabeaa385725aa239d5244871c143ecb356add8a20fcf23773a6c3a35", size = 58945, upload-time = "2026-08-16T16:54:54.067Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/17/c5c6b53ddc18f297992099b3d9ec16c855c0ccc83263a21fe4d1c625ec6c/python_dotenv-1.2.3-py3-none-any.whl", hash = "sha256:904552145e8bfed22162c09dab1c2b9b54fefa7b23ba780f4f26ca0316b0f0d9", size = 22780, upload-time = "2026-08-16T16:54:52.473Z" },
-]
-
-[[package]]
 name = "python-multipart"
 version = "0.0.32"
 source = { registry = "https://pypi.org/simple" }
@@ -2569,9 +2560,10 @@ wheels = [
 
 [[package]]
 name = "vaultspec-core"
-version = "0.2.6"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "anyio" },
     { name = "mcp" },
     { name = "networkx" },
     { name = "phart", version = "1.1.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
@@ -2583,9 +2575,9 @@ dependencies = [
     { name = "rustworkx" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/f0/5c4adf0a740d4d07fb14b96b2c1006ab84b1bea9a6f2fbe3a0b14650842a/vaultspec_core-0.2.6.tar.gz", hash = "sha256:a01e55408523ddf3bf9a609bbd1d0c34f60f04b687ceba43eedd5f70992e7ead", size = 6922606, upload-time = "2026-09-25T20:27:47.538Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/8d/8165eeb39f67dd9ed9658a08727a9b1eb455b9522e63da11aad26a42dc5f/vaultspec_core-0.3.2.tar.gz", hash = "sha256:a0660233250f6f24671dd09fdd6971eea40a28c1d6589f293b4acc89ddf361fc", size = 7098799, upload-time = "2026-09-28T09:17:43.821Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/90/7620047686a7b04467b8471fe4274faff83e1a82b559693a29a61640d9d2/vaultspec_core-0.2.6-py3-none-any.whl", hash = "sha256:a7f7e4e55b959d641fb968218f0de6fd61e7cd3adf79cc7114ee9be48f465afe", size = 1252427, upload-time = "2026-09-25T20:27:44.992Z" },
+    { url = "https://files.pythonhosted.org/packages/de/80/f38f810b5cd7a6440a2ca8e1d8d2b0fa754080db6911b3979d7bc68510cb/vaultspec_core-0.3.2-py3-none-any.whl", hash = "sha256:61334376f2ea2ed724b47d7f4510be73341aaccb5699c402734930a0c1a002bf", size = 1305569, upload-time = "2026-09-28T09:17:40.8Z" },
 ]
 
 [[package]]
@@ -2601,7 +2593,6 @@ dependencies = [
     { name = "pathspec" },
     { name = "psutil" },
     { name = "pydantic" },
-    { name = "python-dotenv" },
     { name = "qdrant-client" },
     { name = "rich" },
     { name = "starlette" },
@@ -2668,7 +2659,6 @@ requires-dist = [
     { name = "pathspec", specifier = ">=0.12" },
     { name = "psutil", specifier = ">=6.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "qdrant-client", specifier = ">=1.16.0" },
     { name = "rich", specifier = ">=14.3.2" },
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.0" },
@@ -2682,7 +2672,7 @@ requires-dist = [
     { name = "tree-sitter-language-pack", specifier = ">=1.20.0" },
     { name = "typer", specifier = ">=0.26.7" },
     { name = "uvicorn", specifier = ">=0.51.0" },
-    { name = "vaultspec-core", specifier = ">=0.1.45" },
+    { name = "vaultspec-core", specifier = ">=0.3.2" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 provides-extras = ["mcp", "gpu"]

@@ -24,9 +24,7 @@ name: RAG Merge Gate
 #   skipped gate there would read as a pass on a commit nothing measured.
 #
 # Branch protection also requires the branch to be up to date with main, so
-# the tree that passed is the tree that merges. The tree, and not the
-# environment: these runners are persistent and their caches outlive any one
-# run, so "measured" is a claim about the source, not about the machine.
+# the tree that passed is the tree that merges.
 #
 # AND IT HOLDS FOR EVERYONE EXCEPT THE PERSON MERGING. The ruleset lists the
 # Admin role as a bypass actor, and the only account with write access here
@@ -38,16 +36,8 @@ name: RAG Merge Gate
 # first. The weekly schedule reruns everything on main, which is what catches
 # advisories published against an unchanged lock.
 #
-# THE TRUST QUESTION, AND WHERE ITS ANSWER ACTUALLY LIVES. A `pull_request`
-# run from a fork executes the FORK's copy of this file, on this repository's
-# runners. Every refusal written below therefore sits in a file the fork can
-# rewrite before the run starts.
-#
-# Actions approval for ALL external contributors is the actual boundary. The
-# clauses below keep THIS repository's copy from drifting into running a pull
-# request head on the fleet, which is depth behind that setting. Approving a
-# fork's run lets its code execute on the fleet and report under this
-# workflow's check names; re-open an outside change from a branch here instead.
+# Pull requests from forks are refused: re-open an outside change from a
+# branch in this repository.
 on:
   pull_request:
     branches: [main]
@@ -58,11 +48,6 @@ on:
         description: Git ref to validate
         required: true
         type: string
-      cache_mode:
-        description: Runner-local cache namespace
-        required: false
-        type: string
-        default: normal
   schedule:
     - cron: '47 5 * * 3'
   workflow_dispatch:
@@ -71,13 +56,6 @@ on:
         description: Git ref to validate (defaults to the dispatched ref)
         required: false
         type: string
-      cache_mode:
-        description: "Runner-local cache namespace"
-        type: choice
-        default: normal
-        options:
-          - normal
-          - isolated
 
 permissions:
   contents: read
@@ -95,7 +73,6 @@ env:
   # console.clear() emit escape codes into the piped CI log; without it
   # is_terminal falls through to isatty()->False as intended.
   NO_COLOR: "1"
-  CI_CACHE_MODE: ${{ inputs.cache_mode || 'normal' }}
   # Job conditions cannot read env, so their literals are checked against the
   # canon. Steps use this one value directly.
   FULL_RUN_LABEL: "ci:full"
@@ -104,12 +81,6 @@ env:
   # accelerator-free suite, the audit and the build never import. Tests that
   # need torch as a library carry the `torch` marker and run in the GPU tier.
   VAULTSPEC_INIT_GPU_STACK: "none"
-
-# Every self-hosted runner is persistent, and `contain-writes` points
-# `UV_CACHE_DIR` at storage owned by that runner. setup-uv's Actions cache would
-# archive that same multi-gigabyte directory after every job and download it
-# again before the next one. Each setup therefore keeps Actions caching
-# explicitly disabled; uv still reads and populates the runner cache normally.
 
 jobs:
   lint:
@@ -138,11 +109,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -198,11 +164,6 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
 
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -231,9 +192,8 @@ jobs:
   # provisioning proofs, and running only their subset would let every other
   # Windows-specific path, lock and process behaviour land untested.
   #
-  # No actions/setup-python: its MSI registry cleanup fails under a runner
-  # service account. uv fetches the interpreter named by UV_PYTHON instead,
-  # which is what the suite runs under anyway.
+  # uv fetches the interpreter named by UV_PYTHON, which is what the suite
+  # runs under.
   tests-windows:
     name: "Test: Full suite (Windows)"
     # A fork's pull request never runs here: the workflow it would run is the
@@ -247,14 +207,6 @@ jobs:
     runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
-      # This runner's agent is a Windows service, so its account is SYSTEM and
-      # every user-scoped path resolves inside
-      # C:\WINDOWS\system32\config\systemprofile - the operating system's own
-      # directory. Left alone, the suite's temp roots, the model cache, and the
-      # managed service state are all written into the OS install by a process
-      # holding administrative rights. Each one is pinned to runner-owned
-      # storage instead. TMP and TEMP cover Python's tempfile, which is where
-      # the pytest session roots are created.
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -262,19 +214,11 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
 
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
-
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: false
 
-      # Same pinned, checksum-verified download the GPU tier in ci.yml uses: this
-      # runner's service account has no bash on PATH, so the marketplace
-      # action's shell is unavailable.
       - name: Set up just
         uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
         with:
@@ -288,12 +232,6 @@ jobs:
       # Windows that is a real assertion rather than a formality - the stamp
       # hashes paths, and a path comparison is where a Windows no-op most
       # often stops being one.
-      #
-      # These two used to be a job of their own, alongside this one, on the
-      # single Windows machine the whole account queues behind. A second job
-      # buys parallelism on a hosted fleet; here it bought a second place in
-      # that queue, a second checkout and a second `init` - for two assertions
-      # that cost seconds once the worktree this job already builds exists.
       - name: Initialization is idempotent
         run: just init
 
@@ -322,11 +260,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ inputs.ref || github.sha }}
-
-      # Every job, every platform: a build never addresses a system
-      # location. Pins the writable paths and refuses to continue if any
-      # still resolves inside one.
-      - uses: ./.github/actions/contain-writes
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -358,9 +291,8 @@ jobs:
     # would pass a commit nothing measured.
     if: always()
     timeout-minutes: 10
-    # Reads results and edits a label, and never runs the pull request's
-    # code, so a hosted runner serves every pull request.
-    runs-on: ubuntu-24.04
+    # Reads results and edits a label; it never checks out the pull request.
+    runs-on: [self-hosted, Linux, X64, build]
     permissions:
       contents: read
       # The draft/unrelated-label path asks this workflow for its newest

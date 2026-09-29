@@ -271,6 +271,43 @@ def _feature_lines(view: _StatusView) -> list[str]:
     return lines
 
 
+def _receipt_lines() -> list[str]:
+    """Say when this installation will lose its GPU build, before it does.
+
+    A uv tool installation resolves torch from what its receipt records, so
+    one whose receipt names no CUDA source is a working GPU host until the
+    next upgrade and a CPU-only one after it, with nothing in between to ask
+    an operator anything. Reading the receipt is a file read, so the check
+    costs nothing on the default view; every other kind of environment has no
+    receipt and no line here.
+    """
+    from ..operator_state._provisioning import classify_tool_receipt
+    from ..operator_state._topology import (
+        RuntimeEnvKind,
+        classify_environment,
+        environment_root,
+    )
+    from ._process import _resolve_daemon_interpreter
+
+    interpreter = _resolve_daemon_interpreter()
+    kind = classify_environment(environment_root(interpreter))
+    if kind is not RuntimeEnvKind.UV_TOOL:
+        return []
+    verdict = classify_tool_receipt(interpreter)
+    if verdict.durable:
+        return []
+    fix = verdict.fix(interpreter)
+    if not fix:
+        return [f"Upgrades: {verdict.label}"]
+    # Listed in order, because running only the first leaves a receipt the
+    # next upgrade resolves back to a CPU-only build.
+    return [
+        f"Upgrades: {verdict.label}",
+        "  Fix, in order:",
+        *(f"    {command}" for command in fix),
+    ]
+
+
 def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
     """Render the plain-language status overview.
 
@@ -294,6 +331,7 @@ def _render_status_text(view: _StatusView, *, verbose: bool = False) -> None:
     ]
     if capability.is_defect and capability.remediation:
         lines.append(f"  Fix: {capability.remediation}")
+    lines.extend(_receipt_lines())
     lines.extend(_feature_lines(view))
     lines.extend(
         (

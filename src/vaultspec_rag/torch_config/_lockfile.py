@@ -6,10 +6,9 @@ never written, so a lock bump cannot leave a copy of it behind somewhere else.
 
 A published wheel ships neither ``uv.lock`` nor ``pyproject.toml``, so this
 derivation is available to the build tooling and to tests running from a
-checkout, and not to an installed runtime. That is why
-:data:`TORCH_TOOL_PIN_VERSION` still exists as a last-resort fallback for an
-environment holding no torch to read a version from - and why a test asserts
-the two agree wherever the lockfile is reachable.
+checkout, and not to an installed runtime. Nothing at runtime needs it: an
+installed environment resolves its accelerated torch from the index recorded
+in its own installation receipt rather than from a version written down here.
 """
 
 from __future__ import annotations
