@@ -58,7 +58,14 @@ def test_install_json_envelope_carries_the_shared_shape_on_success(
 
     result = runner.invoke(
         app,
-        ["install", "--target", str(ws), "--json", "--no-torch-config"],
+        [
+            "install",
+            "--target",
+            str(ws),
+            "--json",
+            "--no-torch-config",
+            "--no-provision",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -71,12 +78,22 @@ def test_install_json_envelope_carries_the_shared_shape_on_success(
 
 def test_install_json_envelope_reports_updated_on_upgrade(tmp_path: Path) -> None:
     ws = _make_pyproject(tmp_path, '[project]\nname = "demo"\nversion = "0.1.0"\n')
-    first = runner.invoke(app, ["install", "--target", str(ws), "--no-torch-config"])
+    first = runner.invoke(
+        app, ["install", "--target", str(ws), "--no-torch-config", "--no-provision"]
+    )
     assert first.exit_code == 0, first.output
 
     result = runner.invoke(
         app,
-        ["install", "--target", str(ws), "--json", "--upgrade", "--no-torch-config"],
+        [
+            "install",
+            "--target",
+            str(ws),
+            "--json",
+            "--upgrade",
+            "--no-torch-config",
+            "--no-provision",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -95,7 +112,9 @@ def test_install_json_envelope_reports_skipped_on_unattended_torch_prompt(
         'dependencies = ["vaultspec-rag"]\n',
     )
 
-    result = runner.invoke(app, ["install", "--target", str(ws), "--json"])
+    result = runner.invoke(
+        app, ["install", "--target", str(ws), "--json", "--no-provision"]
+    )
 
     assert result.exit_code == 2, result.output
     envelope = json.loads(result.output)
@@ -124,7 +143,15 @@ def test_install_no_hints_suppresses_the_hint_key(tmp_path: Path) -> None:
         tmp_path, '[project]\nname = "demo"\nversion = "0.1.0"\n', name="ws-a"
     )
     with_hints = runner.invoke(
-        app, ["install", "--target", str(ws), "--json", "--no-torch-config"]
+        app,
+        [
+            "install",
+            "--target",
+            str(ws),
+            "--json",
+            "--no-torch-config",
+            "--no-provision",
+        ],
     )
     assert with_hints.exit_code == 0, with_hints.output
     assert "hints" in json.loads(with_hints.output)
@@ -140,6 +167,7 @@ def test_install_no_hints_suppresses_the_hint_key(tmp_path: Path) -> None:
             str(ws2),
             "--json",
             "--no-torch-config",
+            "--no-provision",
             "--no-hints",
         ],
     )
