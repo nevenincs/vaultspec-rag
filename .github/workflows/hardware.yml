@@ -204,17 +204,40 @@ jobs:
         run: |
           # Another installation of the product may hold the default service
           # and Qdrant ports. The coordinator and the stop step find this daemon
-          # through its status file, so both bind whatever loopback port is
-          # free. Both probes stay open until both ports are read, so the two
-          # can never be handed the same port.
-          $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-          $qdrantProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-          $probe.Start()
-          $qdrantProbe.Start()
-          $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
-          $env:VAULTSPEC_RAG_QDRANT_PORT = "$($qdrantProbe.LocalEndpoint.Port)"
-          $probe.Stop()
-          $qdrantProbe.Stop()
+          # through its status file, so it binds whatever loopback ports are
+          # free. Qdrant listens for gRPC one port below its HTTP port, so a
+          # free gRPC port is reserved first and the port above it is claimed
+          # for HTTP. Windows hands out ephemeral ports in sequence, so the
+          # port below a fresh probe is usually one already held here, while
+          # the port above it is usually free. Every probe stays bound until
+          # all three ports are read, so none of them is handed out twice.
+          $held = [System.Collections.Generic.List[System.Net.Sockets.TcpListener]]::new()
+          try {
+            $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+            $probe.Start()
+            $held.Add($probe)
+            $qdrantPort = $null
+            for ($attempt = 0; $attempt -lt 20 -and -not $qdrantPort; $attempt++) {
+              $grpc = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+              $grpc.Start()
+              $held.Add($grpc)
+              $candidate = $grpc.LocalEndpoint.Port + 1
+              $http = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidate)
+              try {
+                $http.Start()
+                $held.Add($http)
+                $qdrantPort = $candidate
+              } catch [System.Net.Sockets.SocketException] {
+                # The port above is taken; the held gRPC probe makes the next
+                # draw a different port.
+              }
+            }
+            if (-not $qdrantPort) { throw 'no free loopback port pair for Qdrant HTTP and gRPC' }
+            $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
+            $env:VAULTSPEC_RAG_QDRANT_PORT = "$qdrantPort"
+          } finally {
+            foreach ($listener in $held) { $listener.Stop() }
+          }
           uv run --no-sync vaultspec-rag server start --json
           $startExit = $LASTEXITCODE
           # A dead daemon says only `start_died` on stdout; the reason is in its
