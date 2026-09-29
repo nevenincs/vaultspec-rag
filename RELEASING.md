@@ -50,7 +50,15 @@ The three workflows have deliberately separate responsibilities:
 
 1. `release-please.yml` opens and updates the release PR from conventional
    commits. When the PR is merged, release-please creates the
-   `vaultspec-rag-v<version>` tag and GitHub Release.
+   `vaultspec-rag-v<version>` tag and GitHub Release. Each proposal is one
+   commit: release-please bumps `pyproject.toml`, the manifest, the changelog
+   and the project's own entry in `uv.lock` together.
+1. The two kinds of write use two identities. The release App writes the
+   release PR, so its events start `RAG Merge Gate` like any other pull
+   request; a PR written with the default token would start it only after a
+   maintainer approved the runs in the Actions tab, which the PR's checks never
+   show. The default token creates the tag and the Release, which raises no
+   workflow event, so nothing starts from the tag itself.
 1. The same workflow immediately marks the new Release as a prerelease and
    explicitly dispatches `RAG Publish` with the exact tag. `RAG Publish` also
    performs that prerelease hold for its tag-push and manual entrypoints, then
@@ -337,3 +345,21 @@ fork or after rotating the publisher configuration:
    environment `pypi`.
 1. Confirm that `publish-pypi` keeps `environment: pypi` and
    `id-token: write`; no repository secret is required.
+
+## One-time release App setup
+
+`release-please.yml` mints the release PR's token from a GitHub App. Repeat
+this only for a fork or after rotating the App's key:
+
+1. Register a GitHub App owned by `nevenincs` with no webhook and exactly two
+   repository permissions: Contents read and write, Pull requests read and
+   write.
+1. Install it on `nevenincs/vaultspec-rag` only.
+1. Store its Client ID as the repository variable `RELEASE_APP_CLIENT_ID` and
+   a generated private key as the repository secret `RELEASE_APP_PRIVATE_KEY`.
+
+There is no fallback. When either is missing, or the App is not installed,
+the `Mint the release pull request token` step fails the `RAG Release Please`
+run by name. Releases and Publish dispatch run before that step, so a merged
+release still publishes; only the next proposal waits. Fix the App, then rerun
+the failed `RAG Release Please` run.
