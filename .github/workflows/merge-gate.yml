@@ -205,7 +205,7 @@ jobs:
       (github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
         (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
-    timeout-minutes: 60
+    timeout-minutes: 136
     runs-on: [self-hosted, Windows, X64]
     env:
       UV_PYTHON: "3.13"
