@@ -22,8 +22,10 @@ concurrency:
 jobs:
   release-please:
     name: "Build: Release proposal (Linux)"
-    timeout-minutes: 10
+    timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     # Opens the release PR, pushes its lock refresh, edits the release and
     # dispatches Publish: the only job here, and the only one that writes.
     permissions:

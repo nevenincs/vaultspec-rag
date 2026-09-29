@@ -34,8 +34,10 @@ concurrency:
 jobs:
   resolve-target:
     name: "Check: Release commit (Linux)"
-    timeout-minutes: 10
+    timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
       tag: ${{ steps.commit.outputs.tag }}
@@ -90,8 +92,10 @@ jobs:
     needs: [resolve-target, hardware-validation]
     outputs:
       sha: ${{ needs.resolve-target.outputs.sha }}
-    timeout-minutes: 10
+    timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     permissions:
       contents: write
     steps:
@@ -113,12 +117,13 @@ jobs:
 
   build:
     name: "Build: Python package (Linux)"
-    timeout-minutes: 20
+    timeout-minutes: 210
     needs: hold-release
     outputs:
       sha: ${{ needs.hold-release.outputs.sha }}
     runs-on: [self-hosted, Linux, X64, build]
     env:
+      CI_EXEC_BUDGET_MINUTES: 90
       # Building the sdist and wheel imports nothing from the local inference
       # stack, so `just init` leaves torch and its CUDA runtime out.
       VAULTSPEC_INIT_GPU_STACK: "none"
@@ -161,7 +166,7 @@ jobs:
 
   smoke-test:
     name: "Test: Package smoke (Linux, ${{ matrix.python-version }})"
-    timeout-minutes: 20
+    timeout-minutes: 140
     needs: build
     outputs:
       sha: ${{ needs.build.outputs.sha }}
@@ -177,6 +182,7 @@ jobs:
         # — the exact failure a single-version smoke test ships green.
         python-version: ["3.13", "3.14"]
     env:
+      CI_EXEC_BUDGET_MINUTES: 20
       # `--isolated` does not stop uv reading `.python-version` from the
       # checkout, which pins the floor. Without this the 3.14 leg would
       # silently smoke-test 3.13 and report success for a version it never ran.
@@ -216,12 +222,14 @@ jobs:
 
   github-release:
     name: "Build: Release assets (Linux)"
-    timeout-minutes: 15
+    timeout-minutes: 135
     needs: [resolve-target, smoke-test]
     outputs:
       sha: ${{ needs.smoke-test.outputs.sha }}
     # Needs `gh` and `sha256sum`.
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 15
     permissions:
       contents: write
     steps:
@@ -280,9 +288,11 @@ jobs:
 
   dispatch-binaries:
     name: "Build: Binary dispatch (Linux)"
-    timeout-minutes: 10
+    timeout-minutes: 130
     needs: [resolve-target, github-release]
     runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
     permissions:
       actions: write
       contents: read
@@ -319,7 +329,7 @@ jobs:
   # (publish.yml, environment pypi) unchanged.
   publish-pypi:
     name: "Build: Package index release (Linux)"
-    timeout-minutes: 15
+    timeout-minutes: 135
     needs: resolve-target
     if: ${{ inputs.stage == 'package-index' }}
     runs-on: [self-hosted, Linux, X64, build]
@@ -329,6 +339,7 @@ jobs:
       id-token: write
       contents: read
     env:
+      CI_EXEC_BUDGET_MINUTES: 15
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.resolve-target.outputs.tag }}
     steps:
