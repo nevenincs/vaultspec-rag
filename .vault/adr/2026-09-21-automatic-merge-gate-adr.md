@@ -3,11 +3,12 @@ tags:
   - '#adr'
   - '#automatic-merge-gate'
 date: '2026-09-21'
-modified: '2026-09-21'
+modified: '2026-09-29'
 body_schema: 'body-v2'
-body_hash: 'sha256:ebdb32c404181286d0079744822bc884297477fd8b20689b12b8988ed8eec5b1'
+body_hash: 'sha256:d62f2fca3560681d4727ff2fa79cc4c0414eae6b883de42fa03867d34d7e20bd'
 related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
+  - '[[2026-09-29-release-pr-identity-research]]'
 ---
 
 # `automatic-merge-gate` adr: `automatic pull-request and release-branch proof` | (**status:** `accepted`)
@@ -50,8 +51,10 @@ and release progress currently depend on manual repository bookkeeping.
 - Main continues to require `Check: Merge gate (Linux)` with strict status
   checks; changing that external context is outside this decision.
 - Fork pull requests cannot execute untrusted code on the self-hosted fleet.
-- Default-token changes do not start downstream workflow runs, so the release
-  path requires explicit Actions dispatch.
+- Default-token changes start no downstream workflow run without a
+  maintainer's approval, so the release path requires explicit Actions
+  dispatch. The held pull-request runs on a release branch are redundant and
+  stay unapproved (`2026-09-29-release-pr-identity-research`).
 
 ## Implementation
 

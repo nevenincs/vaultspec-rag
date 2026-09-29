@@ -93,7 +93,12 @@ rerun for the same tag.
    `feat:`, `fix:`, or `perf:`.
 1. Review the release PR opened by release-please. Confirm the proposed
    version, changelog, `pyproject.toml`, `.release-please-manifest.json`, and
-   `uv.lock` are coherent, and wait for the required checks.
+   `uv.lock` are coherent, and wait for the required checks. The Actions tab
+   also shows the release PR's own `RAG Merge Gate` runs waiting for
+   approval: GitHub holds workflows on pull requests the default token
+   writes. Leave them unapproved. The run release-please dispatches is the
+   required check, and approving a held run only repeats the full gate on
+   the same commit.
 1. Merge the release PR. Do not manually create a second tag or Release for
    the same version.
 1. Watch both `RAG Publish` and `RAG Binaries`, then the `package-index` run of
