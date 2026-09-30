@@ -74,6 +74,13 @@ def _render_source(
             rendered_remediation.add(remediation)
 
 
+def _seconds(value: object) -> object:
+    """Round a reported duration; a measured wait is often sub-microsecond."""
+    if isinstance(value, float):
+        return round(value, 2)
+    return value
+
+
 def _render_waits(
     source: dict[str, object], remaining: int, emit: Callable[[str], None]
 ) -> int:
@@ -92,9 +99,9 @@ def _render_waits(
             continue
         prefix = f"{source_id} " if source_id is not None else ""
         emit(
-            f"  Wait {prefix}{cause}: {wait.get('waited_seconds')}s / "
-            f"{wait.get('configured_bound_seconds')}s "
-            f"({wait.get('remaining_bound_seconds')}s remaining)"
+            f"  Wait {prefix}{cause}: {_seconds(wait.get('waited_seconds'))}s / "
+            f"{_seconds(wait.get('configured_bound_seconds'))}s "
+            f"({_seconds(wait.get('remaining_bound_seconds'))}s remaining)"
         )
         remaining -= 1
     return remaining
