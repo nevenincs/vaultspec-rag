@@ -77,14 +77,17 @@ jobs:
           fi
           echo "${TAG} resolves to ${TARGET_SHA}"
 
-  # Build the project wheel once from the release tag. The binary matrix consumes
-  # this artifact rather than resolving the version from PyPI, so a release tag
-  # can be built and validated before either publication workflow wins a race to
-  # the package index.
+  # The binaries carry the release's own wheel, never a second build of it.
+  # Publish built the wheel once, smoke-tested it, attached it to the release
+  # and recorded its digest in SHA256SUMS; PyPI later uploads exactly those
+  # bytes, checked against the same manifest. Taking the attached wheel here,
+  # checked the same way, makes the wheel inside every binary byte-identical
+  # to the one on the release and on PyPI. A rebuild would match only as far
+  # as the build is reproducible, and nothing asserts that it is.
   wheel:
     needs: validate
     timeout-minutes: 150
-    name: "Build: Binary wheel (Linux)"
+    name: "Check: Release wheel (Linux)"
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 30
@@ -101,6 +104,33 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
+      # Exactly one manifest line for exactly this wheel, then the digest: a
+      # manifest missing the wheel would otherwise pass by checking nothing,
+      # and a mismatch stops here, before any binary is built around it.
+      - name: Fetch the wheel Publish attached, checked against SHA256SUMS
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          wheel="vaultspec_rag-${TAG#vaultspec-rag-v}-py3-none-any.whl"
+          work="${RUNNER_TEMP}/release-wheel"
+          rm -rf "${work}"
+          mkdir -p "${work}" dist
+          if ! gh release download "${TAG}" --repo "$GITHUB_REPOSITORY" \
+               --dir "${work}" --pattern SHA256SUMS --pattern "${wheel}"; then
+            echo "::error::${TAG} carries no ${wheel} or SHA256SUMS; Publish attaches both before it dispatches this workflow"
+            exit 1
+          fi
+          awk -v wheel="${wheel}" '$2 == wheel' "${work}/SHA256SUMS" > "${work}/wheel.sha256"
+          if [ "$(wc -l < "${work}/wheel.sha256")" -ne 1 ]; then
+            echo "::error::SHA256SUMS on ${TAG} does not list ${wheel} exactly once"
+            exit 1
+          fi
+          (cd "${work}" && sha256sum -c wheel.sha256)
+          mv "${work}/${wheel}" dist/
+
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -108,9 +138,6 @@ jobs:
 
       - name: Install Python
         run: uv python install 3.13
-
-      - name: Build the wheel
-        run: uv build --wheel --out-dir dist
 
       - name: Validate the wheel matches the release tag
         shell: bash
