@@ -14,7 +14,7 @@ related:
   - '[[2026-09-21-typesafe-classifier-adr]]'
 modified: '2026-09-30'
 body_schema: body-v2
-body_hash: 'sha256:c0960fc26f054811de8fbf5c98230c627eb1bd7fd6d34a5b8ab2f00c0830653f'
+body_hash: 'sha256:c60db71bf3df5e8ba6398ac16538a522abeaa7ceb2d032438e1d12dd7eefb65e'
 ---
 
 # `monitor-browser` plan
@@ -30,7 +30,7 @@ Reuse the root React/Vite/strict-TypeScript harness and shared lifecycle. Pin of
 ## Steps
 
 - [x] `S01` - Implement and verify an automatic local-only monitoring adapter, pin Carbon dependencies, and reconcile frontend decision wording; `src/monitor/server, vite.config.ts, package.json/package-lock.json, bridge covering checks and enrolled Node runtime in existing test workflows, monitor-browser ADR and monitor-tooling ADR`.
-- [ ] `S02` - Implement the responsive Carbon operator UI with independent polling, lifecycle views, TypeSafe details, work/global logs and existing job controls; verify and review the integrated browser monitor; `src/monitor, frontend verification configuration as needed and monitor-browser audit`.
+- [x] `S02` - Implement the responsive Carbon operator UI with independent polling, lifecycle views, TypeSafe details, work/global logs and existing job controls; verify and review the integrated browser monitor; `src/monitor, real bridge and installed-browser checks, dev/monitor-browser.mjs, existing test workflows, docs/service-mode.md, frontend verification configuration as needed, monitor-browser audit and focused prior audit formatting maintenance`.
 
 ## Parallelization
 

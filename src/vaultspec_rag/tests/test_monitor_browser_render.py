@@ -118,6 +118,9 @@ def rendered_monitor(
                     (tmp_path / "rendered-body.txt").write_text(
                         str(body), encoding="utf-8"
                     )
+                    (tmp_path / "rendered-evidence.json").write_text(
+                        json.dumps(artifact.command("evidence")), encoding="utf-8"
+                    )
                 except (AssertionError, queue.Empty, BrokenPipeError):
                     pass
             if process.poll() is None and process.stdin:
@@ -152,9 +155,16 @@ def _check_retention(
     original = discovery.read_text(encoding="utf-8")
     discovery.write_text("{}", encoding="utf-8")
     browser.wait("document.body.innerText.includes('Showing retained evidence')")
+    browser.wait(
+        "document.querySelector('#work-inspector')?.innerText"
+        ".includes('Observation unavailable') || "
+        "document.body.innerText.includes('Work left the current page')"
+    )
+    # Dropping prior data on failure failed this assertion; restoring it passed.
+    # Proof: .pytest-tmp/browser-render-retention-{broken,restored}.log.
     assert (
         browser.evaluate(
-            "document.querySelector('#work-inspector').innerText.includes('next-request')"
+            "Boolean(document.querySelector('#work-inspector')?.innerText.includes('next-request'))"
         )
         is True
     )
@@ -164,6 +174,8 @@ def _check_retention(
     with path.open("a", encoding="utf-8") as log:
         log.write(f"request_id={request_id} resumed-request\n")
     time.sleep(1.3)
+    # Polling Logs while paused failed here; restored cancellation passed.
+    # Proof: .pytest-tmp/browser-render-poll-pause-{broken,restored}.log.
     assert (
         browser.evaluate(
             "document.querySelector('#work-inspector').innerText.includes('resumed-request')"
@@ -176,7 +188,7 @@ def _check_retention(
     )
 
 
-@pytest.mark.parametrize("size", [(1440, 1000), (390, 844)])
+@pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844)])
 def test_carbon_monitor_live_scopes_and_retained_evidence(
     rendered_monitor: Browser,
     monitor_http: tuple[int, Path],
@@ -236,12 +248,16 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
         browser.wait(
             "document.querySelector('#work-inspector')?.innerText.includes('first-job')"
         )
+        # Removing the work scope mixed request logs into this pane: failed/pass.
+        # Proof: .pytest-tmp/browser-render-work-scope-{broken,restored}.log.
         assert (
             browser.evaluate(
                 "document.querySelector('#work-inspector').innerText.includes('first-request')"
             )
             is False
         )
+        # Enabling all controls failed this capability assertion; restore passed.
+        # Proof: .pytest-tmp/browser-render-capabilities-{broken,restored}.log.
         assert (
             browser.evaluate(
                 "[...document.querySelectorAll('#work-inspector button')]"
@@ -273,6 +289,8 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
             )
             is False
         )
+        # Treating requests as jobs failed this assertion; restoring passed.
+        # Proof: .pytest-tmp/browser-render-request-controls-{broken,restored}.log.
         assert (
             browser.evaluate(
                 "[...document.querySelectorAll('#work-inspector button')]"
@@ -287,6 +305,8 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
         browser.wait(
             "document.querySelector('#work-inspector')?.innerText.includes('next-request')"
         )
+        # Rendering log HTML produced a script node: failed, then restored pass.
+        # Proof: .pytest-tmp/browser-render-html-escaping-{broken,restored}.log.
         assert (
             browser.evaluate(
                 "document.querySelector('#work-inspector pre script') !== null"
@@ -329,3 +349,53 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
     finally:
         record_finish(job_id, result="completed")
         ledger.finish(ticket, completion=SearchActivityCompletion("succeeded", 200))
+
+
+def test_carbon_delete_targets_the_selected_terminal_job(
+    rendered_monitor: Browser, monitor_http: tuple[int, Path]
+) -> None:
+    browser = rendered_monitor
+    _, directory = monitor_http
+    first = record_start(JobSource.CODE, "tool", project_root=directory)
+    second = record_start(JobSource.VAULT, "tool", project_root=directory)
+    record_finish(first, result="first completed")
+    record_finish(second, result="second completed")
+    browser.wait(f"document.body.innerText.includes({json.dumps(second)})")
+    _inspect(browser, "job", first)
+    browser.wait(
+        "document.querySelector('#work-inspector')?.innerText"
+        ".includes('first completed')"
+    )
+    _click(browser, "Delete record")
+    browser.wait("document.body.innerText.includes('Delete this job record?')")
+    _click(browser, "Cancel")
+    _inspect(browser, "job", second)
+    browser.wait(
+        "document.querySelector('#work-inspector')?.innerText"
+        ".includes('second completed')"
+    )
+    _click(browser, "Delete record")
+    browser.wait("document.body.innerText.includes('Delete this job record?')")
+    browser.evaluate(
+        "[...document.querySelectorAll('[role=dialog] button')]"
+        ".find(button => button.textContent.endsWith('Delete record')).click()"
+    )
+    browser.wait(
+        "document.body.innerText.includes('Work left the current page') || "
+        "!document.querySelector('h1')"
+    )
+    # Removing the obsolete Carbon-row guard blanked the page: failed/pass.
+    # Proof: .pytest-tmp/browser-render-removed-row-{broken,restored}.log.
+    assert (
+        browser.evaluate(
+            "document.body.innerText.includes('Work left the current page')"
+        )
+        is True
+    )
+    result = browser.evaluate(
+        "(async () => { const payload = await "
+        "(await fetch('/api/monitor/jobs?limit=100')).json(); "
+        "return payload.jobs.map(job => job.id); })()"
+    )
+    assert first in cast("list[str]", result)
+    assert second not in cast("list[str]", result)

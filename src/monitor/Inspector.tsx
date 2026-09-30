@@ -23,7 +23,8 @@ import {
   type Work,
 } from "./model";
 import { Details, Status } from "./presentation";
-import { Logs } from "./Logs";
+import { Evidence, Logs } from "./Logs";
+import type { Observation } from "./use-polling";
 function JobControls({
   job,
   disabled,
@@ -196,6 +197,7 @@ export function Inspector({
   paused,
   refresh,
   stale,
+  observation,
   onRefresh,
   onClose,
 }: {
@@ -204,6 +206,7 @@ export function Inspector({
   paused: boolean;
   refresh: number;
   stale: boolean;
+  observation: Observation<unknown>;
   onRefresh: () => void;
   onClose: () => void;
 }) {
@@ -215,7 +218,11 @@ export function Inspector({
     <section aria-labelledby="inspector-heading" id="work-inspector">
       <Stack gap={5}>
         <Stack orientation="horizontal" gap={5} className="monitor-toolbar">
-          <h2 id="inspector-heading" className="cds--type-heading-03">
+          <h2
+            id="inspector-heading"
+            tabIndex={-1}
+            className="cds--type-heading-03"
+          >
             {indexing ? "Indexing job" : "Serving request"}
           </h2>
           <Button size="sm" kind="ghost" onClick={onClose}>
@@ -223,7 +230,8 @@ export function Inspector({
           </Button>
         </Stack>
         <p className="cds--type-code-01 monitor-identity">{work.id}</p>
-        <Grid narrow className="monitor-grid">
+        <Evidence observation={observation} paused={paused} />
+        <Grid narrow withRowGap className="monitor-grid">
           <Column sm={4} md={8} lg={indexing ? 16 : 8}>
             <Tile>
               <Stack gap={5}>

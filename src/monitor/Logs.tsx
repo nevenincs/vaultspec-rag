@@ -128,7 +128,7 @@ export function Logs({
     <Stack gap={5}>
       <Evidence observation={observation} paused={paused} />
       {observation.data ? (
-        <Grid narrow className="monitor-grid monitor-log-grid">
+        <Grid narrow withRowGap className="monitor-grid monitor-log-grid">
           {observation.data.map((group) => (
             <Column key={group.source} sm={4} md={8} lg={work ? 16 : 8}>
               <LogWindow

@@ -173,6 +173,12 @@ refresh you can slow down or speed up with `--interval`. It is the command to
 reach for while a first index is running on a large tree, where the one-shot
 form tells you only what was true at the moment you asked.
 
+The watch separates daemon health and TypeSafe classification from indexing
+state. Indexing jobs and queued, processing, and recently finished serving
+requests have their own lanes. The focused log follows the selected work and
+refreshes without reselection; raw service and Qdrant logs remain grouped by
+producer. Each observation shows its freshness, failures, and truncation.
+
 To inspect recent service and Qdrant logs:
 
 ```
@@ -193,6 +199,38 @@ Both commands accept `--json`.
 Four job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. A job still queued after five minutes, on a service that isn't paused, degrades health with `jobs_undispatched`: the service starts queued work the moment it is queued, so a job still waiting was left behind and won't start on its own. `server jobs` lists it right after running work, and restarting the service starts it again. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
 
 An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
+
+### Local Carbon browser monitor
+
+From a source checkout with the Node/npm versions pinned in `.nvmrc` and
+`package.json`, run:
+
+```bash
+just init-monitor
+just build-monitor
+just dev
+```
+
+Open `http://127.0.0.1:5420`. The monitor automatically connects to the local
+service recorded in the managed status directory. It requires no login,
+credential entry, or admin role. Start the service through the usual service
+command; opening the monitor observes it. A stopped service shows a connection
+message and retains any previous observations with their timestamps.
+
+Health and TypeSafe details sit above separate indexing and serving tabs.
+Inspect a job or request for its current details and correlated live logs;
+service and Qdrant logs have their own panels. Job controls follow the service's
+reported capabilities, and requested state stays distinct from observed state.
+Deleting a finished job record asks for confirmation.
+
+Work pages show up to 100 records, and each log panel requests the latest 200
+matching records. Counts describe the service's retained snapshot and recent
+history. **Pause live updates** pauses browser polling; the service continues
+working. Resume updates to observe new work again.
+
+The built preview at `http://127.0.0.1:5421` uses the same automatic local
+connection. Serving the static assets alone does not provide that connection.
+Use `just dev stop` to stop this checkout's browser servers.
 
 ## Control one job
 
@@ -328,9 +366,7 @@ Another process is bound there. Use one port consistently: pass `--port N` or se
 Exit `4` covers two different faults, and the fix for one is the wrong move for
 the other. Read the label `status` printed beside it rather than the code alone.
 
-**`crashed (its process is no longer running)`, `crashed (its process ID now belongs to
-another program)`, `crashed (its port gives no usable answer)`, or `crashed (it stopped
-reporting that it is alive)`, or a divergent status file.** No daemon is serving. The status file disagrees with the live process -
+**`crashed (its process is no longer running)`, `crashed (its process ID now belongs to another program)`, `crashed (its port gives no usable answer)`, or `crashed (it stopped reporting that it is alive)`, or a divergent status file.** No daemon is serving. The status file disagrees with the live process -
 naming a process id that is no longer alive, for instance. Re-run `server start`
 to overwrite it cleanly, and if that does not clear it, delete the status file at
 `~/.vaultspec-rag/service.json` and start again.

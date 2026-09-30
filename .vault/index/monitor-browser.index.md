@@ -6,9 +6,10 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:b5783a7620e1a9dda1f72d7b1a17fb441bb4ae3e9bb285a88a3cadfadf412fbe'
+body_hash: 'sha256:53c63f06ccec5d470ed1e0878beaa1856289d96eed2e1b116603253a10c507b3'
 related:
   - '[[2026-09-30-monitor-browser-adr]]'
+  - '[[2026-09-30-monitor-browser-audit]]'
   - '[[2026-09-30-monitor-browser-ledger]]'
   - '[[2026-09-30-monitor-browser-plan]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#monitor-browser`.
 ### adr
 
 - `2026-09-30-monitor-browser-adr` - `monitor-browser` adr: `Credential-free local Carbon operator monitor` | (**status:** `accepted`)
+
+### audit
+
+- `2026-09-30-monitor-browser-audit` - `monitor-browser` audit: `Integrated local Carbon operator monitor review`
 
 ### exec
 

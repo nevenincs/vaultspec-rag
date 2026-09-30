@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:5857fe43a38797337bb2661c9c0a86d8a5c94406bca26cd844b788f78e86a212'
+body_hash: 'sha256:210df8039d95544b7109d25bfcc0b50fb023666a862482dfd8bcc95da6a0f517'
 related:
   - "[[2026-09-30-monitor-refinement-plan]]"
   - "[[2026-09-30-monitor-refinement-reference]]"
@@ -23,7 +23,7 @@ Integrated review of S01 and S02 in 2026-09-30-monitor-refinement-plan. Diff bas
 
 Review criteria: separate scopes and honest absence; queue transitions and stable identity; daemon TypeSafe evidence and correct diagnostic units; live scoped log updates with strict response validation, issue ordering, freshness, bounds and visible truncation; raw producer separation; request/global-log focus cannot mutate retained job selection; 200x24 and narrow terminal navigation and teardown.
 
-Applicable evidence is in the execution ledger and local .pytest-tmp/monitor-*.log outputs. New monitoring tests use production ledgers, production HTTP routes, real managed files, real queue concurrency and Textual pilot without a resident lifespan or inference. Existing control/rendering regression suites remain in scope. Required final verification is owned by this agent; no duplicate stateful check owners.
+Applicable evidence is in the execution ledger and local `.pytest-tmp/monitor-*.log` outputs. New monitoring tests use production ledgers, production HTTP routes, real managed files, real queue concurrency and Textual pilot without a resident lifespan or inference. Existing control/rendering regression suites remain in scope. Required final verification is owned by this agent; no duplicate stateful check owners.
 
 ## Findings
 

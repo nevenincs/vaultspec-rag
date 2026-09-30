@@ -41,13 +41,16 @@ export function App() {
   const refreshNow = () => setRefresh((prior) => prior + 1);
   const inspect = (work: Work) => {
     setSelected(work);
-    setTimeout(
-      () =>
-        document
-          .getElementById("work-inspector")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" }),
-      0,
-    );
+    setTimeout(() => {
+      const heading = document.getElementById("inspector-heading");
+      heading?.focus({ preventScroll: true });
+      document.getElementById("work-inspector")?.scrollIntoView({
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "start",
+      });
+    }, 0);
   };
   return (
     <Theme theme="g100" className="monitor-root">
@@ -59,7 +62,7 @@ export function App() {
       </Header>
       <Content id="main-content" className="monitor-content">
         <Stack gap={8}>
-          <Grid className="monitor-grid">
+          <Grid withRowGap className="monitor-grid">
             <Column sm={4} md={8} lg={16}>
               <Stack gap={5}>
                 <Stack
@@ -105,7 +108,7 @@ export function App() {
             </Column>
           </Grid>
           <HealthCards payload={service.data} />
-          <Grid className="monitor-grid">
+          <Grid withRowGap className="monitor-grid">
             <Column sm={4} md={8} lg={16}>
               <Stack gap={5}>
                 <h2 className="cds--type-heading-03">Work</h2>
@@ -141,7 +144,7 @@ export function App() {
             </Column>
           </Grid>
           {selected && (
-            <Grid className="monitor-grid">
+            <Grid withRowGap className="monitor-grid">
               <Column sm={4} md={8} lg={16}>
                 {record ? (
                   <Inspector
@@ -150,6 +153,7 @@ export function App() {
                     record={record}
                     paused={paused}
                     refresh={refresh}
+                    observation={selected.kind === "job" ? indexing : serving}
                     stale={Boolean(
                       selected.kind === "job" ? indexing.error : serving.error,
                     )}
@@ -179,7 +183,7 @@ export function App() {
               </Column>
             </Grid>
           )}
-          <Grid className="monitor-grid">
+          <Grid withRowGap className="monitor-grid">
             <Column sm={4} md={8} lg={16}>
               <Stack gap={5}>
                 <h2 className="cds--type-heading-03">Service logs</h2>

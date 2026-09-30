@@ -20,7 +20,7 @@ export function HealthCards({ payload }: { payload?: RecordValue }) {
     : [];
   const backend = object(payload?.qdrant);
   return (
-    <Grid narrow className="monitor-grid">
+    <Grid narrow withRowGap className="monitor-grid">
       <Column sm={4} md={4} lg={6}>
         <Tile className="monitor-health-tile">
           <Stack gap={5}>
@@ -28,7 +28,12 @@ export function HealthCards({ payload }: { payload?: RecordValue }) {
             <Status state={state} />
             <Details
               items={[
-                ["Process", reading(payload?.pid)],
+                [
+                  "Process",
+                  payload?.pid === undefined
+                    ? "Not reported"
+                    : String(payload.pid),
+                ],
                 ["Uptime", reading(payload?.uptime_s, " s")],
                 [
                   "Models",
@@ -88,7 +93,15 @@ export function HealthCards({ payload }: { payload?: RecordValue }) {
             <Details
               items={[
                 ["Storage", text(features.storage_backend)],
-                ["Qdrant", text(backend.status)],
+                ["Qdrant mode", text(backend.mode)],
+                [
+                  "Qdrant child",
+                  backend.alive === true
+                    ? "Running"
+                    : backend.alive === false
+                      ? "Stopped"
+                      : "No supervised child reported",
+                ],
                 [
                   "Watcher",
                   features.watcher_enabled === true

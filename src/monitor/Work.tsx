@@ -85,7 +85,9 @@ function WorkTable({
             <TableBody>
               {rows.map((row) => {
                 const id = row.id;
-                const record = byId.get(id)!;
+                const record = byId.get(id);
+                // Carbon reconciles its rows after the new service projection.
+                if (!record) return null;
                 const { key, ...props } = getRowProps({ row });
                 const state = text(record.state, "unknown");
                 const chosen = selected?.kind === kind && selected.id === id;
