@@ -303,6 +303,9 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Restore monitor dependencies for installed-browser checks
+        run: just init-monitor
+
       - name: Run tests
         run: just test-python
 
@@ -369,6 +372,9 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
+
+      - name: Restore monitor dependencies for installed-browser checks
+        run: just init-monitor
 
       - name: Run full test suite
         run: just test-python

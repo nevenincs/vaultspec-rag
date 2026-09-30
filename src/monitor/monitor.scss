@@ -1,0 +1,151 @@
+@use "@carbon/react" with (
+  $font-path: "@ibm/plex"
+);
+@use "@carbon/styles/scss/spacing";
+@use "@carbon/styles/scss/theme";
+@use "@carbon/styles/scss/type";
+@use "@carbon/type" as carbon-type;
+
+@include carbon-type.type-classes;
+
+body {
+  margin: 0;
+}
+
+.monitor-root {
+  min-block-size: 100vh;
+  background: theme.$background;
+  color: theme.$text-primary;
+}
+
+.monitor-content {
+  padding-block: spacing.$spacing-09 spacing.$spacing-08;
+  padding-inline: 0;
+}
+
+.monitor-grid {
+  row-gap: spacing.$spacing-07;
+}
+
+.monitor-grid > * {
+  min-inline-size: 0;
+}
+
+.monitor-log-grid {
+  padding-inline: 0;
+}
+
+.monitor-grid:has(.monitor-health-tile),
+.monitor-log-grid,
+.monitor-grid:has(#work-inspector) .monitor-grid {
+  row-gap: spacing.$spacing-05;
+}
+
+.monitor-muted {
+  color: theme.$text-secondary;
+}
+
+.monitor-toolbar {
+  display: flex;
+  gap: spacing.$spacing-05;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.monitor-controls,
+.monitor-metrics {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.monitor-controls {
+  gap: spacing.$spacing-03;
+}
+
+.monitor-metrics {
+  gap: spacing.$spacing-07;
+}
+
+.monitor-health-tile {
+  block-size: 100%;
+}
+
+.monitor-details {
+  padding-inline: 0;
+  row-gap: spacing.$spacing-05;
+}
+
+.monitor-details dd {
+  margin-block-start: spacing.$spacing-02;
+  overflow-wrap: anywhere;
+}
+
+.monitor-reasons {
+  padding-inline-start: spacing.$spacing-05;
+  list-style-type: disc;
+}
+
+.monitor-reasons li + li {
+  margin-block-start: spacing.$spacing-03;
+}
+
+.monitor-table-window {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.monitor-work-table {
+  min-inline-size: 48rem;
+}
+
+.monitor-work-table td {
+  overflow-wrap: anywhere;
+  max-inline-size: 28rem;
+}
+
+.monitor-work-table tr[data-selected="true"] td {
+  background: theme.$layer-selected-01;
+}
+
+.monitor-empty {
+  padding: spacing.$spacing-06;
+  background: theme.$layer-01;
+}
+
+.monitor-identity {
+  overflow-wrap: anywhere;
+}
+
+#work-inspector {
+  scroll-margin-block-start: spacing.$spacing-11;
+}
+
+.monitor-log-tile {
+  min-inline-size: 0;
+}
+
+.monitor-log-window {
+  @include type.type-style("code-01");
+  block-size: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: spacing.$spacing-05;
+  background: theme.$background;
+  color: theme.$text-primary;
+  border: 1px solid theme.$border-subtle-01;
+}
+
+.monitor-table-window:focus-visible,
+.monitor-log-window:focus-visible {
+  outline: 2px solid theme.$focus;
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

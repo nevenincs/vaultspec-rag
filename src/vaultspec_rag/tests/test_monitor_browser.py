@@ -18,6 +18,8 @@ import pytest
 from ..config._settings import get_config
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start
+from ..server._search_activity import SearchActivityCompletion, SearchActivityStart
+from ..server._state import search_activity_ledger
 from .test_monitor_logs import monitor_http as monitor_http
 
 if TYPE_CHECKING:
@@ -151,3 +153,66 @@ def test_local_bridge_reports_missing_discovery(
     status, answer = _read(port, "/jobs?limit=100")
     assert status == 503
     assert "No local service is recorded" in str(answer["message"])
+
+
+def test_browser_projection_rejects_misattributed_production_observations(
+    browser_bridge: tuple[int, Path],
+) -> None:
+    port, directory = browser_bridge
+    job_id = record_start(JobSource.CODE, "tool", project_root=directory)
+    ledger = search_activity_ledger()
+    ticket = ledger.start(
+        SearchActivityStart(
+            "projection-request", "real query", "code", str(directory), 3
+        )
+    )
+    path = directory / get_config().log_file
+    path.write_text(f"job_id={job_id} projection-record\n", encoding="utf-8")
+    try:
+        _, log_payload = _read(
+            port, f"/logs/json?source=service&lines=200&job_id={job_id}"
+        )
+        _, activity_payload = _read(port, "/search-activity?limit=100")
+        source = Path(__file__).resolve().parents[2] / "monitor/model.ts"
+        node = shutil.which("node")
+        assert node is not None
+        script = (
+            "import assert from 'node:assert/strict';"
+            "import { logs, activity, diagnostic, safeLog } from "
+            f"{json.dumps(source.as_uri())};"
+            "const [payload, serving, id] = JSON.parse(process.argv[1]);"
+            "const work = {kind:'job',id};"
+            "assert.equal(logs(payload,work)[0].lines.length,1);"
+            "assert.equal(activity(serving).records[0].request_id,'projection-request');"
+            # Verified: bypassing filter validation failed this refusal assertion;
+            # restoring validation passed.
+            "assert.throws(() => logs({...payload,"
+            "filters:{job_id:'different-job'}},work), /different scope/);"
+            # Verified: bypassing duplicate identity validation failed this
+            # assertion; restoring validation passed.
+            "assert.throws(() => activity({...serving,recent:["
+            "{...serving.active[0],state:'terminal'}],returned:2}), /identities/);"
+            "assert.equal(diagnostic('typesafe_latency_ms',125),'125 ms');"
+            "assert.equal(diagnostic('typesafe_confidence',0.9),Number(0.9).toLocaleString());"
+            "assert.equal(diagnostic('rerank_seconds',0.05),"
+            "Number(0.05).toLocaleString()+' s');"
+            "assert.equal(safeLog(String.fromCharCode(27)+'[31mrecord'+String.fromCharCode(0)),'record�');"
+        )
+        result = subprocess.run(
+            [
+                node,
+                "--input-type=module",
+                "-e",
+                script,
+                json.dumps([log_payload, activity_payload, job_id]),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        assert result.returncode == 0, result.stderr
+    finally:
+        record_finish(job_id, result="completed")
+        ledger.finish(ticket, completion=SearchActivityCompletion("succeeded", 200))
