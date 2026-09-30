@@ -43,6 +43,7 @@ __all__ = [
     "cuda_remediation",
     "durable_upgrade_commands",
     "environment_python_request",
+    "host_install_command",
     "inplace_cuda_command",
     "installed_tool_release",
     "published_wheel_platform_tag",
@@ -392,6 +393,31 @@ def tool_package_requirement(interpreter: str) -> str:
     if extras is None:
         return fallback
     return f"{package}[{','.join(sorted(extras))}]" if extras else package
+
+
+#: The interpreter a fresh host installation asks for.
+HOST_PYTHON = "3.13"
+
+
+def host_install_command(platform_name: str = sys.platform) -> str:
+    """The standalone host installation, as one line an operator can paste.
+
+    Everywhere but macOS it carries the CUDA index and its strategy: PyPI's
+    torch is CPU-only on Windows, and a GPU-only product must never hand out
+    a command that can resolve it. Apple silicon takes PyPI's standard wheel,
+    which is the one with Metal support.
+    """
+    args: tuple[str, ...] = (
+        "uv",
+        "tool",
+        "install",
+        "--python",
+        HOST_PYTHON,
+        _HOST_TOOL_REQUEST,
+    )
+    if platform_name != "darwin":
+        args += ("--index", CU130_INDEX_URL, "--index-strategy", CU130_INDEX_STRATEGY)
+    return _render_command(args)
 
 
 def _render_command(args: tuple[str, ...]) -> str:
