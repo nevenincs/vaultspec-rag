@@ -38,6 +38,7 @@ class Workflow(StrEnum):
     BINARIES = "binaries.yml"
     ACQUISITION = "acquisition.yml"
     PUBLISH = "publish.yml"
+    CHANNELS = "channels.yml"
     CODE_HEALTH = "code-health.yml"
 
 

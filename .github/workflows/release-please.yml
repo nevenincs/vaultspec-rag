@@ -10,8 +10,10 @@ name: RAG Release Please
 #   release it either.
 # - CUT. A maintainer dispatches this workflow when a release is wanted. It
 #   proves the proposal's head with the full merge gate and both accelerator
-#   tiers, squash-merges it, and has Release Please tag that commit and create
-#   its GitHub release seconds later, then starts Publish.
+#   tiers, squash-merges it, and has Release Please force the tag and create
+#   the DRAFT release seconds later, then starts Publish. The draft is
+#   published last, by the publication lane, once everything it claims is
+#   attached and proven.
 #
 # The proof comes before the merge because the release tag ruleset forbids
 # deleting a tag: a release commit that fails the accelerator tiers after its
@@ -221,7 +223,7 @@ jobs:
       NUMBER: ${{ needs.candidate.outputs.number }}
       SHA: ${{ needs.candidate.outputs.sha }}
       MERGED: ${{ needs.candidate.outputs.merged }}
-    # Merges the proposal, creates the tag and release, holds it, and
+    # Merges the proposal, creates the tag and the draft release, and
     # dispatches Publish.
     permissions:
       contents: write
@@ -272,11 +274,44 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
 
-      # Release Please creates a full release. Hold it out of `latest` until
-      # Binaries has proven the complete artifact set and promoted it; PyPI
-      # follows that promotion, so any failure in the chain leaves the tag a
-      # prerelease instead of a partial stable release.
-      - name: Hold the release out of latest until artifacts are complete
+      # GITHUB_TOKEN never holds the `workflows` permission, and without it
+      # GitHub refuses any tag or release that targets a commit whose workflow
+      # files differ from the branch head, even once the tag exists. When a
+      # workflow change lands between a release commit's merge and its tag,
+      # release-please fails "Resource not accessible by integration" on every
+      # later run. The API error names neither the tag nor the cause, so this
+      # step does.
+      - name: Name a release this token cannot tag
+        if: failure() && steps.release.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNBOOK: RELEASING.md
+        run: |
+          set -euo pipefail
+          repo="repos/${GITHUB_REPOSITORY}"
+          tip=$(gh api "${repo}/commits/${GITHUB_REF_NAME}" --jq .sha)
+          gh pr list --repo "${GITHUB_REPOSITORY}" --base "${GITHUB_REF_NAME}" \
+            --state merged --label "autorelease: pending" \
+            --json number,mergeCommit --jq '.[] | "\(.number) \(.mergeCommit.oid)"' |
+            while read -r number sha; do
+              package=$(gh api "${repo}/contents/release-please-config.json?ref=${sha}" \
+                --jq '.content | @base64d | fromjson | .packages["."]["package-name"]')
+              version=$(gh api "${repo}/contents/.release-please-manifest.json?ref=${sha}" \
+                --jq '.content | @base64d | fromjson | ."."')
+              tag="${package}-v${version}"
+              if gh api "${repo}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+                continue
+              fi
+              changed=$(gh api "${repo}/compare/${sha}...${tip}" \
+                --jq '[.files[]?.filename | select(startswith(".github/workflows/"))] | join(", ")')
+              if [ -n "${changed}" ]; then
+                echo "::error::${tag} cannot be created by this job: #${number} merged it at ${sha}, and ${GITHUB_REF_NAME} has since changed ${changed}. Rerunning cannot finish it; release it with maintainer credentials as ${RUNBOOK} describes."
+              fi
+            done
+
+      # The draft creates no tag of its own; `force-tag-creation` does, and the
+      # whole lane builds from it. Refuse a tag on anything but the proven tree.
+      - name: Require the tag on the proven commit
         env:
           CREATED: ${{ steps.release.outputs.release_created }}
           TAG: ${{ steps.release.outputs.tag_name }}
@@ -294,7 +329,7 @@ jobs:
             echo "::error::${TAG} points at ${tagged}, not the proven ${COMMIT}"
             exit 1
           fi
-          gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
+          echo "${TAG} points at the proven ${COMMIT}"
 
       - name: Trigger Publish workflow
         env:

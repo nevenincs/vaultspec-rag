@@ -24,25 +24,20 @@ run-name: RAG Acquisition ${{ inputs.tag || 'latest' }} @ ${{ inputs.target_sha 
 # no-GPU hosts. `ldd` answers the loader question without triggering that
 # download, which is the only claim this workflow can exercise honestly.
 #
-# It cannot run before publication, so it runs after: `binaries.yml` calls it
-# once every target archive is attached, and promotes the release only if it
-# passes. It has no `release: published` trigger. That event is inert for
-# releases the default token creates, and for a release a person publishes it
-# fires before any binary is attached, so it could only ever fail. The weekly
-# schedule matters on its own: acquisition rots for reasons no commit causes -
-# a yanked release or a renamed asset.
+# It downloads the way a user does - unauthenticated `curl` against the
+# release download URL - so it cannot see a draft, and the release is a draft
+# until the publication lane flips it. It therefore runs AFTER publication, by
+# dispatch from that lane, and never as a gate on it: a check that cannot see
+# the thing it is gating can only ever fail.
+#
+# It has no `release: published` trigger either. That event is inert for
+# releases the default token creates, so it would never fire for anything this
+# chain produces, and for a release a person publishes it fires before any
+# binary is attached. A dispatch is explicitly exempt from the first rule. The
+# weekly schedule matters on its own: acquisition rots for reasons no commit
+# causes - a yanked release or a renamed asset.
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Release tag to acquire
-        required: true
-        type: string
-      target_sha:
-        description: Immutable producer commit expected by the release gate
-        required: true
-        type: string
   schedule:
     # Weekly, off the hour: nothing here is urgent.
     - cron: '41 6 * * 1'
