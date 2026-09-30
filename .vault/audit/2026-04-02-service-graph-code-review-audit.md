@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:b752ddc436e9c45d1da495615e7eed575f6e381f11918638b50039a373b2766e'
+modified: '2026-09-30'
+body_hash: 'sha256:bebee0652474bfe8467f9d3fbf4a5631d64f82e2d63f6ddb4c7bef3850bc31c1'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -225,14 +225,12 @@ liveness in poll loop. No programmatic port check.
 
 ## Phase 5: Model prefetch
 
-### PHASE4-007 | MEDIUM | Warmup: no auth guidance for gated SPLADE model
+### PHASE4-007 | MEDIUM | Warmup: missing model-download guidance
 
-`snapshot_download` without token fails with 401 for `naver/splade-v3`.
-Generic `except Exception` shows "failed" with no guidance about
-`HF_TOKEN` or `huggingface-cli login`.
+The historical `snapshot_download` failure reached a generic `except Exception` that showed "failed" without actionable acquisition guidance. The retained concern is model-download diagnostics; obsolete acquisition mechanics are retired by `2026-09-30-sparseencode-adr`.
 
 **File:** `cli.py:1221-1225`
-**Fix:** Detect 401/403, print auth guidance.
+**Fix:** Report model URL, revision, cache and network/offline guidance on download failure.
 
 ### PHASE4-009 | INFO | HF_HUB_DOWNLOAD_TIMEOUT=60 may be short
 

@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#cuda-provisioning'
 date: '2026-09-04'
-modified: '2026-09-23'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:e57692e0cce4046b1ec3888715ca13671924ea34184a74341b7ea7b15959cc6b'
+body_hash: 'sha256:f3266185eb6a0415b628bb4aa53323f40a398d08f917a176a56dee34d6f64cff'
 related:
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
   - "[[2026-09-01-tool-mode-cuda-research]]"
@@ -207,7 +207,7 @@ pure parsers that already use hand-written TOML (`src/vaultspec_rag/tests/test_t
 
 `integration` is not a generic shells-out tier here: `GPU_MARKERS` in
 `src/vaultspec_rag/tests/_tier_gate.py:98` groups it with the GPU markers, and
-`conftest.py:338-420` forces an exclusive GPU-borrower lease and a Hugging Face token for
+`conftest.py:338-420` forces an exclusive GPU-borrower lease for
 anything carrying it. Marking provisioning tests `integration` would pull them into that
 gate for no reason. The precedent that fits is
 `src/vaultspec_rag/tests/integration/test_adversarial_singleton.py:37` and

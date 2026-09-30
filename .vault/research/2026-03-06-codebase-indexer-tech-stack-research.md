@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-09-14'
-body_hash: 'sha256:4467ef800ece5251f3db75d4060390f0d491b0906affaa7348b5145e7f884e3f'
+modified: '2026-09-30'
+body_hash: 'sha256:28fc7d976dd56092501ac6d7114bfc5211d5201d1f1c3d0d35645012b3f56e40'
 ---
 
 # Research: CodebaseIndexer Tech Stack â€” 2026 GPU-First
@@ -482,10 +482,10 @@ ______________________________________________________________________
 
 The 0.6B model does not have explicit code-specific benchmark scores published.
 The larger Qwen3-Embedding-8B leads MTEB-Code leaderboard, but 8B is too large
-for single-GPU local inference alongside SPLADE + reranker.
+for single-GPU local inference alongside previous BERT sparse encoder + reranker.
 
 **Verdict for our use case:** Adequate. We already use it for docs, and code
-retrieval quality is augmented by SPLADE sparse vectors + CrossEncoder reranker.
+retrieval quality is augmented by previous BERT sparse encoder sparse vectors + CrossEncoder reranker.
 The hybrid search pipeline compensates for any single-model weakness.
 
 ### voyage-code-3 (API-only alternative)
@@ -511,7 +511,7 @@ API fallback path in the future.
 
 1. Already integrated and working
 1. Local GPU inference (no API dependency, no latency, no cost)
-1. Hybrid search (dense + SPLADE + reranker) compensates for model size
+1. Hybrid search (dense + previous BERT sparse encoder + reranker) compensates for model size
 1. Apache 2.0 license â€” no vendor lock-in
 1. 32K context handles large code files
 1. If code retrieval quality is insufficient, upgrade path is Qwen3-Embedding-4B

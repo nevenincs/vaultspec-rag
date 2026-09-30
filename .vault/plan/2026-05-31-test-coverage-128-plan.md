@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#test-coverage-128'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:045955d99879649a86e924f1235ee7fcbc3fe2f2c3b60787de0a14465a844c06'
+modified: '2026-09-30'
+body_hash: 'sha256:c786d20314a3b75627ad23be760feae9d070b4f1e20d4dade625d5a27e8d6d66'
 related:
   - '[[2026-05-31-test-coverage-128-adr]]'
   - '[[2026-05-31-test-coverage-128-research]]'
@@ -19,8 +19,7 @@ Implements gh #128 in one PR.
 ### Phase 1 — CI
 
 - Add `pull_request:` trigger to `.github/workflows/gpu-integration.yml`
-  with the same path filter as `push:`. Add comment about
-  `secrets.HF_TOKEN` access for fork PRs.
+  with the same path filter as `push:`. Document the trusted-event boundary for fork PRs under `2026-07-23-ci-self-hosted-gpu-runner-adr`.
 
 ### Phase 2 — tqdm purity tests
 

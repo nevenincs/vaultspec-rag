@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#serving-runtime'
 date: '2026-06-12'
-modified: '2026-07-27'
-body_hash: 'sha256:2f227cf772faf4c0f02a0220f179330ca995a55ff28183e2460822b71e022991'
+modified: '2026-09-30'
+body_hash: 'sha256:c9bbd54afcdec6a0d971e0e7cf3323c93484951f357d40b9b6b671dd9fe169b6'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-12-service-concurrency-adr]]"
@@ -32,7 +32,7 @@ is already native and measures at 100% GPU utilization during index embed after 
 lock rework; the Starlette/asyncio serving layer costs single-digit milliseconds
 against 400ms-180s compute/store phases. A Rust/C++ serving layer would optimize
 ~1% of request latency while forfeiting the only mature Windows-native consumer-GPU
-model runtime that serves Qwen3-Embedding + SPLADE + bge-reranker today (torch).
+model runtime that serves Qwen3-Embedding + previous BERT sparse encoder + bge-reranker today (torch).
 The correct windmill is Qdrant server mode (the Rust engine, zero business-logic
 change, already an accepted escape hatch) plus the in-flight lock-narrowing
 decisions. A full rewrite rewrites the cheap layer, cannot rewrite the expensive
@@ -40,13 +40,13 @@ one, and breaks the uv/PyPI single-developer distribution story on Windows.
 
 ### Layer-by-layer attribution
 
-- Model inference (Qwen3 dense + SPLADE + bge rerank): ~0.55s encode + ~0.095s
+- Model inference (Qwen3 dense + previous BERT sparse encoder + bge rerank): ~0.55s encode + ~0.095s
   rerank warm; ~17 min embed for 112k chunks; GPU at 100% during index embed.
   Python tax ~0% - kernels are CUDA via torch; Python launches them. Remaining
   costs (batch-of-one query encodes, sequential model calls) are fixable in Python.
 - Vector store (QdrantLocal): 137s mean qdrant phase under concurrency on the
   6.3 GB corpus; 15+ GIL-pinned minutes for an O(N^2) paged scroll; ~20s linear
-  SPLADE scan over ~114k chunks. High Python tax - but library-internal: a
+  previous BERT sparse encoder scan over ~114k chunks. High Python tax - but library-internal: a
   pure-Python brute-force engine with no HNSW, no sparse inverted index, no payload
   pushdown, single-threaded, not thread-safe. The same product in server mode is a
   Rust engine swapped via `VAULTSPEC_RAG_QDRANT_URL` with zero business-logic
@@ -69,11 +69,11 @@ Buys: milliseconds off a path dominated by 400ms-137s phases; no-GIL orchestrati
 threads that are mostly waiting on the GPU or store anyway; tens of MB of memory
 against GBs in CUDA weights. Costs: the model stack has no Windows-viable native
 equivalent for this exact trio. TEI (HuggingFace's Rust embedding server) supports
-Qwen3 embeddings, SPLADE pooling, and rerankers with Ada Lovelace CUDA, but is
+Qwen3 embeddings, previous BERT sparse encoder pooling, and rerankers with Ada Lovelace CUDA, but is
 Linux/Docker-first with documented Windows build failures. candle/fastembed/ort
 paths hit the same ONNX export blockage already settled as upstream-blocked for
-this project, with SPLADE + reranker + flash-attn fp16 parity unproven.
-llama.cpp-style runtimes have no SPLADE and no CrossEncoder. A Rust service binary
+this project, with previous BERT sparse encoder + reranker + flash-attn fp16 parity unproven.
+llama.cpp-style runtimes have no previous BERT sparse encoder and no CrossEncoder. A Rust service binary
 also reintroduces the per-platform release engineering the project rejected when it
 turned down TorchServe/Ray/BentoML.
 

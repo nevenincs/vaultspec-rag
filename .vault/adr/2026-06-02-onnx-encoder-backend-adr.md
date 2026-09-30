@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#onnx-encoder-backend'
 date: '2026-06-02'
-modified: '2026-07-27'
-body_hash: 'sha256:4518f27fd7fd52c14587824e48de92f3576eca6af79b612af06e8cd2b53e1444'
+modified: '2026-09-30'
+body_hash: 'sha256:c293dde9666da4564a4bf2a9f9e7d026a6eb1c082fe1fb2a857c776cf5c3b56e'
 related:
   - "[[2026-06-02-onnx-encoder-backend-research]]"
 ---
@@ -36,7 +36,7 @@ Findings, measured hands-on (2026-06-03), supersede the initial CUDA-version con
 - **Batch regime (research).** Even once it works, the ~1.83x is a batch\<=4 latency result;
   indexing runs at `bs=32` (throughput) where torch is already the saturated optimum
   (`bs>=64` OOMs) — so the expected win is small regardless.
-- **Scope (research).** SPLADE's ONNX export covers only the BERT encoder (pooling stays in
+- **Scope (research).** previous BERT sparse encoder's ONNX export covers only the BERT encoder (pooling stays in
   torch) and it is the lighter model, so any future benefit is dense-only.
 
 ## Constraints
@@ -57,7 +57,7 @@ config knob (`VAULTSPEC_RAG_DENSE_BACKEND`, values `torch` | `onnx`, default `to
 `onnx` is selected it constructs the dense `SentenceTransformer` with `backend="onnx"`,
 `provider="CUDAExecutionProvider"`, and the cached O4 file; on any failure (missing
 `optimum`/`onnxruntime-gpu`, export error, provider load failure) it logs a warning and falls
-back to the torch construction. The sparse SPLADE path stays on torch. No ONNX dependency is
+back to the torch construction. The sparse previous BERT sparse encoder path stays on torch. No ONNX dependency is
 added to the project; selecting `onnx` requires the operator to have installed
 `sentence-transformers[onnx-gpu]` plus the onnxruntime CUDA-13 nightly. The
 parity-and-throughput benchmark that would justify flipping the default on is blocked until

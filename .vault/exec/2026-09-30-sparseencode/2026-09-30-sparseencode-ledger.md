@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:f22799c1e2f4e071e51e5438b9dae158d591fe755c62cddc1b97d5df346ef7e3'
+body_hash: 'sha256:114dde471292cf63c469592bb5bf19c1e2ad2209f66e307eb0e18e041b9d79e8'
 related:
   - "[[2026-09-30-sparseencode-plan]]"
 ---
@@ -97,3 +97,96 @@ related:
 - `S01` `A` `.vault/audit/2026-09-30-sparseencode-audit.md`
 - `S01` `verify:` `just check-markdown` -> `pass`
 - `S01` `verify:` `vault plan check sparseencode` -> `pass`
+- `S03` `M` `.vault/adr/2026-03-06-gpu-only-rag-stack-adr.md`
+- `S03` `M` `.vault/adr/2026-04-02-service-graph-adr.md`
+- `S03` `M` `.vault/adr/2026-05-31-test-coverage-128-adr.md`
+- `S03` `M` `.vault/adr/2026-06-02-index-perf-hardening-adr.md`
+- `S03` `M` `.vault/adr/2026-06-02-onnx-encoder-backend-adr.md`
+- `S03` `M` `.vault/adr/2026-06-07-sparse-search-latency-adr.md`
+- `S03` `M` `.vault/adr/2026-06-09-operability-hardening-adr.md`
+- `S03` `M` `.vault/adr/2026-06-12-qdrant-server-provisioning-adr.md`
+- `S03` `M` `.vault/adr/2026-06-12-service-concurrency-adr.md`
+- `S03` `M` `.vault/adr/2026-07-23-ci-self-hosted-gpu-runner-adr.md`
+- `S03` `M` `.vault/adr/2026-07-25-storage-conformance-adr.md`
+- `S03` `M` `.vault/adr/2026-07-29-encode-batch-adaptivity-adr.md`
+- `S03` `M` `.vault/adr/2026-07-29-gpu-admission-gate-adr.md`
+- `S03` `M` `.vault/adr/2026-08-28-platform-backend-selection-adr.md`
+- `S03` `M` `.vault/adr/2026-09-04-cuda-provisioning-adr.md`
+- `S03` `M` `.vault/audit/2026-03-06-codebase-indexer-audit.md`
+- `S03` `M` `.vault/audit/2026-03-06-config-dependencies-audit.md`
+- `S03` `M` `.vault/audit/2026-03-06-embeddings-gpu-pivot-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-adr-test-coverage-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-api-adr-tests-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-config-init-round12-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-embeddings-round10-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-orchestrator-log-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-pending-task-verification-audit.md`
+- `S03` `M` `.vault/audit/2026-03-07-search-cli-mcp-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-continuous-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-embeddings-round26-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-fixture-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-mcp-config-watcher-round28-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-search-embeddings-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-store-api-round25-audit.md`
+- `S03` `M` `.vault/audit/2026-03-08-test-mandate-audit.md`
+- `S03` `M` `.vault/audit/2026-03-09-coverage-compliance-round33-audit.md`
+- `S03` `M` `.vault/audit/2026-03-09-graph-embedding-round35-audit.md`
+- `S03` `M` `.vault/audit/2026-03-09-graph-embedding-round36-audit.md`
+- `S03` `M` `.vault/audit/2026-04-02-release-readiness-audit.md`
+- `S03` `M` `.vault/audit/2026-04-02-service-graph-code-review-audit.md`
+- `S03` `M` `.vault/audit/2026-04-12-vault-index-perf-memory-audit.md`
+- `S03` `M` `.vault/audit/2026-06-08-comprehensive-code-review-audit.md`
+- `S03` `M` `.vault/audit/2026-07-15-provider-mcp-enrollment-audit.md`
+- `S03` `M` `.vault/audit/2026-07-25-adr-plan-coverage-triage-audit.md`
+- `S03` `M` `.vault/exec/2026-04-02-service-graph/2026-04-02-service-graph-phase2-step1-exec.md`
+- `S03` `M` `.vault/exec/2026-04-12-index-progress-bars/2026-04-12-index-progress-bars-phase-1-summary-exec.md`
+- `S03` `M` `.vault/exec/2026-04-12-index-progress-bars/2026-04-12-index-progress-bars-phase-1-task-5-call-sites-exec.md`
+- `S03` `M` `.vault/exec/2026-04-12-index-progress-bars/2026-04-12-index-progress-bars-phase-1-task-6-progress-tests-exec.md`
+- `S03` `M` `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-summary-exec.md`
+- `S03` `M` `.vault/exec/2026-09-04-cuda-provisioning/2026-09-04-cuda-provisioning-ledger.md`
+- `S03` `M` `.vault/index/gpu-rag-stack.index.md`
+- `S03` `M` `.vault/plan/2026-05-31-test-coverage-128-plan.md`
+- `S03` `M` `.vault/plan/2026-06-08-sparse-search-latency-plan.md`
+- `S03` `M` `.vault/plan/2026-06-09-operability-hardening-plan.md`
+- `S03` `M` `.vault/plan/2026-06-12-service-concurrency-plan.md`
+- `S03` `M` `.vault/reference/2026-06-27-storage-schema-contract-reference.md`
+- `S03` `M` `.vault/reference/2026-09-01-platform-backend-selection-mps-accelerator-reference.md`
+- `S03` `M` `.vault/research/2026-03-06-codebase-indexer-tech-stack-research.md`
+- `S03` `M` `.vault/research/2026-03-06-gpu-rag-architecture-research.md`
+- `S03` `M` `.vault/research/2026-03-06-gpu-vector-search-deep-dive-research.md`
+- `S03` `M` `.vault/research/2026-03-07-continuous-research.md`
+- `S03` `M` `.vault/research/2026-03-07-libdoc-verification-research.md`
+- `S03` `M` `.vault/research/2026-03-08-fastmcp-lifespan-research.md`
+- `S03` `M` `.vault/research/2026-03-08-qdrant-filter-verification-research.md`
+- `S03` `M` `.vault/research/2026-03-08-qdrant-hybrid-search-patterns-research.md`
+- `S03` `M` `.vault/research/2026-03-09-qwen3-task-prefix-verification-research.md`
+- `S03` `M` `.vault/research/2026-04-02-service-graph-research.md`
+- `S03` `M` `.vault/research/2026-05-31-test-coverage-128-research.md`
+- `S03` `M` `.vault/research/2026-06-02-index-perf-hardening-research.md`
+- `S03` `M` `.vault/research/2026-06-02-onnx-encoder-backend-research.md`
+- `S03` `M` `.vault/research/2026-06-02-rag-index-performance-research.md`
+- `S03` `M` `.vault/research/2026-06-07-sparse-search-latency-research.md`
+- `S03` `M` `.vault/research/2026-06-09-operability-hardening-research.md`
+- `S03` `M` `.vault/research/2026-06-09-sparse-search-latency-research.md`
+- `S03` `M` `.vault/research/2026-06-12-service-concurrency-research.md`
+- `S03` `M` `.vault/research/2026-06-12-serving-runtime-research.md`
+- `S03` `M` `.vault/research/2026-06-21-service-first-search-fallback-research.md`
+- `S03` `M` `.vault/research/2026-06-24-vault-pipeline-search-research.md`
+- `S03` `M` `.vault/research/2026-06-26-storage-schema-contract-research.md`
+- `S03` `M` `.vault/research/2026-07-23-ci-self-hosted-gpu-runner-research.md`
+- `S03` `M` `.vault/research/2026-07-29-gpu-admission-gate-research.md`
+- `S03` `M` `.vault/research/2026-08-28-platform-backend-selection-research.md`
+- `S03` `M` `.vault/research/2026-09-04-cuda-provisioning-research.md`
+- `S03` `M` `.vault/audit/2026-09-30-sparseencode-audit.md`
+- `S03` `M` `.vault/plan/2026-09-30-sparseencode-plan.md`
+- `S03` `verify:` `just check-markdown` -> `pass`
+- `S03` `verify:` `mdformat all changed vault documents via owning CLI body edits (84 files)` -> `pass`
+- `S03` `verify:` `pymarkdown changed historical sparse latency plan and new feature records` -> `pass`
+- `S03` `verify:` `vault check sparseencode (0 errors; 0 warnings)` -> `pass`
+- `S03` `verify:` `vault plan check sparseencode (no findings)` -> `pass`
+- `S03` `verify:` `expanded retired model/acquisition reference sweep (zero matches)` -> `pass`
+- `S03` `verify:` `paired pinned float32/SDPA CUDA benchmark (32 documents, batch4, 2 warmup pairs, 7 alternating pairs; output parity; median 1.2784x)` -> `pass`
+- `S03` `verify:` `integrated code/ADR review fixes (rebuild recovery, pinned readiness, batch semantics and operator/CI surfaces)` -> `pass`
+- `S03` `by:` `supervisor with GPT-6.1 Sol records/review agents`
+- `S03` `verify:` `independent GPT-6.1 Sol final integrated review (3311ccdf..056d7f27 plus completed S03 records; no unresolved material findings)` -> `pass`
+- `S03` `by:` `supervisor with GPT-6.1 Sol reviewer`

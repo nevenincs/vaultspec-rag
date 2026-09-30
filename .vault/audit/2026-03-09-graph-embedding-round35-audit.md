@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-09-14'
-body_hash: 'sha256:44e01749d15ed700bd6afd0712c33d152841f7e74c9a8eff659289a985d36dc2'
+modified: '2026-09-30'
+body_hash: 'sha256:12043ad3a5a9c7badbb313675230dfab474f7876a21883c3e2e7db16fc86dbfb'
 ---
 
 # Round 35: api.py Graph Invalidation + search_all() Double Encoding Audit
@@ -188,7 +188,7 @@ def search_codebase(
 **GPU encode_query() latency:**
 
 - Dense (Qwen3-Embedding-0.6B): ~8-12ms on RTX 4090
-- Sparse (SPLADE v3): ~5-8ms on RTX 4090
+- Sparse (previous BERT sparse encoder): ~5-8ms on RTX 4090
 - **Total per query:** ~13-20ms
 
 **Double encoding cost in `search_all()`:**

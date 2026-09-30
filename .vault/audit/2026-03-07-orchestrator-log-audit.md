@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:d03f5bf942a6fef6ce360af65e7cbdddf020a6de5893f96214c8c3591e6ef8d5'
+modified: '2026-09-30'
+body_hash: 'sha256:1dde5eaa6b7519c612d550f821d967676dccbbff7e4d8ffd9c7d91cde716e4a8'
 ---
 
 # Orchestrator Log
@@ -219,7 +219,7 @@ Picked up from context compaction. Status review:
 
 **codebase-researcher-8 (Round 26 — embeddings.py):** PASS ✅
 
-- SPLADE asymmetry verified at 10 call sites. CrossEncoder sigmoid correct. OOM backoff in place. Thread-safe.
+- previous BERT sparse encoder asymmetry verified at 10 call sites. CrossEncoder sigmoid correct. OOM backoff in place. Thread-safe.
 
 **codebase-researcher-9 (Round 27 — search.py):** PASS ✅
 
@@ -337,7 +337,7 @@ None. All confirmed bugs fixed. All modules audited clean.
 **docs-researcher-7 (Topic 21 — Qwen3 task prefixes):** ALL CORRECT ✅
 
 - Document prompt = "" (empty), query prompt = "Instruct:...", batch uniform application ✅
-- SPLADE encode_document()/encode_query() asymmetric routing ✅
+- previous BERT sparse encoder encode_document()/encode_query() asymmetric routing ✅
 - No code changes needed.
 
 ### Cycle 12 final
@@ -406,7 +406,7 @@ None. All confirmed bugs fixed. All modules audited clean.
 **R36 codebase-researcher-18:** Report: `docs/audit/2026-03-09-graph-embedding-round36.md`
 
 - Query embedding pipeline: CORRECT ✅ (prompt_name="query" applied, filter tokens removed before encoding)
-- SPLADE asymmetric dispatch: VERIFIED ✅
+- previous BERT sparse encoder asymmetric dispatch: VERIFIED ✅
 - Graph cache invalidation after reindex: CORRECT ✅
 - CRITICAL (concurrent graph rebuilds at TTL boundary): KNOWN ISSUE — deferred to next session. Risk lower than reported: \_gpu_sem serializes all MCP calls; race only exists via direct api.py multi-thread usage.
 - MEDIUM (graph read mid-write): Mitigated by Task #43 atomic writes. No action.

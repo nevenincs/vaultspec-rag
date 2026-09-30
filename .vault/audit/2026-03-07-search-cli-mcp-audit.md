@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:d256d6e4caaa39c88a6383853bb0d5c6bdae6e296ddc0aa1609739146433ef91'
+modified: '2026-09-30'
+body_hash: 'sha256:b91decf03b2545d540ff39f70897b1d40f503934b5b742f39d54ffd384c59874'
 ---
 
 # Round 21 Audit -- search.py, cli.py, mcp_server.py
@@ -70,7 +70,7 @@ The module docstring (line 3) says "graph-aware re-ranking" but `rerank_with_gra
 
 ### R21-M4: `handle_search` creates new `VaultStore` and `EmbeddingModel` per invocation (Major)
 
-Every `search` command (line 289-294) instantiates a fresh `VaultStore` and `EmbeddingModel`. The `EmbeddingModel` loads two GPU models (SentenceTransformer + SPLADE). For a CLI this is unavoidable (single invocation), so this is actually not a bug -- just an inherent latency cost. Downgrading.
+Every `search` command (line 289-294) instantiates a fresh `VaultStore` and `EmbeddingModel`. The `EmbeddingModel` loads two GPU models (SentenceTransformer + previous BERT sparse encoder). For a CLI this is unavoidable (single invocation), so this is actually not a bug -- just an inherent latency cost. Downgrading.
 
 **Severity downgrade:** Not a bug. Removed.
 

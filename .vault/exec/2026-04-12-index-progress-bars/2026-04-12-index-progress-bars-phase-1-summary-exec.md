@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:973f1945f7715d0d1e2039f79e6dbfe39214d2d993f8837c6b6dd2f529c05144'
+modified: '2026-09-30'
+body_hash: 'sha256:05af42136bd6d5cfeeaab4709bbbebd20f94c0064225687f6c695bb23d7efe6d'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
   - '[[2026-04-12-index-progress-bars-adr]]'
@@ -94,9 +94,8 @@ Verification commands:
   already formatted.
 - `uv run --active pytest src/vaultspec_rag/tests/ --ignore=src/vaultspec_rag/tests/integration --ignore=src/vaultspec_rag/tests/benchmarks` —
   329 passed (32 deselected: pre-existing GPU-gated fixtures in
-  `test_service_registry.py` and `test_store_codebase.py` that
-  require a real `HF_TOKEN`; unchanged by this phase).
-- Integration tests require real GPU + `HF_TOKEN` and are gated at
+  `test_service_registry.py` and `test_store_codebase.py`; unchanged by this phase).
+- Integration tests require a real GPU and were gated at
   collection time by the repo-level conftest; a manual TTY run of
   `vaultspec-rag index` against a real vault is required before merge
   per the plan verification criteria.

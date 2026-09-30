@@ -13,7 +13,7 @@ related:
   - '[[2026-07-25-storage-conformance-adr]]'
 modified: '2026-09-30'
 body_schema: body-v2
-body_hash: 'sha256:8ba9f16de6fa7b8edd1eb2691be806501aae77a52b38d3c5b7218b7144b4e968'
+body_hash: 'sha256:ddba3274f0ddbbe24480c5fc2590bb1a8ae5f4935b4f9951cffbc740c41425d8'
 ---
 
 <!-- RETIRED: S02 -->
@@ -31,7 +31,7 @@ Authorization is the user's explicit request for the breaking ModernBERT sparse 
 ## Steps
 
 - [x] `S01` - Migrate sparse inference, provisioning, configuration and public surfaces together to the pinned ModernBERT model, remove obsolete authentication, and release version 0.6.0; `src/vaultspec_rag sparse/model/storage/configuration paths and tests, conftest.py, dev, .github, README.md, docs, assets, .env.example, pyproject.toml, uv.lock and release metadata`.
-- [ ] `S03` - Reconcile governing and historical records, verify integrated behavior and measured performance, and resolve final review findings; `.vault governing and historical records, integration tests, performance verification, rolling audit`.
+- [x] `S03` - Reconcile governing and historical records, verify integrated behavior and measured performance, and resolve final review findings; `.vault governing and historical records, integration tests, performance verification, rolling audit`.
 
 ## Parallelization
 

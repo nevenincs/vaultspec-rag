@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-07-27'
-body_hash: 'sha256:2ff1d67b2950c1096b708e0032730d6eee1bae0fc56f0304506c82e84a36a003'
+modified: '2026-09-30'
+body_hash: 'sha256:2498228461c77ffb27c2ed4eba37992b306dc989418d816eaea029142503c69d'
 related:
   - "[[2026-06-09-operability-hardening-research]]"
 ---
@@ -30,14 +30,12 @@ fixes plus two documentation/test efforts, rather than a from-scratch redesign.
 - **Pinned Python 3.13 (uv-managed).** A system Python 3.14 breaks `qdrant-client` via the
   `protobuf` C-extension metaclass restriction; the daemon must run under the project venv.
 - **GPU-only, no fallback model.** There is no CPU or sparse-only mode, so a required model
-  being inaccessible (gated/missing) must fail fast with remediation, never degrade.
+  being inaccessible or missing remains fatal; public-loader failures propagate rather than silently degrading. Provisioning and warmup provide repository/cache diagnostics.
 - **Existing project rules apply:** single dedicated GPU consumer thread; index workers stay
   CPU-only; no mocks/skips in tests; destructive verbs preview before applying.
 - **#169 is a breaking CLI restructure** (flatten `server service <cmd>` to `server <cmd>`),
   touching the shipped builtin rule documentation and the CLI tests.
-- **Library grounding (Context7):** `huggingface_hub` exposes gated-repo detection
-  (`auth_check` / `model_info`, `GatedRepoError`) gated on a token (`HF_TOKEN`); Typer
-  supports explicit `help=` on commands and `rich_help_panel` option grouping, overriding
+- **Library grounding (Context7):** Typer supports explicit `help=` on commands and `rich_help_panel` option grouping, overriding
   docstrings.
 
 ## Constraints
@@ -47,8 +45,7 @@ fixes plus two documentation/test efforts, rather than a from-scratch redesign.
 - `CREATE_BREAKAWAY_FROM_JOB` requires the launching Job Object to permit breakaway
   (default on interactive Windows shells); restricted CI job objects may deny it, requiring
   a graceful fallback to today's behaviour.
-- Gated-model preflight adds a network round-trip; it must be cheap/optional and must not
-  block startup when access is already granted.
+- Public-model accessibility checks must stay bounded and must not block startup when cached artifacts are available.
 - The CLI flatten (#169) must preserve the genuine `server mcp` protocol-adapter group and
   keep the deconflation invariants (no "MCP server" wording for the daemon) intact.
 
@@ -59,9 +56,7 @@ interpreter resolved from the venv scripts directory (falling back to the curren
 interpreter only when no venv is detected), removing the system-Python-3.14 path that
 triggers the `protobuf` metaclass crash; add a defensive interpreter-version guard in the
 dependency check that raises an actionable error rather than an opaque metaclass traceback.
-Wrap gated-model construction so an inaccessible model raises a clear fatal error carrying
-the `HF_TOKEN` / login / model-URL remediation, with an optional cheap preflight
-accessibility check. Make the in-process background reindex idempotently ensure the
+Required-model construction uses the public loader, whose failures remain fatal. Provisioning and warmup report repository/cache download diagnostics; no custom model-construction error envelope is required. Public acquisition requires no authentication setup. Make the in-process background reindex idempotently ensure the
 embedding model is loaded before it leases a slot.
 
 **Service hardening.** Make lifecycle verbs truthful and observable: non-zero exit when a
@@ -89,12 +84,9 @@ are resolved, run a formal code review, then reconcile and close the addressed i
 
 Research ground each item to a `file:line` root cause and demonstrated the service cluster
 is bounded, not architectural. The venv-interpreter spawn is the single root cause behind
-both #177 and #178/#179, so fixing it foundationally collapses three issues. Fatal-with-
-remediation for model access is the only honest behaviour given the GPU-only, no-fallback
-stance. Truthful exit codes, orphan detection, the Job-Object breakaway, and token
+both #177 and #178/#179, so fixing it foundationally collapses three issues. Fatal model-loader failure is the honest behavior given the GPU-only, no-fallback stance; provisioning and warmup supply repository/cache diagnostics. Truthful exit codes, orphan detection, the Job-Object breakaway, and token
 persistence map one-to-one onto the divergences observed during the prior empirical
-validation. Typer's explicit-help and HF Hub's gated-detection APIs (Context7-verified)
-make the UX and model-access fixes idiomatic rather than bespoke.
+validation. Typer's explicit-help API makes the UX fixes idiomatic. Public-loader failures remain fatal, with repository/cache diagnostics on provisioning and warmup, under the public-model ruling in `2026-09-30-sparseencode-adr`.
 
 ## Consequences
 
@@ -115,8 +107,7 @@ make the UX and model-access fixes idiomatic rather than bespoke.
   the ambient `sys.executable`, so it cannot inherit an incompatible system Python.
 
 - **Rule slug:** `gpu-model-access-fatal-with-remediation`.
-  **Rule:** when a required GPU model is inaccessible (gated or missing), fail fast with a
-  remediation message (token + URL); never crash silently and never silently degrade.
+  **Rule:** required public-model loader failures remain fatal; provisioning and warmup report repository/cache diagnostics. Never silently degrade or require a custom model-construction error envelope.
 
 - **Rule slug:** `lifecycle-verbs-truthful-exit`.
   **Rule:** service lifecycle verbs must return accurate exit codes — non-zero on a blocked

@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-07-27'
-body_hash: 'sha256:97e9aa7eed2f3827ea2e6f24d29b6bfc5a080b57170f880b03f3bd711095b9d5'
+modified: '2026-09-30'
+body_hash: 'sha256:3ad299a38b7162cef9fa2542eaf2eec82025e27164283c90ba64e1e6599dc038'
 ---
 
 # Round 36: Graph/Embedding Domain Audit (2026-03-09)
@@ -45,7 +45,7 @@ ______________________________________________________________________
 
 **embeddings.py:309-321 (`encode_query_sparse`):**
 
-- Calls `self._sparse_model.encode_query([query[:max_chars]])` ✅ **asymmetric SPLADE**
+- Calls `self._sparse_model.encode_query([query[:max_chars]])` ✅ **asymmetric previous BERT sparse encoder**
 - Extracts first result (line 321) ✅
 
 ### Finding 1.2: ✅ PASS — Filter token removal prevents leakage
@@ -188,7 +188,7 @@ No direct `.encode()` calls on query side ✅
 
 No calls to generic `.encode()` on documents ✅
 
-### Finding 3.3: ✅ VERIFIED — Asymmetric SPLADE prompting is correct
+### Finding 3.3: ✅ VERIFIED — Asymmetric previous BERT sparse encoder prompting is correct
 
 **embeddings.py:186-190:**
 
@@ -201,10 +201,10 @@ self._sparse_model = SparseEncoder(
 ```
 
 - SparseEncoder.encode_document() and encode_query() are asymmetric methods ✅
-- encode_document() uses document-specific SPLADE prompt (learns document expansion)
+- encode_document() uses document-specific previous BERT sparse encoder prompt (learns document expansion)
 - encode_query() uses query-specific prompt (learns query expansion)
 
-**Verdict:** ✅ PASS — Asymmetric SPLADE dispatch is correct.
+**Verdict:** ✅ PASS — Asymmetric previous BERT sparse encoder dispatch is correct.
 
 ______________________________________________________________________
 
@@ -221,7 +221,7 @@ ______________________________________________________________________
 | Graph inconsistency during incremental indexing   | Edge case       | ⚠️ MEDIUM       | Unlikely but possible |
 | All query encoding uses encode_query()            | Correctness     | ✅ PASS         | Verified              |
 | All document encoding uses encode_documents()     | Correctness     | ✅ PASS         | Verified              |
-| Asymmetric SPLADE prompting                       | Correctness     | ✅ PASS         | Verified              |
+| Asymmetric previous BERT sparse encoder prompting | Correctness     | ✅ PASS         | Verified              |
 
 ______________________________________________________________________
 

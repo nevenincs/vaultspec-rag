@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-09-14'
-body_hash: 'sha256:6819636269a89d39c5fd2acdb063aa5eaed17b7fb6ed6c21f0bfd2aa81212dbc'
+modified: '2026-09-30'
+body_hash: 'sha256:5433e1af2b2178f18ca8c2efb4701cbb7834e8fba9a11fbda1a443202307c14a'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
@@ -1240,7 +1240,7 @@ with another (data loss), but the probability at our scale is negligible.
 **R17-M1. `encode_query_sparse()` does not truncate to max_chars** (embeddings.py:282-293)
 `encode_documents_sparse()` truncates to `max_chars` at line 273-274, and `encode_documents()`
 truncates at line 230-231. But `encode_query_sparse()` at line 291 passes the raw query
-directly: `self._sparse_model.encode([query])`. If a user submits a very long query, SPLADE
+directly: `self._sparse_model.encode([query])`. If a user submits a very long query, previous BERT sparse encoder
 receives untrimmed input. `encode_query()` (dense) also does not truncate, but queries are
 typically short. However, `search_all()` could receive a pasted code block as a query. The
 asymmetry between documents (truncated) and queries (not truncated) is inconsistent.
@@ -1542,7 +1542,7 @@ search unless it builds its own fixture — none currently do.
 **R20-M4. `test_store_codebase.py` tests upsert without sparse vectors** (test_store_codebase.py:30-49)
 `test_upsert_code_chunks` creates a `CodeChunk` with only `vector` (dense). The `sparse_indices`
 and `sparse_values` fields default to empty lists. The upsert succeeds but does not test the
-hybrid search path (SPLADE + dense). The actual `CodebaseIndexer` always provides sparse
+hybrid search path (previous BERT sparse encoder + dense). The actual `CodebaseIndexer` always provides sparse
 vectors. This is a fidelity gap — the test doesn't match real usage.
 
 **R20-M5. `test_query.py` is entirely redundant with `test_search_unit.py`** (DUPLICATE)

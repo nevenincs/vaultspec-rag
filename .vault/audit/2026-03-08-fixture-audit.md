@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:dce5e064d64711430643fd8bd70d1fc3fd684ae5c087d7a64c40749accfb2366'
+modified: '2026-09-30'
+body_hash: 'sha256:a8062d7d3fe459d0a14ff9698b8d2251e9ee890ae0e30a243e14ea366d7f60fa'
 ---
 
 # Audit Report: Integration Test Fixture Scoping & Isolation
@@ -247,7 +247,7 @@ def rag_components_mixed(tmp_path_factory):  # ❌ NO embedding_model parameter
 **Problem:** EmbeddingModel loads two large transformer models onto GPU:
 
 - SentenceTransformer("Qwen/Qwen3-Embedding-0.6B") → ~600MB
-- SparseEncoder("naver/splade-v3") → ~300MB
+- SparseEncoder("previous BERT sparse encoder") → ~300MB
 - Total per instance: ~900MB VRAM
 
 **Current GPU memory usage for test run:**

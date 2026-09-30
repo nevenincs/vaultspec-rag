@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#gpu-admission-gate'
 date: '2026-07-29'
-modified: '2026-07-29'
+modified: '2026-09-30'
 body_schema: 'body-v1'
-body_hash: 'sha256:9aba6ac095b2a0a02628df9dd23a179160872afed1469249ddb169c7542a5390'
+body_hash: 'sha256:7d690d6736beea5a4e2ec405a738e9c2318501458092d42b643358b221a672fe'
 related:
   - "[[2026-07-29-gpu-admission-gate-research]]"
   - "[[2026-07-24-service-quiesce-adr]]"
@@ -135,7 +135,7 @@ Cross-process test admission:
 
 - **A machine-global GPU-session OS try-lock acquired in
   `pytest_runtestloop` when selected items carry any slow tier (chosen).**
-  Mirrors the HF-token fail-fast precedent; a second GPU pytest session
+  A second GPU pytest session
   exits non-zero immediately, naming the holder; death releases the lock.
 - **Infer siblings from pytest session temp roots.** Session roots exist for
   unit-only runs too; too coarse to distinguish a GPU session. Rejected.
@@ -250,8 +250,7 @@ offending selection and the serial lane to use. `group_gpu_items` and its
 call site are deleted in the same change, and the tests that exercised
 grouping are repointed at the refusal, per the canonical-code rule.
 
-**Cross-session test admission.** `pytest_runtestloop`, beside the existing
-HF-token fail-fast, gains a GPU preflight for sessions whose selected items
+**Cross-session test admission.** `pytest_runtestloop` gains a GPU preflight for sessions whose selected items
 carry any slow tier: try-acquire the machine-global GPU-session lock,
 `pytest.exit` non-zero naming the holder pid when it is contended, hold it
 for the session (the OS releases it however the session dies); then take one
