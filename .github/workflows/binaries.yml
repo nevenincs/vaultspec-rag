@@ -5,17 +5,21 @@ name: RAG Binaries
 # makes that ordering enforceable: independent tag triggers can be serialized,
 # but serialization alone cannot say which workflow runs first. A maintainer
 # may still dispatch it explicitly to repair a release; the final gate below
-# independently proves the package and bundle set before promotion.
+# independently proves the package and bundle set on the draft.
 #
-# WHAT THIS WORKFLOW STARTS: PyPI publication. Only a release this workflow has
-# promoted is handed to Publish's package-index stage, because an upload to
-# the index cannot be withdrawn and a promotion can.
+# WHAT THIS WORKFLOW STARTS: the publication lane, and only from the gate that
+# found the draft complete. That lane uploads to PyPI and then takes the
+# release out of draft, so an upload that cannot be withdrawn never races a
+# build that could still fail, and an incomplete release is simply never
+# published.
 #
 # The failure worth remembering: vaultspec-rag-v0.4.12 was cut and became
 # `latest` carrying the wheel, the sdist and SHA256SUMS - and not one platform
 # binary. rag went from 3/3 to 0/3. The artifact-less-release guard did not
 # catch it and could not: that guard lives in THIS workflow, and a workflow
-# that never runs cannot demote anything. It was unreachable, not broken.
+# that never runs cannot demote anything. It was unreachable, not broken. A
+# draft closes that gap by construction: an unreachable lane leaves a release
+# nobody was ever sent to.
 on:
   workflow_dispatch:
     inputs:
@@ -266,8 +270,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      # This repo, for the generator itself. No deploy key and no push: the
-      # channel pointers no longer live here.
+      # This repo, for the target matrix the completeness gate below derives
+      # its expectations from. No deploy key and no push: the channel pointers
+      # are published by their own lane, after the release exists.
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -279,41 +284,6 @@ jobs:
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-
-      # The ORG-WIDE distribution repository. Scoop manifests and Homebrew
-      # formulae belong to the account rather than to each product, so a user
-      # taps or bucket-adds ONCE, ever - not once per product. Publishing into
-      # this repo instead multiplied that one-time step by the number of
-      # products and committed to a public product repo's default branch on
-      # every release.
-      #
-      # vaultspec-core retargets identically; the two products now share this
-      # branch, which is what makes the per-product staging below load-bearing
-      # rather than tidy.
-      - name: Checkout the distribution repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2  # zizmor: ignore[artipacked] -- this job pushes the channel pointers with it
-        with:
-          repository: ${{ github.repository_owner }}/homebrew-tap
-          ref: main
-          path: channels
-          ssh-key: ${{ secrets.CHANNEL_ROOT_DEPLOY_KEY }}
-
-      # The channel generator runs in this job, so it needs an interpreter
-      # here too; previously only the build matrix installed one.
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: false
-
-      - name: Install Python
-        run: uv python install 3.13
-
-      # `just release-channels` below runs in this job, and a job only has the
-      # tools it installs itself: the build legs' installs live on other hosts.
-      - name: Set up just
-        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
-        with:
-          tool: just@1.38.0
 
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -454,85 +424,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: gh release upload "${TAG}" dist-bundles/* --clobber
 
-      # Regenerate BOTH release-channel pointers from the SHA256SUMS just
-      # built, then commit them. A Scoop manifest and a Homebrew formula are
-      # pointers a user's package manager acts on, so they are generated whole
-      # by dev/packaging rather than edited in place here.
-      #
-      # This replaced an inline jq rewrite, and the reason is worth keeping:
-      # that version looked digests up with awk and guarded the result with
-      # `test -n "$A" && test -n "$B" && test -n "$C"`, which is INERT under
-      # `set -e` - bash exempts every command in an && list except the one
-      # after the final &&. When the Windows build leg emitted CRLF checksum
-      # sidecars, the awk lookup matched nothing, the guard did not fire, and
-      # vaultspec-core-v0.1.60 published a manifest with empty hashes out of
-      # a green run - this repository adopts the fix rather than repeating it. The generator raises on a missing digest, refuses a
-      # backward bump, and omits an unbuilt platform instead of inventing one.
-      # Generate AND validate, in one call, because they are one act: a
-      # pointer that is generated but not validated is an uninstallable
-      # release nobody has looked at. These were two steps here, so the first
-      # could run without the second. `just release-channels` runs both, and
-      # is what a maintainer reproducing a release runs too.
-      #
-      # Between generating the pointers and committing them is the only point
-      # where a bad pointer can still be STOPPED rather than reported after it
-      # has shipped. vaultspec-core published a manifest with the right
-      # version, the right URLs and empty hashes out of a run that was green
-      # end to end; this repository had no equivalent check.
-      - name: Generate and validate the release channel pointers
-        shell: bash
-        env:
-          TAG: ${{ inputs.tag }}
-        run: just release-channels "${TAG}" channels dist-bundles/SHA256SUMS
-
-      - name: Commit the Scoop manifest and Homebrew formula
-        shell: bash
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          cd channels
-          # Stage BEFORE asking whether anything changed. `git diff` reports
-          # only tracked paths, so on the first release for a channel - when
-          # the generator has just created bucket/*.json and Formula/*.rb and
-          # nothing tracks them yet - it reports no change, and the step
-          # announces "nothing to commit" and exits zero having published no
-          # pointer at all. That is exactly what happened on v0.4.8: both
-          # files were written, neither was committed, and the job went green.
-          # Comparing the index against HEAD sees an added path as a change.
-          # Only THIS product's two files. The distribution repo serves every
-          # product under the account, so a repo-wide `git add` would sweep up a
-          # sibling's pointer if two releases raced and publish it under this
-          # tag's message.
-          git add -- bucket/vaultspec-rag.json Formula/vaultspec-rag.rb
-          if git diff --cached --quiet -- bucket Formula; then
-            echo "channels already at ${TAG}; nothing to commit"
-            exit 0
-          fi
-          # The identity is passed to this one commit rather than written
-          # with `git config`, so the bot identity never outlives this commit.
-          git \
-            -c user.name="github-actions[bot]" \
-            -c user.email="github-actions[bot]@users.noreply.github.com" \
-            commit -m "chore(release): point scoop and homebrew at ${TAG}"
-          # This job runs after a long matrix build, so main may have advanced
-          # meanwhile. Rebase-and-retry (bounded) so an unrelated commit does not
-          # fail the push non-fast-forward; the backward-bump guard in the
-          # generator still protects against clobbering a newer pointer.
-          attempt=1
-          max_attempts=3
-          until git push origin main; do
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "::error::channel pointer push failed after ${max_attempts} attempts"
-              exit 1
-            fi
-            echo "push rejected (attempt ${attempt}/${max_attempts}); rebasing onto origin/main"
-            git fetch origin main
-            git rebase origin/main
-            attempt=$((attempt + 1))
-          done
-
-  # A release with no artifacts must not serve as `latest`.
+  # A release with no artifacts must not exist.
   #
   # vaultspec-rag-v0.4.11 was published by release-please, Binaries had not been
   # dispatched for it, and the empty release immediately became `latest` - which
@@ -545,17 +437,22 @@ jobs:
   # this is the same job, so all three repos fail the same way for the same
   # reason instead of each discovering it separately.
   #
-  # Demotion is reversible and lossless: a prerelease keeps the tag, the notes
-  # and the URL reachable, and only stops that release answering as `latest`.
+  # The release is created as a draft now, so this job judges something nobody
+  # can see yet and its verdict is simply whether the lane may go on to publish
+  # it. What used to demote an incomplete release and promote a repaired one is
+  # gone with the state it managed: a draft is already invisible to `latest`,
+  # and an incomplete one stays a draft.
   verify-release-assets:
     timeout-minutes: 150
     name: "Check: Release proven (Linux)"
     needs: release
     if: ${{ always() }}
     runs-on: [self-hosted, Linux, X64, build]
-    # Demotes an incomplete release.
     permissions:
-      contents: write
+      # Reads the release and downloads its assets; it edits nothing. The
+      # handoff below is a write to the Actions API.
+      contents: read
+      actions: write
     env:
       CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -580,7 +477,7 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: test "$(git -C .sparse-verify-release-assets rev-parse HEAD)" = "$TARGET_SHA"
 
-      - name: Require artifacts on the published release
+      - name: Require every declared target on the draft release
         shell: bash
         run: |
           set -euo pipefail
@@ -611,6 +508,12 @@ jobs:
           fi
 
           # EVERY DECLARED TARGET, not "any asset at all". v0.4.15 is why.
+          #
+          # THIS JUDGES A DRAFT. The release is unpublished until the
+          # publication lane flips it, so an incomplete one is not a live
+          # defect to be demoted and later promoted - it is a draft nobody can
+          # see, and this job simply refuses to let it go further. That is why
+          # nothing here edits the release's flags any more.
           #
           # Its aarch64 leg failed, so the release attachment was skipped and no
           # binary reached the release - but `Publish` had already attached the
@@ -686,74 +589,31 @@ jobs:
           fi
 
           echo "::warning::${TAG} failed the complete archive gate: ${problems[*]}"
-
-          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-                  --json isPrerelease --jq '.isPrerelease')" != "true" ]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
-            echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
-          fi
-
-          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the promote job restores it only after every declared target archive is attached, acquired, and the release job succeeds."
+          echo "::error::Re-dispatch repairs a fix to THIS FILE (use --ref main), not a fix to tracked source. A source-level build fix needs a new release."
+          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It stays a draft, so nothing has been advertised. Fix the build and re-dispatch this workflow for this tag."
           exit 1
 
-  # Promotion waits for the public acquisition path. The build cannot prove
-  # that a checksum-verified bundle loads on each supported x64/ARM
-  # distribution; treating that check as best-effort promoted the release
-  # before that distinct guarantee existed.
-  #
-  # A call, not a dispatch-and-wait. A job that dispatched the check and
-  # watched it held a Linux x64 runner while the check queued for one, which
-  # deadlocks whenever that is the only runner free - 0.5.3's promotion never
-  # ran for exactly that reason. A called workflow is scheduled like any other
-  # job of this run, so nothing holds a runner while waiting.
-  acquisition:
-    name: "Test: Published binaries"
-    needs: verify-release-assets
-    uses: ./.github/workflows/acquisition.yml
-    with:
-      tag: ${{ inputs.tag }}
-      target_sha: ${{ inputs.target_sha }}
-
-  # Undo the hold once the complete set is attached and acquired, or a
-  # repaired release stays invisible to `latest` forever. The tag name
-  # decides: release-please publishes full releases here, so anything carrying
-  # a prerelease marker was meant to be one and must not be promoted by a gate
-  # that only knows about assets.
-  #
-  # PyPI is dispatched only here, after promotion, so the index never carries
-  # a version whose release this chain refused. The Publish run queues behind
-  # this one on the shared per-tag lock and re-checks that the release is a
-  # full one before it uploads anything. A tag that names a prerelease is
-  # never promoted, so it never reaches the index.
-  promote:
-    name: "Build: Release promotion (Linux)"
-    needs: acquisition
-    timeout-minutes: 130
-    runs-on: [self-hosted, Linux, X64, build]
-    # Edits the release and dispatches Publish.
-    permissions:
-      contents: write
-      actions: write
-    env:
-      CI_EXEC_BUDGET_MINUTES: 10
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TAG: ${{ inputs.tag }}
-    steps:
-      - name: Promote the release, then publish it to the package index
+      # THE HANDOFF. The publication lane is dispatched from here, never beside
+      # this workflow, because PyPI - the one act no re-dispatch can take back -
+      # must not race a build that could still fail. This step is reached only
+      # when the gate above found every declared target on the draft and the
+      # release job that attached them succeeded.
+      #
+      # That lane finishes the release: it uploads the draft's own
+      # checksum-verified wheel and sdist to the index, then takes the release
+      # out of draft as its last act, then points the channels at it and asks
+      # the acquisition check to try it. That is why nothing here publishes the
+      # release, pushes a pointer or acquires anything: at this point the
+      # release is still a draft, whose download URLs serve nothing.
+      #
+      # Safe to re-dispatch. `uv publish --check-url` skips a file the index
+      # already carries, so repairing the binaries of an already-published
+      # version re-runs this without a duplicate-upload failure.
+      - name: Hand the proven draft to the publication lane
+        if: ${{ success() }}
         shell: bash
         run: |
           set -euo pipefail
-          case "${TAG}" in
-            *-rc*|*-alpha*|*-beta*|*-dev*)
-              echo "${TAG} names a prerelease; leaving its flag alone and it off the package index"
-              exit 0
-              ;;
-          esac
-          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-                  --json isPrerelease --jq '.isPrerelease')" = "true" ]; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false
-            echo "::notice::promoted ${TAG} to a full release"
-          fi
           gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref main \
             -f tag="$TAG" -f stage=package-index
-          echo "::notice::dispatched package-index publication for ${TAG}"
+          echo "::notice::dispatched the package-index publication for ${TAG}"

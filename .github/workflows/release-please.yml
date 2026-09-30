@@ -10,8 +10,10 @@ name: RAG Release Please
 #   release it either.
 # - CUT. A maintainer dispatches this workflow when a release is wanted. It
 #   proves the proposal's head with the full merge gate and both accelerator
-#   tiers, squash-merges it, and has Release Please tag that commit and create
-#   its GitHub release seconds later, then starts Publish.
+#   tiers, squash-merges it, and has Release Please force the tag and create
+#   the DRAFT release seconds later, then starts Publish. The draft is
+#   published last, by the publication lane, once everything it claims is
+#   attached and proven.
 #
 # The proof comes before the merge because the release tag ruleset forbids
 # deleting a tag: a release commit that fails the accelerator tiers after its
@@ -221,7 +223,7 @@ jobs:
       NUMBER: ${{ needs.candidate.outputs.number }}
       SHA: ${{ needs.candidate.outputs.sha }}
       MERGED: ${{ needs.candidate.outputs.merged }}
-    # Merges the proposal, creates the tag and release, holds it, and
+    # Merges the proposal, creates the tag and the draft release, and
     # dispatches Publish.
     permissions:
       contents: write
@@ -307,11 +309,9 @@ jobs:
               fi
             done
 
-      # Release Please creates a full release. Hold it out of `latest` until
-      # Binaries has proven the complete artifact set and promoted it; PyPI
-      # follows that promotion, so any failure in the chain leaves the tag a
-      # prerelease instead of a partial stable release.
-      - name: Hold the release out of latest until artifacts are complete
+      # The draft creates no tag of its own; `force-tag-creation` does, and the
+      # whole lane builds from it. Refuse a tag on anything but the proven tree.
+      - name: Require the tag on the proven commit
         env:
           CREATED: ${{ steps.release.outputs.release_created }}
           TAG: ${{ steps.release.outputs.tag_name }}
@@ -329,7 +329,7 @@ jobs:
             echo "::error::${TAG} points at ${tagged}, not the proven ${COMMIT}"
             exit 1
           fi
-          gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
+          echo "${TAG} points at the proven ${COMMIT}"
 
       - name: Trigger Publish workflow
         env:
