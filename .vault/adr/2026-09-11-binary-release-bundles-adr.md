@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-09-11'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:09841b8e077b1016cd0fb77f6ad2db9d7b37d0c360ad7039bee964ead5f594aa'
+body_hash: 'sha256:bb1f5dee2f149f57f1a49ad6a2f46d34b8cf8939715ebf0cf1e15cf3d2baefc8'
 related:
   - "[[2026-09-11-binary-release-bundles-rag-port-research]]"
   - "[[2026-09-11-binary-release-bundles-current-pipeline-reference]]"
@@ -49,6 +49,8 @@ RAG needs a single public contract for standalone binary downloads and package c
 The product model becomes the single source for supported targets, stable executable names, bundle names, archive suffixes, and release metadata. A packaging layer stages the finalized binaries, emits deterministic target archives and their manifest, and writes a checksum sidecar only after validating required members. The existing binary builder delegates Windows PE version metadata to the resource module and keeps icon, permissions, platform-floor, and digest finalization ordered.
 
 The binary workflow builds or receives the exact wheel, creates and validates one bundle for each matrix target, uploads only validated public archives plus the shared checksum aggregate, and gates the stable/latest channel on complete target coverage. The Python publication workflow continues to attach wheel and source artifacts and merges the same aggregate without overwriting entries. Scoop/Homebrew generation and validation consume archive names and digests, while the installation and release documents explain the extraction and runtime contract. Detailed source ownership is recorded in `2026-09-11-binary-release-bundles-current-pipeline-reference`.
+
+Amended 2026-09-30: target completeness now gates the publication of a draft release rather than demoting a published one, and the Scoop/Homebrew generation moved into its own lane that runs after publication, as `2026-09-30-release-standard-adr` rules.
 
 ## Rationale
 

@@ -7,8 +7,14 @@ name: RAG Publish
 # for every tag a person pushes, racing the cut's own dispatch.
 #
 # The release chain, one hop each:
-#   cut -> Publish (build, smoke, attach) -> Binaries (build, attach, prove,
-#   acquire, promote) -> Publish (package index)
+#   cut (tag + draft) -> Publish (build, smoke, attach to the draft) ->
+#   Binaries (build, attach, prove the draft) -> Publish (package index: PyPI,
+#   then publish the draft, then the channel pointers and the acquisition
+#   check)
+#
+# Everything above the publication runs against a DRAFT, which is invisible to
+# `latest` by construction. A release that exists is therefore a release that
+# is complete, and a failure anywhere leaves a draft nobody has been sent to.
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +23,7 @@ on:
         required: true
         type: string
       stage:
-        description: "release: build, attach and hand to Binaries. package-index: upload a promoted release's packages to PyPI."
+        description: "release: build, attach and hand to Binaries. package-index: upload a proven draft's packages to PyPI and publish it."
         required: false
         default: release
         type: choice
@@ -44,7 +50,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 10
-    # The hold below edits or creates the release.
+    # The step below creates the draft release when one is missing.
     permissions:
       contents: write
     outputs:
@@ -74,26 +80,31 @@ jobs:
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "${tag} resolves to ${sha}"
 
-      # The cut already holds the release it created; this covers a release a
-      # maintainer tagged by hand, and it runs first so no later failure can
-      # leave a release that serves as `latest`. Never on the package-index
-      # stage, which runs only after Binaries has promoted the release.
-      - name: Hold the release as a prerelease
+      # The cut creates the draft before it dispatches this workflow, so this
+      # is the idempotent guard for a release a maintainer tagged by hand and
+      # for a repair dispatch: "already exists" is the no-op we want, and
+      # `--verify-tag` refuses to invent a release for an unpushed tag.
+      #
+      # `--draft`, so a release recreated here starts in the state the cut
+      # would have left it in. Publication is the last act of the package-index
+      # stage and nothing else in the chain flips it, so a non-draft recreation
+      # would advertise an empty release the moment it was made.
+      #
+      # It never edits an existing release's flags. A release this chain has
+      # already published must not be pushed back into a draft, and an
+      # incomplete draft needs no holding: a draft is invisible to `latest` by
+      # construction.
+      - name: Ensure a draft release exists for the tag
         if: ${{ inputs.stage != 'package-index' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.commit.outputs.tag }}
         run: |
-          set -euo pipefail
-          if gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
-          else
-            gh release create "${TAG}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --generate-notes \
-              --prerelease
-          fi
+          gh release create "${TAG}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --generate-notes || true
 
   build:
     name: "Build: Python package (Linux)"
@@ -233,7 +244,7 @@ jobs:
           set -euo pipefail
           # Bare names, never `./*`: each manifest name must equal its release
           # asset name exactly, or the binaries workflow's final gate refuses to
-          # promote the release. `--` keeps a leading dash from reading as a flag.
+          # hand the draft on. `--` keeps a leading dash from reading as a flag.
           sha256sum -- * > SHA256SUMS
           # MERGE into whatever the release already carries rather than
           # replacing it. binaries.yml and publish.yml both publish a file named
@@ -271,10 +282,10 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
-      # Publication is deliberately sequenced. Binaries is the sole finalizer
-      # that may promote the release, so it must not start until the GitHub
-      # wheel/sdist publication above has succeeded. PyPI is not written here:
-      # see publish-pypi.
+      # Publication is deliberately sequenced. Binaries judges the draft
+      # complete and hands it on, so it must not start until the wheel and
+      # sdist are attached to that draft. PyPI is not written here: see
+      # publish-pypi.
       - name: Trigger Binaries workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -289,27 +300,38 @@ jobs:
             --field target_sha="${TARGET_SHA}"
           echo "Dispatched Binaries for ${TAG} at ${TARGET_SHA}" >> "$GITHUB_STEP_SUMMARY"
 
-  # The package index is written LAST, and only for a release the Binaries
-  # finalizer has proven complete and promoted. An upload can never be
-  # withdrawn, while promotion is a flag. v0.4.35 is why: it reached PyPI from
-  # this workflow, then failed the final archive gate and was demoted, so pip
+  # The package index is written LAST, and only for a draft the Binaries gate
+  # has proven complete. An upload can never be withdrawn, while a draft can
+  # simply be left unpublished. v0.4.35 is why the order matters at all: it
+  # reached PyPI from this workflow, then failed the final archive gate, so pip
   # and the GitHub release disagreed on the latest version.
   #
-  # Binaries dispatches this stage after promotion. It queues behind that run
-  # on the shared per-tag lock without holding a runner, and a maintainer may re-dispatch it to retry a
-  # failed upload. It uploads the release's own wheel and sdist, checked
-  # against the release's SHA256SUMS, so PyPI receives exactly the bytes the
-  # final gate verified. Staying in this workflow keeps the trusted publisher
-  # (publish.yml, environment pypi) unchanged.
+  # Binaries dispatches this stage from the gate that judged the draft. It
+  # queues behind that run on the shared per-tag lock without holding a
+  # runner, and a maintainer may re-dispatch it to retry a failed upload. It
+  # uploads the release's own wheel and sdist, checked against the release's
+  # SHA256SUMS, so PyPI receives exactly the bytes the gate verified. Staying
+  # in this workflow keeps the trusted publisher (publish.yml, environment
+  # pypi) unchanged.
   publish-pypi:
     name: "Build: Package index release (Linux)"
     timeout-minutes: 135
     needs: resolve-target
     if: ${{ inputs.stage == 'package-index' }}
     runs-on: [self-hosted, Linux, X64, build]
+    # Carried forward so the publication job below never re-resolves the tag:
+    # the release it publishes must be the one this job uploaded from.
+    outputs:
+      tag: ${{ needs.resolve-target.outputs.tag }}
+      sha: ${{ needs.resolve-target.outputs.sha }}
     environment:
       name: pypi
     permissions:
+      # `id-token: write` is for PyPI trusted publishing, and it lives in this
+      # job alone: the grant is not scoped to Sigstore, so any step in a job
+      # holding it can mint an OIDC token for any audience it names. The
+      # publication job below flips the release without it, and the channel
+      # deploy key sits in its own lane.
       id-token: write
       contents: read
     env:
@@ -317,15 +339,38 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.resolve-target.outputs.tag }}
     steps:
-      - name: Require a promoted release
+      # A DRAFT is what this stage expects, because the release is published
+      # by the job below and by nothing else. An already-published release is
+      # accepted so a failed upload can be retried for the same tag: PyPI
+      # skips the files it already holds, so the retry is a no-op for anything
+      # that landed.
+      #
+      # The distribution must be on the release before anything is uploaded
+      # from it. Together those two conditions are what "complete draft" means
+      # here; the declared binary targets are the Binaries gate's judgment,
+      # and that gate is what dispatched this stage.
+      - name: Require a draft release carrying its distribution
         shell: bash
-        run: >-
-          gh release view "${TAG}" --repo "$GITHUB_REPOSITORY"
-          --json isDraft,isPrerelease
-          --jq 'if .isDraft or .isPrerelease then error("not a full release
-          (draft=\(.isDraft) prerelease=\(.isPrerelease)); PyPI follows
-          promotion, so dispatch RAG Binaries for this tag first") else
-          "full release" end'
+        run: |
+          set -euo pipefail
+          version="${TAG#vaultspec-rag-v}"
+          state=$(gh release view "${TAG}" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,assets --jq '"\(.isDraft) \(.assets | map(.name) | join(","))"')
+          draft="${state%% *}"
+          names="${state#* }"
+          if [ "${draft}" != "true" ]; then
+            echo "::notice::${TAG} is already published; retrying the upload, which skips files the index holds"
+          fi
+          missing=()
+          for asset in "vaultspec_rag-${version}-py3-none-any.whl" \
+                       "vaultspec_rag-${version}.tar.gz" SHA256SUMS; do
+            printf '%s\n' "${names}" | tr ',' '\n' | grep -Fxq "${asset}" || missing+=("${asset}")
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::${TAG} carries no ${missing[*]}; the release stage attaches them before Binaries hands the draft on. Dispatch the release stage for this tag first."
+            exit 1
+          fi
+          echo "${TAG} carries its distribution (draft=${draft})"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -358,3 +403,95 @@ jobs:
           fi
           (cd "${work}/dist" && sha256sum -c ../packages.sha256)
           uv publish --check-url https://pypi.org/simple/ "${work}/dist/${wheel}" "${work}/dist/${sdist}"
+
+  # THE PUBLICATION, and the last act of the chain. Everything before it ran
+  # against a draft: the release stage attached the wheel and sdist, Binaries
+  # attached every declared target archive and proved the set, and the job
+  # above uploaded the release's own checksum-verified packages to the index.
+  # The release becomes visible here and nowhere else, so a release that exists
+  # is a release that is complete.
+  #
+  # AFTER PyPI deliberately. Both acts are one-way and they fail differently:
+  # an index that rejects the upload leaves an unpublished draft and nothing
+  # advertised, which a re-dispatch repairs, while a release published before
+  # PyPI would advertise a version the index does not carry. The draft is the
+  # safe state, so it is the one held longest.
+  #
+  # ITS OWN JOB, holding no `id-token`. The upload job needs that grant for
+  # trusted publishing; nothing here does, and the two dispatches below reach
+  # lanes that carry credentials of their own.
+  publish-release:
+    name: "Build: Release publication (Linux)"
+    timeout-minutes: 130
+    needs: publish-pypi
+    runs-on: [self-hosted, Linux, X64, build]
+    permissions:
+      # Flipping the draft is a write to the release; the dispatches below are
+      # writes to the Actions API.
+      contents: write
+      actions: write
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.publish-pypi.outputs.tag }}
+    steps:
+      # The tag name decides the publication flag, and it is a flag at the
+      # moment of publication rather than a hold: nothing promotes a release
+      # after this step, so a release meant to be a prerelease must be
+      # published as one here or never be marked at all.
+      - name: Publish the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${TAG}" in
+            *-rc*|*-alpha*|*-beta*|*-dev*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease="${prerelease}"
+          echo "::notice::published ${TAG} (prerelease=${prerelease})"
+
+      # The package-manager pointers, now that there is something for them to
+      # point at. A Scoop manifest and a Homebrew formula address assets by
+      # release download URL, so they advertise the release rather than form
+      # part of it, and the binaries lane used to push them while the release
+      # was still held - sending `scoop update` and `brew upgrade` at a URL
+      # that served nothing until the step above ran.
+      #
+      # A failure there does not retract the release. It is published and
+      # verified by this point; the pointers lag by one dispatch, and
+      # re-dispatching the channels lane for the same tag repairs them.
+      - name: Point the release channels at this release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh workflow run channels.yml --repo "$GITHUB_REPOSITORY" \
+               --ref main -f tag="$TAG"; then
+            echo "dispatched the channel pointers for ${TAG}"
+          else
+            echo "::warning::could not dispatch the channel pointers for ${TAG}; re-dispatch RAG Channels for this tag"
+          fi
+
+      # The acquisition check downloads the way a user does - unauthenticated
+      # `curl` against the release download URL - so it cannot see a draft and
+      # has to be asked after the publication above, not before it.
+      #
+      # It must be ASKED at all because a release published with the default
+      # token raises no workflow events, so no `release: published` trigger
+      # would fire for anything this lane produces. A dispatch is explicitly
+      # exempt from that rule.
+      #
+      # A failure to dispatch does not fail the release: it is published and
+      # verified by this point, and the weekly run still covers it.
+      - name: Ask the acquisition check to try this release
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.publish-pypi.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" \
+               --ref main -f tag="$TAG" -f target_sha="$TARGET_SHA"; then
+            echo "dispatched the acquisition check for ${TAG}"
+          else
+            echo "::warning::could not dispatch the acquisition check for ${TAG}; its weekly run still covers this release"
+          fi

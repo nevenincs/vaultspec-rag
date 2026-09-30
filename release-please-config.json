@@ -6,6 +6,8 @@
       "release-type": "python",
       "package-name": "vaultspec-rag",
       "include-component-in-tag": true,
+      "draft": true,
+      "force-tag-creation": true,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "changelog-sections": [

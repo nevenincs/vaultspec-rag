@@ -46,6 +46,16 @@ name: RAG Merge Gate
 #
 # Pull requests from forks are refused: re-open an outside change from a
 # branch in this repository.
+#
+# ONLY TRUSTED AUTHORS REACH THE FLEET. A pull request runs its jobs on the
+# self-hosted fleet only when its author is the owner or a collaborator, or
+# once a user - never a bot - has applied `ci:full` to it, which takes triage
+# rights. Everyone else, Dependabot included, runs nothing here until a
+# collaborator has read the change, and the gate refuses the commit until
+# then. A fork's pull request runs the fork's own copy of this file, so for
+# forks these conditions only back up the repository's requirement that an
+# outside contributor's runs be approved; for every other author they are the
+# control itself.
 on:
   pull_request:
     branches: [main]
@@ -122,8 +132,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
+         github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
+         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'ready_for_review'))))
@@ -178,7 +190,8 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.action == 'synchronize' &&
-       github.event.pull_request.draft == false)
+       github.event.pull_request.draft == false &&
+       (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR'))
     timeout-minutes: 140
     runs-on: [self-hosted, Linux, X64, build]
     env:
@@ -220,8 +233,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
+         github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
+         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'ready_for_review'))))
@@ -287,8 +302,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
+         github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
+         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'ready_for_review'))))
@@ -343,8 +360,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full' &&
+         github.event.sender.type == 'User') ||
         (github.event.pull_request.draft == false &&
+         (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'COLLABORATOR') &&
          (github.event.action == 'opened' ||
           github.event.action == 'reopened' ||
           github.event.action == 'ready_for_review'))))
@@ -412,6 +431,8 @@ jobs:
       PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      AUTHOR: ${{ github.event.pull_request.user.login }}
+      ASSOCIATION: ${{ github.event.pull_request.author_association }}
       LINT: ${{ needs.lint.result }}
       LIGHT: ${{ needs.lint-light.result }}
       TESTS: ${{ needs.tests.result }}
@@ -482,6 +503,13 @@ jobs:
             echo "the last run on $HEAD_SHA passed"
             exit 0
           fi
+          # An untrusted author's commit ran nothing, so no earlier verdict can
+          # exist unless a collaborator's full-run label proved it; refuse it
+          # by name.
+          case "${ASSOCIATION}" in OWNER | COLLABORATOR) ;; *)
+            echo "::error::pull requests by ${AUTHOR} (${ASSOCIATION}) run nothing on the self-hosted fleet; a collaborator reviews the change and applies $FULL_RUN_LABEL to run it"
+            exit 1 ;;
+          esac
           if [ "$previous" = "none" ]; then
             echo "::error::nothing has measured $HEAD_SHA yet; push to it, mark the pull request ready for review, or add $FULL_RUN_LABEL"
           else

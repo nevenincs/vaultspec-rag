@@ -166,17 +166,64 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
         {"action": "synchronize", "draft": False, "head": "stranger/repo"},
         frozenset(),
     ),
+    (
+        "Dependabot's pull request opened",
+        "pull_request",
+        {"action": "opened", "draft": False, "head": _HOME, "author": "CONTRIBUTOR"},
+        frozenset(),
+    ),
+    (
+        "push to Dependabot's pull request",
+        "pull_request",
+        {
+            "action": "synchronize",
+            "draft": False,
+            "head": _HOME,
+            "author": "CONTRIBUTOR",
+        },
+        frozenset(),
+    ),
+    (
+        "a collaborator pressed ci:full on Dependabot's pull request",
+        "pull_request",
+        {
+            "action": "labeled",
+            "label": "ci:full",
+            "draft": False,
+            "head": _HOME,
+            "author": "CONTRIBUTOR",
+        },
+        FULL_JOBS,
+    ),
+    (
+        "a bot pressed ci:full",
+        "pull_request",
+        {
+            "action": "labeled",
+            "label": "ci:full",
+            "draft": False,
+            "head": _HOME,
+            "sender": "Bot",
+        },
+        frozenset(),
+    ),
 )
 
 
 def _bindings(payload: dict[str, object]) -> dict[str, object]:
-    """Return the context references a pull request *payload* resolves."""
+    """Return the context references a pull request *payload* resolves.
+
+    The author defaults to the owner and the sender to a user, the ordinary
+    case; the Dependabot and bot scenarios override them.
+    """
     return {
         "github.repository": _HOME,
         "github.event.action": payload.get("action", ""),
         "github.event.label.name": payload.get("label", ""),
         "github.event.pull_request.draft": payload.get("draft", False),
         "github.event.pull_request.head.repo.full_name": payload.get("head", ""),
+        "github.event.pull_request.author_association": payload.get("author", "OWNER"),
+        "github.event.sender.type": payload.get("sender", "User"),
         "inputs.scope": payload.get("scope"),
     }
 

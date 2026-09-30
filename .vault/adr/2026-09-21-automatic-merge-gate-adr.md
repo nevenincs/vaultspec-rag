@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:53f860d056735df90be4e3a18c90c03d60160fa729965137b5d257f1182098e5'
+body_hash: 'sha256:614f2a2d611d64720551a1c2f2b7219c546be938c9a8c5e7936365dc63aebd5d'
 related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
   - '[[2026-09-29-release-pr-identity-research]]'
@@ -80,6 +80,10 @@ squash-merges it with the default token, confirms the merged tree equals the
 proven tree, has Release Please tag and release that commit, holds the
 release as a prerelease, and dispatches Publish. A proposal merged by hand is
 proven and tagged by the same dispatch.
+
+Amended 2026-09-30: the cut no longer holds the release as a prerelease - the
+release is created as a draft and published by the lane that proves it, as
+`2026-09-30-release-standard-adr` rules.
 
 ## Rationale
 

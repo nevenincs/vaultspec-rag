@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-07-27'
-body_hash: 'sha256:fa4ab30a261b84216d95bcfd85233bb8bbf8add0534f9dc8ee6021353220a0d6'
+modified: '2026-09-30'
+body_hash: 'sha256:01700b3c4557bcedaa4bffcde9238e4597f0c9d80cf7b493a2a7a18a08380baa'
 related:
   - '[[2026-04-01-cicl-pipeline-research]]'
 ---
@@ -71,6 +71,10 @@ vaultspec-core blocks both CI and publishing.
 - `tests/smoke_check.py` — Non-pytest script: checks import, version
   metadata, entry points registered, `vaultspec-rag --help`,
   `vaultspec-search-mcp --help`.
+
+Amended 2026-09-30: publication is dispatch-only and no lane starts on a
+release event or a pushed tag, because the release is created as a draft and
+published last by the chain itself, as `2026-09-30-release-standard-adr` rules.
 
 ## Rationale
 
