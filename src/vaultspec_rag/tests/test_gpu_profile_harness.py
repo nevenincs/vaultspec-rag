@@ -51,7 +51,9 @@ def test_sampling_command_can_target_only_current_process(tmp_path: Path) -> Non
     assert command[command.index("--duration") + 1] == "30"
     assert command[command.index("--format") + 1] == "speedscope"
     assert "--threads" in command
-    assert "--native" in command
+    # Removing nonblocking must fail here: interrupted sampling must not suspend work.
+    assert "--nonblocking" in command
+    assert "--native" not in command
     assert "--gil" not in command
     assert "--gil" in sampling_command(
         Path("py-spy.exe"), tmp_path / "gil.json", 30, gil=True

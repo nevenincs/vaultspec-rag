@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:e1ed3fb1fa44e02226dc362d0e57106fc585a04bf875e3c7090d371b707885aa'
+body_hash: 'sha256:b186af02bf104322f7e9b3c257faa8d1fcc7115a40879b93e691fc7398ab8ae0'
 related:
   - "[[2026-09-30-sparseencode-research]]"
   - "[[2026-07-29-encode-batch-adaptivity-research]]"
@@ -68,6 +68,22 @@ Cached pinned upstream `modeling_splade.py:67` creates logits; `:68` applies shi
 ### Execution isolation
 
 The performance lane moved to `Y:/code/vaultspec-rag-worktrees/pipeline-performance` on `feature/pipeline-performance`, based on b9d2daf0, while the externally owned sparseencode merge continues. Only owned profiling tools, records and AST changes were copied; foreign staged installation changes were excluded. Earlier observations retain their original source/corpus hashes and runtime scope. The existing environment is reused through an explicit interpreter/PYTHONPATH without synchronizing installed package metadata. The isolated explicit-path S01 commit now permits verified native CPU sampling. Shared CUDA still requires canonical borrowing; this relocation does not authorize parallel GPU inference.
+
+### Completed CPU stack evidence and native provenance
+
+S01 commit 0550d8f2 established reviewed executable/archive pins. The verified official wheel's single executable member and installed py-spy bytes matched the committed executable digest; each launch was rehashed. Two isolated 30-second native CPU passes collected 2916 all-thread and 2999 GIL-filtered samples with zero sampler errors. The parser call at `_ast_chunker.py:80` accounted for about 90.29% and 91.96% of samples; tree-sitter native frames were present in about 95.16% and 96.17%. These are inclusive sample proportions on the fixed Python corpus, not CPU utilization or GPU kernel timing. Evidence: `.pytest-tmp/pipeline-cpu-pyspy`.
+
+The corrected default uses Python-only nonblocking sampling. Both 30-second passes completed with source stability verified: 2938 samples/10 read errors and 2981 samples/18 read errors, demonstrating the documented partial-read limitation. Evidence: `.pytest-tmp/pipeline-cpu-nonblocking-verified` including manifests, logs, speedscope files and summary. A concurrent guard-mutation run produced incompatible native/nonblocking arguments in an earlier attempt; that failed attempt is excluded from measurement evidence. Existing paired AST evidence and corpus hashes remain unchanged.
+
+### Live sampling interruption and safety correction
+
+A bounded native live diagnostic on the installed 0.5.3 resident service timed out while sampling fell behind. Terminating the blocking profiler left service threads/process suspension outstanding. Recovery revalidated the original PID/creation time, reversed the sampler's outstanding thread/process suspension, and confirmed a fresh managed-service heartbeat, models loaded, admissions running and no suspended threads. There was no restart, job cancellation or index rebuild. Recovery artifacts: `.pytest-tmp/service-thread-recovery.json` and `.pytest-tmp/service-process-recovery.json`.
+
+Default profiling now passes `--nonblocking` and excludes `--native`. Official py-spy 0.4.2 cannot combine these flags; nonblocking reads do not suspend the target and can miss frames. Two guard mutations each produced the intended assertion failure and restored passing test (`.pytest-tmp/profile-nonblocking-proofs.txt`). A subsequent low-rate live nonblocking diagnostic also timed out but did not suspend the service and yielded no accepted stack artifact. Device-wide NVML observations remain observations only. GPU operation attribution belongs to the admitted Torch CUDA trace, not these failed live samples. Sources: https://raw.githubusercontent.com/benfred/py-spy/v0.4.2/src/config.rs and https://raw.githubusercontent.com/benfred/py-spy/v0.4.2/src/python_spy.rs .
+
+### User priorities and runtime separation
+
+The user clarified that indexing time and GPU energy use govern candidate selection, and that another session owns the original merge. The resident GPU service uses another model/runtime. Controlled measurements therefore load the pinned new ModernBERT model from current source only after authenticated borrowing releases resident models, then release benchmark models/cache before the existing resident service resumes. Installed runtime metadata is not upgraded during this handoff. Peak memory is measured alongside throughput and sustained device-wide energy per processed item; a lower memory cap alone does not establish an improvement for the user's priorities.
 
 ## Sources
 

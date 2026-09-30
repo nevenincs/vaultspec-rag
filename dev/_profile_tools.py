@@ -62,7 +62,7 @@ def sampling_command(
         "--format",
         "speedscope",
         "--threads",
-        "--native",
+        "--nonblocking",
         "--output",
         str(output),
     ]

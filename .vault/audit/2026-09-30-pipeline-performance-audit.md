@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:06033a1f52241eee895377343f912db36ee7b5e5cdd0d313ad8a7511ce058972'
+body_hash: 'sha256:e3b4ca3a88dc30d1a13e5501642516cac35bec8936332a277ae103ea350b9951'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
   - "[[2026-09-30-sparseencode-adr]]"
@@ -18,7 +18,7 @@ related:
 
 ## Scope
 
-Independent GPT-6.1 Sol review of S01 and partial S02 against b9d2daf0, including uncommitted profiling-harness and AST changes. Foreign staged origin/main merge changes are excluded. Governing plan: `2026-09-30-pipeline-performance-plan`; sparse, batching and GPU ownership decisions bound the review. Overall verdict PENDING: actual native/CUDA measurements remain unavailable, and borrowed lifetime cleanup is being corrected before the S01 close.
+Independent GPT-6.1 Sol review of S01 and partial S02 against b9d2daf0, including uncommitted profiling-harness and AST changes. Foreign staged origin/main merge changes are excluded. Governing plan: `2026-09-30-pipeline-performance-plan`; sparse, batching and GPU ownership decisions bound the review. Overall verdict PENDING: verified native CPU evidence is now available and borrowed lifetime cleanup is closed; admitted CUDA measurements and sustained energy comparisons remain outstanding.
 
 ## Findings
 
@@ -42,6 +42,14 @@ Adaptive ceilings persist across cases; snapshots expose that stateful history. 
 
 Independent re-review closes the preceding high finding. `encoder_work` unwinds model locals/closures before teardown. Failure handling clears traceback frames across exception chains to release retained model references, then consumer-owned GC, synchronization, one canonical cache release and synchronization precede the exclusive teardown-memory artifact and borrower return. Cleanup failures propagate. Applicable evidence: 74 focused passes plus two intended teardown mutation failures and restored passes in `.pytest-tmp/profile-teardown-proofs.txt`. An initial mutation exposed an incidental mock AttributeError; the incomplete snapshot mock was corrected before accepting the intended assertion failure. No per-arm/per-bucket cache flushing was added. Overall verdict remains PENDING for committed pins/native provenance execution and admitted real CUDA profiling, timing/memory and encoder parity.
 
+### live-sampler-interruption | high | Terminating blocking sampling can leave the target suspended
+
+The supervisor's live native diagnostic fell behind and timed out. Terminating its blocking profiler left outstanding process/thread suspension. Recovery restored the same validated service instance without restart or job cancellation. Blocking native sampling is unsafe for interrupted supervised runs; S01 was reopened to require a nonblocking default and explicit exclusion of native mode. No accepted live stack artifact or GPU inference measurement follows from the failed run.
+
+### live-sampler-interruption-closure | low | Nonblocking default and proven guards close the interruption finding
+
+Independent GPT-6.1 Sol re-review found no new code blocker in the corrected default. `sampling_command` uses `--nonblocking`, excludes `--native`, and targets only the current process. Official py-spy config disallows native/nonblocking together. Both guard mutations failed at the intended assertion and passed after restoration. Corrected isolated CPU passes completed with stable source hashes and sampler read errors reported, never hidden. Applicable Ruff, format, focused type and 74-test gates pass. The high finding is closed; no live blocking sampler will be used. Overall review remains PENDING for admitted real CUDA/energy evidence and encoder parity.
+
 ## Recommendations
 
-Close the borrowed lifetime finding with consumer-owned teardown and focused passing evidence; then close S01 and make its explicit-path commit after the externally owned merge finishes. Verify the downloaded archive before inspecting its executable member and reverify the operator executable immediately before each launch. Obtain an admitted GPU window for py-spy, actual CUDA traces, sparse-budget comparisons and output parity before choosing a new default or closing S02. Reuse existing applicable checks and the unchanged AST analysis; completion requires the remaining measurements and final review.
+S01 correction is ready for its explicit-path checkpoint with verified native provenance and completed CPU sampling. Keep the original externally owned merge untouched. Use canonical borrowing to isolate the pinned new model from the resident old-model service; never bypass active tickets or cancel another session's jobs for evidence. Obtain actual CUDA kernels, synchronized timing, allocated/reserved peaks, sustained device-wide energy and sparse parity before selecting a planner default or closing remaining GPU work. Reuse the exact AST parity and paired measurements, with their modest/noisy limits, for the CPU checkpoint. Completion still requires all remaining Steps and integrated review PASS.

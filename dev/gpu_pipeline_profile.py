@@ -176,6 +176,7 @@ def base_manifest(
             "NVML is device-wide, one-second sampling; short peaks may be missed",
             "WDDM process memory may be unavailable",
             "GIL-only samples omit extensions that release the GIL",
+            "Nonblocking sampling can miss frames while interpreter state changes",
         ],
     }
 

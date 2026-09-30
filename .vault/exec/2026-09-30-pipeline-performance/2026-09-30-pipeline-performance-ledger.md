@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:44c2813794c9d65b43a808e2ce6ab05897dba5b3648afdf5ad7b82cd66e4d23d'
+body_hash: 'sha256:c36fa1bf76a53db76d1af949515cd782df544cfd018404638dd5987b76dd2ad8'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -42,6 +42,16 @@ related:
 - `S01` `verify:` `isolated profiling harness pytest13` -> `pass`
 - `S01` `verify:` `isolated Ruff lint and format` -> `pass`
 - `S01` `verify:` `isolated focused ty with existing environment` -> `pass`
+- `S01` `M` `dev/_profile_tools.py`
+- `S01` `M` `dev/gpu_pipeline_profile.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_gpu_profile_harness.py`
+- `S01` `M` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S01` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S01` `verify:` `Ruff lint and format on src dev tools` -> `pass`
+- `S01` `verify:` `focused ty using existing interpreter` -> `pass`
+- `S01` `verify:` `pytest harness and AST focused tests74` -> `pass`
+- `S01` `verify:` `nonblocking and no-native guard intended failures and restored passes2` -> `pass`
+- `S01` `verify:` `verified pinned native CPU sampling and corrected nonblocking source-stable sampling` -> `pass`
 
 ## Notes
 
@@ -49,3 +59,4 @@ related:
 - `S01` Explicit-path commit and native execution remain deferred until the externally owned merge is finished. Overall review is PENDING for real native/CUDA evidence.
 - `S02` Partial Step only: CUDA/native inference measurements and sparse budget/parity selection remain blocked by active service tickets and pending external merge. S02 stays unchecked; no sparse batch/precision/backend default changed.
 - `S01` Execution moved to isolated feature/pipeline-performance worktree at b9d2daf0 so the externally owned sparseencode merge can proceed. Shared GPU admission remains enforced; copied earlier CPU evidence retains its original corpus hashes.
+- `S01` S01 corrective reopen closes live profiler suspension hazard. Same resident service recovered without restart or job cancellation. CUDA and sustained energy remain pending; failed profiler attempts excluded.
