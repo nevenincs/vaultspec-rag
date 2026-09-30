@@ -31,6 +31,25 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_gpu_profile_harness.py": (
+        17,
+        "CPU unit seams: one native-process tripwire rejects any unverified "
+        "profiler launch; six accelerator-load, work and memory observations "
+        "force teardown ordering and failure without allocating CUDA; one "
+        "integration-boundary tripwire proves insufficient power samples never "
+        "reach arithmetic; four clock, encode, memory and ceiling observations "
+        "stage sustained-arm ordering and actual bucket/OOM telemetry; one argv "
+        "substitution supplies parser bounds; two encode/window boundaries "
+        "exercise paired budget planning with real adaptive ceilings; and two "
+        "parity/window boundaries prove failed output parity prevents timing. "
+        "Untrusted native execution, device exhaustion and exact scheduling "
+        "cannot be safely or repeatably induced in CPU unit tests. The real "
+        "guard, planner, artifact writes and cleanup execute; separate admitted "
+        "CUDA/energy measurements and verified-profiler runs exercise the live "
+        "workload. The allowance is exactly these seventeen sites. Mutation "
+        "proof: reducing it to sixteen failed the count-growth assertion; "
+        "restoring seventeen passed",
+    ),
     "test_cli_styled_output.py": (
         1,
         "styling reaches only a colour terminal, and the CLI builds its one "

@@ -253,7 +253,8 @@ Dense encoding and reranking still require
 | `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE`          | integer | `32`    | Vault inner encode sub-batch size                                                   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE`     | integer | `32`    | Code inner encode sub-batch size                                                    | -        |
 | `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` | integer | `12`    | Document inner encode sub-batch size                                                | -        |
-| `VAULTSPEC_RAG_EMBEDDING_ENCODE_TOKEN_BUDGET`        | integer | `24000` | Estimated token footprint allowed per encode bucket                                 | -        |
+| `VAULTSPEC_RAG_EMBEDDING_ENCODE_TOKEN_BUDGET`        | integer | `24000` | Estimated padded token footprint allowed per dense encode bucket                    | -        |
+| `VAULTSPEC_RAG_EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET` | integer | `24000` | Estimated padded token footprint allowed per sparse encode bucket                   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_ENCODE_CHARS_PER_TOKEN`     | integer | `3`     | Chars-per-token ratio used to plan encode buckets                                   | -        |
 | `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH`             | integer | `2048`  | Hard cap on sequence length advertised to the model                                 | -        |
 | `VAULTSPEC_RAG_MAX_EMBED_CHARS`                      | integer | `8000`  | Character cap applied to each text before encoding                                  | -        |
@@ -431,7 +432,7 @@ The same rename applies to the JSON any script reads off the health, status, job
 
 ## Tuning for memory and speed
 
-On a small GPU, the dense and sparse encoders halve their batch size and retry on a CUDA out-of-memory error, down to a batch of one. Most cards work without tuning. The knobs below reduce memory pressure before that automatic backoff has to engage, or raise throughput.
+Dense and sparse encoders plan batches under independent padded-token budgets. A CUDA out-of-memory error lowers the affected encoder's learned budget and retries only the failing bucket, down to one item. Recovery requires successful buckets that exercise the learned ceiling; short batches cannot certify a larger allocation. The knobs below reduce memory pressure before that automatic backoff engages, or raise throughput.
 
 The two ceilings behave differently from that backoff, and it is worth knowing which is which. `VAULTSPEC_RAG_INDEX_RSS_CEILING_MIB` and `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB` are not throttles: they are checked at index checkpoints, and a reading above one fails the run with `rss_memory_ceiling` or `cuda_memory_ceiling`. The first breach is latched, so the outcome does not change if a later sample recovers.
 
@@ -439,6 +440,7 @@ Their defaults are single-tenant. The resident-memory ceiling ships at 16384 MiB
 
 To fit a smaller GPU:
 
+- For long code batches, try `VAULTSPEC_RAG_EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET=8192` independently of the dense budget (24000). At the sparse model's 512-token document limit, this permits sixteen items; short documents can still fill the 32-item cap. Measure indexing time and device power before adopting the setting for your workload.
 - Lower the inner encode sub-batches: `VAULTSPEC_RAG_EMBEDDING_ENCODE_BATCH_SIZE` and `VAULTSPEC_RAG_EMBEDDING_CODE_ENCODE_BATCH_SIZE` (32 each), and `VAULTSPEC_RAG_EMBEDDING_DOCUMENT_ENCODE_BATCH_SIZE` (12, smaller because document fragments fill the model's whole window).
 - Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
 - Raise `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB` to leave more of the device outside the indexing budget, or set `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB` to pin an explicit ceiling.
