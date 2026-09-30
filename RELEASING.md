@@ -242,16 +242,15 @@ gh run list --repo "$REPO" --workflow Publish --limit 20
 ### A merged release that was never tagged
 
 `RAG Release Please` fails in `Run release-please` with
-`Resource not accessible by integration` on create-a-release, and its
+`Resource not accessible by integration`, and its
 `Name a release this token cannot tag` step names the tag. The workflow token
-never holds the `workflows` permission, and without it GitHub refuses a new tag
-on a commit whose workflow files differ from `main`. A workflow change that
-merged before the release commit's own run started therefore blocks the tag
-for good: every rerun and every later push fails the same way.
+never holds the `workflows` permission, and without it GitHub refuses any tag
+or Release that targets a commit whose workflow files differ from `main`, even
+once the tag exists. A workflow change that merged before the release commit's
+own run started therefore blocks the release for good: no rerun can finish it.
 
-Create the Release on the release commit with your own credentials, exactly as
-release-please would have. Relabel the release pull request first, so no
-release-please run creates the same Release and dispatches a second Publish:
+Finish it with your own credentials, as release-please would have. Relabel the
+release pull request first, so later runs stop retrying it:
 
 ```sh
 PR=<release pull request number>
@@ -262,14 +261,15 @@ SHA=$(gh pr view "$PR" --repo "$REPO" --json mergeCommit --jq .mergeCommit.oid)
 gh pr edit "$PR" --repo "$REPO" \
   --remove-label "autorelease: pending" --add-label "autorelease: tagged"
 git fetch origin "$SHA"
+git push origin "$SHA:refs/tags/$TAG"
 git show "$SHA:CHANGELOG.md" \
   | awk -v h="## [$VERSION]" 'index($0, "## [") == 1 { p = index($0, h) == 1 } p' \
   > release-notes.md
-gh release create "$TAG" --repo "$REPO" --target "$SHA" --prerelease \
+gh release create "$TAG" --repo "$REPO" --verify-tag --prerelease \
   --title "vaultspec-rag: v$VERSION" --notes-file release-notes.md
 ```
 
-The new tag starts `RAG Publish` from its tag trigger, which holds the Release
+The tag push starts `RAG Publish` from its tag trigger, which holds the Release
 as a prerelease and continues the normal chain. Do not dispatch Publish as
 well.
 
