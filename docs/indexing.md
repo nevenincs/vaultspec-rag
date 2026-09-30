@@ -64,11 +64,15 @@ The policy names its source-admission behavior so upgrades cannot silently widen
 | `conventional-v1`  | Known conventional source extensions enter the `code` domain       |
 | `explicit-only-v1` | Nothing enters code or document unless the caller assigns an owner |
 
-`conventional-v1` is the compatibility default, and today it is the only profile a shipped install runs: nothing in the configuration surface selects `explicit-only-v1`, which the indexer honours when a caller supplies a policy and no environment variable, flag, or config key sets one. The table describes the admission contract the fingerprint records, not a choice available at the command line. The selected profile, ordered routes,
-preprocessing targets and versions, ignores, decoder policy, and schema versions are
-fingerprinted independently for code and document generations. Invalid profiles,
-targetless legacy rules, unknown targets, or conflicting ownership fail before mutable
-index resources are opened.
+`conventional-v1` is the default, and it is the only profile a shipped install runs.
+No environment variable, flag, or config key selects `explicit-only-v1`. The indexer
+honours it only when a caller supplies a policy. The table describes the admission
+contract the fingerprint records, not a choice available at the command line.
+
+The fingerprint covers the selected profile, ordered routes, preprocessing targets and
+versions, ignores, decoder policy, and schema versions. Code and document generations are
+fingerprinted independently. Invalid profiles, targetless legacy rules, unknown targets,
+or conflicting ownership fail before mutable index resources are opened.
 
 Chunking runs in a spawn-based, CPU-only process pool because tree-sitter holds
 the GIL for both parse and traverse, so threads give no speedup - separate
@@ -105,10 +109,11 @@ and the reranker arrives on the first search that needs one, which is why that
 search can take several seconds longer than the ones after it.
 
 Once loaded they stay resident together and run their forward passes on that
-device.
-CPU is never a placement or fallback target. Each model that follows is paired with the reason its bounds and
-toggles are set the way they are; pure tuning numbers live in the
-[configuration knobs](#configuration-knobs) table.
+device. CPU is never a placement or fallback target.
+
+Each model below comes with the reason its bounds and toggles are set the way they
+are. Pure tuning numbers live in the [configuration knobs](#configuration-knobs)
+table.
 
 ### Dense encoder - `Qwen/Qwen3-Embedding-0.6B`
 
@@ -131,7 +136,7 @@ on a variable-length corpus and waste accelerator memory for no recall gain.
 If `flash_attn` is installed, the model loads it as `flash_attention_2` for
 faster attention; otherwise it falls back to standard attention with no loss of
 correctness, so the dependency stays optional. An experimental ONNX backend
-(`dense_backend=onnx`) exists for environments with a compatible onnxruntime
+(`VAULTSPEC_RAG_DENSE_BACKEND=onnx`) exists for environments with a compatible onnxruntime
 CUDA build, but it is opt-in and falls back to the torch implementation on any
 load failure. The torch implementation is the supported default on both CUDA
 and MPS; this model-backend fallback does not mean CPU inference.
@@ -152,7 +157,7 @@ model's native 512-token sequence length is left untouched - overriding it would
 mismatch the model's position embeddings, so the sparse path truncates
 internally instead.
 
-The sparse channel can be turned off (`sparse_enabled=false`). When it is off,
+The sparse channel can be turned off (`VAULTSPEC_RAG_SPARSE_ENABLED=false`). When it is off,
 hybrid search degrades to dense-only retrieval rather than failing, so a
 dense-only deployment is a supported configuration, not a broken one.
 
@@ -160,10 +165,10 @@ dense-only deployment is a supported configuration, not a broken one.
 
 The reranker is
 [`BAAI/bge-reranker-v2-m3`](https://huggingface.co/BAAI/bge-reranker-v2-m3),
-loaded with a sigmoid activation so its scores lie in `[0, 1]` and read as
+loaded in fp16 with a sigmoid activation, so its scores lie in `[0, 1]` and read as
 calibrated relevance rather than raw logits. It loads lazily on first use and is
-shared across all searcher instances, because a second copy would duplicate
-roughly 560 MB of accelerator allocation for no benefit.
+shared across all searcher instances, because a second copy would duplicate the
+model's accelerator allocation for no benefit.
 
 The reranker scores the full candidate content, bounded by the model's own
 tokenizer at the 1024-token `VAULTSPEC_RAG_RERANKER_MAX_LENGTH`, never a fixed-width display
@@ -173,8 +178,8 @@ a candidate's opening characters. The reranker reads `(query, content)` pairs in
 batches of 32; on a backend-classified out-of-memory error it halves the batch
 and retries down to a minimum of 1, so a momentary memory spike degrades
 throughput instead of aborting the search. Reranking can be turned off
-(`reranker_enabled=false`), in which
-case results are returned in fusion order.
+(`VAULTSPEC_RAG_RERANKER_ENABLED=false`), in which case results are returned in
+fusion order.
 
 ## Vector store
 
@@ -188,20 +193,35 @@ Each point carries both a `dense` named vector (cosine similarity) and a
 `sparse` named vector (dot product). Payload indexes - per-field indexes Qdrant
 uses to filter without scanning every point - back the common filters: `doc_type`,
 `feature`, `date`, and `tags` on vault documents; `path`, `language`,
-`function_name`, `class_name`, and `node_type` on code chunks. A filtered search
+`function_name`, `class_name`, `node_type`, and `domain` on code chunks. A filtered search
 hits the index instead of reading the whole collection.
 
 ### Hybrid search with fusion
 
 Every search issues two Qdrant `Prefetch` sub-queries - one against the `dense`
-vector and one against the `sparse` vector. Each retrieves four times the
-requested limit so the fusion step has enough material to work with. Metadata
+vector and one against the `sparse` vector. The searcher asks the store for a
+candidate window: `max(top_k * 4, 20)` results when the reranker is on, and
+`top_k * 2` when it is off. Each prefetch retrieves four times that window so the
+fusion step has enough material to work with. Metadata
 filters are applied to each prefetch individually, because a filter set only at
 the top level would not constrain the sub-queries. The top-level query merges
 the two channels with `RrfQuery(Rrf(k=60))`, the reciprocal rank fusion blend.
-The sparse vector is sometimes absent - sparse disabled, or a document that
+The sparse vector is sometimes absent - sparse disabled, or a query that
 produced a zero-weight sparse vector. In that case the query falls back to
-dense-only retrieval automatically.
+dense-only retrieval automatically. It also falls back to dense-only if the hybrid
+query itself errors, and logs a warning.
+
+Vault searches then post-process the reranked candidates in order:
+
+- Chunks group per document, so a document appears once.
+- Graph reranking adds small tie-breaking nudges for documents that many others link to
+  and for neighbors that share the `feature` filter's tag.
+- The intent prior weights each result by document type and status. It caps any one
+  document type at 4 results (`VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`; `0` turns the cap
+  off).
+- A `status:` query marker filters by document status.
+- Passage selection picks the answer-sized passage to show from each result's
+  best-ranked chunks.
 
 ### Backends and store-layer locking
 
@@ -248,7 +268,8 @@ a miss: a changed line, an absent donor, a failed gate. A miss encodes exactly a
 it would have without reuse, so a run produces the same index either way.
 
 Reuse is on by default and can be turned off end to end. Set
-`VAULTSPEC_RAG_INDEX_REUSE` to `0`, `false`, or `no`, and every chunk encodes as before.
+`VAULTSPEC_RAG_INDEX_REUSE` to `0`, `false`, `no`, or `off`, and every chunk encodes as before.
+Boolean settings accept `1`/`0`, `true`/`false`, `yes`/`no`, and `on`/`off`, in any letter case. Any other word is rejected.
 Through a config source the same switch is `index_reuse_enabled`, which is the one place
 on this page where the two names do not line up by stripping the prefix - the
 [configuration reference](configuration.md) lists these settings by environment
@@ -323,4 +344,4 @@ If accelerator memory is tight or indexing is slow, see
 If indexing or retrieval behaves unexpectedly, the
 [backends guide](backends.md) covers backend selection and the managed server,
 and the [configuration reference](configuration.md) lists every knob. For more
-help, see [support and help](../README.md#status-and-help).
+help, see [support and license](../README.md#support-and-license).

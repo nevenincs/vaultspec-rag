@@ -2,13 +2,15 @@
 
 Pass `--json` to get machine-readable output instead of a formatted table. The
 flag suppresses console formatting and writes exactly one JSON document to
-stdout, newline-terminated. Log lines at INFO, WARNING, and ERROR still go to
-stderr or the service log, so add `2>/dev/null` when you want stdout alone.
+stdout, newline-terminated. Log lines still go to stderr or the service log.
+The default level is WARNING, so INFO lines appear only with `-v`. Add
+`2>/dev/null` when you want stdout alone.
 
 Every command accepts `--json` except `server warmup`.
 
-Read `ok`, `error`, and the process exit code, plus any per-item results required
-by the [command reference](cli.md).
+Read `ok`, `error`, and the process exit code, plus any per-item results the
+command returns. The [command reference](cli.md) lists each command's options.
+This page lists the [exit codes](#exit-codes-and-error-strings).
 
 Examples use the installed-tool form and call `vaultspec-rag` directly. If
 vaultspec-rag is a project dependency, prefix each command with `uv run`; see
@@ -22,8 +24,9 @@ You need vaultspec-rag installed and a project indexed. See
 [Getting started](getting-started.md) for indexing your first project.
 
 `search` and `index` talk to the running service. With `--port` unset, they
-read the port from the discovery record the daemon publishes at
-`~/.vaultspec-rag/service.json`; pass `--port N` to target a specific service.
+read the port from the discovery record (see
+[Service discovery](service-discovery.md)); pass `--port N` to target a specific
+service.
 An unreachable service returns the `port_unreachable` error rather than
 silently running the work in-process. Start the service with
 `vaultspec-rag server start`. See [Service mode](service-mode.md) for the full
@@ -32,9 +35,13 @@ resolves.
 
 ## The envelope shape
 
-Every `--json` response is one JSON object with `ok` and `command`. Success
-includes `data`; failure includes `error` and `message` and may retain partial
-results in `data`. Error envelopes may also carry `port` or a `remediation` array.
+Every `--json` response is one JSON object with `ok` and `command`, except
+`install` and `uninstall`. Those two print the shared vaultspec envelope
+(`schema`, `status`, `data`); see
+[machine-readable output](installation.md#machine-readable-output). For every
+other command, success includes `data`; failure includes `error` and `message`
+and may retain partial results in `data`. Error envelopes may also carry `port`
+or a `remediation` array.
 
 `command` is an identifier for the operation rather than the command path you
 typed, and it is not always the subcommand's name: `search` reports `search`,
@@ -76,8 +83,7 @@ service separately. `index_state` describes the index the query actually ran
 against: `indexed_count`, the root it was built from, and `target_matches`,
 which is false when the index belongs to a different tree than the one you
 asked about. `search_type`, `query` and `summary` echo the request, and
-`timing` breaks the run into phases. Measured on one run against this project's
-vault: `via` was `service`, `indexed_count` 5140, `target_matches` true.
+`timing` breaks the run into phases.
 
 Error. The capture below was taken against a service on port 8799, which is
 not the default: an unreachable service on a stock install reports 8766.
@@ -167,10 +173,11 @@ esac
 
 `port_unreachable` is retryable and exits `1`. For `search` you can also pass
 `--allow-fallback` to run in-process against the on-disk store under
-`.vault/data/`. `index` has no such flag: local indexing needs an exclusive
-lease the service cannot hand out while it is down, so an unreachable service
-is a hard failure there. Its `remediation` array reflects that, listing only
-`server status` and `server start`.
+`.vault/data/`. `index` has no `--allow-fallback` flag: an unreachable service
+is a hard failure there, and its `remediation` array lists only `server status`
+and `server start`. To index locally on purpose, use `index --borrow-gpu`. It
+takes a borrower lease, pauses a compatible running service, and runs the work
+in this process.
 
 ## Indexing returns when the job is admitted, not when it finishes
 
@@ -181,7 +188,7 @@ admitted. It does not mean anything has been indexed:
 ```json
 {
   "ok": true,
-  "command": "indexing",
+  "command": "index",
   "data": {
     "via": "service",
     "source": "combined",
@@ -196,7 +203,8 @@ the job later fails.
 
 To watch the work itself, poll `vaultspec-rag server jobs --json` and read
 `data.jobs[]`, where each job carries `id`, `state`, and a `progress` object
-with `step`, `completed`, and `total`. To check the result instead, read the
+with `step`, `completed`, and `total`. `progress` can be `null`, for example
+before a job starts. To check the result instead, read the
 index counts with `status`, as
 [the CI example](#worked-example-gate-ci-on-index-health) does.
 
@@ -231,7 +239,8 @@ fi
 `installation` (role, hardware and compute capability), the project's
 `features`, and storage details. Gate on whichever domain your project
 populates. A repository with no preprocessing hooks configured has
-`document_count` at `0` legitimately. The compute capability is a stable token
+`document_count` at `0` legitimately, and `document_count` can be `null` when
+the count is unavailable, so test for `null` before you compare it. The compute capability is a stable token
 such as `ready`, `cpu_only_build` or `not_applicable`, so a script can tell a
 broken GPU environment from a client that needs none.
 
@@ -255,9 +264,9 @@ patch nobody was there to approve. A failed install exits `1` like any other
 failure. See [installation](installation.md#machine-readable-output).
 
 Code `5` is retryable; wait and re-run. The `error` field carries a code such
-as `port_unreachable`, `local_store_locked`, or `stopped`. The
-[CLI reference](cli.md) lists the exit codes and error strings each command can
-return.
+as `port_unreachable`, `local_store_locked`, or `stopped`. The table above is
+the list of exit codes. The [CLI reference](cli.md) lists each command's
+options.
 
 ## Automatic re-indexing
 
@@ -273,8 +282,8 @@ variables.
 
 - [Getting started](getting-started.md) walks through indexing a project and running a first search.
 - [Service mode](service-mode.md) covers running the background service and its watcher.
-- [CLI reference](cli.md) lists every command's flags, exit codes, and error strings.
+- [CLI reference](cli.md) lists every command and its flags.
 - [Configuration](configuration.md) covers the environment variables and tuning knobs.
 
-For anything else, see [Status and help](../README.md#status-and-help) in the
+For anything else, see [Support and license](../README.md#support-and-license) in the
 repo README.

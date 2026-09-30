@@ -2,8 +2,6 @@
 
 This page lists every `VAULTSPEC_RAG_*` environment variable vaultspec-rag declares. It gives the matching command-line interface (CLI) flag where one exists, and the rules for parsing values.
 
-A test in the suite checks every variable name, type, and default on this page against the shipped settings object. Adding, renaming, or re-defaulting a knob fails that test until this page is updated.
-
 Examples use the installed-tool form and call `vaultspec-rag` directly. If
 vaultspec-rag is a project dependency, prefix each command with `uv run`; see
 the [installation guide](installation.md) for lane selection, including the
@@ -31,8 +29,8 @@ Three settings chain the session-environment rung to a shared framework name rea
 
 | This package's variable          | Falls back to (framework-wide) |
 | --------------------------------- | ------------------------------- |
-| `VAULTSPEC_RAG_ROOT`               | `VAULTSPEC_TARGET_DIR`          |
-| `VAULTSPEC_RAG_LOG_LEVEL`          | `VAULTSPEC_LOG_LEVEL`           |
+| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it; see the notes below the table | `--target`        |
+| `VAULTSPEC_RAG_LOG_LEVEL`      | string  | `WARNING`         | Root logger level for the CLI, the stdio MCP server, and the resident daemon. Resolves over its own ladder; see the notes below the table | `--verbose` (INFO), `--debug` (DEBUG) |
 | `VAULTSPEC_RAG_STDIO_WATCHDOG`     | `VAULTSPEC_STDIO_WATCHDOG`      |
 
 No other variable on this page reads a shared framework name; every other row resolves against its own scoped name alone.
@@ -69,7 +67,13 @@ The booleans among them accept the same spellings as every other boolean. They d
 | `VAULTSPEC_RAG_LOG_LEVEL`      | string  | `WARNING`         | Root logger level, honoured by the CLI, the stdio MCP server, and the resident daemon alike. It resolves over the logging ladder rather than the generic chain, so every process reads one validated answer: `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default - `WARNING` for the CLI and the stdio server, `INFO` for the daemon, whose output is a managed log nobody is watching live. A name no level spells is refused rather than degraded; an invocation-supplied level still outranks the whole ladder | `--verbose` (INFO), `--debug` (DEBUG) |
 | `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and blank leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
 | `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so both root variables are stripped from its environment at spawn | `--target`        |
-| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. A credential, not a setting: read from the executing server's own process environment first, never a CLI flag; a workspace-root `.env` supplies it only under the credential gate described above, and the resident service is handed the resolved value through its own environment rather than reading a file itself; whitespace-only means unset. Setting a valid, funded key authorizes sending queries and candidate content to Typesafe. Absent or unusable keys retain legacy search. Authentication or payment rejection disables calls for that key until rotation or server restart; transient failures fall back with a cooldown. | - |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. A credential, never a CLI flag; see [Typesafe enrollment](#typesafe-enrollment) | - |
+
+**Log level.** The CLI, the stdio server, and the daemon all read one validated answer. The order is `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default. That default is `WARNING` for the CLI and the stdio server, and `INFO` for the daemon, whose output is a managed log nobody watches live. A level flag on the command line outranks the whole ladder. A name no level spells is refused, not degraded.
+
+**Root.** `--target` outranks `VAULTSPEC_RAG_ROOT` on the CLI, and a tool call's own `project_root` outranks it over MCP. Below it sit the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value that names a directory that is not an enrolled workspace fails the run and names the variable. The resident HTTP service serves every root at once, so both root variables are stripped from its environment at spawn.
+
+**Typesafe key.** The server reads the key from its own process environment and never from a CLI flag. A workspace-root `.env` supplies it only under the credential gate in [Resolution order](#resolution-order). The resident service is handed the resolved value through its own environment and reads no file itself. Whitespace-only means unset. A valid, funded key authorizes sending queries and candidate content to Typesafe. An absent or unusable key keeps the legacy search. A rejected key (authentication or payment) disables calls for it until you rotate the key or restart the server. A transient failure falls back with a cooldown.
 
 ### Typesafe enrollment
 
@@ -407,6 +411,17 @@ vaultspec-rag downloads its dense, sparse, and reranker model files through the 
 | `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                                                                    |
 | `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                                                                       |
 
+Only the default sparse model, `naver/splade-v3`, is gated. It ships under the non-commercial licence CC-BY-NC-SA-4.0. The dense model `Qwen/Qwen3-Embedding-0.6B` and the reranker `BAAI/bge-reranker-v2-m3` are Apache-2.0 and need no login. To download the gated model, accept its licence on the model page with a Hugging Face account, then do one of these:
+
+- Run `uvx --from huggingface_hub hf auth login` (or `hf auth login` if `hf` is on your `PATH`) as the account that starts the service.
+- Set `HF_TOKEN` in the environment of the account that starts the service. `HF_TOKEN` wins over the saved login. A token alone is not enough until its account has accepted the licence.
+
+A workspace `.env` can supply `HF_TOKEN` only under the credential gate in [Resolution order](#resolution-order). A standalone tool or binary installation never reads it. Set the variable in your user environment instead.
+
+To skip the gated model and the login, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the service's environment. Search then runs on dense vectors only: no exact-term matching, and no hybrid fusion. The service still needs `[gpu]` and a supported GPU. Reindex afterwards so the stored vectors match.
+
+`HF_HOME` sets where model files are cached, and defaults to `~/.cache/huggingface`. Set it to a persistent location before the first download.
+
 `HF_HUB_OFFLINE` is the authoritative offline switch; vaultspec-rag also honours `TRANSFORMERS_OFFLINE`, and when either is set to `1`, `true`, `yes`, or `on` it loads every model cache-only. See the [Hugging Face environment variable reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables).
 
 Searches additionally quiet the Hub and Transformers loggers by defaulting `HF_HUB_DISABLE_PROGRESS_BARS`, `TRANSFORMERS_NO_ADVISORY_WARNINGS`, and `TRANSFORMERS_VERBOSITY` when they are unset. Set them yourself to keep the library output.
@@ -461,10 +476,10 @@ Bind the HTTP service to a non-default port:
 VAULTSPEC_RAG_PORT=9100 vaultspec-rag server start
 ```
 
-Run the on-disk store instead of the supervised server:
+Run the on-disk store instead of the supervised server. The default index profile accepts only the server backend, so select the `embedded-local` profile too:
 
 ```bash
-VAULTSPEC_RAG_LOCAL_ONLY=1 vaultspec-rag server start
+VAULTSPEC_RAG_LOCAL_ONLY=1 VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local vaultspec-rag server start
 ```
 
 Raise the log level to DEBUG for one command:
@@ -475,4 +490,4 @@ vaultspec-rag --debug search "billing flow"
 
 ## Where to go next
 
-See the [Support](../README.md#status-and-help) section of the repo README.
+See the [Support](../README.md#support-and-license) section of the repo README.

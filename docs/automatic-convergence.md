@@ -1,6 +1,6 @@
 # Automatic convergence reference
 
-Automatic convergence keeps code and vault indexes current after filesystem changes.
+Automatic convergence keeps the code, vault, and document indexes current after filesystem changes.
 The resident service owns collection, admission, retries, and publication.
 
 For service setup, see [Service mode](service-mode.md). For command-wide syntax, see
@@ -28,12 +28,12 @@ the same values without recalculating state, age, deadlines, or pressure.
 
 ## Controller identity and fields
 
-Each controller owns one canonical project root and one source: `code` or `vault`.
+Each controller owns one canonical project root and one source: `code`, `vault`, or `document`.
 
 | Field                     | Meaning                                                                            |
 | ------------------------- | ---------------------------------------------------------------------------------- |
 | `root`                    | Canonical absolute project root                                                    |
-| `source`                  | `code` or `vault`                                                                  |
+| `source`                  | `code`, `vault`, or `document`                                                     |
 | `state`                   | Current state from the state table                                                 |
 | `reason`                  | Stable reason code from the reason table                                           |
 | `pending_count`           | Changed paths waiting outside the captured batch                                   |
@@ -120,6 +120,10 @@ Set keys in configuration or use the matching `VAULTSPEC_RAG_` environment varia
 | `watch_batch_path_limit`                 | `VAULTSPEC_RAG_WATCH_BATCH_PATH_LIMIT`                 |   `10000` | Integer, greater than `0` |
 | `watch_scope_max_paths`                  | `VAULTSPEC_RAG_WATCH_SCOPE_MAX_PATHS`                  |  `100000` | Integer, greater than `0` |
 | `watch_scope_max_bytes`                  | `VAULTSPEC_RAG_WATCH_SCOPE_MAX_BYTES`                  | `8388608` | Integer, greater than `0` |
+| `watch_retry_base_seconds`               | `VAULTSPEC_RAG_WATCH_RETRY_BASE_SECONDS`               |    `30.0` | Number, greater than `0`  |
+| `watch_retry_max_seconds`                | `VAULTSPEC_RAG_WATCH_RETRY_MAX_SECONDS`                |  `1800.0` | Number, greater than `0`  |
+| `watch_retry_jitter_fraction`            | `VAULTSPEC_RAG_WATCH_RETRY_JITTER_FRACTION`            |     `0.1` | Number, `0` through `1`   |
+| `watch_circuit_failure_threshold`        | `VAULTSPEC_RAG_WATCH_CIRCUIT_FAILURE_THRESHOLD`        |       `3` | Integer, greater than `0` |
 
 The complete policy must satisfy these relations:
 
@@ -127,6 +131,12 @@ The complete policy must satisfy these relations:
 - `watch_maximum_freshness_seconds` is at least the coalescing maximum, cooling
   maximum, and measurement reevaluation interval
 - `watch_batch_path_limit <= watch_scope_max_paths`
+
+The retry keys shape the `retrying` state. A failed attempt waits an exponentially
+growing delay that starts at `watch_retry_base_seconds` and stops growing at
+`watch_retry_max_seconds`. Jitter shifts each delay by up to `watch_retry_jitter_fraction`
+of its length, in either direction. After `watch_circuit_failure_threshold` consecutive
+failures the circuit opens and automatic attempts stop (`circuit_open`).
 
 Invalid relationships fail configuration loading with a `ValueError` that names the
 conflicting keys and values.
@@ -181,7 +191,7 @@ default is `Inspect the refusal reason and request an explicit rebuild.`
 
 ```bash
 vaultspec-rag server updates status --state refused
-vaultspec-rag server updates status --source code --limit 20 --json
+vaultspec-rag server updates status --source document --limit 20 --json
 vaultspec-rag server jobs --started-by automatic
 vaultspec-rag server logs --limit 200
 ```

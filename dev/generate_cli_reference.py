@@ -92,6 +92,8 @@ def _type_name(param: Any) -> str:
 def _parameter_rows(command: Any, *, options: bool) -> list[str]:
     rows: list[str] = []
     for param in command.params:
+        if getattr(param, "hidden", False):
+            continue
         opts = [*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ())]
         is_option = getattr(param, "param_type_name", "") != "argument"
         if is_option != options:
@@ -136,7 +138,7 @@ def _command_tree(commands: list[tuple[tuple[str, ...], Any]]) -> list[str]:
                     f"{indent}- [{path[-1]}](#{label.replace(' ', '-').lower()})"
                 )
             else:
-                lines.append(f"{indent}- **{path[-1]}**")
+                lines.append(f"{indent}- **{path[depth]}**")
         previous = path
     return lines
 

@@ -28,12 +28,12 @@ If none of these checks reports a problem, [check index status](#check-index-sta
 ## Check index status
 
 ```bash
-vaultspec-rag status
+vaultspec-rag status --verbose
 ```
 
 Counts describe stored sections, not source files, and don't prove the index is current.
 
-Under `Index generations`, each domain shows its latest recorded indexing job
+Add `--verbose` to see the `Index generations` section. Under it, each domain shows its latest recorded indexing job
 for this project. `not indexed yet` means no matching job was found in the
 retained history; it doesn't establish that the store is empty. `succeeded`
 records that job's success, not whether the index matches your current files.
