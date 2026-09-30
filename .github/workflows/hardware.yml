@@ -3,8 +3,8 @@ name: RAG Hardware Tiers
 # THE ONE DEFINITION OF THE ACCELERATOR TIERS: Apple silicon (MPS) and CUDA.
 #
 # Two callers, one job each, so the jobs cannot drift apart:
-# - `publish.yml` requires both tiers to pass on the exact release commit
-#   before a release is published.
+# - The release cut in `release-please.yml` requires both tiers to pass on
+#   the exact head it merges, before the release commit is tagged.
 # - `ci.yml` runs them on schedule and on dispatch against the commit it was
 #   started for, and adds the advisory macOS full suite.
 #
@@ -15,7 +15,7 @@ name: RAG Hardware Tiers
 # step would block every release without measuring anything.
 #
 # Neither tier is reachable from a pull request: both callers start it only
-# from a tag, a schedule or a dispatch, all of which require write access.
+# from a schedule or a dispatch, both of which require write access.
 on:
   workflow_call:
     inputs:
@@ -203,12 +203,41 @@ jobs:
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
           # Another installation of the product may hold the default service
-          # port. The coordinator and the stop step find this daemon through
-          # its status file, so it binds whatever loopback port is free.
-          $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-          $probe.Start()
-          $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
-          $probe.Stop()
+          # and Qdrant ports. The coordinator and the stop step find this daemon
+          # through its status file, so it binds whatever loopback ports are
+          # free. Qdrant listens for gRPC one port below its HTTP port, so a
+          # free gRPC port is reserved first and the port above it is claimed
+          # for HTTP. Windows hands out ephemeral ports in sequence, so the
+          # port below a fresh probe is usually one already held here, while
+          # the port above it is usually free. Every probe stays bound until
+          # all three ports are read, so none of them is handed out twice.
+          $held = [System.Collections.Generic.List[System.Net.Sockets.TcpListener]]::new()
+          try {
+            $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+            $probe.Start()
+            $held.Add($probe)
+            $qdrantPort = $null
+            for ($attempt = 0; $attempt -lt 20 -and -not $qdrantPort; $attempt++) {
+              $grpc = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+              $grpc.Start()
+              $held.Add($grpc)
+              $candidate = $grpc.LocalEndpoint.Port + 1
+              $http = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidate)
+              try {
+                $http.Start()
+                $held.Add($http)
+                $qdrantPort = $candidate
+              } catch [System.Net.Sockets.SocketException] {
+                # The port above is taken; the held gRPC probe makes the next
+                # draw a different port.
+              }
+            }
+            if (-not $qdrantPort) { throw 'no free loopback port pair for Qdrant HTTP and gRPC' }
+            $env:VAULTSPEC_RAG_PORT = "$($probe.LocalEndpoint.Port)"
+            $env:VAULTSPEC_RAG_QDRANT_PORT = "$qdrantPort"
+          } finally {
+            foreach ($listener in $held) { $listener.Stop() }
+          }
           uv run --no-sync vaultspec-rag server start --json
           $startExit = $LASTEXITCODE
           # A dead daemon says only `start_died` on stdout; the reason is in its

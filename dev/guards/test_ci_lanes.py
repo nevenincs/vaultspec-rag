@@ -1,8 +1,10 @@
 """One automatic pull-request workflow owns merge readiness.
 
-Draft state selects cheap feedback; ready state selects every merge gate. A
-release dispatch reaches the same workflow, so the required context has one
-implementation for contributor and bot-authored branches.
+A draft runs nothing. Opening or readying a pull request runs every merge
+gate; a push to it runs the light lint; the commit that lands on main runs
+every gate again. A release dispatch reaches the same workflow, so the
+required context has one implementation for contributor and bot-authored
+branches.
 """
 
 from __future__ import annotations
@@ -23,9 +25,11 @@ PULL_REQUEST_TYPES = [
     "ready_for_review",
     "labeled",
 ]
-FULL_JOBS = frozenset({"tests", "tests-windows", "dependency-audit"})
+FULL_JOBS = frozenset({"lint", "tests", "tests-windows", "dependency-audit"})
+LIGHT_JOBS = frozenset({"lint-light"})
 GATE_RECIPES = {
     "check-all": frozenset({"linux"}),
+    "check-light": frozenset({"linux"}),
     "test-python": frozenset({"linux", "windows"}),
     "audit-deps": frozenset({"linux"}),
 }
@@ -68,10 +72,19 @@ def test_pull_request_heads_start_the_gate_automatically() -> None:
     )
 
 
-def test_the_gate_is_reusable_and_never_runs_on_push() -> None:
-    """Release automation can call the gate while main does not rerun it."""
+def test_the_gate_is_reusable_and_measures_every_main_commit() -> None:
+    """Release automation can call the gate, and every commit on main runs it.
+
+    A pull-request push is proven by the light lint only, so the commit that
+    lands is what the full gate measures; Release Please waits on that run.
+
+    Mutation proof: dropping the ``push`` trigger makes this fail on the
+    missing main push; restoring it makes this pass.
+    """
     triggers = _triggers()
-    assert "push" not in triggers
+    push = triggers.get("push")
+    assert isinstance(push, dict), f"{Workflow.MERGE_GATE} does not run on push"
+    assert cast("dict[object, object]", push).get("branches") == ["main"]
     assert "workflow_call" in triggers
     assert "workflow_dispatch" in triggers
 
@@ -79,27 +92,61 @@ def test_the_gate_is_reusable_and_never_runs_on_push() -> None:
 #: The repository the pull requests below are opened against.
 _HOME = "owner/repo"
 
-#: ``(label, event, pull request payload, jobs that must run)``. Every other
-#: measuring job must skip.
+#: ``(label, event, payload, jobs that must run)``. Every other measuring job
+#: must skip. ``scope`` is a dispatch's choice input; a call carries none.
 _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
-    ("push to a branch", "workflow_dispatch", {}, frozenset({"lint"}) | FULL_JOBS),
+    ("push to main", "push", {}, FULL_JOBS),
+    ("dispatch", "workflow_dispatch", {"scope": "full"}, FULL_JOBS),
+    ("dispatch without a scope", "workflow_dispatch", {"scope": None}, FULL_JOBS),
+    ("light dispatch", "workflow_dispatch", {"scope": "light"}, LIGHT_JOBS),
+    ("weekly schedule", "schedule", {}, frozenset({"dependency-audit"})),
     (
-        "ready pull request",
+        "ready pull request opened",
         "pull_request",
         {"action": "opened", "draft": False, "head": _HOME},
-        frozenset({"lint"}) | FULL_JOBS,
+        FULL_JOBS,
     ),
     (
-        "draft pull request",
+        "ready pull request reopened",
+        "pull_request",
+        {"action": "reopened", "draft": False, "head": _HOME},
+        FULL_JOBS,
+    ),
+    (
+        "draft marked ready",
+        "pull_request",
+        {"action": "ready_for_review", "draft": False, "head": _HOME},
+        FULL_JOBS,
+    ),
+    (
+        "push to a ready pull request",
+        "pull_request",
+        {"action": "synchronize", "draft": False, "head": _HOME},
+        LIGHT_JOBS,
+    ),
+    (
+        "draft opened",
+        "pull_request",
+        {"action": "opened", "draft": True, "head": _HOME},
+        frozenset(),
+    ),
+    (
+        "push to a draft",
         "pull_request",
         {"action": "synchronize", "draft": True, "head": _HOME},
-        frozenset({"lint"}),
+        frozenset(),
     ),
     (
         "draft pressed ci:full",
         "pull_request",
         {"action": "labeled", "label": "ci:full", "draft": True, "head": _HOME},
-        frozenset({"lint"}) | FULL_JOBS,
+        FULL_JOBS,
+    ),
+    (
+        "ready pressed ci:full",
+        "pull_request",
+        {"action": "labeled", "label": "ci:full", "draft": False, "head": _HOME},
+        FULL_JOBS,
     ),
     (
         "unrelated label",
@@ -113,6 +160,12 @@ _SCENARIOS: tuple[tuple[str, str, dict[str, object], frozenset[str]], ...] = (
         {"action": "opened", "draft": False, "head": "stranger/repo"},
         frozenset(),
     ),
+    (
+        "push to a fork's pull request",
+        "pull_request",
+        {"action": "synchronize", "draft": False, "head": "stranger/repo"},
+        frozenset(),
+    ),
 )
 
 
@@ -124,6 +177,7 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
         "github.event.label.name": payload.get("label", ""),
         "github.event.pull_request.draft": payload.get("draft", False),
         "github.event.pull_request.head.repo.full_name": payload.get("head", ""),
+        "inputs.scope": payload.get("scope"),
     }
 
 
@@ -135,12 +189,13 @@ def _bindings(payload: dict[str, object]) -> dict[str, object]:
 def test_pull_request_state_selects_the_cost_tier(
     event: str, payload: dict[str, object], expected: frozenset[str]
 ) -> None:
-    """Drafts run lint, ready pull requests and ``ci:full`` run everything,
-    and a fork or an unrelated label starts nothing.
+    """Drafts run nothing, opening or readying runs everything, a push runs
+    the light lint, and a fork or an unrelated label starts nothing.
 
     Mutation proof: replacing the ``tests`` job's draft comparison with
-    ``true`` made the draft case fail naming ``tests``; restoring it made
-    every case pass.
+    ``true`` made the draft cases fail naming ``tests``; adding
+    ``synchronize`` to the full lanes' actions made the push case fail naming
+    every full job; restoring each made every case pass.
     """
     running = {
         job_id
@@ -152,20 +207,42 @@ def test_pull_request_state_selects_the_cost_tier(
     assert running == expected, f"runs {sorted(running)}, expected {sorted(expected)}"
 
 
-def test_the_gate_always_runs_and_needs_every_measuring_job() -> None:
-    """The required check cannot skip a failure from a measuring job."""
+def test_the_gate_needs_every_measuring_job_and_skips_only_a_draft() -> None:
+    """The required check cannot skip a failure, and skips nothing but a draft.
+
+    A skipped required check counts as passed. A draft cannot merge, so its
+    skip is harmless; on any other occasion a skip would pass a commit nothing
+    measured, so the gate must run there - including after a cancellation,
+    which is what ``always()`` buys.
+
+    Mutation proof: deleting the draft clause made the draft cases fail as
+    reachable; replacing ``always()`` with ``success()`` failed the prefix
+    check; restoring each made this pass.
+    """
     jobs = _jobs()
     gate = jobs.get(GATE_JOB)
     assert isinstance(gate, dict)
     raw = cast("dict[object, object]", gate)
     assert raw.get("name") == GATE_CHECK
-    assert raw.get("if") == "always()"
     needs = raw.get("needs")
     needed = set(cast("list[str]", needs)) if isinstance(needs, list) else set()
     measuring = {str(job_id) for job_id in jobs} - {GATE_JOB}
     assert needed == measuring, (
         f"the gate needs {sorted(needed)}, but measuring jobs are {sorted(measuring)}"
     )
+    condition = " ".join(str(raw.get("if") or "").split())
+    assert condition.startswith("always() &&"), (
+        f"the gate runs under {condition!r}; a cancelled run must still reach it"
+    )
+    findings: list[str] = []
+    for label, event, payload, _expected in _SCENARIOS:
+        verdict = workflows.evaluate(condition, event, _bindings(payload))
+        skips = payload.get("draft") is True and payload.get("label") != "ci:full"
+        if skips and verdict is not workflows.FALSE:
+            findings.append(f"{label}: the gate runs on a draft ({verdict})")
+        if not skips and verdict is workflows.FALSE:
+            findings.append(f"{label}: the gate skips, which passes the commit")
+    assert not findings, "\n".join(findings)
 
 
 def test_the_gate_runs_every_check_on_every_platform() -> None:

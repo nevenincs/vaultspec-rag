@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#automatic-merge-gate'
 date: '2026-09-21'
-modified: '2026-09-29'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:d62f2fca3560681d4727ff2fa79cc4c0414eae6b883de42fa03867d34d7e20bd'
+body_hash: 'sha256:53f860d056735df90be4e3a18c90c03d60160fa729965137b5d257f1182098e5'
 related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
   - '[[2026-09-29-release-pr-identity-research]]'
@@ -59,19 +59,27 @@ and release progress currently depend on manual repository bookkeeping.
 ## Implementation
 
 Make the merge gate the automatic pull-request CI owner. Trigger it for open,
-reopen, synchronize, ready-for-review, and label events. Run lint on ordinary
-same-repository PR events; run every full measuring job when the pull request
-is ready, when `ci:full` optionally requests proof of a draft, or when another
-workflow calls or dispatches the gate. The aggregate job succeeds only when
-all required measurements passed for the current commit, including a prior
-full proof on the same SHA for partial events.
+reopen, synchronize, ready-for-review, and label events, and for every push to
+main. A draft runs nothing and its aggregate job skips; a draft cannot merge,
+and marking it ready runs the full gate on the same head. Opening, reopening,
+or readying a same-repository pull request runs every full measuring job, as
+does `ci:full`. A push to a ready pull request runs the light lint
+(`just check-light`: ruff, TOML, markdown, workflow, absolute-import, nesting,
+and docs-version dimensions) and the aggregate passes on it. A push to main
+runs every full measuring job on the landed commit. The weekly schedule runs
+the dependency audit alone. A dispatch runs the full gate unless it passes
+`scope: light`; a workflow call runs the full gate.
 
-Give the reusable workflow a ref input and check out that ref in every
-measuring job. After release-please finishes all mutations of its release
-branch, dispatch the merge gate with that branch as both workflow ref and
-validation input. Preserve the existing lightweight CI workflow only for
-non-gating accelerator schedules and manual hardware diagnostics. The exact
-pattern is grounded by `2026-09-21-automatic-merge-gate-reference`.
+Release Please runs from the merge gate's successful push run on main, with
+`always-update` so its branch is rebuilt on main's newest green head, and with
+releases skipped. After its lock refresh it dispatches the merge gate on the
+release branch with `scope: light`. A release is cut only by dispatching
+`.github/workflows/release-please.yml`: it proves the proposal head with the
+full merge gate and both accelerator tiers through workflow calls,
+squash-merges it with the default token, confirms the merged tree equals the
+proven tree, has Release Please tag and release that commit, holds the
+release as a prerelease, and dispatches Publish. A proposal merged by hand is
+proven and tagged by the same dispatch.
 
 ## Rationale
 
@@ -84,12 +92,23 @@ demonstrated by `2026-09-21-automatic-merge-gate-reference`.
 
 ## Consequences
 
-- Every ready pull request receives a real required verdict after each push.
-- Release PRs validate their final generated commit automatically.
-- Drafts receive lint feedback without consuming both full-suite runners.
-- `ci:full` remains available for an exceptional draft proof but is no longer
-  required for merging.
-- Full suites will run more often than under a manual gate, increasing runner
-  use in exchange for a reliable production merge boundary.
+- Drafts consume no runner.
+- A pull request pays for the full gate once when it opens or becomes ready;
+  later pushes pay only for the light lint.
+- Every commit on main receives the full gate after it lands. A regression can
+  reach main, but Release Please does not refresh the proposal from a red main,
+  and the cut proves the release head in full before it merges.
+- Releases accumulate and are cut only on an explicit dispatch; merging the
+  release pull request by hand does not publish anything.
+- The release branch is proven by the light lint on each refresh, so the full
+  suites run once per main commit rather than again per proposal refresh.
+- `ci:full` remains available to prove any head on demand.
 - Fork pull requests remain explicitly refused until an isolated execution
   design is adopted.
+
+Amended 2026-09-30 on the maintainer's instruction: drafts run no checks, a
+push to a ready pull request runs the light lint only, the full gate runs on
+opening and again post-merge on main, Release Please proposes only after a
+green main, and releases are cut by manual dispatch while pull requests
+accumulate. This replaces the earlier rule that ready means fully proven on
+every push and that drafts receive lint feedback.

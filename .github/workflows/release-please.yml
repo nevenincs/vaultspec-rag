@@ -1,33 +1,60 @@
 name: RAG Release Please
 
+# THE PROPOSAL KEEPS UP; THE RELEASE WAITS TO BE ASKED FOR.
+#
+# - PROPOSAL. Every commit that lands on main and passes the merge gate
+#   refreshes the release pull request. `always-update` in the config rebuilds
+#   its branch on main's newest head every time, so merged changes accumulate
+#   into one proposal that is never behind main. This path never creates a
+#   release, a tag or a publication, and merging the proposal by hand does not
+#   release it either.
+# - CUT. A maintainer dispatches this workflow when a release is wanted. It
+#   proves the proposal's head with the full merge gate and both accelerator
+#   tiers, squash-merges it, and has Release Please tag that commit and create
+#   its GitHub release seconds later, then starts Publish.
+#
+# The proof comes before the merge because the release tag ruleset forbids
+# deleting a tag: a release commit that fails the accelerator tiers after its
+# tag exists stays a permanent public tag of a commit nobody can ship.
+#
+# The tag follows the merge with nothing in between because the default token
+# cannot create a tag on a commit whose `.github/workflows` differ from main's
+# head. A workflow change that lands between a merge and its tag leaves the
+# release untaggable, which is how 0.5.3 stalled.
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: [RAG Merge Gate]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # The commit is in the group, and only on main. `cancel-in-progress: false`
-  # governs runs that have STARTED; GitHub separately cancels a previously
-  # PENDING run in the same group with no switch to stop it, so a queued main
-  # run can be cancelled by the next push. Without the commit here, a burst of
-  # merges leaves only
-  # the last one with a release proposal - and the ones it cancelled report
-  # `cancelled`, not `failed`, so nothing raises an alarm.
-  group: release-please-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # One group per path. A proposal refresh still waiting for a runner is
+  # superseded by the next green main: Release Please reads main's head, so
+  # the newest refresh does the work of every one it replaces. A cut never
+  # waits behind a proposal, and a second cut queues behind the first.
+  group: release-please-${{ github.event_name }}
+  cancel-in-progress: false
 
 jobs:
   release-please:
     name: "Build: Release proposal (Linux)"
+    # Only a main commit the full gate passed: a pull request's run carries its
+    # own branch, and a scheduled run measures nothing that landed.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     timeout-minutes: 130
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 10
-    # Opens the release PR, pushes its lock refresh, edits the release and
-    # dispatches Publish: the only job here, and the only one that writes.
+    # Opens and rewrites the release pull request, pushes its lock refresh and
+    # dispatches its gate.
     permissions:
       contents: write
       pull-requests: write
@@ -39,6 +66,8 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          # Releases are cut on dispatch only.
+          skip-github-release: true
 
       # GITHUB_TOKEN never holds the `workflows` permission, and without it
       # GitHub refuses any tag or release that targets a commit whose workflow
@@ -80,19 +109,19 @@ jobs:
       # stale, and a stale lock fails `uv sync --locked` for anyone who checks
       # the release branch out. Each step is named for what it DOES.
       - name: Check out the release branch
-        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        if: steps.release.outputs.pr
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2  # zizmor: ignore[artipacked] -- the next step pushes the refreshed lock with it
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
 
       - name: Set up uv
-        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        if: steps.release.outputs.pr
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: false
 
       - name: Regenerate and push uv.lock
-        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        if: steps.release.outputs.pr
         run: |
           uv lock
           if git diff --quiet uv.lock; then
@@ -110,9 +139,11 @@ jobs:
 
       # Changes pushed with GITHUB_TOKEN do not start pull-request workflows.
       # Dispatch the one required gate after the lock refresh so its check run
-      # measures and attaches to the final release-branch head.
+      # attaches to the final release-branch head. The light scope suffices:
+      # the branch is main's newest green head plus the version bump, and the
+      # cut proves the head in full before it merges.
       - name: Dispatch the merge gate for the release pull request
-        if: steps.release.outputs.pr && !steps.release.outputs.release_created
+        if: steps.release.outputs.pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_BRANCH: ${{ steps.release.outputs.pr && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
@@ -125,39 +156,186 @@ jobs:
           gh workflow run merge-gate.yml \
             --repo "${GITHUB_REPOSITORY}" \
             --ref "${HEAD_BRANCH}" \
-            --field ref="${HEAD_BRANCH}"
+            --field ref="${HEAD_BRANCH}" \
+            --field scope=light
 
-      # Release Please creates the GitHub Release before either artifact
-      # workflow finishes. Hold that release out of `latest` until the binary
-      # workflow's complete-target gate has a chance to verify the public set.
-      # Publish dispatches Binaries only after its GitHub package publication
-      # succeeds, and PyPI follows Binaries' promotion, so any failure in that
-      # chain leaves the tag reachable as a prerelease instead of becoming a
-      # partial stable release.
-      - name: Hold the release out of latest until artifacts are complete
-        if: steps.release.outputs.release_created == 'true'
+  candidate:
+    name: "Check: Release candidate (Linux)"
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 130
+    runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      number: ${{ steps.find.outputs.number }}
+      sha: ${{ steps.find.outputs.sha }}
+      merged: ${{ steps.find.outputs.merged }}
+    steps:
+      # A proposal merged by hand and not yet tagged is finished first: Release
+      # Please opens no new proposal while one is pending, so it is the only
+      # candidate there can be.
+      - name: Find the release pull request and the commit to prove
+        id: find
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.release.outputs.tag_name }}
+          PENDING: "autorelease: pending"
         run: |
           set -euo pipefail
-          if [ -z "${TAG}" ]; then
-            echo "::error::release_created is true but tag_name output is empty; refusing to release an untagged build"
+          merged=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state merged \
+            --label "$PENDING" --json number,mergeCommit \
+            --jq '.[] | "\(.number) \(.mergeCommit.oid)"')
+          open=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state open \
+            --label "$PENDING" --json number,headRefOid \
+            --jq '.[] | "\(.number) \(.headRefOid)"')
+          if [ -n "${merged}" ]; then
+            [ "$(printf '%s\n' "${merged}" | wc -l)" -eq 1 ] || {
+              echo "::error::more than one merged release pull request awaits a tag: ${merged}"; exit 1;
+            }
+            read -r number sha <<<"${merged}"
+            state=true
+          elif [ -n "${open}" ]; then
+            [ "$(printf '%s\n' "${open}" | wc -l)" -eq 1 ] || {
+              echo "::error::more than one open release pull request: ${open}"; exit 1;
+            }
+            read -r number sha <<<"${open}"
+            state=false
+            behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...${sha}" --jq '.behind_by')
+            if [ "${behind}" != "0" ]; then
+              echo "::error::release pull request #${number} is ${behind} commit(s) behind main. Release Please rebuilds it once main's merge gate passes; dispatch again after that."
+              exit 1
+            fi
+          else
+            echo "::error::there is no release pull request to cut"
+            exit 1
+          fi
+          if ! [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::release pull request #${number} resolved to no commit"
+            exit 1
+          fi
+          {
+            echo "number=${number}"
+            echo "sha=${sha}"
+            echo "merged=${state}"
+          } >> "$GITHUB_OUTPUT"
+          echo "cutting #${number} at ${sha} (merged=${state})"
+
+  # The full merge gate, on the exact head that will merge.
+  prove-gate:
+    name: "Test: Release gate"
+    needs: candidate
+    uses: ./.github/workflows/merge-gate.yml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    with:
+      ref: ${{ needs.candidate.outputs.sha }}
+
+  # Both accelerator tiers, on the same head, before any tag can exist.
+  prove-hardware:
+    name: "Test: Release hardware"
+    needs: candidate
+    uses: ./.github/workflows/hardware.yml
+    with:
+      target_sha: ${{ needs.candidate.outputs.sha }}
+    secrets:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
+
+  cut:
+    name: "Build: Release cut (Linux)"
+    needs: [candidate, prove-gate, prove-hardware]
+    timeout-minutes: 130
+    runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NUMBER: ${{ needs.candidate.outputs.number }}
+      SHA: ${{ needs.candidate.outputs.sha }}
+      MERGED: ${{ needs.candidate.outputs.merged }}
+    # Merges the proposal, creates the tag and release, holds it, and
+    # dispatches Publish.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      # A squash of a head that is not behind main is exactly the proven tree;
+      # the comparison below refuses to tag anything else.
+      - name: Merge the proven release pull request
+        id: merge
+        run: |
+          set -euo pipefail
+          if [ "${MERGED}" = "true" ]; then
+            echo "commit=${SHA}" >> "$GITHUB_OUTPUT"
+            echo "#${NUMBER} was merged by hand at ${SHA}"
+            exit 0
+          fi
+          head=$(gh pr view "${NUMBER}" --repo "$GITHUB_REPOSITORY" \
+            --json state,headRefOid --jq '"\(.state) \(.headRefOid)"')
+          if [ "${head}" != "OPEN ${SHA}" ]; then
+            echo "::error::release pull request #${NUMBER} is now '${head}', not the proven ${SHA}; dispatch again"
+            exit 1
+          fi
+          behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...${SHA}" --jq '.behind_by')
+          if [ "${behind}" != "0" ]; then
+            echo "::error::main moved while ${SHA} was proven; dispatch again once Release Please has rebuilt the proposal"
+            exit 1
+          fi
+          gh pr merge "${NUMBER}" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "${SHA}" || {
+            echo "::error::could not merge #${NUMBER}. Merge it by hand and dispatch again: the cut then tags the merged commit."
+            exit 1
+          }
+          commit=$(gh pr view "${NUMBER}" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid')
+          proven=$(gh api "repos/$GITHUB_REPOSITORY/commits/${SHA}" --jq '.commit.tree.sha')
+          landed=$(gh api "repos/$GITHUB_REPOSITORY/commits/${commit}" --jq '.commit.tree.sha')
+          if [ "${proven}" != "${landed}" ]; then
+            echo "::error::merged commit ${commit} does not carry the proven tree of ${SHA}; dispatch again to prove and tag ${commit}"
+            exit 1
+          fi
+          echo "commit=${commit}" >> "$GITHUB_OUTPUT"
+          echo "merged #${NUMBER} as ${commit}"
+
+      - name: Create the release for the merged proposal
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      # Release Please creates a full release. Hold it out of `latest` until
+      # Binaries has proven the complete artifact set and promoted it; PyPI
+      # follows that promotion, so any failure in the chain leaves the tag a
+      # prerelease instead of a partial stable release.
+      - name: Hold the release out of latest until artifacts are complete
+        env:
+          CREATED: ${{ steps.release.outputs.release_created }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+          COMMIT: ${{ steps.merge.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ "${CREATED}" != "true" ] || [ -z "${TAG}" ]; then
+            echo "::error::Release Please created no release for ${COMMIT}"
+            exit 1
+          fi
+          refs=$(git ls-remote --tags "https://github.com/${GITHUB_REPOSITORY}.git" "${TAG}")
+          tagged=$(awk -v ref="refs/tags/${TAG}" '$2 == ref "^{}" { print $1; exit }' <<<"${refs}")
+          [ -n "${tagged}" ] || tagged=$(awk -v ref="refs/tags/${TAG}" '$2 == ref { print $1; exit }' <<<"${refs}")
+          if [ "${tagged}" != "${COMMIT}" ]; then
+            echo "::error::${TAG} points at ${tagged}, not the proven ${COMMIT}"
             exit 1
           fi
           gh release edit "${TAG}" --repo "$GITHUB_REPOSITORY" --prerelease
 
       - name: Trigger Publish workflow
-        if: steps.release.outputs.release_created == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |
           set -euo pipefail
-          if [ -z "${TAG}" ]; then
-            echo "::error::release_created is true but tag_name output is empty; refusing to dispatch publication with no tag"
-            exit 1
-          fi
           gh workflow run publish.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
