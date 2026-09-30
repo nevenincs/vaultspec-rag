@@ -31,16 +31,20 @@ import time
 import types
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
+from functools import cache
 from typing import (
     TYPE_CHECKING,
     Any,
     NamedTuple,
+    NotRequired,
     Protocol,
+    Required,
     Union,
     cast,
     get_args,
     get_origin,
     get_type_hints,
+    is_typeddict,
 )
 
 from . import store_schema
@@ -130,13 +134,27 @@ class _PayloadContractType(Protocol):
     __required_keys__: frozenset[str]
 
 
+@cache
 def _payload_contract(
     payload_type: object,
 ) -> tuple[frozenset[str], dict[str, object]]:
     contract = cast("_PayloadContractType", payload_type)
-    required = contract.__required_keys__
-    field_types = cast("dict[str, object]", get_type_hints(payload_type))
-    return required, field_types
+    required = set(contract.__required_keys__)
+    field_types = cast(
+        "dict[str, object]", get_type_hints(payload_type, include_extras=True)
+    )
+    # Deferred annotations leave TypedDict's runtime key sets unaware of
+    # Required/NotRequired; the resolved annotations carry that authority.
+    for name, annotation in field_types.items():
+        origin = get_origin(annotation)
+        if origin is NotRequired:
+            required.discard(name)
+        elif origin is Required:
+            required.add(name)
+        else:
+            continue
+        field_types[name] = get_args(annotation)[0]
+    return frozenset(required), field_types
 
 
 _AUDIT_PAYLOAD_CONTRACTS = {
@@ -536,6 +554,17 @@ def _payload_container_matches(
     return False
 
 
+def _payload_typed_dict_matches(value: object, expected: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    payload = cast("dict[str, object]", value)
+    required, field_types = _payload_contract(expected)
+    return required.issubset(payload) and all(
+        name not in payload or _payload_value_matches(payload[name], field_type)
+        for name, field_type in field_types.items()
+    )
+
+
 def _payload_value_matches(
     value: object,
     expected: object,
@@ -544,6 +573,8 @@ def _payload_value_matches(
         return True
     if expected is int:
         return isinstance(value, int) and not isinstance(value, bool)
+    if is_typeddict(expected):
+        return _payload_typed_dict_matches(value, expected)
     if isinstance(expected, type):
         return isinstance(value, expected)
     origin = get_origin(expected)
@@ -599,6 +630,7 @@ def _audit_payload_identity(
         )
     elif source is PublicSourceType.VAULT:
         doc_id = _required_payload_text(typed_payload, "doc_id")
+        validate_rel_path(_required_payload_text(typed_payload, "path"))
         ordinal = typed_payload.get("chunk_ordinal")
         if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError(
@@ -606,7 +638,7 @@ def _audit_payload_identity(
             )
         identity = _AuditPayloadIdentity(
             point_id=f"{doc_id}#c{ordinal}",
-            rel_path=_required_payload_text(typed_payload, "path"),
+            rel_path=doc_id,
             content_identity=None,
         )
     else:
