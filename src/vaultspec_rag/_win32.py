@@ -84,6 +84,19 @@ _SDDL_REVISION_1: Final = 1
 #: control - survive beside them.
 _SHARED_ANCHOR_SDDL: Final = "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFW;;;AU)"
 
+#: The same grant for the directory the anchors share. Every authenticated
+#: account may list it and create files in it (``FRFW`` on the directory
+#: itself), and every file in it - whoever created it, and whenever - inherits
+#: read and write for them (``OIIO``). Delete is again withheld, both on the
+#: files and as delete-child on the directory, so no account can separate
+#: another's holder from its anchor.
+_SHARED_ANCHOR_DIRECTORY_SDDL: Final = (
+    "D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FRFW;;;AU)(A;OIIO;FRFW;;;AU)"
+)
+
+#: ``ERROR_ACCESS_DENIED`` (``winerror.h``).
+_ERROR_ACCESS_DENIED: Final = 5
+
 #: Job Object constants (``winnt.h``).
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Final = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: Final = 9
@@ -179,8 +192,14 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
     return int(job)
 
 
-def grant_every_account_access(path: str) -> bool:
+def grant_every_account_access(path: str, *, directory: bool = False) -> bool:
     """Let every authenticated account read and write the file at *path*.
+
+    With *directory*, *path* is the directory the machine's anchors share:
+    every account may create files in it, and every file in it inherits the
+    same read and write. Windows pushes an inheritable grant down to the files
+    already there, so an anchor created before its directory was shared - by an
+    older release, or by hand - becomes writable too.
 
     Windows has no umask and no mode bits, so a file created under a shared
     directory carries only what it inherits: on a default ``ProgramData`` tree
@@ -199,7 +218,9 @@ def grant_every_account_access(path: str) -> bool:
 
     Returns whether the grant was applied. A failure is logged and reported,
     never raised: the anchor still locks, and a caller that created it for its
-    own account is no worse off than before.
+    own account is no worse off than before. Only a path's owner may change its
+    access list, so a refusal on another account's directory is expected and
+    logged quietly: that account applies the grant the next time it claims.
     """
     if sys.platform != "win32":
         return False
@@ -239,8 +260,9 @@ def grant_every_account_access(path: str) -> bool:
     advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
 
     descriptor = ctypes.c_void_p()
+    sddl = _SHARED_ANCHOR_DIRECTORY_SDDL if directory else _SHARED_ANCHOR_SDDL
     if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-        _SHARED_ANCHOR_SDDL, _SDDL_REVISION_1, ctypes.byref(descriptor), None
+        sddl, _SDDL_REVISION_1, ctypes.byref(descriptor), None
     ):
         logger.warning("could not build the shared anchor's access list")
         return False
@@ -267,6 +289,9 @@ def grant_every_account_access(path: str) -> bool:
         )
     finally:
         kernel32.LocalFree(descriptor)
+    if status == _ERROR_ACCESS_DENIED:
+        logger.debug("%s belongs to another account, which alone may widen it", path)
+        return False
     if status != 0:
         logger.warning(
             "could not widen a machine-wide anchor to every account "
