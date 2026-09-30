@@ -6,8 +6,10 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:d6381f4f0bc07ebd7a187e98c6019c04315a1d84bd1443e4fec08fcf3f232234'
+body_hash: 'sha256:f9acbd43e9b1db6e9f6e73beaf5e91d9247f12d357a2c5d6c4694239627be138'
 related:
+  - '[[2026-09-30-monitor-refinement-audit]]'
+  - '[[2026-09-30-monitor-refinement-ledger]]'
   - '[[2026-09-30-monitor-refinement-plan]]'
   - '[[2026-09-30-monitor-refinement-reference]]'
 ---
@@ -17,6 +19,14 @@ related:
 Auto-generated index of all documents tagged with `#monitor-refinement`.
 
 ## Documents
+
+### audit
+
+- `2026-09-30-monitor-refinement-audit` - `monitor-refinement` audit: `Integrated TUI operability review`
+
+### exec
+
+- `2026-09-30-monitor-refinement-ledger` - `monitor-refinement` ledger
 
 ### plan
 

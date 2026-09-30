@@ -8,7 +8,7 @@ quiet and why.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from .._job_values import count, mapping
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
@@ -19,9 +19,6 @@ from ._jobs_tui_constants import (
     SEARCH_COUNT_NAMES,
     STATE_ACTIONS,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 def canonical_quiesce_block(raw: object) -> object | None:
@@ -173,18 +170,3 @@ def action_capability(action: str) -> str | None:
     if name in STATE_ACTIONS:
         return STATE_ACTIONS[name][0]
     return PLAIN_ACTIONS.get(name)
-
-
-def log_lines(result: dict[str, object]) -> Iterable[str]:
-    """Yield raw log lines from a managed-log payload, group order preserved."""
-    groups = result.get("groups")
-    if not isinstance(groups, list):
-        return []
-    lines: list[str] = []
-    for group in cast("list[object]", groups):
-        if not isinstance(group, dict):
-            continue
-        raw = cast("dict[str, object]", group).get("lines")
-        if isinstance(raw, list):
-            lines.extend(str(line) for line in cast("list[object]", raw))
-    return lines or ["No log lines matched this job."]

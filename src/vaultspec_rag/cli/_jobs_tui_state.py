@@ -14,8 +14,10 @@ resets, and is reasoned about as one object.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 __all__ = [
+    "FocusedLogState",
     "LaneStamps",
     "LayoutMetrics",
     "MachineSignals",
@@ -70,14 +72,22 @@ class SearchActivityState:
 
 
 @dataclass(slots=True)
-class ManagedLogState:
-    """The managed-log lane, independent of jobs and stamped on its own.
-
-    ``show`` is ``None`` until the operator chooses; the width decides
-    until then.
-    """
+class FocusedLogState:
+    """One bounded inspection, scoped to an indexing job or served request."""
 
     show: bool | None = None
+    kind: Literal["job", "request"] = "job"
+    subject: tuple[Literal["job", "request"], str] | None = None
+    last_refresh: float | None = None
+    error: str | None = None
+    metadata: str = ""
+    stamps: LaneStamps = field(default_factory=LaneStamps)
+
+
+@dataclass(slots=True)
+class ManagedLogState:
+    """The raw source-grouped log lane, independently stamped."""
+
     last_refresh: float | None = None
     error: str | None = None
     stamps: LaneStamps = field(default_factory=LaneStamps)

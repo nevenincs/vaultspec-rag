@@ -595,18 +595,15 @@ def render_status_details(
 ) -> Text:
     """Keep health reasons and hosted-classifier evidence visible at every width."""
     line = Text()
-    if status.observed_at is not None:
-        stamp = time.strftime("%H:%M:%S", time.localtime(status.observed_at))
-        line.append(f"\nhealth observed {stamp}", style="dim")
-        age = max(0.0, time.time() - status.observed_at)
-        if age > 5.0:
-            line.append(
-                f" · {compact_duration(age)} ago", style=tone_style(tones, "attention")
-            )
     if status.degraded_reasons:
         reasons = " · ".join(search_text(reason) for reason in status.degraded_reasons)
         line.append(
             f"\nservice degradation: {reasons}", style=tone_style(tones, "attention")
+        )
+    if status.error:
+        line.append(
+            f"\nhealth error: {search_text(status.error)}",
+            style=tone_style(tones, "bad"),
         )
     snapshot = mapping(status.typesafe)
     state = snapshot.get("state")
@@ -635,4 +632,12 @@ def render_status_details(
             f" · retry in {compact_duration(retry)}",
             style=tone_style(tones, "attention"),
         )
+    if status.observed_at is not None:
+        stamp = time.strftime("%H:%M:%S", time.localtime(status.observed_at))
+        line.append(f" · health observed {stamp}", style="dim")
+        age = max(0.0, time.time() - status.observed_at)
+        if age > 5.0:
+            line.append(
+                f" · {compact_duration(age)} ago", style=tone_style(tones, "attention")
+            )
     return line

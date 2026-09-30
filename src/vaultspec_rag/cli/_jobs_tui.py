@@ -90,6 +90,7 @@ from ._jobs_tui_payload import (
     search_records,
 )
 from ._jobs_tui_state import (
+    FocusedLogState,
     LaneStamps,
     LayoutMetrics,
     MachineSignals,
@@ -305,6 +306,7 @@ class ServerWatchApp(
         self._jobs: list[dict[str, object]] = []
         self._search = SearchActivityState()
         self._logs = ManagedLogState()
+        self._focused_log = FocusedLogState()
         self._version = ServiceVersion()
         self._signals = MachineSignals()
         self._layout = LayoutMetrics()
@@ -403,6 +405,7 @@ class ServerWatchApp(
         screen.set_interval(self._interval, self.refresh_jobs)
         screen.set_interval(self._interval, self.refresh_search_activity)
         screen.set_interval(self._interval, self.refresh_managed_logs)
+        screen.set_interval(self._interval, self._poll_focused_logs)
         # The service itself changes far more slowly than its job list, so
         # its beat runs at a multiple of the jobs interval - but the first
         # read happens now, because the header's identity cell is empty
@@ -582,6 +585,7 @@ class ServerWatchApp(
         status_bar = self._pane("#servicestatus", ServiceStatusBar)
         if status_bar is not None:
             status_bar.repaint_status()
+        self._refresh_log_title()
         if self._expire_tombstones():
             self._render_rows()
         elif self._animating():
@@ -1111,6 +1115,8 @@ class ServerWatchApp(
 
     def watch_selected_search_id(self, _request_id: str) -> None:
         self._render_search_detail()
+        if self._focused_log.kind == "request":
+            self.refresh_focused_logs()
 
     def _render_search_title(self) -> None:
         found = self.query("#searchtitle")
@@ -1172,7 +1178,8 @@ class ServerWatchApp(
             # Nothing is selected, so the pane must stop claiming to show a
             # job's log. Leaving the last one there attributes those lines to
             # work that is no longer listed.
-            self._clear_log("No job selected.")
+            if self._focused_log.kind == "job":
+                self.refresh_focused_logs()
             return
         row = min(table.cursor_row, table.row_count - 1)
         # ``str`` on a row key gives its repr, not the id it carries.
@@ -1193,13 +1200,27 @@ class ServerWatchApp(
         if table.id == "jobs":
             self.selected_id = str(event.row_key.value or "")
 
-    def watch_selected_id(self, job_id: str) -> None:
-        if not job_id:
-            return
+    def watch_selected_id(self, _job_id: str) -> None:
         if not self.query("#logtitle"):
             return
-        self._refresh_log_title()
-        self.fetch_logs(job_id)
+        if self._focused_log.kind == "job":
+            self.refresh_focused_logs()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        if event.widget is self._table():
+            self._focused_log.kind = "job"
+            self.refresh_focused_logs()
+        elif event.widget is self._search_table():
+            self._focused_log.kind = "request"
+            self.refresh_focused_logs()
+
+    def _poll_focused_logs(self) -> None:
+        if (
+            self._active_screen() is not None
+            and self._log_visible()
+            and not self._managed_log_visible()
+        ):
+            self.refresh_focused_logs()
 
     def selected_job(self) -> dict[str, object] | None:
         """Return the currently selected indexing-job record."""
@@ -1241,6 +1262,8 @@ class ServerWatchApp(
             return False
         searches = self._search_table()
         if self.focused is searches:
+            return False
+        if self.focused is self._log_view() and self._focused_log.kind == "request":
             return False
         # In jobs watch, opening search always replaces the indexing lane. In
         # server watch it does so below the split breakpoint. Check the classes
@@ -1338,8 +1361,10 @@ class ServerWatchApp(
         # One state, applied the same way in both layouts, so the key always
         # does something: the width decides only whether showing the log
         # splits the screen or takes it over.
-        self._logs.show = not self._log_visible()
-        self.screen.set_class(self._logs.show, "-showlog")
+        self._focused_log.show = not self._log_visible()
+        self.screen.set_class(self._focused_log.show, "-showlog")
+        if self._focused_log.show:
+            self.refresh_focused_logs()
         # The log keys gate on the pane being on screen, and the footer only
         # re-evaluates them when told to.
         self.refresh_bindings()
@@ -1349,7 +1374,7 @@ class ServerWatchApp(
         if self._managed_log_visible():
             self.action_toggle_managed_logs()
         if self._watch_mode == "jobs" and self._log_visible():
-            self._logs.show = False
+            self._focused_log.show = False
             self.screen.set_class(False, "-showlog")
         if self._wide() and self._watch_mode == "server":
             table = self._search_table()
@@ -1436,7 +1461,7 @@ class ServerWatchApp(
         have chosen, the choice survives every later resize.
         """
         screen = self._active_screen()
-        if self._logs.show is None and screen is not None:
+        if self._focused_log.show is None and screen is not None:
             screen.set_class(self._watch_mode == "jobs" and self._wide(), "-showlog")
 
     def _wide(self) -> bool:
@@ -1447,6 +1472,7 @@ class ServerWatchApp(
         self.refresh_jobs()
         self.refresh_search_activity()
         self.refresh_managed_logs()
+        self.refresh_focused_logs()
 
 
 def run_server_watch(

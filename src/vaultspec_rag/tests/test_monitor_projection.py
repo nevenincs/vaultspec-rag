@@ -112,6 +112,14 @@ async def test_daemon_health_and_indexing_condition_are_separate(
         assert "storage unavailable" in painted
         assert "TypeSafe:" in painted
         assert "standard ranking is used" in painted
+        app._apply_service_status(
+            ServiceStatusHeader(
+                reachable=True, status="error", error="service answered HTTP 503"
+            ),
+            app._status_stamps.issue(),
+        )
+        await pilot.pause()
+        assert "health error: service answered HTTP 503" in _screen_text(app)
 
 
 @pytest.mark.parametrize("state", ["off", "pending", "active", "rejected", "cooldown"])

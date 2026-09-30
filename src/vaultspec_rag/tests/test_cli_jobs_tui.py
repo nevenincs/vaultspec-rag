@@ -716,7 +716,11 @@ class TestClosingTheSession:
                 "the delivery below has to carry an answer the interface would act on"
             )
             await app._close_all()
-            failure = _screen_failure(lambda: app._apply_logs(selected, answer))
+            failure = _screen_failure(
+                lambda: app._apply_logs(
+                    ("job", selected), answer, app._focused_log.stamps.issue()
+                )
+            )
 
         assert failure is None, (
             f"a log answer arriving after the screen went must be dropped: {failure!r}"

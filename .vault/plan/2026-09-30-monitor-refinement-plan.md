@@ -14,7 +14,7 @@ related:
   - '[[2026-09-30-monitor-refinement-reference]]'
 modified: '2026-09-30'
 body_schema: body-v2
-body_hash: 'sha256:9ed5da6264a4dc30399dceb83918b5cacf0c6d9f922a5cdd0ed90c639c0c0fb5'
+body_hash: 'sha256:904df549f79ff6ffd57175ebea99fee13822323d321d674e3b96e828cf30c44e'
 ---
 
 # `monitor-refinement` plan
@@ -34,7 +34,7 @@ Wave 2 will port the reviewed operator model to Carbon under src/monitor using t
 ## Steps
 
 - [x] `S01` - Separate daemon health from indexing condition, expose TypeSafe evidence and diagnostic units, include queued searches and honest lifecycle counts, and verify rendered behavior; `src/vaultspec_rag/cli/_jobs_tui{,_header,_status,_payload,_state,_cells}.py and focused tests under src/vaultspec_rag/tests`.
-- [ ] `S02` - Continuously refresh focused logs by job/request identity with bounds, ordering and freshness, verify navigation and controls, and record integrated review; `src/vaultspec_rag/cli/_jobs_tui{,_logs,_state}.py, focused tests under src/vaultspec_rag/tests and monitor-refinement audit`.
+- [x] `S02` - Continuously refresh focused logs by job/request identity with bounds, ordering and freshness, verify navigation and controls, keep health failures visible, and record integrated review; `src/vaultspec_rag/cli/_jobs_tui{,_logs,_log,_payload,_state,_status}.py, focused tests under src/vaultspec_rag/tests and monitor-refinement audit`.
 
 ## Parallelization
 
