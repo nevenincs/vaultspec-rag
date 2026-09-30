@@ -246,6 +246,7 @@ class _BucketPlanContext:
     """One encode call's immutable planning inputs, shared across replans."""
 
     texts: list[str]
+    token_budget: int
     chars_per_token: int
     max_items: int
     max_tokens_per_item: int | None = None
@@ -380,14 +381,20 @@ class EncodeBatchCeiling:
                 return min(requested, self._ceiling * 2)
             return self._ceiling
 
-    def record_success(self, token_budget: int) -> None:
-        """Bank one call that completed under *token_budget* without an OOM."""
+    def record_success(
+        self, successful_tokens: int, *, padded_tokens_per_item: int = 0
+    ) -> None:
+        """Credit the largest successful bucket's estimated padded footprint."""
         with self._lock:
             if self._ceiling is None:
                 return
-            if token_budget > self._ceiling:
-                self._ceiling = token_budget
-            if token_budget >= self._ceiling:
+            if successful_tokens > self._ceiling:
+                self._ceiling = successful_tokens
+            # Discrete item packing can leave less than one item's headroom.
+            if (
+                successful_tokens >= self._ceiling
+                or successful_tokens + padded_tokens_per_item > self._ceiling
+            ):
                 self._successes_at_ceiling += 1
 
     def record_oom(self, failing_tokens: int) -> int:
@@ -801,6 +808,9 @@ class EmbeddingModel:
         # ceilings clamp, and the chars-to-tokens estimate divisor. The
         # learned ceiling - not the estimate - stays the safety authority.
         self._encode_token_budget: int = int(cfg.embedding_encode_token_budget)
+        self._sparse_encode_token_budget: int = int(
+            cfg.embedding_sparse_encode_token_budget
+        )
         self._encode_chars_per_token: int = int(cfg.embedding_encode_chars_per_token)
 
     def _require_sparse_model(self) -> SparseModelAdapter:
@@ -975,11 +985,13 @@ class EmbeddingModel:
             One ``encode_bucket`` result per successfully encoded
             bucket, in input order.
         """
-        budget = ceiling.clamp(self._encode_token_budget)
+        budget = ceiling.clamp(context.token_budget)
         buckets = context.plan(budget)
         outputs: list[T] = []
         oom_count = 0
         index = 0
+        largest_successful_bucket = 0
+        successful_item_tokens = 0
         while index < len(buckets):
             bucket = buckets[index]
             bucket_texts = context.texts[bucket.start : bucket.end]
@@ -1003,6 +1015,8 @@ class EmbeddingModel:
                     raise
                 self._accelerator.release_cache()
                 oom_count += 1
+                largest_successful_bucket = 0
+                successful_item_tokens = 0
                 if bucket.end - bucket.start <= 1:
                     raise
                 budget, buckets = _shrink_after_bucket_oom(
@@ -1014,6 +1028,12 @@ class EmbeddingModel:
                 )
                 continue
             outputs.append(encoded)
+            item_tokens = bucket.estimated_tokens // (bucket.end - bucket.start)
+            if bucket.estimated_tokens > largest_successful_bucket:
+                largest_successful_bucket = bucket.estimated_tokens
+                successful_item_tokens = item_tokens
+            elif bucket.estimated_tokens == largest_successful_bucket:
+                successful_item_tokens = max(successful_item_tokens, item_tokens)
             if on_bucket is not None:
                 on_bucket(
                     "after",
@@ -1028,7 +1048,10 @@ class EmbeddingModel:
                     ),
                 )
             index += 1
-        ceiling.record_success(budget)
+        ceiling.record_success(
+            largest_successful_bucket,
+            padded_tokens_per_item=successful_item_tokens,
+        )
         return outputs
 
     def _encode_dense_bucket(
@@ -1091,6 +1114,7 @@ class EmbeddingModel:
         outputs = self._run_bucketed_encode(
             _BucketPlanContext(
                 texts=truncated,
+                token_budget=self._encode_token_budget,
                 chars_per_token=self._encode_chars_per_token,
                 max_items=batch_size,
             ),
@@ -1221,6 +1245,7 @@ class EmbeddingModel:
         bucket_results = self._run_bucketed_encode(
             _BucketPlanContext(
                 texts=grouped,
+                token_budget=self._sparse_encode_token_budget,
                 chars_per_token=self._encode_chars_per_token,
                 max_items=batch_size,
                 max_tokens_per_item=SPARSE_DOCUMENT_MAX_LENGTH,

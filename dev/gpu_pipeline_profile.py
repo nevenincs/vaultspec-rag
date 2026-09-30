@@ -13,6 +13,7 @@ import hashlib
 import importlib
 import importlib.metadata
 import json
+import math
 import os
 import platform
 import queue
@@ -21,7 +22,9 @@ import sys
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import asdict
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,11 +49,14 @@ from ._profile_workloads import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from vaultspec_rag.embeddings import EmbeddingModel, EncodeBucketProgress
 
 BATCH_SIZES = (1, 4, 8, 16, 32)
+REFERENCE_TOKEN_BUDGET = 24000
+SPARSE_RTOL = 1e-4
+SPARSE_ATOL = 1e-5
 
 
 def positive(value: str) -> int:
@@ -58,6 +64,28 @@ def positive(value: str) -> int:
     if not 1 <= number <= 16384:
         raise argparse.ArgumentTypeError("Value must be between 1 and 16384")
     return number
+
+
+def sparse_budgets(value: str) -> list[int]:
+    try:
+        budgets = [int(part) for part in value.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "Sparse budgets must be comma-separated integers"
+        ) from exc
+    if (
+        not budgets
+        or any(budget <= 0 for budget in budgets)
+        or len(set(budgets)) != len(budgets)
+    ):
+        raise argparse.ArgumentTypeError(
+            "Sparse budgets must be distinct positive integers"
+        )
+    if len(budgets) > 8 or REFERENCE_TOKEN_BUDGET not in budgets:
+        raise argparse.ArgumentTypeError(
+            "Provide at most eight budgets, including reference 24000"
+        )
+    return budgets
 
 
 def arguments() -> argparse.Namespace:
@@ -76,6 +104,17 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--chunk-size", type=positive, default=8000)
     parser.add_argument("--trace-iterations", type=int, choices=range(1, 6), default=3)
     parser.add_argument("--skip-trace", action="store_true")
+    parser.add_argument(
+        "--energy-seconds",
+        type=int,
+        choices=range(5, 61),
+        help="Additional sustained combined-encoder windows per arm (caps 8 and 32)",
+    )
+    parser.add_argument("--sparse-budgets", type=sparse_budgets)
+    parser.add_argument(
+        "--sparse-budget-seconds", type=int, choices=range(5, 61), default=30
+    )
+    parser.add_argument("--budget-comparison-only", action="store_true")
     return parser.parse_args()
 
 
@@ -219,6 +258,7 @@ class DeviceSampler:
         self.stop = threading.Event()
         self.samples: list[dict[str, object]] = []
         self.error: str | None = None
+        self.power_error: str | None = None
         self.thread = threading.Thread(
             target=self.run, name="nvml-sampler", daemon=True
         )
@@ -237,6 +277,11 @@ class DeviceSampler:
             while not self.stop.is_set():
                 memory = nvml.nvmlDeviceGetMemoryInfo(handle)
                 utilization = nvml.nvmlDeviceGetUtilizationRates(handle)
+                try:
+                    power = nvml.nvmlDeviceGetPowerUsage(handle)
+                except Exception as exc:
+                    power = None
+                    self.power_error = f"{type(exc).__name__}: {exc}"
                 self.samples.append(
                     {
                         "monotonic": time.perf_counter(),
@@ -244,6 +289,7 @@ class DeviceSampler:
                         "device_total_bytes": memory.total,
                         "gpu_utilization_percent": utilization.gpu,
                         "memory_utilization_percent": utilization.memory,
+                        "power_milliwatts": power,
                     }
                 )
                 self.stop.wait(1)
@@ -262,12 +308,17 @@ def memory_snapshot(torch: Any) -> dict[str, int]:
     }
 
 
-def encode_call(
-    model: EmbeddingModel, texts: list[str], size: int, kind: str, events: list[dict]
-) -> None:
+def bucket_observer(events: list[dict]) -> Callable[[str, EncodeBucketProgress], None]:
     def observe(stage: str, progress: EncodeBucketProgress) -> None:
         events.append({"stage": stage, **asdict(progress)})
 
+    return observe
+
+
+def encode_call(
+    model: EmbeddingModel, texts: list[str], size: int, kind: str, events: list[dict]
+) -> None:
+    observe = bucket_observer(events)
     if kind in ("dense", "combined"):
         dense = model.encode_documents_on_device(
             texts, batch_size=size, on_bucket=observe
@@ -339,6 +390,210 @@ def oom_counts(events: list[dict]) -> dict[str, int]:
     }
 
 
+def energy_summary(
+    samples: list[dict[str, object]], start: float, end: float, items: int
+) -> dict:
+    summary = {
+        "scope": "device-wide NVML power, including other device workloads",
+        "sample_count": 0,
+        "sampled_span_seconds": 0.0,
+        "window_seconds": end - start,
+        "coverage_fraction": 0.0,
+        "sampling_complete": False,
+        "device_wide_joules": None,
+        "device_wide_joules_per_item_estimate": None,
+        "reason": None,
+    }
+    if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+        summary["reason"] = "Invalid window times"
+        return summary
+    points: list[tuple[float, float]] = []
+    previous = -1.0
+    for sample in samples:
+        stamp = sample.get("monotonic")
+        if (
+            not isinstance(stamp, (int, float))
+            or not math.isfinite(stamp)
+            or stamp < 0
+            or stamp <= previous
+        ):
+            summary["reason"] = "Negative, invalid or nonmonotonic sample times"
+            return summary
+        previous = stamp
+        power = sample.get("power_milliwatts")
+        if not start <= stamp <= end or power is None:
+            continue
+        if not isinstance(power, (int, float)) or not math.isfinite(power) or power < 0:
+            summary["reason"] = "Invalid power sample"
+            return summary
+        points.append((stamp, power / 1000))
+    summary["sample_count"] = len(points)
+    if len(points) < 2:
+        summary["reason"] = "Fewer than two valid in-window power samples"
+        return summary
+    span = points[-1][0] - points[0][0]
+    summary["sampled_span_seconds"] = span
+    summary["coverage_fraction"] = span / (end - start)
+    intervals = list(pairwise(points))
+    if any(right[0] - left[0] > 2.5 for left, right in intervals):
+        summary["reason"] = "Power samples have a gap above 2.5 seconds"
+        return summary
+    joules = sum(
+        (right[0] - left[0]) * (left[1] + right[1]) / 2 for left, right in intervals
+    )
+    summary["device_wide_joules"] = joules
+    summary["sampling_complete"] = summary["coverage_fraction"] >= 0.9
+    if summary["sampling_complete"] and items > 0:
+        summary["device_wide_joules_per_item_estimate"] = (
+            joules / span / (items / (end - start))
+        )
+    else:
+        summary["reason"] = "Incomplete sampling coverage; per-item estimate withheld"
+    return summary
+
+
+def energy_windows(
+    model: EmbeddingModel,
+    torch: Any,
+    args: argparse.Namespace,
+    workloads: dict[str, list[str]],
+    sampler: DeviceSampler,
+) -> list[dict]:
+    windows = []
+    for name, texts in workloads.items():
+        for round_index in range(args.rounds):
+            order = (8, 32) if round_index % 2 == 0 else (32, 8)
+            for size in order:
+                row = sustained_window(
+                    model,
+                    torch,
+                    texts,
+                    sampler,
+                    {"size": size, "seconds": args.energy_seconds},
+                )
+                windows.append(
+                    {
+                        "workload": name,
+                        "round": round_index,
+                        "arm_order": list(order),
+                        **row,
+                    }
+                )
+    return windows
+
+
+def sustained_window(
+    model: EmbeddingModel,
+    torch: Any,
+    texts: list[str],
+    sampler: DeviceSampler,
+    arm: dict,
+) -> dict:
+    torch.cuda.synchronize()
+    baseline = memory_snapshot(torch)
+    ceilings_before = ceiling_state(model)
+    torch.cuda.reset_peak_memory_stats()
+    attempts: dict[str, dict[int, int]] = {"dense": {}, "sparse": {}}
+    ooms = {"dense": 0, "sparse": 0}
+    iterations = 0
+    start = time.perf_counter()
+    while time.perf_counter() < start + arm["seconds"]:
+        events: list[dict] = []
+        encode_call(model, texts, arm["size"], "combined", events)
+        torch.cuda.synchronize()
+        iterations += 1
+        for kind, count in oom_counts(events).items():
+            ooms[kind] += count
+        for event in events:
+            if event["stage"] == "before":
+                histogram = attempts[event["kind"]]
+                actual_size = event["bucket_items"]
+                histogram[actual_size] = histogram.get(actual_size, 0) + 1
+    end = time.perf_counter()
+    items = iterations * len(texts)
+    return {
+        "requested_batch_size": arm["size"],
+        "kind": "dense_then_sparse",
+        "start_monotonic": start,
+        "end_monotonic": end,
+        "seconds": end - start,
+        "iterations": iterations,
+        "input_items": items,
+        "items_per_second": items / (end - start),
+        "baseline": baseline,
+        "settled": memory_snapshot(torch),
+        "peak_allocated": torch.cuda.max_memory_allocated(),
+        "peak_reserved": torch.cuda.max_memory_reserved(),
+        "ceilings_before": ceilings_before,
+        "ceilings_after": ceiling_state(model),
+        "bucket_attempt_item_histograms": attempts,
+        "oom_count_by_encoder": ooms,
+        "energy": energy_summary(sampler.samples.copy(), start, end, items),
+    }
+
+
+@contextmanager
+def sparse_budget_arm(model: Any, budget: int) -> Iterator[None]:
+    from vaultspec_rag.embeddings import EncodeBatchCeiling
+
+    original_budget = model._sparse_encode_token_budget
+    original_ceiling = model._sparse_batch_ceiling
+    try:
+        model._sparse_encode_token_budget = budget
+        model._sparse_batch_ceiling = EncodeBatchCeiling()
+        yield
+    finally:
+        model._sparse_encode_token_budget = original_budget
+        model._sparse_batch_ceiling = original_ceiling
+
+
+def sparse_budget_windows(
+    model: Any,
+    torch: Any,
+    args: argparse.Namespace,
+    workloads: dict[str, list[str]],
+    sampler: DeviceSampler,
+) -> list[dict]:
+    if model._encode_token_budget != REFERENCE_TOKEN_BUDGET:
+        raise ValueError(
+            "Sparse comparison requires unchanged dense token budget 24000"
+        )
+    windows = []
+    artifacts = args.output / "sparse-budget-window-rows"
+    artifacts.mkdir()
+    for name, texts in workloads.items():
+        for round_index in range(args.rounds):
+            order = (
+                args.sparse_budgets
+                if round_index % 2 == 0
+                else args.sparse_budgets[::-1]
+            )
+            for budget in order:
+                with sparse_budget_arm(model, budget):
+                    warm_events: list[dict] = []
+                    for _ in range(args.warmups):
+                        encode_call(model, texts, 32, "combined", warm_events)
+                    row = sustained_window(
+                        model,
+                        torch,
+                        texts,
+                        sampler,
+                        {"size": 32, "seconds": args.sparse_budget_seconds},
+                    )
+                    row = {
+                        "workload": name,
+                        "round": round_index,
+                        "sparse_budget_order": list(order),
+                        "dense_token_budget": model._encode_token_budget,
+                        "sparse_token_budget": model._sparse_encode_token_budget,
+                        "warmup_buckets": warm_events,
+                        **row,
+                    }
+                    windows.append(row)
+                    write_json(artifacts / f"{len(windows):03d}.json", row)
+    return windows
+
+
 def ceiling_state(model: Any) -> dict:
     return {
         name: {
@@ -352,10 +607,10 @@ def ceiling_state(model: Any) -> dict:
     }
 
 
-def bucket_token_telemetry(model: Any, workloads: dict[str, list[str]]) -> list[dict]:
-    observations: list[dict] = []
-    current: dict = {}
-
+@contextmanager
+def forward_token_capture(
+    model: Any, current: dict, observations: list[dict]
+) -> Iterator[None]:
     def capture(kind: str) -> Callable:
         def hook(_module: object, positional: tuple, keywords: dict) -> None:
             mask = keywords.get("attention_mask")
@@ -382,14 +637,186 @@ def bucket_token_telemetry(model: Any, workloads: dict[str, list[str]]) -> list[
         sparse.register_forward_pre_hook(capture("sparse"), with_kwargs=True),
     ]
     try:
+        yield
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+def bucket_token_telemetry(model: Any, workloads: dict[str, list[str]]) -> list[dict]:
+    observations: list[dict] = []
+    current: dict = {}
+    with forward_token_capture(model, current, observations):
         for name, texts in workloads.items():
             for size in (8, 32):
                 current.update(workload=name, batch_size=size)
                 encode_call(model, texts, size, "combined", [])
-    finally:
-        for handle in handles:
-            handle.remove()
     return observations
+
+
+def compare_sparse_vectors(reference: Any, candidate: Any) -> dict:
+    import numpy as np
+
+    coordinates_equal = reference.indices == candidate.indices
+    left, right = np.asarray(reference.values), np.asarray(candidate.values)
+    reference_valid = bool(np.isfinite(left).all() and (left >= 0).all())
+    candidate_valid = bool(np.isfinite(right).all() and (right >= 0).all())
+    aligned = coordinates_equal and left.shape == right.shape
+    return {
+        "coordinates_equal": coordinates_equal,
+        "reference_nonzero": len(reference.indices),
+        "candidate_nonzero": len(candidate.indices),
+        "reference_weights_valid": reference_valid,
+        "candidate_weights_valid": candidate_valid,
+        "reference_sha256": hashlib.sha256(
+            json.dumps([reference.indices, reference.values]).encode()
+        ).hexdigest(),
+        "candidate_sha256": hashlib.sha256(
+            json.dumps([candidate.indices, candidate.values]).encode()
+        ).hexdigest(),
+        "scores_close": bool(
+            aligned
+            and reference_valid
+            and candidate_valid
+            and np.allclose(left, right, rtol=SPARSE_RTOL, atol=SPARSE_ATOL)
+        ),
+        "maximum_absolute_score_error": float(np.max(np.abs(left - right)))
+        if aligned and reference_valid and candidate_valid and left.size
+        else None,
+    }
+
+
+def sparse_dot(query: Any, document: Any) -> float:
+    weights = dict(zip(query.indices, query.values, strict=True))
+    return sum(
+        weights.get(index, 0.0) * value
+        for index, value in zip(document.indices, document.values, strict=True)
+    )
+
+
+def compare_sparse_dot_scores(reference: list[float], candidate: list[float]) -> dict:
+    import numpy as np
+
+    reference_finite = bool(np.isfinite(reference).all())
+    candidate_finite = bool(np.isfinite(candidate).all())
+    return {
+        "reference_finite": reference_finite,
+        "candidate_finite": candidate_finite,
+        "scores_close": bool(
+            reference_finite
+            and candidate_finite
+            and np.allclose(reference, candidate, rtol=SPARSE_RTOL, atol=SPARSE_ATOL)
+        ),
+        "reference_scores": [
+            value if math.isfinite(value) else None for value in reference
+        ],
+        "candidate_scores": [
+            value if math.isfinite(value) else None for value in candidate
+        ],
+    }
+
+
+def sparse_output_parity(
+    model: Any, args: argparse.Namespace, workloads: dict[str, list[str]]
+) -> list[dict]:
+    rows = []
+    observations: list[dict] = []
+    current: dict = {}
+    with forward_token_capture(model, current, observations):
+        for name, texts in workloads.items():
+            current.update(
+                workload=name,
+                sparse_token_budget=REFERENCE_TOKEN_BUDGET,
+                path="document",
+            )
+            with sparse_budget_arm(model, REFERENCE_TOKEN_BUDGET):
+                dense = model.encode_documents_on_device(texts, batch_size=32)
+                dense.cpu()
+                del dense
+                reference_events: list[dict] = []
+                reference_docs = model.encode_documents_sparse(
+                    texts, batch_size=32, on_bucket=bucket_observer(reference_events)
+                )
+                current["path"] = "query"
+                reference_query = model.encode_query_sparse(texts[0])
+            for budget in args.sparse_budgets:
+                current.update(sparse_token_budget=budget, path="document")
+                with sparse_budget_arm(model, budget):
+                    candidate_events: list[dict] = []
+                    documents = model.encode_documents_sparse(
+                        texts,
+                        batch_size=32,
+                        on_bucket=bucket_observer(candidate_events),
+                    )
+                    current["path"] = "query"
+                    query = model.encode_query_sparse(texts[0])
+                vector_rows = [
+                    compare_sparse_vectors(left, right)
+                    for left, right in zip(reference_docs, documents, strict=True)
+                ]
+                query_row = compare_sparse_vectors(reference_query, query)
+                reference_scores = [
+                    sparse_dot(reference_query, doc) for doc in reference_docs
+                ]
+                candidate_scores = [sparse_dot(query, doc) for doc in documents]
+                dot_scores = compare_sparse_dot_scores(
+                    reference_scores, candidate_scores
+                )
+                score_close = dot_scores["scores_close"]
+                rows.append(
+                    {
+                        "workload": name,
+                        "reference_sparse_token_budget": REFERENCE_TOKEN_BUDGET,
+                        "candidate_sparse_token_budget": budget,
+                        "batch_size": 32,
+                        "reference_document_buckets": reference_events,
+                        "candidate_document_buckets": candidate_events,
+                        "dense_token_budget": model._encode_token_budget,
+                        "relative_tolerance": SPARSE_RTOL,
+                        "absolute_tolerance": SPARSE_ATOL,
+                        "query": query_row,
+                        "documents": vector_rows,
+                        "reference_query_document_dot_scores": dot_scores[
+                            "reference_scores"
+                        ],
+                        "candidate_query_document_dot_scores": dot_scores[
+                            "candidate_scores"
+                        ],
+                        "reference_query_document_scores_finite": dot_scores[
+                            "reference_finite"
+                        ],
+                        "candidate_query_document_scores_finite": dot_scores[
+                            "candidate_finite"
+                        ],
+                        "query_document_scores_close": score_close,
+                        "pass": score_close
+                        and query_row["scores_close"]
+                        and all(row["scores_close"] for row in vector_rows),
+                    }
+                )
+                write_json(
+                    args.output / f"sparse-parity-{name}-{budget}.json", rows[-1]
+                )
+    write_json(args.output / "sparse-budget-forward-tokens.json", observations)
+    return rows
+
+
+def budget_comparison(
+    model: Any,
+    torch: Any,
+    args: argparse.Namespace,
+    workloads: dict[str, list[str]],
+    sampler: DeviceSampler,
+) -> dict:
+    parity = sparse_output_parity(model, args, workloads)
+    write_json(args.output / "sparse-budget-parity.json", parity)
+    if not all(row["pass"] for row in parity):
+        raise RuntimeError(
+            "Sparse budget output parity failed; inspect parity artifacts"
+        )
+    windows = sparse_budget_windows(model, torch, args, workloads, sampler)
+    write_json(args.output / "sparse-budget-windows.json", windows)
+    return {"sparse_budget_parity": parity, "sparse_budget_windows": windows}
 
 
 def token_telemetry(model: Any, workloads: dict[str, list[str]]) -> dict:
@@ -450,6 +877,8 @@ def model_manifest(model: Any) -> dict:
             "attention": getattr(sparse.config, "_attn_implementation", None),
         },
         "encode_batch_size": cfg.embedding_encode_batch_size,
+        "dense_token_budget": model._encode_token_budget,
+        "sparse_token_budget": model._sparse_encode_token_budget,
     }
 
 
@@ -517,15 +946,24 @@ def encoder_work(args: argparse.Namespace, workloads: dict[str, list[str]]) -> d
     sampler = DeviceSampler()
     sampler.thread.start()
     try:
-        result["unprofiled"] = sweep(model, torch, args, workloads)
-        write_json(args.output / "sweep.json", result["unprofiled"])
-        write_json(
-            args.output / "bucket-tokens.json",
-            {
-                "scope": "separate observed forwards; excluded from throughput",
-                "buckets": bucket_token_telemetry(model, workloads),
-            },
-        )
+        if not args.budget_comparison_only:
+            result["unprofiled"] = sweep(model, torch, args, workloads)
+            write_json(args.output / "sweep.json", result["unprofiled"])
+        if args.sparse_budgets is not None:
+            result.update(budget_comparison(model, torch, args, workloads, sampler))
+        if args.energy_seconds is not None:
+            result["energy_windows"] = energy_windows(
+                model, torch, args, workloads, sampler
+            )
+            write_json(args.output / "energy-windows.json", result["energy_windows"])
+        if not args.budget_comparison_only:
+            write_json(
+                args.output / "bucket-tokens.json",
+                {
+                    "scope": "separate observed forwards; excluded from throughput",
+                    "buckets": bucket_token_telemetry(model, workloads),
+                },
+            )
         texts = workloads["mixed"]
 
         def warm_call() -> None:
@@ -554,6 +992,7 @@ def encoder_work(args: argparse.Namespace, workloads: dict[str, list[str]]) -> d
             {
                 "scope": "device-wide, one-second samples",
                 "error": sampler.error,
+                "power_error": sampler.power_error,
                 "samples": sampler.samples,
                 "shutdown_complete": not sampler.thread.is_alive(),
             },
@@ -617,10 +1056,29 @@ def dedicated_consumer(work: Callable[[], dict]) -> dict:
     return outcome
 
 
-def main() -> None:
-    args = arguments()
+def validate_options(args: argparse.Namespace) -> None:
+    if args.budget_comparison_only and args.sparse_budgets is None:
+        raise ValueError("--budget-comparison-only requires --sparse-budgets")
+    if args.sparse_budgets is not None and args.mode != "encoder":
+        raise ValueError("--sparse-budgets requires encoder mode")
+    duration = (args.energy_seconds or 0) * args.rounds * 8
+    if args.sparse_budgets is not None:
+        duration += (
+            args.sparse_budget_seconds * args.rounds * 4 * len(args.sparse_budgets)
+        )
+    if duration > 1200:
+        raise ValueError(
+            "Sustained windows exceed 1200 seconds; reduce rounds or duration"
+        )
+    if args.energy_seconds is not None and args.mode != "encoder":
+        raise ValueError("--energy-seconds requires encoder mode")
     if args.gil and args.py_spy is None:
         raise ValueError("--gil requires --py-spy")
+
+
+def main() -> None:
+    args = arguments()
+    validate_options(args)
     if args.py_spy is not None:
         verify_py_spy(args.py_spy)
     args.output.mkdir(parents=True, exist_ok=False)

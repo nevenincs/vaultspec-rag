@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:128c1afe080b2cfc79fb27bea96b2dffc50dc4bb8731ee331b1a5abc93a2f621'
+body_hash: 'sha256:ee2a001da2645a27ac6da76cd6835d9635e738f9302908a00019e1c02faef386'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
   - "[[2026-09-30-sparseencode-adr]]"
@@ -18,7 +18,7 @@ related:
 
 ## Scope
 
-Independent GPT-6.1 Sol review of S01 and partial S02 against b9d2daf0, including uncommitted profiling-harness and AST changes. Foreign staged origin/main merge changes are excluded. Governing plan: `2026-09-30-pipeline-performance-plan`; sparse, batching and GPU ownership decisions bound the review. Overall verdict PENDING: verified native CPU evidence is now available and borrowed lifetime cleanup is closed; admitted CUDA measurements and sustained energy comparisons remain outstanding.
+Independent GPT-6.1 Sol review of S01 and partial S02 against b9d2daf0, including uncommitted profiling-harness and AST changes. Foreign staged origin/main merge changes are excluded. Governing plan: `2026-09-30-pipeline-performance-plan`; sparse, batching and GPU ownership decisions bound the review. Overall verdict PENDING: native CPU and admitted CUDA/sustained-energy baselines are complete; candidate calibration, encoder parity and integrated verification remain outstanding.
 
 ## Findings
 
@@ -58,6 +58,50 @@ S02 PASS applies to the unchanged AST candidate `1fc776c0e3d49f8f0ad17afc9cdf2df
 
 Independent review finds no blocking code defect in the opt-in energy addition. It retains canonical admission, one GPU consumer, synchronization, alternating caps, actual bucket/OOM state and final-only cache release. Power integration covers the actual sampled span and withholds per-item estimates below coverage thresholds. Ada NVML power is a one-second average, so immediate arm transitions can mix prior-arm power into boundary samples. Prefer 30-second sustained windows and disclose this when assessing small differences. Per-item estimates use sampled-span mean power and whole-window throughput, assuming representative power at uncovered edges. They include desktop/background work, adaptive ceilings, synchronization and bookkeeping; they cannot establish model-only energy or end-to-end indexing efficiency. Source: https://docs.nvidia.com/deploy/archive/R550/nvml-api/group__nvmlDeviceQueries.html . Overall remains PENDING for real admitted CUDA/energy, encoder parity and final energy guard/gate evidence.
 
+### admitted-cuda-baseline | low | Real kernel and sustained-energy evidence is complete
+
+Independent GPT-6.1 Sol review accepts the admitted baseline. Source stability passed, 17052 CUDA kernel events are present, all24 sustained windows meet coverage thresholds, and consumer teardown precedes resident restoration. Measured caps expose workload-dependent speed/energy and repeated full-length sparse OOMs. Child benchmark success is separate from the supervisor's conservative external-control skip exit: post-run detail proves two owned holds resumed/succeeded and four externally cancelled jobs were preserved, with no owned pause left. Evidence and numerical findings live in `2026-09-30-pipeline-performance-research`. Candidate selection, actual encoder parity and final gates remain outstanding.
+
+### recovery-credit | medium | Nominal budget success can certify unexercised loads
+
+The canonical encoder credits requested budget after successful calls even when observed successful buckets are smaller. Low-load successes can accumulate recovery credit or promote a probe never exercised, matching rearmed long/mixed OOMs in the baseline. S03 must credit actual successful estimated padded-token load, prove low-load calls cannot rearm/promote an unexercised probe, and retain successful full-load recovery. Independent sparse-budget calibration must preserve dense behavior, upstream math, separate ceilings, OOM/progress ordering and output semantics.
+
+### recovery-packing | high | Exact ceiling credit can prevent recovery for non-divisible buckets
+
+Independent pre-GPU review identified unavoidable packing slack: a450-token learned ceiling with 100-token items executes400, never reaching the original equality check. This can permanently pin recovery even after pressure clears. S03 requires justified packing slack while retaining actual-only promotion and low-load rejection.
+
+### recovery-packing-closure | low | Exercised item quantum restores bounded recovery
+
+Independent GPT-6.1 Sol re-review closes the high finding. Qualification uses strictly less than one exercised item's headroom; promotion uses only actual larger load. Quantum and footprint come from the same largest successful bucket and reset after OOM. Intended mutation failures and restored passes cover non-divisible packing, exact headroom, low-load calls, undersized probes and successful-prefix backoff. Finite/nonnegative vector and finite dot-score parity guards also close the pre-GPU validation gap. Applicable 253-test/lint/format/type/docs gates pass. Quantitative details and artifact homes live in `2026-09-30-pipeline-performance-research`; real candidate performance/energy/parity remain required before selecting 4096 or closing S03.
+
+### Sparse candidate selection | high | 4096 fails strict document-weight parity
+
+Independent payload inspection confirmed 4096 weight failures despite exact coordinates and passing query/document scores. The harness correctly persisted evidence and stopped before energy windows. Shipping the provisional 4096 default would lack required parity evidence. No tolerance relaxation is authorized.
+
+### Sparse candidate selection closure | low | Failed arm excluded from the next comparison
+
+The provisional configuration/default assertion/documentation now use 8192, which is bit-identical to reference vectors on all four workloads. Ninety-four affected config/documentation/environment tests, full lint/format, explicit-environment focused type checking and documentation formatting passed. Final selection remains pending paired 8192/24000 timing, power coverage, retry and sampling evidence. The historical 4096 run remains a failed experiment, not performance evidence.
+
+### Retry response reconciliation | low | Both owned jobs have valid retry children
+
+The supervisor reported one retry HTTP failure, but fresh server records show the child was created with identical specification and parent lineage. Both cancellations are reconciled; the document child succeeded and the code child is running with desired running state. A repeated canonical retry request also timed out; no duplicate child is claimed or intentionally created. Current comparison waits for natural completion and applies no new job controls. Benchmark outcome and job restoration are recorded separately.
+
+### Candidate measurement | low | Paired parity and sustained windows complete
+
+The fresh 8192/24000 comparison completed with24 valid windows, minimum power coverage0.9396, eight passing bit-identical sparse parity comparisons, stable source/corpus hashes, successful nonblocking owned-process all-thread/GIL sampling, and consumer teardown before resident restoration. Sampling errors 73/21 remain disclosed. The same corrected accounting code was used for both arms. No general peak-memory or end-to-end indexing improvement is established.
+
+### Default selection | medium | Short energy regression prevents universal promotion
+
+8192 avoids six timed long/mixed sparse OOMs and yields small paired time/energy improvements there. All three short pairs consume6.25–10.44% more device-wide energy per item despite identical batch shapes. Its cause remains unresolved. User priority is indexing time and GPU energy, so final implementation retains 24000 as the sparse default and exposes 8192 as opt-in workload-specific tuning. Independent reviewers recommend this selection. The former provisional 8192 default is withdrawn;4096 remains rejected. A repeat could investigate environmental/order controls but is not required to ship the conservative option.
+
+### Recovery-credit closure | low | Actual-load accounting is verified
+
+The canonical planner now credits the largest successfully exercised bucket and its own item quantum, resets both after OOM, prevents low-load calls from certifying unexercised probes, and permits discrete packing recovery. Independent high-finding closures, intended mutation failures/restored passes and applicable 253-test preflight remain valid. Final default selection passed fresh full lint/917-file format/eight-file type gates and 94 config/documentation/environment tests. Remaining final review concerns are record conformance and integrated completion; no code blocker is identified.
+
+### Runtime restoration closure | low | Both owned retries succeeded and service resumed
+
+Fresh canonical records prove both exact-spec retry children succeeded and released resources. Original PID 60756 has admissions open, no borrower bound and zero active compute tickets after the successful comparison. The first retry timeout was reconciled against created-child identity. No owned hold or cancellation remains unresolved; external controls and the original foreign merge were preserved.
+
 ## Recommendations
 
-S01 correction is ready for its explicit-path checkpoint with verified native provenance and completed CPU sampling. Keep the original externally owned merge untouched. Use canonical borrowing to isolate the pinned new model from the resident old-model service; never bypass active tickets or cancel another session's jobs for evidence. Obtain actual CUDA kernels, synchronized timing, allocated/reserved peaks, sustained device-wide energy and sparse parity before selecting a planner default or closing remaining GPU work. Reuse the exact AST parity and paired measurements, with their modest/noisy limits, for the CPU checkpoint. Completion still requires all remaining Steps and integrated review PASS.
+Keep the original externally owned merge untouched. Preserve captured jobs and concurrent operator intent through normal job-control and GPU borrower APIs. Select separate sparse tuning from paired fixed-input time/energy and output checks, close actual-load recovery guards, then complete integrated gates and independent review. Dense attention/padding, code-slice storage overlap and CPU worker sizing remain measured or static follow-on opportunities, not unsupported universal defaults. Completion requires all remaining Steps and integrated review PASS.

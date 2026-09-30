@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:c273e0d6972481641e197a4331b10f597ec67e7cf6792d0ec1fde443d61f24d2'
+body_hash: 'sha256:cc0bd618d5a003f37f78ef06dfedda57770f247b96899fffa18f02d06d07c5d2'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -59,6 +59,30 @@ related:
 - `S02` `verify:` `pytest harness and AST83` -> `pass`
 - `S02` `verify:` `unchanged AST hash exact820input parity at5budgets and paired CPU timings` -> `pass`
 - `S02` `verify:` `independent GPT6.1 Sol S02 review` -> `pass`
+- `S03` `M` `dev/gpu_pipeline_profile.py`
+- `S03` `M` `src/vaultspec_rag/embeddings.py`
+- `S03` `M` `src/vaultspec_rag/config/_types.py`
+- `S03` `M` `src/vaultspec_rag/config/_schema.py`
+- `S03` `M` `src/vaultspec_rag/config/_settings.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_profile_harness.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_encode_bucket_planner.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S03` `M` `docs/configuration.md`
+- `S03` `M` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S03` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S03` `verify:` `ruff check src dev tools` -> `pass`
+- `S03` `verify:` `ruff format --check src dev tools` -> `pass`
+- `S03` `verify:` `ty check --python sparseencode/.venv/Scripts/python.exe (eight changed Python files)` -> `pass`
+- `S03` `verify:` `pytest focused planner/config/harness/AST/documentation/environment preflight (253 passes)` -> `pass`
+- `S03` `verify:` `pytest final config/configuration_doc/env_settings_centralised (94 passes)` -> `pass`
+- `S03` `verify:` `python -m dev.gpu_pipeline_profile encoder --output .pytest-tmp/pipeline-sparse-budget-passing-comparison --rounds 3 --warmups 2 --items 32 --sparse-budgets 8192,24000 --sparse-budget-seconds 30 --budget-comparison-only --skip-trace --py-spy C:/Users/hello/.local/bin/py-spy.exe --seconds 30 --gil` -> `pass`
+- `S03` `verify:` `explicit restored energy/recovery/parity/argument/native/teardown guard mutation proofs` -> `pass`
+- `S03` `verify:` `mdformat --check docs/configuration.md and five feature records` -> `pass`
+- `S03` `verify:` `vaultspec-core vault check all --feature pipeline-performance --json` -> `pass`
+- `S03` `verify:` `verify-final-resident.py exact-spec retry children succeeded and service admissions open` -> `pass`
+- `S03` `verify:` `three-arm sparse comparison including4096 strict document-weight parity` -> `fail`
+- `S03` `by:` `root with GPT-6.1 Sol encoder, harness and independent review agents`
+- `S03` `verify:` `verify-final-selection.py final selected comparison/default and rejected-arm barrier` -> `pass`
 
 ## Notes
 
@@ -68,3 +92,6 @@ related:
 - `S01` Execution moved to isolated feature/pipeline-performance worktree at b9d2daf0 so the externally owned sparseencode merge can proceed. Shared GPU admission remains enforced; copied earlier CPU evidence retains its original corpus hashes.
 - `S01` S01 corrective reopen closes live profiler suspension hazard. Same resident service recovered without restart or job cancellation. CUDA and sustained energy remain pending; failed profiler attempts excluded.
 - `S02` Sequencing separates completed AST work from required GPU and sustained-energy selection now in S03. Conditional repeat timing interval includes no gain. No indexing throughput or energy improvement claim.
+- `S03` 4096 experiment rejected before energy windows; default remains24000 because8192 short energy regressed.8192 is opt-in long/mixed tuning. Both owned cancellations have exact-spec succeeded retry children; first HTTP timeout reconciled against created-child records.
+- `S03` The recorded failed three-arm experiment is preserved as history; it did not evaluate the shipped selection. Final verification explicitly proves the selected two-arm comparison and unchanged 24000 default pass, and the rejected 4096 arm aborted before windows.
+- `S03` A supplementary verification helper initially imported `get_config` from the namespace instead of `config._settings.` The import was corrected and the exact helper rerun passed before checkpoint. The premature helper pass entry is validated by that completed run; production gates were unaffected.

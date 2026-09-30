@@ -12,7 +12,7 @@ related:
   - '[[2026-07-21-large-index-resilience-adr]]'
 modified: '2026-09-30'
 body_schema: body-v2
-body_hash: 'sha256:90c8bb060a2668a574ad710d9d5a4182d564110552c46207daeb6a3109a38fb7'
+body_hash: 'sha256:34fd8bb578b8815e1413f6a87b288ea86b1362cff601ff49c91f370bfc0aa21e'
 ---
 
 # `pipeline-performance` plan
@@ -31,7 +31,7 @@ Semantic discovery was attempted for code and decisions but this worktree's sour
 
 - [x] `S01` - Add a reproducible CPU and CUDA profiling harness with verified native profiler provenance and baseline manifests; `dev profiling tools and focused harness tests, .vault research and enrollment`.
 - [x] `S02` - Implement the measured AST decoding improvement and verify exact chunk behavior and paired CPU timing; `src/vaultspec_rag/indexer/_ast_chunker.py and focused chunking tests, .vault measured research`.
-- [ ] `S03` - Measure admitted dense and sparse CUDA workloads and sustained energy, implement supported tuning, and verify paired performance and encoder parity; `dev profiling tools and focused tests, src/vaultspec_rag encoder paths and tests, .vault GPU research`.
+- [x] `S03` - Measure admitted dense and sparse CUDA workloads and sustained energy, implement supported tuning, and verify paired performance and encoder parity; `dev profiling tools and focused tests, src/vaultspec_rag encoder paths and tests, .vault GPU research`.
 - [ ] `S04` - Complete integrated verification and independent review, recording measured gains and unresolved performance opportunities; `.vault audit and execution ledger, affected documentation and profiling artifact summaries`.
 
 ## Parallelization

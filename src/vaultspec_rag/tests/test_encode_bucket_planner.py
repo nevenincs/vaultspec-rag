@@ -173,6 +173,14 @@ class TestEncodeBatchCeilingTokenSemantics:
         ceiling.record_success(24_000)
         assert ceiling.clamp(24_000) == 24_000
 
+    def test_room_for_another_exercised_item_does_not_credit_recovery(self):
+        ceiling = EncodeBatchCeiling()
+        assert ceiling.record_oom(900) == 450
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            ceiling.record_success(400, padded_tokens_per_item=50)
+        # Mutation proof: admitting exact item headroom failed; restored passed.
+        assert ceiling.clamp(900) == 450
+
     def test_record_oom_halves_the_failing_footprint_and_returns_it(self):
         ceiling = EncodeBatchCeiling()
         # Replanning at the footprint that just failed would reproduce the
@@ -245,6 +253,7 @@ def _model_shell(
     model._dense_batch_ceiling = EncodeBatchCeiling()
     model._sparse_batch_ceiling = EncodeBatchCeiling()
     model._encode_token_budget = token_budget
+    model._sparse_encode_token_budget = token_budget
     model._encode_chars_per_token = chars_per_token
     return model
 
@@ -555,6 +564,103 @@ class TestBucketedSparseEncode:
     """The sparse path shares the planner and the token-denominated ceiling."""
 
     pytestmark: ClassVar = [pytest.mark.unit, pytest.mark.torch]
+
+    def test_sparse_budget_does_not_change_dense_bucket_planning(self):
+        texts = _distinct_texts(4)
+        dense = _BucketRecordingDenseModel()
+        sparse = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=200)
+        model._sparse_encode_token_budget = 50
+        model._dense_model = cast("SentenceTransformer", dense)
+        model._sparse_model = cast("SparseModelAdapter", sparse)
+        model.encode_documents(texts, batch_size=4)
+        model.encode_documents_sparse(texts, batch_size=4)
+        # Mutation proof: using the dense budget for sparse failed; restored passed.
+        assert dense.calls == [texts]
+        assert sparse.calls == [[text] for text in texts]
+
+    def test_long_sparse_documents_respect_the_independent_budget(self):
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=24_000)
+        model._sparse_encode_token_budget = 4096
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        texts = _texts_of_lengths(list(range(7980, 7660, -10)))
+        results = model.encode_documents_sparse(texts, batch_size=32)
+        assert fake.batch_sizes == [8, 8, 8, 8]
+        encoded_order = [text for bucket in fake.calls for text in bucket]
+        assert encoded_order == list(reversed(texts))
+        assert [result.values[0] for result in results] == [
+            float(len(text)) for text in texts
+        ]
+
+    def test_successful_prefix_cannot_undo_a_later_oom_ceiling(self):
+        texts = _distinct_texts(16, length=8000)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts[8:16]])
+        model = _model_shell(token_budget=4096)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        results = model.encode_documents_sparse(texts, batch_size=32)
+        assert fake.calls == [texts[:8], texts[8:16], texts[8:12], texts[12:16]]
+        assert len(results) == len(texts)
+        # Mutation proof: removing the OOM credit reset failed; restored passed.
+        assert model._sparse_batch_ceiling.clamp(24_000) == 2048
+
+    def test_low_load_calls_do_not_certify_recovery_after_oom(self):
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=24_000)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        ceiling = model._sparse_batch_ceiling
+        assert ceiling.record_oom(8192) == 4096
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            model.encode_documents_sparse(["a" * 8000], batch_size=1)
+        # Mutation proof: nominal budget credit failed here; restored passed.
+        assert ceiling.clamp(24_000) == 4096
+        full_bucket: list[str] = ["a" * 8000] * 8
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            model.encode_documents_sparse(full_bucket, batch_size=8)
+        # A nominal recovery probe with only one item cannot promote its budget.
+        model.encode_documents_sparse(["a" * 8000], batch_size=1)
+        assert ceiling.clamp(24_000) == 4096
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES):
+            model.encode_documents_sparse(full_bucket, batch_size=8)
+        model.encode_documents_sparse(full_bucket * 2, batch_size=16)
+        assert ceiling.clamp(24_000) == 8192
+
+    def test_nondivisible_packing_still_earns_an_exercised_recovery_probe(self):
+        texts = _distinct_texts(9, length=400)
+        fake = _BucketRecordingSparseModel(oom_on_first=[texts])
+        model = _model_shell(token_budget=900)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        model.encode_documents_sparse(texts, batch_size=9)
+        assert fake.batch_sizes == [9, 4, 4, 1]
+        ceiling = model._sparse_batch_ceiling
+        assert ceiling.clamp(900) == 450
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES - 1):
+            model.encode_documents_sparse(texts[:4], batch_size=4)
+        # Four 100-token items fill a 450-token ceiling to packing precision.
+        # Mutation proof: removing packing slack failed; restored passed.
+        model.encode_documents_sparse(texts[:8], batch_size=8)
+        assert fake.batch_sizes[-1] == 8
+        assert ceiling.clamp(900) == 800
+
+    def test_saturated_single_item_cannot_promote_an_unexercised_probe(self):
+        text = "a" * 8000
+        fake = _BucketRecordingSparseModel(oom_on_first=[[text] * 3])
+        model = _model_shell(token_budget=1536)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        model.encode_documents_sparse([text] * 3, batch_size=3)
+        ceiling = model._sparse_batch_ceiling
+        assert ceiling.clamp(1536) == 768
+        for _ in range(EncodeBatchCeiling.RECOVERY_SUCCESSES - 1):
+            model.encode_documents_sparse([text], batch_size=1)
+        budgets: list[int] = []
+        model.encode_documents_sparse(
+            [text],
+            batch_size=1,
+            on_bucket=lambda _phase, progress: budgets.append(progress.token_budget),
+        )
+        assert set(budgets) == {1536}
+        # Mutation proof: nominal probe credit failed here; restored passed.
+        assert ceiling.clamp(1536) == 768
 
     def test_each_planned_bucket_is_one_forward(self):
         texts = _distinct_texts(4)

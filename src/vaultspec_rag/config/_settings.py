@@ -202,8 +202,7 @@ class VaultSpecConfigWrapper:
         # budget; the OOM-backoff in ``encode_documents`` still halves it under
         # pressure.
         "embedding_document_encode_batch_size": 12,
-        # Token budget per planned encode bucket, shared by the dense and
-        # sparse document paths. The encode input is partitioned into
+        # Token budget per planned dense encode bucket. Inputs are split into
         # contiguous buckets whose estimated footprint (items x padded
         # longest item, at the calibration divisor below) stays within
         # this budget, bounding activation memory by construction where a
@@ -218,6 +217,9 @@ class VaultSpecConfigWrapper:
         # learned OOM ceiling clamps this budget under pressure and stays
         # the safety authority.
         "embedding_encode_token_budget": 24_000,
+        # Sparse vocabulary-wide activations have a different footprint from
+        # dense encoding, so their budget can be tuned independently.
+        "embedding_sparse_encode_token_budget": 24_000,
         # Chars-to-tokens calibration divisor for the bucket planner's
         # estimate. 3 deliberately equals the documented-conservative
         # ``document_chunk_chars_per_token``: both sit on a memory-safety
@@ -1152,6 +1154,7 @@ class VaultSpecConfigWrapper:
     embedding_code_encode_batch_size: int
     embedding_document_encode_batch_size: int
     embedding_encode_token_budget: int
+    embedding_sparse_encode_token_budget: int
     embedding_encode_chars_per_token: int
     index_cache_flush_slices: int
     vault_cache_flush_slices: int
