@@ -41,6 +41,8 @@ from ._gpu_errors import (
     refuse_if_gpu_owned,
 )
 from ._render import (
+    MUTED,
+    WARN,
     _display_port_unreachable_error,
     _display_search_results,
     _display_service_error,
@@ -48,6 +50,7 @@ from ._render import (
     _emit_json,
     _emit_json_error_and_exit,
     _plain,
+    _styled,
     exit_with_error,
 )
 from ._search_readiness_render import (
@@ -199,13 +202,18 @@ def _handle_service_success(
         show_scores=request.show_scores,
         root=request.target,
     )
-    _render_readiness(payload)
+    _render_readiness(payload, muted=True)
     _render_shortfall_warnings(payload)
     _render_partial_domain_failures(payload)
 
 
-def _render_readiness(payload: dict[str, object]) -> set[str]:
-    return _render_readiness_payload(payload, _plain)
+def _muted_line(text: str) -> None:
+    _styled((text, MUTED), soft_wrap=True)
+
+
+def _render_readiness(payload: dict[str, object], *, muted: bool = False) -> set[str]:
+    """Render the readiness block; muted when it trails results it qualifies."""
+    return _render_readiness_payload(payload, _muted_line if muted else _plain)
 
 
 def _render_string_remediation(payload: dict[str, object], rendered: set[str]) -> None:
@@ -229,8 +237,9 @@ def _render_shortfall_warnings(payload: dict[str, object]) -> None:
     if not isinstance(index_state, dict):
         return
     for warning in shortfall_warnings(cast("dict[str, object]", index_state)):
-        _plain(
-            f"Warning: {warning.deficit}; {warning.missing}.",
+        _styled(
+            ("Warning:", WARN),
+            f" {warning.deficit}; {warning.missing}.",
             soft_wrap=True,
         )
         _plain(f"  {warning.why}, so {SHORTFALL_CONSEQUENCE}.", soft_wrap=True)

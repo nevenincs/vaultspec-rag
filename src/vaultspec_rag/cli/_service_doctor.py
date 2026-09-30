@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 import typer
 from vaultspec_core.config.workspace import WorkspaceError, resolve_workspace
 
+from .._readiness import ReadinessStatus
 from ..api import get_readiness
 from ..commands._mode import RAG_DISTRIBUTION_NAME
 from ..operator_state._holders import HolderRole, holder_line
@@ -41,7 +42,18 @@ from ..operator_state._topology import (
 )
 from ._app import JSON_ENVELOPE_OPTION_HELP, _global_target, server_root_app
 from ._process import _resolve_daemon_interpreter
-from ._render import _emit_json, _plain
+from ._render import (
+    BAD,
+    COMMAND,
+    GOOD,
+    HEADING,
+    WARN,
+    _emit_json,
+    _heading,
+    _plain,
+    _styled,
+    lifecycle_style,
+)
 
 if TYPE_CHECKING:
     from ..operator_state._installation import ComputeCapability
@@ -336,9 +348,12 @@ def _render_readiness(
 ) -> None:
     """Render both readiness axes as a bounded plain-text summary."""
     server_mode = bool(report.get("server_mode"))
-    _plain("Service readiness")
+    _heading("Service readiness")
     _plain(f"Backend: {'server' if server_mode else 'local-only'}")
-    _plain(f"Readiness: {_overall_label(overall_ready, status)}")
+    _styled(
+        "Readiness: ",
+        (_overall_label(overall_ready, status), GOOD if overall_ready else BAD),
+    )
     _render_live_service_axis(service)
     _render_dependency_axis(report)
 
@@ -367,15 +382,18 @@ def _render_receipt_axis(interpreter: str) -> None:
     axis = _receipt_axis(interpreter)
     if axis is None:
         return
-    _plain(f"Installation receipt: {axis['label']}")
     raw = axis["fix"]
     commands = cast("list[object]", raw) if isinstance(raw, list) else []
+    _styled(
+        ("Installation receipt:", HEADING),
+        (f" {axis['label']}", WARN if commands else GOOD),
+    )
     if not commands:
         return
     _plain("  make upgrades keep the GPU build, in order:")
     for command in commands:
         # Soft-wrapped: a folded command is not one an operator can paste.
-        _plain(f"    {command}", soft_wrap=True)
+        _styled("    ", (str(command), COMMAND), soft_wrap=True)
 
 
 def _compute_repair_steps(interpreter: str, capability: ComputeCapability) -> list[str]:
@@ -399,9 +417,9 @@ def _render_compute_repair(interpreter: str, capability: ComputeCapability) -> N
     steps = _compute_repair_steps(interpreter, capability)
     if not steps:
         return
-    _plain(f"Repair for {interpreter}:")
+    _heading(f"Repair for {interpreter}:")
     for step in steps:
-        _plain(f"  {step}", soft_wrap=True)
+        _styled("  ", (step, COMMAND), soft_wrap=True)
 
 
 def _render_environment_holders(report: dict[str, object]) -> None:
@@ -424,7 +442,7 @@ def _render_environment_holders(report: dict[str, object]) -> None:
     if not entries and snapshot.get("certain") and not snapshot.get("self_held"):
         _plain("Service environment: nothing is running out of it")
         return
-    _plain("Running out of the service environment:")
+    _heading("Running out of the service environment:")
     if snapshot.get("self_held"):
         _plain("  this command is running inside that environment")
     for entry in entries:
@@ -472,28 +490,32 @@ def _render_mode_floor_axis(mode: dict[str, object] | None) -> None:
     """
     if mode is None:
         return
-    _plain("Provisioning (vaultspec-rag):")
+    _heading("Provisioning (vaultspec-rag):")
     _plain(f"  declared mode: {mode.get('declared_mode', '?')}")
     if mode.get("mode_mismatch") == "mismatch":
-        detail = "mismatch - .mcp.json launch shape disagrees with the declared mode"
+        verdict, style = "mismatch", WARN
+        detail = " - .mcp.json launch shape disagrees with the declared mode"
     elif mode.get("mode_mismatch") == "unknown":
-        detail = "unknown - no mode declared"
+        verdict, style, detail = "unknown", WARN, " - no mode declared"
     else:
-        detail = "ok - artifacts match the declared mode"
-    _plain(f"  install mode: {detail}")
+        verdict, style = "ok", GOOD
+        detail = " - artifacts match the declared mode"
+    _styled("  install mode: ", (verdict, style), detail)
     if mode.get("version_floor") == "below":
-        _plain(
-            f"  version floor: error - running {mode.get('version_floor_running')} "
-            f"is below the declared floor {mode.get('version_floor_minimum')}"
+        _styled(
+            "  version floor: ",
+            ("error", BAD),
+            f" - running {mode.get('version_floor_running')} "
+            f"is below the declared floor {mode.get('version_floor_minimum')}",
         )
         _plain("    upgrade with, in order:")
         raw = mode.get("upgrade_commands")
         commands = cast("list[object]", raw) if isinstance(raw, list) else []
         for command in commands:
             # Soft-wrapped: a folded command is not one an operator can paste.
-            _plain(f"      {command}", soft_wrap=True)
+            _styled("      ", (str(command), COMMAND), soft_wrap=True)
     else:
-        _plain("  version floor: ok")
+        _styled("  version floor: ", ("ok", GOOD))
 
 
 def _overall_label(overall_ready: bool, status: str) -> str:
@@ -508,38 +530,48 @@ def _overall_label(overall_ready: bool, status: str) -> str:
 
 def _render_live_service_axis(service: dict[str, object]) -> None:
     """Render the live-service axis block, clearly labelled and separate."""
-    _plain("Live service:")
+    _heading("Live service:")
     if not service.get("present"):
-        _plain(f"  {service.get('label', 'no service has been started')}")
+        label = str(service.get("label", "no service has been started"))
+        _styled("  ", (label, WARN))
         return
-    _plain(f"  status: {service.get('label', service.get('state', '?'))}")
-    _plain(
-        f"  process: pid {service.get('pid')} "
-        f"({'alive' if service.get('pid_alive') else 'not alive'})"
+    label = str(service.get("label", service.get("state", "?")))
+    _styled("  status: ", (label, lifecycle_style(service.get("state"))))
+    alive = bool(service.get("pid_alive"))
+    _styled(
+        f"  process: pid {service.get('pid')} (",
+        ("alive" if alive else "not alive", GOOD if alive else BAD),
+        ")",
     )
-    _plain(
-        f"  network: port {service.get('port')} "
-        f"({'listening' if service.get('port_listening') else 'not listening'})"
+    listening = bool(service.get("port_listening"))
+    _styled(
+        f"  network: port {service.get('port')} (",
+        ("listening" if listening else "not listening", GOOD if listening else BAD),
+        ")",
     )
     heartbeat_age = service.get("heartbeat_age_seconds")
     if isinstance(heartbeat_age, int | float) and not isinstance(heartbeat_age, bool):
-        suffix = " (stale)" if service.get("heartbeat_stale") else ""
-        _plain(f"  heartbeat: {heartbeat_age:.0f}s ago{suffix}")
+        stale = " (stale)" if service.get("heartbeat_stale") else ""
+        _styled(f"  heartbeat: {heartbeat_age:.0f}s ago", (stale, WARN))
     else:
-        _plain("  heartbeat: absent")
+        _styled("  heartbeat: ", ("absent", WARN))
     version = service.get("version")
     if isinstance(version, dict):
         version_map = cast("dict[str, object]", version)
         reported = version_map.get("service_version") or "not reported"
-        compatible = version_map.get("compatible")
+        compatible = bool(version_map.get("compatible"))
         state = "matches this client" if compatible else "INCOMPATIBLE"
-        _plain(f"  release: {reported} ({state})")
+        _styled(f"  release: {reported} (", (state, GOOD if compatible else BAD), ")")
 
 
 def _render_dependency_axis(report: dict[str, object]) -> None:
     """Render the installed-dependency axis block, clearly labelled and separate."""
     deps_ready = bool(report.get("ready"))
-    _plain(f"Installed dependencies: {'ready' if deps_ready else 'not ready'}")
+    _styled(
+        ("Installed dependencies:", HEADING),
+        " ",
+        ("ready" if deps_ready else "not ready", GOOD if deps_ready else BAD),
+    )
     deps = report.get("dependencies")
     dep_list = cast("list[object]", deps) if isinstance(deps, list) else []
     for dep in dep_list:
@@ -549,5 +581,14 @@ def _render_dependency_axis(report: dict[str, object]) -> None:
         name = str(dep_map.get("name", "?"))
         dep_status = str(dep_map.get("status", "unknown"))
         detail = str(dep_map.get("detail", ""))
-        line = f"  {name}: {dep_status}" + (f" - {detail}" if detail else "")
-        _plain(line)
+        _styled(
+            f"  {name}: ",
+            (dep_status, _DEPENDENCY_STYLE.get(dep_status, WARN)),
+            f" - {detail}" if detail else "",
+        )
+
+
+_DEPENDENCY_STYLE = {
+    ReadinessStatus.READY.value: GOOD,
+    ReadinessStatus.NOT_READY.value: BAD,
+}

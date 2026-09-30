@@ -56,6 +56,7 @@ from ._core import logger
 from ._gpu_errors import _handle_gpu_error
 from ._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
 from ._render import (
+    COMMAND,
     _display_port_unreachable_error,
     _display_service_error,
     _display_service_version_error,
@@ -63,6 +64,7 @@ from ._render import (
     _emit_json_error_and_exit,
     _format_local_index_busy_message,
     _plain,
+    _styled,
     exit_with_error,
 )
 from ._search import _suppress_hf_progress
@@ -532,11 +534,10 @@ def _try_service_delegation(request: _ServiceDelegationRequest) -> bool:
                 },
             )
         elif "job_id" in data:
-            _plain(
-                f"{_index_source_label(request.index_type.value)} re-index job "
-                f"queued on service: {data.get('job_id')}"
+            _print_job_queued(
+                _index_source_label(request.index_type.value), data.get("job_id")
             )
-            _cli.console.print("Check progress with: vaultspec-rag server jobs")
+            _print_check_progress()
         elif _print_service_domain_outcomes(data.get("domains")):
             pass
         else:
@@ -604,14 +605,26 @@ def _print_service_domain_outcomes(raw_domains: object) -> bool:
         rendered = True
         label = _index_source_label(source)
         if domain.get("ok") is True:
-            _plain(f"{label} re-index job queued on service: {domain.get('job_id')}")
+            _print_job_queued(label, domain.get("job_id"))
         else:
             _plain(
                 f"{label}: failed: {domain.get('error_kind')}: {domain.get('detail')}"
             )
     if rendered:
-        _cli.console.print("Check progress with: vaultspec-rag server jobs")
+        _print_check_progress()
     return rendered
+
+
+def _print_job_queued(label: str, job_id: object) -> None:
+    _styled(
+        f"{label} re-index job queued on service: ",
+        (str(job_id), COMMAND),
+        soft_wrap=True,
+    )
+
+
+def _print_check_progress() -> None:
+    _styled("Check progress with: ", ("vaultspec-rag server jobs", COMMAND))
 
 
 def _index_parameter_is_explicit(ctx: typer.Context, name: str) -> bool:

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal, NoReturn, cast
 
 import typer
+from rich.text import Text
 
 import vaultspec_rag.cli as _cli
 
@@ -25,6 +26,7 @@ from .._operator_commands import (
 )
 from ..commands._models import SYNC_COUNTERS, InstallReport, UninstallReport
 from ..operator_state._installation import ComputeCapability
+from ..operator_state._service import ServiceLifecycle
 from ._cli_format import _counted_unit
 
 if TYPE_CHECKING:
@@ -32,6 +34,13 @@ if TYPE_CHECKING:
     from ..serviceclient._compat import ServiceVersionVerdict
 
 __all__ = [
+    "BAD",
+    "COMMAND",
+    "GOOD",
+    "HEADING",
+    "MUTED",
+    "WARN",
+    "Segment",
     "_display_port_unreachable_error",
     "_display_search_results",
     "_display_service_error",
@@ -40,12 +49,62 @@ __all__ = [
     "_emit_json",
     "_emit_json_error_and_exit",
     "_format_local_index_busy_message",
+    "_heading",
     "_plain",
     "_plain_line",
     "_print_next_action",
     "_render_install_report",
     "_render_uninstall_report",
+    "_styled",
+    "lifecycle_style",
 ]
+
+# The presentation vocabulary the vaultspec CLIs share, so vaultspec-rag and
+# vaultspec-core read as one product. Only ANSI-named styles: the operator's
+# terminal theme picks the actual colours. Every state a style marks is also
+# spelled out in the words, so piped, captured and NO_COLOR output lose nothing.
+HEADING: Final = "bold"
+MUTED: Final = "dim"
+GOOD: Final = "green"
+WARN: Final = "yellow"
+BAD: Final = "red"
+COMMAND: Final = "cyan"
+
+#: One piece of a styled line: literal text, or literal text with a style.
+Segment = str | tuple[str, str]
+
+
+def _styled(*segments: Segment, soft_wrap: bool | None = None) -> None:
+    """Print one operator line assembled from literal, optionally styled, segments.
+
+    The styled counterpart of :func:`_plain`. Each segment is appended to a
+    :class:`rich.text.Text` as literal text, so a bracketed path or command is
+    never read as markup and the printed characters are exactly the segments
+    joined. Styles reach a colour terminal only; captured and piped output is
+    the same plain line :func:`_plain` would have printed.
+    """
+    line = Text()
+    for segment in segments:
+        if isinstance(segment, str):
+            line.append(segment)
+        else:
+            text, style = segment
+            line.append(text, style=style)
+    _cli.console.print(line, highlight=False, soft_wrap=soft_wrap)
+
+
+def _heading(text: str) -> None:
+    """Print a block heading at column 0."""
+    _styled((text, HEADING), soft_wrap=True)
+
+
+def lifecycle_style(state: object) -> str:
+    """Mark a service lifecycle state: serving, on its way, or failed."""
+    if state == ServiceLifecycle.RUNNING:
+        return GOOD
+    if state in (ServiceLifecycle.STARTING, ServiceLifecycle.STOPPED):
+        return WARN
+    return BAD
 
 
 def _plain(text: str, *, soft_wrap: bool | None = None) -> None:
@@ -151,8 +210,8 @@ def exit_with_error(
 def _print_next_action(command: object) -> None:
     """Print the operator's "Next action:" hint, or nothing for a falsy command."""
     if command:
-        _plain_line("Next action:")
-        _plain_line(f"  {command}")
+        _styled(("Next action:", HEADING), soft_wrap=True)
+        _styled("  ", (str(command), COMMAND), soft_wrap=True)
 
 
 def address_line(port: object) -> str:
@@ -267,13 +326,13 @@ def _display_search_results(
     _ = search_type, via
     for rank, result in enumerate(results, start=1):
         location = _search_result_location(result)
-        line = f"{rank}. {location}"
+        head: list[Segment] = [(f"{rank}. {location}", HEADING)]
         if show_scores:
-            line += f" (score {_search_result_score(result):.4f})"
-        _plain(line, soft_wrap=True)
+            head.append((f" (score {_search_result_score(result):.4f})", MUTED))
+        _styled(*head, soft_wrap=True)
         meta_line = _search_result_meta_line(result)
         if meta_line is not None:
-            _plain(f"   {meta_line}", soft_wrap=True)
+            _styled("   ", (meta_line, MUTED), soft_wrap=True)
         for text_line in _search_result_text_lines(result, root=root):
             _plain(f"   {text_line}", soft_wrap=True)
 
@@ -732,7 +791,7 @@ def _render_refused_install(report: InstallReport) -> None:
     once.
     """
     noun = _INSTALL_ACTION_NOUNS.get(report.action, "install")
-    _plain(f"vaultspec-rag {noun} refused - nothing was changed")
+    _heading(f"vaultspec-rag {noun} refused - nothing was changed")
     _plain(f"Target: {report.target}")
     _plain(f"Reason: {report.refused}")
     _render_tool_torch_repair(report.tool_torch_repair)
@@ -751,7 +810,7 @@ def _render_install_report(report: InstallReport) -> None:
         "dry_run": "vaultspec-rag install (dry-run)",
     }.get(report.action, "vaultspec-rag install")
     dry_run = report.action == "dry_run"
-    _plain(title)
+    _heading(title)
     _plain(f"Target: {report.target}")
     if report.created_dirs:
         verb = "would create" if dry_run else "created"
@@ -853,7 +912,7 @@ def _render_uninstall_report(report: UninstallReport) -> None:
         "dry_run": "vaultspec-rag uninstall (dry-run; use --force to apply)",
     }.get(report.action, "vaultspec-rag uninstall")
     dry_run = report.action == "dry_run"
-    _plain(title)
+    _heading(title)
     _plain(f"Target: {report.target}")
     if report.removed:
         verb = "would remove" if dry_run else "removed"

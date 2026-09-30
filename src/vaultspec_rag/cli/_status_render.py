@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
-import vaultspec_rag.cli as _cli
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -66,7 +64,15 @@ from ._cli_format import NOT_REPORTED
 from ._process import (
     _is_our_service,
 )
-from ._render import _emit_json, _plain, _print_next_action, address_line
+from ._render import (
+    _emit_json,
+    _heading,
+    _plain,
+    _print_next_action,
+    _styled,
+    address_line,
+    lifecycle_style,
+)
 from ._service_jobs_presentation import (
     human_progress,
     operation_label,
@@ -258,7 +264,7 @@ def _render_discovery_verdict(
         return
 
     if verbose:
-        _cli.console.print("Service status")
+        _heading("Service status")
         _print_detail_line("Local record", "not found")
         _print_detail_line("Server", verdict.label)
         _print_detail_line("Discovery", verdict.resolution.evidence())
@@ -902,12 +908,21 @@ def _print_operational_detail(
     _print_next_action(operational.get("next_action"))
 
 
+def _print_server_line(request: _StatusSummaryRequest) -> None:
+    _styled(
+        "Server: ",
+        (_plain_status_label(request.label), lifecycle_style(request.state)),
+        soft_wrap=True,
+    )
+
+
 def _render_status_summary(request: _StatusSummaryRequest) -> None:
     if request.health is None:
         # Nothing answered, so there is nothing to report beyond where the
         # service is and how to change that - rows of "not reported" would
         # only repeat that the service is not there.
-        lines = [f"Server: {_plain_status_label(request.label)}"]
+        _print_server_line(request)
+        lines: list[str] = []
         if request.state.remediation:
             lines.append(request.state.remediation)
         lines.append(address_line(request.port))
@@ -928,8 +943,8 @@ def _render_status_summary(request: _StatusSummaryRequest) -> None:
         port_listening=request.port_listening,
     )
     features = service_features(request.health)
+    _print_server_line(request)
     lines = [
-        f"Server: {_plain_status_label(request.label)}",
         f"Requests: {request_status}",
         *_degraded_lines(request.operational, request.health),
         f"Busy: {_status_busy_label(jobs_dict)}",
@@ -957,7 +972,7 @@ def _render_status_detail(
     health: dict[str, object] | None,
     operational: dict[str, object] | None,
 ) -> None:
-    _cli.console.print("Service status")
+    _heading("Service status")
     _print_detail_line("Local record", "found")
     _print_detail_line("Process ID", signals.pid)
     _print_status_lines([address_line(signals.port)])
@@ -1050,7 +1065,7 @@ def _render_port_only_status(
         )
         return
 
-    _cli.console.print("Service status")
+    _heading("Service status")
     _print_detail_line("Local record", "not found")
     _print_detail_line("Process", "not reported")
     _print_status_lines([address_line(port)])
@@ -1258,7 +1273,7 @@ def service_status(
             )
             raise typer.Exit(code=stopped.exit_code)
         if verbose:
-            _cli.console.print("Service status")
+            _heading("Service status")
             _print_detail_line("Local record", "not found")
             _print_detail_line("Server", ServiceLifecycle.STOPPED.label)
             _print_detail_line("Typesafe", typesafe_label(None))

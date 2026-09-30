@@ -23,7 +23,16 @@ from ._cli_format import (
     _project_name,
     compact_duration,
 )
-from ._render import _plain, address_line
+from ._render import (
+    BAD,
+    COMMAND,
+    GOOD,
+    MUTED,
+    _heading,
+    _plain,
+    _styled,
+    address_line,
+)
 from ._service_jobs_query import (
     empty_jobs_message,
     filter_is_set,
@@ -145,6 +154,10 @@ def _job_prefix(job: dict[str, object]) -> str:
     if phase in ("error", "failed"):
         return "!"
     return "-"
+
+
+#: Each feed prefix's colour, keyed by the glyph the legend explains.
+_JOB_PREFIX_STYLE = {"*": COMMAND, "~": MUTED, "!": BAD, "-": GOOD}
 
 
 def _job_timestamp(job: dict[str, object]) -> float:
@@ -812,7 +825,7 @@ def _render_jobs_header(
     counts_line: str,
 ) -> None:
     """Print the opening lines both the populated and empty views share."""
-    _plain("Jobs")
+    _heading("Jobs")
     _plain(address_line(port))
     _plain(f"Displayed: {shown_count}")
     _plain(f"Total: {_job_count_text(total)}")
@@ -876,10 +889,15 @@ def _render_jobs_feed(
         note = lineage_notes.get(index)
         if note:
             detail = f"{detail}; {note}" if detail else note
-        _cli.console.print(
-            f"{_job_prefix(job)} {_job_time_label(job)} {phase_label(job)} "
-            f"{operation_label(job)}{_project_phrase(job)} (job {job_id}) - "
-            f"{detail}",
+        prefix = _job_prefix(job)
+        style = _JOB_PREFIX_STYLE[prefix]
+        _styled(
+            (prefix, style),
+            f" {_job_time_label(job)} ",
+            (phase_label(job), style),
+            f" {operation_label(job)}{_project_phrase(job)} ",
+            (f"(job {job_id})", MUTED),
+            f" - {detail}",
             soft_wrap=True,
         )
 
