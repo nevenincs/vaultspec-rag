@@ -1,326 +1,356 @@
-<img src="assets/logo.png" width="150" alt="vaultspec-rag logo">
+<div align="center">
 
-# vaultspec-rag
+<img src="https://raw.githubusercontent.com/nevenincs/vaultspec-rag/main/assets/logo.png" width="119" alt="Vaultspec logo">
 
-The semantic search component for vault and code.
+# vaultspec-rag: Semantic search for code and the decisions behind it
 
-Grep finds a concept only when you already know its name. Why code looks the way it
-does is often written in a decision record that's hard to find. vaultspec-rag searches a
-repository's source code and its decision records by meaning. Run it from the command
-line, or connect an AI assistant through the Model Context Protocol (MCP), so the
-assistant finds both the code and the decisions behind it. Search combines a model that
-matches meaning with one that matches exact terms, then reranks the results. An optional
-paid service, Typesafe, can refine the ranking.
+vaultspec-rag searches a repository by meaning: its source code, and the decision
+records that explain why the code looks the way it does. Ask in plain words, from the
+command line or from your AI assistant, and it returns the matching code or the passage
+that answers. It runs on your own machine and GPU. It's in beta.
 
-One background service per machine runs the models on the local graphics processing
-unit (GPU), because they're too slow to be useful on a central processing unit (CPU). A
-host installation starts that service; a client installation only sends it requests.
-The [architecture overview](docs/architecture.md) explains how the pieces fit.
+[<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="CI status of main" src="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://github.com/nevenincs/vaultspec-rag/actions/workflows/merge-gate.yml?query=branch%3Amain)
+[<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="PyPI version" src="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://pypi.org/project/vaultspec-rag/)
+[<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/python-3.13%20%7C%203.14.svg?logo=python&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="Supported Python versions" src="https://shieldcn.dev/badge/python-3.13%20%7C%203.14.svg?logo=python&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://www.python.org/downloads/)
+[<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/cli%20%7C%20mcp.svg?variant=secondary&amp;size=xs&amp;mode=dark"><img alt="Interfaces: CLI and MCP" src="https://shieldcn.dev/badge/cli%20%7C%20mcp.svg?variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://github.com/nevenincs/vaultspec-rag#documentation)
+[<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/nevenincs/vaultspec-rag.svg?label=license&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="License" src="https://shieldcn.dev/github/license/nevenincs/vaultspec-rag.svg?label=license&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://github.com/nevenincs/vaultspec-rag/blob/main/LICENSE)
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/stars/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="GitHub Stars" src="https://www.shieldcn.dev/github/stars/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/forks/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="GitHub Forks" src="https://www.shieldcn.dev/github/forks/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/watchers/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Watchers" src="https://www.shieldcn.dev/github/watchers/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/branches/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Branches" src="https://www.shieldcn.dev/github/branches/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/contributors/nevenincs/vaultspec-rag.svg?theme=emerald&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Contributors" src="https://www.shieldcn.dev/github/contributors/nevenincs/vaultspec-rag.svg?theme=emerald&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/last-commit/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Last commit" src="https://www.shieldcn.dev/github/last-commit/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/commits/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Commits" src="https://www.shieldcn.dev/github/commits/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/open-issues/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Open issues" src="https://www.shieldcn.dev/github/open-issues/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/closed-issues/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Closed issues" src="https://www.shieldcn.dev/github/closed-issues/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/open-prs/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Open PRs" src="https://www.shieldcn.dev/github/open-prs/nevenincs/vaultspec-rag.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/closed-prs/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Closed PRs" src="https://www.shieldcn.dev/github/closed-prs/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/merged-prs/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Merged PRs" src="https://www.shieldcn.dev/github/merged-prs/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fvaultspec-rag%2Fjson&amp;query=%24.info.version&amp;label=release&amp;variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Release" src="https://www.shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fvaultspec-rag%2Fjson&amp;query=%24.info.version&amp;label=release&amp;variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fnevenincs%2Fvaultspec-rag%2Factions%2Fworkflows%2Fmerge-gate.yml%2Fruns%3Fbranch%3Dmain%26per_page%3D1&amp;query=%24.workflow_runs%5B0%5D.conclusion&amp;label=build&amp;variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Build" src="https://www.shieldcn.dev/badge/dynamic/json.svg?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fnevenincs%2Fvaultspec-rag%2Factions%2Fworkflows%2Fmerge-gate.yml%2Fruns%3Fbranch%3Dmain%26per_page%3D1&amp;query=%24.workflow_runs%5B0%5D.conclusion&amp;label=build&amp;variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA%20%7C%20MPS-57606a.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Runtime" src="https://www.shieldcn.dev/badge/runtime-Python%203.13%20%7C%203.14%20%7C%20CUDA%20%7C%20MPS-57606a.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/github/license/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="License" src="https://www.shieldcn.dev/github/license/nevenincs/vaultspec-rag.svg?variant=ghost&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://www.shieldcn.dev/badge/Agent--friendly-AGENTS.md-D97757.svg?variant=secondary&amp;size=xs&amp;mode=dark&amp;font=roboto"><img alt="Agent-friendly AGENTS.md" src="https://www.shieldcn.dev/badge/Agent--friendly-AGENTS.md-D97757.svg?variant=secondary&amp;size=xs&amp;mode=light&amp;font=roboto"></picture>
+**[Install](#install)** · **[Search](#search)** ·
+**[AI assistants](#use-it-from-an-ai-assistant)** · **[Commands](#everyday-commands)** ·
+**[Configuration](#configuration)** · **[How it works](#how-it-works)** ·
+**[Documentation](#documentation)** · **[Support](#support-and-license)**
 
-[Install](#install) · [Use it](#use-it) ·
-[Docs](#documentation) · [Help](#status-and-help)
+<br>
 
-Use it with [vaultspec-core](https://github.com/nevenincs/vaultspec-core) or
-independently in another repository. To index PDFs and other formats,
-[connect a converter](#read-pdfs-and-other-formats).
+<img src="https://raw.githubusercontent.com/nevenincs/vaultspec-rag/main/assets/term-search-vault.svg" alt="vaultspec-rag search asking why the indexer uses one GPU consumer thread instead of CUDA streams, answered by two decision records and the passages that give the reason" width="880">
 
-## What you need
+*Ask why, and the answer comes back as the decision record's own passage.*
 
-- Python 3.13 or 3.14 with [uv](https://docs.astral.sh/uv/getting-started/installation/),
-  or a [prebuilt binary](docs/installation.md#install-a-prebuilt-binary).
-- A supported GPU: an NVIDIA GPU with CUDA, NVIDIA's GPU computing platform, on Linux or
-  Windows, or Apple silicon on macOS. vaultspec-rag doesn't run on a CPU or on AMD GPUs.
-- Enough memory for a resource profile. The default profile needs 16 GiB of system
-  memory and, on CUDA, 12 GiB of free GPU memory. The smaller `embedded-local` profile
-  needs 8 GiB of system memory and 6 GiB of free GPU memory.
-- Several gigabytes of disk for a one-time model download.
-- By default, search also uses the sparse model
-  [`naver/splade-v3`](https://huggingface.co/naver/splade-v3), which matches exact terms.
-  It needs a Hugging Face account that has accepted the model's non-commercial licence.
-  The [dense-only setup](docs/installation.md#the-model-cache-and-its-first-download)
-  uses only the meaning model. It needs no Hugging Face login and gives up exact-term
-  matching.
+</div>
 
-The [installation requirements](docs/installation.md#what-you-need-before-you-start)
-list the full figures, and the [glossary](docs/glossary.md) defines the terms used here.
+<br>
+<br>
 
 ## Install
 
-- If vaultspec-rag isn't installed on this machine yet, install the
-  [host](#host-installation). It serves every repository on the machine and gives AI
-  assistants the search tools.
-- If a host installation already runs the service, add a
-  [client](#client-in-a-python-project) to any uv-managed Python project that must list
-  vaultspec-rag as a dependency. A client installs no GPU packages or models and sends
-  every request to the host's service on the same machine.
+vaultspec-rag has two parts. A background service runs the search models on your GPU.
+The `vaultspec-rag` command and your AI assistant send it requests. One service serves
+every repository on the machine.
 
-The [installation guide](docs/installation.md#choose-what-this-environment-runs) covers
-every route, and its [troubleshooting](docs/installation.md#when-something-goes-wrong),
-[upgrade](docs/installation.md#upgrade), and [removal](docs/installation.md#remove-vaultspec-rag)
-sections cover what comes after.
+1. **Install the host** once per machine. It carries the service and its GPU packages.
+1. **Get a Hugging Face token**, or opt out of the one model that needs it.
+1. **Set up each repository** you want to search, then start the service.
+1. **Index and search.**
 
-### Host installation
+Already running a host, and a Python project needs vaultspec-rag as a dependency? Add
+a [client](#add-a-client-to-a-python-project) instead. A client has no GPU packages and
+sends every request to the host's service.
 
-Install the host once, as a standalone tool; it serves every repository on the machine.
-The `[gpu]` extra adds PyTorch and the model libraries, and `[mcp]` adds the MCP adapter
-that AI assistants launch. The Windows and Linux commands record the CUDA package index
-in the tool's installation receipt, so `uv tool upgrade` keeps resolving the GPU build.
+### What you need
 
-Windows x64 and Linux x86_64 or aarch64 (glibc 2.28 or newer):
+- An NVIDIA GPU with CUDA on Windows or Linux, or Apple silicon on macOS.
+  vaultspec-rag doesn't run on a CPU or on AMD GPUs.
+- 16 GiB of system memory and 12 GiB of free GPU memory for the default profile. The
+  smaller `embedded-local` profile needs 8 GiB and 6 GiB; see
+  [Configuration](#configuration).
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). vaultspec-rag
+  supports Python 3.13 and 3.14, and uv downloads an interpreter if needed.
+- A few gigabytes of disk for a one-time model download.
+
+### Install the host
+
+On Windows x64, or Linux x86_64 or aarch64 with glibc 2.28 or newer:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]" --index https://download.pytorch.org/whl/cu130 --index-strategy unsafe-first-match
 ```
 
-Apple silicon macOS, which uses Metal rather than CUDA:
+On Apple silicon:
 
 ```bash
 uv tool install --python 3.13 "vaultspec-rag[gpu,mcp]"
 ```
 
-Upgrade later with `uv tool upgrade vaultspec-rag`, then restart the service so it runs
-the new release; if uv reports an entry point it could not overwrite because the file is
-in use, the release is installed and the running launcher keeps working. An installation
-made without the two index options resolves a CPU-only PyTorch at its next upgrade;
-`vaultspec-rag server doctor` reports that and prints the two commands that repair it in
-place, which [pin the GPU build](docs/installation.md#pin-the-gpu-build) describes. If
-uv reports that its executables directory isn't on your `PATH`, run
+The two extras do different jobs:
+
+- `[gpu]` adds PyTorch and the model libraries. The service needs them.
+- `[mcp]` adds the adapter your AI assistant launches. Installing it here means the
+  assistant runs the same release as the service.
+
+The two `--index` options keep the CUDA build of PyTorch on every later
+`uv tool upgrade`. If uv says its tool directory isn't on your `PATH`, run
 `uv tool update-shell` and open a new terminal.
 
-By default, search needs access to the sparse model. If you can't accept its licence,
-set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in your user environment and skip to the
-repository setup. Otherwise, accept the licence on the
-[model page](https://huggingface.co/naver/splade-v3), then log in:
+### Get a Hugging Face token
 
-```bash
-uvx --from huggingface_hub hf auth login
-```
+Search uses three open models from Hugging Face. Two download freely. The third,
+[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), matches exact terms such as
+function names. It's gated: Hugging Face releases its files only to an account that has
+accepted its non-commercial licence (CC BY-NC-SA 4.0), and a token tells Hugging Face
+which account is asking.
 
-Alternatively, set `HF_TOKEN` in your user environment.
+1. Sign in to Hugging Face and accept the licence on the
+   [model page](https://huggingface.co/naver/splade-v3).
 
-From the root of each repository you want to search, run the repository setup. It
-doesn't reinstall the tool:
+1. Create a read token under
+   [Access Tokens](https://huggingface.co/settings/tokens).
+
+1. Save the token for the account that runs the service:
+
+   ```bash
+   uvx --from huggingface_hub hf auth login
+   ```
+
+   Or set `HF_TOKEN` in that account's environment. `HF_TOKEN` wins over a saved login.
+
+If you can't accept the licence, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the same
+environment instead. Search then matches on meaning alone: no token and no gated
+download, but no exact-term matching either.
+
+### Set up each repository
+
+From the root of each repository you want to search:
 
 ```bash
 vaultspec-rag install --no-torch-config
 ```
 
-The setup adds the AI-assistant integration and creates the `.vault/` folder for
-decision records. On the first repository, it also downloads the search models and
-Qdrant, the index server; later repositories reuse both. The first run downloads
-several gigabytes. `--no-torch-config` leaves the repository's own PyTorch
-configuration alone, because the tool already carries its PyTorch.
+Setup connects your AI assistant and creates the `.vault/` folder for decision records.
+The first run also downloads the models and Qdrant, the index server; later
+repositories reuse them. `--no-torch-config` leaves the repository's own PyTorch
+settings alone, because the host carries its own.
 
-Start the service. It loads the models and waits until it's ready:
+Start the service and check it:
 
 ```bash
 vaultspec-rag server start
-```
-
-The service doesn't start by itself after a reboot, so run `vaultspec-rag server start`
-again then. To stop it, run `vaultspec-rag server stop`.
-
-Check the installation:
-
-```bash
 vaultspec-rag server doctor
 ```
 
+`server start` returns once the models are loaded. The service doesn't come back by
+itself after a reboot, so start it again then. `server doctor` should report your GPU,
+every model, and the Qdrant binary as ready:
+
 <p align="center">
-<img src="assets/term-doctor.svg" alt="vaultspec-rag server doctor - service, GPU, model, and Qdrant readiness at a glance" width="880" />
+<img src="https://raw.githubusercontent.com/nevenincs/vaultspec-rag/main/assets/term-doctor.svg" alt="vaultspec-rag server doctor reporting the service ready, its process alive and listening, and PyTorch with CUDA, the models, and Qdrant ready" width="880">
 </p>
 
-Check that the report detects your GPU and finds every configured model and the Qdrant
-binary. If it reports a problem, use the
-[installation troubleshooting guide](docs/installation.md#when-something-goes-wrong).
+If it reports a problem, the
+[troubleshooting guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md#when-something-goes-wrong)
+explains each finding.
 
-### Client in a Python project
+### Add a client to a Python project
 
-A client lets a project's own AI-assistant configuration launch the search tools from
-the project environment, so collaborators get them with `uv sync`. Each collaborator
-still needs their own host installation at the release the project pins.
+A client puts vaultspec-rag in a project's own environment, so collaborators get it with
+`uv sync`. It has no GPU packages. Each collaborator still needs a host on their own
+machine at the release the project pins, because a client refuses a service from
+another release.
 
-1. In the host installation, run this command and note the release on the
-   `Service release:` line:
+1. On the host, read the release from the `Service release:` line:
 
    ```bash
    vaultspec-rag server status --verbose
    ```
 
-1. From the project root, add the client pinned to that release:
+1. From the project root, add the client at that release. With `[mcp]`, your AI
+   assistant can search too:
 
    ```bash
    uv add --dev "vaultspec-rag[mcp]==<release>"
-   ```
-
-1. Set up the project. `--mode dev` makes the AI assistant launch the search tools from
-   the project environment, even if the host installation set up the project first. A
-   client skips PyTorch configuration and all downloads.
-
-   ```bash
    uv run vaultspec-rag install --mode dev
    ```
 
-1. Confirm the client reaches the service. `uv run vaultspec-rag server doctor` must
-   show `release: <release> (matches this client)` and report PyTorch as not needed for
-   this client installation. If the release doesn't match, repeat step 2 with the
-   release from step 1.
+   For the command line alone, leave out the extra and add `--no-mcp`:
 
-Run the client as `uv run vaultspec-rag`, and start or stop the service from the host
-installation. When you upgrade the host, move each client to the same release with the
-[upgrade steps](docs/installation.md#upgrade).
+   ```bash
+   uv add --dev "vaultspec-rag==<release>"
+   uv run vaultspec-rag install --mode dev --no-mcp
+   ```
 
-## Use it
+1. Check it with `uv run vaultspec-rag server doctor`. Its release line should end in
+   `(matches this client)`.
 
-### Index and search
+Prefix client commands with `uv run`. Start and stop the service from the host.
 
-From the root of each repository you want to search, index it. The command queues
-indexing jobs and prints their IDs:
+> [!TIP]
+> Without a Python toolchain, use a
+> [prebuilt binary](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md#install-a-prebuilt-binary)
+> for Windows x64, Linux, or Apple silicon. It carries its own interpreter and installs
+> as a host. The
+> [installation guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md)
+> also covers upgrades and removal.
+
+## Search
+
+From the root of the repository, index it:
 
 ```bash
 vaultspec-rag index
 ```
 
-Follow progress with `vaultspec-rag server jobs --watch`, and wait until the jobs finish
-before searching. Afterwards, the service watches for file changes and updates the
-index automatically.
+This queues indexing jobs for the code, the decision records, and any documents, and
+prints their IDs. Follow them with `vaultspec-rag server jobs --watch`. The first run
+takes a while. After that, the service watches for file changes and keeps the index
+current by itself.
 
-Search source code with `--type code`, or decision records with `--type vault`. Results
-list file paths with their matching passages:
+To find code, describe what it does. The words don't have to appear in the code:
 
 ```bash
-vaultspec-rag search "parse query text into filters" --type code
+vaultspec-rag search "pick CUDA before Apple MPS and never fall back to the CPU" --type code
 ```
 
-A client runs the same commands with the `uv run` prefix. If results are missing or
-incomplete, [check the index](docs/verification.md) and
-[adjust the query](docs/query-craft.md). The
-[getting-started tutorial](docs/getting-started.md) walks through a first search, and
-[AI assistant setup](#use-it-from-an-ai-assistant) connects your AI assistant. See
-[index maintenance](docs/search-and-index.md) for rebuilding or removing indexed
-content.
+<p align="center">
+<img src="https://raw.githubusercontent.com/nevenincs/vaultspec-rag/main/assets/term-search-code.svg" alt="vaultspec-rag code search returning the resolve_accelerator function, which tries CUDA, then Apple MPS, and raises when neither is available" width="880">
+</p>
 
-### Optional Typesafe classification
+To find out why, ask the decision records with `--type vault`, as in the capture at the
+top of this page. Add `--doc-type adr` for architecture decision records (ADRs) only.
+Each result names the record's type, feature, status, and date, then shows the passage
+that matches.
 
-Set `VAULTSPEC_RAG_TYPESAFE_API_KEY` in the service account's environment before
-starting the server to opt into paid Typesafe classification. A valid, funded key
-enables query interpretation and reranking using the full result content, including
-removal of confidently irrelevant hits. The server sends queries and candidate
-content to Typesafe; without a usable key, search keeps its existing local ranking.
+Code search ranks production code first. It demotes tests, docs, translations, and
+vendored code, and hides generated files and worktree copies. Filters narrow further:
 
-`server start` and `server status` show the running server's enrollment and whether
-a recent evaluation succeeded. No separate enable flag is needed. See
-[activation, fallback, and status meanings](docs/configuration.md#typesafe-enrollment)
-before enabling it. The local search models and GPU are still required.
+- `only:prod` or `exclude:tests` in the query keeps or drops a kind of file.
+- `--include-path "src/**"` and `--language python` narrow by place and language.
+- `--doc-type adr,plan` picks record types in a vault search.
 
-### Other ways to install
+[Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)
+explains how to phrase a query and every filter.
 
-To have one Python project's environment run the service, install the host
-[as a project dependency](docs/installation.md#install-as-a-project-dependency). Unlike a
-client, this adds the GPU packages to the project.
-
-Without a Python toolchain, use the
-[prebuilt Windows, Linux, or Apple silicon macOS binaries](docs/installation.md#install-a-prebuilt-binary).
-
-<p id="where-it-puts-things-and-how-to-remove-it"></p>
-
-### Remove vaultspec-rag
-
-Follow the [removal guide](docs/installation.md#remove-vaultspec-rag) to preview project changes,
-choose whether to clean up indexes, and remove the package.
-
-<p id="write-a-query-that-finds-it"></p>
-<p id="narrow-the-results"></p>
-<p id="check-on-the-index"></p>
-
-## Refine searches
-
-- [Choose query terms](docs/query-craft.md#name-the-nouns-and-ask-one-thing).
-- [Filter by language, path, or document type](docs/query-craft.md#the-filter-surface).
-- [Investigate missing results and index coverage](docs/verification.md).
-- [Monitor indexing jobs](docs/service-mode.md#observe-activity).
+To index PDFs and other formats, add a
+[converter](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/preprocessing-hooks.md).
+Converters run without a sandbox, with your account's permissions, so read
+`.vaultragpreprocess.toml` before you index a repository that has one.
+`vaultspec-rag preprocess status` shows the rules without running them.
 
 ## Use it from an AI assistant
 
-Follow [MCP setup](docs/mcp.md) to connect your coding agent. The default toolset
-includes tools that change or delete indexes. To restrict access, see
-[withholding the mutating tools](docs/mcp.md#withholding-the-mutating-tools).
+`vaultspec-rag install` registers vaultspec-rag as a Model Context Protocol (MCP) server
+in the repository's assistant configuration. Your assistant can then call these tools:
 
-<p id="run-without-the-search-server"></p>
+- `search_codebase`, `search_vault`, `search_documents`, and `search_combined` search by
+  meaning.
+- `get_code_file` reads a file, and `get_index_status` reports index health.
+- Four `reindex_*` tools rebuild indexes, and `clean_documents` and `clean_all` delete
+  them.
 
-## Use an on-disk index
+To give the assistant search without the tools that change or delete indexes, see
+[withholding the mutating tools](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/mcp.md#withholding-the-mutating-tools).
+The [MCP guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/mcp.md)
+covers configuration by hand and troubleshooting.
 
-By default, the service keeps its index in managed Qdrant, a separate process. The
-optional local-only backend keeps the index in each repository's `.vault/` folder
-instead. It still needs a GPU and the models. To use it, set
-`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the environment that starts the
-service, because the default resource profile refuses the local-only backend.
+vaultspec-rag pairs with
+[vaultspec-core](https://github.com/nevenincs/vaultspec-core), which has your agent write
+its research, decisions, and plans into `.vault/`. vaultspec-rag makes them searchable.
+It works without vaultspec-core too, on any Markdown you keep in `.vault/`.
 
-Switching backends doesn't migrate your existing index. Follow
-[backend setup](docs/backends.md) to switch.
+## Everyday commands
 
-## Read PDFs and other formats
+A client runs each of these with the `uv run` prefix.
 
-Converters extract content from unsupported formats for indexing. See
-[converter setup](docs/preprocessing-hooks.md).
+| Command                                      | What it does                                                                                       |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `vaultspec-rag server start`                 | Starts the service and waits until the models are loaded.                                          |
+| `vaultspec-rag server status`                | Shows whether the service is running, what it's working on, and what to do next.                   |
+| `vaultspec-rag server doctor`                | Checks the GPU, models, Qdrant, and service. Exits 0 when ready, 1 on warnings, and 2 on errors.   |
+| `vaultspec-rag index`                        | Queues indexing of the current repository. Add `--type code`, `vault`, or `document` for one kind. |
+| `vaultspec-rag server jobs --watch`          | Opens a live view of indexing jobs. Without `--watch`, it prints a bounded list.                   |
+| `vaultspec-rag search "<query>" --type code` | Searches by meaning. Use `--type vault` for decision records, and `--json` for scripts.            |
+| `vaultspec-rag server stop`                  | Stops the service.                                                                                 |
+| `uv tool upgrade vaultspec-rag`              | Upgrades the host. Stop and start the service afterwards so it runs the new release.               |
+| `vaultspec-rag uninstall --dry-run`          | Previews removing the setup from this repository. Run it with `--force` to remove it.              |
 
-<p id="what-a-converter-is-allowed-to-do"></p>
+For every command and flag, see the
+[CLI reference](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/cli.md). For
+JSON output and exit codes, see
+[scripting and automation](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/automation.md).
 
-Converters run without a sandbox, with the permissions of the account running RAG.
-They can access files and the network. They can run during explicit indexing,
-watched changes, and agent-triggered reindexing.
+## Configuration
 
-Before indexing, inspect `.vaultragpreprocess.toml` and its commands. Use
-`vaultspec-rag preprocess status` to inspect configuration without running converters.
-See [security and disable options](docs/preprocessing-hooks.md#security-posture).
+vaultspec-rag works without configuration. Environment variables change its behaviour.
+Most of them configure the service, so set them where the service starts: in your user
+environment, or in the shell that runs `vaultspec-rag server start`. Then stop and start
+the service. Setting them in another shell doesn't change a running service.
 
-## Scripting it
+| Variable                              | Default                | What it does                                                                                  |
+| ------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
+| `HF_TOKEN`                            | unset                  | Hugging Face token for the gated exact-term model. Wins over a saved `hf auth login`.         |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`        | `1`                    | `0` searches on meaning alone and never downloads the gated model. Reindex after changing it. |
+| `HF_HOME`                             | `~/.cache/huggingface` | Where the models are downloaded and cached.                                                   |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE` | `managed-service`      | `embedded-local` for machines with 8 GiB of memory and 6 GiB of free GPU memory.              |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY`      | unset                  | Turns on optional hosted ranking from Typesafe, a paid service. See below.                    |
+| `VAULTSPEC_RAG_PORT`                  | `8766`                 | The service's port. Commands and assistants find the service without it.                      |
+| `VAULTSPEC_RAG_STATUS_DIR`            | `~/.vaultspec-rag`     | Where the service keeps its status, logs, and the address that commands read.                 |
 
-For JSON output and result handling, follow [scripting and automation](docs/automation.md).
+A project's `.env` file supplies `HF_TOKEN` and the Typesafe key only when vaultspec-rag
+runs from that project's environment, never for a host installed as a uv tool. The
+[configuration reference](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/configuration.md)
+lists every variable.
 
-<p id="how-it-works"></p>
+By default the index lives in a managed Qdrant server shared by every repository. To keep
+each repository's index on disk in its `.vault/` folder instead, set the
+`embedded-local` profile and follow
+[backend setup](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/backends.md).
+
+With a valid, funded `VAULTSPEC_RAG_TYPESAFE_API_KEY`, Typesafe interprets each query
+and reranks the results on their full content, and drops results it judges irrelevant.
+`vaultspec-rag server status` shows whether it's on. Without a usable key, search keeps
+its local ranking. The GPU and local models are still required either way.
+
+> [!IMPORTANT]
+> With the key set, the service sends each query and the content of its candidate
+> results to the Typesafe API. Without the key, your queries and your code stay on your
+> machine.
+
+## How it works
+
+You don't need this section to use vaultspec-rag. It's here for when you want to know
+why a result ranked where it did.
+
+- **Indexing.** Source code is split into function- and class-sized chunks, and records
+  into sections. Each chunk is encoded twice: by
+  [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) for
+  meaning, and by `naver/splade-v3` for exact terms. The vectors go into Qdrant, one
+  namespace per repository.
+- **Search.** The query is encoded the same two ways, and the two candidate lists are
+  merged by rank. A cross-encoder,
+  [`BAAI/bge-reranker-v2-m3`](https://huggingface.co/BAAI/bge-reranker-v2-m3), then
+  reads the query beside each candidate's full content and reorders them.
+- **Results.** Code results are demoted or hidden by kind of file, as
+  [Search](#search) describes. Vault results are grouped per record, and each shows the
+  passage that best answers the query.
+- **The service.** The models load once, on the GPU, and stay loaded for every
+  repository and assistant on the machine. They're too slow to be useful on a CPU. A
+  file watcher queues reindexing when files change.
+
+[Architecture](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/architecture.md)
+and [indexing internals](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/indexing.md)
+go deeper.
 
 ## Documentation
 
-- [Run your first search](docs/getting-started.md)
-- [Installation and troubleshooting](docs/installation.md)
-- [Worked searches](docs/examples.md)
-- [Commands and flags](docs/cli.md)
-- [Configuration reference](docs/configuration.md)
-- [Architecture](docs/architecture.md) and [indexing internals](docs/indexing.md)
-- [Release notes](CHANGELOG.md)
+| Guide                                                                                                 | Purpose                                                  |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [Getting started](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/getting-started.md)       | Install, index, and run a first search, step by step.    |
+| [Installation](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/installation.md)             | Every install route, upgrades, removal, and fixes.       |
+| [Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)           | Phrase a query, and narrow the results with filters.     |
+| [Worked searches](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/examples.md)              | Real queries and what they return.                       |
+| [Search and index](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/search-and-index.md)     | Every search option, and rebuilding or cleaning indexes. |
+| [Checking the index](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/verification.md)       | Find out why a result is missing.                        |
+| [Running the service](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/service-mode.md)      | Observe, pause, and control the service and its jobs.    |
+| [MCP guide](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/mcp.md)                         | Connect an AI assistant and choose its tools.            |
+| [Configuration reference](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/configuration.md) | Every environment variable and its default.              |
+| [CLI reference](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/cli.md)                     | Look up commands and flags.                              |
+| [Glossary](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/glossary.md)                     | The terms these guides use.                              |
 
-## Status and help
+## Support and license
 
-vaultspec-rag is Beta. [Report issues](https://github.com/nevenincs/vaultspec-rag/issues)
-with your version, operating system, GPU, command, and error output.
-Redact credentials and private content before posting.
+vaultspec-rag is in beta. Report bugs, ask questions, or propose changes on the
+[issue tracker](https://github.com/nevenincs/vaultspec-rag/issues). Include your version,
+operating system, GPU, the command, and its output, with credentials and private content
+removed. Release notes are in the
+[changelog](https://github.com/nevenincs/vaultspec-rag/blob/main/CHANGELOG.md).
 
-## Related projects
-
-- [vaultspec-core](https://github.com/nevenincs/vaultspec-core):
-  Decision-driven harness for coding agents, and humans.
-- [vaultspec-dashboard](https://github.com/nevenincs/vaultspec-dashboard):
-  The human-facing visual workspace for a Vaultspec project.
-
-## License
-
-vaultspec-rag is released under the [MIT License](./LICENSE).
+Released under the
+[MIT License](https://github.com/nevenincs/vaultspec-rag/blob/main/LICENSE).
