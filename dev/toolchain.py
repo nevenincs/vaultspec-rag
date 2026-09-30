@@ -72,7 +72,7 @@ MARKDOWN_PATHS = ("README.md", ".vaultspec/", ".vault/")
 LINK_PATHS = ("README.md", ".vault", ".vaultspec")
 
 #: Pinned images backing the native binaries that cannot live in the lockfile.
-TAPLO_IMAGE = "tamasfe/taplo:0.9"
+TAPLO_IMAGE = "tamasfe/taplo:0.9.3"
 LYCHEE_IMAGE = "lycheeverse/lychee:latest"
 
 #: Duplication-detector thresholds. jscpd's own defaults (5 lines / 50 tokens)
