@@ -241,16 +241,17 @@ gh run list --repo "$REPO" --workflow Publish --limit 20
 
 ### A merged release that was never tagged
 
-`RAG Release Please` fails in `Run release-please` with
+The release cut fails in `Create the release for the merged proposal` with
 `Resource not accessible by integration`, and its
 `Name a release this token cannot tag` step names the tag. The workflow token
 never holds the `workflows` permission, and without it GitHub refuses any tag
 or Release that targets a commit whose workflow files differ from `main`, even
-once the tag exists. A workflow change that merged before the release commit's
-own run started therefore blocks the release for good: no rerun can finish it.
+once the tag exists. A workflow change that landed between the release commit's
+merge and its tag, as when a proposal merged by hand waits for its cut,
+therefore blocks the release for good: no rerun or later cut can finish it.
 
-Finish it with your own credentials, as release-please would have. Relabel the
-release pull request first, so later runs stop retrying it:
+Finish it with your own credentials, as the cut would have. Relabel the release
+pull request first, so the next cut does not pick it up again:
 
 ```sh
 PR=<release pull request number>
@@ -267,11 +268,11 @@ git show "$SHA:CHANGELOG.md" \
   > release-notes.md
 gh release create "$TAG" --repo "$REPO" --verify-tag --prerelease \
   --title "vaultspec-rag: v$VERSION" --notes-file release-notes.md
+gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG"
 ```
 
-The tag push starts `RAG Publish` from its tag trigger, which holds the Release
-as a prerelease and continues the normal chain. Do not dispatch Publish as
-well.
+`RAG Publish` starts only by dispatch, so the last command starts the normal
+chain from the held prerelease.
 
 ### Missing or incomplete binary archives
 
