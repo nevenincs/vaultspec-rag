@@ -6,7 +6,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:0d850a605239959ad83574fcef3446f02a1f0571e0a50e811846be5ed08ce497'
+body_hash: 'sha256:ff5edefa5dbbd21b3b488b1283fa42be600ed26004cfaee568b1e3e27f5263cd'
 related:
   - '[[2026-09-30-pipeline-performance-audit]]'
   - '[[2026-09-30-pipeline-performance-ledger]]'
@@ -22,7 +22,7 @@ Auto-generated index of all documents tagged with `#pipeline-performance`.
 
 ### audit
 
-- `2026-09-30-pipeline-performance-audit` - `pipeline-performance` audit: `Profiling harness and CPU optimization review with pending GPU evidence`
+- `2026-09-30-pipeline-performance-audit` - `pipeline-performance` audit: `Profiling, encoder tuning and integrated review`
 
 ### exec
 

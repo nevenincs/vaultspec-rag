@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:ee2a001da2645a27ac6da76cd6835d9635e738f9302908a00019e1c02faef386'
+body_hash: 'sha256:9cadfbee04ed372b483a8923ed2ec13739398365a20e54aa504fbab437fb329a'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
   - "[[2026-09-30-sparseencode-adr]]"
@@ -14,11 +14,11 @@ related:
   - "[[2026-09-30-pipeline-performance-research]]"
 ---
 
-# `pipeline-performance` audit: `Profiling harness and CPU optimization review with pending GPU evidence`
+# `pipeline-performance` audit: `Profiling, encoder tuning and integrated review`
 
 ## Scope
 
-Independent GPT-6.1 Sol review of S01 and partial S02 against b9d2daf0, including uncommitted profiling-harness and AST changes. Foreign staged origin/main merge changes are excluded. Governing plan: `2026-09-30-pipeline-performance-plan`; sparse, batching and GPU ownership decisions bound the review. Overall verdict PENDING: native CPU and admitted CUDA/sustained-energy baselines are complete; candidate calibration, encoder parity and integrated verification remain outstanding.
+Independent GPT-6.1 Sol integrated review of completed S01–S03, base b9d2daf0 through 66c8b9c0, with S04 recording the final review and completion. Governing plan: `2026-09-30-pipeline-performance-plan`; accepted sparse representation, adaptive batching, single GPU owner, producer/consumer pipeline and resilient publication decisions bound the work. The original externally owned sparseencode merge is excluded. Overall verdict PASS: required source/behavior checks, admitted CUDA and sustained paired energy evidence, strict selected-arm parity, nonblocking owned-process sampling, final documentation and exact-spec runtime restoration are complete. No unresolved blocking finding remains. Historical pending/failure entries below retain their original context and later closures.
 
 ## Findings
 
@@ -102,6 +102,14 @@ The canonical planner now credits the largest successfully exercised bucket and 
 
 Fresh canonical records prove both exact-spec retry children succeeded and released resources. Original PID 60756 has admissions open, no borrower bound and zero active compute tickets after the successful comparison. The first retry timeout was reconciled against created-child identity. No owned hold or cancellation remains unresolved; external controls and the original foreign merge were preserved.
 
+### Integrated final review | low | PASS for S01–S03 and S04 completion
+
+Independent GPT-6.1 Sol final review passes base b9d2daf0 through 66c8b9c0 with no unresolved blocking finding. The selected implementation keeps the 24000 default, exposes 8192 as workload-specific opt-in tuning, and rejects 4096 without relaxing parity. Actual-load recovery and packing slack retain independent ceilings, canonical model semantics and input/progress/OOM behavior. Normal authenticated borrowing uses one dedicated consumer and teardown before resident restoration. Original merge ownership and concurrent operator intent remain preserved.
+
+Applicable verification includes 253 preflight tests plus 94 final affected tests, intended guard mutation failures/restored passes, full Ruff/917-file format/eight-file type checks, Markdown/feature conformance, exact 820-input AST parity, admitted 17052-kernel CUDA trace, 24 valid alternating paired windows, eight bit-identical sparse parity comparisons, successful all-thread/GIL nonblocking artifacts, unchanged measurement hashes and final restoration evidence proving both owned retry children succeeded. The supplementary selection helper's corrected import and actual passed rerun are recorded in the ledger; failed experiments remain historical evidence, not checks of the shipped selection.
+
+Small descriptive timing/energy effects, the unresolved short-input device-wide energy regression, unchanged measured live peak allocation, sampler partial-read errors, Python-focused corpus and retained adaptive/allocator history remain explicit limits. This review establishes no end-to-end indexing or universal energy gain. Future worker sizing, dense attention/padding and publication metadata changes require their own measured validation; no further work is required to complete this approved plan.
+
 ## Recommendations
 
-Keep the original externally owned merge untouched. Preserve captured jobs and concurrent operator intent through normal job-control and GPU borrower APIs. Select separate sparse tuning from paired fixed-input time/energy and output checks, close actual-load recovery guards, then complete integrated gates and independent review. Dense attention/padding, code-slice storage overlap and CPU worker sizing remain measured or static follow-on opportunities, not unsupported universal defaults. Completion requires all remaining Steps and integrated review PASS.
+Keep 24000 as the default and measure time/power before applying 8192 to long/mixed workloads. Use the recorded raw pairs, warmup/actual bucket and OOM evidence when evaluating follow-up tuning. Dense attention/padding, workload-sensitive CPU worker allocation and publication metadata subphases are the next profiling targets. Preserve canonical GPU and publication constraints; the approved performance plan and independent review are complete.
