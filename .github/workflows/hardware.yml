@@ -3,8 +3,8 @@ name: RAG Hardware Tiers
 # THE ONE DEFINITION OF THE ACCELERATOR TIERS: Apple silicon (MPS) and CUDA.
 #
 # Two callers, one job each, so the jobs cannot drift apart:
-# - `publish.yml` requires both tiers to pass on the exact release commit
-#   before a release is published.
+# - The release cut in `release-please.yml` requires both tiers to pass on
+#   the exact head it merges, before the release commit is tagged.
 # - `ci.yml` runs them on schedule and on dispatch against the commit it was
 #   started for, and adds the advisory macOS full suite.
 #
@@ -15,7 +15,7 @@ name: RAG Hardware Tiers
 # step would block every release without measuring anything.
 #
 # Neither tier is reachable from a pull request: both callers start it only
-# from a tag, a schedule or a dispatch, all of which require write access.
+# from a schedule or a dispatch, both of which require write access.
 on:
   workflow_call:
     inputs:

@@ -18,11 +18,14 @@ recipe is expanded into the argument vectors it finally runs, which is what
 registry the justfile delegates to, so this guard and the recipes cannot
 disagree about what a recipe runs.
 
-WHAT COUNTS AS A REPEAT. Two jobs reachable by ONE event, running one
+WHAT COUNTS AS A REPEAT. Two jobs reachable by ONE occasion, running one
 identical argument vector, where the recipe is not declared platform-
-sensitive. The event partition matters: a pull-request job and a push job
-naming the same recipe are the deliberate two-tier split, not a repeat, and a
-guard without that partition reports every such split and gets switched off.
+sensitive. An occasion is an event in one payload shape - a pull request
+opening, the same pull request being pushed to, a dispatch choosing a scope -
+because the payload is what selects a lane. The partition matters: a full lint
+on opening and a light lint on a push are the deliberate two-tier split, not a
+repeat, and a guard without that partition reports every such split and gets
+switched off.
 
 WHAT THIS CANNOT CATCH, AND WHAT COVERS IT INSTEAD. A subset lane's argument
 vector genuinely differs from the lane that contains it - five file paths
@@ -83,11 +86,24 @@ SUBSET_LANES: dict[str, tuple[str, str]] = {
 }
 
 
-def _commands_by_job(workflow: str, event: str) -> dict[str, list[tuple[str, str]]]:
-    """Return ``command -> [(job id, recipe)]`` for everything *event* reaches."""
+def _describe(event: str, bindings: dict[str, object]) -> str:
+    """Name one occasion for a finding."""
+    shape = ", ".join(
+        f"{key.rsplit('.', 1)[-1]}={value!r}"
+        for key, value in bindings.items()
+        if key.startswith(("inputs.", "github.event."))
+        and not key.endswith("full_name")
+    )
+    return f"{event} ({shape})" if shape else event
+
+
+def _commands_by_job(
+    workflow: str, event: str, bindings: dict[str, object]
+) -> dict[str, list[tuple[str, str]]]:
+    """Return ``command -> [(job id, recipe)]`` for everything one occasion reaches."""
     index: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for job in workflows.load_jobs(workflow):
-        for recipe in job.measuring_recipes_on(event):
+        for recipe in job.measuring_recipes_on(event, bindings):
             for command in workflows.named(workflows.final_commands(recipe)):
                 index[command].append((job.job_id, recipe))
     return index
@@ -103,7 +119,7 @@ def _platforms(workflow: str, job_id: str) -> frozenset[str]:
 
 @EACH_MERGE_BOX_WORKFLOW
 def test_no_command_runs_in_two_jobs(workflow: str) -> None:
-    """No event reaches two jobs running one identical command.
+    """No occasion reaches two jobs running one identical command.
 
     The exemption is narrow and is not a list of job names: a repeat is
     forgiven only where the RECIPE is declared platform-sensitive and the two
@@ -112,8 +128,10 @@ def test_no_command_runs_in_two_jobs(workflow: str) -> None:
     like coverage and answers a question already answered.
     """
     findings: list[str] = []
-    for event in workflows.workflow_events(workflow):
-        for command, holders in sorted(_commands_by_job(workflow, event).items()):
+    for event, bindings in workflows.occasions(workflow):
+        occasion = _describe(event, bindings)
+        commands = _commands_by_job(workflow, event, bindings)
+        for command, holders in sorted(commands.items()):
             if len({job_id for job_id, _ in holders}) < 2:
                 continue
             recipes = {recipe for _, recipe in holders}
@@ -130,7 +148,7 @@ def test_no_command_runs_in_two_jobs(workflow: str) -> None:
                 f"{'/'.join(sorted(_platforms(workflow, job_id)))})"
                 for job_id, recipe in holders
             )
-            findings.append(f"on {event}: `{command}` runs in {where}")
+            findings.append(f"on {occasion}: `{command}` runs in {where}")
 
     assert not findings, (
         "The same command runs in more than one job of the same run, which "
@@ -171,7 +189,7 @@ def test_every_subset_exemption_still_has_its_cover() -> None:
 
 @EACH_MERGE_BOX_WORKFLOW
 def test_no_event_runs_a_subset_lane_beside_its_cover(workflow: str) -> None:
-    """One event never runs both a subset lane and the lane containing it.
+    """One occasion never runs both a subset lane and the lane containing it.
 
     This is the repeat no comparison of argument vectors can see: five named
     files against the directory that already holds them. Same platform is the
@@ -179,10 +197,10 @@ def test_no_event_runs_a_subset_lane_beside_its_cover(workflow: str) -> None:
     recipes carry their platform-sensitivity in PLATFORM_SENSITIVE above.
     """
     findings: list[str] = []
-    for event in workflows.workflow_events(workflow):
+    for event, bindings in workflows.occasions(workflow):
         running: dict[str, list[workflows.Job]] = defaultdict(list)
         for job in workflows.load_jobs(workflow):
-            for recipe in job.measuring_recipes_on(event):
+            for recipe in job.measuring_recipes_on(event, bindings):
                 running[recipe].append(job)
         for lane, (cover, why) in sorted(SUBSET_LANES.items()):
             for subset_job in running.get(lane, []):
@@ -190,7 +208,8 @@ def test_no_event_runs_a_subset_lane_beside_its_cover(workflow: str) -> None:
                     if subset_job.platforms.isdisjoint(cover_job.platforms):
                         continue
                     findings.append(
-                        f"on {event}: {subset_job.job_id} runs `just {lane}` while "
+                        f"on {_describe(event, bindings)}: {subset_job.job_id} "
+                        f"runs `just {lane}` while "
                         f"{cover_job.job_id} runs `just {cover}` on "
                         f"{'/'.join(sorted(subset_job.platforms))} - {why}"
                     )

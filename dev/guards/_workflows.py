@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import yaml
 
 from dev import toolchain
-from dev.ci_names import MEASURING_GROUPS
+from dev.ci_names import FULL_RUN_LABEL, MEASURING_GROUPS
 from dev.runner import Cmd, Echo, Ref, ToolOrDocker, ToolOrSkip
 
 if TYPE_CHECKING:
@@ -61,6 +61,7 @@ __all__ = [
     "final_commands",
     "load_jobs",
     "named",
+    "occasions",
     "recipe_bodies",
     "recipe_groups",
     "repository_root",
@@ -179,7 +180,9 @@ class Job:
                     found.append((str(step.get("name") or ""), words[1], condition))
         return tuple(found)
 
-    def recipes_on(self, event: str) -> tuple[str, ...]:
+    def recipes_on(
+        self, event: str, bindings: Mapping[str, object] | None = None
+    ) -> tuple[str, ...]:
         """Return the recipes *event* actually reaches inside this job.
 
         A step carries its own ``if``, and two steps of one job whose
@@ -188,15 +191,18 @@ class Job:
         how a job that deliberately narrows its scope on pull requests looks
         like a job running both scopes at once.
         """
-        if not self.reaches(event):
+        if not self.reaches(event, bindings):
             return ()
         return tuple(
             recipe
             for _, recipe, condition in self._recipe_steps()
-            if condition is None or evaluate(condition, event) in {TRUE, MAYBE}
+            if condition is None
+            or evaluate(condition, event, bindings) in {TRUE, MAYBE}
         )
 
-    def measuring_recipes_on(self, event: str) -> tuple[str, ...]:
+    def measuring_recipes_on(
+        self, event: str, bindings: Mapping[str, object] | None = None
+    ) -> tuple[str, ...]:
         """Return the recipes *event* reaches here that measure the tree.
 
         Provisioning recipes are excluded: every job must initialise its
@@ -206,12 +212,12 @@ class Job:
         groups = recipe_groups()
         return tuple(
             recipe
-            for recipe in self.recipes_on(event)
+            for recipe in self.recipes_on(event, bindings)
             if groups.get(recipe) in MEASURING_GROUPS
         )
 
-    def reaches(self, event: str) -> bool:
-        """Whether *event* can reach this job.
+    def reaches(self, event: str, bindings: Mapping[str, object] | None = None) -> bool:
+        """Whether *event*, carrying *bindings*, can reach this job.
 
         An undecidable condition counts as reachable - see this module's
         docstring on why the three-valued evaluator over-reports rather than
@@ -219,7 +225,7 @@ class Job:
         """
         if self.condition is None:
             return True
-        return evaluate(self.condition, event) in {TRUE, MAYBE}
+        return evaluate(self.condition, event, bindings) in {TRUE, MAYBE}
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +270,70 @@ def workflow_events(workflow: str) -> tuple[str, ...]:
         if isinstance(declared, str):
             return (declared,)
     return ()
+
+
+#: The pull-request payload fields a lane condition may branch on, bound so a
+#: pull-request event is read once per shape it can arrive in.
+_PULL_REQUEST_ACTION = "github.event.action"
+_PULL_REQUEST_DRAFT = "github.event.pull_request.draft"
+_PULL_REQUEST_LABEL = "github.event.label.name"
+
+
+def occasions(workflow: str) -> tuple[tuple[str, dict[str, object]], ...]:
+    """Return ``(event, bindings)`` for every distinct way *workflow* starts.
+
+    One event is several occasions when its payload selects the work. A pull
+    request that opens and one that is pushed to reach different lanes, and a
+    dispatch's choice input picks between scopes; reading each such event once,
+    with its payload unknown, reports two lanes that exclude each other as a
+    pair running together. So a pull request is expanded over the actions its
+    trigger lists, draft or ready, and - for a label - :data:`FULL_RUN_LABEL`
+    or any other; a dispatch is expanded over every choice input's options.
+    Every other event, and every payload field not named here, stays unknown.
+    """
+    document_ = document(workflow)
+    declared = triggers(document_)
+    found: list[tuple[str, dict[str, object]]] = []
+    for event in workflow_events(workflow):
+        body = declared.get(event) if isinstance(declared, dict) else None
+        body = body if isinstance(body, dict) else {}
+        if event == "pull_request":
+            same_repo = {
+                "github.repository": "owner/repo",
+                "github.event.pull_request.head.repo.full_name": "owner/repo",
+            }
+            types = body.get("types") or ["opened", "synchronize", "reopened"]
+            for action in types:
+                labels = (FULL_RUN_LABEL, "other") if action == "labeled" else ("",)
+                for draft in (False, True):
+                    for label in labels:
+                        found.append(
+                            (
+                                event,
+                                {
+                                    **same_repo,
+                                    _PULL_REQUEST_ACTION: str(action),
+                                    _PULL_REQUEST_DRAFT: draft,
+                                    _PULL_REQUEST_LABEL: label,
+                                },
+                            )
+                        )
+            continue
+        inputs = body.get("inputs")
+        choices = [
+            (str(name), [str(option) for option in spec.get("options") or []])
+            for name, spec in (inputs.items() if isinstance(inputs, dict) else ())
+            if isinstance(spec, dict) and spec.get("type") == "choice"
+        ]
+        shapes: list[dict[str, object]] = [{}]
+        for name, options in choices:
+            shapes = [
+                {**shape, f"inputs.{name}": option}
+                for shape in shapes
+                for option in options
+            ]
+        found.extend((event, shape) for shape in shapes)
+    return tuple(found)
 
 
 def workflow_names() -> tuple[tuple[str, str], ...]:
