@@ -37,9 +37,10 @@ reported as nothing running.
 An anchor standing for a piece of machine hardware - the GPU - is SHARED: it
 lives in one directory every process on the machine resolves identically
 (:func:`hardware_anchor_path`), and every account must be able to contend for
-it. A process refused write access to such an anchor, because another account
-created it, locks it read-only instead: the lock is what excludes, and a
-read-only holder simply cannot publish its pid.
+it. On Windows that directory is shared too, so every file in it is writable
+by every account whichever account created it. A process still refused write
+access to such an anchor locks it read-only instead: the lock is what
+excludes, and a read-only holder simply cannot publish its pid.
 
 Claims return ``HELD``, ``CONTENDED``, or ``UNAVAILABLE``. Existing-anchor
 observations add ``ABSENT`` and ``FREE`` without ever retaining a descriptor.
@@ -58,6 +59,7 @@ import contextlib
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -112,6 +114,12 @@ _HARDWARE_ANCHOR_PREFIX = "vaultspec-rag"
 # A shared anchor's mode: every account may open it for writing, so whichever
 # account creates it first does not lock the others out of publishing a pid.
 _SHARED_ANCHOR_MODE = 0o666
+
+# The shared anchor directories this process has already widened. Widening is
+# idempotent, but the model-load window claims on every load, and rewriting a
+# directory's access list pushes it down to every file inside.
+_shared_directories: set[str] = set()
+_shared_directories_guard = threading.Lock()
 
 
 def hardware_anchor_path(name: str) -> Path:
@@ -168,6 +176,37 @@ def _shared_by_every_account(directory: Path) -> bool:
     )
 
 
+def _share_directory(directory: Path) -> None:
+    """Let every account create and write anchors in *directory*, on Windows.
+
+    The directory's creator otherwise decides who may write in it. A file
+    another account then creates there, or one an older release created before
+    this grant existed, carries full control for its creator and read-only for
+    everyone else - and an account holding such an anchor through a read-only
+    descriptor cannot record a loan, so a borrower is refused with no reason
+    anyone can act on. Sharing the directory with an inheritable grant makes
+    every file in it writable by every account, including the files already
+    there; delete stays withheld, so no account can unlink an anchor from
+    under its holder.
+
+    Applied once per process, and only by an account allowed to change the
+    directory's access list - its owner or an administrator. Another account's
+    attempt is refused quietly, and the owner applies it on its next claim.
+    POSIX needs nothing here: the hardware anchors share a sticky,
+    world-writable directory rather than a directory of their own.
+    """
+    if sys.platform != "win32":
+        return
+    key = os.path.normcase(str(directory))
+    with _shared_directories_guard:
+        if key in _shared_directories:
+            return
+        _shared_directories.add(key)
+    from ._win32 import grant_every_account_access
+
+    grant_every_account_access(str(directory), directory=True)
+
+
 def _open_anchor(anchor: Path, *, create: bool, shared: bool) -> int:
     """Open *anchor* for claiming, read-only when a shared one refuses writes.
 
@@ -209,10 +248,9 @@ def _create_shared_anchor(anchor: Path) -> int | None:
     Windows carries the same widening as an access list rather than a mode:
     the file otherwise inherits full control for its creator and read-only for
     everyone else, and the next account to claim it holds the lock but cannot
-    publish a record. The directory needs no such treatment, because the
-    shared root it is created under already lets every account create beneath
-    it, and widening a directory would let one account delete another's
-    anchor out from under its holder.
+    publish a record. The directory is widened separately, by
+    :func:`_share_directory`; this grant covers an anchor whose directory
+    belongs to an account that has not shared it yet.
     """
     try:
         fd = os.open(anchor, os.O_RDWR | os.O_CREAT | os.O_EXCL, _SHARED_ANCHOR_MODE)
@@ -331,7 +369,8 @@ def claim_anchor(
             name the holder. An anchor with no such record is locked at byte
             zero and reports no holder.
         create_parent: Create the anchor's directory first. A configured root
-            may not exist yet; a system temp directory always does.
+            may not exist yet; a system temp directory always does. With
+            *shared*, the directory is shared with every account as well.
         shared: Every account on the machine contends for this anchor. It is
             created writable by all of them, and locked through a read-only
             descriptor when another account's copy refuses this one writes.
@@ -347,6 +386,8 @@ def claim_anchor(
     try:
         if create_parent:
             anchor.parent.mkdir(parents=True, exist_ok=True)
+            if shared:
+                _share_directory(anchor.parent)
         fd = _open_anchor(anchor, create=True, shared=shared)
     except (OSError, ValueError) as exc:
         return AnchorClaim(

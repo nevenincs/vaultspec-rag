@@ -306,3 +306,90 @@ def test_an_anchor_this_process_did_not_create_keeps_its_access_list(
 
     assert _dacl_sddl(private) == before
     assert not _authenticated_users_may_write(private)
+
+
+#: SDDL rights that would let an account delete a file, or delete a child of a
+#: directory (``sddl.h``).
+_DELETING_MNEMONICS = ("FA", "GA", "SD", "DC")
+_DELETE = 0x00010000
+_FILE_DELETE_CHILD = 0x00000040
+
+
+def _authenticated_users_may_delete(path: Path) -> bool:
+    """Whether any entry lets every authenticated account delete *path* or in it."""
+    for ace in re.findall(r"\(([^)]*)\)", _dacl_sddl(path)):
+        fields = ace.split(";")
+        if len(fields) < 6 or fields[0] != "A" or fields[5] != _AUTHENTICATED_USERS:
+            continue
+        rights = fields[2]
+        if rights.startswith("0x"):
+            if int(rights, 16) & (_DELETE | _FILE_DELETE_CHILD):
+                return True
+        elif any(mnemonic in rights for mnemonic in _DELETING_MNEMONICS):
+            return True
+    return False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
+def test_a_shared_anchor_directory_admits_every_account_to_every_file_in_it(
+    tmp_path: Path,
+) -> None:
+    """Whoever creates a file in the shared directory, every account writes it.
+
+    A file another account creates there - or anything not created through
+    the anchor path - otherwise inherits read-only for everyone but its
+    creator, and an account holding it read-only cannot record a loan.
+
+    Mutations, each observed failing here and passing once restored: skipping
+    the directory grant in ``claim_anchor`` failed on the directory admitting
+    no authenticated account; dropping the grant's inheritable entry failed on
+    the later file; widening the grant to full control failed on the
+    directory's delete check.
+    """
+    directory = tmp_path / "vaultspec-rag"
+    held = claim_anchor(
+        directory / "gpu-owner.lock", pid_record=True, create_parent=True, shared=True
+    )
+    assert held.descriptor is not None
+    release_anchor_claim(held.descriptor, pid_record=True)
+
+    later = directory / "gpu-load-window.lock"
+    later.write_bytes(b"")
+
+    assert _authenticated_users_may_write(directory)
+    assert _authenticated_users_may_write(later)
+    # Catches the grant widening to delete: an account that can unlink an
+    # anchor can separate its holder from it.
+    assert not _authenticated_users_may_delete(directory)
+    assert not _authenticated_users_may_delete(later)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
+def test_sharing_the_directory_repairs_an_anchor_created_before_it(
+    tmp_path: Path,
+) -> None:
+    """An anchor from before the directory was shared becomes writable too.
+
+    This is the machine an older release left behind: a directory its creator
+    alone may write in, holding a GPU owner anchor no other account can write,
+    so a CI service running as another account holds the GPU read-only and
+    every loan it records is refused.
+
+    Mutation: dropped the inheritable entry from the directory grant. Observed
+    this fail on the old anchor admitting no authenticated account; restoring
+    it passed.
+    """
+    directory = tmp_path / "vaultspec-rag"
+    directory.mkdir()
+    stale = directory / "gpu-owner.lock"
+    stale.write_bytes(b"")
+    assert not _authenticated_users_may_write(stale)
+
+    held = claim_anchor(
+        directory / "gpu-load-window.lock", create_parent=True, shared=True
+    )
+    assert held.descriptor is not None
+    release_anchor_claim(held.descriptor)
+
+    assert _authenticated_users_may_write(stale)
+    assert not _authenticated_users_may_delete(stale)
