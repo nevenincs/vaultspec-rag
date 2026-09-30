@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from .._source_types import PublicSourceType
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -65,12 +67,13 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
 
 
 def test_empty_search_diagnostics_use_supported_jobs_filter() -> None:
+    """A no-match diagnostic for a populated index uses supported commands."""
     from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
             "source": "code",
-            "indexed_count": 0,
+            "indexed_count": 1284,
         },
         port=8766,
     )
@@ -124,8 +127,8 @@ def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() 
     assert diagnostics["reason"] == "no_match"
 
 
-def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
-    """With nothing indexed, the path filter is not the actionable cause."""
+def test_a_published_empty_index_outranks_a_path_filter_explanation() -> None:
+    """After verifying publication, an empty index needs no filter repair."""
     from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
@@ -137,7 +140,8 @@ def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
         path_filter={"patterns": ["src/**"], "candidates_before_filter": 0},
     )
 
-    assert diagnostics["reason"] == "index_missing"
+    assert diagnostics["reason"] == "published_empty"
+    assert diagnostics["remediation"] == []
 
 
 def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
@@ -307,15 +311,15 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
     and dropping the ``integrity=input.integrity`` pass-through fails this
     test on the block lookup below, not on a setup error.
     """
-    from .._index_integrity import IndexIntegrity
+    from .._index_integrity import IndexIntegrity, IntegrityVerdict
     from ..server._search_route_availability import (
         SearchIndexStateInput,
         search_index_state_for_route,
     )
 
     verdict = IndexIntegrity(
-        verdict="shrunken",
-        source="code",
+        verdict=IntegrityVerdict.SHRUNKEN,
+        source=PublicSourceType.CODE,
         claimed_count=421,
         live_count=4,
         generation_id="generation-route",
@@ -534,6 +538,7 @@ def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
         AbsenceAuthority,
         SearchAvailability,
         SearchFreshness,
+        SearchReasonCode,
         SearchSourceFact,
         SearchWaitCause,
         WaitObservation,
@@ -559,7 +564,7 @@ def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
             observed(SearchWaitCause.CONTROLLER_DEFERRAL, 0.2),
             observed(SearchWaitCause.OTHER_SERVICE_CAPACITY, 0.3),
         ),
-        reason_code="index_updating",
+        reason_code=SearchReasonCode.INDEX_UPDATING,
         retryable=True,
     )
     readiness: dict[str, object] = search_readiness_block((fact,))

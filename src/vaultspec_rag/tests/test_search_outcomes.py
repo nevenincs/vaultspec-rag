@@ -13,6 +13,7 @@ from .._search_state import (
     AbsenceAuthority,
     SearchAvailability,
     SearchFreshness,
+    SearchReasonCode,
     SearchSourceFact,
 )
 from .._source_types import IndexSource, PublicSourceType
@@ -37,7 +38,7 @@ def _fact(  # noqa: PLR0913 - explicit fact dimensions keep fixtures truthful
     availability: SearchAvailability = SearchAvailability.USABLE,
     freshness: SearchFreshness = SearchFreshness.CURRENT,
     authority: AbsenceAuthority = AbsenceAuthority.AUTHORITATIVE,
-    reason: str | None = None,
+    reason: SearchReasonCode | None = None,
     retryable: bool = False,
     remediation: str | None = None,
 ) -> SearchSourceFact:
@@ -60,7 +61,7 @@ def _unavailable(
         availability=SearchAvailability.UNAVAILABLE,
         freshness=SearchFreshness.UNVERIFIABLE,
         authority=AbsenceAuthority.NON_AUTHORITATIVE,
-        reason="index_unavailable",
+        reason=SearchReasonCode.INDEX_UNAVAILABLE,
         retryable=True,
         remediation=remediation,
     )
@@ -85,7 +86,7 @@ def test_combined_outcome_retains_partial_failure_and_successful_hits() -> None:
             "document",
             freshness=SearchFreshness.UPDATING,
             authority=AbsenceAuthority.NON_AUTHORITATIVE,
-            reason="index_updating",
+            reason=SearchReasonCode.INDEX_UPDATING,
             retryable=True,
             remediation="inspect document job",
         ),

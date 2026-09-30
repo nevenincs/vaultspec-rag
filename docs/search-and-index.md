@@ -95,7 +95,19 @@ to rank records, then picks the passage to show from the best-ranked chunks of e
 [Writing a query](query-craft.md#inspect-result-scores) covers how to read the gap
 between two scores.
 
-If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
+Search reports whether an empty result is authoritative. When publication cannot
+be verified, follow the response's diagnostics before interpreting it as no matches.
+
+A new worktree has its own index. A response with `reason_code=index_not_built`
+means that source has no published index in the selected backend; it does not
+by itself mean the service is degraded. Check `vaultspec-rag server status --verbose`
+and `vaultspec-rag server jobs --state active` first. If a job is already building
+the same root and source, inspect it and wait for publication. Otherwise, run
+`vaultspec-rag --target <worktree> index --rebuild --type code` (use `vault` or
+`document` for those sources). Follow the response's `--port` when it names one.
+Verify that worktree's index status, then retry the search. Job success or a zero
+record count alone does not prove that a searchable publication exists; a verified
+empty publication can legitimately have zero records.
 
 ## Choose immediate or bounded freshness
 

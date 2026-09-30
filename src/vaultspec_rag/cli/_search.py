@@ -533,8 +533,8 @@ def _try_in_process_search(
         else search_type
     )
     from .._index_integrity import (
+        IndexIntegritySnapshot,
         acquire_index_integrity_snapshot_if_proven,
-        unverifiable_integrity,
     )
 
     integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
@@ -566,11 +566,7 @@ def _try_in_process_search(
         )
         # A combined search reconciles the code domain, mirroring the combined
         # shortfall above; single-domain searches reconcile their own.
-        integrity = (
-            unverifiable_integrity(integrity_source)
-            if integrity_snapshot is None
-            else integrity_snapshot.finish(counts[integrity_source])
-        )
+        integrity = integrity_snapshot.finish(counts[integrity_source])
         envelope["index_state"] = search_index_state(
             indexed_count=(
                 sum(counts.values())
@@ -663,7 +659,7 @@ def _try_in_process_search(
                         ),
                     )
                 )
-        if integrity_snapshot is not None:
+        if isinstance(integrity_snapshot, IndexIntegritySnapshot):
             integrity_snapshot.publication.validate()
         # The block above is built before the search runs, because its counts
         # come from the store rather than from the answer. The collapse signal
@@ -794,6 +790,48 @@ class _InProcessRenderRequest:
     envelope: dict[str, object] | None = None
 
 
+def _empty_in_process_failure(
+    request: _InProcessRenderRequest, index_state: dict[str, object]
+) -> dict[str, object] | None:
+    """Supply local observations to the shared readiness and failure model."""
+    from uuid import uuid4
+
+    from .._search_state import SearchReasonCode
+    from ..server._search_availability import classify_search_response
+    from ..server._search_route_availability import SearchAvailabilityRequestFacts
+
+    request_id = uuid4().hex
+    if request.search_type is PublicSourceType.COMBINED:
+        outcome = cast("CombinedSearchOutcome", request.results)
+        unbuilt = next(
+            (
+                fact
+                for fact in outcome.source_facts
+                if fact.reason_code is SearchReasonCode.INDEX_NOT_BUILT
+            ),
+            None,
+        )
+        if unbuilt is None:
+            return None
+        return unbuilt.failure_response(
+            request_id=request_id,
+            index_state=index_state,
+            sources=outcome.source_facts,
+        ) | {"domains": outcome.domain_status_payload()}
+    facts = SearchAvailabilityRequestFacts(
+        job_snapshot_before=[],
+        root=request.target,
+        source=request.search_type.value,
+        request_id=request_id,
+        port=None,
+    )
+    classified = classify_search_response(
+        {"results": []},
+        facts.to_context(after_snapshot=[], index_state=index_state),
+    )
+    return classified.response if classified.status_code != 200 else None
+
+
 def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from ..search._outcomes import (
         COMBINED_SEARCH_FAILED,
@@ -841,6 +879,17 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from ..server._models import SearchResultItem
 
     items = [SearchResultItem.serialize(r) for r in result_items]
+    if not items and isinstance(raw_state := breadth.get("index_state"), dict):
+        failure = _empty_in_process_failure(
+            request, cast("dict[str, object]", raw_state)
+        )
+        if failure is not None:
+            _handle_service_results(
+                failure,
+                _ServiceSearchRenderRequest(
+                    query, search_type.value, json_mode, show_scores, target
+                ),
+            )
     if json_mode:
         data: dict[str, object] = {
             "query": query,

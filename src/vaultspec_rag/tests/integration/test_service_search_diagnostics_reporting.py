@@ -163,7 +163,11 @@ def test_empty_service_search_reports_missing_index(
     assert isinstance(result, dict)
     assert_request_id(result)
     assert result["ok"] is False
-    assert result["error"] == "index_unverifiable"
+    assert result["error"] == "index_unavailable"
+    readiness = cast("dict[str, object]", result["readiness"])
+    sources = cast("list[dict[str, object]]", readiness["sources"])
+    assert sources[0]["reason_code"] == "index_not_built"
+    assert "has not been built yet" in str(result["message"])
     assert "results" not in result
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
@@ -177,6 +181,8 @@ def test_empty_service_search_reports_missing_index(
         "target_matches",
         "status",
         "index_integrity",
+        "matching_jobs",
+        "matching_jobs_truncated",
     }
     assert index_state["requested_target_root"] == str(root)
     assert index_state["target_matches"] is True

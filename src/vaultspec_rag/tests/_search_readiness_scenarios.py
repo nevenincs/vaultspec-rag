@@ -19,6 +19,7 @@ from .._search_state import (
     SearchAvailability,
     SearchFreshness,
     SearchReadinessAggregate,
+    SearchReasonCode,
     SearchSourceFact,
     SearchWaitCause,
     WaitObservation,
@@ -62,7 +63,7 @@ class ScenarioResult:
 class ScenarioFailure:
     """Stable failure fields owned by the service response."""
 
-    code: str
+    code: SearchReasonCode
     message: str
     retryable: bool
     remediation: str
@@ -178,7 +179,7 @@ def _current(source: IndexSource, *, authoritative: bool = False) -> SearchSourc
         ),
         generation=_generation(source, current=True),
         evidence=("publication_current",),
-        reason_code="published_generation_current",
+        reason_code=SearchReasonCode.PUBLISHED_GENERATION_CURRENT,
     )
 
 
@@ -190,7 +191,7 @@ def _updating(source: IndexSource) -> SearchSourceFact:
         absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
         generation=_generation(source, current=False),
         evidence=("prior_publication_served", "newer_target_pending"),
-        reason_code="index_transition",
+        reason_code=SearchReasonCode.INDEX_TRANSITION,
         retryable=True,
     )
 
@@ -200,7 +201,7 @@ def _failure_fact(  # noqa: PLR0913 - canonical facts keep each authority explic
     *,
     availability: SearchAvailability,
     freshness: SearchFreshness,
-    reason: str,
+    reason: SearchReasonCode,
     remediation: str,
     generation: GenerationEvidence | None = None,
     wait_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE,
@@ -216,7 +217,8 @@ def _failure_fact(  # noqa: PLR0913 - canonical facts keep each authority explic
         waits=waits,
         evidence=(reason,),
         reason_code=reason,
-        retryable=freshness is not SearchFreshness.REBUILD_REQUIRED,
+        retryable=reason is not SearchReasonCode.INDEX_NOT_BUILT
+        and freshness is not SearchFreshness.REBUILD_REQUIRED,
         remediation=remediation,
     )
 
@@ -268,15 +270,35 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "vault",
                     availability=SearchAvailability.UNAVAILABLE,
                     freshness=SearchFreshness.UNVERIFIABLE,
-                    reason="index_unavailable",
+                    reason=SearchReasonCode.INDEX_UNAVAILABLE,
                     remediation=_STATUS_REMEDIATION,
                 ),
             ),
             failure=ScenarioFailure(
-                "index_unavailable",
+                SearchReasonCode.INDEX_UNAVAILABLE,
                 "The requested index is unavailable.",
                 True,
                 _STATUS_REMEDIATION,
+            ),
+        ),
+        "not_built": SearchReadinessScenario(
+            "not_built",
+            "scenario-not-built",
+            503,
+            (
+                _failure_fact(
+                    "code",
+                    availability=SearchAvailability.UNAVAILABLE,
+                    freshness=SearchFreshness.UNVERIFIABLE,
+                    reason=SearchReasonCode.INDEX_NOT_BUILT,
+                    remediation=_REBUILD_REMEDIATION,
+                ),
+            ),
+            failure=ScenarioFailure(
+                SearchReasonCode.INDEX_UNAVAILABLE,
+                SearchReasonCode.INDEX_NOT_BUILT.label,
+                False,
+                _REBUILD_REMEDIATION,
             ),
         ),
         "unverifiable": SearchReadinessScenario(
@@ -288,12 +310,12 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "code",
                     availability=SearchAvailability.UNAVAILABLE,
                     freshness=SearchFreshness.UNVERIFIABLE,
-                    reason="index_unverifiable",
+                    reason=SearchReasonCode.INDEX_UNVERIFIABLE,
                     remediation=_STATUS_REMEDIATION,
                 ),
             ),
             failure=ScenarioFailure(
-                "index_unverifiable",
+                SearchReasonCode.INDEX_UNVERIFIABLE,
                 "Publication evidence is unavailable.",
                 True,
                 _STATUS_REMEDIATION,
@@ -308,12 +330,12 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "document",
                     availability=SearchAvailability.UNAVAILABLE,
                     freshness=SearchFreshness.REBUILD_REQUIRED,
-                    reason="rebuild_required",
+                    reason=SearchReasonCode.REBUILD_REQUIRED,
                     remediation=_REBUILD_REMEDIATION,
                 ),
             ),
             failure=ScenarioFailure(
-                "rebuild_required",
+                SearchReasonCode.REBUILD_REQUIRED,
                 "The requested index requires a rebuild.",
                 False,
                 _REBUILD_REMEDIATION,
@@ -328,7 +350,7 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "code",
                     availability=SearchAvailability.USABLE,
                     freshness=SearchFreshness.UPDATING,
-                    reason="freshness_wait_timeout",
+                    reason=SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
                     remediation=_STATUS_REMEDIATION,
                     generation=_generation("code", current=False),
                     wait_policy=FreshnessWaitPolicy.BOUNDED,
@@ -336,7 +358,7 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                 ),
             ),
             failure=ScenarioFailure(
-                "freshness_wait_timeout",
+                SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
                 "The freshness wait reached its configured bound.",
                 True,
                 _STATUS_REMEDIATION,
@@ -351,12 +373,12 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "vault",
                     availability=SearchAvailability.CAPACITY_LIMITED,
                     freshness=SearchFreshness.UNVERIFIABLE,
-                    reason="capacity_limited",
+                    reason=SearchReasonCode.CAPACITY_LIMITED,
                     remediation=_STATUS_REMEDIATION,
                 ),
             ),
             failure=ScenarioFailure(
-                "capacity_limited",
+                SearchReasonCode.CAPACITY_LIMITED,
                 "Search capacity is temporarily unavailable.",
                 True,
                 _STATUS_REMEDIATION,
@@ -371,12 +393,12 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "document",
                     availability=SearchAvailability.UNAVAILABLE,
                     freshness=SearchFreshness.UNVERIFIABLE,
-                    reason="backend_unavailable",
+                    reason=SearchReasonCode.BACKEND_UNAVAILABLE,
                     remediation=_STATUS_REMEDIATION,
                 ),
             ),
             failure=ScenarioFailure(
-                "backend_unavailable",
+                SearchReasonCode.BACKEND_UNAVAILABLE,
                 "The search backend is unavailable.",
                 True,
                 _STATUS_REMEDIATION,
@@ -396,7 +418,7 @@ def _scenarios() -> dict[str, SearchReadinessScenario]:
                     "document",
                     availability=SearchAvailability.UNAVAILABLE,
                     freshness=SearchFreshness.UNVERIFIABLE,
-                    reason="backend_unavailable",
+                    reason=SearchReasonCode.BACKEND_UNAVAILABLE,
                     remediation=_STATUS_REMEDIATION,
                 ),
             ),
