@@ -4,10 +4,11 @@
 
 # vaultspec-rag: Semantic search for code and the decisions behind it
 
-vaultspec-rag searches a repository by meaning: its source code, and the decision
-records that explain why the code looks the way it does. Ask in plain words, from the
-command line or from your AI assistant, and it returns the matching code or the passage
-that answers. It runs on your own machine and GPU. It's in beta.
+Describe what some code does, or ask why it was built that way, and vaultspec-rag
+returns the code or the decision-record passage that answers, even when it's worded
+differently from your question. It matches on meaning and on exact names, then rereads
+the best candidates beside your question before ranking them. Use it from the command
+line or through your AI assistant. It runs on your own GPU, and it's in beta.
 
 [<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="CI status of main" src="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://github.com/nevenincs/vaultspec-rag/actions/workflows/merge-gate.yml?query=branch%3Amain)
 [<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="PyPI version" src="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://pypi.org/project/vaultspec-rag/)
@@ -56,6 +57,21 @@ sends every request to the host's service.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/). vaultspec-rag
   supports Python 3.13 and 3.14, and uv downloads an interpreter if needed.
 - A few gigabytes of disk for a one-time model download.
+
+### Try it without installing
+
+On Linux or Apple silicon, you can try vaultspec-rag in one repository before you
+install anything. Get a [Hugging Face token](#get-a-hugging-face-token) first, then run
+this from the repository's root:
+
+```bash
+uvx --from "vaultspec-rag[gpu]" vaultspec-rag install --no-torch-config
+```
+
+uvx runs it from a temporary environment, but the setup it writes to the repository is
+real. Put the same `uvx --from "vaultspec-rag[gpu]"` prefix in front of each later
+command. On Windows, a temporary run gets PyPI's CPU-only PyTorch: it can set up the
+repository but can't start the service, so install the host instead.
 
 ### Install the host
 
@@ -294,8 +310,8 @@ each repository's index on disk in its `.vault/` folder instead, set the
 [backend setup](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/backends.md).
 
 With a valid, funded `VAULTSPEC_RAG_TYPESAFE_API_KEY`, Typesafe interprets each query
-and reranks the results on their full content, and drops results it judges irrelevant.
-`vaultspec-rag server status` shows whether it's on. Without a usable key, search keeps
+and reranks the results on their full content; [How it works](#how-it-works) describes
+both steps. `vaultspec-rag server status` shows whether it's on. Without a usable key, search keeps
 its local ranking. The GPU and local models are still required either way.
 
 > [!IMPORTANT]
@@ -317,6 +333,14 @@ why a result ranked where it did.
   merged by rank. A cross-encoder,
   [`BAAI/bge-reranker-v2-m3`](https://huggingface.co/BAAI/bge-reranker-v2-m3), then
   reads the query beside each candidate's full content and reorders them.
+- **Hosted ranking, when enabled.** With a Typesafe key, two steps join the search.
+  First, Typesafe reads the query and names what it's after: code or a decision,
+  production code or tests. Where you didn't say, that sets the defaults. Then, after
+  the local reranker, it judges up to 64 of the top candidates on their full content,
+  one clause at a time for a compound question. Its judgment replaces the local score.
+  It drops a result only when every clause rates it confidently not useful, so
+  uncertainty never removes anything. If Typesafe fails or runs out of time, that search
+  keeps its local ranking.
 - **Results.** Code results are demoted or hidden by kind of file, as
   [Search](#search) describes. Vault results are grouped per record, and each shows the
   passage that best answers the query.
