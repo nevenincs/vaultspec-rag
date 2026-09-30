@@ -9,7 +9,7 @@ name: RAG Hardware Tiers
 #   started for, and adds the advisory macOS full suite.
 #
 # Every precondition the tiers read is provisioned here, inside the job that
-# reads it: the model cache (with the Hugging Face token), the pinned Qdrant
+# reads it: the public model cache, the pinned Qdrant
 # binary and the resident service the CUDA tier borrows. A tier that finds a
 # precondition missing refuses to run and fails, so a caller that skipped a
 # step would block every release without measuring anything.
@@ -34,9 +34,6 @@ on:
         type: boolean
         default: false
     secrets:
-      HF_TOKEN:
-        description: Hugging Face token for warming the model cache
-        required: false
       VAULTSPEC_RAG_TYPESAFE_API_KEY:
         description: Funded Typesafe key for live classification integration tests
         required: true
@@ -109,8 +106,6 @@ jobs:
       # what the guard then loads. A recipe rather than an inline script,
       # because a step's shell is bash here and PowerShell on Windows.
       - name: Warm the model cache the MPS guard reads
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just warm-models
 
       # This is the support gate for Apple silicon. It runs the configured
@@ -188,8 +183,6 @@ jobs:
       # the configured model stack as it comes up, so it needs a warm cache
       # first, or the daemon dies before it can report ready.
       - name: Warm the model cache the resident service loads
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: just warm-models
 
       # Waiting on `running` rather than sleeping a fixed interval is what
@@ -199,7 +192,6 @@ jobs:
         id: resident
         shell: pwsh
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: |
           # Another installation of the product may hold the default service
@@ -269,7 +261,6 @@ jobs:
 
       - name: Run GPU test tier through guarded coordinator
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VAULTSPEC_RAG_TYPESAFE_API_KEY: ${{ secrets.VAULTSPEC_RAG_TYPESAFE_API_KEY }}
         run: just test-gpu
 

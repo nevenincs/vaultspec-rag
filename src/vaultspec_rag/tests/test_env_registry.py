@@ -56,13 +56,12 @@ _OWNED_PREFIX = "VAULTSPEC_RAG_"
 _EXPECTED_SECRETS = {
     EnvVar.TYPESAFE_API_KEY,
     EnvVar.QDRANT_API_KEY,
-    EnvVar.HF_TOKEN,
 }
 
 #: The credentials a workspace ``.env`` may supply. The Qdrant key is excluded
 #: on purpose: it addresses an operator's own deployment, and repository
 #: content has no business naming one.
-_EXPECTED_DOTENV = {EnvVar.TYPESAFE_API_KEY, EnvVar.HF_TOKEN}
+_EXPECTED_DOTENV = {EnvVar.TYPESAFE_API_KEY}
 
 #: The settings shared with the rest of the framework, and the framework name
 #: each falls back to.
@@ -156,13 +155,20 @@ def test_exactly_the_transport_markers_are_internal() -> None:
 
 
 def test_exactly_the_credentials_are_secret() -> None:
-    """A secret's value is withheld from diagnostics; a setting's is not."""
+    """A secret's value is withheld from diagnostics; a setting's is not.
+
+    Mutation proof: marking QDRANT_URL secret failed this exact-set assertion;
+    restoring the credential set passed.
+    """
     secret = {var for var in EnvVar if entry(var).secret}
     assert secret == _EXPECTED_SECRETS
 
 
 def test_only_the_gated_credentials_are_eligible_for_a_workspace_dotenv() -> None:
-    """Repository content may supply these two keys, and nothing else.
+    """Repository content may supply the hosted-classifier key, and nothing else.
+
+    Mutation proof: removing the Typesafe name from the eligible set failed
+    this exact-set assertion; restoring it passed.
 
     Marking a settings knob eligible would reopen exactly the boundary the
     gate exists to close: a cloned repository configuring a tool that merely

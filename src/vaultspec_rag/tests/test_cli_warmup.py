@@ -26,7 +26,7 @@ class TestServiceWarmup:
         assert result.exit_code == 0
         assert "cached" in result.output
         assert "Dense (Qwen3)" in result.output
-        assert "Sparse (SPLADE)" in result.output
+        assert "Sparse (SPARSEUP)" in result.output
         assert "Reranker (CrossEncoder)" in result.output
 
     def test_warmup_shows_model_repos(self):
@@ -34,7 +34,7 @@ class TestServiceWarmup:
         result = runner.invoke(app, ["server", "warmup"])
         assert result.exit_code == 0
         assert "Qwen/Qwen3-Embedding-0.6B" in result.output
-        assert "naver/splade-v3" in result.output
+        assert "Linkup-Platform/linkup-sparseup-embed-v1" in result.output
         assert "BAAI/bge-reranker-v2-m3" in result.output
 
     def test_warmup_no_failed_status(self):

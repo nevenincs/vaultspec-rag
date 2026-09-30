@@ -33,8 +33,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from .._sync_vocabulary import ProvisionAction
-from ..config._credentials import workspace_credential
-from ..config._types import EnvVar
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -259,12 +257,10 @@ def _provision_dependencies(request: _ProvisionRequest) -> ProvisionOutcome:
         )
     )
 
-    models_credential = workspace_credential(EnvVar.HF_TOKEN, target)
     outcome.steps.append(
         provision_models(
             dry_run=dry_run,
             skip=skip,
-            token=None if models_credential is None else models_credential.key,
         )
     )
 
@@ -425,7 +421,6 @@ def provision_models(
     *,
     dry_run: bool = False,
     skip: set[str] | None = None,
-    token: str | None = None,
 ) -> ProvisionStepResult:
     """Ensure the configured embedding/reranker models are present.
 
@@ -444,10 +439,6 @@ def provision_models(
         dry_run: Report what would be fetched without touching the
             network.
         skip: When it contains ``"models"``, the step is opted out.
-        token: The Hugging Face credential this run resolved, passed to the
-            download rather than exported: a key that came from the
-            workspace's gated file belongs to this call, not to the process
-            environment every later child would inherit it from.
 
     Returns:
         A :class:`ProvisionStepResult` in the shared sync vocabulary.
@@ -463,7 +454,6 @@ def provision_models(
     try:
         from huggingface_hub import (
             snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
-            try_to_load_from_cache,
         )
     except ImportError:
         return ProvisionStepResult(
@@ -472,13 +462,14 @@ def provision_models(
             detail="huggingface_hub is not installed; cannot ensure models",
         )
 
+    from .._sparse_profile import sparse_model_revision
     from ..config._settings import configured_model_repos
 
     repos = [repo for _label, repo in configured_model_repos()]
 
-    missing = [
-        repo for repo in repos if try_to_load_from_cache(repo, "config.json") is None
-    ]
+    from .._model_cache import cached_snapshot_is_complete
+
+    missing = [repo for repo in repos if not cached_snapshot_is_complete(repo)]
 
     if not missing:
         return ProvisionStepResult(
@@ -498,7 +489,7 @@ def provision_models(
     downloaded: list[str] = []
     for repo in missing:
         try:
-            snapshot_download(repo, token=token)
+            snapshot_download(repo, revision=sparse_model_revision(repo), token=False)
         except Exception as exc:
             logger.error("model provisioning failed for %s: %s", repo, exc)
             return ProvisionStepResult(

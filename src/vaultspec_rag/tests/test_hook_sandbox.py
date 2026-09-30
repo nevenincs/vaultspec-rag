@@ -52,10 +52,14 @@ def test_curated_child_env_strips_secrets_keeps_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every credential-bearing and VAULTSPEC_RAG_* knob is dropped; the small
-    path/locale allow-list is kept."""
+    path/locale allow-list is kept.
+
+    Mutation proof: adding the Typesafe credential to the production allow-list
+    failed the scoped-name assertion; restoring the allow-list passed.
+    """
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "super-secret")
     monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "C:/managed")
-    monkeypatch.setenv("HF_TOKEN", "hf-secret")
+    monkeypatch.setenv("VAULTSPEC_RAG_TYPESAFE_API_KEY", "typesafe-secret")
     monkeypatch.setenv("QDRANT_API_KEY", "q-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
@@ -64,13 +68,13 @@ def test_curated_child_env_strips_secrets_keeps_path(
 
     assert "PATH" in env
     assert not any(name.upper().startswith("VAULTSPEC_RAG_") for name in env)
-    assert "HF_TOKEN" not in env
+    assert "VAULTSPEC_RAG_TYPESAFE_API_KEY" not in env
     assert "QDRANT_API_KEY" not in env
     assert "GITHUB_TOKEN" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
     # The allow-list only re-admits path-bearing startup vars, never secrets.
     assert "super-secret" not in env.values()
-    assert "hf-secret" not in env.values()
+    assert "typesafe-secret" not in env.values()
 
 
 def test_curated_child_env_is_a_strict_allow_list(

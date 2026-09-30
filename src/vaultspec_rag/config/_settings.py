@@ -18,6 +18,7 @@ from vaultspec_core.config import (
 from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 from vaultspec_core.logging_config import resolve_log_level
 
+from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
 from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
@@ -263,7 +264,7 @@ class VaultSpecConfigWrapper:
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_enabled": True,
-        "sparse_model": "naver/splade-v3",
+        "sparse_model": SPARSE_MODEL_ID,
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
         "reranker_batch_size": 32,
@@ -1436,15 +1437,14 @@ if _undeclared_settings:
 def configured_model_repos() -> tuple[tuple[str, str], ...]:
     """Return every model repo this build needs, label first.
 
-    Sparse (SPLADE) is omitted when ``sparse_enabled`` is false: a dense-only
+    Sparse (SPARSEUP) is omitted when ``sparse_enabled`` is false: a dense-only
     configuration never loads the sparse encoder, so provisioning, warmup, and
-    readiness must not require it either - including its gated Hugging Face
-    access and licence terms.
+    readiness must not require its cached files either.
     """
     cfg = get_config()
     repos: list[tuple[str, str]] = [("Dense (Qwen3)", str(cfg.embedding_model))]
     if bool(cfg.sparse_enabled):
-        repos.append(("Sparse (SPLADE)", str(cfg.sparse_model)))
+        repos.append(("Sparse (SPARSEUP)", str(cfg.sparse_model)))
     repos.append(("Reranker (CrossEncoder)", str(cfg.reranker_model)))
     return tuple(repos)
 

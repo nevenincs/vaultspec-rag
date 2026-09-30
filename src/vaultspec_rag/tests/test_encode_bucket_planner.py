@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 
     import numpy as np
     import torch
-    from sentence_transformers import SentenceTransformer, SparseEncoder
+    from sentence_transformers import SentenceTransformer
+
+    from .._sparse_encoder import SparseModelAdapter
 
 
 def _texts_of_lengths(lengths: list[int]) -> list[str]:
@@ -336,22 +338,15 @@ class _BucketRecordingSparseModel:
         self.batch_sizes: list[int] = []
         self._oom_pending = [list(entry) for entry in (oom_on_first or [])]
 
-    def encode_document(
-        self,
-        texts: list[str],
-        *,
-        batch_size: int,
-        **options: object,
-    ) -> torch.Tensor:
-        # Mirrors the production call site's keyword set; the sparse
-        # encode path passes these explicitly, so a double that accepts
-        # only batch_size fails on the call rather than on the behaviour
-        # the test is actually about.
-        del options
+    def prepare(self, texts: list[str], *, kind: str) -> list[str]:
+        assert kind in {"query", "document"}
+        return texts
+
+    def forward(self, texts: list[str]) -> torch.Tensor:
         import torch
 
         self.calls.append(list(texts))
-        self.batch_sizes.append(batch_size)
+        self.batch_sizes.append(len(texts))
         if list(texts) in self._oom_pending:
             self._oom_pending.remove(list(texts))
             raise torch.cuda.OutOfMemoryError("simulated CUDA OOM")
@@ -565,7 +560,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingSparseModel()
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         results = model.encode_documents_sparse(texts)
         assert fake.calls == [texts[0:2], texts[2:4]]
         # The bucket is handed over as a single library sub-batch, so the
@@ -573,11 +568,59 @@ class TestBucketedSparseEncode:
         assert fake.batch_sizes == [2, 2]
         assert [row.values[0] for row in results] == [200.0] * 4
 
+    def test_mixed_lengths_group_and_restore_input_order(self):
+        texts = _texts_of_lengths([300, 50, 200, 100])
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=100)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        results = model.encode_documents_sparse(texts)
+        assert fake.calls == [[texts[1], texts[3]], [texts[2]], [texts[0]]]
+        assert [row.values[0] for row in results] == [300.0, 50.0, 200.0, 100.0]
+
+    def test_sparse_estimate_is_capped_at_truncation(self):
+        fake = _BucketRecordingSparseModel()
+        model = _model_shell(token_budget=1024)
+        model._sparse_model = cast("SparseModelAdapter", fake)
+        texts: list[str] = ["a" * 8000, "b" * 8000]
+        model.encode_documents_sparse(texts)
+        assert fake.calls == [texts]
+
+    def test_cpu_preparation_and_conversion_are_outside_forward_lock(self):
+        """2026-09-30: preparation under lock failed its assertion; restored passed."""
+        import torch
+
+        gpu_lock = threading.Lock()
+        events: list[str] = []
+
+        class Output:
+            def cpu(self) -> torch.Tensor:
+                assert not gpu_lock.locked(), "CPU conversion held the GPU lock"
+                events.append("cpu")
+                return torch.tensor([[1.0, 0.0]])
+
+        class LockedModel:
+            def prepare(self, texts: list[str], *, kind: str) -> list[str]:
+                assert not gpu_lock.locked(), "CPU preparation held the GPU lock"
+                events.append(kind)
+                return texts
+
+            def forward(self, prepared: list[str]) -> Output:
+                assert gpu_lock.locked(), "forward missed the GPU lock"
+                assert prepared == ["text"]
+                events.append("forward")
+                return Output()
+
+        model = _model_shell()
+        model._sparse_model = cast("SparseModelAdapter", LockedModel())
+        assert model._encode_sparse_batch(["text"], gpu_lock)[0].values == [1.0]
+        assert model.encode_query_sparse("text", gpu_lock=gpu_lock).values == [1.0]
+        assert events == ["document", "forward", "cpu", "query", "forward", "cpu"]
+
     def test_oom_discards_only_the_failing_bucket(self):
         texts = _distinct_texts(6)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         results = model.encode_documents_sparse(texts)
         # Catches the retry scope regressing from the bucket to the whole
         # call: a slice-wide retry discards completed rows and replans
@@ -603,7 +646,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(1)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[0:1]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         with pytest.raises(torch.cuda.OutOfMemoryError):
             model.encode_documents_sparse(texts)
         # A one-text bucket cannot shrink, so there is no retry attempt.
@@ -613,7 +656,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         model.encode_documents_sparse(texts)
         first_call_count = len(fake.calls)
         model.encode_documents_sparse(texts)
@@ -628,7 +671,7 @@ class TestBucketedSparseEncode:
         sparse_fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         dense_fake = _BucketRecordingDenseModel()
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", sparse_fake)
+        model._sparse_model = cast("SparseModelAdapter", sparse_fake)
         model._dense_model = cast("SentenceTransformer", dense_fake)
         model.encode_documents_sparse(texts)
         model.encode_documents(texts)
@@ -639,13 +682,13 @@ class TestBucketedSparseEncode:
     def test_empty_input_returns_no_rows_without_a_forward(self):
         fake = _BucketRecordingSparseModel()
         model = _model_shell()
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         assert model.encode_documents_sparse([]) == []
         assert fake.calls == []
 
     def test_non_positive_batch_size_is_rejected(self):
         model = _model_shell()
-        model._sparse_model = cast("SparseEncoder", _BucketRecordingSparseModel())
+        model._sparse_model = cast("SparseModelAdapter", _BucketRecordingSparseModel())
         with pytest.raises(ValueError, match="batch_size must be a positive integer"):
             model.encode_documents_sparse(["text"], batch_size=0)
 
@@ -660,7 +703,7 @@ class TestBucketedSparseEncode:
         texts = _distinct_texts(4)
         fake = _BucketRecordingSparseModel(oom_on_first=[texts[2:4]])
         model = _model_shell(token_budget=100)
-        model._sparse_model = cast("SparseEncoder", fake)
+        model._sparse_model = cast("SparseModelAdapter", fake)
         events: list[tuple[str, EncodeBucketProgress]] = []
 
         def observe(phase: str, progress: EncodeBucketProgress) -> None:

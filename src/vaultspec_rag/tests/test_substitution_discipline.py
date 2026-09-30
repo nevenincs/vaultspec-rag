@@ -31,6 +31,14 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_cli_styled_output.py": (
+        1,
+        "captures terminal and pipe output by replacing only the console with "
+        "a real Rich console writing to StringIO; production formatting and "
+        "rendering execute unchanged, and no compute or service result is "
+        "substituted. Mutation proof: setting this allowance to zero failed "
+        "the count-growth assertion; restoring one passed",
+    ),
     "test_typesafe_search.py": (
         26,
         "search routing needs fixed candidate windows and forced provider failures "
@@ -264,15 +272,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "environment's classification and its receipt verdict, so the count "
         "is of one known state rather than of whatever this host happens to "
         "be",
-    ),
-    "test_install_client_role.py": (
-        1,
-        "forces the Hugging Face token absent to prove a client installation is "
-        "never asked for one. The hub fixes its token file location when it is "
-        "imported, so the token cannot be redirected in-process, and a "
-        "developer's stored login would hide the warning whether or not the "
-        "client gate works; the real install runs and only the token lookup is "
-        "replaced",
     ),
     "conftest.py": (
         3,

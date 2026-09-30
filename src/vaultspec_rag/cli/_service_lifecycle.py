@@ -12,18 +12,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import typer
 
 import vaultspec_rag.cli as _cli
 
-from .._operator_commands import HF_LOGIN_REMEDIATION
-from ..config._credentials import workspace_credential
+from .._model_cache import cached_snapshot_is_complete
+from .._sparse_profile import sparse_model_revision
 from ..config._settings import configured_model_repos, get_config
 from ..config._types import EnvVar
-from ._app import _global_target, server_root_app
+from ._app import server_root_app
 from ._gpu_errors import _handle_gpu_error
 from ._progress import StartupStatusReporter
 from ._render import _emit_json, _plain
@@ -158,9 +157,6 @@ def _warmup_failure_detail(repo_id: str, exc: Exception) -> str:
     library's default directory to clean up a partial download that is not
     there.
     """
-    msg = str(exc)
-    if "401" in msg or "403" in msg or "GatedRepo" in msg:
-        return f"{repo_id} auth required; run {HF_LOGIN_REMEDIATION}"
     cache = get_config().hf_cache_location
     return f"{repo_id} failed: {exc} (partial cache may remain in {cache})"
 
@@ -173,10 +169,6 @@ class _WarmupFetchRequest:
     label: str
     position: int
     total: int
-    #: The credential this invocation resolved, handed to the download
-    #: rather than exported. A key from the workspace's gated file belongs
-    #: to this call, not to every child process that would inherit it.
-    token: str | None
 
 
 def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
@@ -185,26 +177,30 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
     The fetch is minutes long and its size is known to the hub, so the stage
     names WHICH repo of how many is running and the tracker turns the hub's own
     counters into bytes-of-bytes. Every failure is reported and none aborts the
-    remaining models: a warmup that stops at the first gated repo leaves the
+    remaining models: a warmup that stops at the first unavailable repo leaves the
     operator re-running it to discover the next one.
     """
     from ._hf_progress import SnapshotProgress
 
-    download, progress, repo_id, label, position, total, token = (
+    download, progress, repo_id, label, position, total = (
         request.download,
         request.progress,
         request.repo_id,
         request.label,
         request.position,
         request.total,
-        request.token,
     )
 
     heading = f"Downloading {label} ({position}/{total})"
     progress.stage(f"{heading}...")
     try:
         with SnapshotProgress(progress.heartbeat, prefix=heading) as tracker:
-            download(repo_id, tqdm_class=tracker.tqdm_class, token=token)
+            download(
+                repo_id,
+                tqdm_class=tracker.tqdm_class,
+                revision=sparse_model_revision(repo_id),
+                token=False,
+            )
     except Exception as exc:
         return _warmup_failure_detail(repo_id, exc)
     return f"{repo_id} downloaded"
@@ -218,7 +214,7 @@ def _warmup_fetch_model(request: _WarmupFetchRequest) -> str:
         "search time."
     ),
 )
-def service_warmup(ctx: typer.Context) -> None:
+def service_warmup() -> None:
     """Download GPU model files before they are needed."""
     try:
         from .._gpu import load_accelerator
@@ -229,9 +225,7 @@ def service_warmup(ctx: typer.Context) -> None:
 
     try:
         from huggingface_hub import (
-            get_token,
             snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # huggingface_hub stubs partially unknown
-            try_to_load_from_cache,
         )
     except ImportError:
         _cli.console.print("Error: huggingface_hub is not installed.")
@@ -246,21 +240,9 @@ def service_warmup(ctx: typer.Context) -> None:
     # unbounded download.
     with StartupStatusReporter(json_mode=False) as progress:
         progress.announce("Model warmup")
-        credential = workspace_credential(
-            EnvVar.HF_TOKEN, _global_target(ctx) or Path.cwd()
-        )
-        token = credential.key if credential is not None else get_token()
-        if token:
-            _print_detail_line("HuggingFace auth", "configured")
-        else:
-            _print_detail_line(
-                "HuggingFace auth",
-                f"missing; run {HF_LOGIN_REMEDIATION} if downloads fail",
-            )
-
         for position, (label, repo_id) in enumerate(models, start=1):
             progress.stage(f"Checking the cache for {label} ({position}/{len(models)})")
-            if try_to_load_from_cache(repo_id, "config.json") is not None:
+            if cached_snapshot_is_complete(repo_id):
                 _print_detail_line(label, f"{repo_id} cached")
                 continue
             _print_detail_line(
@@ -276,7 +258,6 @@ def service_warmup(ctx: typer.Context) -> None:
                         label,
                         position,
                         len(models),
-                        token,
                     )
                 ),
             )

@@ -27,15 +27,15 @@ Each setting resolves through a fixed precedence, highest first: invocation (a C
 
 Three settings chain the session-environment rung to a shared framework name read behind this package's own scoped name, so a session that exports only the shared name configures every vaultspec tool at once:
 
-| This package's variable          | Falls back to (framework-wide) |
-| --------------------------------- | ------------------------------- |
-| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it; see the notes below the table | `--target`        |
-| `VAULTSPEC_RAG_LOG_LEVEL`      | string  | `WARNING`         | Root logger level for the CLI, the stdio MCP server, and the resident daemon. Resolves over its own ladder; see the notes below the table | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG`     | `VAULTSPEC_STDIO_WATCHDOG`      |
+| This package's variable        | Falls back to (framework-wide) |
+| ------------------------------ | ------------------------------ |
+| `VAULTSPEC_RAG_ROOT`           | `VAULTSPEC_TARGET_DIR`         |
+| `VAULTSPEC_RAG_LOG_LEVEL`      | `VAULTSPEC_LOG_LEVEL`          |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG` | `VAULTSPEC_STDIO_WATCHDOG`     |
 
 No other variable on this page reads a shared framework name; every other row resolves against its own scoped name alone.
 
-A workspace-root `.env` is read for exactly two names - `VAULTSPEC_RAG_TYPESAFE_API_KEY` and `HF_TOKEN` - and only when both hold: the running interpreter lives inside that workspace, and this package's resolved install mode there is dependency or dev, never a globally installed tool. No other variable on this page is ever read from a `.env`, and no variant (`.env.local` and the like) is read at all. This is a settings file, not a repository surface: repository content may hand you a credential, never reconfigure the tool.
+A workspace-root `.env` is read for only `VAULTSPEC_RAG_TYPESAFE_API_KEY` - and only when both hold: the running interpreter lives inside that workspace, and this package's resolved install mode there is dependency or dev, never a globally installed tool. No other variable on this page is ever read from a `.env`, and no variant (`.env.local` and the like) is read at all. This is a settings file, not a repository surface: repository content may hand you a credential, never reconfigure the tool.
 
 The persisted local-only marker applies only to backend selection. It lives at `{status_dir}/local-only.json` and is written by `install --local-only` - `server start --local-only` applies to that run without persisting. A later `server start` with no flag and no environment variable then still selects the on-disk store.
 
@@ -60,14 +60,14 @@ These variables do not resolve through the chain in [Resolution order](#resoluti
 
 The booleans among them accept the same spellings as every other boolean. They differ only in how they resolve a blank value and a word that spells neither state. The Controls column states each one's rule and the reason for it.
 
-| Variable                       | Type    | Default           | Controls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | CLI flag          |
-| ------------------------------ | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| `VAULTSPEC_RAG_PREPROCESS`     | boolean | unset             | Kill switch for a root's preprocessing rules. A false word (`0`, `false`, `no`, `off`) disables all preprocessing and wins over every other source; a true word, blank, or unset leaves rules enabled; anything else is rejected                                                                                                                                                                                                                                                                              | `--no-preprocess` |
-| `VAULTSPEC_RAG_STDIO_WATCHDOG` | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Chains to the framework-wide `VAULTSPEC_STDIO_WATCHDOG`. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, blank, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                             | -                 |
-| `VAULTSPEC_RAG_LOG_LEVEL`      | string  | `WARNING`         | Root logger level, honoured by the CLI, the stdio MCP server, and the resident daemon alike. It resolves over the logging ladder rather than the generic chain, so every process reads one validated answer: `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default - `WARNING` for the CLI and the stdio server, `INFO` for the daemon, whose output is a managed log nobody is watching live. A name no level spells is refused rather than degraded; an invocation-supplied level still outranks the whole ladder | `--verbose` (INFO), `--debug` (DEBUG) |
-| `VAULTSPEC_RAG_MEMORY_PROBE`   | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and blank leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                           | -                 |
-| `VAULTSPEC_RAG_ROOT`           | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so both root variables are stripped from its environment at spawn | `--target`        |
-| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string | unset | Optional paid Typesafe query classification and full-content result reranking. A credential, never a CLI flag; see [Typesafe enrollment](#typesafe-enrollment) | - |
+| Variable                         | Type    | Default           | Controls                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | CLI flag                              |
+| -------------------------------- | ------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `VAULTSPEC_RAG_PREPROCESS`       | boolean | unset             | Kill switch for a root's preprocessing rules. A false word (`0`, `false`, `no`, `off`) disables all preprocessing and wins over every other source; a true word, blank, or unset leaves rules enabled; anything else is rejected                                                                                                                                                                                                                                                                                                                                            | `--no-preprocess`                     |
+| `VAULTSPEC_RAG_STDIO_WATCHDOG`   | boolean | enabled           | Stdio shim self-reap when its spawning process chain breaks. Chains to the framework-wide `VAULTSPEC_STDIO_WATCHDOG`. Only an explicit `0`, `false`, `off`, or `no` disables it; unset, blank, and any unrecognised word all leave it **armed**, because disarming it by accident strands orphaned shim processes                                                                                                                                                                                                                                                           | -                                     |
+| `VAULTSPEC_RAG_LOG_LEVEL`        | string  | `WARNING`         | Root logger level, honoured by the CLI, the stdio MCP server, and the resident daemon alike. It resolves over the logging ladder rather than the generic chain, so every process reads one validated answer: `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default - `WARNING` for the CLI and the stdio server, `INFO` for the daemon, whose output is a managed log nobody is watching live. A name no level spells is refused rather than degraded; an invocation-supplied level still outranks the whole ladder | `--verbose` (INFO), `--debug` (DEBUG) |
+| `VAULTSPEC_RAG_MEMORY_PROBE`     | boolean | disabled          | Diagnostic memory sampler. Follows the standard boolean rule in full, rejection included: unset and blank leave it off, and an unrecognised word is rejected rather than guessed at                                                                                                                                                                                                                                                                                                                                                                                         | -                                     |
+| `VAULTSPEC_RAG_ROOT`             | path    | working directory | The project every entry point addresses when nothing else names one. `--target` outranks it on the CLI and a tool call's own `project_root` outranks it over MCP; below it sits the framework-wide `VAULTSPEC_TARGET_DIR`, then the working directory. A value naming a directory that is not an enrolled workspace fails the run naming the variable, rather than being dropped for a directory that happens to resolve. The resident HTTP service is the exception: it serves every root at once, so both root variables are stripped from its environment at spawn       | `--target`                            |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY` | string  | unset             | Optional paid Typesafe query classification and full-content result reranking. A credential, never a CLI flag; see [Typesafe enrollment](#typesafe-enrollment)                                                                                                                                                                                                                                                                                                                                                                                                              | -                                     |
 
 **Log level.** The CLI, the stdio server, and the daemon all read one validated answer. The order is `VAULTSPEC_RAG_LOG_LEVEL`, then the framework-wide `VAULTSPEC_LOG_LEVEL`, then the process kind's own default. That default is `WARNING` for the CLI and the stdio server, and `INFO` for the daemon, whose output is a managed log nobody watches live. A level flag on the command line outranks the whole ladder. A name no level spells is refused, not degraded.
 
@@ -105,13 +105,13 @@ search only; it leaves the key enrolled and does not change the state below.
 Both lifecycle commands display a `Typesafe:` line from the daemon's `/health`
 snapshot; neither command tests the key or spends API credits:
 
-| State | Meaning |
-| --- | --- |
-| `off` | No dedicated key in the server environment; legacy ranking. |
-| `pending` | Enrolled, but no successful evaluation within the last 60 seconds. The next search checks usability. |
-| `active` | Enrolled; a validated provider evaluation succeeded within the last 60 seconds. This is observed success, not a live balance check or a promise that every search can be classified. |
-| `rejected` | Enrolled, but the provider rejected authentication or payment; legacy fallback until key rotation or server restart. |
-| `cooldown` | Enrolled, but a transient provider failure has temporarily suspended calls; legacy fallback. |
+| State      | Meaning                                                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `off`      | No dedicated key in the server environment; legacy ranking.                                                                                                                          |
+| `pending`  | Enrolled, but no successful evaluation within the last 60 seconds. The next search checks usability.                                                                                 |
+| `active`   | Enrolled; a validated provider evaluation succeeded within the last 60 seconds. This is observed success, not a live balance check or a promise that every search can be classified. |
+| `rejected` | Enrolled, but the provider rejected authentication or payment; legacy fallback until key rotation or server restart.                                                                 |
+| `cooldown` | Enrolled, but a transient provider failure has temporarily suspended calls; legacy fallback.                                                                                         |
 
 An unreachable or older daemon is `not reported`, not assumed to be enrolled based
 on the client's key. In JSON, start returns `data.typesafe`; status returns
@@ -169,41 +169,41 @@ The tables in this section list every `VAULTSPEC_RAG_*` variable resolved throug
 
 These variables choose between the supervised Qdrant server (the default) and the on-disk store. They also configure a remote or managed server.
 
-| Variable                             | Type    | Default                                  | Controls                                                               | CLI flag                   |
-| ------------------------------------ | ------- | ---------------------------------------- | ---------------------------------------------------------------------- | -------------------------- |
-| `VAULTSPEC_RAG_QDRANT_SERVER`        | boolean | `1` (true)                               | Server-first default backend                                           | `--qdrant` / `--no-qdrant` |
-| `VAULTSPEC_RAG_LOCAL_ONLY`           | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                    | `--local-only`             |
-| `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                        | -                          |
-| `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store         | -                          |
-| `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Remote server API key                                                  | -                          |
-| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                | -                          |
-| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                       | -                          |
-| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                  | -                          |
+| Variable                             | Type    | Default                                  | Controls                                                                        | CLI flag                   |
+| ------------------------------------ | ------- | ---------------------------------------- | ------------------------------------------------------------------------------- | -------------------------- |
+| `VAULTSPEC_RAG_QDRANT_SERVER`        | boolean | `1` (true)                               | Server-first default backend                                                    | `--qdrant` / `--no-qdrant` |
+| `VAULTSPEC_RAG_LOCAL_ONLY`           | boolean | `0` (false)                              | On-disk store opt-out; overrides the server default                             | `--local-only`             |
+| `VAULTSPEC_RAG_QDRANT_PORT`          | integer | `8765`                                   | Managed server HTTP port (gRPC binds one below)                                 | -                          |
+| `VAULTSPEC_RAG_QDRANT_URL`           | string  | none                                     | Remote or managed server URL; selects server mode in the store                  | -                          |
+| `VAULTSPEC_RAG_QDRANT_API_KEY`       | string  | none                                     | Remote server API key                                                           | -                          |
+| `VAULTSPEC_RAG_QDRANT_BINARY`        | string  | none                                     | Operator-supplied binary path (air-gapped escape hatch)                         | -                          |
+| `VAULTSPEC_RAG_QDRANT_STORAGE_DIR`   | string  | `~/.vaultspec-rag/qdrant-server/storage` | Shared multi-root server storage                                                | -                          |
+| `VAULTSPEC_RAG_QDRANT_QUANTIZATION`  | string  | none                                     | Vector quantization (`scalar`, `turbo`, or `product`)                           | -                          |
 | `VAULTSPEC_RAG_QDRANT_READY_TIMEOUT` | float   | `300`                                    | Seconds of no startup progress the supervisor tolerates (total wait is 4x this) | -                          |
 
 ### Project and data locations
 
-| Variable                        | Type | Default                   | Controls                                               | CLI flag        |
-| ------------------------------- | ---- | ------------------------- | ------------------------------------------------------ | --------------- |
-| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata | `--data-dir`    |
-| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir         | `--storage-dir` |
+| Variable                        | Type | Default                   | Controls                                                                  | CLI flag        |
+| ------------------------------- | ---- | ------------------------- | ------------------------------------------------------------------------- | --------------- |
+| `VAULTSPEC_RAG_DATA_DIR`        | path | `.vault/data/search-data` | Directory holding the on-disk store and index metadata                    | `--data-dir`    |
+| `VAULTSPEC_RAG_QDRANT_DIR`      | path | `qdrant`                  | On-disk store subdirectory inside the data dir                            | `--storage-dir` |
 | `VAULTSPEC_RAG_INDEX_META`      | path | `index_meta.json`         | Declared setting with no reading consumer today; setting it has no effect | -               |
 | `VAULTSPEC_RAG_CODE_INDEX_META` | path | `code_index_meta.json`    | Declared setting with no reading consumer today; setting it has no effect | -               |
 
 ### Service runtime and logging
 
-| Variable                                 | Type    | Default            | Controls                                                                           | CLI flag                              |
-| ---------------------------------------- | ------- | ------------------ | ---------------------------------------------------------------------------------- | ------------------------------------- |
-| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files                        | `--status-dir`                        |
-| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir                                | `--log-file`                          |
-| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                                                | `--port`                              |
-| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction                        | -                                     |
-| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                                        | -                                     |
-| `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`               | Client connection and read budget for lifecycle and admin calls (seconds)          | -                                     |
-| `VAULTSPEC_RAG_REINDEX_TIMEOUT`          | float   | `900`              | Client budget for `/reindex`, which admits every domain before it queues (seconds) | -                                     |
-| `VAULTSPEC_RAG_PAUSE_DRAIN_TIMEOUT`      | float   | `20`               | How long a pause waits for in-flight work to drain before it refuses (seconds)     | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `2097152` (2 MiB)  | Active-file size threshold for each managed log source                             | -                                     |
-| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source                               | -                                     |
+| Variable                                 | Type    | Default            | Controls                                                                           | CLI flag       |
+| ---------------------------------------- | ------- | ------------------ | ---------------------------------------------------------------------------------- | -------------- |
+| `VAULTSPEC_RAG_STATUS_DIR`               | path    | `~/.vaultspec-rag` | Directory for service status, marker, binary, and log files                        | `--status-dir` |
+| `VAULTSPEC_RAG_LOG_FILE`                 | path    | `service.log`      | Resident service log filename inside the status dir                                | `--log-file`   |
+| `VAULTSPEC_RAG_PORT`                     | integer | `8766`             | HTTP service port and MCP fast path                                                | `--port`       |
+| `VAULTSPEC_RAG_SERVICE_IDLE_TTL_SECONDS` | integer | `1800`             | Seconds an idle project slot stays resident before eviction                        | -              |
+| `VAULTSPEC_RAG_SERVICE_MAX_PROJECTS`     | integer | `16`               | Maximum simultaneously cached project slots                                        | -              |
+| `VAULTSPEC_RAG_ADMIN_TIMEOUT`            | float   | `30`               | Client connection and read budget for lifecycle and admin calls (seconds)          | -              |
+| `VAULTSPEC_RAG_REINDEX_TIMEOUT`          | float   | `900`              | Client budget for `/reindex`, which admits every domain before it queues (seconds) | -              |
+| `VAULTSPEC_RAG_PAUSE_DRAIN_TIMEOUT`      | float   | `20`               | How long a pause waits for in-flight work to drain before it refuses (seconds)     | -              |
+| `VAULTSPEC_RAG_MANAGED_LOG_MAX_BYTES`    | integer | `2097152` (2 MiB)  | Active-file size threshold for each managed log source                             | -              |
+| `VAULTSPEC_RAG_MANAGED_LOG_BACKUP_COUNT` | integer | `5`                | Rotated backups retained for each managed log source                               | -              |
 
 The log policy applies independently to `service.log` and `qdrant.log`. With the defaults, each source keeps one active file and five backups. The aggregate budget is approximately 24 MiB.
 
@@ -231,22 +231,19 @@ A transient store-write failure (disk pressure, a write-ahead-log stall) is retr
 
 The stored vectors belong to the model that produced them. After changing any model here, reindex. If the dense width disagrees with the dense model, the store rejects the first upsert rather than writing silently.
 
-The default sparse model is gated and non-commercial. The
-[installation guide](installation.md#the-model-cache-and-its-first-download) owns the
-access, licensing, error-recovery, and dense-only policy. This page records the knobs:
-authenticate downloads with `HF_TOKEN` or `hf auth login`, or set
-`VAULTSPEC_RAG_SPARSE_ENABLED=0` consistently in the service environment and reindex.
-Disabling sparse does not disable the dense encoder or reranker, so the service still
-requires `[gpu]` and a supported accelerator. Provisioning, warmup, and readiness all
-honour the toggle, so a dense-only install never provisions or probes the gated sparse
-repository.
+The public ModernBERT SPARSEUP model uses a pinned revision shared by inference,
+provisioning and warmup. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` for dense-only search
+and rebuild indexes afterwards. The sparse adapter supports only
+`Linkup-Platform/linkup-sparseup-embed-v1`; another sparse repository is refused.
+Dense encoding and reranking still require
+`[gpu]` and a supported accelerator.
 
-| Variable                            | Type    | Default                     | Controls                                       | CLI flag |
-| ----------------------------------- | ------- | --------------------------- | ---------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B` | Dense embedding model id                       | -        |
-| `VAULTSPEC_RAG_EMBEDDING_DIMENSION` | integer | `1024`                      | Dense vector width; must match the dense model | -        |
-| `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `naver/splade-v3`           | SPLADE sparse model id                         | -        |
-| `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`   | CrossEncoder reranker model id                 | -        |
+| Variable                            | Type    | Default                                    | Controls                                       | CLI flag |
+| ----------------------------------- | ------- | ------------------------------------------ | ---------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_EMBEDDING_MODEL`     | string  | `Qwen/Qwen3-Embedding-0.6B`                | Dense embedding model id                       | -        |
+| `VAULTSPEC_RAG_EMBEDDING_DIMENSION` | integer | `1024`                                     | Dense vector width; must match the dense model | -        |
+| `VAULTSPEC_RAG_SPARSE_MODEL`        | string  | `Linkup-Platform/linkup-sparseup-embed-v1` | SPARSEUP sparse model id                       | -        |
+| `VAULTSPEC_RAG_RERANKER_MODEL`      | string  | `BAAI/bge-reranker-v2-m3`                  | CrossEncoder reranker model id                 | -        |
 
 ### Embedding and reranking
 
@@ -317,20 +314,20 @@ A floor has to cover the resident stack a load creates, plus the largest demand 
 
 ### Search and model toggles
 
-| Variable                                     | Type    | Default                      | Controls                                                                             | CLI flag                                 |
-| -------------------------------------------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`               | boolean | `1` (true)                   | SPLADE sparse vectors on/off                                                         | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`         | string  | `orientation`                | Default vault ranking intent when a search names none (`orientation` or `debugging`) | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED` | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)       | -                                        |
-| `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`        | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)               | -                                        |
-| `VAULTSPEC_RAG_RERANKER_ENABLED`             | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                           | -                                        |
-| `VAULTSPEC_RAG_SEARCH_TIMEOUT`               | float   | `300`                        | Client connection and read budget for service-handled searches (seconds)             | `--timeout`                              |
-| `VAULTSPEC_RAG_SEARCH_FRESHNESS_WAIT_MAX_SECONDS` | float | `30`                    | Maximum bounded wait accepted for search freshness (seconds)                         | `--freshness-wait-seconds`               |
-| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`      | string  | `worktree,generated`         | Code domains hidden from results by default                                          | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`    | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                         | -                                        |
-| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`    | float   | `0.3`                        | Score subtracted from a demoted code result                                          | -                                        |
-| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`        | boolean | `1` (true)                   | Collapse locale-variant code results by default                                      | `--dedup-locales` / `--no-dedup-locales` |
-| `VAULTSPEC_RAG_GRAPH_TTL_SECONDS`            | float   | `300`                        | Vault graph cache lifetime backing link and grounding lookups (seconds)              | -                                        |
+| Variable                                          | Type    | Default                      | Controls                                                                             | CLI flag                                 |
+| ------------------------------------------------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`                    | boolean | `1` (true)                   | SPARSEUP sparse vectors on/off                                                       | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_DEFAULT`              | string  | `orientation`                | Default vault ranking intent when a search names none (`orientation` or `debugging`) | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_RANKING_ENABLED`      | boolean | `1` (true)                   | Intent-aware vault re-ranking on/off (`0` restores the bare-reranker ordering)       | -                                        |
+| `VAULTSPEC_RAG_VAULT_INTENT_TYPE_CAP`             | integer | `4`                          | Maximum results of one doc type on a vault page (`0` disables the cap)               | -                                        |
+| `VAULTSPEC_RAG_RERANKER_ENABLED`                  | boolean | `1` (true)                   | CrossEncoder rerank on/off                                                           | -                                        |
+| `VAULTSPEC_RAG_SEARCH_TIMEOUT`                    | float   | `300`                        | Client connection and read budget for service-handled searches (seconds)             | `--timeout`                              |
+| `VAULTSPEC_RAG_SEARCH_FRESHNESS_WAIT_MAX_SECONDS` | float   | `30`                         | Maximum bounded wait accepted for search freshness (seconds)                         | `--freshness-wait-seconds`               |
+| `VAULTSPEC_RAG_CODE_NOISE_HIDE_DOMAINS`           | string  | `worktree,generated`         | Code domains hidden from results by default                                          | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_DOMAINS`         | string  | `tests,docs,locale,vendored` | Code domains demoted (not hidden) by default                                         | -                                        |
+| `VAULTSPEC_RAG_CODE_NOISE_DEMOTE_PENALTY`         | float   | `0.3`                        | Score subtracted from a demoted code result                                          | -                                        |
+| `VAULTSPEC_RAG_DEDUP_LOCALES_DEFAULT`             | boolean | `1` (true)                   | Collapse locale-variant code results by default                                      | `--dedup-locales` / `--no-dedup-locales` |
+| `VAULTSPEC_RAG_GRAPH_TTL_SECONDS`                 | float   | `300`                        | Vault graph cache lifetime backing link and grounding lookups (seconds)              | -                                        |
 
 ### Automatic updates
 
@@ -366,20 +363,20 @@ These variables control the daemon's scheduled storage-maintenance cycle. See th
 
 **Zero means opposite things on the two kinds of window here, so read the names carefully.** The three `GRACE_HOURS*` windows are how long a namespace has to stay observably dead before it may be destroyed; they are rejected below `1` hour, because at zero the cycle that first sees a namespace would also be allowed to drop it. `EPHEMERAL_IDLE_HOURS` is a tier's own on/off switch, and zero turns that tier off. So `..._EPHEMERAL_IDLE_HOURS=0` reclaims nothing, while a zero on `..._GRACE_HOURS_EPHEMERAL` would have reclaimed everything on sight - which is why only the idle knob accepts it.
 
-| Variable                                                 | Type    | Default    | Controls                                                                           | CLI flag |
-| -------------------------------------------------------- | ------- | ---------- | ---------------------------------------------------------------------------------- | -------- |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                        | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                                     | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`       | float   | `60`       | Minutes between maintenance cycles                                                 | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed (minimum `1`)       | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed (minimum `1`) | - |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds (minimum `1`; NOT the idle knob below) | - |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it              | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `64`       | Total-size cap on the archive directory (oldest evicted first)                     | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                             | -        |
-| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables this tier) | -      |
-| `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                  | -        |
-| `VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE`          | integer | `4`        | Maximum collections reconciled per cycle                                           | -        |
-| `VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS`         | float   | `300`      | Per-collection wait for the merge to settle before reporting                       | -        |
+| Variable                                                 | Type    | Default    | Controls                                                                                                                      | CLI flag |
+| -------------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE`                        | boolean | `1` (true) | Scheduled auto-prune on/off (server mode only)                                                                                | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_INTERVAL_MINUTES`       | float   | `60`       | Minutes between maintenance cycles                                                                                            | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS`            | float   | `24`       | Continuous-orphan hours before an empty namespace is reclaimed (minimum `1`)                                                  | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_DATA`       | float   | `168`      | Continuous-orphan hours before a point-bearing namespace is archived and reclaimed (minimum `1`)                              | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_GRACE_HOURS_EPHEMERAL`  | float   | `24`       | Continuous-orphan hours before a temp-rooted namespace is reclaimed, whatever it holds (minimum `1`; NOT the idle knob below) | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_RETENTION_DAYS` | float   | `30`       | Days a snapshot archive is kept before the retention sweep deletes it                                                         | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_ARCHIVE_MAX_GB`         | float   | `64`       | Total-size cap on the archive directory (oldest evicted first)                                                                | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_MAX_PER_CYCLE`          | integer | `16`       | Maximum namespaces reclaimed per cycle                                                                                        | -        |
+| `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS`   | float   | `72`       | Idle hours before a live temp-rooted namespace is reclaimed (`0` disables this tier)                                          | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE`                        | boolean | `1` (true) | Shrink pre-existing collections onto the bounded segment geometry                                                             | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE_MAX_PER_CYCLE`          | integer | `4`        | Maximum collections reconciled per cycle                                                                                      | -        |
+| `VAULTSPEC_RAG_STORAGE_RECONCILE_BUDGET_SECONDS`         | float   | `300`      | Per-collection wait for the merge to settle before reporting                                                                  | -        |
 
 ### Preprocessing
 
@@ -401,24 +398,18 @@ These keys exist in the configuration loader and take no direct environment over
 
 vaultspec-rag downloads its dense, sparse, and reranker model files through the Hugging Face Hub. These are third-party variables (no `VAULTSPEC_RAG_` prefix), so they sit outside the reference tables on this page. The Hub client honours most of them itself; the Controls column notes where vaultspec-rag reads or defaults one itself.
 
-| Variable                         | Type    | Controls                                                                                                                                     |
-| -------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HF_TOKEN`                       | string  | Hugging Face access token; overrides a token saved by `hf auth login` and must belong to an account that accepted any gated model conditions |
-| `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface`                                            |
-| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                                                                          |
-| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                                                                       |
-| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                                                                |
-| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                                                                    |
-| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                                                                       |
+| Variable                         | Type    | Controls                                                                                          |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `HF_HOME`                        | path    | Hub cache root. Read directly when reporting cache location; falls back to `~/.cache/huggingface` |
+| `HF_ENDPOINT`                    | string  | Hub mirror base URL                                                                               |
+| `HF_HUB_DOWNLOAD_TIMEOUT`        | integer | Per-file download timeout. The service defaults it to `300` when unset                            |
+| `HF_HUB_OFFLINE`                 | boolean | Cache-only mode; no network access to the Hub                                                     |
+| `TRANSFORMERS_OFFLINE`           | boolean | Cache-only model loading for Transformers                                                         |
+| `DISABLE_SAFETENSORS_CONVERSION` | boolean | Skip on-the-fly safetensors conversion                                                            |
 
-Only the default sparse model, `naver/splade-v3`, is gated. It ships under the non-commercial licence CC-BY-NC-SA-4.0. The dense model `Qwen/Qwen3-Embedding-0.6B` and the reranker `BAAI/bge-reranker-v2-m3` are Apache-2.0 and need no login. To download the gated model, accept its licence on the model page with a Hugging Face account, then do one of these:
-
-- Run `uvx --from huggingface_hub hf auth login` (or `hf auth login` if `hf` is on your `PATH`) as the account that starts the service.
-- Set `HF_TOKEN` in the environment of the account that starts the service. `HF_TOKEN` wins over the saved login. A token alone is not enough until its account has accepted the licence.
-
-A workspace `.env` can supply `HF_TOKEN` only under the credential gate in [Resolution order](#resolution-order). A standalone tool or binary installation never reads it. Set the variable in your user environment instead.
-
-To skip the gated model and the login, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the service's environment. Search then runs on dense vectors only: no exact-term matching, and no hybrid fusion. The service still needs `[gpu]` and a supported GPU. Reindex afterwards so the stored vectors match.
+All default models download publicly, without account setup. To omit sparse
+encoding, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the service environment and
+rebuild existing indexes. The service still needs `[gpu]` and a supported GPU.
 
 `HF_HOME` sets where model files are cached, and defaults to `~/.cache/huggingface`. Set it to a persistent location before the first download.
 
@@ -452,7 +443,7 @@ To fit a smaller GPU:
 - Cap `VAULTSPEC_RAG_EMBEDDING_MAX_SEQ_LENGTH` (default 2048) to shrink padded-attention memory.
 - Raise `VAULTSPEC_RAG_INDEX_CUDA_HEADROOM_MIB` to leave more of the device outside the indexing budget, or set `VAULTSPEC_RAG_INDEX_CUDA_CEILING_MIB` to pin an explicit ceiling.
 - Set `VAULTSPEC_RAG_QDRANT_QUANTIZATION` to `scalar` to compress the stored vectors.
-- Turn off a model to free the most memory. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to drop the SPLADE encoder, or `VAULTSPEC_RAG_RERANKER_ENABLED=0` to drop the CrossEncoder.
+- Turn off a model to free the most memory. Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to drop the SPARSEUP encoder, or `VAULTSPEC_RAG_RERANKER_ENABLED=0` to drop the CrossEncoder.
 
 To speed up indexing:
 

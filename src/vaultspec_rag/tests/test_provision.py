@@ -263,11 +263,11 @@ class TestModelStep:
             assert "cached" in result.detail
 
     def test_disabled_sparse_is_never_named_by_the_model_step(self) -> None:
-        # A dense-only configuration must never provision the gated SPLADE
+        # A dense-only configuration must never provision the sparse encoder
         # repo: its id must not appear anywhere the step names a repo it
         # would fetch, already holds, or fetched, and the step must be
         # considering exactly the dense-only inventory (two repos, not
-        # three) - proving it reads the shared, gated inventory rather than
+        # three) - proving it reads the shared, configured inventory rather than
         # a repo list of its own that could drift from it.
         from ..config._settings import configured_model_repos, get_config, reset_config
         from ..config._types import EnvVar

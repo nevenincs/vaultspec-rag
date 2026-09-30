@@ -138,28 +138,6 @@ def test_a_client_provisions_nothing_and_keeps_the_host_backend_choice(
     assert all("client installation" in result.detail for result in outcome.steps)
 
 
-def test_a_client_is_not_asked_for_hugging_face_credentials(
-    client_workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A client downloads no models, so a missing token is not its concern.
-
-    The token is forced absent because the real one is machine state: the hub
-    fixes its token file location when it is imported, so a test cannot
-    redirect it in-process, and a developer's stored login would otherwise
-    hide the warning in both directions.
-
-    Mutation check: dropping the role from the credential warning's gate warns
-    this client, failing the assertion; restoring it passes.
-    """
-    import huggingface_hub
-
-    monkeypatch.setattr(huggingface_hub, "get_token", lambda: None)
-
-    report = install_run(path=client_workspace, assume_yes=True)
-
-    assert not [w for w in report.warnings if "HuggingFace" in w]
-
-
 def test_cli_upgrade_reports_torch_as_not_needed(client_workspace: Path) -> None:
     """A client upgrade succeeds and says torch is not needed, not skipped.
 

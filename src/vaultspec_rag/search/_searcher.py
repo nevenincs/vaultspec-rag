@@ -1,6 +1,6 @@
 """The VaultSearcher orchestration class for hybrid search.
 
-Owns the stateful search pipeline: query encoding (Qwen3 dense + SPLADE
+Owns the stateful search pipeline: query encoding (Qwen3 dense + ModernBERT
 sparse), Qdrant hybrid search with RRF fusion, optional CrossEncoder
 reranking, and graph-aware score boosts. Holds the GPU lock, the lazily
 loaded reranker, and the TTL-cached VaultGraph.
@@ -314,7 +314,7 @@ class _CodebaseCandidateRequest:
 class VaultSearcher:
     """Orchestrates hybrid search across vault and codebase.
 
-    Encodes queries into dense (Qwen3) and sparse (SPLADE) vectors,
+    Encodes queries into dense (Qwen3) and sparse (ModernBERT) vectors,
     executes Qdrant hybrid search with RRF fusion, optionally reranks
     results with a CrossEncoder, and applies graph-aware score boosts
     using the VaultGraph relationship data.  Supports searching vault
@@ -712,12 +712,12 @@ class VaultSearcher:
     ) -> list[SearchResult]:
         """Search vault using pre-encoded dense and sparse vectors.
 
-        Runs hybrid search (dense + SPLADE) via Qdrant, applies
+        Runs hybrid search (dense + ModernBERT sparse) via Qdrant, applies
         CrossEncoder reranking (if enabled), then graph reranking.
 
         Args:
             query_vector: Dense embedding of the query (1024-d).
-            sparse_vector: SPLADE sparse embedding of the query.
+            sparse_vector: ModernBERT sparse embedding of the query.
             parsed: Parsed query with extracted metadata filters.
             query_text: Clean query text (filters removed).
             top_k: Maximum number of results to return.
@@ -934,7 +934,7 @@ class VaultSearcher:
 
         Args:
             query_vector: Dense embedding of the query (1024-d).
-            sparse_vector: SPLADE sparse embedding of the query.
+            sparse_vector: ModernBERT sparse embedding of the query.
             parsed: Parsed query with extracted metadata filters.
             query_text: Clean query text (filters removed).
             top_k: Maximum number of results to return.
@@ -1102,11 +1102,20 @@ class VaultSearcher:
 
         with self._gpu_section(timings):
             dense = self.model.encode_query(query_text, surface=surface)
+        from ..job_control import gpu_lock_wait_scope
+
+        with gpu_lock_wait_scope() as sparse_wait:
             sparse = (
-                self.model.encode_query_sparse(query_text)
+                self.model.encode_query_sparse(query_text, gpu_lock=self._gpu_lock)
                 if self._sparse_enabled
                 else None
             )
+        for key in (
+            GPU_COMPUTE_WAIT_SECONDS,
+            "gpu_queue_wait_seconds",
+            "queue_wait_seconds",
+        ):
+            _add_seconds(timings, key, sparse_wait.seconds)
         self.model.query_cache.put(cache_key, (dense, sparse))
         return parsed, query_text, dense.tolist(), sparse
 

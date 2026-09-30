@@ -309,7 +309,6 @@ def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
     environment = os.environ.copy()
     environment.pop("VAULTSPEC_RAG_QDRANT_BINARY", None)
     environment.pop("PYTEST_CURRENT_TEST", None)
-    environment["HF_TOKEN"] = "test-gpu-tier-token"
     environment["VAULTSPEC_RAG_STATUS_DIR"] = str(host_status_dir)
     environment["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"] = str(host_storage_dir)
 

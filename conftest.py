@@ -421,17 +421,6 @@ def _atexit_reclaim_singleton_root() -> None:
         )
 
 
-def _has_hf_token() -> bool:
-    """Return True when Hugging Face auth is available to test code."""
-    if os.environ.get("HF_TOKEN"):
-        return True
-    try:
-        from huggingface_hub import get_token
-    except ImportError:
-        return False
-    return bool(get_token())
-
-
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Refuse any collected test that declares no tier, or two lanes.
 
@@ -480,10 +469,8 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
     """
     from vaultspec_rag.cli._gpu_lease import BorrowGPUError, run_with_borrowed_gpu
     from vaultspec_rag.tests._tier_gate import (
-        GPU_MARKERS,
         MPS,
         SLOW_TIERS,
-        SUBPROCESS_GPU,
         selected_tiers,
     )
 
@@ -500,13 +487,6 @@ def pytest_runtestloop(session: pytest.Session) -> bool | None:
         # The MPS guard owns its backend and cache preconditions. It must not
         # enter the CUDA runner's resident-service borrower protocol.
         return None
-    if tiers & (GPU_MARKERS | {SUBPROCESS_GPU}) and not _has_hf_token():
-        pytest.exit(
-            "Hugging Face authentication is required for GPU "
-            "tests (gated model naver/splade-v3). Set HF_TOKEN "
-            "or run `hf auth login` before running tests.",
-            returncode=1,
-        )
     if not tiers & SLOW_TIERS:
         return
     if any(

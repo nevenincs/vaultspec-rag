@@ -19,7 +19,7 @@ Every indexed item is stored as two complementary vectors in
 - A **dense** vector (1024 dimensions, float32) captures semantic meaning in a
   continuous space, so a query matches conceptually related text even when the
   words differ.
-- A **sparse** vector (SPLADE vocabulary weights) captures term-level
+- A **sparse** vector (SPARSEUP vocabulary weights) captures term-level
   importance, so exact and rare terms stay discriminative the way keyword search
   expects.
 
@@ -141,21 +141,25 @@ CUDA build, but it is opt-in and falls back to the torch implementation on any
 load failure. The torch implementation is the supported default on both CUDA
 and MPS; this model-backend fallback does not mean CPU inference.
 
-### Sparse encoder - `naver/splade-v3`
+### Sparse encoder - `Linkup-Platform/linkup-sparseup-embed-v1`
 
-The sparse encoder is
-[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), a BERT-based SPLADE
-model that maps text to a sparse vector over its vocabulary. It runs in fp16
-through `sentence-transformers` on the selected accelerator. Unlike the other
-models on this page, it is gated and non-commercially licensed; see
-[the model cache and its first download](installation.md#the-model-cache-and-its-first-download)
-for the access and licence policy.
+The sparse encoder is a public ModernBERT SPARSEUP model, pinned to revision
+`08314498d4f6a3a205b930ab9f27001404ea94b8`. Its reviewed Transformers adapter
+preserves the trained preprocessing and pooling, producing sparse weights over
+a 50,370-entry folded vocabulary on the selected accelerator.
 
-SPLADE is also asymmetric: `encode_document` runs for indexing and `encode_query`
-runs for queries, mirroring the dense encoder's split for the same reason. The
-model's native 512-token sequence length is left untouched - overriding it would
-mismatch the model's position embeddings, so the sparse path truncates
-internally instead.
+The model handles queries and documents differently: `encode_query` uses the
+upstream query prefix and a 128-token limit; `encode_document` uses the document
+prefix and a 512-token limit. The adapter keeps token preparation and CPU result
+conversion outside the GPU forward lock.
+
+Sparse model identity is part of index compatibility. A mismatch refuses search
+and writes until the affected index is rebuilt. After upgrading to 0.6.0, restart
+the host service and run this for each indexed repository:
+
+```bash
+vaultspec-rag --target <repository> index --rebuild --type all
+```
 
 The sparse channel can be turned off (`VAULTSPEC_RAG_SPARSE_ENABLED=false`). When it is off,
 hybrid search degrades to dense-only retrieval rather than failing, so a
