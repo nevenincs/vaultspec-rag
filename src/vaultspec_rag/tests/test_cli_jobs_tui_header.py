@@ -258,7 +258,7 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "● svc stalled" in painted, (
+        assert "● index stalled" in painted, (
             "the worst service-stamped verdict must sit in the header"
         )
         assert "▲ 1 stalled" in painted, "the stalled tally rides beside the states"
@@ -272,7 +272,7 @@ class TestHeaderCounts:
             await _ready(pilot, app)
             painted = _screen_text(app)
 
-        assert "● svc healthy" in painted
+        assert "● index healthy" in painted
 
     @pytest.mark.asyncio
     async def test_gpu_pressure_renders_from_the_payload(
@@ -501,7 +501,7 @@ class TestHeaderCounts:
 
         assert "▶ 1" in painted, "the count survives every width"
         assert "▶ 1 running" not in painted, "labels are the first thing shed"
-        assert "svc" in painted, "the condition cell is never shed"
+        assert "index" in painted, "the indexing condition cell is never shed"
         assert "gpu" in painted, "the GPU cell is never shed"
 
     @pytest.mark.asyncio

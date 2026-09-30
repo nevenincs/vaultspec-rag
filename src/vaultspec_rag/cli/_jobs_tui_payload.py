@@ -79,10 +79,11 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
     """Validate the bounded active/recent response envelope."""
     active = result.get("active")
     recent = result.get("recent")
+    queued = result.get("queued", [])
     counts = result.get("counts")
     returned = result.get("returned")
     filters = result.get("filters")
-    if not isinstance(active, list) or not isinstance(recent, list):
+    if not all(isinstance(lane, list) for lane in (queued, active, recent)):
         return "served-search activity unavailable: invalid record lists"
     if not isinstance(counts, dict) or not isinstance(filters, dict):
         return "served-search activity unavailable: invalid summary"
@@ -91,17 +92,34 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
     for name in SEARCH_COUNT_NAMES:
         if count(cast("dict[str, object]", counts).get(name)) is None:
             return "served-search activity unavailable: invalid counts"
+    invalid_queue = "queued" in result and count(result.get("queued_count")) is None
+    all_counts = result.get("all_counts")
+    invalid_counts = all_counts is not None and (
+        not isinstance(all_counts, dict)
+        or any(
+            count(cast("dict[str, object]", all_counts).get(name)) is None
+            for name in ("queued", *SEARCH_COUNT_NAMES)
+        )
+    )
+    if invalid_queue or invalid_counts:
+        return "served-search activity unavailable: invalid queue summary"
     return search_activity_records_error(
-        cast("list[object]", active), cast("list[object]", recent)
+        cast("list[object]", active),
+        cast("list[object]", recent),
+        cast("list[object]", queued),
     )
 
 
 def search_activity_records_error(
-    active: list[object], recent: list[object]
+    active: list[object], recent: list[object], queued: list[object] | None = None
 ) -> str | None:
     """Validate record identity, lane, and query privacy invariants."""
     seen: set[str] = set()
-    for records, state in ((active, "active"), (recent, "terminal")):
+    for records, state in (
+        (queued or [], "queued"),
+        (active, "active"),
+        (recent, "terminal"),
+    ):
         for record in records:
             if not isinstance(record, dict):
                 return "served-search activity unavailable: invalid record"

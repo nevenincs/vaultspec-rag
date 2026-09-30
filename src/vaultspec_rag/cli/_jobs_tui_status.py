@@ -66,6 +66,7 @@ sharing its group and the jobs poll would otherwise discard its answer.
 
 from __future__ import annotations
 
+import time
 import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -87,7 +88,9 @@ from ..serviceclient._transport import (
     read_service_response,
 )
 from ._cli_format import compact_duration
+from ._jobs_tui_cells import search_text
 from ._jobs_tui_palette import semantic_tones, tone_style
+from ._status_labels import health_typesafe, typesafe_label
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -189,6 +192,8 @@ class ServiceStatusHeader:
     watching: int | None = None
     seats: tuple[SeatPool, ...] = ()
     error: str | None = None
+    typesafe: object = None
+    observed_at: float | None = None
 
     def seat_pool(self, name: str) -> SeatPool | None:
         """Return the named limiter's occupancy, or ``None`` if unreported."""
@@ -330,10 +335,15 @@ def fetch_service_status(
         The gathered facts. ``reachable`` is ``False`` when nothing answered.
     """
     if port is None:
-        return ServiceStatusHeader(error="no service port")
-    health = _try_http_health(port)
+        return ServiceStatusHeader(error="no service port", observed_at=time.time())
+    bound = timeout if timeout is not None else 5.0
+    deadline = time.monotonic() + bound
+    health = _try_http_health(port, timeout=min(bound, 2.0))
+    observed_at = time.time()
     if health is None:
-        return ServiceStatusHeader(error="service not reachable")
+        return ServiceStatusHeader(
+            error="service not reachable", observed_at=observed_at
+        )
     http_code = count(health.get("http_code"))
     if http_code is not None:
         # The service answered, badly. That is not the same as absent, and an
@@ -342,6 +352,7 @@ def fetch_service_status(
             reachable=True,
             status="error",
             error=f"service answered HTTP {http_code}",
+            observed_at=observed_at,
         )
 
     token = health.get("service_token")
@@ -354,10 +365,14 @@ def fetch_service_status(
         str(mapping(reason).get("detail") or mapping(reason).get("reason"))
         for reason in listed_reasons
     )
-    totals = _survey_totals(port, timeout)
-    loaded, cap, leases = _project_slots(port, timeout)
+    totals = _survey_totals(port, max(0.001, deadline - time.monotonic()))
+    loaded, cap, leases = _project_slots(port, max(0.001, deadline - time.monotonic()))
     seats = _parse_seat_pools(
-        _fetch_metrics_text(port, token if isinstance(token, str) else "", timeout)
+        _fetch_metrics_text(
+            port,
+            token if isinstance(token, str) else "",
+            max(0.001, deadline - time.monotonic()),
+        )
     )
     status = health.get("status")
     return ServiceStatusHeader(
@@ -376,9 +391,11 @@ def fetch_service_status(
         projects_cap=cap,
         leases_held=leases,
         clients=count(health.get("clients_connected")),
-        watching=_watching_count(port, timeout),
+        watching=_watching_count(port, max(0.001, deadline - time.monotonic())),
         seats=seats,
         error=None,
+        typesafe=health_typesafe(health),
+        observed_at=observed_at,
     )
 
 
@@ -560,12 +577,62 @@ class ServiceStatusBar(Static):
         """
         app = cast("App[object]", self.app)
         width = self.content_size.width or self.size.width or app.size.width
-        self.update(
-            render_status_header(self._status, width, tones=semantic_tones(app.theme))
-        )
+        tones = semantic_tones(app.theme)
+        line = render_status_header(self._status, width, tones=tones)
+        if self._status is not None:
+            line.append(render_status_details(self._status, tones))
+        self.update(line)
 
     def on_mount(self) -> None:
         self.repaint_status()
 
     def on_resize(self) -> None:
         self.repaint_status()
+
+
+def render_status_details(
+    status: ServiceStatusHeader, tones: Mapping[str, str]
+) -> Text:
+    """Keep health reasons and hosted-classifier evidence visible at every width."""
+    line = Text()
+    if status.observed_at is not None:
+        stamp = time.strftime("%H:%M:%S", time.localtime(status.observed_at))
+        line.append(f"\nhealth observed {stamp}", style="dim")
+        age = max(0.0, time.time() - status.observed_at)
+        if age > 5.0:
+            line.append(
+                f" · {compact_duration(age)} ago", style=tone_style(tones, "attention")
+            )
+    if status.degraded_reasons:
+        reasons = " · ".join(search_text(reason) for reason in status.degraded_reasons)
+        line.append(
+            f"\nservice degradation: {reasons}", style=tone_style(tones, "attention")
+        )
+    snapshot = mapping(status.typesafe)
+    state = snapshot.get("state")
+    tone = (
+        "bad"
+        if state == "rejected"
+        else "attention"
+        if state == "cooldown"
+        else "muted"
+    )
+    label = (
+        typesafe_label(status.typesafe)
+        if status.reachable
+        else "unavailable (service not reachable)"
+    )
+    line.append(f"\nTypeSafe: {label}", style=tone_style(tones, tone))
+    model = search_text(snapshot.get("model"), fallback="")
+    if model:
+        line.append(f" · model {model}", style="dim")
+    success_age = measurement(snapshot.get("last_success_age_seconds"))
+    if success_age is not None:
+        line.append(f" · last success {compact_duration(success_age)} ago", style="dim")
+    retry = measurement(snapshot.get("retry_after_seconds"))
+    if retry is not None and retry > 0:
+        line.append(
+            f" · retry in {compact_duration(retry)}",
+            style=tone_style(tones, "attention"),
+        )
+    return line

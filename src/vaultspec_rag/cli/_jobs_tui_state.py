@@ -62,6 +62,7 @@ class SearchActivityState:
     records: list[dict[str, object]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
     returned: int = 0
+    queued_count: int | None = None
     last_refresh: float | None = None
     error: str | None = None
     stamps: LaneStamps = field(default_factory=LaneStamps)
