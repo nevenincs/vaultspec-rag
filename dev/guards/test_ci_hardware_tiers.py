@@ -314,12 +314,15 @@ def test_resident_service_binds_free_ports_not_the_defaults() -> None:
     Another installation of the product can hold the default service port or
     the default Qdrant port, and a start that loses either race fails the
     whole release: the service refuses to spawn a Qdrant beside one it does
-    not manage.
+    not manage. Qdrant also listens for gRPC one port below its HTTP port, so
+    that neighbour is reserved with the rest: two independent free ports can
+    be adjacent, and then Qdrant's gRPC listener takes the service's port.
 
     Mutation proof: deleting the ``VAULTSPEC_RAG_PORT`` assignment made this
-    fail on the service-port assertion, and deleting the
+    fail on the service-port assertion, deleting the
     ``VAULTSPEC_RAG_QDRANT_PORT`` assignment made it fail on the Qdrant-port
-    assertion; restoring each passed.
+    assertion, and deleting the gRPC neighbour's reservation made it fail on
+    the gRPC assertion; restoring each passed.
     """
     job = next(
         job for job in workflows.load_jobs(Workflow.HARDWARE) if job.job_id == "cuda"
@@ -332,6 +335,16 @@ def test_resident_service_binds_free_ports_not_the_defaults() -> None:
     launch = start.find("vaultspec-rag server start")
     assert -1 < probe < service < launch, ("service port", probe, service, launch)
     assert -1 < probe < qdrant < launch, ("qdrant port", probe, qdrant, launch)
+    grpc = start.find("$held.Add($grpc)")
+    above = start.find("$candidate = $grpc.LocalEndpoint.Port + 1")
+    claimed = start.find("$held.Add($http)")
+    assert -1 < grpc < above < claimed < qdrant, (
+        "qdrant grpc port",
+        grpc,
+        above,
+        claimed,
+        qdrant,
+    )
     assert "--port" not in start
 
 
