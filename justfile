@@ -1,12 +1,14 @@
 # ===========================================================================
 #  vaultspec-rag development harness
 #
-#  Every entry point is a FLAT HYPHENATED recipe named `<verb>-<thing>` -
+#  Python entry points are FLAT HYPHENATED recipes named `<verb>-<thing>` -
 #  `just check-type`, `just test-fast`, `just fix-markdown`. There is no
-#  `target` argument anywhere: the thing a recipe acts on is part of its name,
+#  `target` argument on those recipes: the thing they act on is part of the name,
 #  so `just --list` is the complete surface and tab completion reaches every
 #  one of them. Run `just` for the annotated recipe list, grouped by
 #  CONSEQUENCE.
+#  The shared frontend `just dev` recipe accepts the workstation's lifecycle
+#  verbs and service names.
 #
 #  PLATFORM AGNOSTIC BY CONSTRUCTION. Every recipe body below is a single
 #  command with no shell branching, no pipes, no conditionals, and no `sh`
@@ -74,6 +76,47 @@ dev := "uv run --no-sync python -m dev"
 [group('meta')]
 default:
     @just --list
+
+[doc('Dev server: start or attach, sanitize, health-check, evict occupiers (up|restart|stop|status|logs|check|ci)')]
+[group('dev')]
+dev target="up" *args="":
+    @uv run --script dev/devserver.py {{ target }} {{ args }}
+
+# Install the committed frontend dependency tree.
+[group('setup')]
+init-monitor:
+    @uv run --script dev/devserver.py stop all
+    npm ci
+
+# Check the shared lifecycle script under its owner's rules.
+[group('check')]
+check-devserver:
+    {{dev}} lint devserver
+
+# Run every frontend gate used by CI.
+[group('check')]
+check-monitor:
+    {{dev}} lint monitor
+
+# Lint the monitor frontend and its configuration.
+[group('check')]
+check-monitor-lint:
+    npm run lint
+
+# Check monitor formatting without changing files.
+[group('check')]
+check-monitor-format:
+    npm run format:check
+
+# Type-check the monitor frontend and Vite configuration.
+[group('check')]
+check-monitor-type:
+    npm run typecheck
+
+# Build the monitor into src/monitor/dist.
+[group('build')]
+build-monitor:
+    npm run build
 
 # ===========================================================================
 #  setup

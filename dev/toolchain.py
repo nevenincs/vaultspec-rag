@@ -259,6 +259,8 @@ DEPS = Verb(
 #: calls could not guarantee.
 LINT_ALL = (
     "python",
+    "devserver",
+    "monitor",
     "type",
     "links",
     "toml",
@@ -281,6 +283,8 @@ LINT_ALL = (
 #: full aggregate runs when the pull request opens and again on main.
 LINT_LIGHT = (
     "python",
+    "devserver",
+    "monitor",
     "toml",
     "markdown",
     "workflow",
@@ -312,6 +316,37 @@ LINT = Verb(
             "type",
             "Check types across the package and the release tooling.",
             (uv_run("python", "-m", "ty", "check", *PYTHON_PATHS),),
+        ),
+        Target(
+            "devserver",
+            "Check the shared lifecycle script under its owner's rules.",
+            (
+                uv_run(
+                    "ruff",
+                    "check",
+                    "--config",
+                    "devserver-ruff.toml",
+                    "dev/devserver.py",
+                ),
+                uv_run(
+                    "ruff",
+                    "format",
+                    "--check",
+                    "--config",
+                    "devserver-ruff.toml",
+                    "dev/devserver.py",
+                ),
+            ),
+        ),
+        Target(
+            "monitor",
+            "Lint, format-check, type-check and build the monitor frontend.",
+            (
+                Cmd(("npm", "run", "lint")),
+                Cmd(("npm", "run", "format:check")),
+                Cmd(("npm", "run", "typecheck")),
+                Cmd(("npm", "run", "build")),
+            ),
         ),
         Target(
             "type-strict",
