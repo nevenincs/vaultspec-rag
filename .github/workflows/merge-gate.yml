@@ -298,6 +298,11 @@ jobs:
       - name: Initialize the worktree
         run: just init
 
+      - name: Set up Node for local monitor route tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+
       - name: Run tests
         run: just test-python
 
@@ -359,6 +364,11 @@ jobs:
 
       - name: The worktree reports itself initialized
         run: just init-check
+
+      - name: Set up Node for local monitor route tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
 
       - name: Run full test suite
         run: just test-python

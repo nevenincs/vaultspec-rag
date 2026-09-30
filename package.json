@@ -16,7 +16,7 @@
       5420,
       5439
     ],
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "allowedHosts": [
       ".localhost",
       "gw-workstation.taild36992.ts.net"
@@ -48,8 +48,10 @@
     "format:check": "prettier --check package.json package-lock.json tsconfig.json vite.config.ts eslint.config.js src/monitor"
   },
   "dependencies": {
+    "@carbon/react": "1.117.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "react-is": "19.3.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -61,6 +63,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.12.0",
     "prettier": "3.9.9",
+    "sass": "1.105.1",
     "typescript": "6.0.3",
     "typescript-7": "npm:typescript@7.0.2",
     "typescript-eslint": "8.70.1",

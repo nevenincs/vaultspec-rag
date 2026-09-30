@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:3374fadb198555994f6b69d28271199c96d12473208134e324f31771bde15af1'
+body_hash: 'sha256:ff811e0a0676e3bdb2c615ffdb9793e48db89429292db89ce0da01a237247483'
 related:
   - "[[2026-09-30-monitor-tooling-reference]]"
   - '[[2026-09-21-automatic-merge-gate-adr]]'
@@ -37,14 +37,17 @@ already owns port allocation conventions, lifecycle supervision and proxy aliase
 
 ## Constraints
 
-Authorization: the user's 2026-09-30 request authorizes the harness, shared
-frontend stack, strict non-overlapping allocation and `src/monitor` home.
-It does not authorize dashboard, API adapter or service-domain implementation.
+The original 2026-09-30 harness request authorized the shared frontend stack,
+strict non-overlapping allocation and `src/monitor` home. The later two-wave
+feature request authorizes the browser application after TUI review; the user's
+explicit local/no-credential/no-admin-gates direction is recorded in
+`2026-09-30-monitor-browser-adr`. Service behavior remains with existing owners.
 
 React and react-dom are pinned to 19.3.0, Vite to 8.3.1 and plugin-react to
 6.1.1. Use npm and a committed lockfile, ESLint with typescript-eslint and
-React Hooks rules, strict TypeScript, and vanilla CSS when application work
-begins. Node follows the enrolled portfolio frontend's installed 26.10.0
+React Hooks rules and strict TypeScript. The initial vanilla-CSS preference is
+refined by the user's explicit Carbon request: official Carbon component SCSS
+and token-based custom SCSS are authorized under monitor-browser. Node follows the enrolled portfolio frontend's installed 26.10.0
 runtime; the shared harness does not pin Node itself.
 
 The frontend manifest is the only source of service ports. Allocate
@@ -80,14 +83,18 @@ byte guard joins the existing accelerator-free test collection.
 `2026-07-27-jobs-tui-adr` and
 `2026-07-29-server-watch-observability-adr` still govern the existing terminal
 interface. Reserving a frontend home does not replace it or authorize a second
-implementation of service behavior. Browser authentication, transport and
-event delivery remain undecided for future implementation.
+implementation of service behavior. The local automatic browser transport and bounded independent polling are now
+settled in `2026-09-30-monitor-browser-adr`; the service-domain contracts remain
+unchanged. The monitor manifest binds dev and preview to loopback for the
+explicitly local operator scope.
 
 ## Implementation
 
 Add a root package manifest, tooling configuration and lifecycle recipes.
-Use `src/monitor/index.html` as an empty build and health-check entry; add no
-React component, data client, dashboard styles or service endpoint.
+The initial harness used `src/monitor/index.html` as an empty build and
+health-check entry. The later authorized Carbon implementation adds the
+presentation and local adapter under that home, without changing daemon
+endpoints or shared lifecycle code.
 Copy the shared harness through its sync tool and verify parity, start,
 reattach, stop, registry allocation, TypeScript, lint and build.
 
@@ -101,7 +108,8 @@ control and process ownership rather than another implementation.
 ## Consequences
 
 Frontend dependencies remain separate from Python packaging and the resident
-RAG service. The browser stays blank until application work is authorized.
+RAG service. The initial browser entry was blank; the user's subsequent feature request
+now authorizes the Carbon application after the passing TUI review.
 The registry can inspect this branch with `--worktree monitor`; ordinary
 main-only registry and tailnet generation pick it up after landing.
 Tailnet HTTPS uses the established port offset. Its feature-worktree mapping

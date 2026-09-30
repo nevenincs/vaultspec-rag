@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import threading
 import time
@@ -43,7 +44,9 @@ def monitor_http(isolated_status_dir: Path) -> Iterator[tuple[int, Path]]:
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     port = int(listener.getsockname()[1])
-    _merge_service_status({"port": port, "service_token": "monitor-test-token"})
+    _merge_service_status(
+        {"pid": os.getpid(), "port": port, "service_token": "monitor-test-token"}
+    )
     application = create_http_app(
         ServerRouteRuntime(
             token="monitor-test-token", registry=ServiceRegistry(), port=port
