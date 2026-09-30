@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#pipeline-performance'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:7e5cb92d47730d22510a8c4a9f0ab0f7a6f52d2f543fc6a4ca3a11381b1860fb'
+body_hash: 'sha256:56c3b22f2745b7ebb51c97eb9a8ce5150fd73e963fafac6dac5f36dd3cfa1c16'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -93,6 +93,12 @@ related:
 - `S04` `by:` `root and independent GPT-6.1 Sol reviewer`
 - `S04` `M` `.vault/index/pipeline-performance.index.md`
 - `S04` `verify:` `final feature status all four Steps checked and latest verification pass` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `verify:` `Ruff lint and917-file format plus focused ty` -> `pass`
+- `S04` `verify:` `pytest test_substitution_discipline and test_gpu_profile_harness52` -> `pass`
+- `S04` `verify:` `substitution allowance17-to16 intended guard failure restored2guard passes` -> `pass`
+- `S04` `verify:` `independent GPT-6.1 Sol scoped publication policy review` -> `pass`
+- `S04` `by:` `root with GPT-6.1 Sol harness executor and independent reviewer`
 
 ## Notes
 
@@ -105,3 +111,4 @@ related:
 - `S03` 4096 experiment rejected before energy windows; default remains24000 because8192 short energy regressed.8192 is opt-in long/mixed tuning. Both owned cancellations have exact-spec succeeded retry children; first HTTP timeout reconciled against created-child records.
 - `S03` The recorded failed three-arm experiment is preserved as history; it did not evaluate the shipped selection. Final verification explicitly proves the selected two-arm comparison and unchanged 24000 default pass, and the rejected 4096 arm aborted before windows.
 - `S03` A supplementary verification helper initially imported `get_config` from the namespace instead of `config._settings.` The import was corrected and the exact helper rerun passed before checkpoint. The premature helper pass entry is validated by that completed run; production gates were unaffected.
+- `S04` S04 reopened when broader publication checks found the missing reviewed unit-boundary declaration. The exact seventeen-site declaration retains existing guard logic and was bounded/mutation-proven; production and measurement behavior remain unchanged.

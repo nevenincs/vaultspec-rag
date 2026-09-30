@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:9cadfbee04ed372b483a8923ed2ec13739398365a20e54aa504fbab437fb329a'
+body_hash: 'sha256:0d44b802e2ba1253a9fba56b25ab5da9bec66c736f0eba50ad09dfc971dc757f'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
   - "[[2026-09-30-sparseencode-adr]]"
@@ -109,6 +109,16 @@ Independent GPT-6.1 Sol final review passes base b9d2daf0 through 66c8b9c0 with 
 Applicable verification includes 253 preflight tests plus 94 final affected tests, intended guard mutation failures/restored passes, full Ruff/917-file format/eight-file type checks, Markdown/feature conformance, exact 820-input AST parity, admitted 17052-kernel CUDA trace, 24 valid alternating paired windows, eight bit-identical sparse parity comparisons, successful all-thread/GIL nonblocking artifacts, unchanged measurement hashes and final restoration evidence proving both owned retry children succeeded. The supplementary selection helper's corrected import and actual passed rerun are recorded in the ledger; failed experiments remain historical evidence, not checks of the shipped selection.
 
 Small descriptive timing/energy effects, the unresolved short-input device-wide energy regression, unchanged measured live peak allocation, sampler partial-read errors, Python-focused corpus and retained adaptive/allocator history remain explicit limits. This review establishes no end-to-end indexing or universal energy gain. Future worker sizing, dense attention/padding and publication metadata changes require their own measured validation; no further work is required to complete this approved plan.
+
+### Publication verification | medium | Harness unit substitutions lacked the required declaration
+
+Broader publication checks found that the CPU profiling-harness tests introduced seventeen substitution sites without their required explicit policy justification. The substitution-discipline guard correctly failed on the undeclared file. S04 reopened for this verification correction. No production, model, GPU ownership, profiler or measurement behavior changed, and the prior numerical evidence remains applicable.
+
+### Publication verification closure | low | Exact reviewed unit boundaries retain count-growth protection
+
+The existing guard explicitly permits reviewed sites through its bounded allowance table. The new entry records exactly seventeen existing harness unit seams and why deterministic native-admission, teardown/failure, scheduling, argument and parity barriers need them. It does not change the scanner, unexpected-file rejection, growth assertions or stale-allowance checks. Native execution, real CUDA/energy measurements and profiler artifacts remain separate actual evidence. Reducing the allowance to sixteen produced the intended count-growth failure; byte restoration and the two guard tests passed. Final combined guard/harness tests pass 52, full Ruff/917-file format and focused type checks pass. Artifacts: `.pytest-tmp/harness-substitution-bound-failure.log`, `harness-substitution-bound-restored.log`, `push-final-policy-harness-gates.log`.
+
+Independent GPT-6.1 Sol review PASS covers this correction from 850a5b0d through the working tree. It confirms that the entry uses the guard's existing documented review mechanism without exempting future sites or weakening runtime evidence. File-level counts cannot detect replacement of an allowed site at unchanged count; this is the existing policy limitation, not a new bypass. S04 closes again after applicable conformance and document checks. The original other-session merge remains excluded from this branch.
 
 ## Recommendations
 
