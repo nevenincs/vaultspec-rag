@@ -33,13 +33,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MISSING_COMPUTE_DEPENDENCIES_MESSAGE = (
-    "GPU inference dependencies are not installed. Install `vaultspec-rag[gpu]`, "
-    "then run `vaultspec-rag install --sync` from the project you want to search "
-    "to provision the CUDA inference stack. vaultspec-rag never runs inference "
-    "on CPU."
-)
-
 # transformers materialises model weights through a background thread pool by
 # default (``spawn_materialize`` in ``core_model_loading``). On Windows that
 # parallel load intermittently faults with a native access violation mid-
@@ -414,19 +407,19 @@ def _check_rag_deps() -> AcceleratorContext:
         ImportError: If the CUDA inference dependencies are not installed.
         RuntimeError: If no CUDA GPU device is available.
     """
-    from ._gpu import load_accelerator
+    from ._gpu import gpu_stack_missing_message, load_accelerator
 
     # The single centralized gate: import torch and assert a CUDA device,
     # failing hard on a CPU-only build rather than degrading to CPU compute.
     try:
         accelerator = load_accelerator()
     except ImportError as exc:
-        raise ImportError(_MISSING_COMPUTE_DEPENDENCIES_MESSAGE) from exc
+        raise ImportError(gpu_stack_missing_message("torch")) from exc
 
     import importlib.util
 
     if importlib.util.find_spec("sentence_transformers") is None:
-        raise ImportError(_MISSING_COMPUTE_DEPENDENCIES_MESSAGE) from None
+        raise ImportError(gpu_stack_missing_message("sentence-transformers")) from None
     return accelerator
 
 

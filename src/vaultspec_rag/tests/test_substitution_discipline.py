@@ -33,11 +33,12 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 _ALLOWED: dict[str, tuple[int, str]] = {
     "test_cli_styled_output.py": (
         1,
-        "captures terminal and pipe output by replacing only the console with "
-        "a real Rich console writing to StringIO; production formatting and "
-        "rendering execute unchanged, and no compute or service result is "
-        "substituted. Mutation proof: setting this allowance to zero failed "
-        "the count-growth assertion; restoring one passed",
+        "styling reaches only a colour terminal, and the CLI builds its one "
+        "console at import from the real stdout, so the styled bytes can only "
+        "be read by handing the unchanged production renderers a real recording "
+        "console; the substitute is the output sink, not any behaviour. "
+        "Mutation proof: setting this allowance to zero failed the count-growth "
+        "assertion; restoring one passed",
     ),
     "test_typesafe_search.py": (
         26,

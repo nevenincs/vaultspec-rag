@@ -47,8 +47,6 @@ Choose where the host installation lives:
   project's environment should run the service.
 - [Install a prebuilt binary](#install-a-prebuilt-binary) when the machine has no Python
   toolchain.
-- [Try a temporary run](#try-a-temporary-run) before installing anything. On Windows, it
-  can't start the service.
 
 If a Python project managed with uv must list vaultspec-rag without GPU packages,
 [add a client](#add-a-client-to-a-python-project) to it. Collaborators' AI assistants
@@ -170,32 +168,34 @@ Run every later command as `vaultspec-rag`. Continue with
 ### Install as a project dependency
 
 Choose this route when one Python project's environment should run the service, and
-collaborators share its pinned version. From the project root, run:
+collaborators share its pinned version.
 
-```bash
-uv add "vaultspec-rag[gpu]"
+Configure the CUDA build of PyTorch before you add the package. Otherwise the first
+`uv add` installs PyPI's `torch`, which is CPU-only on Windows. Add this block to the
+project's `pyproject.toml`; it's the same block the repository setup writes:
+
+```toml
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    {index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'"},
+]
 ```
 
-Run every later command as `uv run vaultspec-rag` from the project root. The repository
-setup then asks to add a CUDA package source to `pyproject.toml`; see
-[set up each repository](#set-up-each-repository).
-
-<p id="trying-it-without-commitment"></p>
-<p id="run-without-installing-a-tool"></p>
-
-### Try a temporary run
-
-On Windows, a temporary run gets PyPI's CPU-only PyTorch, so it can set up a repository
-but can't start the service. Use the standalone tool there.
-
-To try vaultspec-rag before installing it, prefix each command with
-`uvx --from "vaultspec-rag[gpu]"`. For example, from a repository's root:
+Then, from the project root, add vaultspec-rag together with `torch` as a direct
+dependency, because uv applies a package source only to direct dependencies:
 
 ```bash
-uvx --from "vaultspec-rag[gpu]" vaultspec-rag install --no-torch-config
+uv add "vaultspec-rag[gpu,mcp]" "torch>=2.4"
 ```
 
-`uvx` uses a temporary environment, but the command still configures the repository.
+Linux and Windows get the CUDA build, and Apple silicon gets the standard build, which
+uses Metal. Run every later command as `uv run vaultspec-rag` from the project root, and
+continue with [set up each repository](#set-up-each-repository).
 
 <p id="install-without-python"></p>
 <p id="installing-a-prebuilt-binary"></p>
@@ -311,8 +311,8 @@ Run the repository setup once in the root of every repository you want to search
 command is named `install`, but it sets up that repository rather than reinstalling the
 package.
 
-If the host installation is a standalone tool, a prebuilt binary, or a temporary run,
-add `--no-torch-config`. The installation already carries its PyTorch, and the PyTorch
+If the host installation is a standalone tool or a prebuilt binary, add
+`--no-torch-config`. The installation already carries its PyTorch, and the PyTorch
 step only edits the repository's own `pyproject.toml`:
 
 ```sh
@@ -322,9 +322,11 @@ vaultspec-rag install --no-torch-config
 If the host installation is a dependency of this project, run the setup through the
 project:
 
-1. Run the setup. It asks to add a CUDA package source to `pyproject.toml`; answer `y`,
-   or pass `--yes` for an unattended run. On Windows, declining leaves PyPI's CPU-only
-   PyTorch, which can't run the service.
+1. Run the setup. With the CUDA source from
+   [Install as a project dependency](#install-as-a-project-dependency) already in
+   `pyproject.toml`, its PyTorch step has nothing to change. If the source is missing,
+   the setup asks to add it; answer `y`, or pass `--yes` for an unattended run. On
+   Windows, declining leaves PyPI's CPU-only PyTorch, which can't run the service.
 
    ```sh
    uv run vaultspec-rag install
@@ -335,7 +337,7 @@ project:
    never prompts. It skips the patch, reports the skip, and exits non-zero, so the gap
    is visible rather than silent.
 
-1. Install the CUDA build and the `mcp` extra the setup adds:
+1. Sync the environment, so any source or extra the setup added takes effect:
 
    ```sh
    uv sync
@@ -549,9 +551,7 @@ installation and every client together.
 
    uv upgrades respect version constraints, and a standalone tool re-applies the Python
    version, the extras and the [CUDA index](#install-as-a-standalone-tool) its receipt
-   records, so the GPU build survives the upgrade. For a temporary run, follow
-   [uv's version selection](https://docs.astral.sh/uv/guides/tools/#requesting-specific-versions)
-   and keep your extras.
+   records, so the GPU build survives the upgrade.
 
    A standalone tool installed before this mechanism, or installed without the two index
    options, records no CUDA source: a plain upgrade then resolves a CPU-only PyTorch.
