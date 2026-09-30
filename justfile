@@ -253,6 +253,11 @@ check-vault:
 check-all:
     {{dev}} lint all
 
+# Run the fast gating dimensions a pull-request push is checked against.
+[group('check')]
+check-light:
+    {{dev}} lint light
+
 # ===========================================================================
 #  fix - MUTATES. Everything automatically repairable, in one pass.
 # ===========================================================================

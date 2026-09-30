@@ -35,7 +35,7 @@ concurrency:
   # Shared with publish.yml. Both workflows merge and rewrite the same
   # SHA256SUMS release asset, so a per-workflow lock would still permit a lost
   # update when they run for one tag at the same time.
-  group: release-artifacts-${{ inputs.tag || github.ref_name }}
+  group: release-artifacts-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -526,10 +526,9 @@ jobs:
     needs: release
     if: ${{ always() }}
     runs-on: [self-hosted, Linux, X64, build]
+    # Demotes an incomplete release.
     permissions:
       contents: write
-      # Dispatching the acquisition check is a write to the Actions API.
-      actions: write
     env:
       CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -667,64 +666,53 @@ jobs:
             echo "::notice::demoted ${TAG} to a prerelease so latest skips it"
           fi
 
-          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the next step promotes it back only after every declared target archive is attached and the release job succeeds."
+          echo "::error::${TAG} is INCOMPLETE - ${problems[*]}. It has been demoted to a prerelease so it cannot serve as latest. Fix the build and re-dispatch this workflow for this tag; the promote job restores it only after every declared target archive is attached, acquired, and the release job succeeds."
           exit 1
 
-      # Undo an earlier demotion once a re-dispatch actually attaches something,
-      # or a repaired release stays invisible to `latest` forever. The tag name
-      # decides: release-please publishes full releases here, so anything
-      # carrying a prerelease marker was meant to be one and must not be
-      # promoted by a guard that only knows about assets.
-      # The acquisition check cannot see this release by itself. A release
-      # published with the default token raises no workflow events, so its
-      # `release: published` trigger never fires for anything this lane
-      # produces - only its weekly schedule does, which is days of blindness
-      # after every release. An explicit dispatch is exempt from that rule,
-      # which is why the binaries build is dispatched rather than waiting on a
-      # tag push, and this is the same move for the same reason.
-      #
-      # Promotion waits for the public acquisition path. The build cannot
-      # prove that a checksum-verified bundle loads on each supported x64/ARM
-      # distribution; treating dispatch as best-effort promoted the release
-      # before that distinct guarantee existed.
-      - name: Require the acquisition check for this release
-        if: ${{ success() }}
-        env:
-          TARGET_SHA: ${{ inputs.target_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          title="RAG Acquisition ${TAG} @ ${TARGET_SHA}"
-          before_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
-            --workflow acquisition.yml --event workflow_dispatch --limit 1 \
-            --json databaseId --jq '.[0].databaseId // 0')
-          gh workflow run acquisition.yml --repo "$GITHUB_REPOSITORY" --ref main \
-            -f tag="$TAG" -f target_sha="$TARGET_SHA"
+  # Promotion waits for the public acquisition path. The build cannot prove
+  # that a checksum-verified bundle loads on each supported x64/ARM
+  # distribution; treating that check as best-effort promoted the release
+  # before that distinct guarantee existed.
+  #
+  # A call, not a dispatch-and-wait. A job that dispatched the check and
+  # watched it held a Linux x64 runner while the check queued for one, which
+  # deadlocks whenever that is the only runner free - 0.5.3's promotion never
+  # ran for exactly that reason. A called workflow is scheduled like any other
+  # job of this run, so nothing holds a runner while waiting.
+  acquisition:
+    name: "Test: Published binaries"
+    needs: verify-release-assets
+    uses: ./.github/workflows/acquisition.yml
+    with:
+      tag: ${{ inputs.tag }}
+      target_sha: ${{ inputs.target_sha }}
 
-          deadline=$((SECONDS + 180))
-          run_id=""
-          while [ -z "$run_id" ] && [ "$SECONDS" -lt "$deadline" ]; do
-            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow acquisition.yml --event workflow_dispatch --limit 20 \
-              --json databaseId,displayTitle \
-              --jq ".[] | select(.databaseId > ${before_id} and .displayTitle == \"${title}\") | .databaseId" \
-              | head -n 1)
-            [ -n "$run_id" ] || sleep 5
-          done
-          [ -n "$run_id" ] || {
-            echo "::error::acquisition run did not appear for ${TAG} at ${TARGET_SHA}"
-            exit 1
-          }
-          echo "waiting for acquisition run ${run_id} for ${TAG} at ${TARGET_SHA}"
-          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
-
-      # PyPI is dispatched only here, after promotion, so the index never
-      # carries a version whose release this gate refused. The Publish run
-      # queues behind this one on the shared per-tag lock and re-checks that
-      # the release is a full one before it uploads anything. A tag that names
-      # a prerelease is never promoted, so it never reaches the index.
+  # Undo the hold once the complete set is attached and acquired, or a
+  # repaired release stays invisible to `latest` forever. The tag name
+  # decides: release-please publishes full releases here, so anything carrying
+  # a prerelease marker was meant to be one and must not be promoted by a gate
+  # that only knows about assets.
+  #
+  # PyPI is dispatched only here, after promotion, so the index never carries
+  # a version whose release this chain refused. The Publish run queues behind
+  # this one on the shared per-tag lock and re-checks that the release is a
+  # full one before it uploads anything. A tag that names a prerelease is
+  # never promoted, so it never reaches the index.
+  promote:
+    name: "Build: Release promotion (Linux)"
+    needs: acquisition
+    timeout-minutes: 130
+    runs-on: [self-hosted, Linux, X64, build]
+    # Edits the release and dispatches Publish.
+    permissions:
+      contents: write
+      actions: write
+    env:
+      CI_EXEC_BUDGET_MINUTES: 10
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
       - name: Promote the release, then publish it to the package index
-        if: ${{ success() }}
         shell: bash
         run: |
           set -euo pipefail

@@ -1,4 +1,9 @@
-"""Release-please dispatches the required gate on its final branch head."""
+"""Release Please proposes on every green main and releases only when asked.
+
+The proposal path dispatches the required gate on its final branch head and
+never creates a release. The cut path, started by a dispatch alone, proves the
+head with the full gate and both accelerator tiers before it merges and tags.
+"""
 
 from __future__ import annotations
 
@@ -23,11 +28,33 @@ def _triggers(workflow: str) -> dict[object, object]:
     return cast("dict[object, object]", triggers)
 
 
+def _job(job_id: str) -> dict[object, object]:
+    """Return one raw job of the release workflow."""
+    jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
+    assert isinstance(jobs, dict)
+    job = cast("dict[object, object]", jobs).get(job_id)
+    assert isinstance(job, dict), f"{RELEASE_WORKFLOW} has no job `{job_id}`"
+    return cast("dict[object, object]", job)
+
+
+def _release_please_steps(job_id: str) -> list[dict[object, object]]:
+    """Return the Release Please action steps of one job."""
+    steps = _job(job_id).get("steps")
+    assert isinstance(steps, list)
+    return [
+        cast("dict[object, object]", step)
+        for step in steps
+        if isinstance(step, dict)
+        and str(step.get("uses", "")).startswith("googleapis/release-please-action@")
+    ]
+
+
 def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> None:
     """The bot proves the lock-refreshed head without a label or operator.
 
     Mutation proof: deleting ``--field ref=`` makes this fail on the dispatch
-    contract; restoring it makes this pass.
+    contract, and deleting ``--field scope=light`` fails on the scope;
+    restoring each makes this pass.
     """
     jobs = workflows.document(RELEASE_WORKFLOW).get("jobs")
     assert isinstance(jobs, dict)
@@ -52,6 +79,61 @@ def test_release_please_dispatches_the_gate_after_its_last_branch_write() -> Non
     assert "gh workflow run merge-gate.yml" in run
     assert '--ref "${HEAD_BRANCH}"' in run
     assert '--field ref="${HEAD_BRANCH}"' in run
+    assert "--field scope=light" in run
+
+
+def test_the_proposal_never_releases_and_follows_a_green_main() -> None:
+    """Merging changes accumulates a proposal; nothing is released unasked.
+
+    Mutation proof: deleting ``skip-github-release: true`` fails the proposal
+    assertion; dropping the ``conclusion == 'success'`` clause fails the
+    trigger assertion; restoring each makes this pass.
+    """
+    triggers = _triggers(RELEASE_WORKFLOW)
+    assert set(triggers) == {"workflow_run", "workflow_dispatch"}
+    run = triggers["workflow_run"]
+    assert isinstance(run, dict)
+    assert cast("dict[object, object]", run).get("workflows") == ["RAG Merge Gate"]
+    condition = " ".join(str(_job("release-please").get("if") or "").split())
+    for clause in (
+        "github.event_name == 'workflow_run'",
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.conclusion == 'success'",
+    ):
+        assert clause in condition, f"the proposal runs without {clause!r}"
+    proposals = _release_please_steps("release-please")
+    assert len(proposals) == 1
+    options = proposals[0].get("with")
+    assert isinstance(options, dict)
+    assert cast("dict[object, object]", options).get("skip-github-release") is True
+
+
+def test_the_cut_proves_the_head_before_it_releases() -> None:
+    """Only a dispatch releases, and only after the gate and both tiers pass.
+
+    Mutation proof: removing ``prove-hardware`` from the cut's ``needs`` fails
+    naming it; calling the gate with the light scope fails the call check;
+    restoring each makes this pass.
+    """
+    candidate = _job("candidate")
+    assert candidate.get("if") == "github.event_name == 'workflow_dispatch'"
+    gate = _job("prove-gate")
+    assert gate.get("uses") == f"./.github/workflows/{GATE_WORKFLOW}"
+    options = gate.get("with")
+    assert isinstance(options, dict)
+    assert "scope" not in cast("dict[object, object]", options), (
+        "the cut must run the gate in full"
+    )
+    assert _job("prove-hardware").get("uses") == "./.github/workflows/hardware.yml"
+    needs = _job("cut").get("needs")
+    needed = set(cast("list[str]", needs)) if isinstance(needs, list) else set()
+    missing = {"candidate", "prove-gate", "prove-hardware"} - needed
+    assert not missing, f"the cut releases without {sorted(missing)}"
+    releases = _release_please_steps("cut")
+    assert len(releases) == 1
+    options = releases[0].get("with")
+    assert isinstance(options, dict)
+    assert cast("dict[object, object]", options).get("skip-github-pull-request") is True
 
 
 def test_every_gate_checkout_uses_the_requested_ref() -> None:

@@ -230,8 +230,8 @@ def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     A reusable workflow sees no secret its caller does not pass, so a caller
     that omits it warms nothing and the tier refuses.
 
-    Mutation proof: deleting the ``secrets:`` block from ``publish.yml``'s
-    hardware job makes this fail naming ``publish.yml``; restoring it makes
+    Mutation proof: deleting the ``secrets:`` block from ``release-please.yml``'s
+    hardware job makes this fail naming ``release-please.yml``; restoring it makes
     this pass.
     """
     triggers = workflows.triggers(workflows.document(Workflow.HARDWARE))

@@ -1,6 +1,6 @@
 name: RAG Acquisition
 
-run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
+run-name: RAG Acquisition ${{ inputs.tag || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
 
 # Everything else in this repository tests what is IN the tree. This tests what
 # a user actually receives: it downloads the published target bundle onto a machine
@@ -24,18 +24,25 @@ run-name: RAG Acquisition ${{ inputs.tag || github.event.release.tag_name || 'la
 # no-GPU hosts. `ldd` answers the loader question without triggering that
 # download, which is the only claim this workflow can exercise honestly.
 #
-# It cannot run before publication, so it runs after. Note that
-# `release: published` is INERT for releases this repository cuts: GitHub raises
-# no workflow events for refs created with the default GITHUB_TOKEN, and
-# release-please publishes with exactly that token. It is declared anyway for a
-# human-published release, but the path that actually reaches this workflow is
-# the explicit dispatch from `binaries.yml`, plus the weekly schedule. The
+# It cannot run before publication, so it runs after: `binaries.yml` calls it
+# once every target archive is attached, and promotes the release only if it
+# passes. It has no `release: published` trigger. That event is inert for
+# releases the default token creates, and for a release a person publishes it
+# fires before any binary is attached, so it could only ever fail. The weekly
 # schedule matters on its own: acquisition rots for reasons no commit causes -
 # a yanked release or a renamed asset.
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to acquire
+        required: true
+        type: string
+      target_sha:
+        description: Immutable producer commit expected by the release gate
+        required: true
+        type: string
   schedule:
     # Weekly, off the hour: nothing here is urgent.
     - cron: '41 6 * * 1'
@@ -54,7 +61,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: acquisition-${{ inputs.tag || github.event.release.tag_name || 'latest' }}
+  group: acquisition-${{ inputs.tag || 'latest' }}
   cancel-in-progress: false
 
 jobs:
@@ -92,7 +99,6 @@ jobs:
       - name: Acquire the published binaries
         env:
           REPO: ${{ github.repository }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ inputs.target_sha }}
           TRIPLE: ${{ matrix.triple }}
@@ -100,7 +106,7 @@ jobs:
           EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
         run: |
           set -eux
-          tag="${EVENT_TAG:-${INPUT_TAG:-}}"
+          tag="${INPUT_TAG:-}"
           if [ -z "${tag}" ]; then
             tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
                   | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)

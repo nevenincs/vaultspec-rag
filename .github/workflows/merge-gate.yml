@@ -1,25 +1,37 @@
 name: RAG Merge Gate
 
-# EVERYTHING A CHANGE MUST PASS BEFORE IT REACHES MAIN.
+# EVERYTHING A CHANGE MUST PASS, AND WHEN IT PAYS FOR IT.
 #
 # This is the pull request's CI workflow and the only workflow whose verdict
-# main requires. Draft pull requests run lint for quick feedback. Ready pull
-# requests run every gating dimension, both Linux interpreters, the full
-# Windows suite and the dependency audit on every new head. `ci:full` is an
-# optional way to prove a draft; it is never required for the normal merge
-# path. Calls and dispatches always run the full gate, including the dispatch
-# release-please sends after its final branch mutation.
+# main requires. The cost follows the pull request's state:
+#
+# - A draft runs nothing. It is unfinished by declaration and cannot merge.
+# - Opening, reopening or marking a pull request ready runs the full gate:
+#   every gating dimension, both Linux interpreters, the full Windows suite
+#   and the dependency audit.
+# - A push to a ready pull request runs the light lint only, and the gate
+#   passes on it. The full gate runs again on the commit that lands on main.
+# - `ci:full` runs the full gate on demand, on a draft or on a ready head.
+# - A push to main runs the full gate on the commit that landed. Release
+#   Please refreshes the release proposal only after that run succeeds, so a
+#   regression can reach main but never a release.
+# - A dispatch runs the full gate unless it asks for `scope: light`, which is
+#   how Release Please keeps its regenerated branch mergeable without
+#   re-running suites main has already passed. The release cut calls this
+#   workflow for the full gate on the exact head it is about to merge.
+# - The weekly schedule runs only the dependency audit: main's tree was
+#   measured when it landed, but an advisory can be published against an
+#   unchanged lock at any time.
 #
 # WHY ONE REQUIRED CHECK HOLDS. Branch protection requires only
 # `Check: Merge gate (Linux)` on the pull request's head commit.
 #
-# - Opening, reopening, synchronizing or marking a pull request ready starts
-#   this workflow. A ready head therefore receives a full verdict without
-#   operator bookkeeping.
 # - Any label also starts this workflow, and a job skipped by its `if:` counts
-#   as a PASSED required check. So the gate never skips: `ci:full` proves a
-#   draft, while another label can preserve only a full success already earned
-#   by the same commit.
+#   as a PASSED required check. So the gate runs on every non-draft event: an
+#   unrelated label can only preserve the newest verdict this commit already
+#   earned, never mint one.
+# - The gate skips on a draft. A draft cannot merge, and marking it ready runs
+#   the full gate on the same head before it can.
 # - A cancelled run still runs the gate (`always()`), which then fails. A
 #   skipped gate there would read as a pass on a commit nothing measured.
 #
@@ -32,21 +44,24 @@ name: RAG Merge Gate
 # conditions. This gate is a discipline a maintainer keeps, not a wall that
 # keeps them. Remove the bypass actor to make these enforced guarantees.
 #
-# A push to main triggers nothing: the tree that lands was measured here
-# first. The weekly schedule reruns everything on main, which is what catches
-# advisories published against an unchanged lock.
-#
 # Pull requests from forks are refused: re-open an outside change from a
 # branch in this repository.
 on:
   pull_request:
     branches: [main]
     types: [opened, reopened, synchronize, ready_for_review, labeled]
+  push:
+    branches: [main]
   workflow_call:
     inputs:
       ref:
         description: Git ref to validate
         required: true
+        type: string
+      scope:
+        description: "full: every gating job. light: the light lint only."
+        required: false
+        default: full
         type: string
   schedule:
     - cron: '47 5 * * 3'
@@ -56,6 +71,14 @@ on:
         description: Git ref to validate (defaults to the dispatched ref)
         required: false
         type: string
+      scope:
+        description: "full: every gating job. light: the light lint only."
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - light
 
 permissions:
   contents: read
@@ -63,7 +86,8 @@ permissions:
 concurrency:
   # A new push supersedes the previous pull-request run. Label events use the
   # label in their group, so an unrelated label cannot cancel a full run.
-  # Calls, dispatches and main schedules never cancel release validation.
+  # Every run on main - a push, a call, a schedule - is grouped by its own
+  # commit and never cancelled.
   group: merge-gate-${{ github.event.pull_request.number || inputs.ref || github.ref }}-${{ github.event.label.name || github.event_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -91,11 +115,18 @@ jobs:
     # in `dev/toolchain.py`, so this job and the gates cannot disagree about
     # what "everything" means.
     # A fork's pull request never runs here: the workflow it would run is the
-    # fork's own. The gate refuses it instead.
+    # fork's own. The gate refuses it instead. A call from another workflow
+    # carries that workflow's event, a dispatch, and runs the full gate.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       (github.event.action != 'labeled' || github.event.label.name == 'ci:full'))
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
+        (github.event.pull_request.draft == false &&
+         (github.event.action == 'opened' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review'))))
     timeout-minutes: 160
     runs-on: [self-hosted, Linux, X64, build]
     env:
@@ -134,15 +165,66 @@ jobs:
       - name: Every gating dimension
         run: just check-all
 
+  lint-light:
+    name: "Check: Light lint (Linux)"
+    # The push path of a ready pull request, and Release Please's regenerated
+    # branch. It never runs beside the full lint: the two conditions exclude
+    # each other, and the full lint's aggregate already contains every
+    # dimension this one runs.
+    # A fork's pull request never runs here: the workflow it would run is the
+    # fork's own. The gate refuses it instead.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'light') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.action == 'synchronize' &&
+       github.event.pull_request.draft == false)
+    timeout-minutes: 140
+    runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+
+      - name: Initialize the worktree
+        run: just init
+
+      - name: The light gating dimensions
+        run: just check-light
+
   tests:
     name: "Test: Correctness suite (Linux, ${{ matrix.python-version }})"
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+        (github.event.pull_request.draft == false &&
+         (github.event.action == 'opened' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review'))))
     timeout-minutes: 165
     runs-on: [self-hosted, Linux, X64]
     strategy:
@@ -201,10 +283,15 @@ jobs:
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+        (github.event.pull_request.draft == false &&
+         (github.event.action == 'opened' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review'))))
     timeout-minutes: 136
     runs-on: [self-hosted, Windows, X64]
     env:
@@ -245,15 +332,22 @@ jobs:
 
   dependency-audit:
     name: "Check: Dependency advisories (Linux)"
-    # Audits the lock that is about to land. The weekly run catches
-    # advisories published against a lock that has not changed.
+    # Audits the lock that is about to land. The weekly run, which runs this
+    # job alone, catches advisories published against a lock that has not
+    # changed.
     # A fork's pull request never runs here: the workflow it would run is the
     # fork's own. The gate refuses it instead.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'light') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
        ((github.event.action == 'labeled' && github.event.label.name == 'ci:full') ||
-        (github.event.action != 'labeled' && github.event.pull_request.draft == false)))
+        (github.event.pull_request.draft == false &&
+         (github.event.action == 'opened' ||
+          github.event.action == 'reopened' ||
+          github.event.action == 'ready_for_review'))))
     timeout-minutes: 135
     runs-on: [self-hosted, Linux, X64]
     env:
@@ -290,17 +384,22 @@ jobs:
 
   gate:
     name: "Check: Merge gate (Linux)"
-    needs: [lint, tests, tests-windows, dependency-audit]
+    needs: [lint, lint-light, tests, tests-windows, dependency-audit]
     # `always()`, never `!cancelled()`: see the header on why a skipped gate
-    # would pass a commit nothing measured.
-    if: always()
+    # would pass a commit nothing measured. Only a draft skips it, unless
+    # `ci:full` was pressed on it.
+    if: >-
+      always() &&
+      !(github.event_name == 'pull_request' &&
+        github.event.pull_request.draft == true &&
+        !(github.event.action == 'labeled' && github.event.label.name == 'ci:full'))
     timeout-minutes: 125
     # Reads results and edits a label; it never checks out the pull request.
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
       contents: read
-      # The draft/unrelated-label path asks this workflow for its newest
-      # completed run against the same commit. That matches how branch
+      # The unrelated-label path asks this workflow for its newest completed
+      # run against the same commit. That matches how branch
       # protection evaluates the newest required check and cannot revive an
       # older green verdict after a newer red one.
       actions: read
@@ -314,6 +413,7 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       LINT: ${{ needs.lint.result }}
+      LIGHT: ${{ needs.lint-light.result }}
       TESTS: ${{ needs.tests.result }}
       WINDOWS: ${{ needs.tests-windows.result }}
       AUDIT: ${{ needs.dependency-audit.result }}
@@ -340,34 +440,51 @@ jobs:
             echo "::error::pull requests from forks are refused; re-open the change from a branch in this repository"
             exit 1
           fi
-          echo "lint=${LINT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} draft=${DRAFT:-n/a}"
-          if [ "${LINT}" = "success" ] && [ "${TESTS}" = "success" ] && [ "${WINDOWS}" = "success" ] && [ "${AUDIT}" = "success" ]; then
+          echo "lint=${LINT} light=${LIGHT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT} draft=${DRAFT:-n/a}"
+          # A measuring job that ran and did not pass fails the gate, whatever
+          # path this event took.
+          for job in "Check: Full lint (Linux)=${LINT}" \
+                     "Check: Light lint (Linux)=${LIGHT}" \
+                     "Test: Correctness suite (Linux)=${TESTS}" \
+                     "Test: Full suite (Windows)=${WINDOWS}" \
+                     "Check: Dependency advisories (Linux)=${AUDIT}"; do
+            case "${job##*=}" in success | skipped) ;; *)
+              echo "::error::${job%=*} ended '${job##*=}'"
+              exit 1 ;;
+            esac
+          done
+          full="${LINT} ${TESTS} ${WINDOWS} ${AUDIT}"
+          if [ "${full}" = "success success success success" ]; then
             echo "every full check passed in this run"
             exit 0
           fi
-          case "${LINT}" in success | skipped) ;; *)
-            echo "::error::Check: Full lint (Linux) ended '${LINT}'"
-            exit 1 ;;
-          esac
-          if [ "${EVENT}" != "pull_request" ] || [ "${TESTS}" != "skipped" ] || [ "${WINDOWS}" != "skipped" ] || [ "${AUDIT}" != "skipped" ]; then
-            echo "::error::the full checks did not all pass (linux=${TESTS}, windows=${WINDOWS}, audit=${AUDIT})"
+          if [ "${LIGHT}" = "success" ] && [ "${full}" = "skipped skipped skipped skipped" ]; then
+            echo "the light lint passed; the full gate runs on this change when it lands on main"
+            exit 0
+          fi
+          if [ "${EVENT}" = "schedule" ] && [ "${AUDIT}" = "success" ]; then
+            echo "the scheduled dependency audit passed"
+            exit 0
+          fi
+          if [ "${EVENT}" != "pull_request" ] || [ "${LIGHT} ${full}" != "skipped skipped skipped skipped skipped" ]; then
+            echo "::error::the checks this event requires did not all run (lint=${LINT} light=${LIGHT} linux=${TESTS} windows=${WINDOWS} audit=${AUDIT})"
             exit 1
           fi
-          # A draft or unrelated label can preserve only the newest completed
-          # verdict earned by this exact commit. This run is still in progress,
-          # so filtering to completed runs excludes it without comparing ids.
+          # An unrelated label can preserve only the newest completed verdict
+          # earned by this exact commit. This run is still in progress, so
+          # filtering to completed runs excludes it without comparing ids.
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')
           previous=$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?head_sha=$HEAD_SHA&per_page=100" \
             --jq '[.workflow_runs[] | select(.status == "completed")]
                   | sort_by(.id) | last | .conclusion // "none"')
           if [ "$previous" = "success" ]; then
-            echo "the last full run on $HEAD_SHA passed"
+            echo "the last run on $HEAD_SHA passed"
             exit 0
           fi
           if [ "$previous" = "none" ]; then
-            echo "::error::the full checks have not run on $HEAD_SHA; mark the pull request ready for review to run them, or add $FULL_RUN_LABEL to prove it while it remains a draft"
+            echo "::error::nothing has measured $HEAD_SHA yet; push to it, mark the pull request ready for review, or add $FULL_RUN_LABEL"
           else
-            echo "::error::the last full run on $HEAD_SHA ended in $previous; mark the pull request ready for review to run it again, or add $FULL_RUN_LABEL while it remains a draft"
+            echo "::error::the last run on $HEAD_SHA ended in $previous; push a fix, or add $FULL_RUN_LABEL to run the full gate again"
           fi
           exit 1

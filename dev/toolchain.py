@@ -276,6 +276,19 @@ LINT_ALL = (
     "docs-cli",
 )
 
+#: The dimensions a push to a ready pull request runs. Each reads committed
+#: files only and needs no type-checker stack, so they answer in minutes; the
+#: full aggregate runs when the pull request opens and again on main.
+LINT_LIGHT = (
+    "python",
+    "toml",
+    "markdown",
+    "workflow",
+    "absolute-imports",
+    "nesting",
+    "docs-version",
+)
+
 LINT = Verb(
     name="lint",
     summary="Run gating static analysis; a finding fails the build.",
@@ -413,6 +426,12 @@ LINT = Verb(
             "all",
             "Run every gating dimension; one red dimension never hides the rest.",
             tuple(Ref(name) for name in LINT_ALL),
+            keep_going=True,
+        ),
+        Target(
+            "light",
+            "Run the fast dimensions a pull-request push is checked against.",
+            tuple(Ref(name) for name in LINT_LIGHT),
             keep_going=True,
         ),
     ),
