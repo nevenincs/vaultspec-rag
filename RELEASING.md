@@ -2,9 +2,9 @@
 
 This is the maintainer runbook for publishing the Python package, standalone
 binary bundles, and package-manager pointers. The release pipeline is
-automated after the release PR is merged; this document records the artifact
-contract, the gates that protect `latest`, and the recovery paths when a lane
-stalls.
+automated from the moment a maintainer cuts a release; this document records
+the artifact contract, the gates a release must pass before it is published at
+all, and the recovery paths when a lane stalls.
 
 ## Release contract
 
@@ -46,41 +46,56 @@ The user-facing installation and verification commands are in
 
 ## How the release runs
 
-The three workflows have deliberately separate responsibilities:
+A release is invisible until it is complete. The GitHub Release is created as a
+**draft**, every lane attaches to that draft, and one step at the very end of
+the chain takes it out of draft. A draft has no download URLs and never answers
+as `latest`, so a failure anywhere leaves a draft nobody has been sent to
+rather than a live release to be walked back.
+
+Nothing in the chain reacts to a pushed tag or to a `release` event. Each lane
+is dispatched explicitly by the lane before it, in this order:
 
 1. `release-please.yml` opens and updates the release PR from conventional
-   commits. When the PR is merged, release-please creates the
-   `vaultspec-rag-v<version>` tag and GitHub Release.
-1. The same workflow immediately marks the new Release as a prerelease and
-   explicitly dispatches `RAG Publish` with the exact tag. `RAG Publish` also
-   performs that prerelease hold for its tag-push and manual entrypoints, then
-   dispatches `RAG Binaries` only after its GitHub package publication
-   succeeds. Do not dispatch the two artifact workflows independently in the
-   normal release path: their ordering is the stable/latest safety boundary.
-1. `RAG Publish` builds the wheel and source distribution, smoke-tests both
-   across the supported Python versions, and attaches the Python artifacts to
-   the GitHub Release. It does not upload to PyPI in this stage.
-1. `RAG Binaries` builds the exact release wheel once, passes that wheel to
-   every target leg, finalizes the target-qualified executables, and creates and
-   verifies one archive per target. Its release job aggregates the archive
-   checksums, passes the complete-target gate, attaches only the public
-   archives and merged checksum file, then generates and validates the Scoop
-   manifest and Homebrew formula in the account channel repository.
+   commits. Merging the PR releases nothing. A maintainer dispatches the same
+   workflow to cut a release: it proves the PR head with the full merge gate
+   and both accelerator tiers, squash-merges it, and has release-please force
+   the `vaultspec-rag-v<version>` tag and create the draft Release. The cut
+   refuses a tag that does not point at the proven commit, then dispatches
+   `RAG Publish` with the exact tag.
+1. `RAG Publish`, release stage, builds the wheel and source distribution,
+   smoke-tests both across the supported Python versions, and attaches them
+   with a merged `SHA256SUMS` to the draft. It creates the draft itself only if
+   one is missing, for a tag a maintainer pushed by hand. It never edits an
+   existing release's flags, and it does not upload to PyPI in this stage. It
+   then dispatches `RAG Binaries`.
+1. `RAG Binaries` takes the release's own attached wheel, checked against
+   `SHA256SUMS`, passes it to every target leg, and creates and verifies one
+   archive per target. Its release job aggregates the archive checksums, passes
+   the complete-target gate, and attaches only the public archives and the
+   merged checksum file to the draft.
 1. `RAG Binaries` always runs `verify-release-assets` after its release job.
    The verifier derives the expected targets from the matrix and requires every
    correctly named archive, the exact wheel and source distribution, no raw
    executables, exact `SHA256SUMS` coverage with valid digests, and a
-   successful binary release job. A failed or incomplete set is demoted to a
-   prerelease. A normal release is promoted only after the full set and the
-   acquisition check pass; release tags containing `rc`, `alpha`, `beta`, or
-   `dev` remain prereleases by design.
-1. After promotion, `RAG Binaries` dispatches `RAG Publish` in its
-   `package-index` stage. That run refuses anything but a full release,
-   downloads the release's own wheel and source distribution, checks them
-   against the release's `SHA256SUMS`, and uploads exactly those files to PyPI
-   through the trusted publisher. An upload cannot be withdrawn, so PyPI is
-   written last: a release the final gate refuses never reaches the index, and
-   a prerelease-named tag, never promoted, never reaches it either.
+   successful binary release job. It judges a draft, so it edits nothing: an
+   incomplete set fails and the release stays a draft.
+1. Only on success, that gate dispatches `RAG Publish` in its `package-index`
+   stage. That run requires the release to carry its wheel, source
+   distribution, and `SHA256SUMS`, downloads the release's own packages, checks
+   them against the release's `SHA256SUMS`, and uploads exactly those bytes to
+   PyPI through the trusted publisher. An already-published release is accepted
+   so a failed upload can be retried; PyPI skips files it already holds.
+1. A separate job in that same run then publishes the release, as the last act
+   of the chain. It holds no `id-token`. PyPI comes first deliberately: both
+   acts are one-way, and a failed upload leaves an unpublished draft that a
+   re-dispatch repairs, while a release published first would advertise a
+   version the index does not carry. A tag containing `rc`, `alpha`, `beta`, or
+   `dev` is published as a prerelease and stays off `latest`.
+1. That job then dispatches `RAG Channels` and `RAG Acquisition` for the tag.
+   Both advertise or consume public download URLs, so neither can run before
+   the flip: the channel lane refuses a draft outright, and the acquisition
+   check downloads unauthenticated and cannot see one. A failure in either does
+   not retract the release; re-dispatch that lane for the same tag.
 
 `RAG Publish` and `RAG Binaries` share the concurrency group
 `release-artifacts-<tag>` with `cancel-in-progress: false`. This serializes
@@ -99,15 +114,18 @@ rerun for the same tag.
    writes. Leave them unapproved. The run release-please dispatches is the
    required check, and approving a held run only repeats the full gate on
    the same commit.
-1. Merge the release PR. Do not manually create a second tag or Release for
-   the same version.
-1. Watch both `RAG Publish` and `RAG Binaries`, then the `package-index` run of
-   `RAG Publish` that Binaries dispatches. The release should remain a
-   prerelease until the binary verifier has accepted all three target archives,
-   and PyPI should not list the version until after that promotion.
-1. Confirm the GitHub Release asset list and the PyPI version. A normal,
-   complete release should expose three binary archives, one wheel, one source
-   distribution, and `SHA256SUMS`.
+1. Dispatch `RAG Release Please` to cut the release. Merging the PR by hand
+   releases nothing; the cut finishes a hand-merged proposal too. Do not
+   manually create a second tag or Release for the same version.
+1. Watch `RAG Publish`, then `RAG Binaries`, then the `package-index` run of
+   `RAG Publish` that the binary verifier dispatches. The Release stays a draft
+   for the whole of that sequence. It becomes visible only after PyPI has the
+   version, so a release listed on the releases page is a release the chain
+   finished.
+1. Confirm the GitHub Release asset list and the PyPI version, then the
+   `RAG Channels` and `RAG Acquisition` runs the publication dispatched. A
+   normal, complete release should expose three binary archives, one wheel, one
+   source distribution, and `SHA256SUMS`.
 
 The required release checks include workflow lint, static analysis, tests,
 documentation checks, the Vault audit, and the dependency audit. The GPU
@@ -163,10 +181,11 @@ requires exactly one archive with the expected tag, target triple, and format:
   the gate before `gh release upload` runs.
 
 The final verifier repeats the check against the assets actually present on
-GitHub. This second check matters when a matrix leg fails before the release
-job runs, or when an old release already contains an incomplete asset set. It
-also ensures that the binary release job itself succeeded before stable/latest
-promotion.
+the draft Release. This second check matters when a matrix leg fails before the
+release job runs, or when an existing draft already contains an incomplete
+asset set. It also requires that the binary release job itself succeeded. It is
+the only thing that dispatches the publication, so a release it refuses is
+never published and never reaches PyPI.
 
 Both artifact workflows reconcile `SHA256SUMS` in the same way:
 
@@ -197,18 +216,29 @@ brew tap nevenincs/tap https://github.com/nevenincs/homebrew-tap
 brew install vaultspec-rag
 ```
 
-The release job runs the equivalent of:
+The pointers are published by `RAG Channels`, a dispatch-only lane the
+publication dispatches once the release is public. A Scoop manifest and a
+Homebrew formula address assets by release download URL, so they advertise a
+release rather than form part of it: pushed while the release was still a draft
+they would send every package manager at a URL that serves nothing. The lane
+refuses a draft, reads `SHA256SUMS` back from the published release rather than
+from a build directory, and holds the channel deploy key and nothing else - the
+job that uploads to PyPI carries `id-token: write`, and that grant has no
+business beside a deploy key.
+
+It runs the equivalent of:
 
 ```sh
-just release-channels "$TAG" channels dist-bundles/SHA256SUMS
+just release-channels "$TAG" channels published/SHA256SUMS
 ```
 
-Here `channels` is a checkout of `nevenincs/homebrew-tap`. The command
-generates and validates both pointers from the same aggregate checksum file.
-The generator refuses a backward version bump, refuses missing digests, and
-omits unsupported or unavailable Homebrew targets rather than inventing a
-pointer. A missing supported build is reported as a warning; the complete
-target gate must still pass before a normal release can become stable.
+Here `channels` is a checkout of `nevenincs/homebrew-tap` and
+`published/SHA256SUMS` is downloaded from the release. The command generates
+and validates both pointers from the same aggregate checksum file. The
+generator refuses a backward version bump, refuses missing digests, and omits
+unsupported or unavailable Homebrew targets rather than inventing a pointer. A
+missing supported build is reported as a warning; the complete target gate must
+still pass before a release is published at all.
 
 Only these files belong in the channel commit:
 
@@ -227,14 +257,22 @@ URL and digest.
 
 ## Recovery
 
-Set the repository and exact tag before inspecting or rerunning anything:
+Every repair is the same shape: the release is a draft until the chain
+finishes, so a failure has advertised nothing, and the fix is to re-dispatch
+the lane that failed for the **same tag**. Never publish a draft by hand to
+unstick a lane - the publication is the statement that everything above it
+passed.
+
+Set the repository and exact tag before inspecting or rerunning anything. A
+draft is not listed by `gh release list` without `--exclude-drafts=false`, and
+`gh release view` reads it by tag:
 
 ```sh
 REPO=nevenincs/vaultspec-rag
 TAG=vaultspec-rag-v<version>
 
-gh release view "$TAG" --repo "$REPO" --json isPrerelease,assets \
-  --jq '{isPrerelease, assets: [.assets[].name]}'
+gh release view "$TAG" --repo "$REPO" --json isDraft,isPrerelease,assets \
+  --jq '{isDraft, isPrerelease, assets: [.assets[].name]}'
 gh run list --repo "$REPO" --workflow Binaries --limit 20
 gh run list --repo "$REPO" --workflow Publish --limit 20
 ```
@@ -266,13 +304,17 @@ git push origin "$SHA:refs/tags/$TAG"
 git show "$SHA:CHANGELOG.md" \
   | awk -v h="## [$VERSION]" 'index($0, "## [") == 1 { p = index($0, h) == 1 } p' \
   > release-notes.md
-gh release create "$TAG" --repo "$REPO" --verify-tag --prerelease \
+gh release create "$TAG" --repo "$REPO" --verify-tag --draft \
   --title "vaultspec-rag: v$VERSION" --notes-file release-notes.md
 gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG"
 ```
 
+`--draft`, because the chain publishes the release itself as its last act. A
+release created full here would be advertised with no assets on it.
+
 `RAG Publish` starts only by dispatch, so the last command starts the normal
-chain from the held prerelease.
+chain from that draft: release stage, then Binaries, then the package-index
+stage that publishes it.
 
 ### Missing or incomplete binary archives
 
@@ -288,23 +330,23 @@ Do not remove a target from the matrix just to make a release green. If the
 supported target set intentionally changes, update the product model, channel
 tests, installation guidance, and this contract in the same reviewed change.
 
-If the remote Release contains legacy raw target-qualified executables, the
-verifier will continue to reject it after the new archives are attached. List
-the assets first, then remove only the named raw files; do not delete the
-archives or `SHA256SUMS`:
+If the Release contains legacy raw target-qualified executables, the verifier
+will continue to reject it after the new archives are attached. List the assets
+first, then remove only the named raw files; do not delete the archives or
+`SHA256SUMS`:
 
 ```sh
 gh release delete-asset "$TAG" <raw-asset-name> --repo "$REPO" --yes
 ```
 
-Rerun `RAG Binaries` after cleanup. If a normal release is currently stable while
-it is incomplete, demote it immediately so it cannot answer as `latest`:
+Rerun `RAG Binaries` after cleanup. An incomplete release needs no demotion: it
+is still a draft, so it has never answered as `latest`. The repaired run's
+verifier hands it on to the publication, which publishes it.
 
-```sh
-gh release edit "$TAG" --repo "$REPO" --prerelease
-```
-
-The successful binary verifier will promote a repaired normal release again.
+An already-published release cannot be repaired this way. Publication is the
+last act of the chain, so a published release with a broken asset set means a
+lane pushed something after it - fix forward with a new release rather than
+retracting a version users may already hold.
 
 ### Missing Python artifacts or PyPI publication
 
@@ -315,22 +357,26 @@ If the Release exists but the wheel or source distribution is missing, rerun
 gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG"
 ```
 
-If the Release is a full release but PyPI does not list the version, retry only
-the upload. Files PyPI already holds are skipped:
+If PyPI does not list the version, retry the upload. Files PyPI already holds
+are skipped, so this is safe whether the release is still a draft or was
+published and the upload failed on a later attempt:
 
 ```sh
 gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG" \
   --field stage=package-index
 ```
 
-That stage refuses a prerelease or draft. If the release is still a
-prerelease, it has not passed the final gate: repair it and rerun
-`RAG Binaries`, which promotes it and then dispatches the upload itself.
+That stage requires the release to carry its wheel, source distribution, and
+`SHA256SUMS`. If it refuses for a missing asset, the release stage has not
+finished for this tag: rerun it as above. The stage publishes the release when
+it completes, so it also repairs a chain that stopped after the binaries were
+proven.
 
 If no GitHub Release exists yet, run `RAG Publish` first and wait for its
-`github-release` job to create the Release before rerunning `RAG Binaries`. The
-manual `RAG Publish` path verifies the tag and can create the missing Release;
-`RAG Binaries` then attaches the validated target archives.
+`github-release` job to attach the packages to the draft before rerunning
+`RAG Binaries`. The manual `RAG Publish` path verifies the tag and creates the
+draft when one is missing; `RAG Binaries` then attaches the validated target
+archives.
 
 ### Checksum drift or a lost merge
 
@@ -343,14 +389,24 @@ final file with the `gh release view` asset list and by downloading
 
 ### Channel pointers did not advance
 
-Rerun `RAG Binaries` after the Release has a complete archive set. Its release job
-regenerates and validates the account pointers before committing them. For a
-local repair, use a fresh checkout of `nevenincs/homebrew-tap` and the Release
-checksum file:
+Re-dispatch `RAG Channels` for the published tag. It reads the checksums back
+from the release, regenerates and validates both pointers, and commits only
+this product's two files:
+
+```sh
+gh workflow run channels.yml --repo "$REPO" --ref main --field tag="$TAG"
+```
+
+It refuses a draft. If it does, the release was never published: repair the
+chain above instead, and the publication will dispatch this lane itself.
+
+For a local repair, use a fresh checkout of `nevenincs/homebrew-tap` and the
+Release checksum file:
 
 ```sh
 CHANNEL_ROOT=../homebrew-tap
-just release-channels "$TAG" "$CHANNEL_ROOT" dist-bundles/SHA256SUMS
+gh release download "$TAG" --repo "$REPO" --pattern SHA256SUMS --dir published
+just release-channels "$TAG" "$CHANNEL_ROOT" published/SHA256SUMS
 git -C "$CHANNEL_ROOT" add -- bucket/vaultspec-rag.json Formula/vaultspec-rag.rb
 git -C "$CHANNEL_ROOT" diff --cached -- bucket Formula
 ```
@@ -361,10 +417,24 @@ version, do not force it backward; investigate the release tag or wait for the
 newer release's artifacts instead. If a push races another channel update,
 fetch and rebase, then retry without force-pushing.
 
-After recovery, verify all three surfaces: the GitHub Release has the complete
-archive set and merged checksums, the account channel files name the same
-version and digests, and the [installation guide](docs/installation.md)
-commands still describe the current target contract.
+### The acquisition check never ran for a release
+
+The publication dispatches it, and a failed dispatch does not fail the release.
+Ask for it again; it downloads the published archives the way a user does, so it
+needs the release to be published:
+
+```sh
+gh workflow run acquisition.yml --repo "$REPO" --ref main --field tag="$TAG" \
+  --field target_sha="$(git rev-parse "$TAG^{commit}")"
+```
+
+The weekly scheduled run covers the latest release regardless.
+
+After recovery, verify all three surfaces: the GitHub Release is published with
+the complete archive set and merged checksums, the account channel files name
+the same version and digests, and the
+[installation guide](docs/installation.md) commands still describe the current
+target contract.
 
 ## One-time PyPI trusted-publisher setup
 
