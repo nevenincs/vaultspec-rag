@@ -14,11 +14,11 @@ A single CLI command that starts its own short-lived process, loads the accelera
 
 ## Backend
 
-One selected implementation behind a stable interface. The compute backend is CUDA or MPS; the storage backend is the managed Qdrant server or the local-only store. `server doctor` reports both independently. See [the architecture overview](architecture.md) and [backends guide](backends.md).
+One selected implementation behind a stable interface. The compute backend is CUDA or MPS; the storage backend is the managed Qdrant server or the local-only store. `server doctor` prints one `Backend: server` or `Backend: local-only` line for the storage backend. See [the architecture overview](architecture.md) and [backends guide](backends.md).
 
 ## Chunk
 
-A small slice of a vault document or source file, a few hundred tokens long, that the indexer stores as one searchable unit. Search results point back to specific chunks rather than whole files. See [the architecture overview](architecture.md).
+A slice of a vault document or source file that the indexer stores as one searchable unit. A vault chunk follows the document's headings and runs up to about 3,000 characters. A source chunk is a function or a class where the language has a parser, and a structure-aware split otherwise. Search results point back to specific chunks rather than whole files. See [the architecture overview](architecture.md).
 
 ## Client installation
 
@@ -55,6 +55,14 @@ Text produced by a project-defined converter from a format vaultspec-rag cannot 
 ## fnmatch glob
 
 A shell-style filename pattern, for example `*.md` or `notes/**/draft-*`, used in include and exclude lists. It follows Python's `fnmatch` rules, not full regex. See [the configuration guide](configuration.md).
+
+## Freshness
+
+How current a search's answer is compared with your files. A search reports `freshness` as `current`, `updating`, `unverifiable`, or `rebuild_required`, separately from whether any published index can answer at all. By default a search answers from the last published generation without waiting for a running index job. See [choose immediate or bounded freshness](search-and-index.md#choose-immediate-or-bounded-freshness).
+
+## Generation
+
+One published version of an index. Indexing builds new content and publishes it as a whole, so a search always reads a complete generation and never a half-written one. A rebuild publishes a new generation next to the one still answering. Automatic updates capture a generation for each attempt so a stale job cannot overwrite a newer one; see [automatic convergence](automatic-convergence.md).
 
 ## Host installation
 
@@ -106,7 +114,7 @@ The per-root prefix that keeps one project's collections separate from another's
 
 ## Noise domain
 
-How code search classifies a source file's role: `prod`, `tests`, `docs`, `locale`, `generated`, `vendored`, or `worktree`. The default profile treats the other six in two ways rather than one: `worktree` and `generated` are hidden, and `tests`, `docs`, `locale` and `vendored` are kept but score-penalised so production ranks above them. A demoted result still comes back. Filter on it with the inline `exclude:`, `only:`, and `include:` tokens. See [writing a query](query-craft.md).
+How code search classifies a source file's role: `prod`, `tests`, `docs`, `locale`, `generated`, `vendored`, or `worktree`. By default some domains are hidden and others demoted below production; the [search guide](search-and-index.md#filter-noise-by-domain) lists which. Filter on a domain with the inline `exclude:`, `only:`, and `include:` tokens. See [writing a query](query-craft.md).
 
 ## Preprocessing hook
 
@@ -122,7 +130,7 @@ The one-time setup, run during `install`, that obtains the external dependencies
 
 ## Readiness
 
-Whether the service can serve requests: torch sees a supported accelerator, the models are cached, and the active storage backend is present and usable. The `server doctor` command reports it. See [the service-mode guide](service-mode.md).
+Whether the service can serve requests: torch sees a supported accelerator, the models are cached, and the active storage backend is present and usable. The `server doctor` command reports it. A search response also carries readiness facts for each domain, such as `availability`, which say whether a published index can answer. See [the service-mode guide](service-mode.md) and [Freshness](#freshness).
 
 ## Reciprocal rank fusion (RRF)
 
@@ -160,6 +168,10 @@ A numeric representation that records which specific terms a piece of text empha
 
 The MCP transport where the client launches the server as a subprocess and exchanges messages over standard input and output. It is the default for local AI clients. See [the MCP guide](mcp.md).
 
+## Typesafe
+
+An optional hosted classifier that the service uses when `VAULTSPEC_RAG_TYPESAFE_API_KEY` is set in its environment. It can reweight candidates and drop results it judges confidently irrelevant. Without a key, or when the provider is unavailable, search uses local ranking only. See [Typesafe enrollment](configuration.md#typesafe-enrollment).
+
 ## Unified memory
 
 Memory shared by the CPU, GPU, and system on Apple silicon. MPS allocator and recommended-working-set readings describe this shared pool rather than discrete video memory (VRAM). See [the architecture overview](architecture.md).
@@ -170,7 +182,7 @@ The `.vault/` directory in a project containing structured Markdown documents (A
 
 ## Watcher (automatic updates)
 
-The background facility that watches your files and re-indexes changed content automatically while the service runs. A debounce window and a per-project cooldown keep bursts of edits from triggering constant re-indexing. See [the service-mode guide](service-mode.md).
+The background facility that watches your files and re-indexes changed content automatically while the service runs. It groups bursts of edits into one batch with an adaptive coalescing window, bounds the wait with a freshness deadline, and cools down after a successful run. The older debounce and cooldown settings still work but map onto those bounds. See [automatic convergence](automatic-convergence.md) and [the service-mode guide](service-mode.md).
 
 ## Need help?
 

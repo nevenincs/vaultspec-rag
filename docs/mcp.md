@@ -27,10 +27,11 @@ the written configuration launches the server without syncing:
 vaultspec-rag install
 ```
 
-The server publishes six index-mutating tools, one of which deletes every index
-for the project. If you want the assistant to search and nothing else, see
-[Withholding the mutating tools](#withholding-the-mutating-tools) before you
-connect a client.
+The server publishes six index-mutating tools. Four reindex, and two delete
+indexes: `clean_documents` deletes the extracted-document index, and `clean_all`
+deletes every index for the project. If you want the assistant to search and
+nothing else, see [Withholding the mutating tools](#withholding-the-mutating-tools)
+before you connect a client.
 
 Use `--no-mcp` for a CLI-only workspace, which also skips the `mcp` dependency
 and, on Windows, `pywin32`.
@@ -320,4 +321,4 @@ process to watch, and `VAULTSPEC_RAG_STDIO_WATCHDOG=0` disables the self-reap.
 - [Commands, flags, and filter values](cli.md).
 
 If something still does not work, see
-[Status and help](../README.md#status-and-help) in the repo README.
+[Support and license](../README.md#support-and-license) in the repo README.

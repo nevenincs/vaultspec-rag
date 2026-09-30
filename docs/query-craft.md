@@ -25,7 +25,7 @@ Keep your query and add a filter to select part of the index.
 
 ### Document results
 
-Limit document results to ADRs:
+Limit document results to ADRs. Replace the query with your own; it is a stand-in:
 
 ```bash
 uv run vaultspec-rag search "cache control on deployed assets" --type vault --doc-type adr
@@ -41,10 +41,10 @@ uv run vaultspec-rag search "cache control on deployed assets" --type vault --fe
 
 ### Code results
 
-Exclude a mirrored directory. Replace `.claude/*` with the path glob you want to exclude:
+Exclude a directory you don't want in results. Replace the query and the `.claude/*` glob with your own:
 
 ```bash
-uv run vaultspec-rag search "detect antipatterns in the page DOM" --type code --exclude-path ".claude/*"
+uv run vaultspec-rag search "gpu lock around the forward pass" --type code --exclude-path ".claude/*"
 ```
 
 Append `--language python` to limit code results to Python.
@@ -65,8 +65,9 @@ Ask one question at a time. Split unrelated questions into separate searches.
 ## The filter surface
 
 `--type` picks the content domain first: `vault`, `code`, `document`, or
-`combined`. The filters below then split by what they narrow, so a code filter on
-`--type vault` has no candidates to act on.
+`combined`. The filters below then split by what they narrow. A filter that does not
+apply to the chosen `--type` is rejected as a usage error, so a code filter with
+`--type vault` fails instead of being ignored. `--type combined` accepts them all.
 
 Code results:
 
@@ -81,15 +82,25 @@ Code results:
 To favor production code, tests, or documentation without excluding other code results,
 use [`--prefer`](search-and-index.md#prefer-production-tests-or-documentation).
 
-Document and vault results:
+Vault results:
 
-| Filter          | Narrows to                                                                     |
-| --------------- | ------------------------------------------------------------------------------ |
-| `--doc-type`    | `adr` (decision), `plan`, `exec` (execution), `audit`, `research`, `reference` |
-| `--feature`     | one feature tag                                                                |
-| `--date`        | one date                                                                       |
-| `--tag`         | one frontmatter tag                                                            |
-| `--source-path` | one originating file, for extracted documents                                  |
+| Filter       | Narrows to                                                                     |
+| ------------ | ------------------------------------------------------------------------------ |
+| `--doc-type` | `adr` (decision), `plan`, `exec` (execution), `audit`, `research`, `reference` |
+| `--feature`  | one feature tag                                                                |
+| `--date`     | one date                                                                       |
+| `--tag`      | one frontmatter tag                                                            |
+
+`--doc-type` also takes a comma-separated union, such as `--doc-type adr,plan`.
+
+Extracted-document results:
+
+| Filter                | Narrows to                                    |
+| --------------------- | --------------------------------------------- |
+| `--source-path`       | one originating file                          |
+| `--extractor-id`      | documents emitted by one extractor            |
+| `--extractor-version` | documents from one extractor version          |
+| `--locator-kind`      | one kind of locator, such as `page` or `sheet` |
 
 ### Query markers
 
@@ -105,17 +116,16 @@ this way.
 | Ranking, no flag | `status:` `intent:`                          |
 
 The noise markers take one or more domains from `prod`, `tests`, `docs`,
-`locale`, `generated`, `vendored`, and `worktree`. The default profile treats
-them unequally: `generated` and `worktree` are hidden outright, while `tests`,
-`docs`, `locale` and `vendored` stay visible and are demoted below production.
-So `only:prod` keeps production code, and `exclude:tests` drops a test tree that
-would otherwise still be returned, lower down. Comma-separated sets accumulate when
-repeated.
+`locale`, `generated`, `vendored`, and `worktree`. The default profile hides some
+domains and demotes others, so `only:prod` keeps production code and `exclude:tests`
+drops a test tree that would otherwise still be returned, lower down. The defaults
+are listed under [filter noise by domain](search-and-index.md#filter-noise-by-domain).
+Comma-separated sets accumulate when repeated.
 
-`status:` takes `all`, `active`, or a comma-separated set such as
-`accepted,proposed`. `intent:` takes `orientation`, the default, or `debugging`,
-which reorders results for tracking down a fault rather than getting your
-bearings.
+`status:` and `intent:` apply to vault results only. `status:` takes `all`, `active`,
+or a comma-separated set such as `accepted,proposed`. `intent:` takes `orientation`,
+the default, or `debugging`, which reorders results for tracking down a fault rather
+than getting your bearings. `debug` is accepted as an alias for `debugging`.
 
 ```
 uv run vaultspec-rag search "auth token validation only:prod" --type code
@@ -140,6 +150,12 @@ Scores help compare ranked results; they aren't probabilities that your question
 been answered. Their meaning depends on the ranking configuration. No universal score
 cutoff establishes whether your index contains an answer.
 
+When `VAULTSPEC_RAG_TYPESAFE_API_KEY` is set in the service's environment, a hosted
+classifier also reweights candidates and can drop confidently irrelevant ones, so
+results and scores differ from local ranking. See
+[Typesafe enrollment](configuration.md#typesafe-enrollment). The scores described in
+this documentation come from local ranking.
+
 `--max-results` caps the results at 10 by default, but doesn't guarantee that many
 matches. Results can be irrelevant, and empty output doesn't explain why.
 
@@ -150,8 +166,10 @@ Use `--json` for structured output. See the [search options](cli.md#search) for 
 1. Read the returned passages to check whether they answer your question.
 1. [Check file coverage](#check-file-coverage) and index status if expected code is missing.
 1. Add the filter that states which kind of thing you want.
-1. If results arrive doubled, exclude the mirrored tree with `exclude:worktree`
-   or an `--exclude-path` pattern.
+1. If results arrive doubled, exclude the duplicate tree with an `--exclude-path`
+   pattern. The `worktree` domain already hides `.claude/worktrees/` and
+   `.git/worktrees/` by default, so a sibling clone of the repository needs the
+   path pattern.
 1. If the query carries two ideas, split it into two searches.
 1. Reword, naming the concrete nouns the target would contain.
 
@@ -167,6 +185,5 @@ takes questions as well as bug reports. Include the query, the flags, and the
   the index.
 - [CLI reference](cli.md) lists every flag with its type and default.
 - [Verify the index](verification.md) covers health, currency, and coverage.
-- [Indexing](indexing.md) covers profiles, admission, and the encoders.
-- [Architecture](architecture.md) covers how the two signals are fused.
+- [Indexing](indexing.md) covers profiles, admission, the encoders, and how the two signals are [fused](indexing.md#hybrid-search-with-fusion).
 - [Glossary](glossary.md) defines the vocabulary used here.

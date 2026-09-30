@@ -27,7 +27,7 @@ Generated from the live command surface. Each entry lists the command's argument
 - [install](#install)
 - [uninstall](#uninstall)
 - [status](#status)
-- **doctor**
+- **server**
   - [doctor](#server-doctor)
   - [warmup](#server-warmup)
   - [jobs](#server-jobs)
@@ -39,34 +39,34 @@ Generated from the live command surface. Each entry lists the command's argument
   - [reconcile](#server-reconcile)
   - [start](#server-start)
   - [stop](#server-stop)
-  - **show**
+  - **job**
     - [show](#server-job-show)
     - [pause](#server-job-pause)
     - [resume](#server-job-resume)
     - [stop](#server-job-stop)
     - [retry](#server-job-retry)
     - [delete](#server-job-delete)
-  - **list**
+  - **projects**
     - [list](#server-projects-list)
     - [unload](#server-projects-unload)
-  - **status**
+  - **updates**
     - [status](#server-updates-status)
     - [start](#server-updates-start)
     - [stop](#server-updates-stop)
     - [timing](#server-updates-timing)
-  - **install**
+  - **qdrant**
     - [install](#server-qdrant-install)
     - [status](#server-qdrant-status)
     - [clean](#server-qdrant-clean)
     - [quarantine](#server-qdrant-quarantine)
-  - **survey**
+  - **storage**
     - [survey](#server-storage-survey)
     - [delete](#server-storage-delete)
     - [prune](#server-storage-prune)
     - [reconcile](#server-storage-reconcile)
     - [migrate](#server-storage-migrate)
     - [restore](#server-storage-restore)
-- **list**
+- **preprocess**
   - [list](#preprocess-list)
   - [check](#preprocess-check)
   - [run-one](#preprocess-run-one)
@@ -225,7 +225,6 @@ None.
 | `--dry-run` | boolean | no | off | Preview changes without removing. |
 | `--force` | boolean | no | off | Required to execute. Uninstall is destructive. |
 | `--skip` | str | no | () | Skip a component (repeatable). |
-| `--yes`, `-y` | boolean | no | off | Deprecated: uninstall has no prompt to bypass. Accepted for backward compatibility only. |
 | `--json` | boolean | no | off | Emit JSON for scripts instead of human text. |
 
 ## status

@@ -2,7 +2,7 @@
 
 vaultspec-rag keeps semantic search indexes so agents and operators can search your projects by meaning instead of by exact keyword. In server mode, the default, one background service per machine owns a single managed vector store, and every project you index - each one a *root* - lives inside that one store. This guide covers how to inspect what that store holds, how the service reclaims dead data on its own, how to restore an index from an archive, how to prune space by hand, and how to watch maintenance as it runs.
 
-Everything here needs the background service running. Start it with `uv run vaultspec-rag server start`. If you haven't set the service up yet, work through [getting started](getting-started.md) first, then [run the background service](service-mode.md) for the full startup and configuration walkthrough.
+Automatic reclamation and maintenance reporting need the background service running. The manual commands need a reachable managed Qdrant server, which the service supervises. `server storage survey` also works without the service, because it reads the store directly when no service answers. `prune`, `delete`, `reconcile`, and `restore` exit `3` when the server is unreachable, and `migrate` needs the server reachable too. Start the service with `uv run vaultspec-rag server start`. If you haven't set the service up yet, work through [getting started](getting-started.md) first, then [run the background service](service-mode.md) for the full startup and configuration walkthrough.
 
 Maintenance operates on the shared managed store. [Migration](#migrate-a-root-between-backends) also accesses a project's local-only store.
 
@@ -30,9 +30,9 @@ If you installed vaultspec-rag as a standalone tool, drop the prefix and call
 
 ## Why disk usage grows
 
-Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. One development machine accumulated 79 dead namespaces totalling 167.9 GiB, all holding zero documents.
+Creating a namespace preallocates a large block of storage immediately, before a single document is indexed. Every root you have ever indexed - including throwaway ones like test directories, temporary worktrees, and scratch checkouts - keeps costing that space until it is reclaimed. Dead namespaces that hold no documents still occupy that space, and many throwaway roots add up quickly.
 
-That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: removing namespaces you no longer need, and shrinking the ones you are keeping. Both have their own sections, Reclaim space manually and Shrinking collections you keep, and the service does both on its own.
+That preallocation is why disk usage tracks the *number* of roots you have indexed far more closely than the amount of code and documents in them. It also means there are two different ways to get space back: [removing namespaces you no longer need](#reclaim-space-manually), and [shrinking the ones you are keeping](#shrinking-collections-you-keep). The service does both on its own.
 
 The store lives at `~/.vaultspec-rag/qdrant-server/storage` by default; `VAULTSPEC_RAG_QDRANT_STORAGE_DIR` relocates it. Any location works, including deeply nested ones - on Windows the service hands the storage engine extended-length paths, so the classic 260-character path limit does not constrain where the store lives.
 
@@ -46,18 +46,24 @@ uv run vaultspec-rag server storage survey
 
 ```
 34 namespaces  (orphaned=10 unknown=0 unverifiable=0 live=24)  33.4 GiB on disk  [19 temp-rooted]
-  orphaned r02c5d80096c3_         2 pts  318.6 MiB  C:\Users\me\AppData\Local\Temp\.tmpMum3wV  [temp]
-  live     r45b56789f389_     12322 pts  1020.3 MiB  C:\projects\my-project
+  orphaned r02c5d80096c3_         2 pts  318.6 MiB  /tmp/.tmpMum3wV  [temp]
+  live     r45b56789f389_     12322 pts  1020.3 MiB  ~/projects/my-project
 ```
 
-Two of the thirty-four rows are shown, and the namespace prefixes and root paths are stand-ins; the classifications, counts, and footprints are as the tool reported them, and the two progress lines it prints while it works are cut. Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path; a namespace no root can be attributed to shows `(unattributable)` in the final column. A row whose root lives under an operating-system temp directory carries a trailing `[temp]`, and the summary line counts those separately. `--orphaned` and `--unknown` narrow the list to those states. With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification; without a daemon the CLI reads the store directly.
+Two of the thirty-four rows are shown. The namespace prefixes and root paths are stand-ins, the numbers are example output, and the two progress lines the tool prints while it works are cut.
 
-A running daemon answers from a cached survey snapshot rather than re-measuring every namespace per call, so the survey stays fast (sub-second) no matter how many namespaces the store holds. The snapshot is computed shortly after startup and refreshed by every maintenance cycle; the HTTP response carries `computed_at` (when the underlying survey ran) and `source` (`cache` or `fresh`) so a consumer can see exactly how old the data is. The CLI's `--json` carries the namespaces and the counts rather than those two fields, so a script that needs the age of the answer should read it over HTTP. Survey data is therefore eventually-consistent, up to one maintenance interval behind. When you need up-to-the-second truth - for example immediately after indexing or deleting a namespace - pass `--fresh` (HTTP: `?fresh=true`), which recomputes the survey and reseeds the cache.
+Each row reads left to right as the classification, the namespace prefix, the document count, the on-disk footprint, and the attributed root path. A namespace no root can be attributed to shows `(unattributable)` in the final column. A row whose root lives under an operating-system temp directory carries a trailing `[temp]`, and the summary line counts those separately. `--orphaned` and `--unknown` narrow the list to those states.
+
+With a running daemon the survey is answered by the service itself, so the CLI, the MCP tools, and HTTP consumers all see one classification. Without a daemon the CLI reads the store directly.
+
+A running daemon answers from a cached survey snapshot rather than re-measuring every namespace per call, so the survey stays fast no matter how many namespaces the store holds. The snapshot is computed shortly after startup and refreshed by every maintenance cycle. The HTTP response carries `computed_at` (when the underlying survey ran) and `source` (`cache` or `fresh`) so a consumer can see exactly how old the data is. The CLI's `--json` carries the namespaces and the counts rather than those two fields, so a script that needs the age of the answer should read it over HTTP.
+
+Survey data is therefore eventually consistent, up to one maintenance interval behind. When you need up-to-the-second truth, for example immediately after indexing or deleting a namespace, pass `--fresh` (HTTP: `?fresh=true`). It recomputes the survey and reseeds the cache.
 
 To look up a single root - which namespace and collection prefix belong to it - pass `--root`:
 
 ```
-uv run vaultspec-rag server storage survey --root C:\projects\my-project
+uv run vaultspec-rag server storage survey --root ~/projects/my-project
 ```
 
 The output leads with `Queried root: <resolved path>  prefix: r..._`, and the same lookup is available as `queried_root` in `--json` output. This works even for a root that has never been indexed: the service computes the authoritative prefix, so an external consumer never has to reimplement the hash.
@@ -80,7 +86,7 @@ One class waits less. A namespace whose root lived under the OS temp directory w
 
 The cycle never touches `unknown` namespaces, `unverifiable` namespaces (an unplugged drive looks exactly like a deleted root, so it is never treated as one), or - with one exception, temp-rooted namespaces - anything `live`. At most 16 namespaces are reclaimed per cycle; the remainder waits for the next one.
 
-The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is exactly how leaked harness namespaces once filled a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
+The exception is temp-rooted namespaces. A harness temp directory that still exists classifies `live` and would otherwise survive every prune forever, which is how leaked harness namespaces can fill a disk. A namespace whose root lives under an OS temp directory therefore runs on an additional clock: every successful index run stamps a persisted `last_indexed` time, and once that stamp is older than the ephemeral idle TTL (72 hours by default) the namespace is treated as dangling even though its root exists. The same tiers then apply - empty ones drop, data-bearing ones are archived first - under the same per-cycle cap, with ordinary orphans taking priority. An actively re-indexed temp root keeps refreshing its stamp and is never touched; set `VAULTSPEC_RAG_STORAGE_AUTOPRUNE_EPHEMERAL_IDLE_HOURS=0` to disable the tier.
 
 The interval, all three grace windows, the ephemeral idle TTL, the per-cycle cap, and the archive bounds are tunable - see the [storage maintenance knobs](configuration.md#storage-maintenance-auto-prune).
 
@@ -88,9 +94,9 @@ The interval, all three grace windows, the ephemeral idle TTL, the per-cycle cap
 
 Reclamation removes namespaces you no longer need. Geometry reconcile is the other half: it shrinks the preallocation of namespaces you are keeping.
 
-A collection's on-disk cost is dominated by a fixed floor rather than by its contents - the storage engine preallocates a set of memory-mapped pages per segment, and it sizes the segment count from the host's CPU count unless told otherwise. On a 24-core machine that meant eight segments and roughly 1.2 GiB for a collection holding zero documents. Newer versions cap this at creation, but a collection carries the geometry it was created with for its whole life, so upgrading does not shrink anything that already exists.
+A collection's on-disk cost is dominated by a fixed floor rather than by its contents - the storage engine preallocates a set of memory-mapped pages per segment, and it sizes the segment count from the host's CPU count unless told otherwise. In one measurement on a 24-core machine, that meant eight segments and roughly 1.2 GiB for a collection holding zero documents. Newer versions cap this at creation, but a collection carries the geometry it was created with for its whole life, so upgrading does not shrink anything that already exists.
 
-The service converges them for you. Each maintenance cycle reconciles up to four drifted collections onto the bounded geometry, so a backend full of oversized collections shrinks over the following few hours without any action. Measured across collection sizes from empty to 20,000 documents, this reclaims 63-84% of each collection's footprint.
+The service converges them for you. Each maintenance cycle reconciles up to four drifted collections onto the bounded geometry, so a backend full of oversized collections shrinks over the following few hours without any action. In one measurement across collection sizes from empty to 20,000 documents, this reclaimed 63-84% of each collection's footprint. Your results will vary with host and data.
 
 Reconcile is not destructive. It changes a setting and lets the storage engine merge segments in the background: no document is moved or deleted, and the collection stays searchable throughout. It is also idempotent - a collection already at the target is skipped, so once your backend has converged the stage does nothing.
 
@@ -105,6 +111,8 @@ After reviewing the preview, apply the changes:
 ```
 uv run vaultspec-rag server storage reconcile --yes
 ```
+
+Example output:
 
 ```
 Reconciled 6 collections (23.4 GiB reclaimed); 0 still converging.
@@ -165,8 +173,10 @@ After checking which namespaces will be deleted, apply the prune:
 uv run vaultspec-rag server storage prune --yes
 ```
 
+Example output:
+
 ```
-Reclaimed 79 orphaned namespaces (167.9 GiB); 0 unknown left untouched.
+Reclaimed 3 orphaned namespaces (4.2 GiB); 0 unknown left untouched.
 ```
 
 Prune targets only `orphaned` namespaces; `unknown` and `unverifiable` are never touched. To remove one specific namespace, name its prefix:
@@ -194,7 +204,7 @@ uv run vaultspec-rag server storage prune --debris --yes
 You can also address a namespace by its root path instead of its prefix - the sanctioned teardown for test harnesses and consumers that register throwaway roots against the resident service:
 
 ```
-uv run vaultspec-rag server storage delete --root C:\Temp\my-throwaway-root --yes --json
+uv run vaultspec-rag server storage delete --root /tmp/my-throwaway-root --yes --json
 ```
 
 The path is resolved and hashed exactly as indexing does, so it removes precisely the namespace that root's indexing created. Deletion is idempotent: an already-absent namespace reports `already_absent` and exits `0`, so a teardown hook can run unconditionally. A harness that deletes its temp roots instead also works - the scheduled reclamation removes the leftover namespaces once their grace window passes.
@@ -205,8 +215,7 @@ A test, demo, or acceptance harness that indexes a throwaway root against the
 resident service mints a real namespace in the shared backend - often gigabytes
 once fully indexed - and as long as the temp directory still exists it
 classifies `live` and survives every prune. Left alone, leaked harness
-namespaces can exhaust the disk (the issue-242 incident: 36 temp-rooted
-namespaces, ~74 GiB). Every harness must do one of these, in order of
+namespaces can exhaust the disk. Every harness must do one of these, in order of
 preference:
 
 1. **Isolate**: point `VAULTSPEC_RAG_STATUS_DIR` and
@@ -236,7 +245,7 @@ Copy one project's index between [local-only storage and managed Qdrant](backend
 1. Replace the sample path with your project directory and preview the copy to managed Qdrant. For the other direction, use `--to local` in both commands.
 
    ```sh
-   uv run vaultspec-rag server storage migrate "C:\code\my-project" --to server --dry-run
+   uv run vaultspec-rag server storage migrate "/path/to/my-project" --to server --dry-run
    ```
 
    Preview opens the local store but copies nothing. Inspect the results before proceeding.
@@ -244,7 +253,7 @@ Copy one project's index between [local-only storage and managed Qdrant](backend
 1. Apply the copy:
 
    ```sh
-   uv run vaultspec-rag server storage migrate "C:\code\my-project" --to server --yes
+   uv run vaultspec-rag server storage migrate "/path/to/my-project" --to server --yes
    ```
 
 1. Inspect every collection's result. Existing destinations are skipped, including partial copies left by failed runs; rerunning does not repair them. See the [result and exit semantics](cli.md#server-storage-migrate). For unresolved failures, [open an issue](https://github.com/nevenincs/vaultspec-rag/issues).

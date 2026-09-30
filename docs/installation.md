@@ -144,7 +144,8 @@ Otherwise, give the account that runs vaultspec-rag access before the first down
 Instead of logging in, set `HF_TOKEN` persistently in your user environment, so both
 the repository setup and `vaultspec-rag server start` see it. `HF_TOKEN` takes
 precedence over the stored login. A token alone isn't enough until its account has
-accepted the model's conditions.
+accepted the model's conditions. The [configuration guide](configuration.md#hugging-face-cache)
+explains the `.env` rules for `HF_TOKEN`, the cache location, and offline mode.
 
 The repository setup's model download, `server warmup`, and the `server doctor` cache
 check all honour `VAULTSPEC_RAG_SPARSE_ENABLED=0`. With it, they never download, warm,
@@ -163,7 +164,11 @@ reference.
 ### Install as a standalone tool
 
 Choose this route by default. The following commands install the host and the Model
-Context Protocol (MCP) adapter that AI assistants launch. The Windows and Linux command
+Context Protocol (MCP) adapter that AI assistants launch. The service itself needs only
+the `gpu` extra. The `mcp` extra is there so an assistant's adapter runs from this same
+installation, at the service's release: in `tool` mode the assistant launches
+`uvx --from "vaultspec-rag[mcp]" python -m vaultspec_rag.server`, and `uvx` reuses the
+installed tool instead of fetching another copy. The Windows and Linux command
 records the CUDA package index and its resolution strategy in the tool's installation
 receipt, which uv re-applies on every later upgrade, so the GPU build survives them.
 
@@ -381,15 +386,16 @@ These flags change it:
 - For terminal use without an AI assistant, add `--no-mcp`.
 - To keep the index in the local-only backend instead of the managed Qdrant server, add
   `--local-only`, which also skips the Qdrant download. The backend is a choice for the
-  whole service, not one repository. Start the service with
-  `vaultspec-rag server start --local-only` every time. Set
+  whole service, not one repository. `install --local-only` records the choice, so a
+  later `vaultspec-rag server start` needs no flag. Pass `server start --local-only`
+  only for a machine or run where you never ran `install --local-only`. Either way, set
   `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` where the service starts,
   because the default profile refuses the local-only backend. See
   [storage backends](backends.md).
 
 The repository setup detects how the repository declares vaultspec-rag and records it in
 `.vaultspec/workspace.json`. If the detection is wrong, correct it with `--mode`; see
-the [install command reference](cli.md#install) for every flag and exit code.
+the [install command reference](cli.md#install) for every flag.
 
 #### Machine-readable output
 
@@ -398,20 +404,22 @@ the [install command reference](cli.md#install) for every flag and exit code.
 The run's own report is the `data` member, and `status` is one word from the shared
 vocabulary:
 
-| Status      | Meaning                                                       |
-| ----------- | ------------------------------------------------------------- |
-| `created`   | The workspace was enrolled                                    |
-| `updated`   | An existing installation was upgraded                         |
-| `unchanged` | A preview (`--dry-run`), or a run that changed nothing        |
-| `removed`   | Uninstall removed the installation                            |
-| `skipped`   | The run completed but a required step was skipped for consent |
-| `failed`    | The run failed                                                |
+| Status      | Meaning                                                                          |
+| ----------- | -------------------------------------------------------------------------------- |
+| `created`   | Install only. The install completed and was not an upgrade                       |
+| `updated`   | Install only. An existing installation was upgraded (`--upgrade`)                |
+| `unchanged` | A preview (`--dry-run`), or a run that changed nothing                           |
+| `removed`   | Uninstall only. Uninstall removed the installation                               |
+| `skipped`   | Install only. The run completed but a required step was skipped for consent      |
+| `failed`    | The run failed                                                                   |
+
+Uninstall reports only `failed`, `unchanged`, or `removed`.
 
 A run that can't start at all prints the `vaultspec.error.v1` envelope with its reason
 instead, so every `--json` run is parsed the same way.
 
-The exit codes are the shared ones: `0` for success, `1` for a failure, and `2` for the
-`skipped` status above, a run that completed with a required step skipped, such as the
+The exit codes are the shared ones: `0` for success, `1` for a failure, and, for install
+only, `2` for the `skipped` status above, a run that completed with a required step skipped, such as the
 PyTorch configuration patch nobody was there to approve. A tool environment that needs
 the CUDA repair, and wasn't authorised to have it applied, is a failure rather than a
 skip: nothing was installed, so the requested state wasn't reached.
@@ -428,8 +436,8 @@ vaultspec-rag server start
 
 The command loads the models and waits until the service is ready. Stop the service
 with `vaultspec-rag server stop`. It doesn't restart by itself after a reboot, and
-vaultspec-rag ships no autostart; the [service guide](service-mode.md) covers running it
-at login.
+vaultspec-rag ships no autostart. The [service guide](service-mode.md) explains how the
+service is started and what a service manager must account for.
 
 Three commands answer different questions throughout this guide:
 
@@ -488,7 +496,8 @@ From the project root:
 1. Add the client to the development dependencies, pinned to the service's release.
    `uv add` also syncs the environment.
 
-   If the project's AI assistant should get the search tools, add the `mcp` extra:
+   If the project's AI assistant should get the search tools, add the `mcp` extra. It
+   adds only the stdio adapter the assistant launches, and needs no GPU packages:
 
    ```bash
    uv add --dev "vaultspec-rag[mcp]==<release>"
@@ -504,13 +513,14 @@ From the project root:
    the project environment. Without it, a project the host installation already set up
    keeps launching the standalone tool.
 
-   With the `mcp` extra:
+   With the `mcp` extra, `install` enrolls the MCP server by default (`--mcp`) and
+   reconciles the `mcp` extra at the project's placement:
 
    ```bash
    uv run vaultspec-rag install --mode dev
    ```
 
-   With the plain package:
+   With the plain package, `--no-mcp` skips the assistant integration:
 
    ```bash
    uv run vaultspec-rag install --mode dev --no-mcp
@@ -890,13 +900,13 @@ vaultspec-rag anymore.
   storage.
 - [Configuration](configuration.md) answers which environment variables and settings
   exist.
-- The [command reference](cli.md) lists every command, flag, and exit code.
+- The [command reference](cli.md) lists every command and flag. The
+  [automation guide](automation.md#exit-codes-and-error-strings) lists exit codes.
 - [MCP integration](mcp.md) answers how an AI assistant reaches the service.
 - The [architecture overview](architecture.md) answers how the service, models, and
   index fit together.
 - The [glossary](glossary.md) defines the terms these guides use.
-- The [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes
-  questions and bug reports.
+- [Ask for help](#ask-for-help) names the support channel.
 
 ## Appendix: reference
 

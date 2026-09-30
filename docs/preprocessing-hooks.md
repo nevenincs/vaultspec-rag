@@ -86,7 +86,8 @@ Rule fields:
   - `fail` - abort the whole index run (use when missing a document is unacceptable).
   - `passthrough` - index the raw file unprocessed instead of failing.
 - **`timeout_s`** (optional) - kill the command after this many seconds and treat it as
-  a failure per `on_error`. Must be a positive number.
+  a failure per `on_error`. Must be a positive number. Without it, the command gets 120
+  seconds. Values above 1800 seconds are capped at 1800.
 - **`path_independent`** (optional, default `false`) - permit byte-identical inputs at
   different paths to share an extraction-cache entry. Enable it only when output never
   embeds the source path in text, anchors, locators, or metadata.
@@ -128,7 +129,6 @@ uv run vaultspec-rag preprocess status          # mode, config presence, and rul
   extractor abort under `on_error = "fail"`, are structured errors with a non-zero exit.
   Other malformed rules use the non-strict loader and may appear as no match. When
   validating configuration, run `preprocess check` first.
-
 - `preprocess status` reports the effective execution mode, schema version, targets,
   extractor versions, rule count, and whether the kill switch prevents hooks from
   running. Its `--json` envelope carries more than that human summary shows; the
@@ -230,9 +230,10 @@ Rules:
 
 ## Batch hooks
 
-With one subprocess per file, interpreter startup dominates the cost of a cheap extractor: a bare
-`python` noop hook measures **102.7 ms/file** (and **217.3 ms/file** through `uv run`),
-versus **1.2 ms/file** when one spawn handles 100 files. On a first index or a clean
+With one subprocess per file, interpreter startup dominates the cost of a cheap extractor.
+On one development machine, a bare `python` noop hook cost about 100 ms per file (about
+220 ms through `uv run`), versus about 1 ms per file when one spawn handled 100 files.
+Your numbers will differ. On a first index or a clean
 rebuild that constant is paid for every matched file. A batch hook amortizes it: one
 subprocess processes many files at once.
 
@@ -334,9 +335,10 @@ coupling one domain's cleanup to another domain's extractor work.
 - From the Model Context Protocol (MCP): use the targeted document or combined reindex and clean tools.
 
 The filesystem watcher routes a changed matched file (an edited `.pdf`, for example)
-through your extractor on the same debounce and cooldown machinery as code changes. See
-[keep the index fresh automatically](service-mode.md#keep-the-index-fresh-automatically)
-for the watcher's timing knobs.
+through your extractor under the same watcher timing as code changes: an adaptive
+coalescing window, a freshness deadline, and a cooling delay after a successful run. See
+[automatic convergence](automatic-convergence.md#policy-settings) for the timing
+settings.
 
 ## Failure visibility
 
@@ -353,8 +355,9 @@ Success is equally visible. Extractors run in worker subprocesses whose own logg
 never reaches the service log, so the indexer counts every rule-fed file and surfaces
 the tally where the skips already live: `IndexResult.preprocess_ok`, the
 `preprocess_ok` field in `vaultspec-rag index --json` and on the reindex job record,
-and the `preprocess_rules` / `preprocess_ok` fields on the service log's
-`service.index completed` event. A run whose rules matched nothing reports
+and the `files`, `preprocess_ok`, and `preprocess_skipped` fields on the service log's
+`service.index completed` event. A code-domain event also carries `preprocess_rules`,
+the number of preprocess rules routed in that run. A run whose rules matched nothing reports
 `preprocess_ok=0` there - the discriminating signal when rule-fed content seems to be
 missing from the index.
 
@@ -484,5 +487,5 @@ tag-path anchor; reach for `lxml` (BSD) only if you need XPath or source line nu
   clean the index that drives preprocessing.
 - [Run the background service](service-mode.md) - the resident watcher that re-extracts
   changed files automatically.
-- [Support and help](../README.md#status-and-help) - where to ask questions and file
+- [Support and license](../README.md#support-and-license) - where to ask questions and file
   issues.

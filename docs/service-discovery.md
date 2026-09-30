@@ -43,7 +43,7 @@ A consumer that doesn't understand the pair must refuse the record. This project
 
 A record declaring neither is the pre-discriminator case. Accept it; the next heartbeat upgrades it in place. A record declaring one half without the other is a partial write. Refuse it.
 
-Don't confuse this pair with `package_version`. The pair describes the shape of the record; `package_version` describes the release of the daemon that wrote it. Compare the pair to decide whether you can read the record at all, and `package_version` to decide whether you may drive the daemon it points at.
+Don't confuse this pair with `package_version`. The pair describes the shape of the record; `package_version` describes the release of the daemon that wrote it. The `package_version` in the sample record below is example data, not the current release. Compare the pair to decide whether you can read the record at all, and `package_version` to decide whether you may drive the daemon it points at.
 
 ## Interface fields
 
@@ -81,7 +81,7 @@ The `qdrant_*` fields are absent in local-only mode and when pointed at a remote
 
 Parse `started_at` and `last_heartbeat` as ISO-8601 strings. Note that `qdrant_start_time` is epoch seconds, not ISO-8601.
 
-A complete record, with the token redacted:
+An abridged sample, with the token redacted. It omits always-present fields such as `phase_detail`, `parent_pid`, `executable`, `prefix`, `base_prefix` and `virtual_env`, and every value is sample data:
 
 ```json
 {
@@ -149,7 +149,7 @@ The single authority for "a daemon is running on this machine" is an operating-s
 
 A discovery record is *evidence* of an address. The live lock is *proof* of ownership. When the two disagree, the lock wins.
 
-The lock file, `service.lock`, lives beside the machine-global managed Qdrant storage rather than under the per-instance status directory, so it stays machine-wide even when the status directory is overridden.
+The lock file, `service.lock`, lives beside the machine-global managed Qdrant storage rather than under the per-instance status directory, so it stays machine-wide even when the status directory is overridden. By default that is `~/.vaultspec-rag/qdrant-server/service.lock`. It moves only if you override the Qdrant storage directory (`VAULTSPEC_RAG_QDRANT_STORAGE_DIR`), because it sits in the parent of that directory.
 
 ## The two discovery views
 
@@ -160,7 +160,7 @@ The daemon publishes the same versioned payload to two files, both named `servic
 | Machine pointer | Beside the lock file        | Yes, mutated only by the lock owner    | The canonical address record. A consumer that doesn't share the daemon's status directory still finds the one running daemon. |
 | Status file     | `{status_dir}/service.json` | No, an operator and compatibility view | Operator detail, and a legacy fallback for daemons predating the pointer.                                                     |
 
-The [configuration reference](configuration.md) covers how `status_dir` resolves.
+By default the machine pointer is `~/.vaultspec-rag/qdrant-server/service.json`, next to `service.lock`, and the status file is `~/.vaultspec-rag/service.json`. The [configuration reference](configuration.md) covers how `status_dir` resolves.
 
 Deleting or corrupting the status file never stops the daemon from republishing canonical discovery: each heartbeat rebuilds a complete daemon-owned snapshot and recreates a missing or invalid status file.
 
@@ -213,7 +213,7 @@ A wedged owner stays degraded, and the operator sees that state rather than a gu
 - [Service mode](service-mode.md) answers how to start, observe, and stop the daemon.
 - [Configuration](configuration.md) answers how the status directory and ports resolve.
 - [MCP integration](mcp.md) answers how the MCP server reaches the daemon.
-- [CLI reference](cli.md) catalogues every command, flag, and exit code.
+- [CLI reference](cli.md) catalogues every command and flag. Exit codes are in the [automation guide](automation.md#exit-codes-and-error-strings).
 - [Glossary](glossary.md) defines the vocabulary used here.
 
 If you find a wedged owner that never recovers, or a record this contract does not describe, the [issue tracker](https://github.com/nevenincs/vaultspec-rag/issues) takes questions as well as bug reports.

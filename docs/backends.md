@@ -12,10 +12,10 @@ vaultspec-rag uses a managed local Qdrant server by default. Choose local-only s
 |                        | Managed Qdrant (default)                 | Local-only                        |
 | ---------------------- | ---------------------------------------- | --------------------------------- |
 | Process                | Separate, supervised Qdrant process      | Embedded store                    |
-| Default index location | `~/.vaultspec-rag/qdrant-server/storage` | `.vault/data/search-data/qdrant/` |
+| Default store location | `~/.vaultspec-rag/qdrant-server/storage` | `.vault/data/search-data/qdrant/` |
 | Qdrant binary          | Pinned and checksum-verified             | No binary download                |
 
-Managed storage separates projects by namespaces based on each project's resolved root. Local-only storage keeps the index inside each project.
+Managed storage separates projects by namespaces based on each project's resolved root. Local-only storage keeps the index inside each project. The project's data directory is `.vault/data/search-data/`, and the local store sits in its `qdrant/` subfolder.
 
 Both backends need the [GPU runtime and models](installation.md). Local-only storage avoids the Qdrant binary download; packages and models still need downloading if they are not cached.
 
@@ -67,6 +67,6 @@ Check that the service is running. For managed Qdrant, also check its process an
 vaultspec-rag server qdrant status
 ```
 
-`server doctor` assesses the invoking process's backend configuration alongside service health; its backend label does not prove which backend the running daemon uses.
+`server doctor` assesses the invoking process's backend configuration alongside service health. It prints one `Backend: server` or `Backend: local-only` line, which describes that configuration and does not prove which backend the running daemon uses.
 
 For startup failures, follow [service troubleshooting](service-mode.md#troubleshooting). For collection recovery or disk cleanup, use [storage maintenance](storage-maintenance.md).

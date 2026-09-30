@@ -18,9 +18,11 @@ At search time vaultspec-rag encodes your query the same two ways, fuses the two
 
 ## Why results are ranked, not exhaustive
 
-A query returns its closest matches. No relevance threshold filters results out, so a weak answer arrives as poor results rather than as the empty response a keyword search would give. Two things do still empty a result list, and neither is a threshold: a hard filter such as `--include-path` or `only:` that no indexed file satisfies, and an index with nothing in it yet.
+A query returns its closest matches. Local ranking applies no relevance threshold, so a weak answer arrives as poor results rather than as the empty response a keyword search would give. Two things do still empty a result list: a hard filter such as `--include-path` or `only:` that no indexed file satisfies, and an index with nothing in it yet.
 
-Two consequences follow. An exact string can rank below a looser conceptual hit, because the ranking weighs meaning alongside wording. And a query with nothing genuinely relevant to match still returns its ten closest chunks, which look like poor results rather than an empty answer. [Writing a query](query-craft.md) covers how to tell the two apart.
+The optional Typesafe stage is the exception. When `VAULTSPEC_RAG_TYPESAFE_API_KEY` is set in the service's environment, a hosted classifier can reweight candidates and drop the ones it judges confidently irrelevant, which can return fewer results or none. See [Typesafe enrollment](configuration.md#typesafe-enrollment). The scores in this documentation's examples come from local ranking.
+
+Two consequences follow. An exact string can rank below a looser conceptual hit, because the ranking weighs meaning alongside wording. And a query with nothing genuinely relevant to match still returns up to ten results, which look like poor results rather than an empty answer. Vault results are grouped per document, so a vault search can return fewer than ten. [Writing a query](query-craft.md) covers how to tell the two apart.
 
 ## Why vaultspec-rag needs a GPU
 
@@ -30,7 +32,7 @@ It resolves CUDA first, then Apple silicon Metal Performance Shaders (MPS). When
 
 That refusal is deliberate. A search that silently ran a hundred times longer would look as though the tool had stopped responding. A background service that appeared to start and then never returned results would be harder to diagnose than a refusal at launch.
 
-When `PYTORCH_ENABLE_MPS_FALLBACK` is set, vaultspec-rag refuses MPS too: the variable moves unsupported operators to the CPU and reintroduces the behavior the refusal exists to prevent.
+When `PYTORCH_ENABLE_MPS_FALLBACK` is exactly `1`, vaultspec-rag refuses MPS too: that setting moves unsupported operators to the CPU and reintroduces the behavior the refusal exists to prevent. PyTorch reads only the value `1`, so other values do not trigger the refusal.
 
 ### Accelerator and GPU
 
@@ -59,9 +61,9 @@ One service runs per machine. Each project keeps its own index, namespaced insid
 
 Server mode and local-only mode are two storage arrangements, not a default and a downgrade.
 
-**Server mode** is the default. vaultspec-rag runs the vector database as a supervised standalone server, so concurrent reads and writes go straight to it instead of queuing through one process. It downloads a checksum-verified pinned binary and supervises it, so you install no separate service yourself. The server holds a port, and its storage is shared across projects in your home directory at `~/.vaultspec-rag/qdrant-server/storage`.
+**Server mode** is the default. vaultspec-rag runs the vector database as a supervised standalone server, so concurrent reads and writes go straight to it instead of queuing through one process. The binary is pinned and checksum-verified. `install` provisions it. If it is missing, `server start` prints the install command, or downloads it when you pass `--qdrant-auto-provision`. vaultspec-rag then supervises the server, so you run no separate service yourself. The server holds a port, and its storage is shared across projects in your home directory at `~/.vaultspec-rag/qdrant-server/storage`.
 
-**Local-only mode** runs the database in-process behind a single flag. Nothing is provisioned or supervised, and the storage stays inside the project at `.vault/data/search-data/`. Without a separate process, concurrent operations contend for the one process, so this mode trades throughput under load for a self-contained setup. It suits continuous integration runs, air-gapped machines, and anywhere a resident service is impractical.
+**Local-only mode** runs the database in-process behind a single flag. Nothing is provisioned or supervised. The storage stays inside the project: the data directory is `.vault/data/search-data/`, and the store itself lives in its `qdrant/` subfolder. Without a separate process, concurrent operations contend for the one process, so this mode trades throughput under load for a self-contained setup. It suits continuous integration runs, air-gapped machines, and anywhere a resident service is impractical.
 
 Neither mode changes the GPU requirement. The [storage backends](backends.md) page covers switching between them and operating each.
 

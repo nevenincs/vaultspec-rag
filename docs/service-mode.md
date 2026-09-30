@@ -26,7 +26,14 @@ If you don't want a managed server, run local-only instead:
 uv run vaultspec-rag server start --local-only
 ```
 
+The default index profile accepts only the managed server, so also set
+`VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE=embedded-local` in the environment that starts the
+service. See [the installation guide](installation.md#what-you-need-before-you-start).
+`install --local-only` records the choice, so a later `server start` needs no flag.
+
 Start it from a host installation, the one that carries the `gpu` extra. The service runs in whatever Python environment launched it, which is why `uv run` is the documented form for a project that depends on `vaultspec-rag[gpu]`; see [Which Python environment runs the service](#which-python-environment-runs-the-service). A client installation, without the `gpu` extra, cannot start it.
+
+`server start` detaches: it returns once the service is ready and leaves the daemon running. A service unit that wraps it needs oneshot or remain-after-exit semantics, or the manager treats the returned command as a stopped service.
 
 Other start flags control the port, automatic updates, update timing, and the managed server. The [CLI reference](cli.md) carries the full list.
 
@@ -36,8 +43,8 @@ Other start flags control the port, automatic updates, update timing, and the ma
 uv run vaultspec-rag server status
 ```
 
-On a service that has been up for a while, that reads, with the environment path
-shortened to its last three segments:
+On a service that has been up for a while, that reads like this example, with the
+environment path shortened to its last three segments:
 
 ```text
 Server: running
@@ -61,8 +68,8 @@ Its exit codes:
 
 - `0` running
 - `3` stopped
-- `4` crashed, divergent, or degraded; the label beside it says which, and
-  [Troubleshooting](#troubleshooting) branches on that
+- `4` crashed, divergent, degraded, or running but unable to serve (`not_serving`); the
+  label beside it says which, and [Troubleshooting](#troubleshooting) branches on that
 - `5` starting, meaning the daemon holds the machine lock and is loading models; retry shortly
 
 "Divergent" means the status file disagrees with the live process, for example naming a process ID that is no longer alive. If `status` reports crashed or divergent, see [Troubleshooting](#troubleshooting).
@@ -72,6 +79,8 @@ To check each dependency rather than the process, run:
 ```
 uv run vaultspec-rag server doctor
 ```
+
+An example of its output:
 
 ```text
 Service readiness
@@ -99,8 +108,9 @@ to see: every dependency reads `ready`, and the last section still reports a
 the recorded mode. Search keeps working throughout. Readiness and provisioning are
 separate questions, and only the first one decides whether a query returns.
 
-The `release:` line reads `(matches this client)` above because it did. When it
-does not, the client refuses the request rather than answering it:
+The `release:` line above reads `(matches this client)`, and the release numbers in
+these captures are examples from older releases. When the release does not match,
+the client refuses the request rather than answering it:
 
 ```text
 Refusing to search against the running service.
@@ -121,9 +131,9 @@ have the service restarted from a host installation running the client's release
 
 `doctor` reports PyTorch and accelerator readiness, the compute backend (`cuda` or `mps`), the models, and Qdrant. It separately names the storage backend (`server` or `local-only`) and states whether the service is ready for requests. If a dependency reports not ready, follow its detail line, which names either a provision step or an install step.
 
-One failure has a detail line that cannot tell you what to do, because the fix is not an install or a provision step: a corrupt collection in the managed store stops the server from starting at all. `server qdrant quarantine` moves it aside so the server starts again, listing the store's collections when you run it with no name and requiring `--yes` to move one. Nothing is deleted and the affected root re-indexes on its next use. To keep working while you investigate, `server start --local-only` skips the managed store entirely. The [backends guide](backends.md) covers both.
+One failure has a detail line that cannot tell you what to do, because the fix is not an install or a provision step: a corrupt collection in the managed store stops the server from starting at all. `server qdrant quarantine` moves it aside so the server starts again, listing the store's collections when you run it with no name and requiring `--yes` to move one. Nothing is deleted and the affected root re-indexes on its next use. To keep working while you investigate, `server start --local-only` skips the managed store entirely, but only with the `embedded-local` index profile set as described under [Start the service](#start-the-service). The [backends guide](backends.md) covers both.
 
-Both accept `--json`, and `status` accepts `--verbose`. For every field and exit code, see the [CLI reference](cli.md).
+Both accept `--json`, and `status` accepts `--verbose`. The [CLI reference](cli.md) lists each command's options. Exit codes are in the lists on this page and in the [automation guide](automation.md#exit-codes-and-error-strings).
 
 ## Route commands at the service
 
@@ -238,7 +248,7 @@ On Windows, the daemon runs detached from any console, so a separate process can
 
 ## Running it automatically
 
-vaultspec-rag ships no service-manager integration. No systemd unit, launchd agent, or Windows service ships with it, and `server start` installs none. To run the service at login or boot, wrap `uv run vaultspec-rag server start` in your own unit, and point it at the project directory so it inherits the right Python environment.
+vaultspec-rag ships no service-manager integration. No systemd unit, launchd agent, or Windows service ships with it, and `server start` installs none. To run the service at login or boot, wrap `uv run vaultspec-rag server start` in your own unit, and point it at the project directory so it inherits the right Python environment. Because `server start` returns once the service is up, give the unit oneshot or remain-after-exit semantics.
 
 ## Keep the index fresh automatically
 
@@ -283,7 +293,7 @@ A client installation, without the `gpu` extra, never launches the service: its 
 
 ## HTTP monitoring routes
 
-The running service exposes read-only HTTP routes on loopback:
+The running service exposes token-gated HTTP routes on loopback. Most are read-only monitoring routes. Mutating routes exist too, all behind the same token: `POST /search`, `/reindex`, `/clean`, `/pause` and `/resume`, `PUT /jobs/{job_id}/desired-state`, and `DELETE /jobs/{job_id}`, among others. The monitoring routes are:
 
 - `GET /health` - service health. Ungated.
 - `GET /readiness` - dependency readiness. Requires the service token.
@@ -293,7 +303,7 @@ The running service exposes read-only HTTP routes on loopback:
 
 Token-gated routes take the service token as a bearer: `Authorization: Bearer <service_token>`. The token is in the status file at `~/.vaultspec-rag/service.json`, and `/health` also returns it.
 
-The token plus loopback binding is a monitoring gate, not an authentication boundary. Keep the service loopback-bound.
+The token plus loopback binding is a local access gate, not an authentication boundary. Keep the service loopback-bound.
 
 The Model Context Protocol (MCP) server is a separate stdio process, not mounted on this HTTP service. It delegates to these same routes over loopback. See the [MCP guide](mcp.md).
 
@@ -318,20 +328,25 @@ Another process is bound there. Use one port consistently: pass `--port N` or se
 Exit `4` covers two different faults, and the fix for one is the wrong move for
 the other. Read the label `status` printed beside it rather than the code alone.
 
-**`crashed (port silent)` or `crashed (heartbeat stale)`, or a divergent status
-file.** No daemon is serving. The status file disagrees with the live process -
+**`crashed (its process is no longer running)`, `crashed (its process ID now belongs to
+another program)`, `crashed (its port gives no usable answer)`, or `crashed (it stopped
+reporting that it is alive)`, or a divergent status file.** No daemon is serving. The status file disagrees with the live process -
 naming a process id that is no longer alive, for instance. Re-run `server start`
 to overwrite it cleanly, and if that does not clear it, delete the status file at
 `~/.vaultspec-rag/service.json` and start again.
 
-**`degraded`, which reads as "a service (PID N) holds the machine singleton but
-has not published its address".** A daemon is alive and holding the lock; what is
-missing or unreadable is the pointer it should have published. Deleting the file
+**`unreachable (a service holds this machine but its address cannot be trusted)`.**
+A daemon is alive and holding the lock; what is missing or unreadable is the pointer it
+should have published. `server doctor` shows what holds the machine. Deleting the file
 does not help - the holder is the only writer of canonical discovery, so nothing
 you delete makes it publish - and starting a second daemon only loses the race
 for the lock. Run `server reconcile` and give it time to converge. If it exits
 without converging, the holder is wedged: stop it (`server stop`, and on a
 resistant process by its own PID, which the label names) and start again.
+
+**`running but unable to serve (its search models never loaded)`.** The process is up,
+but it cannot answer searches. Run `server doctor` to see why the models did not load,
+then restart with `server stop` and `server start`.
 
 ### The service won't stop
 
@@ -339,7 +354,7 @@ A stale process ID can keep `server stop` from completing. Kill the process by i
 
 ### The managed server can't start
 
-Server mode needs the Qdrant binary. Provision it with `server qdrant install`, or run local-only with `server start --local-only`.
+Server mode needs the Qdrant binary. Provision it with `server qdrant install`, or run local-only with `server start --local-only` and the `embedded-local` index profile (see [Start the service](#start-the-service)).
 
 ### `server start` says the environment cannot run the service
 
@@ -363,4 +378,4 @@ Capture `server doctor --json`, `server status --json`, and `server logs`, then 
 - [Search and index](search-and-index.md) answers how to search and index through the service.
 - [Storage maintenance](storage-maintenance.md) answers how to survey and reclaim index storage.
 - [MCP integration](mcp.md) answers how to reach the service from an AI assistant.
-- [CLI reference](cli.md) catalogues every command, flag, field, and exit code.
+- [CLI reference](cli.md) catalogues every command and flag.

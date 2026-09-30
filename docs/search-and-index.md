@@ -22,34 +22,39 @@ description of the behavior with the concrete words the target would contain.
 Search defaults to your vault documents:
 
 ```
-uv run vaultspec-rag search "how does the watcher debounce changes"
+uv run vaultspec-rag search "how does the watcher coalesce changes"
 ```
 
-```text
-1. .vault/adr/2026-06-02-watcher-targeted-reindex-adr.md:16-22
-   adr | feature: watcher-targeted-reindex | status: accepted | 2026-06-02 | related: [[2026-06-02-watcher-targeted-reindex-research]] | section: Problem Statement
-   Result of investigating issue #151. The resident watcher reacts to every
-   matched filesystem change by running a full `incremental_index()` pass that
-   ...
-2. .vault/adr/2026-06-18-watcher-targeted-reindex-adr.md:113-116
-   adr | feature: watcher-targeted-reindex | status: accepted | 2026-06-18 | related: [[2026-06-18-watcher-targeted-reindex-research]], [[2026-06-02-watcher-targeted-reindex-plan]] | section: Codification candidates
-   - **Rule slug:** `watcher-flushes-pending-on-idle`.
-     **Rule:** Any application-level debounce or cooldown layered on top of the filesystem
-     ...
-```
-
-That run is against this project's own vault. Each result is the document and
-the lines that hold the passage shown, then its type, feature, status, date,
-related records and the section the passage sits under, then the passage itself;
-ten came back and the first two are shown, each passage cut to its first lines.
-That is the shape every example on this page returns, with one addition:
-`--scores` puts a relevance figure after the location, which the section on it
-shows.
+A vault result has three parts. The first line is the document path with the lines that
+hold the passage. The second line gives the document's type, feature, status, date,
+related records, and the section the passage sits under. Then comes the passage itself,
+cut to its first lines in human output. `--scores` adds a relevance figure after the
+location, which a later section shows.
 
 To search source code instead, add `--type code`:
 
 ```
-uv run vaultspec-rag search "gpu lock around the forward pass" --type code
+uv run vaultspec-rag search "gpu lock around the forward pass" --type code --max-results 3
+```
+
+This is the start of a real run against this repository. A code result is a path with a
+line range, then the passage from those lines. Long passages are trimmed here with
+`...`:
+
+```text
+1. src/vaultspec_rag/embeddings.py:1089-1108
+       def _encode_dense_bucket(
+           self,
+           bucket_texts: list[str],
+           gpu_lock: threading.Lock | None,
+           ...
+2. src/vaultspec_rag/memory_probe.py:691-709
+   @contextlib.contextmanager
+   def cuda_forward_peak_capture() -> Generator[None]:
+       """Bracket one model forward with a job-local peak capture.
+       ...
+3. src/vaultspec_rag/job_control.py:85-106
+   ...
 ```
 
 Search extracted documents independently with `--type document`, or allocate candidates
@@ -80,32 +85,15 @@ To see numeric relevance scores beside each record, add `--scores`:
 uv run vaultspec-rag search "why the service publishes a heartbeat" --type vault --scores --max-results 5
 ```
 
-That run, cut to the first two of its five records:
-
-```text
-1. .vault/adr/2026-07-21-machine-discovery-recovery-adr.md:108-115 (score 0.6008)
-   adr | feature: machine-discovery-recovery | status: accepted | 2026-07-21 | related: ... | section: Implementation
-   **D2 — Heartbeat publication is independent and self-healing.** Each heartbeat constructs
-   one canonical snapshot from daemon-owned runtime identity and configuration rather than
-   requiring an existing storage-specific record. While ownership remains valid, it may
-   ...
-2. .vault/adr/2026-05-30-service-lifecycle-adr.md:144-149 (score 0.2749)
-   adr | feature: service-lifecycle | status: accepted | 2026-05-30 | related: [[2026-05-30-service-lifecycle-research]] | section: Rationale
-   A daemon-side atexit + SIGTERM handler is the smallest cut that
-   turns "the log went quiet" into "the log explicitly says I died
-   and how". The heartbeat exists for the unreachable case (SIGKILL,
-   ...
-```
-
-Two things to read there. The second line of each record is the document's own
-type, status and date, and the section the passage sits under, so a vault
-result says what kind of decision it is and where in it the answer is before
-you open it. And the passage is the paragraph, list or block in that record that
-best answers the query - up to about 1,200 characters, verbatim from the lines
-the location names - not the opening of the record. The index scores whole
-chunks to rank records, then picks the passage to show from the best-ranked
-chunks of each. [Writing a query](query-craft.md) covers what the gap between
-0.6008 and 0.2749 tells you.
+Each location then carries a `(score N.NNNN)` suffix. Two things to read in a vault
+result. The second line is the document's own type, status and date, and the section
+the passage sits under, so a result says what kind of record it is and where in it the
+answer is before you open it. And the passage is the paragraph, list or block in that
+record that best answers the query - up to about 1,200 characters, verbatim from the
+lines the location names - not the opening of the record. The index scores whole chunks
+to rank records, then picks the passage to show from the best-ranked chunks of each.
+[Writing a query](query-craft.md#inspect-result-scores) covers how to read the gap
+between two scores.
 
 If nothing comes back, the index may be empty or still building. Build it first; see [Build and refresh the index](#build-and-refresh-the-index). With a running service, an index job may still be in flight, so wait for it to finish, then search again.
 
@@ -146,11 +134,15 @@ the service cannot truthfully promise when retrying will help. Treat `rebuild_re
 operator action, not a reason to loop: inspect the reported remediation and run an explicit
 rebuild for the named source.
 
-The service accepts the same policy directly:
+The service accepts the same policy directly. Token-gated routes take the
+`service_token` field of the discovery record as a bearer token. The record is
+`service.json` in the status directory, which is `~/.vaultspec-rag/` by default
+(`VAULTSPEC_RAG_STATUS_DIR` relocates it). Read the token from it, for example with `jq`:
 
 ```bash
+TOKEN=$(jq -r .service_token ~/.vaultspec-rag/service.json)
 curl -sS http://127.0.0.1:8766/search \
-  -H "Authorization: Bearer $VAULTSPEC_RAG_SERVICE_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"type":"code","query":"newly added cancellation path","top_k":10,"project_root":"/workspace/project","freshness_policy":"bounded","freshness_wait_seconds":5}'
 ```
@@ -174,7 +166,7 @@ readiness, so HTTP, CLI JSON, and MCP automation can make the same decision from
 
 ## Narrow code results by path
 
-Use `--include-path` to keep only files matching a pattern, and `--exclude-path` to drop matching files. Both flags are repeatable and accept standard globs:
+Use `--include-path` to keep only files matching a pattern, and `--exclude-path` to drop matching files. Both flags are repeatable and accept `fnmatch`-style globs:
 
 ```
 uv run vaultspec-rag search "lock ordering" --type code \
@@ -191,9 +183,14 @@ Protocol (MCP) tools:
 uv run vaultspec-rag search "reopen a drifted indexed path path:src/vaultspec_rag/indexer/" --type code
 ```
 
-Patterns match indexed project-relative paths, not files on disk. When a pattern excludes every candidate the query matched, the empty result says so and names the pattern rather than reporting a plain no-match.
+Patterns match indexed project-relative paths, not files on disk. Matching uses
+Python's `fnmatch`, where `*` also matches `/`, so `src/*.py` selects Python files at any
+depth under `src`, not only those directly inside it. When a pattern excludes every candidate the query matched, the empty result says so and names the pattern rather than reporting a plain no-match.
 
-These flags apply to code only. Passing them with a vault search is a usage error.
+The path flags apply to code. So do `--language`, `--path`, `--structure`,
+`--function-name`, `--class-name`, `--dedup-locales`, and `--prefer`. They work with
+`--type code` and `--type combined`, where they narrow the code results. Passing any of
+them with `--type vault` or `--type document` is a usage error.
 
 ## Narrow by language, structure, or symbol
 
@@ -255,8 +252,11 @@ kind of code in the ranking:
 uv run vaultspec-rag search "encode batch" --type code --prefer tests --max-results 12 --scores
 ```
 
-This preference doesn't exclude other code results or guarantee that a preferred
-result ranks first. Inspect the returned passages to judge their relevance.
+The preference adds 0.05 to the score of results in the preferred category and
+subtracts 0.05 from all others. It doesn't exclude other code results or guarantee that
+a preferred result ranks first. It also doesn't remove the default demotion of tests,
+docs, locale, and vendored code, which is 0.3. To lift that demotion for one search, use
+`include:tests` in the query. Inspect the returned passages to judge their relevance.
 
 To return only test code, use `only:tests` in the query instead. See
 [noise-domain filters](#filter-noise-by-domain) for other restrictions.
@@ -276,12 +276,12 @@ select noise domains.
 | `locale`     | Localization tables, such as `locales/`, `i18n/`, `<lang>.yml`          |
 | `generated`  | Machine-emitted files, such as `*_pb2.py`, `*.min.js`, `__generated__/` |
 | `vendored`   | Third-party trees, such as `vendor/`, `dist/`, `node_modules/`          |
-| `worktree`   | Agent worktree clones that duplicate the real source                    |
+| `worktree`   | Clones under `.claude/worktrees/` or `.git/worktrees/`                  |
 
 By default, the search keeps production first. It hides `generated` output and
 `worktree` clones, demotes `tests`, `docs`, `locale`, and `vendored` below
-production, and collapses locale duplicates. Worktree clones are also skipped at
-index time.
+production, and collapses locale duplicates. The default demotion is 0.3 in score.
+At index time the indexer also skips `.claude/worktrees/`, along with `.git/`.
 
 When a query still returns noise, narrow by domain rather than raising
 `--max-results` and reading past it.
@@ -312,8 +312,8 @@ scope precisely:
 uv run vaultspec-rag search "auth handler exclude:tests" --type code \
   --include-path "src/**" --exclude-path "**/legacy/**"
 
-# Take the fixed penalty off tests instead of off production
-uv run vaultspec-rag search "encode batch" --type code --prefer tests
+# Lift the default demotion of tests for one search
+uv run vaultspec-rag search "encode batch include:tests" --type code
 
 # Keep every locale variant for a translation audit
 uv run vaultspec-rag search "greeting string include:locale" --type code --no-dedup-locales
