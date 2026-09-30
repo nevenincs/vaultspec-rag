@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:e3b4ca3a88dc30d1a13e5501642516cac35bec8936332a277ae103ea350b9951'
+body_hash: 'sha256:128c1afe080b2cfc79fb27bea96b2dffc50dc4bb8731ee331b1a5abc93a2f621'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
   - "[[2026-09-30-sparseencode-adr]]"
@@ -49,6 +49,14 @@ The supervisor's live native diagnostic fell behind and timed out. Terminating i
 ### live-sampler-interruption-closure | low | Nonblocking default and proven guards close the interruption finding
 
 Independent GPT-6.1 Sol re-review found no new code blocker in the corrected default. `sampling_command` uses `--nonblocking`, excludes `--native`, and targets only the current process. Official py-spy config disallows native/nonblocking together. Both guard mutations failed at the intended assertion and passed after restoration. Corrected isolated CPU passes completed with stable source hashes and sampler read errors reported, never hidden. Applicable Ruff, format, focused type and 74-test gates pass. The high finding is closed; no live blocking sampler will be used. Overall review remains PENDING for admitted real CUDA/energy evidence and encoder parity.
+
+### ast-checkpoint | low | Independent review passes S02 with timing uncertainty preserved
+
+S02 PASS applies to the unchanged AST candidate `1fc776c0e3d49f8f0ad17afc9cdf2dff07c45f430c08977660e9a57db3d2f69b`. Exact tuple parity covers 820 inputs, including four synthetic cases, at five budgets. Current combined focused pytest passes 83 tests; applicable Ruff/format/focused type gates pass after the energy-addition lint/type corrections. The repeat median-ratio interval 0.9873–1.0409x includes no improvement, so behavior is verified and timing remains a modest observed optimization candidate. No end-to-end indexing or energy gain is claimed. Sequencing now closes this independent CPU checkpoint while retaining required GPU/energy work in S03 and final integrated review in S04.
+
+### sustained-energy-scope | low | Device-wide power estimates need sustained windows and boundary limits
+
+Independent review finds no blocking code defect in the opt-in energy addition. It retains canonical admission, one GPU consumer, synchronization, alternating caps, actual bucket/OOM state and final-only cache release. Power integration covers the actual sampled span and withholds per-item estimates below coverage thresholds. Ada NVML power is a one-second average, so immediate arm transitions can mix prior-arm power into boundary samples. Prefer 30-second sustained windows and disclose this when assessing small differences. Per-item estimates use sampled-span mean power and whole-window throughput, assuming representative power at uncovered edges. They include desktop/background work, adaptive ceilings, synchronization and bookkeeping; they cannot establish model-only energy or end-to-end indexing efficiency. Source: https://docs.nvidia.com/deploy/archive/R550/nvml-api/group__nvmlDeviceQueries.html . Overall remains PENDING for real admitted CUDA/energy, encoder parity and final energy guard/gate evidence.
 
 ## Recommendations
 

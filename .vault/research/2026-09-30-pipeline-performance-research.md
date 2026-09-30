@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:b186af02bf104322f7e9b3c257faa8d1fcc7115a40879b93e691fc7398ab8ae0'
+body_hash: 'sha256:a8abc1079d9c3c536028e7bd4ba4281437e068ce15b83434b0763690bb3236cb'
 related:
   - "[[2026-09-30-sparseencode-research]]"
   - "[[2026-07-29-encode-batch-adaptivity-research]]"
@@ -51,7 +51,7 @@ Accepted sparseencode, batching, GPU pipeline/single-owner and large-index-resil
 
 Initial cProfile: 33 real production Python sources, 564714 UTF-8 bytes, 613 chunks. Ten corpus passes took 1.693 seconds including output-hash serialization. Native parsing consumed 1.209 seconds (about 71% total); bytes decoding consumed 0.041 seconds (about 2.4%). This is Python chunking attribution, not end-to-end indexing or all-language performance. Evidence: ignored `.pytest-tmp/chunk-baseline-profile.txt`, `.pytest-tmp/chunk-baseline.pstats` and `.pytest-tmp/chunk-baseline.json`.
 
-The retained AST candidate defers container decoding and avoids structural-child decoding immediately before recursive collection. Character budgets, chunk text/spans/metadata/order remain unchanged. Exact tuple parity covered 820 Python sources plus Unicode/decorator/oversized edge cases at budgets 40, 80, 512, 1500 and 8000. Focused tests also cover JavaScript, TypeScript, Rust and Go. An initial slower candidate was discarded. The simplified default-budget candidate measured median paired speed ratios 1.04511 over 20 alternating pairs and 1.01035 over 36 repeat pairs; combined descriptive median 1.02293, with 36 of 56 wins. Each arm times three canonical corpus passes without hash serialization. Timing selection also includes synthetic edge cases. Evidence: `.pytest-tmp/chunk-paired-candidate.json` and `.pytest-tmp/chunk-paired-repeat.json`. Repeat parity reuses the unchanged first run (`parity_reused: true`); its empty digest is not a new output digest. These small, noisy CPU results under live service load do not certify the quiet-machine performance lane or a large indexing gain.
+The retained AST candidate defers container decoding and avoids structural-child decoding immediately before recursive collection. Character budgets, chunk text/spans/metadata/order remain unchanged. Exact tuple parity covered 820 inputs including four Unicode/decorator/oversized synthetic cases at budgets 40, 80, 512, 1500 and 8000. Focused tests also cover JavaScript, TypeScript, Rust and Go. An initial slower candidate was discarded. The simplified default-budget candidate measured median paired speed ratios 1.04511 over 20 alternating pairs and 1.01035 over 36 repeat pairs; combined descriptive median 1.02293, with 36 of 56 wins. Each arm times three canonical corpus passes without hash serialization. Timing selection also includes synthetic edge cases. Evidence: `.pytest-tmp/chunk-paired-candidate.json` and `.pytest-tmp/chunk-paired-repeat.json`. Repeat parity reuses the unchanged first run (`parity_reused: true`); its empty digest is not a new output digest. These small, noisy CPU results under live service load do not certify the quiet-machine performance lane or a large indexing gain.
 
 ### Device observation and blocked inference evidence
 
@@ -84,6 +84,10 @@ Default profiling now passes `--nonblocking` and excludes `--native`. Official p
 ### User priorities and runtime separation
 
 The user clarified that indexing time and GPU energy use govern candidate selection, and that another session owns the original merge. The resident GPU service uses another model/runtime. Controlled measurements therefore load the pinned new ModernBERT model from current source only after authenticated borrowing releases resident models, then release benchmark models/cache before the existing resident service resumes. Installed runtime metadata is not upgraded during this handoff. Peak memory is measured alongside throughput and sustained device-wide energy per processed item; a lower memory cap alone does not establish an improvement for the user's priorities.
+
+### CPU checkpoint uncertainty and sequencing
+
+S02 is now the independently verified AST checkpoint; admitted encoder/energy selection remains required in S03, with final integrated review S04. This changes sequencing without removing GPU work. The unchanged AST candidate hash is `1fc776c0e3d49f8f0ad17afc9cdf2dff07c45f430c08977660e9a57db3d2f69b`. Conditional 95% paired-bootstrap median-ratio intervals (10,000 resamples, seed 20260930) are 20 pairs: 1.0205–1.0773x; 36 pairs: 0.9873–1.0409x. The repeat interval includes no gain, so the observed small positive median is descriptive, not a certified performance guarantee. Do not pool these runs into a quiet-machine or end-to-end indexing claim. Evidence: `.pytest-tmp/chunk-timing-uncertainty.json`; raw paired observations and exact parity remain applicable.
 
 ## Sources
 

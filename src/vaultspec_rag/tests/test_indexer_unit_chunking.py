@@ -69,6 +69,27 @@ class TestASTChunkerPython:
         assert len(chunks) == 1
         assert "def hello" in chunks[0][0]
 
+    def test_unicode_structural_node_fits_character_budget(self):
+        source = "def café():\n    return '漢字😀é'\n"
+        text = source.rstrip("\n")
+        assert len(text.encode("utf-8")) > len(text)
+        assert ASTChunker(chunk_size=len(text)).chunk(source, "python") == [
+            (text, 1, 2, "function_definition", "café", None)
+        ]
+
+    def test_unicode_decorated_class_keeps_text_and_identity(self):
+        source = (
+            "@decorator\n"
+            "class Café:\n"
+            "    @staticmethod\n"
+            "    def méthode():\n"
+            "        return '漢字😀é'\n"
+        )
+        text = source.rstrip("\n")
+        assert ASTChunker(chunk_size=len(text)).chunk(source, "python") == [
+            (text, 1, 5, "decorated_definition", None, "Café")
+        ]
+
 
 class TestASTChunkerMultiLang:
     """ASTChunker works across languages with tree-sitter grammars."""
@@ -120,6 +141,23 @@ class TestASTChunkerMultiLang:
             ("aa\nb", 1, 2),
             ("b\ncc", 2, 3),
             ("\ndd", 3, 4),
+        ]
+
+    def test_large_unicode_leaf_splits_characters_without_breaking_utf8(self):
+        from tree_sitter_language_pack import get_parser
+
+        text = "é漢😀\né漢😀\né漢😀"
+        source = "'''" + text + "'''"
+        root = get_parser("python").parse(source.encode("utf-8")).root_node
+        content_node = root.children[0].children[1]
+        chunks: list[tuple[str, int, int, str | None, str | None, str | None]] = []
+        ASTChunker(chunk_size=4)._split_large_leaf(
+            content_node, text, None, None, chunks
+        )
+        assert chunks == [
+            ("é漢😀\n", 1, 2, None, None, None),
+            ("é漢😀\n", 2, 3, None, None, None),
+            ("é漢😀", 3, 3, None, None, None),
         ]
 
 
