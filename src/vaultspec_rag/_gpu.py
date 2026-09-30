@@ -26,20 +26,31 @@ MemoryKind = Literal["vram", "unified"]
 __all__ = [
     "ACCELERATOR_REQUIRED_MESSAGE",
     "MPS_FALLBACK_MESSAGE",
-    "TORCH_MISSING_MESSAGE",
     "AcceleratorBackend",
     "AcceleratorContext",
     "MemoryKind",
     "detect_accelerator_backend",
+    "gpu_stack_missing_message",
     "load_accelerator",
     "resolve_accelerator",
 ]
 
-TORCH_MISSING_MESSAGE = (
-    "GPU RAG dependencies not installed: torch is missing. Install "
-    "`vaultspec-rag[gpu]`, then run `vaultspec-rag install --sync` to "
-    "provision torch for this platform."
-)
+
+def gpu_stack_missing_message(missing: str) -> str:
+    """Name the missing GPU dependency and the one install that provides it.
+
+    The command comes from the provisioning module, so every surface hands out
+    the same install, and none of them one that can resolve CPU-only torch.
+    Imported at call time: this loader must stay light for every worker.
+    """
+    from .operator_state._provisioning import host_install_command
+
+    return (
+        f"GPU RAG dependencies not installed: {missing} is missing. "
+        "vaultspec-rag never runs inference on CPU. Install the host, which "
+        f"carries the GPU build of torch: {host_install_command()}"
+    )
+
 
 ACCELERATOR_REQUIRED_MESSAGE = (
     "Supported accelerator required: neither CUDA nor Apple MPS is available. "
@@ -167,7 +178,7 @@ def _import_accelerator_for_compute() -> AcceleratorContext:
     try:
         import torch
     except ImportError as exc:
-        raise ImportError(TORCH_MISSING_MESSAGE) from exc
+        raise ImportError(gpu_stack_missing_message("torch")) from exc
     return resolve_accelerator(torch)
 
 

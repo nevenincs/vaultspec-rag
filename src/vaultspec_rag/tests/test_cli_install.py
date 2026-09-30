@@ -157,9 +157,7 @@ class TestNoGpuMessageRendering:
 
 
 class TestNoTorchMessageRendering:
-    """TEST-11 regression: NO_TORCH message must render its single
-    actionable ``uv add`` command line cleanly.
-    """
+    """The NO_TORCH message renders its one install command whole."""
 
     @staticmethod
     def _render() -> str:
@@ -171,14 +169,19 @@ class TestNoTorchMessageRendering:
 
         buf = io.StringIO()
         Console(file=buf, force_terminal=False, color_system=None, width=120).print(
-            _no_torch_message(), markup=False, highlight=False
+            _no_torch_message(), markup=False, highlight=False, soft_wrap=True
         )
         return buf.getvalue()
 
-    def test_renders_uv_add_command(self) -> None:
+    def test_renders_the_gpu_host_install(self) -> None:
+        # Mutation proof: restoring the bare `uv add "vaultspec-rag[gpu]"`
+        # remedy, which resolves PyPI's CPU-only torch on Windows, failed the
+        # first assertion.
+        from ..operator_state._provisioning import host_install_command
+
         out = self._render()
-        assert 'uv add "vaultspec-rag[gpu]"' in out
-        assert "vaultspec-rag install" in out
+        assert host_install_command() in out
+        assert "uv add" not in out
 
     def test_no_stray_backslashes(self) -> None:
         out = self._render()

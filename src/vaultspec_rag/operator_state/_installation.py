@@ -105,14 +105,18 @@ class ComputeCapability(StrEnum):
     @property
     def remediation(self) -> str | None:
         """What the operator should do, or ``None`` when nothing is needed."""
+        from ._provisioning import host_install_command
+
+        install = f"`{host_install_command()}`"
         return {
             ComputeCapability.NOT_APPLICABLE: (
-                "To run searches on this machine, install `vaultspec-rag[gpu]`."
+                "Start the service from the host installation. To make this "
+                f"machine a host, install it with {install}."
             ),
             ComputeCapability.READY: None,
             ComputeCapability.BUILD_PRESENT: None,
             ComputeCapability.TORCH_MISSING: (
-                f"Reinstall vaultspec-rag with the `gpu` extra. {_DOCTOR}"
+                f"Install the GPU build with {install}. {_DOCTOR}"
             ),
             ComputeCapability.TORCH_IMPORT_FAILED: (
                 f"Reinstall torch in this environment. {_DOCTOR}"

@@ -93,18 +93,13 @@ def refuse_beside_a_service_of_another_release(
 
 def _no_torch_message() -> str:
     """Return the NO_TORCH remediation copy as plain text."""
-    import sys
+    from ..operator_state._provisioning import host_install_command
 
-    if sys.platform == "darwin":
-        return (
-            f"Error: {ComputeCapability.TORCH_MISSING.label}.\n\n"
-            "  Install vaultspec-rag in this interpreter to provision the "
-            "macOS torch build with Apple MPS support."
-        )
     return (
         f"Error: {ComputeCapability.TORCH_MISSING.label}.\n\n"
-        '  uv add "vaultspec-rag[gpu]" && uv run vaultspec-rag install '
-        "configures the cu130 torch index and installs the GPU build."
+        "  vaultspec-rag runs inference only on a GPU. Install the host, which "
+        "carries the GPU build of torch:\n"
+        f"    {host_install_command()}"
     )
 
 
@@ -270,7 +265,7 @@ def _handle_gpu_error(
         ComputeCapability.TORCH_MISSING,
         ComputeCapability.TORCH_IMPORT_FAILED,
     }:
-        _plain(_no_torch_message())
+        _plain(_no_torch_message(), soft_wrap=True)
     elif sys.platform == "darwin":
         _plain(_no_mps_message())
     elif capability is ComputeCapability.CPU_ONLY_BUILD:
