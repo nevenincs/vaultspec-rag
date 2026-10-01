@@ -5,40 +5,14 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:ab179ffa9693e02a7769c0e0c53b70b29432f70dcc1bedc989540a6a33de12db'
+body_hash: 'sha256:d8073759b3698ae7e1958f5f947b06b80366c9e8e142325bb04474637a8e40d5'
 related:
   - "[[2026-10-01-monitor-operations-plan]]"
 ---
 
-<!-- Machine-owned, whole file: `vaultspec-core vault exec log` creates it
-     on first use and appends every row; never hand-edit it. Add no
-     frontmatter fields. Wiki-links belong in `related:` only.
-
-     ONE ledger per plan, the only execution artifact. Each row's first
-     column names its Step. -->
-
 # `monitor-operations` ledger
 
 ## Changes
-
-<!-- MECHANICAL LOG, append-only, one row per path touched per Step, written
-     by `--row`:
-       - `S##` `A` `path`   added
-       - `S##` `M` `path`   modified
-       - `S##` `D` `path`   deleted
-       - `S##` `R` `old` -> `new`   renamed
-     Paths are repo-relative, in backticks. No prose: the Step row states the
-     intent and the commit carries the diff.
-
-     Optional per-Step rows, written by `--verify` and `--by`:
-       - `S##` `verify:` `<command>` -> `pass` | `fail`
-       - `S##` `by:` `<persona>`
-
-     Rows are appended in Step order and never rewritten. Only rows in this
-     section register a Step as covered. `--note` adds a `## Notes` section
-     ONLY on exception (data loss, skipped work, a scaffold left in code, a
-     persistent failure), one `S##`-prefixed line each; it is otherwise
-     omitted. -->
 
 - `S01` `M` `src/monitor/server/local-service.ts`
 - `S01` `M` `src/vaultspec_rag/_job_evidence.py`
@@ -95,7 +69,20 @@ related:
 - `S03` `verify:` `pytest src/vaultspec_rag/tests/test_monitor_browser_render.py -q (5 tests, desktop/tablet/mobile, 85.80s)` -> `pass`
 - `S03` `verify:` `persistent navigation disabled mutation fails intended assertion and restored browser suite` -> `pass`
 - `S03` `by:` `principal frontend designer/executor`
+- `S04` `A` `.vault/audit/2026-10-01-monitor-operations-audit.md`
+- `S04` `A` `.vault/index/monitor-operations.index.md`
+- `S04` `M` `src/vaultspec_rag/tests/test_monitor_browser_render.py`
+- `S04` `verify:` `integrated review against monitor-browser/tooling/quiesce/observability/storage ADRs` -> `pass`
+- `S04` `verify:` `vaultspec-core vault plan check monitor-operations --json` -> `pass`
+- `S04` `verify:` `vaultspec-core vault check all --fix --feature monitor-operations --json` -> `pass`
+- `S04` `verify:` `pytest test_monitor_browser_render.py -k size1-or-size2 (settled mobile navigation, 2 tests)` -> `pass`
+- `S04` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S04` `verify:` `ruff format --check test_monitor_browser_render.py` -> `pass`
+- `S04` `verify:` `ty check test_monitor_browser_render.py` -> `pass`
+- `S04` `verify:` `basedpyright test_monitor_browser_render.py` -> `pass`
+- `S04` `by:` `principal reviewer`
 
 ## Notes
 
 - `S03` Installed-browser evidence .pytest-tmp/operations-render-final.log and carbon-dashboard-{1440,800,390}.png; no resident daemon lifecycle or GPU compute exercised. Carbon static audit false positives manually adjudicated in the audit.
+- `S04` Reused unchanged S01/S03 evidence: 124 backend tests, 5 browser cases and frontend gates/build. Audit PASS with resident lifecycle, loaded GPU telemetry and independent tailnet rollout limitations recorded.

@@ -199,6 +199,10 @@ def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
         browser.evaluate(
             "document.querySelector('button[aria-label=\"Close navigation\"]').click()"
         )
+        browser.wait(
+            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
+            ".getBoundingClientRect().right <= 0"
+        )
     artifact = Path(__file__).resolve().parents[3] / ".pytest-tmp"
     artifact.mkdir(exist_ok=True)
     browser.command(
