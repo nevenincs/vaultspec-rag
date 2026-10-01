@@ -743,7 +743,8 @@ async def test_detached_admission_consumes_its_fenced_handoff(
 
         assert replacement.state.attempt_generation is None
         assert replacement.state.convergence_pending
-        assert not replacement.state.unscoped_required
+        # Mutation: dropping the marker's unknown intent loses work after rebuild.
+        assert replacement.state.unscoped_required
         assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
         next_attempt = replacement.admit()
@@ -769,7 +770,8 @@ def test_prestart_handoff_cancels_reserved_admission(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     next_attempt = replacement.admit(now=2.0)
     assert not next_attempt.admitted
@@ -821,7 +823,8 @@ async def test_cancellation_handoff_has_reserved_worker_capacity(
 
     replacement = _policy(tmp_path / "code.json", tmp_path)
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
@@ -985,7 +988,8 @@ def test_recovery_marker_clears_claim_and_requires_explicit_rebuild(
 
     assert recovered.state.attempt_generation is None
     assert recovered.state.convergence_pending
-    assert not recovered.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert recovered.state.unscoped_required
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert not marker.exists()
     next_attempt = recovered.admit(now=1.0)
@@ -1011,7 +1015,8 @@ def test_late_recovery_marker_preserves_newer_live_claim(tmp_path: Path) -> None
     assert not marker.exists()
     assert settled.attempt_generation is None
     assert settled.convergence_pending
-    assert not settled.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert settled.unscoped_required
     assert settled.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert settled.convergence_generation > retiring_attempt.attempt_generation
 
@@ -1033,7 +1038,8 @@ def test_inactive_same_process_fence_is_consumed(tmp_path: Path) -> None:
     assert not marker.exists()
     assert replacement.state.attempt_generation is None
     assert replacement.state.convergence_pending
-    assert not replacement.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert replacement.state.unscoped_required
     assert replacement.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
@@ -1121,10 +1127,11 @@ async def test_mixed_batch_cancellation_hands_off_both_sources(
     recovered_vault = _policy(vault_path, tmp_path, source=WatcherSource.VAULT)
     recovered_code = _policy(code_path, tmp_path)
     assert recovered_vault.state.convergence_pending
-    assert not recovered_vault.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses either source's work.
+    assert recovered_vault.state.unscoped_required
     assert recovered_vault.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert recovered_code.state.convergence_pending
-    assert not recovered_code.state.unscoped_required
+    assert recovered_code.state.unscoped_required
     assert recovered_code.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
 
 
@@ -1170,5 +1177,6 @@ async def test_cancellation_hands_off_after_indefinite_lock_contention(
 
     recovered = _policy(state_path, tmp_path)
     assert recovered.state.convergence_pending
-    assert not recovered.state.unscoped_required
+    # Mutation: dropping the marker's unknown intent loses work after rebuild.
+    assert recovered.state.unscoped_required
     assert recovered.state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED

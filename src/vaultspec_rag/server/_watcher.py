@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import zlib
 from dataclasses import dataclass
 from enum import StrEnum
@@ -212,7 +213,7 @@ class _WatcherScheduler:
 
     def unregister_root(self, root: Path) -> None:
         """Remove every source controller belonging to one canonical root."""
-        canonical_root = str(root.resolve())
+        canonical_root = os.path.normcase(str(root.resolve()))
         self._registrations = {
             key: registration
             for key, registration in self._registrations.items()
@@ -229,7 +230,7 @@ class _WatcherScheduler:
 
     async def wait_root_released(self, root: Path, deadline: float) -> bool:
         """Boundedly join callbacks that already claimed one root."""
-        canonical_root = str(root.resolve())
+        canonical_root = os.path.normcase(str(root.resolve()))
         while any(key[0] == canonical_root for key in self._active):
             remaining = deadline - self._monotonic()
             if remaining <= 0:

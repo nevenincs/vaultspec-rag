@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         IndexResult,
         VaultIndexer,
     )
+    from .indexer._checkpoint_common import RunCheckpointBase
     from .indexer._codebase_indexer import CodeIndexPreflight
     from .indexer._document_indexer import DocumentIndexPreflight
     from .job_manager.manager import JobManager
@@ -89,6 +90,45 @@ def _admit_attempt_mode(
     return clean
 
 
+def _require_published_attempt(
+    checkpoint: RunCheckpointBase | None,
+    mode: JobMode,
+    previous_checkpoint: RunCheckpointBase | None = None,
+) -> None:
+    """Refuse a returned index result whose concrete run did not publish."""
+    from ._job_errors import JobError, JobErrorKind
+    from .indexer._run_ledger_models import FinalizationPhase, RunTerminalState
+
+    if mode is JobMode.INCREMENTAL and checkpoint is previous_checkpoint:
+        # Code can return validated unchanged content before opening a run.
+        return
+    if checkpoint is None:
+        raise JobError(
+            JobErrorKind.FULL_REINDEX_REQUIRED,
+            "indexing returned without a durable publication checkpoint",
+        )
+    if mode is JobMode.REBUILD and checkpoint is previous_checkpoint:
+        raise JobError(
+            JobErrorKind.FULL_REINDEX_REQUIRED,
+            "full indexing returned without opening its own publication checkpoint",
+        )
+    generation = checkpoint.ledger.generation(checkpoint.generation_id)
+    if (
+        generation.terminal_state is not RunTerminalState.SUCCEEDED
+        or generation.finalization_phase
+        not in {
+            FinalizationPhase.GENERATION_PUBLISHED,
+            FinalizationPhase.COMPACTED,
+        }
+    ):
+        raise JobError(
+            JobErrorKind.FULL_REINDEX_REQUIRED,
+            "indexing did not publish its generation "
+            f"{generation.generation_id}: "
+            f"{generation.terminal_detail or generation.terminal_state.value}",
+        )
+
+
 def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
     """Bind one restored or newly admitted indexing job to production services."""
     # Admission authority proves creation was validated; execution rediscovers
@@ -136,8 +176,35 @@ def bind_index_job(binding: IndexJobBinding) -> JobOutcome:
         binding.job_id,
         runner,
         on_started=binding.on_started,
-        on_finished=binding.on_finished,
+        on_finished=partial(_finish_index_job, binding=binding),
     )
+
+
+def _finish_index_job(
+    snapshot: JobSnapshot,
+    duration_seconds: float,
+    result: JobExecutionResult | None,
+    error: BaseException | None,
+    *,
+    binding: IndexJobBinding,
+) -> None:
+    """Reconcile watcher authority after the manager persists publication success."""
+    from .watcher_retry_policy import WatcherRetryPolicy
+
+    try:
+        if (
+            error is None
+            and result is not None
+            and WatcherRetryPolicy.reconcile_rebuild(snapshot)
+        ):
+            from .server._watcher import _wake_watcher_scheduler
+
+            _wake_watcher_scheduler()
+    except Exception:
+        logger.exception("Watcher rebuild settlement failed for %s", snapshot.id)
+    finally:
+        if binding.on_finished is not None:
+            binding.on_finished(snapshot, duration_seconds, result, error)
 
 
 def _run_vault_attempt(
@@ -163,6 +230,7 @@ def _run_vault_attempt(
                     and snapshot.attempt.resumed_from_attempt is not None
                 )
                 try:
+                    previous_checkpoint = runtime.vault_indexer.last_checkpoint
                     if clean:
                         result = runtime.vault_indexer.full_index(
                             clean=not resumed,
@@ -176,6 +244,11 @@ def _run_vault_attempt(
                             authority=dispatch.authority,
                             run_control=context.control,
                         )
+                    _require_published_attempt(
+                        runtime.vault_indexer.last_checkpoint,
+                        dispatch.mode,
+                        previous_checkpoint,
+                    )
                 finally:
                     _publish_resilience(
                         context,
@@ -225,8 +298,8 @@ def _run_indexing_attempt(
     preflight, holds no pipeline resource, invalidates the graph cache, and
     returns a result without preprocess fields - it is a different job, not
     this one with different nouns. It does publish resilience, but a different
-    shape of it: observed memory peaks with no admitted ceiling and no
-    checkpoint projection, because the vault domain has neither.
+    shape of it: observed memory peaks and checkpoint publication with no
+    admitted ceiling, because the vault domain has no support profile.
     """
     from ._job_admission import (
         validate_code_job_admission,
@@ -275,6 +348,7 @@ def _run_indexing_attempt(
                 try:
                     if code_preflight is not None:
                         code_indexer = runtime.code_indexer
+                        previous_checkpoint = code_indexer.last_checkpoint
                         result = (
                             code_indexer.full_index(
                                 clean=not resumed,
@@ -291,8 +365,14 @@ def _run_indexing_attempt(
                                 run_control=context.control,
                             )
                         )
+                        _require_published_attempt(
+                            code_indexer.last_checkpoint,
+                            dispatch.mode,
+                            previous_checkpoint,
+                        )
                     else:
                         document_indexer = runtime.document_indexer
+                        previous_checkpoint = document_indexer.last_checkpoint
                         result = (
                             document_indexer.full_index(
                                 clean=not resumed,
@@ -308,6 +388,11 @@ def _run_indexing_attempt(
                                 authority=dispatch.authority,
                                 run_control=context.control,
                             )
+                        )
+                        _require_published_attempt(
+                            document_indexer.last_checkpoint,
+                            dispatch.mode,
+                            previous_checkpoint,
                         )
                 finally:
                     _publish_resilience(
@@ -416,10 +501,9 @@ def _checkpoint_resilience(
     peak_cuda_reserved_mib: float | None,
 ) -> IndexResilienceSnapshot:
     """Project one concrete checkpoint without adapter policy recomputation."""
-    from .indexer._document_checkpoint import DocumentRunCheckpoint
-    from .indexer._run_checkpoint import CodeRunCheckpoint
+    from .indexer._checkpoint_common import RunCheckpointBase
 
-    if not isinstance(checkpoint, (CodeRunCheckpoint, DocumentRunCheckpoint)):
+    if not isinstance(checkpoint, RunCheckpointBase):
         return admitted
     generation = checkpoint.ledger.generation(checkpoint.generation_id)
     run = checkpoint.run_policy.snapshot()
@@ -466,24 +550,23 @@ def _code_resilience(indexer: CodebaseIndexer) -> IndexResilienceSnapshot:
 
 
 def _vault_resilience(indexer: VaultIndexer) -> IndexResilienceSnapshot:
-    """Project one vault run's observed memory high-water.
-
-    Deliberately not routed through ``_admitted_resilience`` or
-    ``_checkpoint_resilience``, and neither is an oversight. The vault domain
-    has no entry in the support profiles, so there are no admitted ceilings to
-    report and reporting another domain's would be worse than reporting none.
-    The vault run has no ledger and no checkpoint either, so the checkpoint
-    projector would discard the peaks it was handed. What is left is the
-    measurement itself, which is the thing an operator watching headroom
-    actually needs.
-    """
+    """Project vault publication and measured peaks without profile ceilings."""
     budget = indexer.memory_budget_snapshot
-    if budget is None:
-        return IndexResilienceSnapshot()
-    return IndexResilienceSnapshot(
-        peak_rss_mib=budget.peak_rss_mib,
-        peak_cuda_allocated_mib=budget.peak_cuda_allocated_mib,
-        peak_cuda_reserved_mib=budget.peak_cuda_reserved_mib,
+    observed = IndexResilienceSnapshot(
+        peak_rss_mib=budget.peak_rss_mib if budget is not None else None,
+        peak_cuda_allocated_mib=(
+            budget.peak_cuda_allocated_mib if budget is not None else None
+        ),
+        peak_cuda_reserved_mib=(
+            budget.peak_cuda_reserved_mib if budget is not None else None
+        ),
+    )
+    return _checkpoint_resilience(
+        indexer.last_checkpoint,
+        observed,
+        peak_rss_mib=observed.peak_rss_mib,
+        peak_cuda_allocated_mib=observed.peak_cuda_allocated_mib,
+        peak_cuda_reserved_mib=observed.peak_cuda_reserved_mib,
     )
 
 

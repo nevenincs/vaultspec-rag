@@ -58,6 +58,7 @@ class WatcherSettlement:
 
     outcome: WatcherAttemptOutcome
     error: BaseException | None = None
+    failure_at: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +537,10 @@ def _settlement_operation(
     error = settlement.error
     if error is None:
         raise ValueError("failed watcher settlement requires an error")
+    if settlement.failure_at is not None:
+        return lambda: policy.record_failure(
+            error, attempt_generation, now=settlement.failure_at
+        )
     return lambda: policy.record_failure(error, attempt_generation)
 
 

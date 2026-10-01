@@ -241,6 +241,7 @@ async def test_unsafe_restart_recovery_is_terminal_and_retry_cannot_clear_it(
 
     assert refused.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert refused.circuit_state is WatcherCircuitState.OPEN
-    assert refused.pending_paths == ()
+    # Mutation: a terminal refusal must restore the captured paths before release.
+    assert [item.relative_path for item in refused.pending_paths] == ["src/a.py"]
     assert policy.state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
     assert not policy.admit(now=4.0).admitted

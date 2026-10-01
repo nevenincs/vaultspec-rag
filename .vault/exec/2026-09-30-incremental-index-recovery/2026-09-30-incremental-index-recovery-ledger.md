@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:d158f09596924a4514bfc7d7227811143fa7c39be2bc81fe75a1651b1a8884ff'
+body_hash: 'sha256:35b9f23b7901c44b3721d10819ad3c08b54000c85eb8b1e92ebfd3f78f990839'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -65,3 +65,26 @@ related:
 - `S02` `verify:` `ruff format --check src dev tools conftest.py: applicable unchanged S02 snapshot` -> `pass`
 - `S02` `verify:` `python -m ty check and basedpyright all changed Python files before checkpoint: zero diagnostics` -> `pass`
 - `S02` `by:` `Codex supervisor`
+- `S03` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S03` `M` `src/vaultspec_rag/job_dispatch.py`
+- `S03` `M` `src/vaultspec_rag/watcher_runtime.py`
+- `S03` `M` `src/vaultspec_rag/watcher_durability.py`
+- `S03` `M` `src/vaultspec_rag/server/_watcher.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_watcher_rebuild_settlement.py`
+- `S03` `A` `src/vaultspec_rag/tests/test_watcher_publication_certification.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_scheduler.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_watcher_recovery.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_job_resilience.py`
+- `S03` `verify:` `python -m pytest all unit test_watcher and test_job modules plus config/CLI watcher modules -q --tb=short: 751 tests` -> `pass`
+- `S03` `verify:` `python -m ruff check src dev tools conftest.py` -> `pass`
+- `S03` `verify:` `python -m ruff format --check src dev tools conftest.py: 921 files` -> `pass`
+- `S03` `verify:` `python -m ty check --python main .venv interpreter all changed Python files from 14269e8e` -> `pass`
+- `S03` `verify:` `python -m basedpyright --pythonpath main .venv interpreter all changed Python files from 14269e8e: zero diagnostics` -> `pass`
+- `S03` `verify:` `127 intended-red/restored-green watcher guard records, 125 distinct mutations, zero invalid records` -> `pass`
+- `S03` `verify:` `52-case persisted historical matrix and 8 actual production dispatch orchestration cases` -> `pass`
+- `S03` `by:` `vaultspec-high-executor`
+
+## Notes
+
+- `S03` Additional full-package complexipy remains red solely for untouched `_routes_search._execute_search_request` at 21 against 20; all changed production functions pass. No threshold or suppression changes.

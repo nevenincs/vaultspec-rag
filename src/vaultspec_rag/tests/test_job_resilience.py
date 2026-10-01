@@ -521,7 +521,7 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
     """The dispatcher projection carries peaks and claims no ceiling.
 
     The vault domain has no support-profile entry, so reporting a ceiling
-    here could only mean borrowing another domain's, and the vault run has
+    here could only mean borrowing another domain's, and this fixture opens
     no checkpoint, so claiming one would be equally false. The projection
     must carry the three measured peaks and leave both groups absent.
 
@@ -552,7 +552,7 @@ def test_vault_resilience_projects_observed_peaks_without_ceilings(
     assert resilience.rss_ceiling_mib is None
     assert resilience.cuda_ceiling_mib is None
     assert resilience.support_profile is None
-    # No checkpoint exists for a vault run, so none is claimed.
+    # This vault indexer has not opened a checkpoint, so none is claimed.
     assert resilience.generation_id is None
     assert resilience.checkpoint_compatible is None
 

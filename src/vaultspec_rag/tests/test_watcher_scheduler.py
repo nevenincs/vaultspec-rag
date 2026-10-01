@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -45,7 +46,7 @@ def _controller(
 ) -> WatcherController:
     return WatcherController(
         ControllerSnapshot(
-            canonical_root=str(root.resolve()),
+            canonical_root=os.path.normcase(str(root.resolve())),
             source=WatcherSource.CODE,
             state=state,
             reason=ControllerReason.QUIET_TREE_DEADLINE,

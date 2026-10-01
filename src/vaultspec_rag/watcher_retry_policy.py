@@ -66,6 +66,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Self
 
+    from .job_models import JobSnapshot
+
 __all__ = ["WatcherRetryPolicy"]
 
 #: How many admission reservations one interpreter may hold at once. A
@@ -90,6 +92,7 @@ class _WatcherRetryOptions:
     scope_max_paths: int = DEFAULT_SCOPE_MAX_PATHS
     scope_max_bytes: int = DEFAULT_SCOPE_MAX_BYTES
     now: float | None = None
+    recover_abandoned_attempts: bool = True
 
 
 def _decision(
@@ -166,6 +169,75 @@ def _recovery_marker_is_consumable(
     return marker_owner_is_current_process(
         marker
     ) and _same_process_marker_token_is_consumable(token)
+
+
+def _retry_state_path(root: Path, source: WatcherSource) -> Path:
+    """Resolve the configured durable state owner for one canonical source."""
+    from .config._settings import get_config
+
+    return (
+        root.resolve()
+        / get_config().data_dir
+        / STATE_DIRECTORY
+        / f"{source.value}.json"
+    )
+
+
+def _scope_loss_needs_refusal(state: WatcherRetryState) -> bool:
+    """Refuse newly lost scope without treating each read as another event."""
+    return (
+        state.convergence_pending
+        and not state.unscoped_required
+        and not state.pending_paths
+        and not state.captured_paths
+        and not (
+            state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            and state.circuit_state is WatcherCircuitState.OPEN
+        )
+    )
+
+
+def _rebuild_publication_is_certified(
+    root: Path, source: WatcherSource, generation_id: str | None
+) -> bool:
+    """Require this full run's exact committed canonical publication owner."""
+    from ._publication_state import (
+        UNREADABLE_PUBLICATION_ERRORS,
+        acquire_publication_snapshot,
+    )
+    from ._source_types import PublicSourceType
+    from .indexer._publication_proof import ProofProvenance
+    from .indexer._run_ledger_models import (
+        FinalizationPhase,
+        RunOperation,
+        RunTerminalState,
+    )
+    from .indexer._run_ledger_publication_identity import compatibility_for_generation
+
+    if generation_id is None:
+        return False
+    try:
+        published = acquire_publication_snapshot(root, PublicSourceType(source.value))
+        if published.proof.generation_id != generation_id:
+            return False
+        generation = published.ledger.generation(generation_id)
+        if (
+            generation.terminal_state is not RunTerminalState.SUCCEEDED
+            or generation.finalization_phase
+            not in {
+                FinalizationPhase.GENERATION_PUBLISHED,
+                FinalizationPhase.COMPACTED,
+            }
+            or generation.signature.operation is not RunOperation.FULL
+            or compatibility_for_generation(generation)
+            != published.proof.compatibility_key
+            or published.proof.provenance is not ProofProvenance.VERIFIED
+        ):
+            return False
+        published.validate()
+    except (*UNREADABLE_PUBLICATION_ERRORS, KeyError):
+        return False
+    return True
 
 
 class WatcherRetryPolicy:
@@ -270,12 +342,7 @@ class WatcherRetryPolicy:
             self._validate_authority(loaded)
             loaded = self._apply_recovery_markers_unlocked(loaded, timestamp)
             state_changed = False
-            if (
-                loaded.convergence_pending
-                and not loaded.unscoped_required
-                and not loaded.pending_paths
-                and not loaded.captured_paths
-            ):
+            if _scope_loss_needs_refusal(loaded):
                 loaded = replace(
                     loaded,
                     last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
@@ -287,8 +354,10 @@ class WatcherRetryPolicy:
                     updated_at=timestamp,
                 )
                 state_changed = True
-            if loaded.attempt_generation is not None and not _attempt_owner_is_live(
-                loaded
+            if (
+                options.recover_abandoned_attempts
+                and loaded.attempt_generation is not None
+                and not _attempt_owner_is_live(loaded)
             ):
                 loaded, recovered_changed = self._recover_abandoned_attempt(
                     loaded, timestamp
@@ -303,6 +372,14 @@ class WatcherRetryPolicy:
     ) -> tuple[WatcherRetryState, bool]:
         """Retain scoped fences for job reconciliation; refuse legacy scope loss."""
         if state.attempt_job_id is None:
+            if (
+                state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+                and state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                and state.circuit_state is WatcherCircuitState.OPEN
+            ):
+                # Retain terminal refusal provenance for a covering rebuild;
+                # loading the same abandoned fence is not a newer observation.
+                return state, False
             failures = state.consecutive_failures + 1
             return (
                 replace(
@@ -352,6 +429,7 @@ class WatcherRetryPolicy:
         source: WatcherSource,
         *,
         now: float | None = None,
+        recover_abandoned_attempts: bool = True,
     ) -> Self:
         """Construct the configured policy for one canonical project root."""
         from .config._settings import get_config
@@ -359,7 +437,7 @@ class WatcherRetryPolicy:
         cfg = get_config()
         resolved_root = root.resolve()
         canonical_root = os.path.normcase(str(resolved_root))
-        path = resolved_root / cfg.data_dir / STATE_DIRECTORY / f"{source.value}.json"
+        path = _retry_state_path(resolved_root, source)
         return cls(
             path,
             _WatcherRetryOptions(
@@ -372,6 +450,7 @@ class WatcherRetryPolicy:
                 scope_max_paths=cfg.watch_scope_max_paths,
                 scope_max_bytes=cfg.watch_scope_max_bytes,
                 now=now,
+                recover_abandoned_attempts=recover_abandoned_attempts,
             ),
         )
 
@@ -379,6 +458,137 @@ class WatcherRetryPolicy:
     def state(self) -> WatcherRetryState:
         """Return the current immutable policy state."""
         return self._state
+
+    @classmethod
+    def reconcile_rebuild(
+        cls, snapshot: JobSnapshot, policy: WatcherRetryPolicy | None = None
+    ) -> bool:
+        """Settle only an obsolete refusal after certified full publication.
+
+        The production dispatch completion callback supplies canonical terminal
+        job truth. A later failure remains authoritative, and all exact paths
+        and attempt ownership remain available for their ordinary settlement.
+        """
+        from pathlib import Path
+
+        from .indexer._run_ledger_models import RunAuthority, RunTerminalState
+        from .job_models import JobMode, JobOperation, JobState
+
+        spec = snapshot.spec
+        started_at = snapshot.timestamps.started_at
+        finished_at = snapshot.timestamps.finished_at
+        if (
+            snapshot.state is not JobState.SUCCEEDED
+            or snapshot.result is None
+            or not snapshot.result.strip()
+            or snapshot.error_kind is not None
+            or snapshot.resilience is None
+            or snapshot.resilience.terminal_outcome != RunTerminalState.SUCCEEDED.value
+            or spec.operation is not JobOperation.INDEX
+            or not spec.source.is_corpus
+            or spec.mode is not JobMode.REBUILD
+            or spec.authority is not RunAuthority.REBUILD
+            or spec.project_root is None
+            or started_at is None
+            or finished_at is None
+            or finished_at < started_at
+        ):
+            return False
+        root = Path(spec.project_root)
+        source = WatcherSource(spec.source.value)
+        if not _retry_state_path(root, source).is_file():
+            return False
+        if policy is None:
+            # Publication settlement owns durable state, never a watcher attempt.
+            policy = cls.for_root(root, source, recover_abandoned_attempts=False)
+        elif policy._root != os.path.normcase(str(root.resolve())) or (
+            policy._source is not source
+        ):
+            return False
+        with locked_state(policy._path):
+            state = policy._refresh_unlocked()
+            if (
+                state.scope_refusal
+                not in {
+                    None,
+                    WatcherScopeRefusal.FULL_REINDEX_REQUIRED,
+                }
+                or state.last_error_kind
+                not in {
+                    None,
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                }
+                or (
+                    state.scope_refusal is None
+                    and state.last_error_kind is not JobErrorKind.FULL_REINDEX_REQUIRED
+                )
+            ):
+                return False
+            refused_at = (
+                state.last_failure_at
+                if state.last_failure_at is not None
+                else state.updated_at
+            )
+            unknown_scope = state.unscoped_required or (
+                state.convergence_pending
+                and not state.pending_paths
+                and not state.captured_paths
+            )
+            if (
+                refused_at > started_at
+                or (unknown_scope and state.updated_at > started_at)
+                or not _rebuild_publication_is_certified(
+                    root, source, snapshot.resilience.generation_id
+                )
+            ):
+                return False
+            abandoned_legacy_token = None
+            if (
+                state.attempt_generation is not None
+                and state.attempt_job_id is None
+                and state.attempt_owner_pid is not None
+                and state.attempt_owner_create_time is not None
+                and state.attempt_started_at is not None
+                and state.attempt_started_at <= started_at
+                and not _attempt_owner_is_live(state)
+            ):
+                abandoned_legacy_token = state.attempt_token
+                state = replace(
+                    state,
+                    attempt_generation=None,
+                    attempt_token=None,
+                    attempt_started_at=None,
+                    attempt_owner_pid=None,
+                    attempt_owner_create_time=None,
+                )
+            policy._commit_unlocked(
+                replace(
+                    state,
+                    consecutive_failures=0,
+                    last_error_kind=None,
+                    last_error_detail=None,
+                    last_failure_at=None,
+                    last_durable_progress_at=finished_at,
+                    next_retry_at=0.0,
+                    circuit_state=(
+                        WatcherCircuitState.HALF_OPEN
+                        if state.circuit_state is WatcherCircuitState.HALF_OPEN
+                        else WatcherCircuitState.CLOSED
+                    ),
+                    convergence_pending=bool(
+                        state.pending_paths
+                        or state.captured_paths
+                        or state.attempt_generation is not None
+                    ),
+                    unscoped_required=False,
+                    scope_refusal=None,
+                    convergence_generation=state.convergence_generation + 1,
+                    updated_at=max(state.updated_at, finished_at),
+                )
+            )
+            if abandoned_legacy_token is not None:
+                policy._clear_owned_admission_token(abandoned_legacy_token)
+            return True
 
     def mark_convergence_pending(
         self, *, now: float | None = None
@@ -464,13 +674,25 @@ class WatcherRetryPolicy:
                 pending_paths=merged,
                 scope_max_paths=self._scope_max_paths,
                 scope_max_bytes=self._scope_max_bytes,
-                scope_refusal=None,
-                unscoped_required=False,
-                last_error_kind=None,
-                last_error_detail=None,
-                consecutive_failures=0,
-                next_retry_at=0.0,
-                circuit_state=WatcherCircuitState.CLOSED,
+                scope_refusal=(
+                    state.scope_refusal if state.unscoped_required else None
+                ),
+                unscoped_required=state.unscoped_required,
+                last_error_kind=(
+                    state.last_error_kind if state.unscoped_required else None
+                ),
+                last_error_detail=(
+                    state.last_error_detail if state.unscoped_required else None
+                ),
+                consecutive_failures=(
+                    state.consecutive_failures if state.unscoped_required else 0
+                ),
+                next_retry_at=(state.next_retry_at if state.unscoped_required else 0.0),
+                circuit_state=(
+                    state.circuit_state
+                    if state.unscoped_required
+                    else WatcherCircuitState.CLOSED
+                ),
                 updated_at=timestamp,
             )
             if state_payload_size(candidate) > self._scope_max_bytes:
@@ -587,7 +809,8 @@ class WatcherRetryPolicy:
                         "admission cancelled by recovery handoff",
                     )
                 terminal_scope_loss = (
-                    state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+                    state.unscoped_required
+                    or state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
                 )
                 if not state.convergence_pending or terminal_scope_loss:
                     self._clear_owned_admission_token(attempt_token)
@@ -700,27 +923,39 @@ class WatcherRetryPolicy:
         with locked_state(self._path):
             state = self._refresh_unlocked()
             self._require_active_attempt(state, attempt_generation)
-            newer_generation_pending = state.convergence_generation > attempt_generation
+            newer_generation_pending = state.unscoped_required or (
+                bool(state.pending_paths)
+                if state.attempt_job_id is not None
+                else state.convergence_generation > attempt_generation
+            )
             committed = self._commit_unlocked(
                 replace(
                     state,
-                    consecutive_failures=0,
-                    last_error_kind=None,
-                    last_error_detail=None,
-                    last_failure_at=None,
-                    last_durable_progress_at=timestamp,
-                    next_retry_at=0.0,
-                    circuit_state=WatcherCircuitState.CLOSED,
-                    convergence_pending=newer_generation_pending,
-                    # A generation marked mid-attempt keeps its exact paths in
-                    # the live convergence slot, so success preserves rather
-                    # than forces the unscoped requirement; construction over
-                    # a loaded pending bit and scope refresh still escalate
-                    # for any instance that cannot scope the pending
-                    # generation.
-                    unscoped_required=(
-                        newer_generation_pending and state.unscoped_required
+                    consecutive_failures=(
+                        state.consecutive_failures if state.unscoped_required else 0
                     ),
+                    last_error_kind=(
+                        state.last_error_kind if state.unscoped_required else None
+                    ),
+                    last_error_detail=(
+                        state.last_error_detail if state.unscoped_required else None
+                    ),
+                    last_failure_at=(
+                        state.last_failure_at if state.unscoped_required else None
+                    ),
+                    last_durable_progress_at=timestamp,
+                    next_retry_at=(
+                        state.next_retry_at if state.unscoped_required else 0.0
+                    ),
+                    circuit_state=(
+                        state.circuit_state
+                        if state.unscoped_required
+                        else WatcherCircuitState.CLOSED
+                    ),
+                    convergence_pending=newer_generation_pending,
+                    # This attempt certifies captured paths only. Unknown
+                    # handoff intent requires a separately fenced full rebuild.
+                    unscoped_required=state.unscoped_required,
                     captured_paths=(),
                     attempt_job_id=None,
                     attempt_generation=None,
@@ -758,7 +993,7 @@ class WatcherRetryPolicy:
                     ),
                     circuit_state=(
                         WatcherCircuitState.OPEN
-                        if half_open
+                        if half_open or state.unscoped_required
                         else WatcherCircuitState.CLOSED
                     ),
                     convergence_pending=True,
@@ -806,6 +1041,10 @@ class WatcherRetryPolicy:
             self._require_active_attempt(state, attempt_generation)
             failures = state.consecutive_failures + 1
             error_kind, retryable = _classify_failure(error)
+            if state.unscoped_required:
+                # A scoped outcome cannot replace the unknown handoff's refusal.
+                error_kind = JobErrorKind.FULL_REINDEX_REQUIRED
+                retryable = False
             requires_explicit_rebuild = error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
             delay = self._retry_delay(failures, random_unit=unit)
             was_half_open = state.circuit_state is WatcherCircuitState.HALF_OPEN
@@ -813,29 +1052,45 @@ class WatcherRetryPolicy:
                 was_half_open or not retryable or failures >= self._failure_threshold
             )
             detail = str(error).strip() or type(error).__name__
+            newer_failure = (
+                state.last_failure_at is not None and state.last_failure_at > timestamp
+            )
+            stronger_scope_refusal = state.scope_refusal not in {
+                None,
+                WatcherScopeRefusal.FULL_REINDEX_REQUIRED,
+            }
+            if (
+                state.unscoped_required or newer_failure or stronger_scope_refusal
+            ) and state.last_error_detail is not None:
+                detail = state.last_error_detail
+            pending_paths = restore_captured_paths(state)
             committed = self._commit_unlocked(
                 replace(
                     state,
                     consecutive_failures=failures,
                     last_error_kind=error_kind,
                     last_error_detail=detail[:MAX_ERROR_DETAIL_CHARS],
-                    last_failure_at=timestamp,
-                    next_retry_at=timestamp + delay,
+                    last_failure_at=max(state.last_failure_at or timestamp, timestamp),
+                    next_retry_at=(
+                        max(state.next_retry_at, timestamp + delay)
+                        if newer_failure
+                        else timestamp + delay
+                    ),
                     circuit_state=(
                         WatcherCircuitState.OPEN
                         if open_circuit
                         else WatcherCircuitState.CLOSED
                     ),
-                    convergence_pending=not requires_explicit_rebuild,
-                    unscoped_required=False,
-                    pending_paths=(
-                        ()
-                        if requires_explicit_rebuild
-                        else restore_captured_paths(state)
+                    convergence_pending=(
+                        state.unscoped_required
+                        or bool(pending_paths)
+                        or not requires_explicit_rebuild
                     ),
+                    unscoped_required=state.unscoped_required,
+                    pending_paths=pending_paths,
                     captured_paths=(),
                     scope_refusal=(
-                        WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+                        state.scope_refusal or WatcherScopeRefusal.FULL_REINDEX_REQUIRED
                         if requires_explicit_rebuild
                         else state.scope_refusal
                     ),
@@ -845,7 +1100,7 @@ class WatcherRetryPolicy:
                     attempt_started_at=None,
                     attempt_owner_pid=None,
                     attempt_owner_create_time=None,
-                    updated_at=timestamp,
+                    updated_at=max(state.updated_at, timestamp),
                 )
             )
             owned_token = self._owned_attempt_token
@@ -951,7 +1206,10 @@ class WatcherRetryPolicy:
         """
         cleared: dict[str, object] = (
             {
+                "pending_paths": restore_captured_paths(state),
+                "captured_paths": (),
                 "attempt_generation": None,
+                "attempt_job_id": None,
                 "attempt_token": None,
                 "attempt_started_at": None,
                 "attempt_owner_pid": None,
@@ -972,7 +1230,10 @@ class WatcherRetryPolicy:
         return replace(
             state,
             convergence_pending=True,
-            unscoped_required=False,
+            unscoped_required=True,
+            scope_refusal=(
+                state.scope_refusal or WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+            ),
             last_error_kind=JobErrorKind.FULL_REINDEX_REQUIRED,
             last_error_detail=(
                 "watcher recovery handoff cannot preserve the exact changed-path "
@@ -1047,10 +1308,7 @@ class WatcherRetryPolicy:
         """Refuse a pending generation this instance cannot scope."""
         state = self._refresh_unlocked()
         if (
-            state.convergence_pending
-            and not state.unscoped_required
-            and not state.pending_paths
-            and not state.captured_paths
+            _scope_loss_needs_refusal(state)
             and state.convergence_generation != self._scoped_generation
         ):
             state = self._commit_unlocked(

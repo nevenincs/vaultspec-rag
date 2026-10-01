@@ -15,8 +15,11 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from anyio.to_thread import run_sync as _run_in_thread
+
 from . import jobs as _jobs
 from ._backoff import capped_exponential
+from ._job_errors import JobErrorKind
 from .job_manager.models import JobExecutionResult  # noqa: TC001
 from .job_models import (
     JobMode,
@@ -27,6 +30,7 @@ from .job_models import (
 )
 from .logging_config import log_event
 from .watcher_retry import (
+    WatcherScopeRefusal,
     WatcherSource,
 )
 
@@ -36,6 +40,7 @@ if TYPE_CHECKING:
     from .indexer._document_indexer import DocumentExecutionPreflight
     from .indexer._resolved_policy import ResolvedIndexPolicy
     from .service import ServiceRegistry
+    from .watcher_retry import WatcherRetryState
     from .watcher_retry_policy import WatcherRetryPolicy
 
 logger = logging.getLogger(__name__)
@@ -493,8 +498,8 @@ async def reconcile_restarted_slot(
     slot: WatcherConvergenceSlot,
     manager: _jobs.JobManager,
 ) -> None:
-    """Reconcile one durable attempt fence with canonical manager history."""
-    state = slot.retry_policy.state
+    """Reconcile rebuild settlement and attempt fences with bounded job history."""
+    state = await _reconcile_rebuild_history(slot, manager)
     with slot.lock:
         slot.pending_paths.update(
             slot.root / observation.relative_path for observation in state.pending_paths
@@ -514,7 +519,7 @@ async def reconcile_restarted_slot(
         await _settle_recovered_attempt(
             slot,
             generation,
-            JobState.FAILED,
+            None,
             detail=detail,
             force_refusal=True,
         )
@@ -534,12 +539,57 @@ async def reconcile_restarted_slot(
             slot.observed_state = snapshot.state
         return
 
+    unpublished = _recovered_source_run_unpublished(snapshot)
     await _settle_recovered_attempt(
         slot,
         generation,
-        snapshot.state,
-        detail=snapshot.result or snapshot.error_kind or snapshot.state.value,
-        force_refusal=snapshot.error_kind == "full_reindex_required",
+        snapshot,
+        detail=(
+            "the fenced watcher job returned without publishing its source generation"
+            if unpublished
+            else snapshot.result or snapshot.error_kind or snapshot.state.value
+        ),
+        force_refusal=unpublished or snapshot.error_kind == "full_reindex_required",
+    )
+    await _reconcile_rebuild_history(slot, manager)
+
+
+async def _reconcile_rebuild_history(
+    slot: WatcherConvergenceSlot, manager: _jobs.JobManager
+) -> WatcherRetryState:
+    """Apply a covering certified full run without inventing newer observations."""
+    state = slot.retry_policy.state
+    if (
+        state.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+        or state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    ):
+        canonical_root = os.path.normcase(str(slot.root.resolve()))
+        for snapshot in manager.terminal():
+            if (
+                snapshot.spec.source is slot.source
+                and snapshot.spec.project_root is not None
+                and os.path.normcase(str(Path(snapshot.spec.project_root).resolve()))
+                == canonical_root
+                and await _run_in_thread(
+                    slot.retry_policy.reconcile_rebuild, snapshot, slot.retry_policy
+                )
+            ):
+                state = await _run_in_thread(slot.retry_policy.refresh)
+                break
+    return state
+
+
+def _recovered_source_run_unpublished(snapshot: JobSnapshot) -> bool:
+    """Refuse unproved current-run outcomes from always-opening source owners."""
+    from .indexer._run_ledger_models import RunTerminalState
+
+    return (
+        snapshot.state is JobState.SUCCEEDED
+        and snapshot.spec.source in {JobSource.DOCUMENT, JobSource.VAULT}
+        and (
+            snapshot.resilience is None
+            or snapshot.resilience.terminal_outcome != RunTerminalState.SUCCEEDED.value
+        )
     )
 
 
@@ -564,7 +614,7 @@ def _is_exact_watcher_job(slot: WatcherConvergenceSlot, snapshot: JobSnapshot) -
 async def _settle_recovered_attempt(
     slot: WatcherConvergenceSlot,
     generation: int,
-    state: JobState,
+    snapshot: JobSnapshot | None,
     *,
     detail: str,
     force_refusal: bool,
@@ -577,17 +627,21 @@ async def _settle_recovered_attempt(
         settle_watcher_attempt,
     )
 
-    if state is JobState.SUCCEEDED:
-        settlement = WatcherSettlement(WatcherAttemptOutcome.SUCCEEDED)
-    elif force_refusal:
+    state = snapshot.state if snapshot is not None else JobState.FAILED
+    failure_at = snapshot.timestamps.finished_at if snapshot is not None else None
+    if force_refusal:
         settlement = WatcherSettlement(
             WatcherAttemptOutcome.FAILED,
             JobError(JobErrorKind.FULL_REINDEX_REQUIRED, detail),
+            failure_at,
         )
+    elif state is JobState.SUCCEEDED:
+        settlement = WatcherSettlement(WatcherAttemptOutcome.SUCCEEDED)
     elif state is JobState.FAILED:
         settlement = WatcherSettlement(
             WatcherAttemptOutcome.FAILED,
             RuntimeError(detail),
+            failure_at,
         )
     else:
         settlement = WatcherSettlement(WatcherAttemptOutcome.INTERRUPTED)

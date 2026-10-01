@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:6cebf066392594a218b1bba1646cda1aa60ed906512ff235339072ce823bbf8a'
+body_hash: 'sha256:61ba2259a65a92634d9b26a75787664b04d6c3ee2ac70c7e7169739188a753c4'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -14,7 +14,7 @@ related:
 
 ## Scope
 
-Review the approved four-Step plan against base `14269e8e`, including its committed and uncommitted repairs. Trace publication receipts, explicit rebuild admission, route cleanup, service job completion, durable watcher recovery and canonical vault audits together. The accepted decisions linked by the plan govern this review. Independent preparation is PENDING while S01 and S03 corrections finish; the supervisor owns shared verification and all records.
+Review all four closed Steps against base `14269e8e` on branch `fix/incremental-index-recovery`, including committed S01, S02 and S04 and the completed stable S03 working tree. Trace publication receipts, explicit rebuild admission, route cleanup, service job completion, durable watcher recovery and canonical vault audits together. The accepted decisions linked by the plan govern this review. The independent reviewer reused completed traces and checked every corrective interaction; the supervisor owned shared verification and all records. Source remained unchanged between final gates and the final review.
 
 ## Findings
 
@@ -74,6 +74,54 @@ S01 records durable progress after the canonical receipt commit or empty rollbac
 
 The existing `VaultRunCheckpoint` is exposed through `VaultIndexer.last_checkpoint`, initialized empty and assigned at all three actual open sites in the full, incremental and payload owners. Four CPU cases use real temporary storage and ledger state for empty full, ordinary and scoped incremental, and a metadata-only refresh with manually seeded vectors. Five guard mutations cover initial state and each opening path. The final affected S01 command passed 37 cases; both strict type checkers and package Ruff/format passed after a mixed-line-ending correction. Evidence is in `incremental-recovery-vault-exposure-guard-evidence.json` and `incremental-recovery-progress-exposure-final-unit.log`.
 
+### historical-publication-truth | high | Failed persisted incremental attempts could consume captured scope
+
+Final S03 review found that an old document incremental attempt could also mark its generation FAILED and return a result. Its persisted job could therefore say SUCCEEDED with an explicitly failed per-attempt resilience outcome. The restart owner then recorded successful captured-scope consumption. The watcher owner is applying a typed failed/refused interpretation for the document and vault paths that always open a current checkpoint, while preserving valid unchanged code attempts that can reuse an older owner. The canonical FULL_REINDEX_REQUIRED failure owner must also restore pending and captured exact paths before clearing the attempt identity, keeping newer unknown scope refused. Real persisted restart regressions, valid code no-op coverage and scoped mutation evidence are required before S03 closes.
+
+### historical-recovery-order | high | Restart-time refusal could outlive a later covering rebuild
+
+The final historical recovery trace identified an ordering facet of `historical-publication-truth`: when restart first discovers an old falsely successful incremental job, recording its failure at the current restart time can make a later certified successful rebuild look too old to cover it. The first history scan may already have skipped that rebuild because no refusal existed yet. S03 must use the persisted terminal outcome's time, reconcile certified rebuild history after recovered-attempt settlement, and preserve genuinely newer unknown observations. A real persisted restart regression and uninterrupted mutation proof are required before closure.
+
+### watcher-admission-resolution | low | Settlement preserves execution ownership and root identity
+
+The state-only policy loader settles an obsolete refusal without adopting an abandoned admission reservation a second time. Restart reuses its existing execution-owning policy, and completion preserves the existing callback while waking the scheduler. Legacy dead attempt fences are released only with positive owner identity, proved death and an attempt older than the certified rebuild. Constructor recovery retains original refusal timestamps. Windows unregister and join use the same normalized resolved root identity. Real persisted policy and scheduler regressions and their restored guard sequences cover these interactions.
+
+### watcher-unknown-scope-resolution | low | Lost observations and exact paths remain durable
+
+Cancellation recovery markers retain unknown pending intent through marker consumption, later exact batches and captured-attempt settlement. Successful rebuilds clear only the refusal they cover and preserve pending, captured and newer dirty scope. Canonical FULL_REINDEX_REQUIRED failure restores pending and captured exact paths before closing the attempt identity, retaining convergence work and newer unknown metadata. Historical document and vault jobs with explicitly failed current-attempt outcomes are refused even if their old job state says SUCCEEDED; valid unchanged code attempts can retain prior-owner telemetry. The restart ordering facet recorded above remains pending separately.
+
+### rebuild-publication-truth-resolution | low | Completion and rebuild settlement require actual publication
+
+The source/job boundary checks the actual returned checkpoint's terminal publication outcome rather than treating a nonthrowing IndexResult as success. Real JobManager dispatch cases cover full and incremental code, document and vault failures, plus successful code no-op and safe skip diagnostics. Removing each of the six production call-site validations failed its exact persisted job-state assertion before immediate byte restoration passed. Completion callbacks and bounded restart history additionally require the exact per-attempt succeeded generation, canonical source/root/backend/collection compatibility, FULL mode, clean VERIFIED proof, published owner and valid publication token. Foreign, unpublished, pruned and superseded proof cannot settle a refusal. Vault resilience exposes its canonical checkpoint identity and retains observed peak telemetry even when no owner is present.
+
+The S03 local evidence file `.pytest-tmp/watcher-mutation-evidence.json` currently contains 96 uninterrupted intended-red/restored-green records. These include historical outcomes, failure precedence, exact dirty-scope preservation, valid code prior-owner no-op handling, all six actual dispatch validation call sites and vault peak telemetry. The eight real dispatch orchestration cases and the preceding 165-case affected watcher/job command passed. The final ordering regression and combined supervisor gates are pending; no final verdict is implied by this intermediate evidence.
+
+### historical-recovery-order-follow-up | high | Truthfully failed historical attempts also need the covering rebuild pass
+
+Independent review of the first ordering correction found that its second bounded history pass was limited to the legacy SUCCEEDED document/vault case with an unpublished per-attempt outcome. A genuinely FAILED incremental job with FULL_REINDEX_REQUIRED can also be persisted before its policy callback runs, followed by a later certified rebuild before restart. Recovering that terminal attempt creates the same old refusal. S03 must reconcile covering rebuild history after terminal recovery whenever a canonical full refusal exists, including this modern failed-job case, with persisted regression and omission guard evidence. The original historical-order finding remains open until both terminal-state variants pass final review.
+
+### historical-outcome-unknown | high | Missing document or vault outcome cannot prove captured-scope success
+
+The complete terminal-state matrix trace found that old SUCCEEDED document/vault jobs can lack resilience or a terminal outcome: historical resilience projection could fail silently, and the previous vault owner did not expose its checkpoint. These always-opening sources cannot prove successful publication from the job state alone. S03 must retain their captured paths as a typed recovery refusal, using recorded terminal time when available so a later certified full rebuild can cover it. Missing resilience and missing terminal outcome need both no-cover and covering-rebuild regressions. Valid code no-owner and unchanged prior-owner successes must retain their explicit exception. The canonical JobManager attempt join will replace the focused test fixture's vulnerable five-second event-only wait, with a bounded timeout and outcome diagnostics while preserving terminal and callback assertions.
+
+### historical-publication-truth-resolution | low | Recovery preserves unproved scope and reconciles covering rebuilds in order
+
+S03 now restores captured and pending paths for failed or unproved always-opening document/vault attempts. Missing resilience, missing outcome and explicit non-success outcomes are refused rather than inferred successful. CODE retains valid unchanged prior-owner and no-owner successes. Recovery carries the persisted terminal job time into canonical durable failure settlement, retains the newest observation, refusal time and stronger refusal detail, and retries bounded certified-full history after every terminal settlement. This includes modern FAILED/FULL_REINDEX_REQUIRED jobs for all three sources, as well as legacy SUCCEEDED attempts. Missing or foreign identity and absent terminal timing remain conservative.
+
+The expanded real persisted historical matrix passed all 52 cases. Fifteen additional uninterrupted mutations cover modern FAILED second-history omission for all sources, missing/non-success document/vault outcomes, captured-scope retention after a covering full rebuild and code no-owner exceptions. Sixteen earlier ordering proofs cover timestamp propagation, the second history pass and newer unknown/refusal/capacity evidence in both document and vault paths. The final S03 evidence contains 127 valid red/restored-green records for 125 distinct mutations, with zero invalid records; all temporary bytes are restored and the canonical ledger acquisition owner has no final diff. Independent final trace and the combined supervisor test run remain pending.
+
+The earlier six-module test run passed 180 cases and failed one five-second event-only fixture wait. Seven affected waits now join the real canonical JobManager attempt with a 30-second bound and diagnostic outcomes while retaining their callback, terminal-state and settlement assertions. That earlier run is retained as failure evidence and is not presented as a passing gate.
+
+### final-static-gates | low | Required static checks pass on the completed implementation
+
+The supervisor reran `python -m ruff check src dev tools conftest.py`, `python -m ruff format --check src dev tools conftest.py` and both `python -m ty check --python <main .venv interpreter>` and strict `python -m basedpyright --pythonpath <main .venv interpreter>` over every Python file changed from `14269e8e`, including newly added files. All four commands exited zero on the final stable source; formatting checked 921 files and Basedpyright reported zero errors, warnings or notes. The additional full-package `complexipy src/vaultspec_rag --failed` command still exits one solely for the untouched search handler recorded above at 21 versus 20. Every changed production function passes the configured complexity limit. No threshold, suppression, dependency or baseline search change was introduced.
+
+### final-integration-review | low | PASS for all four completed Steps
+
+The final independent integrated review reports PASS against `14269e8e`. All reported functional findings are resolved and all four Steps are closed. Receipt recovery, bounded cleanup, actual publication outcomes, historical restart ordering, exact and unknown scope preservation, Windows root identity and canonical payload audits satisfy the governing accepted decisions. The final supervisor watcher/job command passed 751 tests in 124.79 seconds with process exit zero; its result is in `incremental-recovery-final-watcher-job-tests.log` under the local temporary directory. Applicable earlier publication, real-storage and audit verification remains valid, including the 169-case publication suite, eight real-store route cases, the final 37-case receipt/checkpoint suite and 41 audit/adjacent cases. S03's 127 uninterrupted restored guard proofs supplement the receipt, route, candidate-query and audit mutation evidence already recorded above.
+
+Package Ruff and formatting, both strict type checkers over every changed Python file, plan validation and all 20 feature health checks pass with no diagnostics. There are no required verification gaps. The inherited search-handler complexity limitation remains disclosed; changed production functions meet the configured limit. The running installed service was not changed during implementation, and this local branch is not pushed, merged or deployed.
+
 ## Recommendations
 
-Finish the in-scope corrections and required checks, then append the final integrated verdict and applicable evidence. Preserve these findings and append their resolutions. Keep ordinary commit authority strict, protect concurrent unknown scope, and verify private code pointer recovery with real temporary storage. Do not deploy, push or merge this implementation branch.
+Implementation and required verification are complete. Preserve the strict canonical commit and certified rebuild gates, newer unknown intent and non-destructive private code publication during release. Keep the inherited search complexity limitation visible rather than changing its threshold or adding a suppression. Any installation into the running service belongs to the ordinary release flow; do not push or merge this implementation branch.
