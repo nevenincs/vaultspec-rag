@@ -65,7 +65,7 @@ function Freshness({
   return (
     <Tag type="gray" size="sm" className="monitor-freshness">
       {age === null
-        ? "No live observation"
+        ? "Not updated yet"
         : `${paused || observation.error ? "Last update" : "Updated"} ${age}s ago · ${new Date(observation.observedAt!).toLocaleTimeString()}`}
     </Tag>
   );
@@ -353,7 +353,7 @@ export function App() {
                       <InlineNotification
                         lowContrast
                         kind="warning"
-                        title="Observation unavailable"
+                        title="Unable to update data"
                         subtitle={pageObservation.error}
                         hideCloseButton
                       />
@@ -420,8 +420,8 @@ export function App() {
                   {page === "clients" && (
                     <Stack gap={5}>
                       <p className="monitor-muted">
-                        Observed service TCP connections. Connections through
-                        this monitor appear as its local bridge.
+                        Active service connections. Connections through this
+                        monitor appear as its local bridge.
                       </p>
                       <DataTree
                         value={object(runtime.data?.clients)}
@@ -436,9 +436,7 @@ export function App() {
                         payload={runtime.data}
                       />
                       <DataTree
-                        value={
-                          runtime.data ?? { observation: "Waiting for metrics" }
-                        }
+                        value={runtime.data ?? { status: "Loading metrics…" }}
                         label="Resource diagnostics"
                       />
                     </Stack>

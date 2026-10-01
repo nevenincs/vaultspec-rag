@@ -36,7 +36,7 @@ export function usePolling<T>(
             error:
               error instanceof Error
                 ? error.message
-                : "Observation unavailable.",
+                : "Unable to load data from the service.",
           }));
         }
       } finally {

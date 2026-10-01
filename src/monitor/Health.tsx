@@ -235,10 +235,7 @@ export function ServiceDiagnostics({
                   "State detail",
                   text(quiesce.failure_reason, "No failure reported"),
                 ],
-                [
-                  "Observed connections",
-                  reading(object(runtime?.clients).total),
-                ],
+                ["Active connections", reading(object(runtime?.clients).total)],
                 ["Storage path", text(object(runtime?.disk).path)],
               ]}
             />

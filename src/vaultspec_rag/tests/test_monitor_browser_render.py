@@ -165,7 +165,10 @@ def _check_retention(
     _select_theme(browser, "dark")
     try:
         discovery.write_text("{}", encoding="utf-8")
-        browser.wait("document.body.innerText.includes('Showing retained evidence')")
+        browser.wait(
+            "document.body.innerText.includes("
+            "'Showing data from the last successful update')"
+        )
         assert browser.evaluate(
             "getComputedStyle(document.querySelector('.cds--inline-notification'))"
             ".backgroundColor.match(/\\d+/g).slice(0, 3)"
@@ -177,7 +180,7 @@ def _check_retention(
     finally:
         discovery.write_text(original, encoding="utf-8")
     browser.wait(
-        "!document.querySelector('main').innerText.includes('Observation unavailable')"
+        "!document.querySelector('main').innerText.includes('Unable to update data')"
     )
     browser.evaluate("document.querySelector('#live-updates').click()")
     with path.open("a", encoding="utf-8") as log:

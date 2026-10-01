@@ -223,9 +223,7 @@ export function WorkPage({
         </div>
       )}
       {!rows.length && (
-        <p className="monitor-empty">
-          No {label.toLowerCase()} in this observation.
-        </p>
+        <p className="monitor-empty">No {label.toLowerCase()} to show.</p>
       )}
     </Stack>
   );

@@ -20,19 +20,21 @@ export function Evidence({
   return (
     <Stack gap={3}>
       <p className="monitor-muted cds--type-label-01">
-        {observation.error && observation.observedAt
-          ? "Showing retained evidence"
+        {observation.error
+          ? observation.observedAt
+            ? "Showing data from the last successful update"
+            : ""
           : paused
             ? "Live updates paused"
             : !observation.observedAt
-              ? "Waiting for an observation"
+              ? "Loading data…"
               : ""}
       </p>
       {observation.error && (
         <InlineNotification
           lowContrast
           kind="warning"
-          title="Observation unavailable"
+          title="Unable to update data"
           subtitle={observation.error}
           hideCloseButton
           role="status"
@@ -114,9 +116,7 @@ export function Logs({
           ))}
         </Grid>
       ) : (
-        <p className="cds--type-body-01 monitor-muted">
-          No log observation yet.
-        </p>
+        <p className="cds--type-body-01 monitor-muted">No logs loaded yet.</p>
       )}
     </Stack>
   );

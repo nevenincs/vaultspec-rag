@@ -85,7 +85,7 @@ export async function request(
     );
   }
   if (Object.keys(payload).length === 0)
-    throw new Error("The service returned an invalid observation.");
+    throw new Error("The service returned data that could not be displayed.");
   return payload;
 }
 
@@ -129,7 +129,9 @@ export function activity(payload: RecordValue): Activity {
       const disclosed = typeof record.query === "string";
       const redacted = record.query_redacted === true;
       if (record.state !== state || disclosed === redacted)
-        throw new Error("Invalid serving observation.");
+        throw new Error(
+          "The service returned query data that could not be displayed.",
+        );
       rows.push(record);
     }
   }

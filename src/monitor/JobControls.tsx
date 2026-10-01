@@ -82,7 +82,7 @@ export function JobControls({
           failed: false,
           message: text(
             result.message,
-            `${action} request accepted. Waiting for the service observation.`,
+            `${action} request accepted. Waiting for the status to update.`,
           ),
         });
     } catch (error) {
@@ -133,7 +133,7 @@ export function JobControls({
       <p className="cds--type-label-01 monitor-muted">
         {pending
           ? "Sending job request…"
-          : "Controls follow service capabilities. Requested state is shown separately from observed state."}
+          : "Available actions depend on the current status. Changes may take a moment to appear."}
       </p>
       {feedback && (
         <InlineNotification

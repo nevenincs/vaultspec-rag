@@ -421,7 +421,7 @@ async function forward(
     const message =
       error instanceof Error && error.message.startsWith("No local service")
         ? error.message
-        : "The local service did not answer. Previous observations remain visible.";
+        : "The service is not responding. Check that it is running and try again.";
     reply(response, 503, { ok: false, message });
   }
 }
