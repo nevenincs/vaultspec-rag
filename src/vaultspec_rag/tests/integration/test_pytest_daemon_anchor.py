@@ -10,6 +10,7 @@ terminated with ``TerminateProcess``, which runs no cleanup of any kind.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import signal
 import subprocess
@@ -89,11 +90,22 @@ class TestKillOnCloseSurvivesAHardKill:
                 "kill-on-close job did not hold"
             )
         finally:
-            if owner.poll() is None:
-                owner.kill()
-            if sleeper_pid is not None and pid_alive(sleeper_pid):
-                with __import__("contextlib").suppress(OSError):
-                    os.kill(sleeper_pid, signal.SIGTERM)
+            with contextlib.ExitStack() as cleanup:
+                for stream in (owner.stdout, owner.stderr):
+                    if stream is not None:
+                        cleanup.callback(stream.close)
+                try:
+                    if owner.poll() is None:
+                        owner.kill()
+                    try:
+                        owner.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        owner.kill()
+                        owner.wait(timeout=10)
+                finally:
+                    if sleeper_pid is not None and pid_alive(sleeper_pid):
+                        with contextlib.suppress(OSError):
+                            os.kill(sleeper_pid, signal.SIGTERM)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Job Objects are Windows-only")

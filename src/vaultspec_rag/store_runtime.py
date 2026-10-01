@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Generator, Sequence
     from contextlib import AbstractContextManager
+    from typing import Self
 
     from qdrant_client import QdrantClient
     from qdrant_client.conversions.common_types import (
@@ -428,6 +429,8 @@ class VaultStore(
 
     def _open_local_client(self, cfg: VaultSpecConfigWrapper) -> None:
         """Create (or open) the embedded local Qdrant store and set its fields."""
+        import sqlite3
+
         from qdrant_client import QdrantClient as _QdrantClient
 
         data_dir = _typed_setting(cfg.data_dir, str, "data_dir")
@@ -446,6 +449,9 @@ class VaultStore(
             with suppress_local_qdrant_warnings():
                 self._client = _QdrantClient(
                     path=str(self.db_path),
+                    # Supported Python reports the compiled SQLite mode directly.
+                    # Only serialized SQLite can share connections across threads.
+                    force_disable_check_same_thread=sqlite3.threadsafety == 3,
                 )
         except RuntimeError as exc:
             self._lock_helper.release()
@@ -786,7 +792,7 @@ class VaultStore(
         if hasattr(self, "_lock_helper") and self._lock_helper is not None:
             self._lock_helper.release()
 
-    def __enter__(self) -> VaultStore:
+    def __enter__(self) -> Self:
         """Return *self* to support use as a context manager.
 
         Returns:

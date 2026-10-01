@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#service-observability'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:e12c050b3fb2686fa4ea34c63c62ef7b5584150729104238b935d88d760f82b4'
+body_hash: 'sha256:7f25fadcbc094aecf45303044b25b7013bd2fa92e4a62922b5c58e11cc062a5e'
 related:
   - '[[2026-06-01-service-observability-adr]]'
+  - '[[2026-06-01-service-observability-ledger]]'
   - '[[2026-06-01-service-observability-plan]]'
   - '[[2026-06-01-service-observability-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#service-observability`.
 ### adr
 
 - `2026-06-01-service-observability-adr` - `service-observability` adr: server state surface — read-only HTTP + CLI/MCP parity (#142) | (**status:** `accepted`)
+
+### exec
+
+- `2026-06-01-service-observability-ledger` - `service-observability` ledger
 
 ### plan
 

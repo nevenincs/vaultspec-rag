@@ -7,8 +7,8 @@ tier: L2
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'
   - '[[2026-06-07-sparse-search-latency-research]]'
-modified: '2026-09-30'
-body_hash: 'sha256:67b6eb8e9c604124519acdeb979bc8c69e795a8fd24f8e21db078bd774a20eb1'
+modified: '2026-10-01'
+body_hash: 'sha256:e56076daf94fee61c696015d89e36ee13a405482788337b472ec47ed679301af'
 ---
 
 <!-- RETIRED: S09 -->
@@ -59,7 +59,7 @@ Fix all 43 failing tests caused by the CLI refactor drift and the new MCP REST b
 
 The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP requests into REST calls to the daemon. No direct imports from `server`, `store`, `service`, or `registry`.
 
-- [x] `P05.S15` - Remove `_resources.py` direct Qdrant access: replace `_m._registry.lease(root)` + `slot.store.get_by_id()` with a REST call to a new `/vault-document` daemon endpoint; `src/vaultspec_rag/mcp/_resources.py`, `src/vaultspec_rag/server/_routes.py`.
+- [x] `P05.S15` - Remove `_resources.py` direct Qdrant access: replace `_m._registry.lease(root)` + `slot.store.get_by_id()` with a REST call to a new `/vault-document` daemon endpoint; `src/vaultspec_rag/mcp/_resources.py, src/vaultspec_rag/server/_routes.py`.
 - [x] `P05.S16` - Remove `_resources.py` server internal imports: eliminate `import vaultspec_rag.server as _m`, `from ..server._utils import _default_root`, and `_m._http_mode` reads; `src/vaultspec_rag/mcp/_resources.py`.
 - [x] `P05.S17` - Add `/vault-document` REST route to daemon serving document content by stem ID; `src/vaultspec_rag/server/_routes.py`.
 - [x] `P05.S18` - Integration tests asserting `mcp/` has zero imports from `server/`, `store`, `service`, or `registry`; `src/vaultspec_rag/tests/`.
@@ -69,9 +69,9 @@ The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP req
 Purge all semantic conflation where "MCP server" is used to mean "REST daemon" or where function/variable/docstring names use `mcp` when they mean `service` or `daemon`. The CLI in-process fallback path is acceptable per existing ADRs and stays.
 
 - [x] `P06.S19` - Rename the server package docstring to RAG daemon HTTP service and the console entry-point docstring to Console-script entry point for the RAG daemon; `src/vaultspec_rag/server/__init__.py, src/vaultspec_rag/server/_main.py, src/vaultspec_rag/server/_models.py, src/vaultspec_rag/server/_state.py`.
-- [x] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_render.py`, `src/vaultspec_rag/cli/__init__.py`.
-- [x] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_store.py`, `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [x] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py`, `src/vaultspec_rag/service.py`.
+- [x] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/cli/__init__.py`.
+- [x] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/cli/_store.py, src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py, src/vaultspec_rag/service.py`.
 - [x] `P06.S23` - Integration test asserting no `.py` file in `cli/` or `server/` contains the string "MCP server" in docstrings, help text, or user-facing output (the `mcp/` package itself is exempt); `src/vaultspec_rag/tests/`.
 
 ### Phase `P07` - Pre-Merge Code Review

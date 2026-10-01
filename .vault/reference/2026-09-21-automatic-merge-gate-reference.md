@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#automatic-merge-gate'
 date: '2026-09-21'
-modified: '2026-09-21'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:242a9dfa6ffa90335487a967deb845ae1660ab1950ae7290fa7a42636189ee68'
+body_hash: 'sha256:a244396d9b719cd0fc0cfc6878fee147c654cedd202908d507d80a28ad9c8ae7'
 related: []
 ---
 
@@ -22,16 +22,16 @@ recent workflow runs were also inspected on 2026-09-21.
 Core's merge-gate workflow is the pull request's CI entry point. It listens to
 `opened`, `reopened`, `synchronize`, `ready_for_review`, and `labeled`, so every
 new ready pull-request head is measured without operator bookkeeping:
-`Y:/code/vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:37`.
+`../vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:37`.
 
 Draft state chooses cost. Draft pull requests run lint; ready pull requests run
 lint plus Linux and Windows suites. The optional `ci:full` label only requests
 a full proof while a pull request remains draft. It is not part of the normal
-merge path: `Y:/code/vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:64`.
+merge path: `../vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:64`.
 
 One aggregate job named `Check: Merge gate (Linux)` waits for every measuring
 job and reports the exact context required by the live main-branch ruleset:
-`Y:/code/vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:254`.
+`../vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:254`.
 The ruleset requires strict up-to-date status and that single GitHub Actions
 context. It has no merge-queue rule.
 
@@ -40,10 +40,10 @@ context. It has no merge-queue rule.
 Changes made with the repository's default token do not start another Actions
 workflow. Core therefore grants its release-please job `actions: write` and,
 after all release-branch mutations, explicitly dispatches `merge-gate.yml`
-against the release branch: `Y:/code/vaultspec-core-worktrees/main/.github/workflows/release-please.yml:1`
-and `Y:/code/vaultspec-core-worktrees/main/.github/workflows/release-please.yml:143`.
+against the release branch: `../vaultspec-core-worktrees/main/.github/workflows/release-please.yml:1`
+and `../vaultspec-core-worktrees/main/.github/workflows/release-please.yml:143`.
 The reusable gate accepts an optional ref and checks that ref out in every
-measuring job: `Y:/code/vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:40`.
+measuring job: `../vaultspec-core-worktrees/main/.github/workflows/merge-gate.yml:40`.
 
 The dispatch run attaches its successful required check to the release branch
 head even though GitHub separately records the suppressed pull-request run as

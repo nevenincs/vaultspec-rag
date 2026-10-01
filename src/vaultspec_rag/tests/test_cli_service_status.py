@@ -171,7 +171,7 @@ def _status_against(
     with _live_status_service(
         tmp_path,
         _status_contract_server(
-            health=health, jobs=_jobs_payload() if jobs is None else jobs
+            tmp_path, health=health, jobs=_jobs_payload() if jobs is None else jobs
         ),
     ):
         return runner.invoke(app, ["server", "status", *args])
@@ -620,7 +620,7 @@ class TestHealthyServiceStaysQuiet:
     """Nothing above is allowed to add noise to a service with no problem."""
 
     def test_healthy_summary_has_no_degraded_block(self, tmp_path: Path) -> None:
-        with _live_status_service(tmp_path, _status_contract_server()) as port:
+        with _live_status_service(tmp_path, _status_contract_server(tmp_path)) as port:
             result = runner.invoke(app, ["server", "status"])
 
             assert result.exit_code == 0, result.output
@@ -940,7 +940,7 @@ class TestServiceDaemonHelpers:
         """service status renders the plain operator summary by default."""
         with _live_status_service(
             tmp_path,
-            _status_contract_server(),
+            _status_contract_server(tmp_path),
         ) as port:
             result = runner.invoke(app, ["server", "status"])
 
@@ -959,7 +959,7 @@ class TestServiceDaemonHelpers:
     def test_service_status_lists_multiple_active_jobs(self, tmp_path: Path):
         with _live_status_service(
             tmp_path,
-            _status_contract_server(extra_running_job=True),
+            _status_contract_server(tmp_path, extra_running_job=True),
         ):
             result = runner.invoke(app, ["server", "status"])
 
@@ -983,7 +983,7 @@ class TestServiceDaemonHelpers:
     def test_service_status_summary_reports_failed_jobs(self, tmp_path: Path):
         with _live_status_service(
             tmp_path,
-            _status_contract_server(failed_jobs=2),
+            _status_contract_server(tmp_path, failed_jobs=2),
         ):
             result = runner.invoke(app, ["server", "status"])
 
@@ -998,7 +998,7 @@ class TestServiceDaemonHelpers:
     def test_service_status_omits_missing_current_job_project(self, tmp_path: Path):
         with _live_status_service(
             tmp_path,
-            _status_contract_server(omit_project=True),
+            _status_contract_server(tmp_path, omit_project=True),
         ):
             result = runner.invoke(app, ["server", "status"])
 
@@ -1015,7 +1015,7 @@ class TestServiceDaemonHelpers:
     ):
         with _live_status_service(
             tmp_path,
-            _status_contract_server(omit_job_started_at=True),
+            _status_contract_server(tmp_path, omit_job_started_at=True),
             drop=("started_at",),
         ):
             result = runner.invoke(app, ["server", "status", "--verbose"])
@@ -1035,6 +1035,7 @@ class TestServiceDaemonHelpers:
         with _live_status_service(
             tmp_path,
             _status_contract_server(
+                tmp_path,
                 last_progress_age_seconds=last_progress_age_seconds,
             ),
         ):
@@ -1085,7 +1086,7 @@ class TestServiceDaemonHelpers:
             _isolated_status_dir(tmp_path),
             _serving(
                 _status_contract_server(
-                    health=_ready_health_payload(), jobs=_idle_jobs_payload()
+                    tmp_path, health=_ready_health_payload(), jobs=_idle_jobs_payload()
                 )
             ) as port,
         ):
@@ -1112,7 +1113,7 @@ class TestServiceDaemonHelpers:
             _isolated_status_dir(tmp_path),
             _serving(
                 _status_contract_server(
-                    health={"status": "ready"}, jobs=_idle_jobs_payload()
+                    tmp_path, health={"status": "ready"}, jobs=_idle_jobs_payload()
                 )
             ) as port,
         ):
@@ -1138,7 +1139,7 @@ class TestServiceDaemonHelpers:
             _isolated_status_dir(tmp_path),
             _serving(
                 _status_contract_server(
-                    health={"uptime_s": 12}, jobs=_idle_jobs_payload()
+                    tmp_path, health={"uptime_s": 12}, jobs=_idle_jobs_payload()
                 )
             ) as port,
         ):
@@ -1162,6 +1163,7 @@ class TestServiceDaemonHelpers:
             _isolated_status_dir(tmp_path),
             _serving(
                 _status_contract_server(
+                    tmp_path,
                     health={"status": "ready", "uptime_s": 60},
                     jobs={
                         "ok": False,
@@ -1227,7 +1229,7 @@ class TestServiceDaemonHelpers:
             _isolated_status_dir(tmp_path),
             _serving(
                 _status_contract_server(
-                    health=_ready_health_payload(), jobs=_idle_jobs_payload()
+                    tmp_path, health=_ready_health_payload(), jobs=_idle_jobs_payload()
                 )
             ) as port,
         ):

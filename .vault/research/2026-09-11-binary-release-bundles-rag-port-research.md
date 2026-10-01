@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-09-11'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:dff0b8f378272588f34599a284c37a9315a84c55463666c9e3ef1ba447ceb4e0'
+body_hash: 'sha256:f8664c5fb9db2d1cd7dcffdcf32284584cc447808cb7c9ca28aab3ca1009bbd1'
 related: []
 ---
 
@@ -49,9 +49,9 @@ The source evidence does not settle whether RAG's public archive should carry on
 
 ## Sources
 
-- Core research: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/research/2026-09-11-binary-release-bundles-bundle-contract-research.md`
-- Core current-pipeline reference: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/reference/2026-09-11-binary-release-bundles-current-pipeline-reference.md`
-- Core accepted decision: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/adr/2026-09-11-binary-release-bundles-adr.md`
+- Core research: `../vaultspec-core-worktrees/artefacts/.vault/research/2026-09-11-binary-release-bundles-bundle-contract-research.md`
+- Core current-pipeline reference: `../vaultspec-core-worktrees/artefacts/.vault/reference/2026-09-11-binary-release-bundles-current-pipeline-reference.md`
+- Core accepted decision: `../vaultspec-core-worktrees/artefacts/.vault/adr/2026-09-11-binary-release-bundles-adr.md`
 - `tools/binaries/build_pyapp.py:66-203`
 - `tools/binaries/build_pyapp.py:316-409`
 - `tools/binaries/torch_channel.py:1-130`

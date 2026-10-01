@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#cli-json-output'
 date: '2026-05-30'
-modified: '2026-07-25'
-body_hash: 'sha256:375ae22b69afd143560c4431282ede1f6eb1078e68007b5a15a66e54849ed7d6'
+tier: L2
 related:
   - '[[2026-05-30-cli-json-output-adr]]'
   - '[[2026-05-30-cli-json-output-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:fb013eb94263641ba84745cc6ae235e0d7b1d9a9b871228e843a96910b51f339'
 ---
 
 # `cli-json-output` `--json output mode for the vaultspec-rag cli` plan
@@ -64,7 +65,7 @@ Prove every command emits exactly one envelope on success and failure, that no s
 
 ## Steps
 
-### Phase 1 — helpers
+### Phase 1 - helpers
 
 1. `_emit_json(ok, command, *, data=None, error=None, message=None, **extra)`: serialises one JSON document to
    `sys.stdout.write` (not via Rich console). Single trailing
@@ -74,7 +75,7 @@ Prove every command emits exactly one envelope on success and failure, that no s
 1. Extend `_display_mcp_error(payload, *, json_mode=False, command=...)` and `_display_port_unreachable_error(port, *, command, json_mode=False)` so the existing call sites switch
    on the flag.
 
-### Phase 2 — wire `--json` on the high-traffic commands
+### Phase 2 - wire `--json` on the high-traffic commands
 
 1. `handle_search`: add `--json` bool. When set: suppress
    `console.status` spinner; replace `_display_search_results`
@@ -89,7 +90,7 @@ Prove every command emits exactly one envelope on success and failure, that no s
 1. `handle_status`: add `--json` bool. Serialise `IndexStatus`
    shape via `model_dump`.
 
-### Phase 3 — wire `--json` on service commands
+### Phase 3 - wire `--json` on service commands
 
 1. `service_status`: add `--json` bool. Serialise the four
    signal bools, heartbeat age, derived state, health sub-
@@ -102,13 +103,13 @@ Prove every command emits exactly one envelope on success and failure, that no s
 1. `service_start` / `service_stop`: add `--json` bool. Each
    `Panel` becomes one envelope.
 
-### Phase 4 — clean + minor commands
+### Phase 4 - clean + minor commands
 
 1. `handle_clean`: add `--json` bool. Require `--yes` when
    `--json` is set (skip the interactive confirm). Emit
    `{"cleared": [...]}`.
 
-### Phase 5 — docs
+### Phase 5 - docs
 
 1. `README.md`: example `vaultspec-rag search "foo" --json | jq '.data.results[0]'`.
 1. `src/vaultspec_rag/README.md`: a `### --json output mode`
@@ -118,7 +119,7 @@ Prove every command emits exactly one envelope on success and failure, that no s
    `--json` as a global rendering flag in the CLI command
    summary.
 
-### Phase 6 — tests + smoke
+### Phase 6 - tests + smoke
 
 1. `tests/test_cli.py` `TestJsonMode` class:
    - One test per command's success-envelope shape: parse
@@ -134,14 +135,14 @@ Prove every command emits exactly one envelope on success and failure, that no s
      characters present.
 1. Smoke: live service on port 18877, `vaultspec-rag status --json | jq` returns parseable JSON; `vaultspec-rag search "x" --type code --port 18877 --json | jq '.data.results | length'` returns an integer.
 
-### Phase 7 — commit + push + PR + merge
+### Phase 7 - commit + push + PR + merge
 
 Conventional-commit; PR links #112. Ignore Gemini per standing
 instruction. Merge after CI green.
 
 ## Parallelization
 
-Phase 1 (helpers) must land first. Phases 2-4 are independent —
+Phase 1 (helpers) must land first. Phases 2-4 are independent -
 they touch disjoint commands and can land in one commit. Phase 5
 docs depend on the final flag shapes; do last. Phase 6 tests
 need Phases 2-4 wired.

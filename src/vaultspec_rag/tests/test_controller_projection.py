@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ..api import controller_snapshot_envelope
 from ..watcher_controller import (
@@ -22,7 +25,9 @@ from ..watcher_retry import WatcherCircuitState, WatcherPathEvent, WatcherSource
 pytestmark = pytest.mark.unit
 
 
-def test_controller_projection_contains_complete_actionable_truth() -> None:
+def test_controller_projection_contains_complete_actionable_truth(
+    tmp_path: Path,
+) -> None:
     observation = ScopeObservation(
         relative_path="src/example.py",
         source=WatcherSource.CODE,
@@ -52,7 +57,7 @@ def test_controller_projection_contains_complete_actionable_truth() -> None:
         measurement_generation=8,
     )
     snapshot = ControllerSnapshot(
-        canonical_root="C:/work/project",
+        canonical_root=str(tmp_path / "project"),
         source=WatcherSource.CODE,
         state=ControllerState.BACKPRESSURED,
         reason=ControllerReason.GPU_PRESSURE,
@@ -78,7 +83,7 @@ def test_controller_projection_contains_complete_actionable_truth() -> None:
     )
 
     assert projected == {
-        "root": "C:/work/project",
+        "root": str(tmp_path / "project"),
         "source": "code",
         "state": "backpressured",
         "reason": "gpu_pressure",
@@ -122,9 +127,11 @@ def test_controller_projection_contains_complete_actionable_truth() -> None:
     }
 
 
-def test_refused_controller_has_actionable_default_remediation() -> None:
+def test_refused_controller_has_actionable_default_remediation(
+    tmp_path: Path,
+) -> None:
     snapshot = ControllerSnapshot(
-        canonical_root="C:/work/project",
+        canonical_root=str(tmp_path / "project"),
         source=WatcherSource.VAULT,
         state=ControllerState.REFUSED,
         reason=ControllerReason.FULL_REINDEX_REQUIRED,
@@ -158,7 +165,9 @@ def _measurement_of(projected: dict[str, object]) -> dict[str, object]:
     return cast("dict[str, object]", section)
 
 
-def test_an_absent_measurement_projects_the_same_fields_as_a_present_one() -> None:
+def test_an_absent_measurement_projects_the_same_fields_as_a_present_one(
+    tmp_path: Path,
+) -> None:
     """Unmeasured and measured-with-nothing-available must look alike.
 
     The projection builds those two shapes on separate branches, so nothing
@@ -172,7 +181,7 @@ def test_an_absent_measurement_projects_the_same_fields_as_a_present_one() -> No
     def project(measurement: ControllerMeasurement | None) -> dict[str, object]:
         return controller_snapshot_envelope(
             ControllerSnapshot(
-                canonical_root="C:/work/project",
+                canonical_root=str(tmp_path / "project"),
                 source=WatcherSource.VAULT,
                 state=ControllerState.COLLECTING,
                 reason=ControllerReason.COALESCE_WINDOW_ACTIVE,
@@ -192,7 +201,9 @@ def test_an_absent_measurement_projects_the_same_fields_as_a_present_one() -> No
     assert all(value is None for value in _measurement_of(absent).values())
 
 
-def test_real_clock_projection_converts_scheduler_times_to_wall_time() -> None:
+def test_real_clock_projection_converts_scheduler_times_to_wall_time(
+    tmp_path: Path,
+) -> None:
     monotonic_now = time.monotonic()
     wall_now = time.time()
     observation = ScopeObservation(
@@ -204,7 +215,7 @@ def test_real_clock_projection_converts_scheduler_times_to_wall_time() -> None:
         generation=1,
     )
     snapshot = ControllerSnapshot(
-        canonical_root="C:/work/project",
+        canonical_root=str(tmp_path / "project"),
         source=WatcherSource.CODE,
         state=ControllerState.COLLECTING,
         reason=ControllerReason.COALESCE_WINDOW_ACTIVE,

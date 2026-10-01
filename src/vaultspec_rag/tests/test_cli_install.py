@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from functools import partial
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import TYPE_CHECKING, TextIO, cast
@@ -651,11 +652,14 @@ class TestInstallTargetValidation:
 _REFUSAL_COMMAND = "uv pip install --python sentinel --reinstall-package torch"
 
 
-def _blocking_repair(*_args: object, **_kwargs: object) -> ToolTorchRepairOutcome:
+def _blocking_repair(
+    tmp_path: Path, *_args: object, **_kwargs: object
+) -> ToolTorchRepairOutcome:
     """A repair outcome that stops the install, as a held tool env yields."""
     return ToolTorchRepairOutcome(
         ToolTorchRepairAction.HOLDER_DETECTED,
-        "tool CUDA repair must run from outside C:/tools/vaultspec-rag\n"
+        "tool CUDA repair must run from outside "
+        f"{tmp_path / 'tools' / 'vaultspec-rag'}\n"
         "  holders to clear first:",
         (_REFUSAL_COMMAND,),
         steps=(f"Install the CUDA build of torch: {_REFUSAL_COMMAND}",),
@@ -691,7 +695,9 @@ class TestRefusedInstall:
     ) -> None:
         from ..commands import _install
 
-        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        monkeypatch.setattr(
+            _install, "repair_tool_torch", partial(_blocking_repair, tmp_path)
+        )
         ws = self._workspace(tmp_path)
 
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes"])
@@ -715,7 +721,9 @@ class TestRefusedInstall:
         """The refusal names the run that was asked for, not always install."""
         from ..commands import _install
 
-        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        monkeypatch.setattr(
+            _install, "repair_tool_torch", partial(_blocking_repair, tmp_path)
+        )
         ws = self._workspace(tmp_path)
 
         result = runner.invoke(
@@ -732,7 +740,9 @@ class TestRefusedInstall:
 
         from ..commands import _install
 
-        monkeypatch.setattr(_install, "repair_tool_torch", _blocking_repair)
+        monkeypatch.setattr(
+            _install, "repair_tool_torch", partial(_blocking_repair, tmp_path)
+        )
         ws = self._workspace(tmp_path)
 
         result = runner.invoke(app, ["install", "--target", str(ws), "--yes", "--json"])
@@ -775,7 +785,7 @@ class TestRefusedInstall:
 
         def _record(request: object) -> ToolTorchRepairOutcome:
             authorised.append(bool(getattr(request, "assume_yes", False)))
-            return _blocking_repair()
+            return _blocking_repair(tmp_path)
 
         monkeypatch.setattr(_install, "repair_tool_torch", _record)
         ws = self._workspace(tmp_path)
@@ -796,7 +806,7 @@ class TestRefusedInstall:
 
         def _record(request: object) -> ToolTorchRepairOutcome:
             authorised.append(bool(getattr(request, "assume_yes", False)))
-            return _blocking_repair()
+            return _blocking_repair(tmp_path)
 
         monkeypatch.setattr(_install, "repair_tool_torch", _record)
         ws = self._workspace(tmp_path)

@@ -303,6 +303,12 @@ def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
 ) -> None:
     """A selected real Qdrant fixture refuses before borrower or device admission."""
     test_path = tmp_path / "test_selected_qdrant_runner.py"
+    child_config = tmp_path / "pytest.ini"
+    child_config.write_text(
+        "[pytest]\nasyncio_default_fixture_loop_scope = function\n"
+        "markers =\n    subprocess_gpu: isolated GPU subprocess test\n",
+        encoding="utf-8",
+    )
     test_path.write_text(_QDRANT_SELECTION_PROGRAM, encoding="utf-8")
     host_status_dir = tmp_path / "unprovisioned-host-status"
     host_storage_dir = tmp_path / "unprovisioned-host-storage"
@@ -327,6 +333,8 @@ def test_selected_qdrant_fixture_refuses_without_provisioning_before_test_body(
             sys.executable,
             "-m",
             "pytest",
+            "-c",
+            str(child_config),
             "-p",
             "conftest",
             f"--confcutdir={tmp_path}",

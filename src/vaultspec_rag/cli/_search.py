@@ -17,7 +17,6 @@ from .._operator_commands import (
     index_command,
     server_start_command,
     server_status_command,
-    server_stop_command,
 )
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
@@ -29,6 +28,7 @@ from ..serviceclient._search_transport import (
     get_search_timeout,
     try_http_search,
 )
+from . import _render as search_render
 from ._app import (
     CLIState,
     JsonMode,
@@ -334,87 +334,6 @@ def _render_empty_index_state(
     _plain(f"Project: {requested}", soft_wrap=True)
 
 
-def _handle_vaultstore_locked_error(
-    exc: VaultStoreLockedError, json_mode: bool
-) -> NoReturn:
-    if exc.held_in_process:
-        # The lock table proves the blocker: a store this same process opened
-        # earlier in the run is still open, not a foreign holder to wait out.
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "local_store_locked",
-                (
-                    f"The local search index at {exc.db_path} is busy. "
-                    "This command already opened it earlier in this run, and "
-                    "a local store cannot be opened twice from the same "
-                    "process. Send the search through the running service "
-                    "instead, for example with --port 8766."
-                ),
-                1,
-                db_path=str(exc.db_path),
-                routing_mode="direct_local_search",
-                remediation=[
-                    "vaultspec-rag search ... --port 8766",
-                    "Rerun the command.",
-                ],
-            )
-        _plain(
-            f"Error: The local search index at {exc.db_path} is busy.\n\n"
-            "  This command already opened it earlier in this run, and a "
-            "local store cannot be opened twice from the same process.\n\n"
-            "  Next actions:\n"
-            "    1. Send this search through a running "
-            "service on a port, e.g.:\n"
-            "         vaultspec-rag search ... --port 8766\n"
-            "    2. Rerun the command."
-        )
-        raise typer.Exit(code=1) from exc
-    if json_mode:
-        _emit_json_error_and_exit(
-            "search",
-            "local_store_locked",
-            (
-                f"The local search index at {exc.db_path} is busy. "
-                "This command tried to search the index directly, but another "
-                "vaultspec-rag command, the background service, or an automatic "
-                "index update is using this workspace. Send the search through "
-                "the running service instead, for example with --port 8766."
-            ),
-            1,
-            db_path=str(exc.db_path),
-            routing_mode="direct_local_search",
-            remediation=[
-                "Wait for the other command or update to finish.",
-                "vaultspec-rag search ... --port 8766",
-                server_status_command(),
-                server_stop_command(),
-                "Stop any orphaned Python process that is still using this workspace.",
-            ],
-        )
-    _plain(
-        f"Error: The local search index at {exc.db_path} is busy.\n\n"
-        "  This command tried to search the index directly, but another "
-        "vaultspec-rag command, the background service, or an automatic index "
-        "update is using this workspace.\n\n"
-        "  Only one local command can use this index directly at a time. "
-        "For concurrent searches, send requests through one running "
-        "vaultspec-rag service.\n\n"
-        "  Next actions:\n"
-        "    1. Wait for the other command or update to finish.\n"
-        "    2. Send this search through a running "
-        "service on a port, e.g.:\n"
-        "         vaultspec-rag search ... --port 8766\n"
-        "    3. Check the service:\n"
-        f"         {server_status_command()}\n"
-        "    4. Stop the running service:\n"
-        f"         {server_stop_command()}\n"
-        "    5. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process using the index and stop it manually."
-    )
-    raise typer.Exit(code=1) from exc
-
-
 @dataclass(frozen=True, slots=True)
 class _InProcessSearchRequest:
     target: pathlib.Path
@@ -547,7 +466,7 @@ def _try_in_process_search(
             PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
         }
     except VaultStoreLockedError as exc:
-        _handle_vaultstore_locked_error(exc, json_mode)
+        search_render.handle_vaultstore_locked_error(exc, json_mode)
         return []
     has_index = (
         any(counts.values())
@@ -672,7 +591,7 @@ def _try_in_process_search(
             results,
         )
     except VaultStoreLockedError as exc:
-        _handle_vaultstore_locked_error(exc, json_mode)
+        search_render.handle_vaultstore_locked_error(exc, json_mode)
         return []
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e, command="search", json_mode=request.json_mode)

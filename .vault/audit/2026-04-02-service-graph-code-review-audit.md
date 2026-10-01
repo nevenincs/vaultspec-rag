@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-09-30'
-body_hash: 'sha256:bebee0652474bfe8467f9d3fbf4a5631d64f82e2d63f6ddb4c7bef3850bc31c1'
+modified: '2026-10-01'
+body_hash: 'sha256:35b730637ed1f0e1b056519f48a8ca8bca3b070e5e637383ebd326d1051765d6'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
@@ -504,7 +504,7 @@ pre-service-graph.
 ### SEC-001 | MEDIUM | `_resolve_root` allows arbitrary filesystem access
 
 `mcp_server.py:389` calls `Path(project_root).resolve()` with no
-validation. Any MCP client can pass `/etc` or `C:\Windows\System32`
+validation. Any MCP client can pass `/etc` or `%SystemRoot%\System32`
 and the registry will index its contents, read files, and expose
 search results. `Path.resolve()` follows symlinks.
 

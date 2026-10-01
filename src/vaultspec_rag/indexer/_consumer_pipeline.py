@@ -355,6 +355,16 @@ class CodeConsumerPipeline:
         finally:
             reporter.phase_end()
         run_control.checkpoint()
+        # The accumulator began with resumed IDs, not just this attempt's
+        # writes. Durable drift repair may have deleted some of those while
+        # the consumer ran. Keep identities the final manifest owns again,
+        # including a source that returned to a previously indexed digest.
+        superseded = self._lifecycle.drift_owner.superseded_point_ids
+        if superseded:
+            retained = checkpoint.ledger.iter_retained_point_ids(
+                checkpoint.generation_id
+            )
+            new_ids.difference_update(superseded.difference(retained))
         return ChunkEmbedResult(new_ids, total[0], metadata, reuse_stats)
 
     def raise_code_result_failure(

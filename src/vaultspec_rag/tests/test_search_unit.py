@@ -541,7 +541,8 @@ class TestInlinePathScopeToken:
 
     def test_an_explicit_exact_path_still_pushes_down(self) -> None:
         """--path keeps its exact-match pushdown; only the marker changed."""
-        from ..search._searcher import CodebaseSearchOptions, VaultSearcher
+        from ..search._options import CodebaseSearchOptions
+        from ..search._searcher import VaultSearcher
 
         parsed = parse_query("lock ordering")
         store_filters = VaultSearcher._build_codebase_store_filters(

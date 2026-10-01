@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-09-30'
-body_hash: 'sha256:5433e1af2b2178f18ca8c2efb4701cbb7834e8fba9a11fbda1a443202307c14a'
+modified: '2026-10-01'
+body_hash: 'sha256:5bd25013174308145bf88ca8bd5454fd6cde0b1d1b065f0351cb362f23fbba2f'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
 ---
@@ -322,7 +322,7 @@ Audited files:
 ### MAJOR Issues
 
 **R6-M1. `vaultspec` dependency uses absolute local path** (pyproject.toml:20)
-`"vaultspec @ file:///C:/projects/worktrees/main"` — this hard-codes a Windows-specific absolute path. The package cannot be installed by anyone else, in CI, or on any machine where `C:/projects/worktrees/main` doesn't exist. Should use a relative path or proper package registry.
+`"vaultspec @ file:///<absolute-companion-checkout>"` — this hard-codes a Windows-specific absolute path. The package cannot be installed by anyone else, in CI, or on any machine where `<companion-checkout>` doesn't exist. Should use a relative path or proper package registry.
 
 **R6-M2. Duplicate dev dependencies in both `[project.optional-dependencies]` and `[dependency-groups]`** (pyproject.toml:31-57)
 Lines 32-43 (`[project.optional-dependencies] dev`) and lines 46-57 (`[dependency-groups] dev`) contain the same packages. This is confusing — uv reads `[dependency-groups]` (PEP 735) while `[project.optional-dependencies]` is the older PEP 621 surface. If one is updated and the other forgotten, they'll diverge silently.

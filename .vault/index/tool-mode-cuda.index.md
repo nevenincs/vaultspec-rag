@@ -4,10 +4,11 @@ tags:
   - '#index'
   - '#tool-mode-cuda'
 date: '2026-09-01'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:cbc04f7236108a58a86f69f0dfed8354cfe84cdc640666116c77a21faabc0ac3'
+body_hash: 'sha256:7901f617e77d5db3031e243803f2cd1bf62d7e2d6a8b1ee63160275a99e4b41b'
 related:
+  - '[[2026-09-01-tool-mode-cuda-ledger]]'
   - '[[2026-09-01-tool-mode-cuda-plan]]'
   - '[[2026-09-01-tool-mode-cuda-reference]]'
   - '[[2026-09-01-tool-mode-cuda-research]]'
@@ -18,6 +19,10 @@ related:
 Auto-generated index of all documents tagged with `#tool-mode-cuda`.
 
 ## Documents
+
+### exec
+
+- `2026-09-01-tool-mode-cuda-ledger` - `tool-mode-cuda` ledger
 
 ### plan
 

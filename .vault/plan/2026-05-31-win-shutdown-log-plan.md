@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#win-shutdown-log'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:782ccf36f2481c9d27c2e3360fe9f1186a7763e4a53792b63458862704fb961a'
+tier: L1
 related:
   - '[[2026-05-31-win-shutdown-log-adr]]'
   - '[[2026-05-31-win-shutdown-log-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:78e1c19c10ea923720118868d46ac6a0150b7c9e8e8f720d03be7876220e1873'
 ---
 
 # `win-shutdown-log` `windows-only cli append of service.lifecycle shutdown line` plan
@@ -24,7 +25,7 @@ the line itself when `sys.platform == "win32"`.
 - New helper `_append_lifecycle_shutdown_log(reason, **kv)` in
   `cli.py` formats and appends a structured shutdown line to
   the rotating service log. Narrow `OSError` catch with
-  `logger.debug(..., exc_info=True)` per the no-swallow rule —
+  `logger.debug(..., exc_info=True)` per the no-swallow rule -
   never raises, so the shutdown path always completes.
 - `service_stop` calls the helper on `win32` only, right after
   the successful `_status_file().unlink()`.
@@ -35,7 +36,7 @@ the line itself when `sys.platform == "win32"`.
 
 ## Tasks
 
-### Phase 1 — helper
+### Phase 1 - helper
 
 1. Add `_append_lifecycle_shutdown_log(reason: str, **kv: object) -> None` to `cli.py`, alongside the other status /
    log helpers (around `_log_file`, line ~2178).
@@ -45,7 +46,7 @@ the line itself when `sys.platform == "win32"`.
    branch calls `logger.debug("lifecycle log append failed: %s", exc, exc_info=True)`. Comment explains why
    suppression is safe (shutdown must complete).
 
-### Phase 2 — call site
+### Phase 2 - call site
 
 1. In `service_stop`, after `_status_file().unlink(missing_ok= True)` (cli.py:2642), add:
 
@@ -58,7 +59,7 @@ the line itself when `sys.platform == "win32"`.
        )
    ```
 
-### Phase 3 — tests
+### Phase 3 - tests
 
 1. `tests/test_cli.py` `TestWinShutdownLog`:
    - `test_append_writes_expected_format`: monkeypatch
@@ -76,12 +77,12 @@ the line itself when `sys.platform == "win32"`.
      `_is_pid_alive` to return False; invoke `app server service stop`, assert the tmp log contains the
      `cli.lifecycle event=shutdown reason=cli_terminate` line.
 
-### Phase 4 — smoke
+### Phase 4 - smoke
 
 1. On Windows, start service on free port, stop it, grep the
    log for `cli.lifecycle event=shutdown reason=cli_terminate pid=<n> platform=win32`. Confirm one occurrence per stop.
 
-### Phase 5 — commit + push + PR + merge
+### Phase 5 - commit + push + PR + merge
 
 1. One commit with vault docs + helper + call site + tests in
    the same changeset.

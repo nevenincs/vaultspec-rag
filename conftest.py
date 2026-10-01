@@ -37,6 +37,7 @@ _singleton_prior_env: dict[str, str | None] | None = None
 _singleton_root: Path | None = None
 _singleton_root_owned = False
 _singleton_pair_owned = False
+_singleton_participant: str | None = None
 #: Set by pytest_sessionfinish. Teardown keeps this session's basetemp when a
 #: test failed, so ``tmp_path_retention_policy = "failed"`` actually delivers.
 _session_failed = False
@@ -139,15 +140,17 @@ def _suppressed_fdatasync(fd: int | HasFileno) -> None:
     _fsync_suppressed += 1
 
 
-vars(os)["fsync"] = _suppressed_fsync
+cast("dict[str, object]", vars(os))["fsync"] = _suppressed_fsync
 if _real_fdatasync is not None:
-    vars(os)["fdatasync"] = _suppressed_fdatasync
+    cast("dict[str, object]", vars(os))["fdatasync"] = _suppressed_fdatasync
 
 
 @pytest.fixture(autouse=True)
 def _durable_writes(request: pytest.FixtureRequest) -> Iterator[None]:
     """Give a `durable`-marked test the real ``fsync`` back for its duration."""
-    if request.node.get_closest_marker("durable") is None:
+    node = cast("pytest.Item", request.node)
+    assert isinstance(node, pytest.Item)
+    if node.get_closest_marker("durable") is None:
         yield
         return
     global _fsync_restored_depth
@@ -183,7 +186,9 @@ def pytest_testnodedown(node: object, error: object) -> None:
     global _fsync_from_workers
     output = getattr(node, "workeroutput", None)
     if isinstance(output, dict):
-        _fsync_from_workers += int(output.get(_FSYNC_KEY, 0))
+        count = cast("dict[str, object]", output).get(_FSYNC_KEY, 0)
+        assert isinstance(count, int)
+        _fsync_from_workers += count
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
@@ -287,6 +292,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
     global _gpu_borrower_target, _singleton_prior_env
     global _singleton_root, _singleton_root_owned, _singleton_pair_owned
+    global _singleton_participant
     if _singleton_root is not None:
         return
 
@@ -307,14 +313,17 @@ def pytest_configure(config: pytest.Config) -> None:
         _singleton_root_owned = True
 
     worker = os.environ.get("PYTEST_XDIST_WORKER")
-    pytest_temp_name = "pytest-temp" if not worker else f"pytest-temp-{worker}"
+    from vaultspec_rag._test_isolation import singleton_child_names
+
+    _singleton_participant = (
+        f"{worker}-pid{os.getpid()}" if worker else f"pid{os.getpid()}"
+    )
+    base_name, pytest_temp_name = singleton_child_names(_singleton_participant)
     config.option.basetemp = str(root / pytest_temp_name)
-    base_name = "machine-singleton" if not worker else f"machine-singleton-{worker}"
     base = root / base_name
-    # A nested pytest subprocess inherits the root and PYTEST_XDIST_WORKER, so
-    # it derives the same directory pair as the live parent that spawned it.
-    # Only the process that created the pair may reclaim it; otherwise the
-    # child's teardown deletes the parent's basetemp mid-session.
+    # Nested sessions inherit containment and worker identity, but own distinct
+    # process-qualified pairs: pytest clears an explicit basetemp on first use.
+    # Separating only teardown ownership cannot protect the live parent.
     _singleton_pair_owned = not base.exists()
     status_dir = base / "status"
     qdrant_storage_dir = base / "qdrant-server" / "storage"
@@ -360,6 +369,8 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     del config
 
     global _gpu_borrower_target, _singleton_prior_env, _singleton_root
+    global _singleton_root_owned, _singleton_pair_owned, _singleton_participant
+    global _session_failed
     prior = _singleton_prior_env
     root = _singleton_root
     if prior is not None:
@@ -379,16 +390,15 @@ def pytest_unconfigure(config: pytest.Config) -> None:
             singleton_child_names,
         )
 
-        worker = os.environ.get("PYTEST_XDIST_WORKER")
         reclaim_singleton_paths(
             root,
             owned_root=_singleton_root_owned,
             owned_pair=_singleton_pair_owned,
             keep_diagnostics=_session_failed,
-            worker=worker,
+            worker=_singleton_participant,
         )
         if _session_failed:
-            _, basetemp = singleton_child_names(worker)
+            _, basetemp = singleton_child_names(_singleton_participant)
             print(
                 f"pytest: retained failure artifacts under {root / basetemp}",
                 file=sys.stderr,
@@ -396,6 +406,10 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     _singleton_prior_env = None
     _singleton_root = None
     _gpu_borrower_target = None
+    _singleton_root_owned = False
+    _singleton_pair_owned = False
+    _singleton_participant = None
+    _session_failed = False
 
 
 def _atexit_reclaim_singleton_root() -> None:
@@ -417,7 +431,7 @@ def _atexit_reclaim_singleton_root() -> None:
             owned_root=_singleton_root_owned,
             owned_pair=_singleton_pair_owned,
             keep_diagnostics=_session_failed,
-            worker=os.environ.get("PYTEST_XDIST_WORKER"),
+            worker=_singleton_participant,
         )
 
 

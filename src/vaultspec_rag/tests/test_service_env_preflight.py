@@ -336,7 +336,7 @@ class TestTheReceiptCarriesTheCudaSource:
         interpreter = _tool_env(tmp_path, _PLAIN_RECEIPT)
         root = Path(interpreter).parent.parent
         (root / "pyvenv.cfg").write_text(
-            "home = C:/python/cpython-3.14-windows\n"
+            f"home = {tmp_path / 'python' / 'cpython-3.14-windows'}\n"
             "implementation = CPython\n"
             "version_info = 3.14.6\n",
             encoding="utf-8",
@@ -424,8 +424,9 @@ class TestTheReceiptCarriesTheCudaSource:
         so an installation that can never resolve a new torch reported that
         upgrades would keep its GPU build.
         """
+        wheel_path = (tmp_path / "wheels" / "torch.whl").as_posix()
         for recorded in (
-            '{ name = "torch", path = "C:/wheels/torch.whl" }',
+            f'{{ name = "torch", path = "{wheel_path}" }}',
             '{ name = "torch", specifier = "==2.14.0+cu130" }',
         ):
             interpreter = _tool_env(

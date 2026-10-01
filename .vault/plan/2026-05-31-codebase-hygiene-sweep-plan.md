@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#codebase-hygiene-sweep'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:9a52b399dc5805fdb30752a553250bfa06dbeb29039921f25c52bba62d160f23'
+tier: L1
 related:
   - '[[2026-05-31-codebase-hygiene-sweep-adr]]'
   - '[[2026-05-31-codebase-hygiene-sweep-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:c771cc8864d516583a1b07e28e7c9437a1fc22c3ac27dcb6d09932782317398d'
 ---
 
 # `codebase-hygiene-sweep` plan: `mechanical strip + no-swallow sweep`
@@ -17,7 +18,7 @@ elimination) as one PR. Mechanical, no behaviour change.
 
 ## Steps
 
-### Phase 1 — dev metadata strip
+### Phase 1 - dev metadata strip
 
 - For each occurrence in `cli.py`, `mcp_server.py`,
   `tests/test_cli.py`, `tests/test_mcp_server.py`,
@@ -26,7 +27,7 @@ elimination) as one PR. Mechanical, no behaviour change.
     or remove it if redundant.
 - Confirm the verification grep returns zero matches.
 
-### Phase 2 — silent except sweep
+### Phase 2 - silent except sweep
 
 - For each `.py` file under `src/vaultspec_rag/`:
   - Audit every `except` / `contextlib.suppress`.
@@ -37,7 +38,7 @@ elimination) as one PR. Mechanical, no behaviour change.
   - Narrow exception types where the broad-catch was lazy
     rather than intentional.
 
-### Phase 3 — verification
+### Phase 3 - verification
 
 - `uv run --no-sync ruff check src/`.
 - `uv run --no-sync ruff format src/`.
@@ -45,7 +46,7 @@ elimination) as one PR. Mechanical, no behaviour change.
 - `uv run --no-sync pytest src/vaultspec_rag/tests -m unit -q`.
 - Verification grep returns zero matches.
 
-### Phase 4 — commit + push + PR + merge
+### Phase 4 - commit + push + PR + merge
 
 - One commit covering all sweeps.
 - PR title: `chore(hygiene): strip dev metadata + log every except clause (#127, #130)`.
@@ -61,7 +62,7 @@ elimination) as one PR. Mechanical, no behaviour change.
 
 ## Out of scope
 
-- New ruff rules enforcing the no-swallow invariant — separate
+- New ruff rules enforcing the no-swallow invariant - separate
   follow-up.
 - Replacing `print` calls (none expected in src/).
 - Test coverage gain (this PR adds no functional code).

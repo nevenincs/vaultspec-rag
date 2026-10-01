@@ -212,6 +212,7 @@ addopts = [
   "--capture=sys",
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 # GPU test runs materialize real Qdrant stores under the pytest temp
 # root; retaining every run's directories once filled a system drive
 # (50k+ leftover dirs). Keep temp only for failing tests and only for

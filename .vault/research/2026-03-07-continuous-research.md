@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-30'
-body_hash: 'sha256:d1636c869b8e051948d8a5cabdc2da99e93e7c1498ed58546413e0bfda0fa0da'
+modified: '2026-10-01'
+body_hash: 'sha256:c6b60de59a807f71fda34d14926b292de24f5fe2dd9e2e74d89567308a0e2ceb'
 ---
 
 # Continuous Research Loop Findings â€” 2026-03-07
@@ -1856,7 +1856,7 @@ Why `resolve()` over `normpath`:
 ### On Windows specifically
 
 `Path.resolve()` on Windows also normalizes drive letter case and UNC paths.
-`Path("c:/foo")` and `Path("C:/foo")` resolve to the same canonical form.
+Paths that differ only in drive-letter case resolve to the same canonical form; `<drive-lowercase>:/<root>` and `<drive-uppercase>:/<root>` are symbolic stand-ins for that case-only difference.
 This is relevant for our Windows development environment.
 
 ______________________________________________________________________

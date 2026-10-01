@@ -2,13 +2,14 @@
 tags:
   - '#plan'
   - '#install-cuda'
-date: 2026-04-22
-modified: '2026-07-27'
-body_hash: 'sha256:37af6265a5172c30b670c903dfc9335ae998662235c35adcb41c4c3be84b368a'
+date: '2026-04-22'
+tier: L1
 related:
   - '[[2026-04-22-install-cuda-adr]]'
   - '[[2026-04-22-install-cuda-research]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
+modified: '2026-10-01'
+body_hash: 'sha256:79772a6e3c3c99e6aaa7b4119d2d17e47ce2f5ec9ae01aa57f38b4e6dc8196d4'
 ---
 
 # install-cuda plan: executable implementation steps
@@ -36,14 +37,14 @@ Target branch: `feature/install-cuda` (current).
   commit to establish baseline.
 - User approval on this plan before step 1 begins.
 
-## step 1 — add tomlkit runtime dependency
+## step 1 - add tomlkit runtime dependency
 
 **file:** `pyproject.toml`
 
 Insert `"tomlkit>=0.13",` into `[project] dependencies` (line 17-34),
 alphabetically between `sentence-transformers` and `torch` or at
 the obvious insert point matching existing style (append to the
-list — current order is not strictly alphabetical).
+list - current order is not strictly alphabetical).
 
 Run `uv lock` to refresh the lockfile.
 
@@ -55,7 +56,7 @@ Run `uv lock` to refresh the lockfile.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task1.md`
 
-## step 2 — create torch_config.py
+## step 2 - create torch_config.py
 
 **file:** `src/vaultspec_rag/torch_config.py` (NEW)
 
@@ -109,7 +110,7 @@ Implementation tips (not verbatim code):
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task2.md`
 
-## step 3 — unit tests for torch_config
+## step 3 - unit tests for torch_config
 
 **file:** `src/vaultspec_rag/tests/unit/test_torch_config.py` (NEW)
 
@@ -141,7 +142,7 @@ Assertions to cover:
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task3.md`
 
-## step 4 — extend commands.py
+## step 4 - extend commands.py
 
 **file:** `src/vaultspec_rag/commands.py`
 
@@ -176,14 +177,14 @@ Assertions to cover:
 **exit criteria:**
 
 - `uv run pytest src/vaultspec_rag/tests/integration/test_install.py`
-  (existing) still passes — backward compat with the prior
+  (existing) still passes - backward compat with the prior
   install feature.
 - Both new params default-off at the function level do not change
   the prior report shape except additively.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task4.md`
 
-## step 5 — update cli.py Typer wrappers
+## step 5 - update cli.py Typer wrappers
 
 **file:** `src/vaultspec_rag/cli.py`
 
@@ -213,7 +214,7 @@ and Rich panels) so the user sees the torch-config action.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task5.md`
 
-## step 6 — refactor \_handle_gpu_error and migrate cli.py:1652
+## step 6 - refactor \_handle_gpu_error and migrate cli.py:1652
 
 **file:** `src/vaultspec_rag/cli.py`
 
@@ -235,14 +236,14 @@ so both sites share the taxonomy.
 - A unit test in `tests/unit/test_torch_config.py::test_diagnose_torch`
   covers all 4 states (from step 3).
 - A manual smoke test (in the step record) confirms the 3 messages
-  render as expected — constructed by raising the appropriate
+  render as expected - constructed by raising the appropriate
   exception in a fixture that stubs torch.version.cuda via the
   `cuda`/`available` args of `diagnose_torch` (no monkeypatching of
   the real torch module).
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task6.md`
 
-## step 7 — integration tests
+## step 7 - integration tests
 
 **file:** `src/vaultspec_rag/tests/integration/test_install_torch_config.py`
 (NEW)
@@ -269,7 +270,7 @@ verification step.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task7.md`
 
-## step 8 — README updates
+## step 8 - README updates
 
 **files:** `README.md`, `src/vaultspec_rag/README.md`
 
@@ -288,7 +289,7 @@ verification step.
 
 **step record:** `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-task8.md`
 
-## step 9 — full test + lint sweep, commit, push
+## step 9 - full test + lint sweep, commit, push
 
 Run the full matrix:
 
@@ -319,9 +320,9 @@ to `origin feature/install-cuda`.
 and
 `.vault/exec/2026-04-22-install-cuda/2026-04-22-install-cuda-phase1-summary-exec.md`
 
-## step 10 — code review artefact
+## step 10 - code review artefact
 
-**skill:** `vaultspec-code-review` (conceptual — produced as an
+**skill:** `vaultspec-code-review` (conceptual - produced as an
 audit doc since the skill is not wired as a slash command in this
 harness).
 

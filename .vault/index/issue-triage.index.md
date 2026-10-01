@@ -4,10 +4,11 @@ tags:
   - '#index'
   - '#issue-triage'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:0c0de653f968c5bd2cf8154e5c41239085d07bfcd20c15566b9aa0027de9ccf5'
+body_hash: 'sha256:df14af8beac2ee5bdb26b1c7426d3c37976632be5c253b80a0f3a862c0289cb1'
 related:
+  - '[[2026-07-31-issue-triage-ledger]]'
   - '[[2026-07-31-issue-triage-plan]]'
   - '[[2026-07-31-issue-triage-research]]'
 ---
@@ -17,6 +18,10 @@ related:
 Auto-generated index of all documents tagged with `#issue-triage`.
 
 ## Documents
+
+### exec
+
+- `2026-07-31-issue-triage-ledger` - `issue-triage` ledger
 
 ### plan
 

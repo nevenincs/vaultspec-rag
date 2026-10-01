@@ -212,6 +212,17 @@ vendored code, and hides generated files and worktree copies. Filters narrow fur
 - `--include-path "src/**"` and `--language python` narrow by place and language.
 - `--doc-type adr,plan` picks record types in a vault search.
 
+Locale variants with similar relevance scores collapse into one representative
+result by default. Use `--no-dedup-locales` to inspect every variant, or `--dedup-locales` to
+enable collapse for a search. Use `--prefer production`, `--prefer tests`, or
+`--prefer documentation` to favor that kind of code in the ranking while keeping
+other results:
+
+```bash
+vaultspec-rag search "translation lookup" --type code --no-dedup-locales
+vaultspec-rag search "encode batch" --type code --prefer tests
+```
+
 [Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)
 explains how to phrase a query and every filter.
 

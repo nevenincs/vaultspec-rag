@@ -40,15 +40,24 @@ def _drain(
 
     t_out = threading.Thread(target=_read, args=(handle.stdout, "out"))
     t_err = threading.Thread(target=_read, args=(handle.stderr, "err"))
-    t_out.start()
-    t_err.start()
-    rc = handle.wait(timeout=timeout)
-    t_out.join(timeout=10)
-    t_err.join(timeout=10)
+    with handle:
+        t_out.start()
+        t_err.start()
+        try:
+            rc = handle.wait(timeout=timeout)
+        finally:
+            if handle.poll() is None:
+                handle.kill()
+                handle.wait(timeout=timeout)
+            t_out.join(timeout=10)
+            t_err.join(timeout=10)
+        assert not t_out.is_alive()
+        assert not t_err.is_alive()
     return rc, captured["out"], captured["err"]
 
 
 def test_curated_child_env_strips_secrets_keeps_path(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every credential-bearing and VAULTSPEC_RAG_* knob is dropped; the small
@@ -58,7 +67,7 @@ def test_curated_child_env_strips_secrets_keeps_path(
     failed the scoped-name assertion; restoring the allow-list passed.
     """
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "super-secret")
-    monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "C:/managed")
+    monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "managed"))
     monkeypatch.setenv("VAULTSPEC_RAG_TYPESAFE_API_KEY", "typesafe-secret")
     monkeypatch.setenv("QDRANT_API_KEY", "q-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-secret")

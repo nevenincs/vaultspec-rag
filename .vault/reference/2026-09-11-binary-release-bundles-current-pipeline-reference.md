@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-09-11'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:8177457970598f2fd790063bbea1662f246b4a1870d783a8bac0d4b2cade16f7'
+body_hash: 'sha256:1f1aff5afaad01e2747ac63bdaa0a95a4d3b957efa3bec7da4445a7ae83293cf'
 related:
   - "[[2026-09-11-binary-release-bundles-rag-port-research]]"
 ---
@@ -52,9 +52,9 @@ The bundle port should make those raw names an internal staging detail. Each sup
 
 ## Sources
 
-- Core accepted decision: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/adr/2026-09-11-binary-release-bundles-adr.md`
-- Core current-pipeline reference: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/reference/2026-09-11-binary-release-bundles-current-pipeline-reference.md`
-- Core implementation plan: `Y:/code/vaultspec-core-worktrees/artefacts/.vault/plan/2026-09-11-binary-release-bundles-plan.md`
+- Core accepted decision: `../vaultspec-core-worktrees/artefacts/.vault/adr/2026-09-11-binary-release-bundles-adr.md`
+- Core current-pipeline reference: `../vaultspec-core-worktrees/artefacts/.vault/reference/2026-09-11-binary-release-bundles-current-pipeline-reference.md`
+- Core implementation plan: `../vaultspec-core-worktrees/artefacts/.vault/plan/2026-09-11-binary-release-bundles-plan.md`
 - RAG builder and runtime channel: `tools/binaries/build_pyapp.py:66-409`, `tools/binaries/torch_channel.py:1-130`
 - RAG packaging and channel surfaces: `tools/packaging/products.py:18-152`, `tools/packaging/scoop.py:34-75`, `tools/packaging/homebrew.py:39-245`, `tools/packaging/generate.py:40-156`, `tools/packaging/validate.py:70-200`
 - RAG release workflows and package metadata: `.github/workflows/binaries.yml:220-729`, `.github/workflows/publish.yml:132-200`, `.github/workflows/release-please.yml`, `pyproject.toml:1-76`, `justfile:444-457`

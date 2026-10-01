@@ -26,7 +26,7 @@ from ..search._outcomes import (
     CombinedSearchOutcome,
     SearchDomainOutcome,
 )
-from ..server._routes_search import _dominant_combined_failure
+from ..server._search_route_availability import dominant_combined_failure
 from ._process_probe_guard_helpers import every_production_file
 
 pytestmark = pytest.mark.unit
@@ -223,7 +223,7 @@ def test_dominant_failure_is_stable_for_same_reason_and_null_remediation() -> No
     second = replace(_unavailable("code"), remediation="inspect code")
     third = _fact("document")
 
-    assert _dominant_combined_failure((first, second, third)) == (
+    assert dominant_combined_failure((first, second, third)) == (
         "index_unavailable",
         False,
         "inspect code",

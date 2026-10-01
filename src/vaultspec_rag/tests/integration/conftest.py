@@ -275,14 +275,24 @@ def frozen_corpus_evidence(
     set on the device: they own the session's dense, sparse and reranker
     weights, and they acquire any missing snapshot through the killable
     bounded worker before constructing anything cache-only.
+
+    These floors measure the pinned local models. An operator's optional
+    hosted classifier must not change their candidate window or ranking as
+    its requests succeed, fail, and recover. Its enrolled search contract is
+    exercised separately; this experiment uses the normal no-credential path.
     """
+    from ...search import _typesafe_transport
     from ._frozen_corpus_evidence import build_frozen_corpus_evidence
 
-    return build_frozen_corpus_evidence(
-        tmp_path_factory.mktemp("frozen-corpus"),
-        embedding_model,
-        shared_reranker,
-    )
+    with managed_env(**{EnvVar.TYPESAFE_API_KEY.value: None}):
+        assert not _typesafe_transport.available(), (
+            "the frozen local-model baseline must not enroll a hosted classifier"
+        )
+        return build_frozen_corpus_evidence(
+            tmp_path_factory.mktemp("frozen-corpus"),
+            embedding_model,
+            shared_reranker,
+        )
 
 
 @pytest.fixture

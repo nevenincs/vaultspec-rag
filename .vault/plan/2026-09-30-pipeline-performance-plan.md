@@ -10,9 +10,9 @@ related:
   - '[[2026-09-26-gpu-single-owner-adr]]'
   - '[[2026-06-02-index-gpu-pipeline-adr]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: body-v2
-body_hash: 'sha256:3689ed11d870075a40332aef2bd4e6d422ed92c0a2f378d7ee70261ab0c87e67'
+body_hash: 'sha256:97096121d8061591eacef65fe83b2bf272a7ae3e132fece05ac1eff102cd090c'
 ---
 
 # `pipeline-performance` plan
@@ -20,6 +20,8 @@ body_hash: 'sha256:3689ed11d870075a40332aef2bd4e6d422ed92c0a2f378d7ee70261ab0c87
 ## Description
 
 Approved 2026-09-30
+
+Approved follow-up 2026-10-01: The user explicitly requires repair of all demonstrated CI and vault failures before push. S04 remains open after failed required CI signals at commit 3b0724c and closes only after fresh full CPU and both GPU lanes, aggregate gates, and independent review pass. Earlier scoped observations remain historical evidence.
 
 The user's continuation explicitly authorizes rigorous py-spy and GPU analysis, further benchmarking, and performance/GPU-usage improvements across dense encoding, sparse encoding and code chunking, continuing with GPT-6.1 Sol agents. S01 establishes repeatable measurement and reviewed native-tool pins. S02 checkpoints the measured AST change independently of GPU availability. S03 measures the dense/sparse paths and sustained device-wide energy, selects compatible tuning, and verifies unchanged encoder semantics. S04 verifies and independently reviews the integrated result. The user clarified that indexing time and GPU energy use guide optimization; peak memory remains a supporting measurement.
 

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#storage-lifecycle'
 date: '2026-06-18'
-modified: '2026-07-27'
-body_hash: 'sha256:3e4f98b0bf67d2d2bce2e3358e7d07c4de6dae323e5bea3534d495f2b3300d09'
+modified: '2026-10-01'
+body_hash: 'sha256:54d0c0ff30d65dc9aef2974359701893b952d192de02efcb7deb927755f3f2a7'
 related:
   - "[[2026-06-18-storage-lifecycle-research]]"
   - "[[2026-06-13-server-first-default-adr]]"
@@ -39,13 +39,15 @@ not an implementation detail.
   every root's data lives there as collections namespaced by a stable per-root prefix
   (`r{12-hex}_`, a one-way hash of the resolved root path). Only the daemon that supervises
   that server can enumerate every root's namespaces and read on-disk footprint. Storage
-  lifecycle is therefore a service-domain responsibility executed in the daemon, with the
-  CLI and MCP as thin adapters over one shared JSON contract.
+  lifecycle is therefore a service-domain responsibility. The accepted reconciliation
+  keeps the read-only survey daemon-owned and runs destructive CLI verbs through shared
+  storage-domain functions against the managed loopback server; MCP remains read-only.
 - **Local mode is the degenerate, daemon-less case.** The `--local-only` opt-out remains
   first-class, but a local store is a single root's on-disk directory with no shared tree
   and no other namespaces to reconcile. Cross-root survey and orphan reconciliation are
-  inherently a server-mode capability; in local mode the surface degrades to in-process
-  operations on the one store. (Local-mode scope is called out for sign-off below.)
+  inherently a server-mode capability. The original single-store local maintenance
+  proposal is retained in the historical sign-off below; the accepted reconciliation
+  retires local-mode survey and requires server mode for the storage CLI surface.
 - **The namespacing hash is one-way.** A collection name cannot be reversed to its source
   path, and the in-memory project registry holds only currently-leased roots, not a durable
   record of every indexed root. Safe orphan detection requires a new persisted
@@ -68,8 +70,9 @@ not an implementation detail.
   locks plus a lifecycle lock in local mode, no client-side point locks in server mode,
   lifecycle-before-collection ordering; never a store-wide mutex. Collection drop is
   lifecycle-lock territory; point delete is collection-lock territory.
-- **GPU lock wraps forward passes only**; all storage I/O runs outside it. A migrate that
-  re-embeds reuses the single dedicated GPU consumer and keeps index workers CPU-only.
+- **GPU lock wraps forward passes only**; all storage I/O runs outside it. The accepted
+  migrate is copy-only: it preserves vectors and payloads without re-embedding, so it
+  neither consumes the GPU pipeline nor acquires the GPU lock.
 - **No background sweeper.** Reclamation is operator-invoked or lazy; new tuning ships as
   `VAULTSPEC_RAG_*` env with CLI translation.
 - **Pinned-binary integrity and daemon ownership.** Destructive ops on shared server-mode
@@ -77,21 +80,29 @@ not an implementation detail.
   deleting storage files under a live server corrupts the engine. A prune that touches the
   managed binary tree must never leave an unverifiable binary.
 - **Real-backend tests only** (no mocks/fakes/skips), Windows primary, GPU run locally.
-- **Frontier risk - migrate tooling.** The ultrafast bulk-data-movement path for `migrate`
-  depends on a C-backed Python tooling choice that does not yet exist in the project and
-  must be settled by a bounded research spike before the migrate wave; until then migrate
-  is unimplementable to the required performance bar.
+- **Historical frontier risk - migrate tooling.** The original proposal required a
+  bounded tooling research spike before migration. The accepted reconciliation delivers
+  copy-only vector/payload movement; the previous conditional re-embedding requirement
+  does not apply to that operation.
 - **Parent-feature stability.** Builds on the server-first default backend and the managed
   Qdrant server provisioning, both shipped (0.2.21) and stable, and on the service
   concurrency lock model. No unstable parent.
 
 ## Implementation
 
-A new service-domain storage module owns survey/prune/delete/migrate; the daemon exposes
-them as gated HTTP endpoints (`GET /storage`, `POST /storage/prune`, `POST /storage/delete`,
-`POST /storage/migrate`) and the CLI adds a `server storage` group (`survey`, `prune`,
-`delete`, `migrate`) that adapts over the existing CLI->service HTTP client. MCP exposes
-the read-only survey only; control-plane verbs are CLI-only.
+The original accepted proposal put survey and destructive storage operations behind
+daemon HTTP routes. That proposal is retained here as history; the later user-directed
+reconciliation recorded in Git commit `d3be70d0` and the shared
+`2026-06-18-storage-lifecycle-W02-P03-S13` execution record replaces that control plane
+with the CLI-direct architecture.
+
+Shared service-domain storage functions own survey/prune/delete/migrate. The read-only
+`GET /storage/survey` route, service-first CLI survey, and read-only MCP tool are the
+daemon-owned surface. Destructive `server storage delete`, `prune`, and `migrate` verbs
+open their own client to the managed loopback Qdrant server and call those functions
+in-process. There are no destructive daemon HTTP routes or corresponding CLI HTTP
+adapters. The same recorded reconciliation retires local-mode survey and the proposed
+GPU-consumer migration because migration copies existing vectors and payloads unchanged.
 
 **Manifest (D2).** The daemon maintains a persisted prefix->root manifest (resolved root
 path, backend, last-indexed time), written/updated whenever a root is indexed. Survey
@@ -102,7 +113,8 @@ from the manifest is reported `unknown` and never auto-pruned.
 (`--orphaned`, `--unknown`, `--root`, `--since`). Reports per-namespace point counts and
 live/orphaned/unknown status in both backends now; daemon-side byte footprint from the
 server storage tree where available. Output distinguishes logical occupancy from
-physically reclaimable space.
+physically reclaimable space. Cross-root maintenance and the CLI storage surface require
+server mode; local-only survey is retired by the recorded reconciliation.
 
 **Prune / delete (D5, D6).** Both are destructive and follow the project discipline:
 `--dry-run` is the canonical preview rendering the exact target namespaces; `--yes`
@@ -111,31 +123,33 @@ vocabulary. `prune` targets orphaned namespaces; `delete` takes an explicit requ
 target so nothing is removed by accident. Removing a root's data first releases its
 in-memory slot through the existing evict path (skip-busy refcount - a busy root returns
 `busy`, never blocks), confirms no live store or held lock, then drops the namespaced
-collections via the live server's API (server) or removes the local store tree only when
-the store is confirmed closed (local).
+collections via the live server's API. The original local-only maintenance surface is
+retired; this is not authorization to remove an open local store or storage files beneath
+a running server.
 
 **#192 eviction (D7).** A real server-mode regression test indexes two files, deletes one,
 runs the scoped incremental index, and asserts both store-level eviction and that hybrid
 search no longer surfaces the file. Any minimal durability fix the test demands lands with
 it; eviction remains an incremental-index concern reusing the existing delete primitives.
 
-**Migrate (D9) - last wave.** `migrate` relocates/converts a root's index between backends
-(local\<->server) and is implemented last, after a bounded research spike selects the most
-capable C-backed Python tooling for ultrafast bulk vector/payload movement. If re-embedding
-is required it reuses the single GPU consumer pipeline; all storage I/O stays outside the
-GPU lock.
+**Migrate (D9).** `migrate` relocates/converts a root's existing index between backends
+(local\<->server) through the CLI-direct storage-domain function. It copies vectors and
+payloads unchanged, rather than re-embedding. The maintenance command requires server
+mode, and all storage I/O stays outside the GPU lock.
 
 **Data safety (D10) - dedicated wave.** A threat-model wave hardens every destructive path:
 operate only on the resolved root's own namespaces / the managed storage tree; reject path
 traversal, symlink escape, and roots resolving outside the allowed base; never delete a
 path the surface did not itself namespace; treat unknown namespaces conservatively; honour
-the live-data refcount/lock discipline; keep the loopback+token auth boundary.
+the live-data refcount/lock discipline; keep the loopback+token auth boundary on
+the exposed daemon survey and the managed-loopback boundary for CLI-direct operations.
 
 ## Rationale
 
-Centring authority on the daemon follows the established service-domain-owns-operability
-discipline and the physical reality that only the daemon can see the shared storage tree
-and its footprint - the research showed a remote client cannot. The persisted manifest is
+The original daemon control-plane proposal followed the service-domain operability
+discipline. The subsequent user-directed reconciliation preserves the shared storage-domain
+owner and daemon-authoritative read-only survey and footprint while explicitly choosing
+CLI-direct destructive operations through the managed server's collection API. The persisted manifest is
 the minimum mechanism that makes orphan detection safe given a one-way namespacing hash;
 without it, pruning server collections is guessing. Sequencing #192 first de-risks the
 whole feature: it closes a shipped correctness bug and produces the real server-mode test
@@ -155,18 +169,18 @@ single out-of-scope deletion is unacceptable.
 - "Unknown" namespaces (pre-manifest data, or data from another tool) will exist after
   rollout and are deliberately not auto-cleaned; operators must reconcile them explicitly,
   which is safe but not fully automatic.
-- Footprint reporting is server-authoritative and filesystem-derived; in local mode it is
-  limited to the single store and cross-root features are unavailable - a deliberate
-  asymmetry that needs clear documentation.
-- The migrate wave carries unresolved tooling risk until its research spike lands; the
-  feature delivers value before migrate exists.
+- Footprint reporting remains server-authoritative and filesystem-derived. The CLI storage
+  maintenance surface requires server mode; local-only survey is retired.
+- Migration copies stored vectors and payloads without re-embedding, so the earlier
+  conditional GPU-consumer requirement does not apply.
 
 ## Codification candidates
 
 - **Rule slug:** `storage-authority-is-the-server`.
   **Rule:** Storage-lifecycle logic (survey, prune, delete, migrate, footprint) is
-  service-domain behaviour executed in the supervising daemon; CLI and MCP only adapt to it,
-  and destructive operations on server-mode collections go through the live server's API -
+  service-domain behaviour. Read-only survey and footprint remain daemon-owned, destructive
+  CLI operations use the shared storage-domain functions, and MCP remains read-only.
+  Destructive operations on server-mode collections go through the live server's API -
   never by deleting storage files under a running server.
 
 - **Rule slug:** `namespace-deletion-needs-manifest-attribution`.
@@ -176,11 +190,13 @@ single out-of-scope deletion is unacceptable.
 
 ## Decided sign-offs
 
-- **Local-mode scope (decided):** local mode is supported as single-root, in-process
-  survey/delete operating on the one local store; #192 eviction applies there too.
-  Cross-root orphan reconciliation (prune) is a server-mode-only capability by design,
-  because a daemon-less local install has no shared tree to reconcile. This asymmetry is
-  documented, not a gap.
+- **Original local-mode sign-off (historical):** the earlier proposal supported
+  single-root, in-process survey/delete and server-only cross-root prune. The later
+  user-directed reconciliation explicitly retired local-mode survey because storage
+  maintenance requires server mode and a local store has no cross-root namespaces to
+  reconcile. The incremental deleted-file eviction contract remains separate and applies
+  to both backends. The prior sign-off is preserved as decision history, not current
+  authorization for a local-only maintenance command.
 
 ## Considered options
 

@@ -22,6 +22,7 @@ from ..server._search_activity import (
 
 if TYPE_CHECKING:
     from collections.abc import Sized
+    from pathlib import Path
 
     from ..server._search_activity import _SearchActivitySnapshot
 
@@ -126,9 +127,9 @@ def _start(
     ledger: SearchActivityLedger,
     request_id: str,
     *,
+    root: str,
     query: str | None = None,
     search_type: str = "vault",
-    root: str = "Y:/workspace",
 ) -> SearchActivityTicket:
     """Start one ordinary served-query record through the production API."""
     return ledger.start(
@@ -142,10 +143,12 @@ def _start(
     )
 
 
-def test_search_activity_preserves_query_only_for_authenticated_serialization() -> None:
+def test_search_activity_preserves_query_only_for_authenticated_serialization(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=3, max_recent=3)
     query = "credential rotation investigation for incident 124"
-    _start(ledger, "query-privacy", query=query)
+    _start(ledger, "query-privacy", query=query, root=str(tmp_path / "workspace"))
 
     authenticated = ledger.snapshot(include_query=True)
     active = authenticated["active"]
@@ -163,9 +166,11 @@ def test_search_activity_preserves_query_only_for_authenticated_serialization() 
     assert query not in str(redacted)
 
 
-def test_search_activity_transitions_once_from_active_to_terminal() -> None:
+def test_search_activity_transitions_once_from_active_to_terminal(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=3, max_recent=3)
-    ticket = _start(ledger, "once")
+    ticket = _start(ledger, "once", root=str(tmp_path / "workspace"))
 
     assert ledger.finish(
         ticket,
@@ -206,9 +211,9 @@ def test_search_activity_transitions_once_from_active_to_terminal() -> None:
     assert record["total_seconds"] is not None
 
 
-def test_search_activity_capacity_backpressures_until_every_query_is_reviewable() -> (
-    None
-):
+def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
+    tmp_path: Path,
+) -> None:
     """A full active ledger waits rather than retaining an unbounded overflow ticket.
 
     Proven able to fail: removing ``notify`` in ``finish`` leaves the waiting
@@ -217,7 +222,7 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
     both complete rows remain reviewable.
     """
     ledger = SearchActivityLedger(max_active=1, max_recent=3)
-    active = _start(ledger, "active")
+    active = _start(ledger, "active", root=str(tmp_path / "workspace"))
     admitted = threading.Event()
     terminalized = threading.Event()
     waiting_ticket: list[SearchActivityTicket] = []
@@ -228,7 +233,7 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
             "waiting-success",
             query="the query held until an active activity slot is free",
             search_type="code",
-            root="Y:/other",
+            root=str(tmp_path / "other"),
         )
         waiting_ticket.append(ticket)
         admitted.set()
@@ -281,7 +286,9 @@ def test_search_activity_capacity_backpressures_until_every_query_is_reviewable(
     assert records["waiting-success"]["outcome"] == "success"
 
 
-def test_queued_admission_is_visible_before_blocking_then_retains_wait() -> None:
+def test_queued_admission_is_visible_before_blocking_then_retains_wait(
+    tmp_path: Path,
+) -> None:
     """Queued state exists for review before the condition wait begins.
 
     Mutation evidence: moving the queued insertion after the wait loop made the
@@ -289,11 +296,14 @@ def test_queued_admission_is_visible_before_blocking_then_retains_wait() -> None
     passed (exit 0).
     """
     ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=3)
-    active = _start(ledger, "visible-active")
+    active = _start(ledger, "visible-active", root=str(tmp_path / "workspace"))
     admitted: list[SearchActivityTicket] = []
 
     thread = threading.Thread(
-        target=lambda: admitted.append(_start(ledger, "visible-queued")), daemon=True
+        target=lambda: admitted.append(
+            _start(ledger, "visible-queued", root=str(tmp_path / "workspace"))
+        ),
+        daemon=True,
     )
     thread.start()
     deadline = time.monotonic() + 1.0
@@ -332,7 +342,9 @@ def test_queued_admission_is_visible_before_blocking_then_retains_wait() -> None
     assert cast("float", retained_wait["waited_seconds"]) > 0.0
 
 
-def test_admission_deadline_timeout_retains_typed_evidence_once() -> None:
+def test_admission_deadline_timeout_retains_typed_evidence_once(
+    tmp_path: Path,
+) -> None:
     """The monotonic wait bound produces one terminal refusal record.
 
     Mutation evidence: removing the deadline refusal history write made the
@@ -340,7 +352,7 @@ def test_admission_deadline_timeout_retains_typed_evidence_once() -> None:
     passed (exit 0).
     """
     ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=2)
-    active = _start(ledger, "deadline-active")
+    active = _start(ledger, "deadline-active", root=str(tmp_path / "workspace"))
     started = time.perf_counter()
     with pytest.raises(SearchActivityAdmissionError) as raised:
         ledger.start(
@@ -348,7 +360,7 @@ def test_admission_deadline_timeout_retains_typed_evidence_once() -> None:
                 request_id="deadline-refused",
                 query="bounded admission",
                 search_type="code",
-                root="Y:/deadline",
+                root=str(tmp_path / "deadline"),
                 top_k=3,
                 admission_wait_seconds=0.02,
             )
@@ -380,7 +392,9 @@ def test_admission_deadline_timeout_retains_typed_evidence_once() -> None:
     )
 
 
-def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded() -> None:
+def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded(
+    tmp_path: Path,
+) -> None:
     """Immediate queue refusal has no deadline and obeys the history cap.
 
     Mutation evidence: assigning the ordinary admission deadline to both
@@ -388,13 +402,15 @@ def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded() -> No
     (exit 1); restoration passed (exit 0).
     """
     ledger = SearchActivityLedger(max_active=1, max_queued=1, max_recent=2)
-    active = _start(ledger, "queue-active")
+    active = _start(ledger, "queue-active", root=str(tmp_path / "workspace"))
     queued_ticket: list[SearchActivityTicket] = []
     worker_errors: list[BaseException] = []
 
     def wait_for_queue() -> None:
         try:
-            queued_ticket.append(_start(ledger, "queue-waiting"))
+            queued_ticket.append(
+                _start(ledger, "queue-waiting", root=str(tmp_path / "workspace"))
+            )
         except BaseException as exc:
             worker_errors.append(exc)
 
@@ -406,7 +422,7 @@ def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded() -> No
         time.sleep(0.001)
 
     with pytest.raises(SearchActivityAdmissionError) as raised:
-        _start(ledger, "queue-refused")
+        _start(ledger, "queue-refused", root=str(tmp_path / "workspace"))
     assert raised.value.reason == "queue_full"
     assert raised.value.deadline is None
     assert raised.value.wait.configured_bound_seconds == 0.0
@@ -443,17 +459,22 @@ def test_queue_full_has_no_fabricated_deadline_and_history_stays_bounded() -> No
     ]
 
 
-def test_duplicate_request_id_is_rejected_while_queued_active_or_recent() -> None:
+def test_duplicate_request_id_is_rejected_while_queued_active_or_recent(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=1, max_queued=2, max_recent=3)
-    active = _start(ledger, "duplicate")
+    active = _start(ledger, "duplicate", root=str(tmp_path / "workspace"))
     with pytest.raises(
         ValueError, match=r"^request_id 'duplicate' is already recorded$"
     ):
-        _start(ledger, "duplicate")
+        _start(ledger, "duplicate", root=str(tmp_path / "workspace"))
 
     queued: list[SearchActivityTicket] = []
     thread = threading.Thread(
-        target=lambda: queued.append(_start(ledger, "queued-duplicate")), daemon=True
+        target=lambda: queued.append(
+            _start(ledger, "queued-duplicate", root=str(tmp_path / "workspace"))
+        ),
+        daemon=True,
     )
     thread.start()
     deadline = time.monotonic() + 1.0
@@ -463,7 +484,7 @@ def test_duplicate_request_id_is_rejected_while_queued_active_or_recent() -> Non
     with pytest.raises(
         ValueError, match=r"^request_id 'queued-duplicate' is already recorded$"
     ):
-        _start(ledger, "queued-duplicate")
+        _start(ledger, "queued-duplicate", root=str(tmp_path / "workspace"))
 
     assert ledger.finish(
         active, completion=SearchActivityCompletion(outcome="success", status_code=200)
@@ -477,29 +498,46 @@ def test_duplicate_request_id_is_rejected_while_queued_active_or_recent() -> Non
     with pytest.raises(
         ValueError, match=r"^request_id 'duplicate' is already recorded$"
     ):
-        _start(ledger, "duplicate")
+        _start(ledger, "duplicate", root=str(tmp_path / "workspace"))
 
 
-def test_search_activity_filters_active_and_recent_records() -> None:
+def test_search_activity_filters_active_and_recent_records(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=4, max_recent=4)
-    vault_recent = _start(ledger, "vault-recent", search_type="vault", root="Y:/alpha")
+    vault_recent = _start(
+        ledger,
+        "vault-recent",
+        search_type="vault",
+        root=str(tmp_path / "alpha"),
+    )
     assert ledger.finish(
         vault_recent,
         completion=SearchActivityCompletion(outcome="success", status_code=200),
     )
-    code_recent = _start(ledger, "code-recent", search_type="code", root="Y:/beta")
+    code_recent = _start(
+        ledger,
+        "code-recent",
+        search_type="code",
+        root=str(tmp_path / "beta"),
+    )
     assert ledger.finish(
         code_recent,
         completion=SearchActivityCompletion(outcome="failed", status_code=500),
     )
-    _start(ledger, "document-active", search_type="document", root="Y:/alpha")
+    _start(
+        ledger,
+        "document-active",
+        search_type="document",
+        root=str(tmp_path / "alpha"),
+    )
 
     code_only = ledger.snapshot(
         include_query=True,
         filters=SearchActivityFilters(
             state="terminal",
             search_type="code",
-            root="Y:/beta",
+            root=str(tmp_path / "beta"),
             limit=1,
         ),
     )
@@ -508,7 +546,7 @@ def test_search_activity_filters_active_and_recent_records() -> None:
     assert code_only["filters"] == {
         "state": "terminal",
         "type": "code",
-        "root": "Y:/beta",
+        "root": str(tmp_path / "beta"),
         "request_id": None,
         "since": None,
         "limit": 1,
@@ -526,7 +564,9 @@ def test_search_activity_filters_active_and_recent_records() -> None:
     assert active["recent"] == []
 
 
-def test_search_activity_retains_every_terminal_failure_outcome() -> None:
+def test_search_activity_retains_every_terminal_failure_outcome(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=6, max_recent=6)
     expected = {
         "validation": ("validation_rejected", 400, "bad_request"),
@@ -535,7 +575,7 @@ def test_search_activity_retains_every_terminal_failure_outcome() -> None:
         "failure": ("failed", 500, "RuntimeError"),
     }
     for request_id, (outcome, status_code, error_code) in expected.items():
-        ticket = _start(ledger, request_id)
+        ticket = _start(ledger, request_id, root=str(tmp_path / "workspace"))
         assert ledger.finish(
             ticket,
             completion=SearchActivityCompletion(
@@ -560,7 +600,9 @@ def test_search_activity_retains_every_terminal_failure_outcome() -> None:
     assert records["unavailable"]["availability_cause"] == "collection_missing"
 
 
-def test_search_activity_retention_evicts_the_oldest_query_text() -> None:
+def test_search_activity_retention_evicts_the_oldest_query_text(
+    tmp_path: Path,
+) -> None:
     """Terminal retention is finite, and eviction takes the query text with it.
 
     Proven able to fail: dropping the ``popleft`` eviction from the ledger's
@@ -574,7 +616,9 @@ def test_search_activity_retention_evicts_the_oldest_query_text() -> None:
     for index, query in enumerate(
         (evicted_query, "second query", "third query", "fourth query")
     ):
-        ticket = _start(ledger, f"retained-{index}", query=query)
+        ticket = _start(
+            ledger, f"retained-{index}", query=query, root=str(tmp_path / "workspace")
+        )
         assert ledger.finish(
             ticket,
             completion=SearchActivityCompletion(outcome="success", status_code=200),
@@ -596,7 +640,9 @@ def test_search_activity_retention_evicts_the_oldest_query_text() -> None:
     )
 
 
-def test_search_activity_handles_concurrent_start_and_finish() -> None:
+def test_search_activity_handles_concurrent_start_and_finish(
+    tmp_path: Path,
+) -> None:
     ledger = SearchActivityLedger(max_active=2, max_recent=24)
     participants = 16
     ready = threading.Barrier(participants)
@@ -604,7 +650,9 @@ def test_search_activity_handles_concurrent_start_and_finish() -> None:
     def record(index: int) -> None:
         request_id = f"concurrent-{index}"
         ready.wait()
-        ticket = _start(ledger, request_id, search_type="combined")
+        ticket = _start(
+            ledger, request_id, search_type="combined", root=str(tmp_path / "workspace")
+        )
         assert ledger.finish(
             ticket,
             completion=SearchActivityCompletion(

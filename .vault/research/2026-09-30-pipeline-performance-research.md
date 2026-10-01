@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:7005391c00fe70f8d551c401b0530cdfc3058e52e96a7ee16f9b6f08368a4795'
+body_hash: 'sha256:efd718690826ff52e6e897a33004da46477949ab3ba11726a0696c97f7177992'
 related:
   - "[[2026-09-30-sparseencode-research]]"
   - "[[2026-07-29-encode-batch-adaptivity-research]]"
@@ -123,7 +123,7 @@ The larger frozen holdout repeats493 real test Python sources under unique paths
 
 ### Clean publication explains the second handoff delay
 
-Two later running CLI rebuild jobs in `Y:/code/cadrumo-worktrees/mcp` did not acknowledge script-owned PAUSED holds within240seconds. Both holds were withdrawn successfully, with original desired RUNNING restored. The user-approved cancellation/requeue path then captured and requested cancellation of only those exact two IDs/specs/attempts, recording fresh revision checks and owned request timestamps. Pending cancellation cannot be reversed by RUNNING; terminal acknowledgement is required for canonical retry with immutable parent lineage and identical rebuild authority/spec. Supervisor artifacts: `.pytest-tmp/gpu-job-holds-budget-comparison`, `.pytest-tmp/gpu-owned-cancellation-comparison`.
+Two later running CLI rebuild jobs in `<benchmark-workspace>` did not acknowledge script-owned PAUSED holds within240seconds. Both holds were withdrawn successfully, with original desired RUNNING restored. The user-approved cancellation/requeue path then captured and requested cancellation of only those exact two IDs/specs/attempts, recording fresh revision checks and owned request timestamps. Pending cancellation cannot be reversed by RUNNING; terminal acknowledgement is required for canonical retry with immutable parent lineage and identical rebuild authority/spec. Supervisor artifacts: `.pytest-tmp/gpu-job-holds-budget-comparison`, `.pytest-tmp/gpu-owned-cancellation-comparison`.
 
 Installed0.5.3 and current dispatcher paths pass `clean=not resumed` for fresh code/document rebuilds. The shared control token protects the entire clean publication from collection preparation through indexing, ingest barrier, stale reconciliation and valid metadata publication. Checkpoints intentionally defer pause/cancel throughout that protected interval; continued progress is not a token leak or ignored control. The capacity waiter should observe cancellation at its entry checkpoint after admission. The1200-second supervisor observation bound is not an API guarantee. Root continues waiting for acknowledged resource release before normal authenticated borrowing. Sources: `src/vaultspec_rag/job_dispatch.py:281`, `src/vaultspec_rag/indexer/_codebase_indexer.py:705`, `src/vaultspec_rag/indexer/_document_indexer.py:1222`, `src/vaultspec_rag/job_control.py`, and accepted large-index-resilience coverage. Reducing this control latency would require revisiting clean-publication safety, potentially verified shadow publication; it is a separate costly-decision opportunity.
 
@@ -135,7 +135,7 @@ The first candidate run stopped before all timed windows because 4096 failed the
 
 ### Owned cancellations reconciled through retry lineage
 
-The user explicitly authorized cancelling and requeuing pending work for benchmarking. Only the two captured rebuild jobs for `Y:/code/cadrumo-worktrees/mcp` were cancelled. Both acknowledged terminal cancellation and released resources before the normal authenticated borrower started. The document retry child is `b3993831-61b4-4037-8f20-254ea8e03fc8` (parent `a9b5a6ea-cf1e-4634-8e30-198994123df4`), and code child is `24d038a6-66e1-4eb9-81ba-2166088d238a` (parent `ad1d758f-3d5e-41cd-a9db-7f8d89fd64e7`). Fresh canonical detail reads prove identical original specifications, parent lineage and desired running state; the document child has succeeded and the code child is advancing. The code retry HTTP response timed out after creation, so response failure was reconciled against server state rather than treated as failure to create a child. Evidence: `.pytest-tmp/gpu-owned-cancellation-comparison/requeue-reconciliation.json`, `retry-before-list.json`, `code-retry-reconciliation-response.json`, `service-restored.json`. The resident identity remains PID 60756; no package metadata, model configuration or service process was replaced.
+The user explicitly authorized cancelling and requeuing pending work for benchmarking. Only the two captured rebuild jobs for `<benchmark-workspace>` were cancelled. Both acknowledged terminal cancellation and released resources before the normal authenticated borrower started. The document retry child is `b3993831-61b4-4037-8f20-254ea8e03fc8` (parent `a9b5a6ea-cf1e-4634-8e30-198994123df4`), and code child is `24d038a6-66e1-4eb9-81ba-2166088d238a` (parent `ad1d758f-3d5e-41cd-a9db-7f8d89fd64e7`). Fresh canonical detail reads prove identical original specifications, parent lineage and desired running state; the document child has succeeded and the code child is advancing. The code retry HTTP response timed out after creation, so response failure was reconciled against server state rather than treated as failure to create a child. Evidence: `.pytest-tmp/gpu-owned-cancellation-comparison/requeue-reconciliation.json`, `retry-before-list.json`, `code-retry-reconciliation-response.json`, `service-restored.json`. The resident identity remains PID 60756; no package metadata, model configuration or service process was replaced.
 
 ### Publication metadata is a separate profiling opportunity
 
@@ -187,3 +187,5 @@ https://docs.pytorch.org/docs/2.14/notes/cuda.html
 https://docs.nvidia.com/deploy/nvidia-smi/index.html
 
 https://pypi.org/project/py-spy/0.4.2/
+
+Historical workstation locations in this record are rendered as named portable placeholders; the observed commands, outcomes, timings, and identifiers are retained.

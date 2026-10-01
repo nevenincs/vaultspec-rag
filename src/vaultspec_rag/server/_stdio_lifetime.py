@@ -357,6 +357,21 @@ if sys.platform == "win32":
             exe = "?"
         return WatchedAncestor(pid, exe, handle, grace_prunable=grace_prunable)
 
+    def _discovered_handle_is_live(handle: int, watched: list[WatchedAncestor]) -> bool:
+        """Own refusal/error cleanup for one native discovered-ancestor wait."""
+        status = int(_kernel32.WaitForSingleObject(handle, 0))
+        if status == _WAIT_TIMEOUT:
+            return True
+        error = ctypes.get_last_error()
+        _kernel32.CloseHandle(handle)
+        if status == _WAIT_OBJECT_0:
+            # Exited ancestors may remain openable while their kernel object
+            # is retained, but are not live anchors for re-discovery.
+            return False
+        for ancestor in watched:
+            _kernel32.CloseHandle(ancestor.handle)
+        raise ctypes.WinError(error)
+
     def open_ancestor_handles() -> list[WatchedAncestor]:
         """SYNCHRONIZE handles on the live ancestor chain, PID-reuse safe.
 
@@ -376,6 +391,8 @@ if sys.platform == "win32":
         for pid in _walk_ancestor_pids(os.getpid(), parents):
             handle = _open_process(pid)
             if handle is None:
+                break
+            if not _discovered_handle_is_live(handle, watched):
                 break
             ancestor_ctime = _creation_time(handle)
             if child_ctime and (ancestor_ctime == 0 or ancestor_ctime > child_ctime):

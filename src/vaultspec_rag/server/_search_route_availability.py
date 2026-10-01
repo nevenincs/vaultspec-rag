@@ -19,11 +19,16 @@ from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
     SearchEmptyReason,
+    SearchReasonCode,
     SearchSourceFact,
     search_readiness_block,
 )
 from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 from ..concurrency import get_search_limiter
+from ..search._outcomes import (
+    COMBINED_SEARCH_FAILED,
+    COMBINED_SEARCH_FAILED_MESSAGE,
+)
 from ._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
@@ -37,6 +42,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
+    from ..search._outcomes import CombinedSearchOutcome
     from ..service import ServiceRegistry
     from ._routes_search import SearchRequest
     from ._search_readiness import PublicationTarget, ReadinessRevisionSnapshot
@@ -422,3 +428,101 @@ async def run_search_with_availability(
         if classification is None:
             raise
         return classification.response, classification
+
+
+def dominant_combined_failure(
+    source_facts: tuple[SearchSourceFact, ...],
+) -> tuple[SearchReasonCode, bool, str | None]:
+    """Select the strongest carried failure without erasing its retry policy."""
+    priority = (
+        SearchReasonCode.REBUILD_REQUIRED,
+        SearchReasonCode.REBUILD_REFUSED,
+        SearchReasonCode.CAPACITY_LIMITED,
+        SearchReasonCode.BACKEND_UNAVAILABLE,
+        SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
+        SearchReasonCode.INDEX_UNAVAILABLE,
+        SearchReasonCode.INDEX_NOT_BUILT,
+        SearchReasonCode.INDEX_UPDATING,
+        SearchReasonCode.INDEX_UNVERIFIABLE,
+    )
+    selected_reason = next(
+        (
+            reason
+            for reason in priority
+            if any(fact.reason_code == reason for fact in source_facts)
+        ),
+        SearchReasonCode.INDEX_UNVERIFIABLE,
+    )
+    selected = next(
+        (fact for fact in source_facts if fact.reason_code == selected_reason),
+        source_facts[0],
+    )
+    remediation = next(
+        (
+            fact.remediation
+            for fact in source_facts
+            if fact.reason_code == selected_reason and fact.remediation is not None
+        ),
+        selected.remediation,
+    )
+    stable_error = selected_reason.failure_code
+    return stable_error, selected.retryable, remediation
+
+
+def apply_combined_search_outcome(
+    response: dict[str, object],
+    combined: CombinedSearchOutcome,
+    *,
+    request_id: str,
+    index_state: dict[str, object],
+    has_results: bool,
+) -> None:
+    """Apply domain readiness and failure facts to a combined response."""
+    dominant_error, dominant_retryable, dominant_remediation = (
+        dominant_combined_failure(combined.source_facts)
+    )
+    response["ok"] = combined.ok
+    response["partial"] = combined.partial
+    response["domains"] = combined.domain_status_payload()
+    response["readiness"] = search_readiness_block(combined.source_facts)
+    if not combined.ok:
+        response.pop("results", None)
+        response.update(
+            {
+                "error": COMBINED_SEARCH_FAILED,
+                "message": COMBINED_SEARCH_FAILED_MESSAGE,
+                "summary": "Combined search failed in every domain.",
+                "retryable": dominant_retryable,
+                "remediation": dominant_remediation,
+            }
+        )
+    elif not has_results and (
+        combined.partial
+        or combined.readiness.absence_authority is not AbsenceAuthority.AUTHORITATIVE
+    ):
+        response.pop("results", None)
+        response.pop("summary", None)
+        unbuilt = next(
+            (
+                fact
+                for fact in combined.source_facts
+                if fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
+            ),
+            None,
+        )
+        response.update(
+            {
+                "ok": False,
+                "error": dominant_error.value,
+                "message": (
+                    unbuilt.failure_response(
+                        request_id=request_id, index_state=index_state
+                    )["message"]
+                    if unbuilt is not None
+                    else "The empty combined search is not authoritative for "
+                    "every requested source."
+                ),
+                "retryable": dominant_retryable,
+                "remediation": dominant_remediation,
+            }
+        )

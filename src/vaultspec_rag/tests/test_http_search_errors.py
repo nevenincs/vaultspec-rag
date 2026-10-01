@@ -710,7 +710,9 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
     makes the honest type the thing that has to be pinned.
     """
 
-    def test_the_facts_refuse_every_source_no_index_job_can_carry(self) -> None:
+    def test_the_facts_refuse_every_source_no_index_job_can_carry(
+        self, tmp_path: Path
+    ) -> None:
         """Only a concrete corpus builds facts; the fan-out is refused.
 
         Proven able to fail: replacing the ``__post_init__`` membership test
@@ -721,7 +723,7 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         for source in INDEX_SOURCES:
             facts = SearchAvailabilityRequestFacts(
                 job_snapshot_before=[],
-                root=Path("C:/combined-carve-out"),
+                root=Path(str(tmp_path / "combined-carve-out")),
                 source=source,
                 request_id="concrete-source",
                 port=None,
@@ -731,7 +733,7 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         with pytest.raises(ValueError, match="combined fan-out has no single index"):
             SearchAvailabilityRequestFacts(
                 job_snapshot_before=[],
-                root=Path("C:/combined-carve-out"),
+                root=Path(str(tmp_path / "combined-carve-out")),
                 source=cast("IndexSource", PublicSourceType.COMBINED.value),
                 request_id="fan-out-source",
                 port=None,

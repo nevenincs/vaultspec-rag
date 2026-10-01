@@ -63,9 +63,18 @@ holder = subprocess.Popen(
     stdout=subprocess.PIPE,
     text=True,
 )
-line = holder.stdout.readline() if holder.stdout is not None else ""
-print(line.strip(), flush=True)
-holder.wait()
+try:
+    line = holder.stdout.readline() if holder.stdout is not None else ""
+    print(line.strip(), flush=True)
+    holder.wait()
+finally:
+    if holder.poll() is None:
+        holder.kill()
+    try:
+        holder.wait(timeout=5.0)
+    finally:
+        if holder.stdout is not None:
+            holder.stdout.close()
 launcher_stop = Path(sys.argv[3])
 while not launcher_stop.exists():
     time.sleep(0.01)
@@ -190,36 +199,40 @@ def _terminate_confirmed_holder(holder_pid: int, *, timeout: float) -> None:
 
 def _reap_launcher(launcher: subprocess.Popen[str], stop: Path) -> None:
     """Signal and await the test-owned launcher, force-reaping its tree if stuck."""
-    signal_error: OSError | None = None
-    try:
-        stop.write_text("stop\n", encoding="utf-8")
-    except OSError as exc:
-        signal_error = exc
-    if launcher.poll() is None:
+    with contextlib.ExitStack() as cleanup:
+        for stream in (launcher.stdin, launcher.stdout, launcher.stderr):
+            if stream is not None:
+                cleanup.callback(stream.close)
+        signal_error: OSError | None = None
         try:
-            launcher.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            if sys.platform == "win32":
-                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(launcher.pid)],
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                        timeout=5.0,
-                    )
-            else:
-                launcher.kill()
-            if launcher.poll() is None:
-                with contextlib.suppress(OSError):
-                    launcher.kill()
+            stop.write_text("stop\n", encoding="utf-8")
+        except OSError as exc:
+            signal_error = exc
+        if launcher.poll() is None:
             try:
                 launcher.wait(timeout=5.0)
-            except subprocess.TimeoutExpired as exc:
-                msg = f"test-owned launcher {launcher.pid} did not exit"
-                raise AssertionError(msg) from exc
-    if signal_error is not None:
-        raise signal_error
+            except subprocess.TimeoutExpired:
+                if sys.platform == "win32":
+                    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(launcher.pid)],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=5.0,
+                        )
+                else:
+                    launcher.kill()
+                if launcher.poll() is None:
+                    with contextlib.suppress(OSError):
+                        launcher.kill()
+                try:
+                    launcher.wait(timeout=5.0)
+                except subprocess.TimeoutExpired as exc:
+                    msg = f"test-owned launcher {launcher.pid} did not exit"
+                    raise AssertionError(msg) from exc
+        if signal_error is not None:
+            raise signal_error
 
 
 def _abort_failed_start(

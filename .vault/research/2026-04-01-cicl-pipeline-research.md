@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-09-14'
-body_hash: 'sha256:b80256f6aa3fefa5f60f47e601cab9c469e3e38f0f944a2744a9669aeb7a5894'
+modified: '2026-10-01'
+body_hash: 'sha256:04dda653305bae74ac190f60207aeaecf381d3671c09f04b8a65d16a1a825196'
 ---
 
 # `cicl` research: CI/CD pipeline and release automation
@@ -62,7 +62,7 @@ require org-level setup — overkill for this project currently.
 #### vaultspec-core dependency for CI and publishing
 
 The current `pyproject.toml` has a local file path dependency:
-`vaultspec-core @ file:///C:/projects/worktrees/main`. This is a
+`vaultspec-core @ file:///<absolute-companion-checkout>`. This is a
 hard blocker for both CI runners and PyPI publishing (PyPI rejects path deps).
 
 **Solution:** Use uv's source override pattern:

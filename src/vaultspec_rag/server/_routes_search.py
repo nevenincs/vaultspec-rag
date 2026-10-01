@@ -58,7 +58,6 @@ from ..concurrency import get_search_limiter
 from ..logging_config import log_event
 from ..search._outcomes import (
     COMBINED_SEARCH_FAILED,
-    COMBINED_SEARCH_FAILED_MESSAGE,
 )
 from ..search._result_shaping import (
     PHASE_EMBEDDING,
@@ -70,6 +69,7 @@ from ..search._result_shaping import (
 )
 from ..service import RegistryFullError, ServiceRegistry
 from ..service_quiesce import QuiesceAdmissionClosedError
+from . import _search_route_availability as route_availability
 from ._auth import require_token
 from ._runtime import get_request_runtime
 from ._search_activity import (
@@ -594,45 +594,6 @@ def _dispatch_public_search(
     return combined.results, timings, combined
 
 
-def _dominant_combined_failure(
-    source_facts: tuple[SearchSourceFact, ...],
-) -> tuple[SearchReasonCode, bool, str | None]:
-    """Select the strongest carried failure without erasing its retry policy."""
-    priority = (
-        SearchReasonCode.REBUILD_REQUIRED,
-        SearchReasonCode.REBUILD_REFUSED,
-        SearchReasonCode.CAPACITY_LIMITED,
-        SearchReasonCode.BACKEND_UNAVAILABLE,
-        SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
-        SearchReasonCode.INDEX_UNAVAILABLE,
-        SearchReasonCode.INDEX_NOT_BUILT,
-        SearchReasonCode.INDEX_UPDATING,
-        SearchReasonCode.INDEX_UNVERIFIABLE,
-    )
-    selected_reason = next(
-        (
-            reason
-            for reason in priority
-            if any(fact.reason_code == reason for fact in source_facts)
-        ),
-        SearchReasonCode.INDEX_UNVERIFIABLE,
-    )
-    selected = next(
-        (fact for fact in source_facts if fact.reason_code == selected_reason),
-        source_facts[0],
-    )
-    remediation = next(
-        (
-            fact.remediation
-            for fact in source_facts
-            if fact.reason_code == selected_reason and fact.remediation is not None
-        ),
-        selected.remediation,
-    )
-    stable_error = selected_reason.failure_code
-    return stable_error, selected.retryable, remediation
-
-
 def _execute_search_request(
     request: SearchRequest, registry: ServiceRegistry
 ) -> dict[str, object]:
@@ -713,55 +674,13 @@ def _execute_search_request(
             "index_state": index_state,
         }
         if combined is not None:
-            dominant_error, dominant_retryable, dominant_remediation = (
-                _dominant_combined_failure(combined.source_facts)
+            route_availability.apply_combined_search_outcome(
+                response,
+                combined,
+                request_id=request.request_id,
+                index_state=index_state,
+                has_results=bool(items),
             )
-            response["ok"] = combined.ok
-            response["partial"] = combined.partial
-            response["domains"] = combined.domain_status_payload()
-            response["readiness"] = search_readiness_block(combined.source_facts)
-            if not combined.ok:
-                response.pop("results", None)
-                response.update(
-                    {
-                        "error": COMBINED_SEARCH_FAILED,
-                        "message": COMBINED_SEARCH_FAILED_MESSAGE,
-                        "summary": "Combined search failed in every domain.",
-                        "retryable": dominant_retryable,
-                        "remediation": dominant_remediation,
-                    }
-                )
-            elif not items and (
-                combined.partial
-                or combined.readiness.absence_authority
-                is not AbsenceAuthority.AUTHORITATIVE
-            ):
-                response.pop("results", None)
-                response.pop("summary", None)
-                unbuilt = next(
-                    (
-                        fact
-                        for fact in combined.source_facts
-                        if fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
-                    ),
-                    None,
-                )
-                response.update(
-                    {
-                        "ok": False,
-                        "error": dominant_error.value,
-                        "message": (
-                            unbuilt.failure_response(
-                                request_id=request.request_id, index_state=index_state
-                            )["message"]
-                            if unbuilt is not None
-                            else "The empty combined search is not authoritative for "
-                            "every requested source."
-                        ),
-                        "retryable": dominant_retryable,
-                        "remediation": dominant_remediation,
-                    }
-                )
         return response
     except RegistryFullError as exc:
         return _m._registry_full_error_dict(exc, registry)
