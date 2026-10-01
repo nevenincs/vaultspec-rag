@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:22ecab2de577692689035555ed795511ecfbee2d455387b77bb9a0d9ad103222'
+body_hash: 'sha256:32f67eb825f76f0fa7709ba102ad703b8a9408f0c8068962437660b71f94769f'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -192,6 +192,21 @@ related:
 - `S04` `verify:` `source-v12 just test-python=pass;source-v12 just check-all` -> `pass`
 - `S04` `verify:` `source-v12 complete resident GPU selection=pass;source-v12 source stability` -> `pass`
 - `S04` `verify:` `source-v12 just test-python=pass;source-v12 just check-all=pass;source-v12 COMPLETE just test-gpu=pass;post-all source hash=pass;post-all acceptance no-recreation/preservation=pass;independent integrated source review` -> `pass`
+- `S04` `verify:` `full GitHub CI 36912341534 exact 6cff5b90 Windows CPU job 110537815818 16 failed 5829 passed 7 skipped` -> `fail`
+- `S04` `M` `src/vaultspec_rag/_win32.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S04` `verify:` `strict just test-python frozen preliminary source-v13 5844 passed 8 existing skips zero warnings 160.04s` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-guard-proofs-v14.py intended creator deny null RED exact restoration GREEN` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-repeat-proof-v14.py intended native-write RED exact restoration GREEN` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-restricted-acl-proof.py actual administrator-disabled baseline old denied repaired operations` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-boundaries-v13.py actual denied write remains refused null DACL unchanged` -> `pass`
+- `S04` `verify:` `source-v14 exact strict just test-python: 5844 passed, 8 existing OS/admin skips, 0 warnings, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 exact just check-all: aggregate and general vault clean, basedpyright 0 errors 0 warnings 0 notes, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 exact strict just test-gpu: resident 738 passed and subprocess 76 passed, serial, 0 warnings, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 frozen 1188-file digest 66d353904efdfa1fe23f20d0ef6eb2f7e61ba8d3cecf373ee413ed115ead14d2: post-full mismatch count 0` -> `pass`
+- `S04` `verify:` `acceptance-index post-full retention: 9 directories 40 files preserved, no common-Git artifacts recreated` -> `pass`
+- `S04` `verify:` `post-full resident borrowing restoration: models loaded, running admission, borrower unbound, compute tickets 0` -> `pass`
+- `S04` `verify:` `GPT-6.1 Sol integrated local S04 review of final opaque-ACE repair and frozen full gates: no blocker` -> `pass`
 
 ## Notes
 
@@ -242,3 +257,6 @@ related:
 - `S04` Frozen source-v12 1188nonvaultfiles digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105: exactstrictfullCPU native0,5844PASS8existingplatform/adminSKIP0warnings195.14s; all13originalWindowsCIfailedcases pass. Exactfullaggregate native0, Ruff/format/Ty/links/TOML/Markdown/workflows/imports/complexity/nesting/Pylintmodulelimits/docs0.6/citationsidentity/conventions/basedpyright/generalvault/generatedCLIreference pass. Basedpyright0errors0warnings0notes; generalvaultallchecks clean. Independent GPT6.1Sol rolloverfollowup confirms originalbyte-order repair no blocker, intended actual-retained-boundary replay RED/exactrestore/GREEN and freshrealUvicornPASS applicable. Required fullresident/subprocessGPU stillrunning rootsoleowner; allsourcewriters stopped. S04open/integratedPENDING/PR569DRAFT/no repairedcommit orpush. Evidence .pytest-tmp/remediation-final-cpu-v12.log and remediation-final-check-all-v12.log.
 - `S04` Fresh exact just test-gpu resident selection completed native0:738PASS5656deselected0warnings1143.42s. FullCPU5844PASS8existingskips0warnings and exactaggregate native0 already apply to the SAME frozen1188nonvaultfiles source-v12 digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105, nowverified0mismatches. The previouslyfailed realaccess-log rollover case PASSED in thiscomplete selection; all realquality/model cases also passed unchanged floors. Resident report preserved .pytest-tmp/remediation-final-resident-gpu-v12.jsonl. Same exactrecipe proceeds serially to fullsubprocessGPU; combinedrecipe outcome and finalintegratedacceptance remain PENDING. RootsoleGPUowner, no sourcewrites, S04open, PR569DRAFT, no repairedcommit/push.
 - `S04` ACTUAL finalsame-source acceptance: CPU5844PASS8existingplatform/adminSKIP0WARN195.14s; residentGPU738PASS0WARN1143.42s; subprocessGPU76PASS0WARN1693.78s; COMPLETE exactGPUrecipe native0. Exactaggregate native0, strictbasedpyright0errors0warnings0notes, generalvaultallclean. Total6658full-lanepasses, no focused double-count. Source1188files frozenv12 digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105 verified0mismatches AFTERALL. Realserveddrift/restart/shutdown/rollover/quality cases allpass. IndependentGPT6.1Sol integratedsource reviewPASS/no blockers. Postfull commonGitnoacceptanceartifacts,9dirs40filesandZIP exactpreserved; issueS09owncriterionclosed withoutretiringhistoricalplan. Originalresidentmodelsloaded/running/admissionsopen/no borrower/tickets0; globalhealthdegraded from latestfailed vaultjobforadifferentproject, no causeinferred orforeigncontrols. Finalauditappendedactualevidenceandlimits/history withoutrewrites. S04 localcriterion complete; owningCLIclosure and finalcompletion-recordaggregate follow before explicitcommit/pushdraft/exact-headfullCI/ready. No repairedcommit/push yet.
+- `S04` Reopened S04 after actual full CI Windows filesystem failures. Full local v12 checks remain historical passes; CI has not passed and PR stays draft. Independent caller inspection found the shared Windows anchor directory grant replaces prior explicit creator ACL rights; PID-qualified temp separation did not repair this additional non-admin permissions cause. Repair and intended mutation proof are pending.
+- `S04` Additional actual deny probe rejected the initial SetEntriesInAcl `GRANT_ACCESS` repair: it removed an existing AU deny and permitted the forbidden write. Final implementation preserves opaque existing ACE bytes and copies only missing grants. Earlier owner-rights baseline setup failures and unchanged rendered-ACL dedup mutations are not counted as intended RED proof. S04 remains open pending fresh final local full checks, review and exact-head full CI.
+- `S04` Repair-commit full CI is pending; prior exact-head 6cff5b90 run36912341534 failed 16 Windows CPU cases. PR569 remains draft. Separate foreign-project resident health degradation is retained.
