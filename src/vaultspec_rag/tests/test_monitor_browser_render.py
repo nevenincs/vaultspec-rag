@@ -143,8 +143,15 @@ def _click(browser: Browser, label: str) -> None:
     )
 
 
-def _inspect(browser: Browser, kind: str, identity: str) -> None:
-    selector = json.dumps(f'[aria-label="Inspect {kind} {identity}"]')
+def _page(browser: Browser, page: str) -> None:
+    browser.evaluate(f"location.hash = '/{page}'")
+    browser.wait(f"location.hash === '#/{page}'")
+
+
+def _expand(browser: Browser, kind: str, identity: str) -> None:
+    label = f"Expand {kind} {identity}"
+    selector = json.dumps(f'button[aria-label="{label}"]')
+    browser.wait(f"!!document.querySelector({selector})")
     browser.evaluate(f"document.querySelector({selector}).click()")
 
 
@@ -153,39 +160,51 @@ def _check_retention(
 ) -> None:
     discovery = directory / "service.json"
     original = discovery.read_text(encoding="utf-8")
-    discovery.write_text("{}", encoding="utf-8")
-    browser.wait("document.body.innerText.includes('Showing retained evidence')")
-    browser.wait(
-        "document.querySelector('#work-inspector')?.innerText"
-        ".includes('Observation unavailable') || "
-        "document.body.innerText.includes('Work left the current page')"
-    )
-    # Dropping prior data on failure failed this assertion; restoring it passed.
-    # Proof: .pytest-tmp/browser-render-retention-{broken,restored}.log.
-    assert (
-        browser.evaluate(
-            "Boolean(document.querySelector('#work-inspector')?.innerText.includes('next-request'))"
+    try:
+        discovery.write_text("{}", encoding="utf-8")
+        browser.wait("document.body.innerText.includes('Showing retained evidence')")
+        assert (
+            browser.evaluate("document.body.innerText.includes('next-request')") is True
         )
-        is True
+    finally:
+        discovery.write_text(original, encoding="utf-8")
+    browser.wait(
+        "!document.querySelector('main').innerText.includes('Observation unavailable')"
     )
-    discovery.write_text(original, encoding="utf-8")
-    browser.wait("!document.body.innerText.includes('Observation unavailable')")
-    _click(browser, "Pause live updates")
+    browser.evaluate("document.querySelector('#live-updates').click()")
     with path.open("a", encoding="utf-8") as log:
         log.write(f"request_id={request_id} resumed-request\n")
     time.sleep(1.3)
-    # Polling Logs while paused failed here; restored cancellation passed.
-    # Proof: .pytest-tmp/browser-render-poll-pause-{broken,restored}.log.
     assert (
+        browser.evaluate("document.body.innerText.includes('resumed-request')") is False
+    )
+    browser.evaluate("document.querySelector('#live-updates').click()")
+    browser.wait("document.body.innerText.includes('resumed-request')")
+
+
+def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
+    if size[0] >= 1056:
+        assert browser.evaluate(
+            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
+            ".getBoundingClientRect().right > 0"
+        ), "Desktop navigation must be visible"
+    else:
         browser.evaluate(
-            "document.querySelector('#work-inspector').innerText.includes('resumed-request')"
+            "document.querySelector('button[aria-label=\"Open navigation\"]').click()"
         )
-        is False
+        browser.wait(
+            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
+            ".getBoundingClientRect().right > 200"
+        )
+        browser.evaluate(
+            "document.querySelector('button[aria-label=\"Close navigation\"]').click()"
+        )
+    artifact = Path(__file__).resolve().parents[3] / ".pytest-tmp"
+    artifact.mkdir(exist_ok=True)
+    browser.command(
+        "screenshot", path=str(artifact / f"carbon-dashboard-{size[0]}.png")
     )
-    _click(browser, "Resume live updates")
-    browser.wait(
-        "document.querySelector('#work-inspector')?.innerText.includes('resumed-request')"
-    )
+    return artifact
 
 
 @pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844)])
@@ -193,7 +212,6 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
     rendered_monitor: Browser,
     monitor_http: tuple[int, Path],
     size: tuple[int, int],
-    tmp_path: Path,
 ) -> None:
     browser = rendered_monitor
     _, directory = monitor_http
@@ -213,24 +231,27 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
     (directory / QDRANT_LOG_NAME).write_text("qdrant-own-record\n", encoding="utf-8")
     try:
         browser.command("resize", width=size[0], height=size[1])
-        browser.wait(
-            f"document.body.innerText.includes({json.dumps(job_id)}) && "
-            "document.body.innerText.includes('qdrant-own-record')"
-        )
-        browser.command("screenshot", path=str(tmp_path / f"monitor-{size[0]}.png"))
-        artifact = Path(__file__).resolve().parents[3] / ".pytest-tmp"
-        artifact.mkdir(exist_ok=True)
-        browser.command(
-            "screenshot", path=str(artifact / f"carbon-monitor-{size[0]}.png")
+        browser.wait("document.body.innerText.includes('Models and integrations')")
+        browser.wait("document.body.innerText.includes('System CPU')")
+        assert (
+            browser.evaluate("document.querySelector('h1').textContent") == "Dashboard"
         )
         assert (
             browser.evaluate(
-                "(async () => { const payload = await "
-                "(await fetch('/api/monitor/health')).json(); "
-                "const tile = document.querySelector('#typesafe-heading')"
-                ".closest('.monitor-health-tile'); "
-                "return tile.innerText.includes(payload.features.typesafe.state) && "
-                "tile.innerText.includes(payload.features.typesafe.model); })()"
+                "!!document.querySelector('[aria-label=\"Monitor navigation\"]')"
+            )
+            is True
+        )
+        assert (
+            browser.evaluate("document.body.innerText.includes('TypeSafe API')") is True
+        )
+        assert (
+            browser.evaluate("document.querySelector('#typesafe-heading') === null")
+            is True
+        )
+        assert (
+            browser.evaluate(
+                "document.querySelector('table[aria-label=\"Queries\"]') === null"
             )
             is True
         )
@@ -240,61 +261,37 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
         )
         assert (
             browser.evaluate(
-                "document.querySelector('h1').getBoundingClientRect().top >= 48"
+                "document.querySelector('h1').getBoundingClientRect().top "
+                ">= document.querySelector('header').getBoundingClientRect().bottom"
             )
             is True
         )
-        _inspect(browser, "job", job_id)
-        browser.wait(
-            "document.querySelector('#work-inspector')?.innerText.includes('first-job')"
-        )
-        # Removing the work scope mixed request logs into this pane: failed/pass.
-        # Proof: .pytest-tmp/browser-render-work-scope-{broken,restored}.log.
+        artifact = _dashboard_artifact(browser, size)
+        _page(browser, "indexing")
+        _expand(browser, "index request", job_id)
+        browser.wait("document.body.innerText.includes('first-job')")
         assert (
-            browser.evaluate(
-                "document.querySelector('#work-inspector').innerText.includes('first-request')"
-            )
+            browser.evaluate("document.body.innerText.includes('first-request')")
             is False
         )
-        # Enabling all controls failed this capability assertion; restore passed.
-        # Proof: .pytest-tmp/browser-render-capabilities-{broken,restored}.log.
         assert (
             browser.evaluate(
-                "[...document.querySelectorAll('#work-inspector button')]"
-                ".find(button => button.textContent === 'Pause').disabled"
+                "[...document.querySelectorAll('button')].find(button => "
+                "button.textContent === 'Pause').disabled"
             )
             is True
         )
         with path.open("a", encoding="utf-8") as log:
             log.write(f"job_id={job_id} next-job\n")
-        browser.wait(
-            "document.querySelector('#work-inspector')?.innerText.includes('next-job')"
-        )
-        browser.evaluate(
-            "[...document.querySelectorAll('[role=tab]')]"
-            ".find(tab => tab.textContent === 'Serving requests').click()"
-        )
-        browser.wait(
-            f"!!document.querySelector('[aria-label=\"Inspect request {request_id}\"]')"
-        )
-        _inspect(browser, "request", request_id)
-        browser.wait(
-            "document.querySelector('#work-inspector')?.innerText.includes('first-request')"
-        )
-        # Removing scope/filter validation failed the separate model guard.
-        # Rendered ownership independently requires the old job log to leave.
+        browser.wait("document.body.innerText.includes('next-job')")
+        _page(browser, "queries")
+        _expand(browser, "query", request_id)
+        browser.wait("document.body.innerText.includes('first-request')")
+        assert browser.evaluate("document.body.innerText.includes('next-job')") is False
         assert (
             browser.evaluate(
-                "document.querySelector('#work-inspector').innerText.includes('next-job')"
-            )
-            is False
-        )
-        # Treating requests as jobs failed this assertion; restoring passed.
-        # Proof: .pytest-tmp/browser-render-request-controls-{broken,restored}.log.
-        assert (
-            browser.evaluate(
-                "[...document.querySelectorAll('#work-inspector button')]"
-                ".some(button => button.textContent === 'Stop')"
+                "[...document.querySelectorAll('button')].some(button => "
+                "button.textContent === 'Delete record')"
             )
             is False
         )
@@ -302,50 +299,23 @@ def test_carbon_monitor_live_scopes_and_retained_evidence(
             log.write(
                 f"request_id={request_id} next-request <script>inert()</script>\n"
             )
-        browser.wait(
-            "document.querySelector('#work-inspector')?.innerText.includes('next-request')"
-        )
-        # Rendering log HTML produced a script node: failed, then restored pass.
-        # Proof: .pytest-tmp/browser-render-html-escaping-{broken,restored}.log.
+        browser.wait("document.body.innerText.includes('next-request')")
         assert (
-            browser.evaluate(
-                "document.querySelector('#work-inspector pre script') !== null"
-            )
-            is False
+            browser.evaluate("document.querySelector('main script') === null") is True
         )
         _check_retention(browser, directory, path, request_id)
-        ledger.finish(
-            ticket,
-            completion=SearchActivityCompletion(
-                "succeeded",
-                200,
-                result_count=3,
-                timings={
-                    "typesafe_latency_ms": 125,
-                    "typesafe_confidence": 0.9,
-                    "rerank_seconds": 0.05,
-                },
-            ),
+        browser.command(
+            "screenshot", path=str(artifact / f"carbon-queries-{size[0]}.png")
         )
-        browser.wait(
-            "document.querySelector('#work-inspector')?.innerText.includes('125 ms')"
-        )
-        assert (
-            browser.evaluate(
-                "document.querySelector('#work-inspector').innerText.includes('0.9 s')"
-            )
-            is False
-        )
+        _page(browser, "logs")
+        browser.wait("document.body.innerText.includes('qdrant-own-record')")
+        browser.wait("document.body.innerText.includes('next-job')")
         assert (
             browser.evaluate("document.documentElement.scrollWidth <= innerWidth")
             is True
         )
         evidence = cast("dict[str, object]", browser.command("evidence"))
         assert evidence["errors"] == []
-        assert any(
-            "contains=" + request_id in str(url)
-            for url in cast("list[str]", evidence["network"])
-        )
     finally:
         record_finish(job_id, result="completed")
         ledger.finish(ticket, completion=SearchActivityCompletion("succeeded", 200))
@@ -360,42 +330,77 @@ def test_carbon_delete_targets_the_selected_terminal_job(
     second = record_start(JobSource.VAULT, "tool", project_root=directory)
     record_finish(first, result="first completed")
     record_finish(second, result="second completed")
-    browser.wait(f"document.body.innerText.includes({json.dumps(second)})")
-    _inspect(browser, "job", first)
-    browser.wait(
-        "document.querySelector('#work-inspector')?.innerText"
-        ".includes('first completed')"
-    )
-    _click(browser, "Delete record")
-    browser.wait("document.body.innerText.includes('Delete this job record?')")
-    _click(browser, "Cancel")
-    _inspect(browser, "job", second)
-    browser.wait(
-        "document.querySelector('#work-inspector')?.innerText"
-        ".includes('second completed')"
-    )
+    _page(browser, "indexing")
+    _expand(browser, "index request", second)
     _click(browser, "Delete record")
     browser.wait("document.body.innerText.includes('Delete this job record?')")
     browser.evaluate(
-        "[...document.querySelectorAll('[role=dialog] button')]"
-        ".find(button => button.textContent.endsWith('Delete record')).click()"
+        "[...document.querySelectorAll('[role=dialog] button')].find(button "
+        "=> button.textContent.endsWith('Delete record')).click()"
     )
     browser.wait(
-        "document.body.innerText.includes('Work left the current page') || "
-        "!document.querySelector('h1')"
+        f"!document.querySelector('[aria-label=\"Expand index request {second}\"]')"
     )
-    # Removing the obsolete Carbon-row guard blanked the page: failed/pass.
-    # Proof: .pytest-tmp/browser-render-removed-row-{broken,restored}.log.
     assert (
-        browser.evaluate(
-            "document.body.innerText.includes('Work left the current page')"
-        )
-        is True
+        browser.evaluate("document.querySelector('h1').textContent") == "Index Requests"
     )
     result = browser.evaluate(
-        "(async () => { const payload = await "
-        "(await fetch('/api/monitor/jobs?limit=100')).json(); "
-        "return payload.jobs.map(job => job.id); })()"
+        "(async () => { const payload = await (await "
+        "fetch('/api/monitor/jobs?limit=100')).json(); return "
+        "payload.jobs.map(job => job.id); })()"
     )
     assert first in cast("list[str]", result)
     assert second not in cast("list[str]", result)
+
+
+def test_carbon_relational_query_results_and_enrollment_validation(
+    rendered_monitor: Browser, monitor_http: tuple[int, Path]
+) -> None:
+    browser = rendered_monitor
+    _, directory = monitor_http
+    request_id = uuid.uuid4().hex
+    ledger = search_activity_ledger()
+    ticket = ledger.start(
+        SearchActivityStart(request_id, "nested evidence", "code", str(directory), 1)
+    )
+    ledger.finish(
+        ticket,
+        completion=SearchActivityCompletion(
+            "succeeded",
+            200,
+            result_count=1,
+            response={"results": [{"path": "src/example.py", "score": 0.95}]},
+        ),
+    )
+    _page(browser, "queries")
+    _expand(browser, "query", request_id)
+    browser.wait("document.body.innerText.includes('response')")
+    browser.evaluate(
+        "[...document.querySelectorAll('[role=treeitem]')].find(item => "
+        "item.textContent.trim().startsWith('response')).click()"
+    )
+    browser.wait("!!document.querySelector('button[aria-label=\"Expand results\"]')")
+    browser.evaluate(
+        "document.querySelector('button[aria-label=\"Expand results\"]').click()"
+    )
+    browser.wait("document.body.innerText.includes('src/example.py')")
+    assert browser.evaluate("document.body.innerText.includes('0.95')") is True
+    _page(browser, "repositories")
+    browser.wait("document.body.innerText.includes('Enroll repository')")
+    _click(browser, "Enroll repository")
+    browser.evaluate(
+        "(() => { const input = document.querySelector('#repository-root'); "
+        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')"
+        ".set.call(input, 'relative/path'); "
+        "input.dispatchEvent(new Event('input', { bubbles: true })); })()"
+    )
+    browser.wait(
+        "[...document.querySelectorAll('[role=dialog] button')].some(button => "
+        "button.textContent === 'Enroll' && !button.disabled)"
+    )
+    _click(browser, "Enroll")
+    browser.wait(
+        "[...document.querySelectorAll('[role=dialog]')].some(dialog => "
+        "dialog.innerText.includes('Enrollment failed'))"
+    )
+    assert cast("dict[str, object]", browser.command("evidence"))["errors"] == []

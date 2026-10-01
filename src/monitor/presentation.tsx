@@ -1,7 +1,12 @@
 import type { ComponentProps, ReactNode } from "react";
 import {
-  Column,
-  Grid,
+  Table,
+  DataTable,
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableCell,
+  TableRow,
   Stack,
   preview__IconIndicator as IconIndicator,
 } from "@carbon/react";
@@ -14,10 +19,20 @@ function statusKind(state: string): StatusKind {
     return "failed";
   if (["degraded", "cooldown", "stalled"].includes(state))
     return "caution-major";
-  if (["running", "pausing", "cancelling", "starting"].includes(state))
+  if (
+    [
+      "running",
+      "pausing",
+      "draining",
+      "warming",
+      "cancelling",
+      "starting",
+    ].includes(state)
+  )
     return "in-progress";
   if (["queued", "pending"].includes(state)) return "pending";
-  if (["paused", "cancelled", "off"].includes(state)) return "incomplete";
+  if (["paused", "quiesced", "stopped", "cancelled", "off"].includes(state))
+    return "incomplete";
   return "unknown";
 }
 
@@ -32,14 +47,37 @@ export function Status({ state, label }: { state: string; label?: string }) {
 
 export function Details({ items }: { items: [string, ReactNode][] }) {
   return (
-    <Grid as="dl" narrow withRowGap className="monitor-details">
-      {items.map(([label, value]) => (
-        <Column sm={4} md={4} lg={8} key={label}>
-          <dt className="cds--type-label-01 monitor-muted">{label}</dt>
-          <dd className="cds--type-body-compact-01">{value}</dd>
-        </Column>
-      ))}
-    </Grid>
+    <DataTable
+      rows={items.map(([label]) => ({ id: label, property: label }))}
+      headers={[
+        { key: "property", header: "Property" },
+        { key: "value", header: "Value" },
+      ]}
+      size="sm"
+    >
+      {({ getTableProps }) => (
+        <Table
+          {...getTableProps()}
+          aria-label="Service properties"
+          className="monitor-details"
+        >
+          <TableHead>
+            <TableRow>
+              <TableHeader>Property</TableHeader>
+              <TableHeader>Value</TableHeader>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {items.map(([label, value]) => (
+              <TableRow key={label}>
+                <TableCell>{label}</TableCell>
+                <TableCell>{value}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </DataTable>
   );
 }
 

@@ -12,7 +12,7 @@ related:
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
 modified: '2026-10-01'
 body_schema: body-v2
-body_hash: 'sha256:3108a3a14289f55c1bd41a2b1ebc2676a2b8239c7eac407497891262132f6c96'
+body_hash: 'sha256:0d7000bf52fa2c5101f49ea1463f80f6c2a1098fff1fb8430104e539cad5570e'
 ---
 
 <!-- RETIRED: S02 -->
@@ -30,7 +30,7 @@ User clarifications: Dashboard is the opening service/system overview; Index Req
 ## Steps
 
 - [x] `S01` - Implement and verify canonical backend operations for repository enrollment, resident storage management, lifecycle bridge, resource/client monitoring and bounded query evidence; `src/vaultspec_rag service/runtime modules and covering tests, src/monitor/server/local-service.ts and bridge tests`.
-- [ ] `S03` - Build and verify separate Carbon dashboard and operational pages with relational evidence; `src/monitor frontend components/styles, package.json/package-lock.json and rendered browser checks`.
+- [x] `S03` - Build and verify separate Carbon dashboard and operational pages with relational evidence; `src/monitor frontend components/styles, package.json/package-lock.json and rendered browser checks`.
 - [ ] `S04` - Verify and review integrated operator workflows and checkpoint results; `monitor covering checks, vault execution and audit records`.
 
 ## Parallelization

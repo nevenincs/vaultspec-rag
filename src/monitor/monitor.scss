@@ -19,12 +19,14 @@ body {
 }
 
 .monitor-content {
-  padding-block: spacing.$spacing-09 spacing.$spacing-08;
+  padding-block: spacing.$spacing-07 spacing.$spacing-08;
+  margin-inline-start: 16rem;
   padding-inline: 0;
 }
 
 .monitor-grid {
-  row-gap: spacing.$spacing-07;
+  max-inline-size: none;
+  row-gap: spacing.$spacing-05;
 }
 
 .monitor-grid > * {
@@ -33,12 +35,6 @@ body {
 
 .monitor-log-grid {
   padding-inline: 0;
-}
-
-.monitor-grid:has(.monitor-health-tile),
-.monitor-log-grid,
-.monitor-grid:has(#work-inspector) .monitor-grid {
-  row-gap: spacing.$spacing-05;
 }
 
 .monitor-muted {
@@ -71,16 +67,6 @@ body {
   block-size: 100%;
 }
 
-.monitor-details {
-  padding-inline: 0;
-  row-gap: spacing.$spacing-05;
-}
-
-.monitor-details dd {
-  margin-block-start: spacing.$spacing-02;
-  overflow-wrap: anywhere;
-}
-
 .monitor-reasons {
   padding-inline-start: spacing.$spacing-05;
   list-style-type: disc;
@@ -105,41 +91,16 @@ body {
   max-inline-size: 28rem;
 }
 
-.monitor-work-table tr[data-selected="true"] td {
-  background: theme.$layer-selected-01;
-}
-
 .monitor-empty {
   padding: spacing.$spacing-06;
   background: theme.$layer-01;
-}
-
-.monitor-identity {
-  overflow-wrap: anywhere;
-}
-
-#work-inspector {
-  scroll-margin-block-start: spacing.$spacing-11;
 }
 
 .monitor-log-tile {
   min-inline-size: 0;
 }
 
-.monitor-log-window {
-  @include type.type-style("code-01");
-  block-size: 20rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: spacing.$spacing-05;
-  background: theme.$background;
-  color: theme.$text-primary;
-  border: 1px solid theme.$border-subtle-01;
-}
-
-.monitor-table-window:focus-visible,
-.monitor-log-window:focus-visible {
+.monitor-table-window:focus-visible {
   outline: 2px solid theme.$focus;
   outline-offset: -2px;
 }
@@ -148,4 +109,64 @@ body {
   html {
     scroll-behavior: auto;
   }
+}
+
+.monitor-header-details {
+  margin-inline-start: auto;
+  align-items: center;
+  padding-inline-end: spacing.$spacing-05;
+}
+.monitor-freshness {
+  min-inline-size: 12rem;
+}
+
+.monitor-relation {
+  padding-inline: 0;
+}
+.monitor-expanded {
+  padding: spacing.$spacing-05;
+}
+.monitor-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.monitor-reading {
+  @include type.type-style("heading-03");
+}
+html {
+  scroll-padding-block-start: 5rem;
+}
+@media (max-width: 65.98rem) {
+  .monitor-content {
+    margin-inline-start: 0;
+  }
+  .monitor-freshness {
+    min-inline-size: 0;
+  }
+}
+@media (max-width: 41.98rem) {
+  .monitor-header {
+    flex-wrap: wrap;
+    block-size: auto;
+    min-block-size: 6rem;
+  }
+  .monitor-header-details {
+    inline-size: 100%;
+    justify-content: space-between;
+    gap: spacing.$spacing-03;
+    padding-inline: spacing.$spacing-05;
+  }
+  .monitor-content {
+    padding-block-start: spacing.$spacing-10;
+  }
+  .monitor-freshness {
+    max-inline-size: 10rem;
+  }
+}
+
+.monitor-details td {
+  overflow-wrap: anywhere;
+}
+.monitor-details td:first-child {
+  inline-size: 40%;
 }

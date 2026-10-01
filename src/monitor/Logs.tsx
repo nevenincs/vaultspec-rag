@@ -1,23 +1,15 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import {
-  Button,
-  Column,
-  Grid,
-  InlineNotification,
-  Stack,
-  Tile,
-} from "@carbon/react";
+import { useCallback } from "react";
+import { Column, Grid, InlineNotification, Stack, Tile } from "@carbon/react";
 import {
   logPath,
   logs,
-  reading,
   safeLog,
   type LogGroup,
   type RecordValue,
   type Work,
 } from "./model";
+import { DataTree } from "./DataTree";
 import { usePolling, type Observation } from "./use-polling";
-
 export function Evidence({
   observation,
   paused,
@@ -28,13 +20,13 @@ export function Evidence({
   return (
     <Stack gap={3}>
       <p className="monitor-muted cds--type-label-01">
-        {observation.observedAt
-          ? `Observed ${new Date(observation.observedAt).toLocaleTimeString()}`
-          : "Waiting for an observation"}
-        {paused ? " · Live updates paused" : " · Live updates"}
         {observation.error && observation.observedAt
-          ? " · Showing retained evidence"
-          : ""}
+          ? "Showing retained evidence"
+          : paused
+            ? "Live updates paused"
+            : !observation.observedAt
+              ? "Waiting for an observation"
+              : ""}
       </p>
       {observation.error && (
         <InlineNotification
@@ -48,59 +40,35 @@ export function Evidence({
     </Stack>
   );
 }
-
 function LogWindow({ group, label }: { group: LogGroup; label: string }) {
-  const window = useRef<HTMLPreElement>(null);
-  const [following, setFollowing] = useState(true);
-  useLayoutEffect(() => {
-    if (following && window.current)
-      window.current.scrollTop = window.current.scrollHeight;
-  }, [group, following]);
   return (
     <Tile className="monitor-log-tile">
       <Stack gap={4}>
-        <Stack orientation="horizontal" gap={5} className="monitor-toolbar">
-          <h3 className="cds--type-heading-compact-01">{label}</h3>
-          <Button
-            size="sm"
-            kind="ghost"
-            aria-pressed={following}
-            onClick={() => setFollowing(!following)}
-          >
-            {following ? "Following tail" : "Follow tail"}
-          </Button>
-        </Stack>
+        <h3 className="cds--type-heading-compact-01">{label}</h3>
         <p className="cds--type-label-01 monitor-muted">
           {group.lines.length} records · Tail 200 ·{" "}
           {group.truncated
             ? "Truncated by service"
             : "No service truncation reported"}
-          {group.truncated &&
-            ` · Shortened ${reading(group.truncation.record_truncations)} records · Omitted at least ${reading(group.truncation.omitted_bytes_at_least)} bytes`}
         </p>
-        <pre
-          ref={window}
-          tabIndex={0}
-          role="region"
-          aria-label={`${label} log records`}
-          className="monitor-log-window"
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            setFollowing(
-              target.scrollHeight - target.clientHeight - target.scrollTop < 8,
-            );
+        <DataTree
+          label={label}
+          initialPath={["records"]}
+          value={{
+            source: group.source,
+            records: group.lines.map((line, index) => ({
+              record: index + 1,
+              message: safeLog(line),
+            })),
+            ...(group.truncated
+              ? { marker: safeLog(group.marker), truncation: group.truncation }
+              : {}),
           }}
-        >
-          {group.marker && `${safeLog(group.marker)}\n`}
-          {group.lines.length
-            ? group.lines.map(safeLog).join("\n")
-            : "No matching records in the bounded log window."}
-        </pre>
+        />
       </Stack>
     </Tile>
   );
 }
-
 export function Logs({
   work,
   paused,
@@ -135,7 +103,7 @@ export function Logs({
                 group={group}
                 label={
                   work
-                    ? `${kind === "job" ? "Job" : "Request"} logs`
+                    ? `${kind === "job" ? "Index request" : "Query"} logs`
                     : group.source === "service"
                       ? "Service logs"
                       : "Qdrant logs"

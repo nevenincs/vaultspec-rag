@@ -63,10 +63,11 @@ export function clock(value: unknown): string {
 export async function request(
   path: string,
   options: RequestInit = {},
+  timeout = 7000,
 ): Promise<RecordValue> {
   const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(7000)])
-    : AbortSignal.timeout(7000);
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(timeout)])
+    : AbortSignal.timeout(timeout);
   const response = await fetch(`/api/monitor${path}`, {
     ...options,
     signal,
@@ -75,7 +76,7 @@ export async function request(
   });
   const raw: unknown = await response.json();
   const payload = object(raw);
-  if (!response.ok || payload.ok === false) {
+  if (!response.ok || (payload.ok === false && path !== "/lifecycle")) {
     throw new Error(
       text(
         payload.message,

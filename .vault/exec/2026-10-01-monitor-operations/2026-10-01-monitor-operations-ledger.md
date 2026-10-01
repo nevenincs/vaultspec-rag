@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:6bb407220aa840eeb00231a364af60b500f23d67294e34fa162d2fa57ec320d0'
+body_hash: 'sha256:ab179ffa9693e02a7769c0e0c53b70b29432f70dcc1bedc989540a6a33de12db'
 related:
   - "[[2026-10-01-monitor-operations-plan]]"
 ---
@@ -68,3 +68,34 @@ related:
 - `S01` `verify:` `npm run typecheck` -> `pass`
 - `S01` `verify:` `npm run format:check` -> `pass`
 - `S01` `by:` `principal with backend agents`
+- `S03` `M` `package-lock.json`
+- `S03` `M` `package.json`
+- `S03` `M` `src/monitor/App.tsx`
+- `S03` `M` `src/monitor/Health.tsx`
+- `S03` `D` `src/monitor/Inspector.tsx`
+- `S03` `M` `src/monitor/Logs.tsx`
+- `S03` `M` `src/monitor/Work.tsx`
+- `S03` `M` `src/monitor/main.tsx`
+- `S03` `M` `src/monitor/model.ts`
+- `S03` `M` `src/monitor/monitor.scss`
+- `S03` `M` `src/monitor/presentation.tsx`
+- `S03` `M` `src/monitor/use-polling.ts`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_browser_render.py`
+- `S03` `A` `src/monitor/DataTree.tsx`
+- `S03` `A` `src/monitor/Inventory.tsx`
+- `S03` `A` `src/monitor/JobControls.tsx`
+- `S03` `A` `src/monitor/ServiceControls.tsx`
+- `S03` `verify:` `npm run lint` -> `pass`
+- `S03` `verify:` `npm run format:check` -> `pass`
+- `S03` `verify:` `npm run build (includes typecheck)` -> `pass`
+- `S03` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S03` `verify:` `ruff format --check src/vaultspec_rag/tests/test_monitor_browser_render.py` -> `pass`
+- `S03` `verify:` `ty check src/vaultspec_rag/tests/test_monitor_browser_render.py` -> `pass`
+- `S03` `verify:` `basedpyright --pythonpath .venv/Scripts/python.exe src/vaultspec_rag/tests/test_monitor_browser_render.py` -> `pass`
+- `S03` `verify:` `pytest src/vaultspec_rag/tests/test_monitor_browser_render.py -q (5 tests, desktop/tablet/mobile, 85.80s)` -> `pass`
+- `S03` `verify:` `persistent navigation disabled mutation fails intended assertion and restored browser suite` -> `pass`
+- `S03` `by:` `principal frontend designer/executor`
+
+## Notes
+
+- `S03` Installed-browser evidence .pytest-tmp/operations-render-final.log and carbon-dashboard-{1440,800,390}.png; no resident daemon lifecycle or GPU compute exercised. Carbon static audit false positives manually adjudicated in the audit.

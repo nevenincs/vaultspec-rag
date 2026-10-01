@@ -11,6 +11,7 @@ export function usePolling<T>(
   enabled: boolean,
   refresh: number,
   interval = 2000,
+  timeout = 7000,
 ): Observation<T> {
   const [stored, setStored] = useState<StoredObservation<T>>({ path });
   useEffect(() => {
@@ -20,7 +21,11 @@ export function usePolling<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const payload = await request(path, { signal: controller.signal });
+        const payload = await request(
+          path,
+          { signal: controller.signal },
+          timeout,
+        );
         const data = decode(payload);
         if (current) setStored({ path, data, observedAt: Date.now() });
       } catch (error) {
@@ -44,6 +49,6 @@ export function usePolling<T>(
       controller.abort();
       clearTimeout(timer);
     };
-  }, [path, decode, enabled, refresh, interval]);
+  }, [path, decode, enabled, refresh, interval, timeout]);
   return stored.path === path ? stored : {};
 }
