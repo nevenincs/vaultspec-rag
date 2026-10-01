@@ -16,6 +16,7 @@ await mkdir(directory, { recursive: true });
 const server = await createServer({
   ...config,
   configFile: false,
+  cacheDir: join(directory, "vite-cache"),
   logLevel: "error",
   server: { ...config.server, port: 0, strictPort: true, host: "127.0.0.1" },
 });

@@ -172,24 +172,40 @@ def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
     assert answer["message"] == "Unknown monitor operation."
 
 
-def test_local_bridge_lifecycle_uses_fixed_canonical_commands() -> None:
+@pytest.mark.parametrize("installed", [True, False])
+def test_local_bridge_lifecycle_uses_fixed_canonical_commands(
+    tmp_path: Path, installed: bool
+) -> None:
     """Exercise the adapter's command boundary without operating a daemon."""
     node = shutil.which("node")
     assert node is not None
     source = Path(__file__).resolve().parents[2] / "monitor/server/local-service.ts"
+    tools_directory = tmp_path / "tools"
+    if installed:
+        interpreter = (
+            tools_directory
+            / "vaultspec-rag"
+            / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        )
+        interpreter.parent.mkdir(parents=True)
+        interpreter.touch()
     script = (
         "import assert from 'node:assert/strict';"
         "import child from 'node:child_process';"
         "import { syncBuiltinESMExports } from 'node:module';"
         "import { createServer } from 'node:http';"
         "import { join } from 'node:path';"
-        "const calls=[]; let failure=false;"
+        "const config=JSON.parse(process.argv[1]);"
+        "const calls=[],probes=[]; let failure=false,observedState='stopped';"
         "child.execFile=(file,args,options,callback)=>{"
+        "if(file==='uv'){probes.push({args,options});"
+        "callback(null,config.toolsDirectory,'');return;}"
         "calls.push({file,args,options}); const verb=args[4];"
-        "const code=verb==='status'?3:failure?1:0;"
+        "const code=verb==='status'?observedState==='stopped'?3:"
+        "observedState==='warming'?5:4:failure?1:0;"
         "const error=code?Object.assign(new Error('owner failed'),{code}):null;"
         "callback(error,JSON.stringify({ok:code===0,command:'service.'+verb,"
-        "data:verb==='status'?{state:'stopped'}:{status:failure?'still_running':"
+        "data:verb==='status'?{state:observedState}:{status:failure?'still_running':"
         "verb==='start'?'already_running':'already_stopped',"
         "health:{service_token:'never-browser',nested:[{token:'private'}]}}}),'');"
         "}; syncBuiltinESMExports();"
@@ -203,8 +219,10 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands() -> None:
         "body:body===undefined?undefined:JSON.stringify(body)});"
         "assert.equal(response.status,expected);return response.json();}"
         "try {"
+        "for(observedState of ['stopped','warming','crashed-pid-dead']){"
         "const state=await action('/lifecycle',undefined,200);"
-        "assert.equal(state.state,'stopped');assert.equal(state.ok,false);"
+        "assert.equal(state.state,observedState);assert.equal(state.ok,false);"
+        "assert.equal(state.data.state,observedState); }"
         "for(const verb of ['start','stop']){"
         "const result=await action('/lifecycle/'+verb,{},200);"
         "assert.equal(result.data.status,'already_'+(verb==='start'?'running':'stopped'));"
@@ -214,10 +232,18 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands() -> None:
         "}"
         "failure=true;const refused=await action('/lifecycle/stop',{},503);"
         "assert.equal(refused.data.status,'still_running');assert.equal(refused.ok,false);"
-        "assert.equal(calls.length,4);"
+        "assert.equal(calls.length,6);assert.equal(probes.length,1);"
+        "assert.deepEqual(probes[0].args,['tool','dir']);"
+        "assert.equal(probes[0].options.shell,false);"
+        "assert.equal(probes[0].options.windowsHide,true);"
+        "assert.equal(probes[0].options.timeout,5000);"
+        "assert.equal(probes[0].options.maxBuffer,8192);"
         "for(const call of calls){const verb=call.args[4];"
         "assert.deepEqual(call.args,['-P','-m','vaultspec_rag','server',verb,'--json']);"
-        "assert.equal(call.file,join(call.options.cwd,'.venv',"
+        # Preferring checkout Python failed the installed-runtime assertion;
+        # restoring installed-tool preference passed.
+        "assert.equal(call.file,join(config.installed?"
+        "join(config.toolsDirectory,'vaultspec-rag'):join(call.options.cwd,'.venv'),"
         "process.platform==='win32'?'Scripts/python.exe':'bin/python'));"
         "assert.equal(call.options.env.PYTHONPATH,join(call.options.cwd,'src'));"
         # Enabling shell execution fails this assertion; restoration passes.
@@ -233,11 +259,19 @@ def test_local_bridge_lifecycle_uses_fixed_canonical_commands() -> None:
         "await action('/lifecycle/start',null,400);"
         "await action('/lifecycle/restart',{},404);"
         "await action('/lifecycle/start',undefined,404);"
-        "assert.equal(calls.length,4);"
+        "assert.equal(calls.length,6);"
         "} finally {await new Promise(resolve=>server.close(resolve));}"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", script],
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            script,
+            json.dumps(
+                {"toolsDirectory": str(tools_directory), "installed": installed}
+            ),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",

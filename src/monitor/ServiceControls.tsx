@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import {
   Button,
+  Grid,
+  Column,
   InlineLoading,
   InlineNotification,
   Modal,
@@ -69,58 +71,75 @@ export function ServiceControls({
   };
   return (
     <Stack gap={3}>
-      <Stack orientation="horizontal" gap={3} className="monitor-controls">
-        <Button
-          size="sm"
-          kind="primary"
-          disabled={Boolean(pending) || (!stopped && Boolean(health) && !stale)}
-          onClick={() => void send("start")}
-        >
-          Start service
-        </Button>
-        <Button
-          size="sm"
-          kind="tertiary"
-          disabled={
-            Boolean(pending) ||
-            stopped ||
-            stale ||
-            mode === "quiesced" ||
-            mode === "paused"
-          }
-          onClick={() => void send("pause")}
-        >
-          Pause service
-        </Button>
-        <Button
-          size="sm"
-          kind="tertiary"
-          disabled={
-            Boolean(pending) ||
-            stopped ||
-            stale ||
-            !["quiesced", "paused", "pausing", "draining", "warming"].includes(
-              mode,
-            )
-          }
-          onClick={() => void send("resume")}
-        >
-          Resume service
-        </Button>
-        <Button
-          size="sm"
-          kind="danger--tertiary"
-          disabled={Boolean(pending) || stopped || stale}
-          onClick={() => setConfirm(true)}
-        >
-          Stop service
-        </Button>
-      </Stack>
+      <Grid narrow className="monitor-grid monitor-control-grid">
+        <Column sm={2} md={2} lg={4}>
+          <Button
+            size="lg"
+            kind="primary"
+            disabled={
+              Boolean(pending) || (!stopped && Boolean(health) && !stale)
+            }
+            onClick={() => void send("start")}
+          >
+            Start service
+          </Button>
+        </Column>
+        <Column sm={2} md={2} lg={4}>
+          <Button
+            size="lg"
+            kind="tertiary"
+            disabled={
+              Boolean(pending) ||
+              !health ||
+              stopped ||
+              stale ||
+              mode === "quiesced" ||
+              mode === "paused"
+            }
+            onClick={() => void send("pause")}
+          >
+            Pause service
+          </Button>
+        </Column>
+        <Column sm={2} md={2} lg={4}>
+          <Button
+            size="lg"
+            kind="tertiary"
+            disabled={
+              Boolean(pending) ||
+              !health ||
+              stopped ||
+              stale ||
+              ![
+                "quiesced",
+                "paused",
+                "pausing",
+                "draining",
+                "warming",
+              ].includes(mode)
+            }
+            onClick={() => void send("resume")}
+          >
+            Resume service
+          </Button>
+        </Column>
+        <Column sm={2} md={2} lg={4}>
+          <Button
+            size="lg"
+            kind="danger--tertiary"
+            disabled={Boolean(pending) || !health || stopped || stale}
+            onClick={() => setConfirm(true)}
+          >
+            Stop service
+          </Button>
+        </Column>
+      </Grid>
       {pending && (
         <InlineLoading description={`${pending} service requested…`} />
       )}
       {feedback && (
         <InlineNotification
+          lowContrast
           kind={feedback.failed ? "error" : "info"}
           title={feedback.failed ? "Service action failed" : "Service action"}
           subtitle={feedback.message}

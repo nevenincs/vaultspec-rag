@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -13,6 +13,7 @@ const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
 const checkout = fileURLToPath(new URL("../../../", import.meta.url));
 type LifecycleVerb = "status" | "start" | "stop";
+let lifecyclePython: string | undefined;
 class InvalidRequestError extends Error {}
 
 type Connection = { port: number; token: string };
@@ -229,16 +230,46 @@ function timeout(path: string): number {
   return 5000;
 }
 
+async function pythonRuntime(signal: AbortSignal): Promise<string> {
+  if (lifecyclePython) return lifecyclePython;
+  const interpreter =
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
+  const toolsDirectory = await new Promise<string>((resolve) => {
+    execFile(
+      "uv",
+      ["tool", "dir"],
+      {
+        cwd: checkout,
+        encoding: "utf8",
+        shell: false,
+        windowsHide: true,
+        timeout: 5000,
+        maxBuffer: 8192,
+        signal,
+      },
+      (error, stdout) => resolve(error ? "" : stdout.trim()),
+    );
+  });
+  const candidates = [join(checkout, ".venv", interpreter)];
+  if (isAbsolute(toolsDirectory) && !/[\r\n]/.test(toolsDirectory))
+    candidates.unshift(join(toolsDirectory, "vaultspec-rag", interpreter));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      lifecyclePython = candidate;
+      return candidate;
+    } catch {
+      // An unenrolled tool can still use the checkout's Python environment.
+    }
+  }
+  throw new Error("No local Python runtime is available for service controls.");
+}
+
 async function lifecycle(
   verb: LifecycleVerb,
   signal: AbortSignal,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
-  const python = join(
-    checkout,
-    ".venv",
-    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
-  );
-  await access(python);
+  const python = await pythonRuntime(signal);
   const { error, stdout } = await new Promise<{
     error: (Error & { code?: string | number; killed?: boolean }) | null;
     stdout: string;
@@ -271,7 +302,10 @@ async function lifecycle(
     throw new Error("The lifecycle owner returned an invalid response.");
   if (verb === "status") {
     if (error && ![3, 4, 5].includes(Number(error.code))) throw error;
-    payload.state = object(payload.data).state;
+    const state = object(payload.data).state;
+    if (typeof state !== "string" || !state)
+      throw new Error("The lifecycle owner returned no service state.");
+    payload.state = state;
     return { status: 200, payload };
   }
   return { status: error || !payload.ok ? 503 : 200, payload };

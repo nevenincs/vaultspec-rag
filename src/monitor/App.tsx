@@ -1,13 +1,17 @@
+import { Awake, Asleep, Screen, Renew } from "@carbon/icons-react";
 import { useEffect, useState } from "react";
 import {
-  Button,
   Column,
   Content,
   Grid,
   Header,
   HeaderMenuButton,
   HeaderName,
-  InlineLoading,
+  HeaderGlobalBar,
+  HeaderGlobalAction,
+  usePrefersDarkScheme,
+  Tag,
+  Tile,
   InlineNotification,
   SideNav,
   SideNavItems,
@@ -15,6 +19,7 @@ import {
   SkipToContent,
   Stack,
   Theme,
+  GlobalTheme,
   Toggle,
 } from "@carbon/react";
 import { activity, health, jobs, object, text } from "./model";
@@ -58,34 +63,64 @@ function Freshness({
     ? Math.max(0, Math.floor((now - observation.observedAt) / 1000))
     : null;
   return (
-    <InlineLoading
-      className="monitor-freshness"
-      status={
-        observation.error
-          ? "error"
-          : paused
-            ? "inactive"
-            : age === null
-              ? "active"
-              : "finished"
-      }
-      description={
-        age === null
-          ? "Waiting for service"
-          : `Updated ${age}s ago · ${new Date(observation.observedAt!).toLocaleTimeString()}`
-      }
-    />
+    <Tag type="gray" size="sm" className="monitor-freshness">
+      {age === null
+        ? "No live observation"
+        : `${paused || observation.error ? "Last update" : "Updated"} ${age}s ago · ${new Date(observation.observedAt!).toLocaleTimeString()}`}
+    </Tag>
   );
 }
 export function App() {
   const [page, setPage] = useState<Page>(locationPage);
-  const [nav, setNav] = useState(false);
+  const [desktop, setDesktop] = useState(
+    () => matchMedia("(min-width: 66rem)").matches,
+  );
+  const [nav, setNav] = useState(
+    () => matchMedia("(min-width: 66rem)").matches,
+  );
+  const [themeSetting, setThemeSetting] = useState<"light" | "system" | "dark">(
+    () => {
+      try {
+        const saved = localStorage.getItem("monitor-theme");
+        return saved === "light" || saved === "dark" ? saved : "system";
+      } catch {
+        return "system";
+      }
+    },
+  );
+  const prefersDark = usePrefersDarkScheme();
+  const theme =
+    themeSetting === "dark" || (themeSetting === "system" && prefersDark)
+      ? "g100"
+      : "g10";
+  const nextTheme = (
+    { light: "dark", dark: "system", system: "light" } as const
+  )[themeSetting];
+  const ThemeIcon = { light: Awake, dark: Asleep, system: Screen }[
+    themeSetting
+  ];
+  useEffect(() => {
+    const media = matchMedia("(min-width: 66rem)");
+    const change = () => {
+      setDesktop(media.matches);
+      setNav(media.matches);
+    };
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("monitor-theme", themeSetting);
+    } catch {
+      /* Storage can be disabled. */
+    }
+  }, [themeSetting]);
   const [paused, setPaused] = useState(false);
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     const change = () => {
       setPage(locationPage());
-      setNav(false);
+      if (!matchMedia("(min-width: 66rem)").matches) setNav(false);
       document.getElementById("page-heading")?.focus();
     };
     window.addEventListener("hashchange", change);
@@ -101,13 +136,39 @@ export function App() {
     35000,
   );
   const state = service;
+  const lifecycleState = lifecycle.error
+    ? "unavailable"
+    : text(lifecycle.data?.state, "connecting");
   const serviceStatus = service.error
-    ? text(lifecycle.data?.state, "unavailable")
-    : text(service.data?.status, "unknown");
+    ? lifecycleState
+    : service.data
+      ? text(object(service.data.quiesce).state) === "running"
+        ? text(service.data.status, "unknown")
+        : text(object(service.data.quiesce).state, text(service.data.status))
+      : "connecting";
+  const offline = Boolean(service.error);
+  const serviceLabel =
+    (
+      {
+        ready: "Service running",
+        degraded: "Service degraded",
+        error: "Service error",
+        quiesced: "Service paused",
+        draining: "Service pausing",
+        stopped: "Service not running",
+        crashed: "Service stopped unexpectedly",
+        warming: "Service starting",
+        connecting: "Checking service",
+        unavailable: "Cannot connect to service",
+        divergent: "Service needs attention",
+      } as Record<string, string>
+    )[serviceStatus] ?? serviceStatus.replaceAll("_", " ");
   const runtime = usePolling(
     "/runtime-observations",
     object,
-    !paused && ["dashboard", "performance", "clients"].includes(page),
+    !paused &&
+      !offline &&
+      ["dashboard", "performance", "clients"].includes(page),
     refresh,
     3000,
   );
@@ -133,182 +194,261 @@ export function App() {
           ? runtime
           : service;
   return (
-    <Theme theme="g100" className="monitor-root">
-      <Header aria-label="Vaultspec RAG" className="monitor-header">
-        <SkipToContent href="#main-content" />
-        <HeaderMenuButton
-          aria-label={nav ? "Close navigation" : "Open navigation"}
-          onClick={() => setNav(!nav)}
-          isActive={nav}
-        />
-        <HeaderName href="#/dashboard" prefix="Vaultspec">
-          RAG
-        </HeaderName>
-        <Stack
-          orientation="horizontal"
-          gap={5}
-          className="monitor-header-details"
-        >
-          <span className="cds--type-label-01">
-            v{text(service.data?.package_version, "—")}
-          </span>
-          <Freshness observation={service} paused={paused} />
-          <Toggle
-            id="live-updates"
-            labelText="Live updates"
-            hideLabel
-            labelA="Paused"
-            labelB="Live updates"
-            size="sm"
-            toggled={!paused}
-            onToggle={(enabled) => setPaused(!enabled)}
+    <GlobalTheme theme={theme}>
+      <Theme
+        theme={theme}
+        className={`monitor-root ${desktop && nav ? "monitor-nav-open" : ""}`}
+      >
+        <Header aria-label="Vaultspec RAG" className="monitor-header">
+          <SkipToContent href="#main-content" />
+          <HeaderMenuButton
+            aria-label={nav ? "Close navigation" : "Open navigation"}
+            onClick={() => setNav(!nav)}
+            isActive={nav}
+            className="monitor-nav-toggle"
+            isCollapsible
+            aria-expanded={nav}
+            aria-controls="monitor-navigation"
           />
-          <Button kind="ghost" size="sm" disabled={paused} onClick={refreshNow}>
-            Refresh
-          </Button>
-        </Stack>
-        <SideNav
-          aria-label="Monitor navigation"
-          expanded={nav}
-          isPersistent
-          onOverlayClick={() => setNav(false)}
-        >
-          <SideNavItems>
-            {Object.entries(pages).map(([key, label]) => (
-              <SideNavLink key={key} href={`#/${key}`} isActive={page === key}>
-                {label}
-              </SideNavLink>
-            ))}
-          </SideNavItems>
-        </SideNav>
-      </Header>
-      <Content id="main-content" className="monitor-content">
-        <Stack gap={6}>
-          <Grid narrow className="monitor-grid">
-            <Column sm={4} md={8} lg={16}>
-              <Stack gap={5}>
-                <Stack
-                  orientation="horizontal"
-                  gap={5}
-                  className="monitor-toolbar"
+          <HeaderName
+            href="#/dashboard"
+            prefix="Vaultspec"
+            className="monitor-brand"
+          >
+            RAG
+          </HeaderName>
+          <HeaderGlobalBar className="monitor-header-actions">
+            <HeaderGlobalAction
+              className="monitor-refresh"
+              aria-label={
+                paused ? "Refresh and resume live updates" : "Refresh"
+              }
+              tooltipAlignment="end"
+              onClick={() => {
+                setPaused(false);
+                refreshNow();
+              }}
+            >
+              <Renew size={20} />
+            </HeaderGlobalAction>
+            <HeaderGlobalAction
+              className="monitor-theme"
+              aria-label={`Theme: ${themeSetting}. Switch to ${nextTheme}`}
+              tooltipAlignment="end"
+              onClick={() => setThemeSetting(nextTheme)}
+            >
+              <ThemeIcon size={20} />
+            </HeaderGlobalAction>
+          </HeaderGlobalBar>
+          <Stack
+            orientation={desktop ? "horizontal" : "vertical"}
+            gap={3}
+            className="monitor-header-details"
+          >
+            <Stack
+              orientation="horizontal"
+              gap={3}
+              className="monitor-observation-group"
+            >
+              <span className="cds--type-label-01 monitor-version">
+                v{text(service.data?.package_version, "—")}
+              </span>
+              <Freshness observation={service} paused={paused} />
+            </Stack>
+            <Stack
+              orientation="horizontal"
+              gap={5}
+              className="monitor-update-controls"
+            >
+              <Toggle
+                id="live-updates"
+                labelText="Live updates"
+                hideLabel
+                labelA="Paused"
+                labelB="Live updates"
+                size="sm"
+                toggled={!paused}
+                onToggle={(enabled) => setPaused(!enabled)}
+              />
+            </Stack>
+          </Stack>
+          <SideNav
+            aria-label="Monitor navigation"
+            expanded={nav}
+            id="monitor-navigation"
+            className="monitor-navigation"
+            isPersistent={false}
+            isFixedNav={desktop}
+            addMouseListeners={false}
+            addFocusListeners={false}
+            onOverlayClick={() => setNav(false)}
+          >
+            <SideNavItems>
+              {Object.entries(pages).map(([key, label]) => (
+                <SideNavLink
+                  key={key}
+                  href={`#/${key}`}
+                  isActive={page === key}
                 >
-                  <h1
-                    id="page-heading"
-                    tabIndex={-1}
-                    className="cds--type-heading-04"
-                  >
-                    {pages[page]}
-                  </h1>
-                  <Status
-                    state={
-                      service.error
-                        ? serviceStatus
-                        : text(object(state.data?.quiesce).state, serviceStatus)
-                    }
-                  />
-                </Stack>
-                <div hidden={page !== "dashboard"}>
-                  <ServiceControls
-                    health={service.data}
-                    state={state.data}
-                    lifecycle={lifecycle.data}
-                    stale={Boolean(service.error || state.error)}
-                    onRefresh={refreshNow}
-                  />
-                </div>
-                {pageObservation.error && (
-                  <InlineNotification
-                    kind="warning"
-                    title="Observation unavailable"
-                    subtitle={pageObservation.error}
-                    hideCloseButton
-                  />
-                )}
-              </Stack>
-            </Column>
-          </Grid>
-          {page === "dashboard" && (
-            <>
-              <ResourceMetrics payload={runtime.data} />
-              {runtime.error && (
-                <Grid narrow className="monitor-grid">
-                  <Column sm={4} md={8} lg={16}>
-                    <Evidence observation={runtime} paused={paused} />
-                  </Column>
-                </Grid>
-              )}
-              <HealthCards
-                payload={service.data}
-                runtime={runtime.data}
-                status={serviceStatus}
-              />
-              <ServiceDiagnostics
-                health={service.data}
-                runtime={runtime.data}
-              />
-            </>
-          )}
-          {page !== "dashboard" && (
+                  {label}
+                </SideNavLink>
+              ))}
+            </SideNavItems>
+          </SideNav>
+        </Header>
+        <Content id="main-content" className="monitor-content">
+          <Stack gap={6}>
             <Grid narrow className="monitor-grid">
               <Column sm={4} md={8} lg={16}>
-                {page === "indexing" && (
-                  <WorkPage
-                    kind="job"
-                    data={indexing.data}
-                    paused={paused}
-                    stale={Boolean(indexing.error)}
-                    refresh={refresh}
-                    onRefresh={refreshNow}
-                  />
-                )}
-                {page === "queries" && (
-                  <WorkPage
-                    kind="request"
-                    data={serving.data}
-                    paused={paused}
-                    stale={Boolean(serving.error)}
-                    refresh={refresh}
-                    onRefresh={refreshNow}
-                  />
-                )}
-                {page === "logs" && <Logs paused={paused} refresh={refresh} />}
-                {(page === "repositories" || page === "storage") && (
-                  <InventoryPage
-                    key={page}
-                    kind={page}
-                    paused={paused}
-                    refresh={refresh}
-                    onRefresh={refreshNow}
-                  />
-                )}
-                {page === "clients" && (
-                  <Stack gap={5}>
-                    <p className="monitor-muted">
-                      Observed service TCP connections. Connections through this
-                      monitor appear as its local bridge.
-                    </p>
-                    <DataTree
-                      value={object(runtime.data?.clients)}
-                      label="Connected clients"
-                    />
+                <Stack gap={5}>
+                  <Stack
+                    orientation="horizontal"
+                    gap={5}
+                    className="monitor-toolbar"
+                  >
+                    <h1
+                      id="page-heading"
+                      tabIndex={-1}
+                      className="cds--type-heading-04"
+                    >
+                      {pages[page]}
+                    </h1>
+                    <Status state={serviceStatus} label={serviceLabel} />
                   </Stack>
-                )}
-                {page === "performance" && (
-                  <Stack gap={6}>
-                    <ResourceMetrics payload={runtime.data} />
-                    <DataTree
-                      value={
-                        runtime.data ?? { observation: "Waiting for metrics" }
+                  <div hidden={page !== "dashboard"}>
+                    <ServiceControls
+                      health={offline ? undefined : service.data}
+                      state={offline ? undefined : state.data}
+                      lifecycle={lifecycle.data}
+                      stale={Boolean(service.error || state.error)}
+                      onRefresh={refreshNow}
+                    />
+                  </div>
+                  {offline && ["stopped", "warming"].includes(serviceStatus) ? (
+                    <Tile id="service-state-notice">
+                      <p>
+                        {serviceStatus === "stopped"
+                          ? "Start the service to resume indexing and queries."
+                          : "Models and storage are loading. This page updates automatically."}
+                      </p>
+                    </Tile>
+                  ) : offline ? (
+                    <InlineNotification
+                      lowContrast
+                      kind={serviceStatus === "stopped" ? "info" : "warning"}
+                      id="service-state-notice"
+                      title={serviceLabel}
+                      subtitle={
+                        serviceStatus === "stopped"
+                          ? "Start the service to resume indexing and queries."
+                          : serviceStatus === "warming"
+                            ? "Models and storage are loading. This page updates automatically."
+                            : (lifecycle.error ??
+                              "Checking the local service process. Live metrics are unavailable.")
                       }
-                      label="Resource diagnostics"
+                      hideCloseButton
                     />
-                  </Stack>
-                )}
+                  ) : (
+                    pageObservation.error && (
+                      <InlineNotification
+                        lowContrast
+                        kind="warning"
+                        title="Observation unavailable"
+                        subtitle={pageObservation.error}
+                        hideCloseButton
+                      />
+                    )
+                  )}
+                </Stack>
               </Column>
             </Grid>
-          )}
-        </Stack>
-      </Content>
-    </Theme>
+            {page === "dashboard" && !offline && (
+              <>
+                <ResourceMetrics
+                  key={`${desktop}-${nav}`}
+                  payload={runtime.data}
+                />
+                {runtime.error && (
+                  <Grid narrow className="monitor-grid">
+                    <Column sm={4} md={8} lg={16}>
+                      <Evidence observation={runtime} paused={paused} />
+                    </Column>
+                  </Grid>
+                )}
+                <HealthCards payload={service.data} runtime={runtime.data} />
+                <ServiceDiagnostics
+                  health={service.data}
+                  runtime={runtime.data}
+                />
+              </>
+            )}
+            {page !== "dashboard" && (
+              <Grid narrow className="monitor-grid">
+                <Column sm={4} md={8} lg={16}>
+                  {page === "indexing" && (
+                    <WorkPage
+                      kind="job"
+                      data={indexing.data}
+                      paused={paused}
+                      stale={Boolean(indexing.error)}
+                      refresh={refresh}
+                      onRefresh={refreshNow}
+                    />
+                  )}
+                  {page === "queries" && (
+                    <WorkPage
+                      kind="request"
+                      data={serving.data}
+                      paused={paused}
+                      stale={Boolean(serving.error)}
+                      refresh={refresh}
+                      onRefresh={refreshNow}
+                    />
+                  )}
+                  {page === "logs" && (
+                    <Logs paused={paused} refresh={refresh} />
+                  )}
+                  {(page === "repositories" || page === "storage") && (
+                    <InventoryPage
+                      key={page}
+                      kind={page}
+                      paused={paused}
+                      refresh={refresh}
+                      onRefresh={refreshNow}
+                    />
+                  )}
+                  {page === "clients" && (
+                    <Stack gap={5}>
+                      <p className="monitor-muted">
+                        Observed service TCP connections. Connections through
+                        this monitor appear as its local bridge.
+                      </p>
+                      <DataTree
+                        value={object(runtime.data?.clients)}
+                        label="Connected clients"
+                      />
+                    </Stack>
+                  )}
+                  {page === "performance" && (
+                    <Stack gap={6}>
+                      <ResourceMetrics
+                        key={`${desktop}-${nav}`}
+                        payload={runtime.data}
+                      />
+                      <DataTree
+                        value={
+                          runtime.data ?? { observation: "Waiting for metrics" }
+                        }
+                        label="Resource diagnostics"
+                      />
+                    </Stack>
+                  )}
+                </Column>
+              </Grid>
+            )}
+          </Stack>
+        </Content>
+      </Theme>
+    </GlobalTheme>
   );
 }

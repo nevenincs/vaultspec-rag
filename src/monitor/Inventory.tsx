@@ -1,3 +1,4 @@
+import { useTheme } from "@carbon/react";
 import { Fragment, useState } from "react";
 import {
   Button,
@@ -35,6 +36,7 @@ export function InventoryPage({
   refresh: number;
   onRefresh: () => void;
 }) {
+  const { theme } = useTheme();
   const storage = kind === "storage";
   const [filter, setFilter] = useState("");
   const [enroll, setEnroll] = useState(false);
@@ -158,6 +160,7 @@ export function InventoryPage({
       <Evidence observation={observation} paused={paused} />
       {feedback && (
         <InlineNotification
+          lowContrast
           title={feedback.failed ? "Operation failed" : "Operation completed"}
           kind={feedback.failed ? "error" : "info"}
           subtitle={feedback.message}
@@ -170,7 +173,7 @@ export function InventoryPage({
           options={{
             title: "Storage by repository",
             height: "160px",
-            theme: "g100",
+            theme,
             toolbar: { enabled: false },
             animations: false,
             meter: {
@@ -295,6 +298,7 @@ export function InventoryPage({
       >
         {feedback?.failed && (
           <InlineNotification
+            lowContrast
             kind="error"
             title="Enrollment failed"
             subtitle={feedback.message}

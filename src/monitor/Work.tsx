@@ -1,6 +1,8 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   DataTable,
+  Accordion,
+  AccordionItem,
   Stack,
   Table,
   TableBody,
@@ -42,6 +44,16 @@ export function WorkPage({
   refresh: number;
   onRefresh: () => void;
 }) {
+  const [mobile, setMobile] = useState(
+    () => matchMedia("(max-width: 41.98rem)").matches,
+  );
+  const [expanded, setExpanded] = useState<string>();
+  useEffect(() => {
+    const media = matchMedia("(max-width: 41.98rem)");
+    const change = () => setMobile(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
   const indexing = kind === "job";
   const label = indexing ? "Index Requests" : "Queries";
   const records = data?.records ?? [];
@@ -69,6 +81,22 @@ export function WorkPage({
     { key: "origin", header: indexing ? "Initiator" : "Source" },
     { key: "progress", header: indexing ? "Progress" : "Results / duration" },
   ];
+  const detail = (record: (typeof records)[number], identity: string) => (
+    <Stack gap={5} className="monitor-expanded">
+      {indexing && (
+        <JobControls
+          job={record}
+          disabled={paused || stale}
+          onRefresh={onRefresh}
+        />
+      )}
+      <DataTree
+        value={record}
+        label={indexing ? "Index request" : "Query evidence"}
+      />
+      <Logs work={{ kind, id: identity }} paused={paused} refresh={refresh} />
+    </Stack>
+  );
   return (
     <Stack gap={5}>
       <Metrics
@@ -94,93 +122,111 @@ export function WorkPage({
         {records.length} retained {indexing ? "index requests" : "queries"} ·
         Limit 100
       </p>
-      <div className="monitor-table-window">
-        <DataTable rows={rows} headers={headers} size="lg" isSortable>
-          {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
-            <Table
-              {...getTableProps()}
-              aria-label={label}
-              className="monitor-work-table"
-            >
-              <TableHead>
-                <TableRow>
-                  <TableExpandHeader />
-                  {headers.map((header) => {
-                    const { key, ...props } = getHeaderProps({ header });
+      {mobile ? (
+        <Accordion size="lg" className="monitor-mobile-work">
+          {rows.map((row) => {
+            const record = records.find(
+              (item) => item[indexing ? "id" : "request_id"] === row.id,
+            )!;
+            return (
+              <AccordionItem
+                key={row.id}
+                data-work-id={row.id}
+                open={expanded === row.id}
+                onHeadingClick={() =>
+                  setExpanded(expanded === row.id ? undefined : row.id)
+                }
+                title={
+                  <Stack gap={3} className="monitor-work-title">
+                    <Status state={text(record.outcome, row.state)} />
+                    <span>{row.identity}</span>
+                    <span className="cds--type-label-01">
+                      {row.origin} · {row.progress}
+                    </span>
+                  </Stack>
+                }
+              >
+                {expanded === row.id && detail(record, row.id)}
+              </AccordionItem>
+            );
+          })}
+        </Accordion>
+      ) : (
+        <div className="monitor-table-window monitor-desktop-work">
+          <DataTable rows={rows} headers={headers} size="lg" isSortable>
+            {({
+              rows,
+              headers,
+              getTableProps,
+              getHeaderProps,
+              getRowProps,
+            }) => (
+              <Table
+                {...getTableProps()}
+                aria-label={label}
+                className="monitor-work-table"
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableExpandHeader />
+                    {headers.map((header) => {
+                      const { key, ...props } = getHeaderProps({ header });
+                      return (
+                        <TableHeader key={key} {...props}>
+                          {header.header}
+                        </TableHeader>
+                      );
+                    })}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => {
+                    const record = records.find(
+                      (item) => item[indexing ? "id" : "request_id"] === row.id,
+                    );
+                    if (!record) return null;
+                    const { key, ...props } = getRowProps({ row });
                     return (
-                      <TableHeader key={key} {...props}>
-                        {header.header}
-                      </TableHeader>
+                      <Fragment key={key}>
+                        <TableExpandRow
+                          {...props}
+                          aria-label={`Expand ${indexing ? "index request" : "query"} ${row.id}`}
+                        >
+                          <TableCell>
+                            <Status
+                              state={text(record.outcome, text(record.state))}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Stack gap={2}>
+                              <span>{row.cells[1].value}</span>
+                              <span className="cds--type-label-01 monitor-muted">
+                                {row.id}
+                              </span>
+                            </Stack>
+                          </TableCell>
+                          <TableCell>{row.cells[2].value}</TableCell>
+                          <TableCell>{row.cells[3].value}</TableCell>
+                        </TableExpandRow>
+                        {row.isExpanded && (
+                          <TableExpandedRow colSpan={5}>
+                            {detail(record, row.id)}
+                          </TableExpandedRow>
+                        )}
+                      </Fragment>
                     );
                   })}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.map((row) => {
-                  const record = records.find(
-                    (item) => item[indexing ? "id" : "request_id"] === row.id,
-                  );
-                  if (!record) return null;
-                  const { key, ...props } = getRowProps({ row });
-                  return (
-                    <Fragment key={key}>
-                      <TableExpandRow
-                        {...props}
-                        aria-label={`Expand ${indexing ? "index request" : "query"} ${row.id}`}
-                      >
-                        <TableCell>
-                          <Status
-                            state={text(record.outcome, text(record.state))}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Stack gap={2}>
-                            <span>{row.cells[1].value}</span>
-                            <span className="cds--type-label-01 monitor-muted">
-                              {row.id}
-                            </span>
-                          </Stack>
-                        </TableCell>
-                        <TableCell>{row.cells[2].value}</TableCell>
-                        <TableCell>{row.cells[3].value}</TableCell>
-                      </TableExpandRow>
-                      {row.isExpanded && (
-                        <TableExpandedRow colSpan={5}>
-                          <Stack gap={5} className="monitor-expanded">
-                            {indexing && (
-                              <JobControls
-                                job={record}
-                                disabled={paused || stale}
-                                onRefresh={onRefresh}
-                              />
-                            )}
-                            <DataTree
-                              value={record}
-                              label={
-                                indexing ? "Index request" : "Query evidence"
-                              }
-                            />
-                            <Logs
-                              work={{ kind, id: row.id }}
-                              paused={paused}
-                              refresh={refresh}
-                            />
-                          </Stack>
-                        </TableExpandedRow>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </DataTable>
-        {!rows.length && (
-          <p className="monitor-empty">
-            No {label.toLowerCase()} in this observation.
-          </p>
-        )}
-      </div>
+                </TableBody>
+              </Table>
+            )}
+          </DataTable>
+        </div>
+      )}
+      {!rows.length && (
+        <p className="monitor-empty">
+          No {label.toLowerCase()} in this observation.
+        </p>
+      )}
     </Stack>
   );
 }

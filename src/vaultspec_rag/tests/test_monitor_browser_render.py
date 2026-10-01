@@ -150,7 +150,9 @@ def _page(browser: Browser, page: str) -> None:
 
 def _expand(browser: Browser, kind: str, identity: str) -> None:
     label = f"Expand {kind} {identity}"
-    selector = json.dumps(f'button[aria-label="{label}"]')
+    selector = json.dumps(
+        f'button[aria-label="{label}"], [data-work-id="{identity}"] button'
+    )
     browser.wait(f"!!document.querySelector({selector})")
     browser.evaluate(f"document.querySelector({selector}).click()")
 
@@ -160,9 +162,15 @@ def _check_retention(
 ) -> None:
     discovery = directory / "service.json"
     original = discovery.read_text(encoding="utf-8")
+    _select_theme(browser, "dark")
     try:
         discovery.write_text("{}", encoding="utf-8")
         browser.wait("document.body.innerText.includes('Showing retained evidence')")
+        assert browser.evaluate(
+            "getComputedStyle(document.querySelector('.cds--inline-notification'))"
+            ".backgroundColor.match(/\\d+/g).slice(0, 3)"
+            ".every(value => Number(value) < 128)"
+        ), "Dark-theme warnings must use Carbon's low-contrast background"
         assert (
             browser.evaluate("document.body.innerText.includes('next-request')") is True
         )
@@ -182,27 +190,72 @@ def _check_retention(
     browser.wait("document.body.innerText.includes('resumed-request')")
 
 
-def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
-    if size[0] >= 1056:
-        assert browser.evaluate(
-            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
-            ".getBoundingClientRect().right > 0"
-        ), "Desktop navigation must be visible"
-    else:
+def _select_theme(browser: Browser, theme: str) -> None:
+    browser.wait("!!document.querySelector('.monitor-theme')")
+    for _ in range(3):
+        if browser.evaluate("localStorage.getItem('monitor-theme')") == theme:
+            break
+        browser.evaluate("document.querySelector('.monitor-theme').click()")
+    browser.wait(f"localStorage.getItem('monitor-theme') === '{theme}'")
+
+
+def _check_shell(browser: Browser, desktop: bool) -> None:
+    assert browser.evaluate(
+        "(() => { const refresh = document.querySelector('.monitor-refresh')"
+        ".getBoundingClientRect(); const theme = "
+        "document.querySelector('.monitor-theme')"
+        ".getBoundingClientRect(); return refresh.right === theme.left "
+        "&& refresh.top === theme.top && theme.width === 48; })()"
+    ), "Refresh must immediately precede the standard theme header action"
+
+    def toggle(label: str) -> None:
         browser.evaluate(
-            "document.querySelector('button[aria-label=\"Open navigation\"]').click()"
+            f"document.querySelector('button[aria-label=\"{label} navigation\"]')"
+            ".click()"
         )
+
+    if desktop:
+        assert browser.evaluate(
+            "document.querySelector('button[aria-label=\"Close navigation\"]')"
+            ".getBoundingClientRect().width >= 40"
+        ), "Desktop sidebar control must be visible"
+        toggle("Close")
+    else:
+        toggle("Open")
         browser.wait(
-            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
+            "document.querySelector('#monitor-navigation')"
+            ".getBoundingClientRect().width > 200"
+        )
+        toggle("Close")
+    browser.wait(
+        "document.querySelector('#monitor-navigation')"
+        ".getBoundingClientRect().right <= 0"
+    )
+    if desktop:
+        toggle("Open")
+        browser.wait(
+            "document.querySelector('#monitor-navigation')"
             ".getBoundingClientRect().right > 200"
         )
-        browser.evaluate(
-            "document.querySelector('button[aria-label=\"Close navigation\"]').click()"
-        )
-        browser.wait(
-            "document.querySelector('[aria-label=\"Monitor navigation\"]')"
-            ".getBoundingClientRect().right <= 0"
-        )
+    _select_theme(browser, "light")
+    browser.wait("localStorage.getItem('monitor-theme') === 'light'")
+    browser.wait(
+        "getComputedStyle(document.querySelector('.monitor-root')).backgroundColor "
+        "=== 'rgb(244, 244, 244)'"
+    )
+    _select_theme(browser, "dark")
+    browser.wait(
+        "getComputedStyle(document.querySelector('.monitor-root')).backgroundColor "
+        "=== 'rgb(22, 22, 22)'"
+    )
+
+
+def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
+    _check_shell(browser, size[0] >= 1056)
+    assert browser.evaluate(
+        "document.querySelector('.monitor-header-details').getBoundingClientRect()"
+        ".bottom <= document.querySelector('header').getBoundingClientRect().bottom"
+    ), "Header controls must stay inside the header"
     artifact = Path(__file__).resolve().parents[3] / ".pytest-tmp"
     artifact.mkdir(exist_ok=True)
     browser.command(
@@ -211,7 +264,7 @@ def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
     return artifact
 
 
-@pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844)])
+@pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844), (320, 740)])
 def test_carbon_monitor_live_scopes_and_retained_evidence(
     rendered_monitor: Browser,
     monitor_http: tuple[int, Path],
@@ -408,3 +461,48 @@ def test_carbon_relational_query_results_and_enrollment_validation(
         "dialog.innerText.includes('Enrollment failed'))"
     )
     assert cast("dict[str, object]", browser.command("evidence"))["errors"] == []
+
+
+def test_carbon_stopped_service_and_theme_notifications(
+    rendered_monitor: Browser, monitor_http: tuple[int, Path]
+) -> None:
+    browser = rendered_monitor
+    discovery = monitor_http[1] / "service.json"
+    original = discovery.read_text(encoding="utf-8")
+    _select_theme(browser, "dark")
+    try:
+        discovery.write_text("{}", encoding="utf-8")
+        browser.wait("document.body.innerText.includes('Service not running')")
+        assert (
+            browser.evaluate(
+                "!document.querySelector('main').innerText.includes('System CPU')"
+            )
+            is True
+        )
+        assert (
+            browser.evaluate(
+                "[...document.querySelectorAll('button')].find(button => "
+                "button.textContent === 'Start service').disabled"
+            )
+            is False
+        )
+        assert (
+            browser.evaluate(
+                "[...document.querySelectorAll('button')].find(button => "
+                "button.textContent === 'Pause service').disabled"
+            )
+            is True
+        )
+        dark = browser.evaluate(
+            "getComputedStyle(document.querySelector('#service-state-notice')).backgroundColor"
+        )
+        _select_theme(browser, "light")
+        browser.wait("localStorage.getItem('monitor-theme') === 'light'")
+        browser.wait(
+            "getComputedStyle(document.querySelector('#service-state-notice'))"
+            ".backgroundColor "
+            f"!== {json.dumps(dark)}"
+        )
+    finally:
+        discovery.write_text(original, encoding="utf-8")
+    browser.wait("document.body.innerText.includes('Models and integrations')")

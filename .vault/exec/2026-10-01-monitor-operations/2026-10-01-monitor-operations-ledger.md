@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:d8073759b3698ae7e1958f5f947b06b80366c9e8e142325bb04474637a8e40d5'
+body_hash: 'sha256:0c9e9811ac8988c749869ec57504258db364faba66e0d0f6d3944295a3840fb8'
 related:
   - "[[2026-10-01-monitor-operations-plan]]"
 ---
@@ -81,8 +81,41 @@ related:
 - `S04` `verify:` `ty check test_monitor_browser_render.py` -> `pass`
 - `S04` `verify:` `basedpyright test_monitor_browser_render.py` -> `pass`
 - `S04` `by:` `principal reviewer`
+- `S05` `M` `src/monitor/App.tsx`
+- `S05` `M` `src/monitor/Health.tsx`
+- `S05` `M` `src/monitor/Inventory.tsx`
+- `S05` `M` `src/monitor/JobControls.tsx`
+- `S05` `M` `src/monitor/Logs.tsx`
+- `S05` `M` `src/monitor/ServiceControls.tsx`
+- `S05` `M` `src/monitor/Work.tsx`
+- `S05` `M` `src/monitor/main.tsx`
+- `S05` `M` `src/monitor/monitor.scss`
+- `S05` `M` `src/monitor/server/local-service.ts`
+- `S05` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S05` `M` `src/vaultspec_rag/tests/test_monitor_browser_render.py`
+- `S05` `M` `dev/monitor-browser.mjs`
+- `S05` `M` `package.json`
+- `S05` `M` `package-lock.json`
+- `S05` `verify:` `npm run lint` -> `pass`
+- `S05` `verify:` `npm run format:check` -> `pass`
+- `S05` `verify:` `npm run typecheck` -> `pass`
+- `S05` `verify:` `ruff check changed monitor tests` -> `pass`
+- `S05` `verify:` `ruff format --check changed monitor tests` -> `pass`
+- `S05` `verify:` `ty check changed monitor tests` -> `pass`
+- `S05` `verify:` `pytest test_monitor_browser.py (14 tests)` -> `pass`
+- `S05` `verify:` `pytest test_monitor_browser_render.py (7 tests)` -> `pass`
+- `S05` `verify:` `pytest narrow mobile size3 (repeat)` -> `pass`
+- `S05` `verify:` `header containment before global action height correction` -> `fail`
+- `S05` `verify:` `installed interpreter preference mutation` -> `fail`
+- `S05` `verify:` `installed interpreter preference restored` -> `pass`
+- `S05` `by:` `Codex`
+- `S05` `verify:` `npm run build` -> `pass`
+- `S05` `verify:` `pytest desktop size0 after chart resize repair` -> `pass`
+- `S05` `verify:` `vault check all --fix --feature monitor-operations` -> `pass`
+- `S05` `verify:` `vault plan check monitor-operations` -> `pass`
 
 ## Notes
 
 - `S03` Installed-browser evidence .pytest-tmp/operations-render-final.log and carbon-dashboard-{1440,800,390}.png; no resident daemon lifecycle or GPU compute exercised. Carbon static audit false positives manually adjudicated in the audit.
 - `S04` Reused unchanged S01/S03 evidence: 124 backend tests, 5 browser cases and frontend gates/build. Audit PASS with resident lifecycle, loaded GPU telemetry and independent tailnet rollout limitations recorded.
+- `S05` Carbon audit native-button keyboard warning reviewed as a false positive. Browser startup timeouts occurred under concurrent machine load; complete rerun passed. Live frontend routes returned HTTP 200 after restart. Resident RAG service was not restarted.

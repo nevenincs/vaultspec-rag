@@ -30,6 +30,7 @@ export function Evidence({
       </p>
       {observation.error && (
         <InlineNotification
+          lowContrast
           kind="warning"
           title="Observation unavailable"
           subtitle={observation.error}

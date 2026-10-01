@@ -137,6 +137,7 @@ export function JobControls({
       </p>
       {feedback && (
         <InlineNotification
+          lowContrast
           kind={feedback.failed ? "error" : "info"}
           title={
             feedback.failed ? "Job action refused" : "Job request received"

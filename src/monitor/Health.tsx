@@ -1,9 +1,11 @@
+import { useTheme } from "@carbon/react";
 import { Column, Grid, Stack, Tile } from "@carbon/react";
 import { MeterChart } from "@carbon/charts-react";
 import { number, object, reading, text, type RecordValue } from "./model";
-import { Details, Status } from "./presentation";
+import { Details } from "./presentation";
 
 export function ResourceMetrics({ payload }: { payload?: RecordValue }) {
+  const { theme } = useTheme();
   const cpu = object(payload?.cpu),
     ram = object(payload?.ram),
     gpu = object(payload?.gpu),
@@ -47,7 +49,7 @@ export function ResourceMetrics({ payload }: { payload?: RecordValue }) {
   return (
     <Grid narrow className="monitor-grid">
       {metrics.map((metric) => (
-        <Column key={metric.label} sm={4} md={4} lg={4}>
+        <Column key={metric.label} sm={2} md={4} lg={4}>
           <Tile className="monitor-health-tile">
             <Stack gap={4}>
               <h2 className="cds--type-heading-compact-01">{metric.label}</h2>
@@ -59,7 +61,7 @@ export function ResourceMetrics({ payload }: { payload?: RecordValue }) {
                   options={{
                     title: `${reading(metric.value, "%")} used`,
                     height: "88px",
-                    theme: "g100",
+                    theme,
                     toolbar: { enabled: false },
                     meter: { peak: 100 },
                     animations: false,
@@ -88,11 +90,9 @@ export function bytes(value: unknown): string {
 export function HealthCards({
   payload,
   runtime,
-  status,
 }: {
   payload?: RecordValue;
   runtime?: RecordValue;
-  status: string;
 }) {
   const features = object(payload?.features),
     backend = object(payload?.qdrant),
@@ -104,7 +104,6 @@ export function HealthCards({
         <Tile className="monitor-health-tile">
           <Stack gap={5}>
             <h2 className="cds--type-heading-compact-02">Service overview</h2>
-            <Status state={status} />
             <Details
               items={[
                 ["Process", reading(payload?.pid)],
@@ -209,10 +208,9 @@ export function ServiceDiagnostics({
       <Column sm={4} md={4} lg={8}>
         <Tile className="monitor-health-tile">
           <Stack gap={4}>
-            <h2 className="cds--type-heading-compact-02">Service state</h2>
+            <h2 className="cds--type-heading-compact-02">Request admission</h2>
             <Details
               items={[
-                ["Admission state", text(quiesce.state)],
                 [
                   "Admission",
                   quiesce.admissions_open === true
