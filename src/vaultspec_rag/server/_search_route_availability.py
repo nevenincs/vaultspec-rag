@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 from anyio.to_thread import run_sync as _run_in_thread
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._index_integrity import IntegrityVerdict
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -17,6 +18,7 @@ from .._operator_commands import (
 from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
+    SearchEmptyReason,
     SearchSourceFact,
     search_readiness_block,
 )
@@ -114,7 +116,7 @@ class SearchAvailabilityRequestFacts:
         )
         integrity_verified = (
             integrity_block is not None
-            and integrity_block.get("verdict") == "consistent"
+            and integrity_block.get("verdict") == IntegrityVerdict.CONSISTENT
         )
         snapshot = self.readiness_snapshot
         target = self.readiness_target
@@ -196,7 +198,7 @@ def _integrity_source(request: SearchRequest) -> PublicSourceType:
 
 def acquire_search_integrity_snapshot(
     request: SearchRequest,
-) -> IndexIntegritySnapshot | None:
+) -> IndexIntegritySnapshot | IndexIntegrity:
     """Capture integrity evidence before retrieval runs, when it is provable."""
     from .._index_integrity import acquire_index_integrity_snapshot_if_proven
 
@@ -208,7 +210,7 @@ def acquire_search_integrity_snapshot(
 def search_integrity_for_route(
     request: SearchRequest,
     phase_timing: dict[str, float],
-    snapshot: IndexIntegritySnapshot | None,
+    snapshot: IndexIntegritySnapshot | IndexIntegrity,
 ) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
@@ -223,12 +225,9 @@ def search_integrity_for_route(
     shrink turns into at most one supervised repair, whose job id (when known)
     rides back on the envelope beside the verdict that motivated it.
     """
-    from .._index_integrity import unverifiable_integrity
     from .._integrity_remediation import note_integrity_verdict
 
     source = _integrity_source(request)
-    if snapshot is None:
-        return unverifiable_integrity(source), None
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
         integrity = snapshot.finish(None if code_count is None else int(code_count))
@@ -244,15 +243,17 @@ def _empty_search_diagnostics(
     port: int | None,
     path_filter: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    """Explain an empty result after its publication authority is verified."""
     source = index_state["source"]
     remediation = [
         index_command(source, IndexCommandOptions(port=port)),
-        server_status_command(),
+        server_status_command(port),
         server_jobs_command(port),
     ]
     if index_state["indexed_count"] == 0:
-        reason = "index_missing"
-        message = f"No indexed {source} items are available."
+        reason = SearchEmptyReason.PUBLISHED_EMPTY
+        message = f"The published {source} index is empty."
+        remediation = []
     elif path_filter is not None:
         # The search proved this: candidates matched the query and the path
         # patterns removed every one. Saying so, with the patterns, is the
@@ -262,7 +263,7 @@ def _empty_search_diagnostics(
         patterns = ", ".join(
             str(p) for p in cast("list[object]", path_filter["patterns"])
         )
-        reason = "no_match_path_filter"
+        reason = SearchEmptyReason.NO_MATCH_PATH_FILTER
         message = (
             f"{path_filter['candidates_before_filter']} indexed items matched "
             f"the query, and the path filter ({patterns}) excluded every one. "
@@ -274,11 +275,11 @@ def _empty_search_diagnostics(
             "widen the pattern, or check it against a path from an unfiltered result",
         ]
     else:
-        reason = "no_match"
+        reason = SearchEmptyReason.NO_MATCH
         message = "The index is available, but no indexed item matched the query."
 
     return {
-        "reason": reason,
+        "reason": reason.value,
         "message": message,
         "remediation": remediation,
     }
@@ -362,30 +363,14 @@ def _non_authoritative_empty_result(
     request_id: str,
 ) -> dict[str, object]:
     """Suppress an empty result list that cannot prove absence."""
-    stable_error = (
-        source_fact.reason_code
-        if source_fact.reason_code
-        in {
-            "index_unavailable",
-            "index_unverifiable",
-            "rebuild_required",
-            "capacity_limited",
-        }
-        else "index_unverifiable"
-    )
     return {
         key: value
         for key, value in result.items()
         if key not in {"results", "summary", "empty"}
-    } | {
-        "ok": False,
-        "error": stable_error,
-        "message": "The empty search result is not authoritative for this source.",
-        "retryable": source_fact.retryable,
-        "request_id": request_id,
-        "readiness": _readiness_block(source_fact),
-        "remediation": source_fact.remediation,
-    }
+    } | source_fact.failure_response(
+        request_id=request_id,
+        index_state=cast("dict[str, object]", result.get("index_state", {})),
+    )
 
 
 def _classify_collection_disappearance(
@@ -393,10 +378,7 @@ def _classify_collection_disappearance(
     facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import (
-        acquire_index_integrity_snapshot_if_proven,
-        unverifiable_integrity,
-    )
+    from .._index_integrity import acquire_index_integrity_snapshot_if_proven
     from ._routes import canonical_job_snapshot
 
     disappeared_source = PublicSourceType(facts.source)
@@ -417,11 +399,7 @@ def _classify_collection_disappearance(
                     # and carrying it keeps the daemon envelope uniform - every
                     # route response has the block, so absence still means only
                     # "old daemon".
-                    integrity=(
-                        unverifiable_integrity(disappeared_source)
-                        if disappeared is None
-                        else disappeared.finish(None)
-                    ),
+                    integrity=disappeared.finish(None),
                     search_type=facts.source,
                 )
             ),

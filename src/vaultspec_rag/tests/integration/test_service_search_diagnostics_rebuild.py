@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from mcp.types import TextContent
 
+from ..._search_state import SearchReasonCode
 from ...indexer._run_ledger_models import RunAuthority
 from ...job_manager.manager import JobManager
 from ...job_models import JobInitiator, JobMode, JobOperation, JobSource, JobSpec
@@ -411,8 +412,7 @@ def _assert_unavailable_response_envelope(
     assert body["ok"] is False, evidence
     assert body["error"] == "index_unavailable", evidence
     assert body["message"] == (
-        f"The vault index for {root} is changing; this empty search cannot "
-        "establish that no matches exist."
+        f"vault index for {root}: {SearchReasonCode.INDEX_UPDATING.label}"
     ), evidence
     request_id = body["request_id"]
     assert isinstance(request_id, str), evidence
@@ -505,9 +505,18 @@ def _assert_unavailable_search_response(
         evidence=evidence,
     )
     assert index_state["status"] == "rebuilding", evidence
-    assert body["remediation"] == (
-        f"vaultspec-rag server jobs --state active --index vault --port {port}"
+    assert body["remediation"] == SearchReasonCode.INDEX_UPDATING.remediation(
+        source="vault", port=port, target=str(root)
     ), evidence
+    assert body["retryable"] is True, evidence
+    readiness = cast("dict[str, object]", body["readiness"])
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert len(facts) == 1, evidence
+    assert facts[0]["source"] == "vault", evidence
+    assert facts[0]["reason_code"] == SearchReasonCode.INDEX_UPDATING.value, evidence
+    assert facts[0]["freshness"] == "updating", evidence
+    assert facts[0]["absence_authority"] == "non_authoritative", evidence
+    assert job_id in cast("list[str]", facts[0]["evidence"]), evidence
 
 
 def _assert_stable_missing_index_response(
@@ -520,7 +529,7 @@ def _assert_stable_missing_index_response(
     status, _headers, body = response
     assert status == 503, evidence
     assert body["ok"] is False, evidence
-    assert body["error"] == "index_unverifiable", evidence
+    assert body["error"] == "index_unavailable", evidence
     assert "results" not in body, evidence
 
     raw_index_state = body["index_state"]
@@ -534,6 +543,8 @@ def _assert_stable_missing_index_response(
         "target_matches",
         "status",
         "index_integrity",
+        "matching_jobs",
+        "matching_jobs_truncated",
     }, evidence
     assert index_state["source"] == source, evidence
     assert index_state["indexed_count"] == 0, evidence
@@ -543,10 +554,25 @@ def _assert_stable_missing_index_response(
     assert isinstance(raw_integrity, dict), evidence
     integrity = cast("dict[str, object]", raw_integrity)
     assert integrity["verdict"] == "unverifiable", evidence
+    assert integrity["reason"] == "proof_missing", evidence
+    assert integrity["live_count"] == 0, evidence
     assert index_state["indexed_target_root"] == str(root), evidence
     assert index_state["requested_target_root"] == str(root), evidence
     assert index_state["target_matches"] is True, evidence
     assert index_state["status"] == "missing", evidence
+
+    assert index_state["matching_jobs"] == [], evidence
+    assert index_state["matching_jobs_truncated"] is False, evidence
+    assert body["retryable"] is False, evidence
+    readiness = cast("dict[str, object]", body["readiness"])
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert len(facts) == 1, evidence
+    assert facts[0]["source"] == source, evidence
+    assert facts[0]["reason_code"] == SearchReasonCode.INDEX_NOT_BUILT.value, evidence
+    assert facts[0]["absence_authority"] == "non_authoritative", evidence
+    assert body["message"] == (
+        f"{source} index for {root}: {SearchReasonCode.INDEX_NOT_BUILT.label}"
+    ), evidence
 
 
 def _assert_matching_nonempty_response(

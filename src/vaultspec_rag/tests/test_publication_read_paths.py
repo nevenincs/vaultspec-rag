@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from .._index_breadth import acquire_code_breadth_snapshot_if_proven
-from .._index_integrity import acquire_index_integrity_snapshot_if_proven
+from .._index_integrity import (
+    IndexIntegrity,
+    acquire_index_integrity_snapshot_if_proven,
+)
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..indexer._publication_proof import ProofEvidence
@@ -54,10 +57,11 @@ def test_an_old_ledger_leaves_a_search_unfenced_rather_than_failing(
     ledger = _old_schema_ledger(tmp_path)
     before = sqlite_contents(ledger)
 
-    assert (
-        acquire_index_integrity_snapshot_if_proven(tmp_path, PublicSourceType.VAULT)
-        is None
+    observation = acquire_index_integrity_snapshot_if_proven(
+        tmp_path, PublicSourceType.VAULT
     )
+    assert isinstance(observation, IndexIntegrity)
+    assert observation.reason == "proof_unreadable"
     assert acquire_code_breadth_snapshot_if_proven(tmp_path) is None
     assert_sqlite_unchanged(ledger, before)
 
@@ -103,7 +107,9 @@ def test_an_update_publishing_leaves_a_search_unfenced_rather_than_failing(
     root = tmp_path.resolve()
     _root_mid_publication(root)
 
-    assert (
-        acquire_index_integrity_snapshot_if_proven(root, PublicSourceType.CODE) is None
+    observation = acquire_index_integrity_snapshot_if_proven(
+        root, PublicSourceType.CODE
     )
+    assert isinstance(observation, IndexIntegrity)
+    assert observation.reason == "proof_unreadable"
     assert acquire_code_breadth_snapshot_if_proven(root) is None
