@@ -19,6 +19,7 @@ from ..indexer._run_ledger_models import (
 )
 from ..indexer._run_ledger_runtime import RunLedger
 from ._run_ledger_test_support import (
+    ledger_test_certify_generation,
     ledger_test_digest,
     ledger_test_insert_reserved_receipt,
     ledger_test_proof_compatibility,
@@ -43,6 +44,7 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
     second = ledger.start_generation(
         ledger_test_signature(tmp_path, content_epoch="second")
     )
+    ledger_test_certify_generation(ledger, second.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -57,6 +59,7 @@ def test_compaction_preserves_published_and_running_generations(tmp_path: Path) 
         collection_identity="document-v1",
     )
     running = ledger.start_generation(document)
+    ledger_test_certify_generation(ledger, running.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,
@@ -102,6 +105,7 @@ def test_compact_tolerates_an_updated_at_tie_with_another_publication(
     ledger_test_publish_and_compact(ledger, older.generation_id)
 
     newest = ledger.start_generation(signature)
+    ledger_test_certify_generation(ledger, newest.generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,

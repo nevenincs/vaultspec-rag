@@ -75,7 +75,6 @@ def _root_mid_publication(root: Path) -> None:
         root, backend_identity=configured_backend_identity(root)
     )
     parent = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, parent.generation_id)
     key = ledger_test_proof_key_for_signature(signature)
     ledger_test_seed_publication_proof(
         ledger,
@@ -89,6 +88,7 @@ def _root_mid_publication(root: Path) -> None:
             ),
         ),
     )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
     successor = ledger.start_generation(signature)
     ledger.reserve_publication_receipt(
         key,

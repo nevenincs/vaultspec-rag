@@ -13,12 +13,13 @@ import pytest
 from .. import store_schema
 from .._source_types import PublicSourceType
 from ..indexer._content_policy import ContentKind
-from ..indexer._file_state import FileState
+from ..indexer._file_state import FileState, FileStateKind
 from ..indexer._publication_proof import (
     PathDelta,
     PathOutcome,
     ProofCompatibilityKey,
     ProofEvidence,
+    ProofMissingError,
     ProofProvenance,
 )
 from ..indexer._run_ledger_models import (
@@ -30,6 +31,7 @@ from ..indexer._run_ledger_models import (
     CommitUnitKind,
     FinalizationPhase,
     PublicationReceipt,
+    RunAuthority,
     RunLedgerRebuildRequiredError,
     RunOperation,
     RunSignature,
@@ -387,7 +389,6 @@ def ledger_test_seeded_publication_lineage(
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = ledger_test_signature(tmp_path)
     parent = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, parent.generation_id)
     key = ledger_test_proof_key_for_signature(signature)
     ledger_test_seed_publication_proof(
         ledger,
@@ -395,6 +396,7 @@ def ledger_test_seeded_publication_lineage(
         key=key,
         evidence=evidence,
     )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
     successor = ledger.start_generation(signature)
     assert successor.parent_generation_id == parent.generation_id
     return ledger, key, parent.generation_id, successor.generation_id
@@ -612,7 +614,39 @@ def ledger_test_indexed_path_ledger(
     return ledger, generation.generation_id
 
 
+def ledger_test_certify_generation(ledger: RunLedger, generation_id: str) -> None:
+    """Establish full-generation proof before a fixture publishes its phases."""
+    generation = ledger.generation(generation_id)
+    key = ledger_test_proof_key_for_signature(generation.signature)
+    try:
+        proof = ledger.publication_proof(key)
+    except ProofMissingError:
+        proof = None
+    if generation.signature.operation is RunOperation.FULL and (
+        proof is None or proof.generation_id != generation_id
+    ):
+        evidence = tuple(
+            ProofEvidence(
+                state.rel_path,
+                state.content_hash,
+                tuple(
+                    sorted(
+                        ledger.iter_retained_point_ids(
+                            generation_id, rel_path=state.rel_path
+                        )
+                    )
+                ),
+            )
+            for state in ledger.iter_file_states(generation_id)
+            if state.state is FileStateKind.INDEXED and state.content_hash is not None
+        )
+        ledger.establish_verified_publication(
+            generation_id, RunAuthority.REBUILD, evidence
+        )
+
+
 def ledger_test_publish_and_compact(ledger: RunLedger, generation_id: str) -> int:
+    ledger_test_certify_generation(ledger, generation_id)
     for phase in (
         FinalizationPhase.STALE_RECONCILED,
         FinalizationPhase.METADATA_PUBLISHED,

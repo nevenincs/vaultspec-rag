@@ -87,6 +87,7 @@ class VaultIndexer(VaultIncrementalMixin):
         self.root_dir = root_dir
         self.model = model
         self.store = store
+        self._last_checkpoint: VaultRunCheckpoint | None = None
         self._gpu_lock = gpu_lock
         # Indexer-level writer lock that serializes full_index and
         # incremental_index against each other and against themselves.
@@ -113,6 +114,11 @@ class VaultIndexer(VaultIncrementalMixin):
             ),
         )
         self._memory_budget: MemoryBudget | None = None
+
+    @property
+    def last_checkpoint(self) -> VaultRunCheckpoint | None:
+        """Return this indexer's latest durable run authority."""
+        return self._last_checkpoint
 
     @property
     def memory_budget_snapshot(self) -> MemoryBudgetSnapshot | None:
@@ -306,6 +312,7 @@ class VaultIndexer(VaultIncrementalMixin):
             operation=RunOperation.FULL,
             run_control=run_control,
         )
+        self._last_checkpoint = checkpoint
         # Note: we intentionally do NOT short-circuit when docs is
         # empty. The streaming helper handles a zero-length list
         # correctly, and falling through the main path means
@@ -385,8 +392,7 @@ class VaultIndexer(VaultIncrementalMixin):
             # Streaming completed successfully - now it is safe to delete
             # the rows that were in the collection before but are absent
             # from the freshly-indexed corpus.
-            new_ids = {doc.id for doc in docs}
-            stale_ids = sorted(existing_ids_before - new_ids)
+            stale_ids = sorted(existing_ids_before - {doc.id for doc in docs})
 
             # The stream ran without the per-slice apply handshake, so
             # prove every acknowledged chunk applied before anything
@@ -583,6 +589,7 @@ class VaultIndexer(VaultIncrementalMixin):
             operation=RunOperation.INCREMENTAL,
             run_control=run_control,
         )
+        self._last_checkpoint = checkpoint
         receipt = checkpoint.receipt
         if receipt is None:
             raise RuntimeError("vault incremental opened without a publication receipt")

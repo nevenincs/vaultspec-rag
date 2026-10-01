@@ -67,13 +67,13 @@ def test_generation_start_leaves_canonical_publication_projection_unchanged(
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     signature = ledger_test_signature(tmp_path)
     parent = ledger.start_generation(signature)
-    ledger_test_publish_and_compact(ledger, parent.generation_id)
     ledger_test_seed_publication_proof(
         ledger,
         generation_id=parent.generation_id,
         key=ledger_test_proof_key_for_signature(signature),
         evidence=evidence,
     )
+    ledger_test_publish_and_compact(ledger, parent.generation_id)
 
     def canonical_projection() -> tuple[tuple[object, ...], ...]:
         with sqlite3.connect(ledger.path) as connection:

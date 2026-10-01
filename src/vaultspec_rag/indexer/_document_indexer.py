@@ -848,12 +848,15 @@ class DocumentIndexer:
             raise RuntimeError("document checkpoint has no resolved policy")
         reporter.phase_start("resume document publication", 1)
         try:
-            reconcile_generation_storage(
-                self.store,
-                checkpoint,
-                policy,
-                ContentKind.DOCUMENT,
-            )
+            if not checkpoint.ledger.publication_already_committed(
+                checkpoint.generation_id
+            ):
+                reconcile_generation_storage(
+                    self.store,
+                    checkpoint,
+                    policy,
+                    ContentKind.DOCUMENT,
+                )
             checkpoint.publish_proof_transition()
             self._publish_generation(checkpoint)
             reporter.advance(1)

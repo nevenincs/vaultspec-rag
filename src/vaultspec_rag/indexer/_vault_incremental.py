@@ -216,6 +216,7 @@ class VaultIncrementalMixin:
         store: VaultStore
         _gpu_lock: threading.Lock | None
         _stat_gate_cache: _stat_gate.StatEvidenceStore
+        _last_checkpoint: VaultRunCheckpoint | None
 
         # Provided by the indexer this mixes into.
         def _resolve_reuse(
@@ -661,6 +662,7 @@ class VaultIncrementalMixin:
             operation=RunOperation.SCOPED_INCREMENTAL,
             run_control=run_control,
         )
+        self._last_checkpoint = checkpoint
         if checkpoint.receipt is None:
             raise RuntimeError("vault incremental opened without a publication receipt")
 

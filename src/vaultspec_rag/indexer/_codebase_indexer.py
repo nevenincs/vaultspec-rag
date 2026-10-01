@@ -636,6 +636,20 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             discovered_paths=discovered_paths,
             run_control=run_control,
         )
+        effective_clean = authority is RunAuthority.REBUILD
+        limits = self._consumer_pipeline.resolve_limits()
+        checkpoint = self._lifecycle.open_checkpoint(
+            CodeGenerationOpenRequest(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=authority is RunAuthority.REBUILD,
+                configuration=limits.run_configuration,
+                dense_dimensions=limits.dense_dimension,
+                sparse_enabled=limits.sparse_enabled,
+                run_control=run_control,
+                authority=authority,
+            )
+        )
         from .._publication_state import (
             acquire_publication_snapshot,
             read_all_publication_evidence,
@@ -657,20 +671,6 @@ class CodebaseIndexer(CodebasePreprocessMixin):
                 ).items()
             }
             previous_snapshot.validate()
-        effective_clean = authority is RunAuthority.REBUILD
-        limits = self._consumer_pipeline.resolve_limits()
-        checkpoint = self._lifecycle.open_checkpoint(
-            CodeGenerationOpenRequest(
-                policy=policy,
-                operation=RunOperation.FULL,
-                clean=authority is RunAuthority.REBUILD,
-                configuration=limits.run_configuration,
-                dense_dimensions=limits.dense_dimension,
-                sparse_enabled=limits.sparse_enabled,
-                run_control=run_control,
-                authority=authority,
-            )
-        )
         resumed_publication = self._resume_pending_finalization(
             checkpoint,
             reporter=reporter,

@@ -37,6 +37,7 @@ from ._publication_proof import (
     PathDelta,
     PathOutcome,
     ProofEvidence,
+    ProofMutationState,
     ProofReceiptState,
 )
 from ._run_ledger_models import (
@@ -217,7 +218,9 @@ class RunCheckpointBase:
             backend_identity=request.backend_identity,
         )
         ledger = RunLedger(index_run_ledger_path(request.data_root))
-        generation = cls.start_compatible_generation(ledger, signature)
+        generation = cls.start_compatible_generation(
+            ledger, signature, request.authority, request.run_policy
+        )
         receipt = cls.open_publication_receipt(ledger, generation, request.authority)
         return cls(
             ledger=ledger,
@@ -233,6 +236,8 @@ class RunCheckpointBase:
         cls,
         ledger: RunLedger,
         signature: RunSignature,
+        authority: RunAuthority,
+        run_policy: RunPolicy,
     ) -> RunGeneration:
         """Start one attempt's generation, refusing a parentless incremental.
 
@@ -254,6 +259,8 @@ class RunCheckpointBase:
         Verifying exactly there costs a fresh run nothing and still refuses to
         resume onto damaged durable state.
         """
+        if authority is RunAuthority.REBUILD:
+            cls._recover_publication_for_rebuild(ledger, signature, run_policy)
         generation = ledger.start_generation(signature)
         if (
             signature.operation
@@ -267,6 +274,47 @@ class RunCheckpointBase:
         if ledger.committed_unit_count(generation.generation_id) > 0:
             ledger.verify_integrity()
         return generation
+
+    @classmethod
+    def _recover_publication_for_rebuild(
+        cls,
+        ledger: RunLedger,
+        signature: RunSignature,
+        run_policy: RunPolicy,
+    ) -> None:
+        """Finish only exact recorded work before admitting a replacement build."""
+        receipt = ledger.rebuild_recovery_receipt(signature, RunAuthority.REBUILD)
+        if receipt is None:
+            return
+        run_policy.checkpoint("recover unfinished publication")
+        if not receipt.mutations and not receipt.deltas:
+            ledger.begin_publication_rollback(receipt.receipt_id)
+            ledger.roll_back_publication_receipt(
+                receipt.receipt_id, compensated_units=()
+            )
+            run_policy.record_durable_progress(
+                kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+                label="publication receipt rollback recovery",
+            )
+            return
+        if receipt.state is not ProofReceiptState.SEALED or any(
+            mutation.state is not ProofMutationState.CONFIRMED
+            for mutation in receipt.mutations
+        ):
+            raise RunLedgerStateError(
+                "unfinished publication requires exact recorded-unit recovery "
+                "before rebuild"
+            )
+        ledger.verify_integrity()
+        ledger.commit_publication_receipt(
+            receipt.receipt_id,
+            authority=RunAuthority.REBUILD,
+            rebuild_signature=signature,
+        )
+        run_policy.record_durable_progress(
+            kind=DurableProgressKind.FINALIZATION_PHASE_COMMITTED,
+            label="publication proof recovery",
+        )
 
     @classmethod
     def open_publication_receipt(
@@ -300,6 +348,11 @@ class RunCheckpointBase:
                     "canonical proof has a receipt owned by another generation"
                 )
             return active
+        completed = ledger.publication_receipt_for_generation(generation.generation_id)
+        if completed is not None and ledger.publication_noop_completed(
+            generation.generation_id, completed.receipt_id
+        ):
+            return completed
         return ledger.reserve_publication_receipt(
             key,
             generation.generation_id,
@@ -447,13 +500,14 @@ class RunCheckpointBase:
     ) -> list[PathDelta]:
         """Derive changed heads from confirmed mutations and the exact parent proof."""
         deltas: list[PathDelta] = []
+        upserts_by_path: dict[str, list[CommitUnit]] = {}
+        for mutation in receipt.mutations:
+            if mutation.unit.kind is CommitUnitKind.UPSERT:
+                upserts_by_path.setdefault(mutation.unit.rel_path, []).append(
+                    mutation.unit
+                )
         for rel_path in paths:
-            upserts = tuple(
-                mutation.unit
-                for mutation in receipt.mutations
-                if mutation.unit.rel_path == rel_path
-                and mutation.unit.kind is CommitUnitKind.UPSERT
-            )
+            upserts = tuple(upserts_by_path.get(rel_path, ()))
             old = old_by_path.get(rel_path)
             new = self._new_evidence(rel_path, upserts)
             if old == new:
@@ -474,6 +528,10 @@ class RunCheckpointBase:
         """Freeze an incremental receipt's exact delta before stale deletion."""
         if self.receipt is None:
             raise RunLedgerStateError("incremental publication has no receipt")
+        if self.ledger.publication_noop_completed(
+            self.generation_id, self.receipt.receipt_id
+        ):
+            return 0
         receipt = self.ledger.active_publication_receipt(self.receipt.compatibility_key)
         if receipt is None or receipt.receipt_id != self.receipt.receipt_id:
             raise RunLedgerStateError("incremental publication receipt disappeared")

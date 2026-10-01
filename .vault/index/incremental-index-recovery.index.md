@@ -4,12 +4,13 @@ tags:
   - '#index'
   - '#incremental-index-recovery'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:f6cc0d2ada32217c286752fa42f5f98e418fc4927dfcd8b48e917514cd784911'
+body_hash: 'sha256:0986583a79438c71290a904f3cf612ed029abd1a5e1d4aed9733bb6f6dc6029c'
 related:
   - '[[2026-09-30-incremental-index-recovery-ledger]]'
   - '[[2026-09-30-incremental-index-recovery-plan]]'
+  - '[[2026-10-01-incremental-index-recovery-audit]]'
 ---
 
 # `incremental-index-recovery` feature index
@@ -17,6 +18,10 @@ related:
 Auto-generated index of all documents tagged with `#incremental-index-recovery`.
 
 ## Documents
+
+### audit
+
+- `2026-10-01-incremental-index-recovery-audit` - `incremental-index-recovery` audit: `Integrated incremental indexing recovery review`
 
 ### exec
 
