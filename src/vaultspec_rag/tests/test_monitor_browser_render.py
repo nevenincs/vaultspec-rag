@@ -297,6 +297,63 @@ def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
     return artifact
 
 
+def test_chart_updates_and_navigation_release_browser_resources(
+    rendered_monitor: Browser,
+) -> None:
+    browser = rendered_monitor
+    browser.wait("document.querySelectorAll('.chart-holder svg').length >= 2")
+    browser.evaluate("document.querySelector('#live-updates').click()")
+    browser.wait(
+        "document.querySelector('#live-updates')"
+        ".getAttribute('aria-checked') === 'false'"
+    )
+    browser.evaluate("new Promise(resolve => setTimeout(resolve, 500))")
+    original = int(
+        cast("int", browser.evaluate("document.querySelectorAll('*').length"))
+    )
+    # Repeated theme changes force the production chart's option-update path.
+    # Removing the status-indicator class repair makes the node bound fail.
+    for _ in range(12):
+        browser.evaluate("document.querySelector('[aria-label^=\"Theme:\"]').click()")
+        browser.evaluate("new Promise(resolve => setTimeout(resolve, 50))")
+    current = int(
+        cast("int", browser.evaluate("document.querySelectorAll('*').length"))
+    )
+    assert current <= original + 8, (original, current)
+    _page(browser, "queries")
+    browser.wait("!document.querySelector('.chart-holder')")
+    baseline = cast("dict[str, int]", browser.command("memory"))
+    for _ in range(6):
+        _page(browser, "dashboard")
+        browser.wait("document.querySelectorAll('.chart-holder svg').length >= 2")
+        _page(browser, "queries")
+        browser.wait("!document.querySelector('.chart-holder')")
+    retained = cast("dict[str, int]", browser.command("memory"))
+    # Removing componentWillUnmount or the document listener cleanup makes
+    # repeated visits retain complete detached chart trees after collection.
+    assert retained["nodes"] <= baseline["nodes"] + 40, (baseline, retained)
+    assert retained["jsEventListeners"] <= baseline["jsEventListeners"] + 4
+
+
+def test_background_monitor_stops_polling_and_resumes(
+    rendered_monitor: Browser,
+) -> None:
+    browser = rendered_monitor
+    browser.wait("document.querySelectorAll('.chart-holder svg').length >= 2")
+    browser.command("background", hidden=True)
+    browser.wait("document.hidden")
+    before = cast("dict[str, list[object]]", browser.command("evidence"))
+    browser.evaluate("new Promise(resolve => setTimeout(resolve, 3500))")
+    after = cast("dict[str, list[object]]", browser.command("evidence"))
+    # Removing the visibility gate permits health/runtime requests while hidden.
+    assert len(after["network"]) == len(before["network"])
+    browser.command("background", hidden=False)
+    browser.wait("!document.hidden")
+    browser.evaluate("new Promise(resolve => setTimeout(resolve, 500))")
+    resumed = cast("dict[str, list[object]]", browser.command("evidence"))
+    assert len(resumed["network"]) > len(after["network"])
+
+
 def test_browser_wait_uses_its_deadline_for_renderer_commands(
     rendered_monitor: Browser,
 ) -> None:

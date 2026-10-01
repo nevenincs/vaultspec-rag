@@ -39,6 +39,7 @@
     }
   },
   "scripts": {
+    "postinstall": "patch-package --error-on-fail",
     "dev": "vite",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
@@ -65,6 +66,7 @@
     "eslint": "10.11.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.12.0",
+    "patch-package": "8.0.1",
     "prettier": "3.9.9",
     "sass": "1.105.1",
     "typescript": "6.0.3",

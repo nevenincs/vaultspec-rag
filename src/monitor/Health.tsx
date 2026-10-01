@@ -1,10 +1,15 @@
 import { useTheme } from "@carbon/react";
 import { Column, Grid, Stack, Tile } from "@carbon/react";
 import { MeterChart } from "@carbon/charts-react";
+import { memo } from "react";
 import { number, object, reading, text, type RecordValue } from "./model";
 import { Details } from "./presentation";
 
-export function ResourceMetrics({ payload }: { payload?: RecordValue }) {
+export const ResourceMetrics = memo(function ResourceMetrics({
+  payload,
+}: {
+  payload?: RecordValue;
+}) {
   const { theme } = useTheme();
   const cpu = object(payload?.cpu),
     ram = object(payload?.ram),
@@ -77,7 +82,7 @@ export function ResourceMetrics({ payload }: { payload?: RecordValue }) {
       ))}
     </Grid>
   );
-}
+});
 
 export function bytes(value: unknown): string {
   const amount = number(value);

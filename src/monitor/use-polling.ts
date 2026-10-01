@@ -16,20 +16,20 @@ export function usePolling<T>(
   const [stored, setStored] = useState<StoredObservation<T>>({ path });
   useEffect(() => {
     if (!enabled) return;
-    const controller = new AbortController();
+    let controller: AbortController | undefined;
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
+      if (!current || document.hidden || controller) return;
+      const active = new AbortController();
+      controller = active;
       try {
-        const payload = await request(
-          path,
-          { signal: controller.signal },
-          timeout,
-        );
+        const payload = await request(path, { signal: active.signal }, timeout);
         const data = decode(payload);
-        if (current) setStored({ path, data, observedAt: Date.now() });
+        if (current && !active.signal.aborted)
+          setStored({ path, data, observedAt: Date.now() });
       } catch (error) {
-        if (current) {
+        if (current && !active.signal.aborted) {
           setStored((prior) => ({
             ...(prior.path === path ? prior : {}),
             path,
@@ -40,14 +40,26 @@ export function usePolling<T>(
           }));
         }
       } finally {
-        if (current) timer = setTimeout(() => void poll(), interval);
+        controller = undefined;
+        if (current && !document.hidden)
+          timer = setTimeout(
+            () => void poll(),
+            active.signal.aborted ? 0 : interval,
+          );
       }
     };
+    const visibility = () => {
+      clearTimeout(timer);
+      if (document.hidden) controller?.abort();
+      else void poll();
+    };
+    document.addEventListener("visibilitychange", visibility);
     void poll();
     return () => {
       current = false;
-      controller.abort();
+      controller?.abort();
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visibility);
     };
   }, [path, decode, enabled, refresh, interval, timeout]);
   return stored.path === path ? stored : {};

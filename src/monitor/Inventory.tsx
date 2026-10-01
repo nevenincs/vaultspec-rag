@@ -1,5 +1,5 @@
 import { useTheme } from "@carbon/react";
-import { Fragment, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   Button,
   DataTable,
@@ -132,25 +132,45 @@ export function InventoryPage({
       setPending(false);
     }
   };
-  const chartData = records
-    .filter(
-      (row) =>
-        typeof row.footprint_bytes === "number" && row.footprint_bytes > 0,
-    )
-    .map((row) => ({
-      group:
-        text(
-          row.project_name,
-          text(
-            row.name,
-            text(row.root, text(row.repository_root, text(row.prefix))),
-          ),
+  const chartData = useMemo(
+    () =>
+      (Array.isArray(raw) ? raw.map(object) : [])
+        .filter(
+          (row) =>
+            typeof row.footprint_bytes === "number" && row.footprint_bytes > 0,
         )
-          .replace(/[\\/]+$/, "")
-          .split(/[\\/]+/)
-          .at(-1) || "Unnamed project",
-      value: Number(row.footprint_bytes) / 1024 ** 3,
-    }));
+        .map((row) => ({
+          group:
+            text(
+              row.project_name,
+              text(
+                row.name,
+                text(row.root, text(row.repository_root, text(row.prefix))),
+              ),
+            )
+              .replace(/[\\/]+$/, "")
+              .split(/[\\/]+/)
+              .at(-1) || "Unnamed project",
+          value: Number(row.footprint_bytes) / 1024 ** 3,
+        })),
+    [raw],
+  );
+  const chartOptions = useMemo(
+    () => ({
+      title: "Storage by repository",
+      height: "160px",
+      theme,
+      toolbar: { enabled: false },
+      animations: false,
+      meter: {
+        proportional: {
+          total: chartData.reduce((sum, row) => sum + row.value, 0),
+          unit: "GiB",
+        },
+      },
+    }),
+    [chartData, theme],
+  );
   return (
     <Stack gap={5}>
       <Stack orientation="horizontal" gap={4} className="monitor-toolbar">
@@ -191,22 +211,7 @@ export function InventoryPage({
         />
       )}
       {storage && chartData.length > 0 && (
-        <MeterChart
-          data={chartData}
-          options={{
-            title: "Storage by repository",
-            height: "160px",
-            theme,
-            toolbar: { enabled: false },
-            animations: false,
-            meter: {
-              proportional: {
-                total: chartData.reduce((sum, row) => sum + row.value, 0),
-                unit: "GiB",
-              },
-            },
-          }}
-        />
+        <MeterChart data={chartData} options={chartOptions} />
       )}
       {!storage && Boolean(observation.data?.seats) && (
         <DataTree

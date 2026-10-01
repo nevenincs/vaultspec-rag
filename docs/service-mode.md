@@ -242,6 +242,10 @@ matching records. Counts describe the service's retained snapshot and recent
 history. **Pause live updates** pauses browser polling; the service continues
 working. Resume updates to observe new work again.
 
+Background browser tabs stop polling and retain the last displayed data.
+Returning to the tab refreshes it immediately, unless live updates were
+manually paused.
+
 The built preview at `http://127.0.0.1:5421` uses the same automatic local
 connection. Serving the static assets alone does not provide that connection.
 Use `just dev stop` to stop this checkout's browser servers.

@@ -57,8 +57,17 @@ function Freshness({
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const visibility = () => {
+      clearInterval(timer);
+      if (!document.hidden) timer = setInterval(() => setNow(Date.now()), 1000);
+    };
+    visibility();
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", visibility);
+    };
   }, []);
   const age = observation.observedAt
     ? Math.max(0, Math.floor((now - observation.observedAt) / 1000))

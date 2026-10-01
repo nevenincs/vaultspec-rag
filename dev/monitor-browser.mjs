@@ -25,6 +25,7 @@ let socket;
 const pending = new Map();
 const errors = [];
 const network = [];
+let backgroundTarget;
 let sequence = 0;
 const send = (method, params = {}, timeout = 10000) =>
   new Promise((resolve, reject) => {
@@ -155,6 +156,27 @@ try {
         });
         await writeFile(command.path, Buffer.from(capture.data, "base64"));
         value = command.path;
+      } else if (command.operation === "memory") {
+        // Let pending layout/tooltip callbacks release their temporary DOM refs.
+        await evaluate(
+          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+        );
+        await delay(500);
+        await send("HeapProfiler.collectGarbage");
+        value = await send("Memory.getDOMCounters");
+      } else if (command.operation === "background") {
+        if (command.hidden) {
+          const target = await send("Target.createTarget", {
+            url: "about:blank",
+          });
+          backgroundTarget = target.targetId;
+          await send("Target.activateTarget", { targetId: backgroundTarget });
+        } else {
+          if (backgroundTarget)
+            await send("Target.closeTarget", { targetId: backgroundTarget });
+          backgroundTarget = undefined;
+          await send("Page.bringToFront");
+        }
       } else if (command.operation === "evidence") value = { errors, network };
       else if (command.operation === "close") {
         input.close();
