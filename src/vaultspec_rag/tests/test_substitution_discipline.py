@@ -31,6 +31,13 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    "test_cli_styled_output.py": (
+        1,
+        "styling reaches only a colour terminal, and the CLI builds its one "
+        "console at import from the real stdout, so the styled bytes can only "
+        "be read by handing the unchanged production renderers a real recording "
+        "console; the substitute is the output sink, not any behaviour",
+    ),
     "test_typesafe_search.py": (
         26,
         "search routing needs fixed candidate windows and forced provider failures "

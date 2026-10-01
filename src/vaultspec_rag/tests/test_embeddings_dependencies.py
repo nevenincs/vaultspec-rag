@@ -22,12 +22,11 @@ def test_missing_torch_explains_cuda_provisioning(
     with pytest.raises(ImportError) as raised:
         embeddings._check_rag_deps()
 
-    assert str(raised.value) == (
-        "GPU inference dependencies are not installed. Install `vaultspec-rag[gpu]`, "
-        "then run `vaultspec-rag install --sync` from the project you want to search "
-        "to provision the CUDA inference stack. vaultspec-rag never runs inference "
-        "on CPU."
-    )
+    from ..operator_state._provisioning import host_install_command
+
+    message = str(raised.value)
+    assert "torch is missing" in message
+    assert host_install_command() in message
 
 
 @pytest.mark.unit
@@ -50,9 +49,8 @@ def test_missing_sentence_transformers_explains_cuda_provisioning(
     with pytest.raises(ImportError) as raised:
         embeddings._check_rag_deps()
 
-    assert str(raised.value) == (
-        "GPU inference dependencies are not installed. Install `vaultspec-rag[gpu]`, "
-        "then run `vaultspec-rag install --sync` from the project you want to search "
-        "to provision the CUDA inference stack. vaultspec-rag never runs inference "
-        "on CPU."
-    )
+    from ..operator_state._provisioning import host_install_command
+
+    message = str(raised.value)
+    assert "sentence-transformers is missing" in message
+    assert host_install_command() in message

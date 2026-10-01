@@ -31,6 +31,12 @@ _BOLD = "\x1b[1m"
 
 
 def _capture(monkeypatch: pytest.MonkeyPatch, *, terminal: bool) -> io.StringIO:
+    """Hand the production renderers a real console that records to a buffer.
+
+    Styling reaches only a colour terminal, and the CLI builds its one console
+    at import from the real stdout, so swapping the output sink is the only way
+    to read the styled bytes. Every renderer under test runs unchanged.
+    """
     buffer = io.StringIO()
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(

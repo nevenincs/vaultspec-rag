@@ -2,13 +2,18 @@
 
 <img src="https://raw.githubusercontent.com/nevenincs/vaultspec-rag/main/assets/logo.png" width="119" alt="Vaultspec logo">
 
-# vaultspec-rag: Semantic search for code and the decisions behind it
+# vaultspec-rag: Semantic search for vault and code
 
-Describe what some code does, or ask why it was built that way, and vaultspec-rag
-returns the code or the decision-record passage that answers, even when it's worded
-differently from your question. It matches on meaning and on exact names, then rereads
-the best candidates beside your question before ranking them. Use it from the command
-line or through your AI assistant. It runs on your own GPU, and it's in beta.
+vaultspec-rag is the companion search toolkit for
+[vaultspec-core](https://github.com/nevenincs/vaultspec-core): a semantic retrieval
+engine for codebases and the architecture decisions behind them, and the retrieval half
+of retrieval-augmented generation (RAG) for coding agents. It indexes source code,
+decision records, and documents on your own hardware, and answers each query with hybrid
+retrieval: dense semantic embeddings fused with sparse exact-term matching, reranked by
+a cross-encoder over each candidate's full content and, optionally, by Typesafe's hosted
+relevance judgments. A single GPU-resident service serves every repository on the
+machine, keeps its indexes current, and exposes search to the command line and to AI
+agents over the Model Context Protocol (MCP). It's in beta.
 
 [<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="CI status of main" src="https://shieldcn.dev/github/ci/nevenincs/vaultspec-rag.svg?workflow=merge-gate.yml&amp;branch=main&amp;label=ci&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://github.com/nevenincs/vaultspec-rag/actions/workflows/merge-gate.yml?query=branch%3Amain)
 [<picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=dark"><img alt="PyPI version" src="https://shieldcn.dev/pypi/v/vaultspec-rag.svg?label=pypi&amp;variant=secondary&amp;size=xs&amp;mode=light"></picture>](https://pypi.org/project/vaultspec-rag/)
@@ -57,21 +62,6 @@ sends every request to the host's service.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/). vaultspec-rag
   supports Python 3.13 and 3.14, and uv downloads an interpreter if needed.
 - A few gigabytes of disk for a one-time model download.
-
-### Try it without installing
-
-On Linux or Apple silicon, you can try vaultspec-rag in one repository before you
-install anything. Get a [Hugging Face token](#get-a-hugging-face-token) first, then run
-this from the repository's root:
-
-```bash
-uvx --from "vaultspec-rag[gpu]" vaultspec-rag install --no-torch-config
-```
-
-uvx runs it from a temporary environment, but the setup it writes to the repository is
-real. Put the same `uvx --from "vaultspec-rag[gpu]"` prefix in front of each later
-command. On Windows, a temporary run gets PyPI's CPU-only PyTorch: it can set up the
-repository but can't start the service, so install the host instead.
 
 ### Install the host
 
