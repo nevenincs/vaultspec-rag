@@ -14,7 +14,7 @@ related:
   - '[[2026-09-01-generation-accounting-adr]]'
 modified: '2026-10-01'
 body_schema: body-v2
-body_hash: 'sha256:d9c8b0508a87cbd3d5dbe3089d51dcc0d799cb768eb6c2982c63968d63fb5b6d'
+body_hash: 'sha256:f93fb5dcf8abcb7f062cdf0ecc0929d01bce1d45d132ee4a311c9d6eb7b32b7c'
 ---
 
 # `incremental-index-recovery` plan
@@ -30,7 +30,7 @@ The incremental-publication-cost decision governs receipt finalization and bound
 ## Steps
 
 - [x] `S01` - Make no-op publication finalization idempotent and recover unfinished receipts safely for explicit rebuilds; `src/vaultspec_rag/indexer/_checkpoint_common.py, receipt and rebuild admission owners, src/vaultspec_rag/indexer/_vault_indexer.py, src/vaultspec_rag/indexer/_vault_incremental.py, receipt regression tests`.
-- [ ] `S02` - Bound incremental route reconciliation and indexed ledger membership work with genuine durable checkpoints; `src/vaultspec_rag/indexer/_route_migration.py, bounded effective ledger readers, reconciliation performance tests`.
+- [x] `S02` - Bound incremental route reconciliation and indexed ledger membership work with genuine durable checkpoints; `src/vaultspec_rag/indexer/_route_migration.py, bounded effective ledger readers, reconciliation performance tests`.
 - [ ] `S03` - Settle stale watcher refusals only after certified published rebuilds, report failed generations truthfully and preserve concurrent dirty scope; `src/vaultspec_rag/watcher_retry_policy.py, src/vaultspec_rag/job_dispatch.py, watcher runtime and service settlement owners, watcher and job regression tests`.
 - [x] `S04` - Validate optional and nested vault payload fields and compare canonical audit identities correctly; `src/vaultspec_rag/_index_integrity.py, payload validation owners, vault audit regression tests`.
 

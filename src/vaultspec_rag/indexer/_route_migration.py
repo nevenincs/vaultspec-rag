@@ -15,8 +15,10 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from .. import store_schema
 from .._source_types import PublicSourceType
 from ._content_policy import ContentKind
+from ._publication_proof import ProofReceiptState
 from ._run_ledger_models import (
     PublicationPointCandidate,
+    RunLedgerStateError,
     index_run_ledger_path,
     ledger_connection,
     ledger_transaction,
@@ -277,6 +279,7 @@ class RouteScanOptions:
 
     page_size: int = _DEFAULT_PAGE_SIZE
     code_collection: str | None = None
+    source_paths: frozenset[str] | None = None
 
 
 _DEFAULT_ROUTE_SCAN_OPTIONS = RouteScanOptions()
@@ -286,21 +289,26 @@ def _scroll_stored_route_page(
     store: VaultStore,
     stored_kind: ContentKind,
     *,
-    page_size: int,
     offset: PointId | None,
-    code_collection: str | None = None,
+    options: RouteScanOptions,
 ) -> tuple[list[dict[str, Any]], PointId | None, str, str]:
     """Read one bounded collection page with its payload field names."""
     if stored_kind is ContentKind.CODE:
         rows, next_offset = store.scroll_code_content(
-            collection=code_collection,
-            limit=page_size,
+            collection=options.code_collection,
+            limit=options.page_size,
             offset=offset,
+            source_paths=set(options.source_paths)
+            if options.source_paths is not None
+            else None,
         )
         return rows, next_offset, "path", "chunk_id"
     rows, next_offset = store.scroll_document_content(
-        limit=page_size,
+        limit=options.page_size,
         offset=offset,
+        source_paths=set(options.source_paths)
+        if options.source_paths is not None
+        else None,
     )
     return rows, next_offset, "source_path", "document_id"
 
@@ -351,6 +359,11 @@ def iter_stored_route_pages(
         raise ValueError("route migration page size must be between 1 and 1000")
     if code_collection is not None and stored_kind is not ContentKind.CODE:
         raise ValueError("only code route scans accept an explicit collection")
+    if options.source_paths is not None:
+        if len(options.source_paths) > _LEDGER_LOOKUP_BATCH:
+            raise ValueError("route path selection exceeds the bounded lookup batch")
+        if not options.source_paths:
+            return
     offset: PointId | None = None
     while True:
         if run_policy is not None:
@@ -358,9 +371,8 @@ def iter_stored_route_pages(
         rows, next_offset, path_key, id_key = _scroll_stored_route_page(
             store,
             stored_kind,
-            page_size=page_size,
             offset=offset,
-            code_collection=code_collection,
+            options=options,
         )
         page = _classify_stored_route_rows(
             rows,
@@ -501,9 +513,11 @@ def reconcile_checkpoint_routes(
     policy: ResolvedIndexPolicy,
     destination_kind: ContentKind,
     *,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    options: RouteScanOptions = _DEFAULT_ROUTE_SCAN_OPTIONS,
 ) -> int:
     """Reconcile complete destinations through one bounded origin scan."""
+    if options.code_collection is not None:
+        raise ValueError("cross-kind reconciliation requires served origin collections")
     origin_kind = (
         ContentKind.DOCUMENT
         if destination_kind is ContentKind.CODE
@@ -519,7 +533,7 @@ def reconcile_checkpoint_routes(
         policy,
         origin_kind,
         run_policy=checkpoint.run_policy,
-        options=RouteScanOptions(page_size=page_size),
+        options=options,
     ):
         states = _file_states_for_rows(checkpoint, page)
         point_ids_by_path: dict[str, list[str]] = {}
@@ -685,30 +699,48 @@ def reconcile_generation_storage(
     breadth while allowing only destination-confirmed cross-kind cleanup.
     In-place code and document generations already select their destinations.
     """
+    path_batches: tuple[frozenset[str] | None, ...] = (None,)
     if checkpoint.receipt is not None:
         checkpoint.seal_incremental_proof()
+        receipt = checkpoint.ledger.publication_receipt_for_generation(
+            checkpoint.generation_id
+        )
+        if receipt is None or receipt.receipt_id != checkpoint.receipt.receipt_id:
+            raise RunLedgerStateError("incremental route receipt disappeared")
+        if receipt.state is ProofReceiptState.ROLLED_BACK and not receipt.mutations:
+            path_batches = ()
+        elif receipt.state is ProofReceiptState.SEALED:
+            paths = sorted({mutation.unit.rel_path for mutation in receipt.mutations})
+            path_batches = tuple(
+                frozenset(paths[start : start + _LEDGER_LOOKUP_BATCH])
+                for start in range(0, len(paths), _LEDGER_LOOKUP_BATCH)
+            )
+        else:
+            raise RunLedgerStateError("incremental route receipt is not sealed")
     resumed = resume_pending_migrations(
         store,
         checkpoint.ledger.path.parent,
         run_policy=checkpoint.run_policy,
         destination_kind=destination_kind,
     )
-    purged = (
-        purge_unpublished_rows(
+    purged = 0
+    migrated = 0
+    for source_paths in path_batches:
+        if include_same_kind:
+            purged += purge_unpublished_rows(
+                store,
+                checkpoint,
+                policy,
+                destination_kind,
+                options=RouteScanOptions(source_paths=source_paths),
+            )
+        migrated += reconcile_checkpoint_routes(
             store,
             checkpoint,
             policy,
             destination_kind,
+            options=RouteScanOptions(source_paths=source_paths),
         )
-        if include_same_kind
-        else 0
-    )
-    migrated = reconcile_checkpoint_routes(
-        store,
-        checkpoint,
-        policy,
-        destination_kind,
-    )
     if resumed or purged or migrated:
         # Reconciliation deletes without touching the run's own counters, so
         # this line is the only record a publication removed anything at all.
@@ -772,6 +804,10 @@ def resume_pending_migrations(
         journal.mark_origin_deleted(migration.migration_id)
         completed += 1
         if run_policy is not None:
+            run_policy.record_durable_progress(
+                kind=DurableProgressKind.RECONCILIATION_BATCH_COMMITTED,
+                label="route migration replay committed",
+            )
             run_policy.checkpoint("route migration replay after origin delete")
     return completed
 

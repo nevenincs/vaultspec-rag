@@ -514,7 +514,7 @@ def test_generation_route_cleanup_uses_bounded_store_and_ledger_pages(
             checkpoint,
             policy,
             ContentKind.DOCUMENT,
-            page_size=1,
+            options=RouteScanOptions(page_size=1),
         )
 
         assert removed == 2

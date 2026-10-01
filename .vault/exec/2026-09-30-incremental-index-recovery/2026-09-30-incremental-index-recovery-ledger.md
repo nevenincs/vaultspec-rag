@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:7d94554e28242ff0ed2dae60854b4de18e586c6679bbfdb0c1b0a4538fbeabbd'
+body_hash: 'sha256:d158f09596924a4514bfc7d7227811143fa7c39be2bc81fe75a1651b1a8884ff'
 related:
   - "[[2026-09-30-incremental-index-recovery-plan]]"
 ---
@@ -61,3 +61,7 @@ related:
 - `S01` `verify:` `ruff check src dev tools conftest.py` -> `pass`
 - `S01` `verify:` `ruff format --check src dev tools conftest.py: 921 files` -> `pass`
 - `S01` `by:` `vaultspec-high-executor`
+- `S02` `verify:` `ruff check src dev tools conftest.py: applicable unchanged S02 snapshot` -> `pass`
+- `S02` `verify:` `ruff format --check src dev tools conftest.py: applicable unchanged S02 snapshot` -> `pass`
+- `S02` `verify:` `python -m ty check and basedpyright all changed Python files before checkpoint: zero diagnostics` -> `pass`
+- `S02` `by:` `Codex supervisor`
