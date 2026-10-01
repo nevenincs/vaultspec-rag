@@ -1,7 +1,9 @@
-import { open } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { isIP } from "node:net";
+import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import manifest from "../../../package.json" with { type: "json" };
@@ -9,6 +11,9 @@ import manifest from "../../../package.json" with { type: "json" };
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
+const checkout = fileURLToPath(new URL("../../../", import.meta.url));
+type LifecycleVerb = "status" | "start" | "stop";
+class InvalidRequestError extends Error {}
 
 type Connection = { port: number; token: string };
 
@@ -158,22 +163,118 @@ async function requestBody(
     signal.removeEventListener("abort", abort);
   }
   const body = Buffer.concat(chunks).toString("utf8");
-  JSON.parse(body);
+  try {
+    JSON.parse(body);
+  } catch {
+    throw new InvalidRequestError("The monitor operation requires valid JSON.");
+  }
   return body;
 }
 
 function allowedRoute(path: string, method: string): boolean {
   if (method === "GET") {
-    return ["/health", "/jobs", "/search-activity", "/logs/json"].includes(
-      path,
-    );
+    return [
+      "/health",
+      "/jobs",
+      "/search-activity",
+      "/logs/json",
+      "/lifecycle",
+      "/service-state",
+      "/runtime-observations",
+      "/repositories",
+      "/storage/survey",
+      "/projects",
+    ].includes(path);
   }
   const job = "/jobs/[a-zA-Z0-9_-]{1,128}";
   return (
     (method === "PUT" && new RegExp(`^${job}/desired-state$`).test(path)) ||
     (method === "POST" && new RegExp(`^${job}/retry$`).test(path)) ||
+    (method === "POST" &&
+      [
+        "/lifecycle/start",
+        "/lifecycle/stop",
+        "/pause",
+        "/resume",
+        "/repositories/enroll",
+        "/projects/evict",
+      ].includes(path)) ||
     (method === "DELETE" && new RegExp(`^${job}$`).test(path))
   );
+}
+
+function redact(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redact);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([key]) =>
+          !["service_token", "token", "borrower_capability"].includes(key),
+      )
+      .map(([key, entry]) => [key, redact(entry)]),
+  );
+}
+
+function timeout(path: string): number {
+  if (path === "/lifecycle/start") return 900000;
+  if (path === "/lifecycle/stop") return 120000;
+  if (path === "/lifecycle" || path === "/storage/survey") return 30000;
+  if (
+    ["/pause", "/resume", "/repositories/enroll", "/projects/evict"].includes(
+      path,
+    )
+  )
+    return 120000;
+  return 5000;
+}
+
+async function lifecycle(
+  verb: LifecycleVerb,
+  signal: AbortSignal,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  const python = join(
+    checkout,
+    ".venv",
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
+  );
+  await access(python);
+  const { error, stdout } = await new Promise<{
+    error: (Error & { code?: string | number; killed?: boolean }) | null;
+    stdout: string;
+  }>((resolve) => {
+    execFile(
+      python,
+      ["-P", "-m", "vaultspec_rag", "server", verb, "--json"],
+      {
+        cwd: checkout,
+        env: {
+          ...process.env,
+          PYTHONPATH: join(checkout, "src"),
+          PYTHONUTF8: "1",
+        },
+        encoding: "utf8",
+        shell: false,
+        windowsHide: true,
+        timeout: timeout(
+          verb === "status" ? "/lifecycle" : `/lifecycle/${verb}`,
+        ),
+        maxBuffer: 1024 * 1024,
+        signal,
+      },
+      (error, stdout) => resolve({ error, stdout }),
+    );
+  });
+  if (error && (error.killed || typeof error.code !== "number")) throw error;
+  const payload = object(JSON.parse(stdout));
+  if (typeof payload.ok !== "boolean" || payload.command !== `service.${verb}`)
+    throw new Error("The lifecycle owner returned an invalid response.");
+  if (verb === "status") {
+    if (error && ![3, 4, 5].includes(Number(error.code))) throw error;
+    payload.state = object(payload.data).state;
+    return { status: 200, payload };
+  }
+  return { status: error || !payload.ok ? 503 : 200, payload };
 }
 
 function reply(
@@ -187,7 +288,7 @@ function reply(
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
   });
-  response.end(JSON.stringify(body));
+  response.end(JSON.stringify(redact(body)));
 }
 
 async function forward(
@@ -213,15 +314,44 @@ async function forward(
   response.once("close", () => controller.abort());
   const signal = AbortSignal.any([
     controller.signal,
-    AbortSignal.timeout(5000),
+    AbortSignal.timeout(timeout(route.pathname)),
   ]);
   try {
-    const local = await connection();
-    const base = `http://127.0.0.1:${local.port}`;
     const body =
       method === "PUT" || method === "POST"
         ? await requestBody(request, signal)
         : undefined;
+    if (
+      route.pathname === "/lifecycle" ||
+      route.pathname.startsWith("/lifecycle/")
+    ) {
+      const parameters: unknown = body === undefined ? {} : JSON.parse(body);
+      if (
+        route.search ||
+        parameters === null ||
+        typeof parameters !== "object" ||
+        Array.isArray(parameters) ||
+        Object.keys(parameters).length !== 0
+      ) {
+        reply(response, 400, {
+          ok: false,
+          message:
+            "Lifecycle controls accept an empty object and no parameters.",
+        });
+        return;
+      }
+      const verb: LifecycleVerb =
+        route.pathname === "/lifecycle"
+          ? "status"
+          : route.pathname === "/lifecycle/start"
+            ? "start"
+            : "stop";
+      const result = await lifecycle(verb, signal);
+      reply(response, result.status, result.payload);
+      return;
+    }
+    const local = await connection();
+    const base = `http://127.0.0.1:${local.port}`;
     const send = (token: string) =>
       fetch(`${base}${route.pathname}${route.search}`, {
         method,
@@ -245,10 +375,15 @@ async function forward(
         payload = await responseJSON(result);
       }
     }
-    delete payload.service_token;
-    delete payload.token;
     reply(response, result.status, payload);
   } catch (error) {
+    if (error instanceof InvalidRequestError) {
+      reply(response, 400, {
+        ok: false,
+        message: error.message,
+      });
+      return;
+    }
     const message =
       error instanceof Error && error.message.startsWith("No local service")
         ? error.message

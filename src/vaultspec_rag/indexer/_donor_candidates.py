@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict, Unpack
 
 from .. import store_schema
+from .._git_repository import git_common_dir
 from .._source_types import PublicSourceType
 from ._index_schema import (
     CODE_EMBED_SCHEMA,
@@ -280,40 +281,6 @@ def read_donor_recorded_state(
     )
 
 
-def _git_common_dir(root: Path) -> Path | None:
-    """Resolve the git common dir of ``root`` by filesystem inspection only.
-
-    A linked worktree's ``.git`` is a file pointing at the private worktree
-    gitdir, whose ``commondir`` file names the shared repository dir. No git
-    subprocess is spawned; any unreadable or unrecognised layout returns
-    ``None``. Used for ranking only - a wrong or missing answer can never
-    make reuse incorrect.
-    """
-    marker = root / ".git"
-    try:
-        if marker.is_dir():
-            return marker.resolve()
-        if not marker.is_file():
-            return None
-        for line in marker.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.startswith("gitdir:"):
-                continue
-            gitdir = Path(line[len("gitdir:") :].strip())
-            if not gitdir.is_absolute():
-                gitdir = root / gitdir
-            gitdir = gitdir.resolve()
-            commondir_file = gitdir / "commondir"
-            if commondir_file.is_file():
-                common = Path(commondir_file.read_text(encoding="utf-8").strip())
-                if not common.is_absolute():
-                    common = gitdir / common
-                return common.resolve()
-            return gitdir
-    except OSError:
-        return None
-    return None
-
-
 def _family_rank(
     donor_root: Path, target_family: Path | None, target_parent: Path | None
 ) -> int:
@@ -323,7 +290,7 @@ def _family_rank(
     fallback heuristic when git identity is unavailable on either side.
     Both signals order consultation only and carry no correctness weight.
     """
-    donor_family = _git_common_dir(donor_root)
+    donor_family = git_common_dir(donor_root)
     if (
         target_family is not None
         and donor_family is not None
@@ -393,7 +360,7 @@ def discover_donor_candidates(
     entries = manifest if manifest is not None else load_manifest()
     own_prefix = root_collection_prefix(root)
     root_path = Path(root)
-    target_family = _git_common_dir(root_path)
+    target_family = git_common_dir(root_path)
     try:
         target_parent: Path | None = root_path.resolve().parent
     except OSError:

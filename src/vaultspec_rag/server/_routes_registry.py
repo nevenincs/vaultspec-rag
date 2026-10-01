@@ -9,8 +9,10 @@ single-purpose modules.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from functools import partial
+from typing import TYPE_CHECKING, cast
 
+from anyio.to_thread import run_sync
 from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
@@ -46,12 +48,25 @@ async def evict_project_route(request: Request) -> JSONResponse:
     denied = require_token(request)
     if denied is not None:
         return denied
-    payload = await request.json()
-    root = payload.get("root")
     from pathlib import Path
 
-    target = Path(root).resolve()
-    evicted, reason = get_request_runtime(request).registry.try_evict(target)
+    try:
+        raw_payload: object = await request.json()
+        if not isinstance(raw_payload, dict):
+            raise ValueError("Eviction must be a JSON object.")
+        payload = cast("dict[str, object]", raw_payload)
+        root = payload.get("root")
+        if not isinstance(root, str) or not root.strip():
+            raise ValueError("root must be a non-empty path.")
+        target = Path(root).resolve()
+    except (OSError, ValueError) as exc:
+        return JSONResponse(
+            {"ok": False, "error": "bad_request", "message": str(exc)},
+            status_code=400,
+        )
+    evicted, reason = await run_sync(
+        partial(get_request_runtime(request).registry.try_evict, target)
+    )
     return JSONResponse({"root": str(target), "evicted": evicted, "reason": reason})
 
 

@@ -10,6 +10,14 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 from .._search_state import SearchWaitCause, WaitObservation
+from ._search_evidence import (
+    MAX_LEDGER_EVIDENCE_BYTES,
+    MAX_REQUEST_EVIDENCE_BYTES,
+    MAX_RESPONSE_EVIDENCE_BYTES,
+    SEARCH_INPUT_FIELDS,
+    JsonEvidence,
+    capture_json_evidence,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -78,6 +86,7 @@ class SearchActivityCompletion:
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    response: Mapping[str, object] | None = None
 
 
 class SearchActivityAdmissionError(TimeoutError):
@@ -135,6 +144,17 @@ class _SearchActivity:
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    request_inputs: JsonEvidence | None = None
+    response: JsonEvidence | None = None
+    evidence_evicted: bool = False
+
+    @property
+    def evidence_bytes(self) -> int:
+        return sum(
+            item.size_bytes
+            for item in (self.request_inputs, self.response)
+            if item is not None
+        )
 
     def serialise(self, *, include_query: bool) -> dict[str, object]:
         """Return the route-safe representation with optional query text."""
@@ -161,8 +181,24 @@ class _SearchActivity:
         }
         if include_query:
             result["query"] = self.query
+            result["request_inputs"] = (
+                self.request_inputs.materialize() if self.request_inputs else None
+            )
+            result["response"] = self.response.materialize() if self.response else None
+            result["evidence_truncated_paths"] = {
+                "request_inputs": (
+                    list(self.request_inputs.truncated_paths)
+                    if self.request_inputs
+                    else []
+                ),
+                "response": list(self.response.truncated_paths)
+                if self.response
+                else [],
+            }
+            result["evidence_evicted"] = self.evidence_evicted
         else:
             result["query_redacted"] = True
+            result["evidence_redacted"] = True
         return result
 
 
@@ -196,6 +232,17 @@ class SearchActivityStart:
     admission_wait_seconds: float = DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS
 
 
+@dataclass(frozen=True, slots=True)
+class SearchActivityRequest:
+    """Inspectable request fields after its JSON body has been read."""
+
+    query: str
+    search_type: str
+    root: str | None
+    top_k: int | None
+    inputs: Mapping[str, object] | None = None
+
+
 class SearchActivityLedger:
     """Own active and recently terminal search activity with finite retention.
 
@@ -225,6 +272,7 @@ class SearchActivityLedger:
         self._queued: dict[str, _SearchActivity] = {}
         self._recent: deque[_SearchActivity] = deque()
         self._active_slot = threading.Condition(self._lock)
+        self._evidence_bytes = 0
 
     def start(self, admission: SearchActivityStart) -> SearchActivityTicket:
         """Start one served search and return its terminal-record ticket.
@@ -374,7 +422,16 @@ class SearchActivityLedger:
                 availability_cause=completion.availability_cause,
                 error_code=completion.error_code,
                 error_message=_bounded_text(completion.error_message),
+                response=(
+                    capture_json_evidence(
+                        dict(completion.response),
+                        maximum_bytes=MAX_RESPONSE_EVIDENCE_BYTES,
+                    )
+                    if completion.response is not None
+                    else None
+                ),
             )
+            self._evidence_bytes -= active.evidence_bytes
             self._append_recent_locked(terminal)
             self._active_slot.notify()
             return True
@@ -383,27 +440,39 @@ class SearchActivityLedger:
         self,
         ticket: SearchActivityTicket,
         *,
-        query: str,
-        search_type: str,
-        root: str | None,
-        top_k: int | None,
+        request: SearchActivityRequest,
     ) -> bool:
         """Replace provisional request metadata once route validation settles it."""
-        truncated_query = query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
+        truncated_query = request.query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
         with self._lock:
             if ticket.terminal:
                 return False
             active = self._active.get(ticket.request_id)
             if active is None:
                 return False
-            self._active[ticket.request_id] = replace(
+            updated = replace(
                 active,
                 query=truncated_query,
-                query_truncated=len(query) > len(truncated_query),
-                source=search_type,
-                root=root,
-                top_k=top_k,
+                query_truncated=len(request.query) > len(truncated_query),
+                source=request.search_type,
+                root=request.root,
+                top_k=request.top_k,
+                request_inputs=(
+                    capture_json_evidence(
+                        {
+                            key: value
+                            for key, value in request.inputs.items()
+                            if key in SEARCH_INPUT_FIELDS
+                        },
+                        maximum_bytes=MAX_REQUEST_EVIDENCE_BYTES,
+                    )
+                    if request.inputs is not None
+                    else active.request_inputs
+                ),
             )
+            self._evidence_bytes += updated.evidence_bytes - active.evidence_bytes
+            self._active[ticket.request_id] = updated
+            self._enforce_evidence_budget_locked()
             return True
 
     def snapshot(
@@ -517,8 +586,26 @@ class SearchActivityLedger:
 
     def _append_recent_locked(self, record: _SearchActivity) -> None:
         self._recent.append(record)
+        self._evidence_bytes += record.evidence_bytes
         while len(self._recent) > self._max_recent:
-            self._recent.popleft()
+            self._evidence_bytes -= self._recent.popleft().evidence_bytes
+        self._enforce_evidence_budget_locked()
+
+    def _enforce_evidence_budget_locked(self) -> None:
+        for index, record in enumerate(self._recent):
+            if self._evidence_bytes <= MAX_LEDGER_EVIDENCE_BYTES:
+                return
+            self._evidence_bytes -= record.evidence_bytes
+            self._recent[index] = replace(
+                record, request_inputs=None, response=None, evidence_evicted=True
+            )
+        for request_id, record in self._active.items():
+            if self._evidence_bytes <= MAX_LEDGER_EVIDENCE_BYTES:
+                return
+            self._evidence_bytes -= record.evidence_bytes
+            self._active[request_id] = replace(
+                record, request_inputs=None, response=None, evidence_evicted=True
+            )
 
 
 def _bounded_text(value: str | None) -> str | None:

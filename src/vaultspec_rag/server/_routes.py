@@ -67,6 +67,7 @@ from ._routes_jobs import (
     _parse_since_seconds,
     _prioritise_running_jobs,
 )
+from ._routes_operator import enroll_repository_route, repositories_route
 from ._routes_quiesce import pause_service_route, resume_service_route
 from ._routes_registry import (
     evict_project_route,
@@ -77,6 +78,7 @@ from ._routes_registry import (
     stop_watcher_route,
 )
 from ._routes_reindex import audit_route, clean_route, reindex_route
+from ._routes_runtime import runtime_observations_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
 from ._runtime import get_request_runtime
@@ -1143,6 +1145,9 @@ ROUTES: list[Route] = [
     Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
     Route("/search-activity", search_activity_route, methods=["GET"]),
+    Route("/runtime-observations", runtime_observations_route, methods=["GET"]),
+    Route("/repositories", repositories_route, methods=["GET"]),
+    Route("/repositories/enroll", enroll_repository_route, methods=["POST"]),
     Route("/reindex", reindex_route, methods=["POST"]),
     Route("/index/audit", audit_route, methods=["POST"]),
     Route("/clean", clean_route, methods=["POST"]),

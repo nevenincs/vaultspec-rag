@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.client import HTTPConnection
 from pathlib import Path
@@ -21,6 +22,7 @@ from ..job_models import JobSource
 from ..jobs import record_finish, record_start
 from ..server._search_activity import SearchActivityCompletion, SearchActivityStart
 from ..server._state import search_activity_ledger
+from ..service_quiesce import QuiesceTransitionCode
 from .test_monitor_logs import monitor_http as monitor_http
 
 if TYPE_CHECKING:
@@ -89,6 +91,21 @@ def _read(
         request.add_header("Origin", origin)
     if host:
         request.add_header("Host", host)
+    return _response(request)
+
+
+def _post(
+    port: int, path: str, body: dict[str, object]
+) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/monitor{path}",
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    return _response(request)
+
+
+def _response(request: urllib.request.Request) -> tuple[int, dict[str, object]]:
     try:
         response = urllib.request.urlopen(request, timeout=8)
     except urllib.error.HTTPError as error:
@@ -144,15 +161,141 @@ def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
 ) -> None:
     port, _ = browser_bridge
     # Bypassing localRequest failed the foreign-origin assertion, then passed
-    # after restoration. Bypassing allowedRoute similarly exposed /projects.
+    # after restoration. Bypassing allowedRoute exposes /readiness.
     status, answer = _read(port, "/health", origin="http://example.invalid")
     assert status == 403
     assert answer["message"] == (
         "The monitor accepts local and Tailscale clients at its declared host."
     )
-    status, answer = _read(port, "/projects")
+    status, answer = _read(port, "/readiness")
     assert status == 404
     assert answer["message"] == "Unknown monitor operation."
+
+
+def test_local_bridge_lifecycle_uses_fixed_canonical_commands() -> None:
+    """Exercise the adapter's command boundary without operating a daemon."""
+    node = shutil.which("node")
+    assert node is not None
+    source = Path(__file__).resolve().parents[2] / "monitor/server/local-service.ts"
+    script = (
+        "import assert from 'node:assert/strict';"
+        "import child from 'node:child_process';"
+        "import { syncBuiltinESMExports } from 'node:module';"
+        "import { createServer } from 'node:http';"
+        "import { join } from 'node:path';"
+        "const calls=[]; let failure=false;"
+        "child.execFile=(file,args,options,callback)=>{"
+        "calls.push({file,args,options}); const verb=args[4];"
+        "const code=verb==='status'?3:failure?1:0;"
+        "const error=code?Object.assign(new Error('owner failed'),{code}):null;"
+        "callback(error,JSON.stringify({ok:code===0,command:'service.'+verb,"
+        "data:verb==='status'?{state:'stopped'}:{status:failure?'still_running':"
+        "verb==='start'?'already_running':'already_stopped',"
+        "health:{service_token:'never-browser',nested:[{token:'private'}]}}}),'');"
+        "}; syncBuiltinESMExports();"
+        f"const {{ monitorMiddleware }}=await import({json.dumps(source.as_uri())});"
+        "const server=createServer((req,res)=>monitorMiddleware(req,res,()=>{"
+        "res.writeHead(404);res.end();}));"
+        "await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));"
+        "const base='http://127.0.0.1:'+server.address().port+'/api/monitor';"
+        "async function action(path,body,expected){"
+        "const response=await fetch(base+path,{method:body===undefined?'GET':'POST',"
+        "body:body===undefined?undefined:JSON.stringify(body)});"
+        "assert.equal(response.status,expected);return response.json();}"
+        "try {"
+        "const state=await action('/lifecycle',undefined,200);"
+        "assert.equal(state.state,'stopped');assert.equal(state.ok,false);"
+        "for(const verb of ['start','stop']){"
+        "const result=await action('/lifecycle/'+verb,{},200);"
+        "assert.equal(result.data.status,'already_'+(verb==='start'?'running':'stopped'));"
+        # Returning nested credentials fails this assertion; restoration passes.
+        "assert.equal(JSON.stringify(result).includes('never-browser'),false);"
+        "assert.equal(JSON.stringify(result).includes('private'),false);"
+        "}"
+        "failure=true;const refused=await action('/lifecycle/stop',{},503);"
+        "assert.equal(refused.data.status,'still_running');assert.equal(refused.ok,false);"
+        "assert.equal(calls.length,4);"
+        "for(const call of calls){const verb=call.args[4];"
+        "assert.deepEqual(call.args,['-P','-m','vaultspec_rag','server',verb,'--json']);"
+        "assert.equal(call.file,join(call.options.cwd,'.venv',"
+        "process.platform==='win32'?'Scripts/python.exe':'bin/python'));"
+        "assert.equal(call.options.env.PYTHONPATH,join(call.options.cwd,'src'));"
+        # Enabling shell execution fails this assertion; restoration passes.
+        "assert.equal(call.options.shell,false);assert.equal(call.options.windowsHide,true);"
+        "assert.equal(call.options.maxBuffer,1024*1024);"
+        "assert.equal(call.options.timeout,verb==='status'?30000:verb==='start'?900000:120000);"
+        "}"
+        "failure=false;"
+        # Accepting browser arguments fails this assertion; restoration passes.
+        "await action('/lifecycle/start',{root:'arbitrary',command:'anything'},400);"
+        "await action('/lifecycle/stop?port=1',{},400);"
+        "await action('/lifecycle/start',[],400);"
+        "await action('/lifecycle/start',null,400);"
+        "await action('/lifecycle/restart',{},404);"
+        "await action('/lifecycle/start',undefined,404);"
+        "assert.equal(calls.length,4);"
+        "} finally {await new Promise(resolve=>server.close(resolve));}"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_local_bridge_status_reads_stopped_owner_without_starting(
+    browser_bridge: tuple[int, Path],
+) -> None:
+    port, directory = browser_bridge
+    (directory / "service.json").unlink()
+    status, answer = _read(port, "/lifecycle")
+    assert status == 200
+    assert answer["command"] == "service.status"
+    assert answer["state"] == "stopped"
+    assert answer["data"] == {"service_json_present": False, "state": "stopped"}
+    assert not (directory / "service.json").exists()
+
+
+def test_local_bridge_forwards_operator_inventory_and_controls(
+    browser_bridge: tuple[int, Path], tmp_path: Path
+) -> None:
+    port, _ = browser_bridge
+    root = tmp_path / "enrolled-root"
+    root.mkdir()
+    (root / ".vault").mkdir()
+    status, enrollment = _post(
+        port, "/repositories/enroll", {"root": str(root), "watch": False}
+    )
+    assert status == 200 and enrollment["status"] == "enrolled"
+    assert enrollment["watcher_status"] == "disabled"
+    status, inventory = _read(port, "/repositories?limit=100")
+    assert status == 200
+    rows = cast("list[dict[str, object]]", inventory["repositories"])
+    assert any(row["root"] == str(root.resolve()) and row["enrolled"] for row in rows)
+    assert "seats" in inventory
+    status, projects = _read(port, "/projects")
+    assert status == 200 and projects["projects"] == []
+    status, eviction = _post(port, "/projects/evict", {"root": str(root)})
+    assert status == 200 and eviction["reason"] == "not_found"
+    status, state = _read(
+        port, "/service-state?" + urllib.parse.urlencode({"project_root": str(root)})
+    )
+    assert status == 200 and "quiesce" in state and "root_features" in state
+    status, resources = _read(port, "/runtime-observations?client_limit=2")
+    assert status == 200 and "cpu" in resources and "clients" in resources
+    status, survey = _read(port, "/storage/survey?status=unsupported")
+    assert status in (400, 409)
+    assert survey["error"] in ("bad_request", "server_mode_required")
+    status, paused = _post(port, "/pause", {})
+    assert status == 200 and paused["ok"] is True
+    assert paused["status"] == QuiesceTransitionCode.QUIESCED
+    status, resumed = _post(port, "/resume", {})
+    assert status == 200 and resumed["ok"] is True
+    assert resumed["status"] == QuiesceTransitionCode.RUNNING
 
 
 @pytest.mark.parametrize(

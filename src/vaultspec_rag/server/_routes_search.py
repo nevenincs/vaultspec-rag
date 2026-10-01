@@ -10,6 +10,7 @@ observation into a stable 503 rather than surfacing a raw client exception.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -72,6 +73,7 @@ from ._runtime import get_request_runtime
 from ._search_activity import (
     SearchActivityAdmissionError,
     SearchActivityCompletion,
+    SearchActivityRequest,
     SearchActivityStart,
     SearchActivityTicket,
 )
@@ -455,6 +457,7 @@ def _finish_search_activity(
             availability_cause=finalization.availability_cause,
             error_code=resolved_error,
             error_message=resolved_message,
+            response=finalization.result,
         ),
     )
 
@@ -793,13 +796,18 @@ def _record_provisional_activity(
     raw_root = payload.get("project_root")
     search_activity_ledger().update_request(
         ticket,
-        query=raw_query if isinstance(raw_query, str) else "",
-        search_type=raw_search_type if isinstance(raw_search_type, str) else "unknown",
-        root=raw_root if isinstance(raw_root, str) else None,
-        top_k=(
-            raw_top_k
-            if isinstance(raw_top_k, int) and not isinstance(raw_top_k, bool)
-            else None
+        request=SearchActivityRequest(
+            query=raw_query if isinstance(raw_query, str) else "",
+            search_type=raw_search_type
+            if isinstance(raw_search_type, str)
+            else "unknown",
+            root=raw_root if isinstance(raw_root, str) else None,
+            top_k=(
+                raw_top_k
+                if isinstance(raw_top_k, int) and not isinstance(raw_top_k, bool)
+                else None
+            ),
+            inputs=payload,
         ),
     )
 
@@ -953,10 +961,12 @@ def _record_normalized_activity(
     """Replace provisional activity metadata with validated request facts."""
     search_activity_ledger().update_request(
         ticket,
-        query=search_request.query,
-        search_type=search_request.search_type.value,
-        root=str(search_request.root),
-        top_k=search_request.top_k,
+        request=SearchActivityRequest(
+            query=search_request.query,
+            search_type=search_request.search_type.value,
+            root=str(search_request.root),
+            top_k=search_request.top_k,
+        ),
     )
 
 
@@ -969,6 +979,9 @@ def _record_validation_rejection(
     finalization.outcome = "validation_rejected"
     finalization.error_code = error.error_code
     finalization.error_message = error.error_message
+    finalization.result = cast(
+        "dict[str, object]", json.loads(bytes(error.response.body))
+    )
 
 
 def _capture_publication_targets(
