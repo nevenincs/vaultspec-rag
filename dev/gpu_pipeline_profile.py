@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import psutil
 
@@ -51,12 +51,55 @@ from ._profile_workloads import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from vaultspec_rag.embeddings import EmbeddingModel, EncodeBucketProgress
+    from vaultspec_rag.embeddings import (
+        EmbeddingModel,
+        EncodeBucketProgress,
+        SparseResult,
+    )
 
 BATCH_SIZES = (1, 4, 8, 16, 32)
 REFERENCE_TOKEN_BUDGET = 24000
 SPARSE_RTOL = 1e-4
 SPARSE_ATOL = 1e-5
+
+
+class BucketEvent(TypedDict, total=False):
+    stage: str
+    kind: str
+    oom_count: int
+    bucket_items: int
+
+
+class EnergySummary(TypedDict):
+    scope: str
+    sample_count: int
+    sampled_span_seconds: float
+    window_seconds: float
+    coverage_fraction: float
+    sampling_complete: bool
+    device_wide_joules: float | None
+    device_wide_joules_per_item_estimate: float | None
+    reason: str | None
+
+
+class SparseVectorComparison(TypedDict):
+    coordinates_equal: bool
+    reference_nonzero: int
+    candidate_nonzero: int
+    reference_weights_valid: bool
+    candidate_weights_valid: bool
+    reference_sha256: str
+    candidate_sha256: str
+    scores_close: bool
+    maximum_absolute_score_error: float | None
+
+
+class SparseDotComparison(TypedDict):
+    reference_finite: bool
+    candidate_finite: bool
+    scores_close: bool
+    reference_scores: list[float | None]
+    candidate_scores: list[float | None]
 
 
 def positive(value: str) -> int:
@@ -308,7 +351,9 @@ def memory_snapshot(torch: Any) -> dict[str, int]:
     }
 
 
-def bucket_observer(events: list[dict]) -> Callable[[str, EncodeBucketProgress], None]:
+def bucket_observer(
+    events: list[BucketEvent],
+) -> Callable[[str, EncodeBucketProgress], None]:
     def observe(stage: str, progress: EncodeBucketProgress) -> None:
         events.append({"stage": stage, **asdict(progress)})
 
@@ -316,7 +361,11 @@ def bucket_observer(events: list[dict]) -> Callable[[str, EncodeBucketProgress],
 
 
 def encode_call(
-    model: EmbeddingModel, texts: list[str], size: int, kind: str, events: list[dict]
+    model: EmbeddingModel,
+    texts: list[str],
+    size: int,
+    kind: str,
+    events: list[BucketEvent],
 ) -> None:
     observe = bucket_observer(events)
     if kind in ("dense", "combined"):
@@ -351,7 +400,7 @@ def sweep(
                     baseline = memory_snapshot(torch)
                     ceilings_before = ceiling_state(model)
                     torch.cuda.reset_peak_memory_stats()
-                    events: list[dict] = []
+                    events: list[BucketEvent] = []
                     start = time.perf_counter()
                     encode_call(model, texts, size, kind, events)
                     torch.cuda.synchronize()
@@ -381,7 +430,7 @@ def sweep(
     return observations
 
 
-def oom_counts(events: list[dict]) -> dict[str, int]:
+def oom_counts(events: list[BucketEvent]) -> dict[str, int]:
     return {
         kind: max(
             (event["oom_count"] for event in events if event["kind"] == kind), default=0
@@ -392,8 +441,8 @@ def oom_counts(events: list[dict]) -> dict[str, int]:
 
 def energy_summary(
     samples: list[dict[str, object]], start: float, end: float, items: int
-) -> dict:
-    summary = {
+) -> EnergySummary:
+    summary: EnergySummary = {
         "scope": "device-wide NVML power, including other device workloads",
         "sample_count": 0,
         "sampled_span_seconds": 0.0,
@@ -458,7 +507,7 @@ def energy_windows(
     args: argparse.Namespace,
     workloads: dict[str, list[str]],
     sampler: DeviceSampler,
-) -> list[dict]:
+) -> list[dict[str, object]]:
     windows = []
     for name, texts in workloads.items():
         for round_index in range(args.rounds):
@@ -498,7 +547,7 @@ def sustained_window(
     iterations = 0
     start = time.perf_counter()
     while time.perf_counter() < start + arm["seconds"]:
-        events: list[dict] = []
+        events: list[BucketEvent] = []
         encode_call(model, texts, arm["size"], "combined", events)
         torch.cuda.synchronize()
         iterations += 1
@@ -553,7 +602,7 @@ def sparse_budget_windows(
     args: argparse.Namespace,
     workloads: dict[str, list[str]],
     sampler: DeviceSampler,
-) -> list[dict]:
+) -> list[dict[str, object]]:
     if model._encode_token_budget != REFERENCE_TOKEN_BUDGET:
         raise ValueError(
             "Sparse comparison requires unchanged dense token budget 24000"
@@ -570,7 +619,7 @@ def sparse_budget_windows(
             )
             for budget in order:
                 with sparse_budget_arm(model, budget):
-                    warm_events: list[dict] = []
+                    warm_events: list[BucketEvent] = []
                     for _ in range(args.warmups):
                         encode_call(model, texts, 32, "combined", warm_events)
                     row = sustained_window(
@@ -654,7 +703,9 @@ def bucket_token_telemetry(model: Any, workloads: dict[str, list[str]]) -> list[
     return observations
 
 
-def compare_sparse_vectors(reference: Any, candidate: Any) -> dict:
+def compare_sparse_vectors(
+    reference: SparseResult, candidate: SparseResult
+) -> SparseVectorComparison:
     import numpy as np
 
     coordinates_equal = reference.indices == candidate.indices
@@ -686,7 +737,7 @@ def compare_sparse_vectors(reference: Any, candidate: Any) -> dict:
     }
 
 
-def sparse_dot(query: Any, document: Any) -> float:
+def sparse_dot(query: SparseResult, document: SparseResult) -> float:
     weights = dict(zip(query.indices, query.values, strict=True))
     return sum(
         weights.get(index, 0.0) * value
@@ -694,7 +745,9 @@ def sparse_dot(query: Any, document: Any) -> float:
     )
 
 
-def compare_sparse_dot_scores(reference: list[float], candidate: list[float]) -> dict:
+def compare_sparse_dot_scores(
+    reference: list[float], candidate: list[float]
+) -> SparseDotComparison:
     import numpy as np
 
     reference_finite = bool(np.isfinite(reference).all())
@@ -733,7 +786,7 @@ def sparse_output_parity(
                 dense = model.encode_documents_on_device(texts, batch_size=32)
                 dense.cpu()
                 del dense
-                reference_events: list[dict] = []
+                reference_events: list[BucketEvent] = []
                 reference_docs = model.encode_documents_sparse(
                     texts, batch_size=32, on_bucket=bucket_observer(reference_events)
                 )
@@ -742,7 +795,7 @@ def sparse_output_parity(
             for budget in args.sparse_budgets:
                 current.update(sparse_token_budget=budget, path="document")
                 with sparse_budget_arm(model, budget):
-                    candidate_events: list[dict] = []
+                    candidate_events: list[BucketEvent] = []
                     documents = model.encode_documents_sparse(
                         texts,
                         batch_size=32,
@@ -807,7 +860,7 @@ def budget_comparison(
     args: argparse.Namespace,
     workloads: dict[str, list[str]],
     sampler: DeviceSampler,
-) -> dict:
+) -> dict[str, object]:
     parity = sparse_output_parity(model, args, workloads)
     write_json(args.output / "sparse-budget-parity.json", parity)
     if not all(row["pass"] for row in parity):
@@ -1002,7 +1055,9 @@ def encoder_work(args: argparse.Namespace, workloads: dict[str, list[str]]) -> d
     return result
 
 
-def encoder_run(args: argparse.Namespace, workloads: dict[str, list[str]]) -> dict:
+def encoder_run(
+    args: argparse.Namespace, workloads: dict[str, list[str]]
+) -> dict[str, object]:
     from vaultspec_rag._gpu import load_accelerator
 
     accelerator = load_accelerator()
@@ -1033,8 +1088,10 @@ def encoder_run(args: argparse.Namespace, workloads: dict[str, list[str]]) -> di
         write_json(args.output / "teardown.json", memory_snapshot(accelerator.torch))
 
 
-def dedicated_consumer(work: Callable[[], dict]) -> dict:
-    completed: queue.Queue[dict | BaseException] = queue.Queue(maxsize=1)
+def dedicated_consumer(
+    work: Callable[[], dict[str, object]],
+) -> dict[str, object]:
+    completed: queue.Queue[dict[str, object] | BaseException] = queue.Queue(maxsize=1)
 
     def consume() -> None:
         try:

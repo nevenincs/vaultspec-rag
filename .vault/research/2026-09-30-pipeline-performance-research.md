@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#pipeline-performance'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:3fe7981ae639650e7a42bda657bd6c48f3281e9f6e9bfdd28093bc281fa664a1'
+body_hash: 'sha256:7005391c00fe70f8d551c401b0530cdfc3058e52e96a7ee16f9b6f08368a4795'
 related:
   - "[[2026-09-30-sparseencode-research]]"
   - "[[2026-07-29-encode-batch-adaptivity-research]]"
@@ -67,7 +67,7 @@ Cached pinned upstream `modeling_splade.py:67` creates logits; `:68` applies shi
 
 ### Execution isolation
 
-The performance lane moved to `Y:/code/vaultspec-rag-worktrees/pipeline-performance` on `feature/pipeline-performance`, based on b9d2daf0, while the externally owned sparseencode merge continues. Only owned profiling tools, records and AST changes were copied; foreign staged installation changes were excluded. Earlier observations retain their original source/corpus hashes and runtime scope. The existing environment is reused through an explicit interpreter/PYTHONPATH without synchronizing installed package metadata. The isolated explicit-path S01 commit now permits verified native CPU sampling. Shared CUDA still requires canonical borrowing; this relocation does not authorize parallel GPU inference.
+The performance lane moved to an isolated performance checkout on `feature/pipeline-performance`, based on b9d2daf0, while the externally owned sparseencode merge continues. Only owned profiling tools, records and AST changes were copied; foreign staged installation changes were excluded. Earlier observations retain their original source/corpus hashes and runtime scope. The existing environment is reused through an explicit interpreter/PYTHONPATH without synchronizing installed package metadata. The isolated explicit-path S01 commit now permits verified native CPU sampling. Shared CUDA still requires canonical borrowing; this relocation does not authorize parallel GPU inference.
 
 ### Completed CPU stack evidence and native provenance
 

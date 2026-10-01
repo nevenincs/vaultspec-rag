@@ -21,6 +21,7 @@ from dev._profile_tools import (
 )
 from dev._profile_workloads import chunk_sources, corpus
 from dev.gpu_pipeline_profile import (
+    BucketEvent,
     DeviceSampler,
     arguments,
     budget_comparison,
@@ -39,7 +40,7 @@ from dev.gpu_pipeline_profile import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from vaultspec_rag.embeddings import EmbeddingModel
+    from ..embeddings import EmbeddingModel
 
 pytestmark = pytest.mark.unit
 
@@ -131,7 +132,7 @@ def test_consumer_runs_off_caller_and_propagates_failure() -> None:
     result = dedicated_consumer(lambda: {"thread": threading.get_ident()})
     assert result["thread"] != caller
 
-    def fail() -> dict:
+    def fail() -> dict[str, object]:
         raise ValueError("consumer failed")
 
     with pytest.raises(ValueError, match="consumer failed"):
@@ -139,7 +140,7 @@ def test_consumer_runs_off_caller_and_propagates_failure() -> None:
 
 
 def test_combined_oom_counts_sum_independent_encoder_counters() -> None:
-    events = [
+    events: list[BucketEvent] = [
         {"kind": "dense", "stage": "before", "oom_count": 0},
         {"kind": "dense", "stage": "after", "oom_count": 2},
         {"kind": "sparse", "stage": "before", "oom_count": 0},
@@ -160,12 +161,12 @@ def test_failed_encoder_work_drops_model_then_releases_cache_before_return(
         def __del__(self) -> None:
             events.append("model_deleted")
 
-    def failed_work(_args: object, _workloads: object) -> dict:
+    def failed_work(_args: object, _workloads: object) -> dict[str, object]:
         _model = Model()
         events.append("work")
         raise ValueError("work failed")
 
-    def snapshot(_torch: object) -> dict:
+    def snapshot(_torch: object) -> dict[str, object]:
         events.append("snapshot")
         return {"allocated": 0, "reserved": 0, "rss": 1}
 
@@ -202,10 +203,15 @@ def test_teardown_failure_prevents_successful_encoder_return(
         release_cache=fail_release,
     )
     monkeypatch.setattr("vaultspec_rag._gpu.load_accelerator", lambda: accelerator)
-    monkeypatch.setattr("dev.gpu_pipeline_profile.encoder_work", lambda _a, _w: {})
-    monkeypatch.setattr(
-        "dev.gpu_pipeline_profile.memory_snapshot", lambda _torch: {"reserved": 0}
-    )
+
+    def successful_work(_args: object, _workloads: object) -> dict[str, object]:
+        return {}
+
+    def empty_snapshot(_torch: object) -> dict[str, int]:
+        return {"reserved": 0}
+
+    monkeypatch.setattr("dev.gpu_pipeline_profile.encoder_work", successful_work)
+    monkeypatch.setattr("dev.gpu_pipeline_profile.memory_snapshot", empty_snapshot)
     with pytest.raises(RuntimeError, match="cache release failed"):
         dedicated_consumer(lambda: encoder_run(Namespace(output=tmp_path), {}))
     assert not (tmp_path / "teardown.json").exists()
@@ -220,7 +226,7 @@ def test_teardown_failure_prevents_successful_encoder_return(
     ],
 )
 def test_energy_withholds_values_without_enough_power_samples(
-    samples: list[dict],
+    samples: list[dict[str, object]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def integration_boundary(
@@ -249,14 +255,17 @@ def test_energy_coverage_controls_per_item_estimate_without_extrapolating_span()
     covered = energy_summary(samples, 0, 30, 100)
     assert partial["sampled_span_seconds"] == 2
     assert partial["sample_count"] == 3
-    assert partial["device_wide_joules"] > 0
+    partial_joules = partial["device_wide_joules"]
+    assert partial_joules is not None and partial_joules > 0
     assert partial["device_wide_joules_per_item_estimate"] is None
     assert partial["sampling_complete"] is False
     assert covered["sampled_span_seconds"] == 28
     assert covered["coverage_fraction"] == pytest.approx(28 / 30)
     assert covered["sampling_complete"] is True
-    assert covered["device_wide_joules_per_item_estimate"] > 0
-    assert covered["device_wide_joules"] > partial["device_wide_joules"]
+    covered_estimate = covered["device_wide_joules_per_item_estimate"]
+    assert covered_estimate is not None and covered_estimate > 0
+    covered_joules = covered["device_wide_joules"]
+    assert covered_joules is not None and covered_joules > partial_joules
 
 
 @pytest.mark.parametrize("times", [[1, 2, 1.5], [-1, 1], [1, 1], [1, 29]])
@@ -282,7 +291,7 @@ def test_energy_windows_alternate_caps_and_record_actual_bucket_attempts(
     caps: list[int] = []
 
     def encode(
-        _model: object, _texts: object, cap: int, kind: str, events: list
+        _model: object, _texts: object, cap: int, kind: str, events: list[BucketEvent]
     ) -> None:
         assert kind == "combined"
         caps.append(cap)
@@ -303,8 +312,15 @@ def test_energy_windows_alternate_caps_and_record_actual_bucket_attempts(
 
     monkeypatch.setattr("dev.gpu_pipeline_profile.time.perf_counter", lambda: clock[0])
     monkeypatch.setattr("dev.gpu_pipeline_profile.encode_call", encode)
-    monkeypatch.setattr("dev.gpu_pipeline_profile.memory_snapshot", lambda _torch: {})
-    monkeypatch.setattr("dev.gpu_pipeline_profile.ceiling_state", lambda _model: {})
+
+    def empty_snapshot(_torch: object) -> dict[str, int]:
+        return {}
+
+    def empty_ceilings(_model: object) -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr("dev.gpu_pipeline_profile.memory_snapshot", empty_snapshot)
+    monkeypatch.setattr("dev.gpu_pipeline_profile.ceiling_state", empty_ceilings)
     torch = SimpleNamespace(
         cuda=SimpleNamespace(
             synchronize=lambda: None,
@@ -369,7 +385,7 @@ def test_sparse_budget_window_duration_bounds(
 
 def test_sparse_budget_arm_restores_original_policy_and_ceiling_on_error() -> None:
     # Fresh-ceiling and policy-restoration mutations failed; both restored passed.
-    from vaultspec_rag.embeddings import EncodeBatchCeiling
+    from ..embeddings import EncodeBatchCeiling
 
     original = EncodeBatchCeiling()
     original.record_oom(10000)
@@ -391,7 +407,7 @@ def test_sparse_budget_windows_alternate_fresh_arms_and_save_each_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vaultspec_rag.embeddings import EncodeBatchCeiling
+    from ..embeddings import EncodeBatchCeiling
 
     original = EncodeBatchCeiling()
     model = SimpleNamespace(
@@ -419,8 +435,8 @@ def test_sparse_budget_windows_alternate_fresh_arms_and_save_each_row(
         _torch: object,
         _texts: object,
         _sampler: object,
-        arm: dict,
-    ) -> dict:
+        arm: dict[str, int],
+    ) -> dict[str, object]:
         assert active._encode_token_budget == 24000
         assert arm == {"size": 32, "seconds": 5}
         budget = active._sparse_encode_token_budget
@@ -453,7 +469,7 @@ def test_sparse_budget_windows_alternate_fresh_arms_and_save_each_row(
 
 def test_sparse_parity_rejects_changed_coordinates_and_score_drift() -> None:
     # Coordinate and score-comparison mutations failed; both restored passed.
-    from vaultspec_rag.embeddings import SparseResult
+    from ..embeddings import SparseResult
 
     reference = SparseResult([1, 3], [1.0, 2.0])
     changed_coordinates = compare_sparse_vectors(
@@ -476,10 +492,10 @@ def test_failed_sparse_parity_is_saved_and_never_reaches_timed_windows(
     def reject_window(*_args: object) -> None:
         pytest.fail("Failed sparse parity reached timed windows")
 
-    monkeypatch.setattr(
-        "dev.gpu_pipeline_profile.sparse_output_parity",
-        lambda *_args: [{"pass": False}],
-    )
+    def failed_parity(*_args: object) -> list[dict[str, bool]]:
+        return [{"pass": False}]
+
+    monkeypatch.setattr("dev.gpu_pipeline_profile.sparse_output_parity", failed_parity)
     monkeypatch.setattr("dev.gpu_pipeline_profile.sparse_budget_windows", reject_window)
     with pytest.raises(RuntimeError, match="Sparse budget output parity failed"):
         budget_comparison(None, None, Namespace(output=tmp_path), {}, DeviceSampler())
@@ -500,7 +516,7 @@ def test_sparse_comparison_rejects_changed_dense_policy(tmp_path: Path) -> None:
 def test_sparse_parity_rejects_invalid_weights_even_when_they_match(
     invalid: float, side: str
 ) -> None:
-    from vaultspec_rag.embeddings import SparseResult
+    from ..embeddings import SparseResult
 
     # Finite and nonnegative guard removals failed matching invalid weights;
     # both restored paths passed.

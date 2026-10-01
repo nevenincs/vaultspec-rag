@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:9978a2ca000cc87d4880f211652913d6536089132b53c356f216ac0f218dfb0b'
+body_hash: 'sha256:f3a91c1837710ac8905a182086ba7b409576552ae8035a9fea8f349d017e52de'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -75,7 +75,7 @@ related:
 - `S03` `verify:` `ty check --python sparseencode/.venv/Scripts/python.exe (eight changed Python files)` -> `pass`
 - `S03` `verify:` `pytest focused planner/config/harness/AST/documentation/environment preflight (253 passes)` -> `pass`
 - `S03` `verify:` `pytest final config/configuration_doc/env_settings_centralised (94 passes)` -> `pass`
-- `S03` `verify:` `python -m dev.gpu_pipeline_profile encoder --output .pytest-tmp/pipeline-sparse-budget-passing-comparison --rounds 3 --warmups 2 --items 32 --sparse-budgets 8192,24000 --sparse-budget-seconds 30 --budget-comparison-only --skip-trace --py-spy C:/Users/hello/.local/bin/py-spy.exe --seconds 30 --gil` -> `pass`
+- `S03` `verify:` `python -m dev.gpu_pipeline_profile encoder --output .pytest-tmp/pipeline-sparse-budget-passing-comparison --rounds 3 --warmups 2 --items 32 --sparse-budgets 8192,24000 --sparse-budget-seconds 30 --budget-comparison-only --skip-trace --py-spy <verified-profiler-executable> --seconds 30 --gil` -> `pass`
 - `S03` `verify:` `explicit restored energy/recovery/parity/argument/native/teardown guard mutation proofs` -> `pass`
 - `S03` `verify:` `mdformat --check docs/configuration.md and five feature records` -> `pass`
 - `S03` `verify:` `vaultspec-core vault check all --feature pipeline-performance --json` -> `pass`
