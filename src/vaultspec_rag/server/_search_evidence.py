@@ -7,6 +7,8 @@ import math
 from dataclasses import dataclass
 from typing import cast
 
+from ..store_schema import CODE_FILTER_KEYS, DOCUMENT_FILTER_KEYS, VAULT_FILTER_KEYS
+
 MAX_REQUEST_EVIDENCE_BYTES = 64 * 1024
 MAX_RESPONSE_EVIDENCE_BYTES = 128 * 1024
 MAX_LEDGER_EVIDENCE_BYTES = 4 * 1024 * 1024
@@ -17,6 +19,9 @@ _MAX_TRUNCATION_PATHS = 128
 
 SEARCH_INPUT_FIELDS = frozenset(
     {
+        *CODE_FILTER_KEYS,
+        *VAULT_FILTER_KEYS,
+        *DOCUMENT_FILTER_KEYS,
         "query",
         "top_k",
         "project_root",
@@ -25,11 +30,6 @@ SEARCH_INPUT_FIELDS = frozenset(
         "freshness_wait_seconds",
         "like_ids",
         "unlike_ids",
-        "language",
-        "path",
-        "node_type",
-        "function_name",
-        "class_name",
         "include_paths",
         "exclude_paths",
         "dedup_locales",
@@ -37,15 +37,7 @@ SEARCH_INPUT_FIELDS = frozenset(
         "exclude_domains",
         "only_domains",
         "include_domains",
-        "doc_type",
-        "feature",
-        "date",
-        "tag",
         "intent",
-        "source_path",
-        "extractor_id",
-        "extractor_version",
-        "locator_kind",
     }
 )
 

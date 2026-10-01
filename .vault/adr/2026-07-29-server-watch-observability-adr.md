@@ -5,7 +5,7 @@ tags:
 date: '2026-07-29'
 modified: '2026-10-01'
 body_schema: 'body-v1'
-body_hash: 'sha256:db6a6b42a65d6898f0a299c984816e08a72f1699bb07996de7bb97a4b70cdb66'
+body_hash: 'sha256:6a709fa4dee6ffb8630dd331e44b8addcb3df2449f1b719a7190ed494ba3fa75'
 related:
   - "[[2026-07-29-server-watch-observability-research]]"
   - '[[2026-07-29-server-watch-observability-reference]]'

@@ -147,7 +147,7 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "API fail",
     ),
     "test_env_holders.py": (
-        6,
+        7,
         "drives the fail-closed branches of the holder query and the shapes a "
         "live table cannot be made to contain: a process whose image and "
         "directory both read as unknown, a table that cannot be enumerated at "
@@ -159,7 +159,11 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "walk, and the rest need a parentage the test cannot arrange around "
         "its own pid. Every relation the query reports is still driven for "
         "real elsewhere in the file, against real environments held by real "
-        "child processes",
+        "child processes. The additional lazy-row witness records which rows "
+        "request a parent pid: the OS returns the value but cannot expose "
+        "whether this query requested an unused one, and elapsed time cannot "
+        "establish that on a variably loaded runner. Holder classification, "
+        "exclusions and parent pairing remain production behaviour",
     ),
     "test_job_progress_durability.py": (
         1,

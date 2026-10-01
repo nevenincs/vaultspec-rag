@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from ._error_payload import error_payload
+
 
 def read_inventory(operation: str, parameters: dict[str, str]) -> dict[str, object]:
     """Use the service's canonical projections with unavailable live readings."""
@@ -72,7 +74,7 @@ def main() -> None:
             raise ValueError("Unknown inventory parameter.")
         payload = read_inventory(operation, cast("dict[str, str]", parameters))
     except ValueError as exc:
-        print(json.dumps({"ok": False, "error": "bad_request", "message": str(exc)}))
+        print(json.dumps(error_payload("bad_request", str(exc))))
         raise SystemExit(2) from exc
     except OSError as exc:
         print(

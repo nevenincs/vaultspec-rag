@@ -26,22 +26,22 @@ const pending = new Map();
 const errors = [];
 const network = [];
 let sequence = 0;
-const send = (method, params = {}) =>
+const send = (method, params = {}, timeout = 10000) =>
   new Promise((resolve, reject) => {
     const id = ++sequence;
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(new Error(`Browser command timed out: ${method}`));
-    }, 10000);
+    }, timeout);
     pending.set(id, { resolve, reject, timer });
     socket.send(JSON.stringify({ id, method, params }));
   });
-const evaluate = async (expression) => {
-  const result = await send("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  });
+const evaluate = async (expression, timeout) => {
+  const result = await send(
+    "Runtime.evaluate",
+    { expression, returnByValue: true, awaitPromise: true },
+    timeout,
+  );
   if (result.exceptionDetails)
     throw new Error(
       result.exceptionDetails.exception?.description ??
@@ -64,10 +64,10 @@ try {
       `--user-data-dir=${directory}`,
       "about:blank",
     ],
-    { windowsHide: true, stdio: "ignore" },
+    { windowsHide: true, stdio: ["ignore", "ignore", "inherit"] },
   );
   let debuggerPort;
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 45000;
   while (!debuggerPort && Date.now() < deadline) {
     try {
       debuggerPort = Number(
@@ -135,7 +135,7 @@ try {
       else if (command.operation === "wait") {
         const until = Date.now() + (command.timeout ?? 30000);
         while (Date.now() < until) {
-          value = await evaluate(command.expression);
+          value = await evaluate(command.expression, until - Date.now());
           if (value) break;
           await delay(50);
         }

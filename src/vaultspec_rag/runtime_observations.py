@@ -10,7 +10,9 @@ from pathlib import Path
 import psutil
 
 from ._job_evidence import gpu_pressure_snapshot, process_cpu_snapshot
+from ._process_probe import pid_tcp_connections
 from .config._settings import get_config
+from .memory_probe import memory_observation
 
 MAX_OBSERVED_CLIENTS = 256
 DEFAULT_OBSERVED_CLIENTS = 64
@@ -43,23 +45,6 @@ def _host_cpu_utilization() -> float | None:
         return sample
 
 
-def _ram_observation(process: psutil.Process) -> dict[str, object]:
-    result: dict[str, object] = {
-        "available": False,
-        "process_rss_bytes": None,
-        "total_bytes": None,
-        "available_bytes": None,
-    }
-    try:
-        memory = psutil.virtual_memory()
-        result.update(total_bytes=memory.total, available_bytes=memory.available)
-        result["process_rss_bytes"] = process.memory_info().rss
-        result["available"] = True
-    except (psutil.Error, OSError) as exc:
-        result["reason"] = type(exc).__name__
-    return result
-
-
 def _disk_observation() -> dict[str, object]:
     target = Path(get_config().qdrant_storage_dir).expanduser().resolve()
     result: dict[str, object] = {
@@ -86,9 +71,7 @@ def _disk_observation() -> dict[str, object]:
     return result
 
 
-def _client_observation(
-    process: psutil.Process, *, port: int, limit: int
-) -> dict[str, object]:
+def _client_observation(*, port: int, limit: int) -> dict[str, object]:
     result: dict[str, object] = {
         "kind": "observed_tcp_connections",
         "available": False,
@@ -101,7 +84,7 @@ def _client_observation(
     try:
         peers = sorted(
             (connection.raddr.ip, connection.raddr.port)
-            for connection in process.net_connections(kind="tcp")
+            for connection in pid_tcp_connections(os.getpid())
             if connection.status == psutil.CONN_ESTABLISHED
             and connection.laddr
             and connection.laddr.port == port
@@ -127,7 +110,6 @@ def runtime_observations(
 ) -> dict[str, object]:
     """Observe this process; TCP peers are transport evidence, not sessions."""
     limit = max(1, min(MAX_OBSERVED_CLIENTS, client_limit))
-    process = psutil.Process()
     cpu = process_cpu_snapshot()
     cpu["system_utilization_percent"] = _host_cpu_utilization()
     cpu["process_percent_basis"] = "one_cpu_core"
@@ -139,8 +121,8 @@ def runtime_observations(
         "observed_at": time.time(),
         "pid": os.getpid(),
         "cpu": cpu,
-        "ram": _ram_observation(process),
+        "ram": memory_observation(),
         "gpu": gpu,
         "disk": _disk_observation(),
-        "clients": _client_observation(process, port=port, limit=limit),
+        "clients": _client_observation(port=port, limit=limit),
     }

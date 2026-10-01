@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from starlette.responses import JSONResponse
 
+from .._error_payload import error_payload
 from ._auth import require_token
 from ._utils import _TRUTHY_QUERY_VALUES
 
@@ -412,11 +413,7 @@ async def storage_survey_route(request: Request) -> JSONResponse:
     raw_root = request.query_params.get("root")
     if raw_root is not None and not raw_root.strip():
         return JSONResponse(
-            {
-                "ok": False,
-                "error": "bad_request",
-                "message": "root must be a non-empty path.",
-            },
+            error_payload("bad_request", "root must be a non-empty path."),
             status_code=400,
         )
     raw_fresh = request.query_params.get("fresh")

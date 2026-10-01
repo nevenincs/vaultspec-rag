@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-_PROMOTE = "- name: Promote the release, then publish it to the package index"
+_HANDOFF = "- name: Hand the proven draft to the publication lane"
 
 
 def _workflow(repo_root: Path) -> str:
@@ -32,16 +32,16 @@ def _assert_immutable_action_pins(text: str) -> None:
 
 @pytest.mark.parametrize("workflow", ["binaries.yml", "publish.yml"])
 def test_artifact_workflows_are_release_only(repo_root: Path, workflow: str) -> None:
-    """Artifact production exposes only its intentional release entrypoints."""
+    """Artifact production exposes only its intentional release entrypoints.
+
+    Mutation proof: restoring the publish tag-push trigger failed the trigger
+    assertion; removing it passed immediately.
+    """
     path = repo_root / ".github" / "workflows" / workflow
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     triggers = document.get("on", document.get(True))
 
-    expected = {"workflow_dispatch"}
-    if workflow == "publish.yml":
-        expected.add("push")
-        assert triggers["push"] == {"tags": ["vaultspec-rag-v*"]}
-    assert set(triggers) == expected
+    assert set(triggers) == {"workflow_dispatch"}
     assert "tag" in triggers["workflow_dispatch"]["inputs"]
 
 
@@ -59,7 +59,7 @@ def test_binary_release_action_pin_guard_rejects_a_mutable_tag() -> None:
 def test_release_workflow_publishes_only_a_complete_archive_set(
     repo_root: Path,
 ) -> None:
-    """Publication and promotion are downstream of the exact target archive gate.
+    """The publication handoff follows the exact target archive gate.
 
     Mutation proof: removing the ``expected_name`` assertion from the release
     gate made this test fail at the named contract assertion; the guard was
@@ -68,11 +68,11 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     text = _workflow(repo_root)
     ready = text.index("- name: Assert every declared target archive ready")
     upload = text.index('run: gh release upload "${TAG}" dist-bundles/* --clobber')
-    verify = text.index("- name: Require artifacts on the published release")
-    promote = text.index(_PROMOTE)
+    verify = text.index("- name: Require every declared target on the draft release")
+    handoff = text.index(_HANDOFF)
 
     release_gate = text[ready:upload]
-    verify_gate = text[verify:promote]
+    verify_gate = text[verify:handoff]
 
     assert ready < upload
     assert 'expected_name="${TAG}-${triple}${suffix}"' in release_gate
@@ -89,8 +89,8 @@ def test_release_workflow_publishes_only_a_complete_archive_set(
     assert 'sdist="vaultspec_rag-${version}.tar.gz"' in verify_gate
     assert "sha256sum -c SHA256SUMS" in verify_gate
     assert "vaultspec-rag-*|vaultspec-search-mcp-*)" in verify_gate
-    assert verify < promote
-    assert "if: ${{ success() }}" in text[promote:]
+    assert verify < handoff
+    assert "if: ${{ success() }}" in text[handoff:]
 
 
 def test_python_and_binary_release_workflows_share_the_checksum_lock(
@@ -108,7 +108,7 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     publish = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
         encoding="utf-8"
     )
-    lock = "group: release-artifacts-${{ inputs.tag || github.ref_name }}"
+    lock = "group: release-artifacts-${{ inputs.tag }}"
 
     assert lock in binaries
     assert lock in publish
@@ -116,7 +116,7 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
     assert "cancel-in-progress: false" in publish
 
     # A `./*` glob writes `./name` entries that never equal the release asset
-    # names, so the final exact-coverage gate demotes every release.
+    # names, so the final exact-coverage gate refuses every draft.
     assert "sha256sum -- * > SHA256SUMS" in publish
     assert 'gh release download "${TAG}" --repo "$GITHUB_REPOSITORY"' in publish
     assert "--pattern SHA256SUMS --output inherited.txt" in publish
@@ -127,7 +127,11 @@ def test_python_and_binary_release_workflows_share_the_checksum_lock(
 
 
 def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> None:
-    """The source checkout and every handoff carry one immutable release SHA."""
+    """The source checkout and every handoff carry one immutable release SHA.
+
+    Mutation proof: substituting ``github.sha`` for the resolved build output
+    failed the build SHA assertion; restoring it passed immediately.
+    """
     publish = yaml.safe_load(
         (repo_root / ".github" / "workflows" / "publish.yml").read_text(
             encoding="utf-8"
@@ -142,11 +146,8 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     assert publish["jobs"]["resolve-target"]["outputs"]["sha"] == (
         "${{ steps.commit.outputs.sha }}"
     )
-    assert publish["jobs"]["hold-release"]["outputs"]["sha"] == (
-        "${{ needs.resolve-target.outputs.sha }}"
-    )
     assert publish["jobs"]["build"]["outputs"]["sha"] == (
-        "${{ needs.hold-release.outputs.sha }}"
+        "${{ needs.resolve-target.outputs.sha }}"
     )
     assert publish["jobs"]["smoke-test"]["outputs"]["sha"] == (
         "${{ needs.build.outputs.sha }}"
@@ -154,6 +155,12 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     assert publish["jobs"]["github-release"]["outputs"]["sha"] == (
         "${{ needs.smoke-test.outputs.sha }}"
     )
+    assert publish["jobs"]["publish-pypi"]["outputs"] == {
+        "tag": "${{ needs.resolve-target.outputs.tag }}",
+        "sha": "${{ needs.resolve-target.outputs.sha }}",
+    }
+    publication = publish["jobs"]["publish-release"]
+    assert publication["env"]["TAG"] == "${{ needs.publish-pypi.outputs.tag }}"
 
     publish_text = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
         encoding="utf-8"
@@ -161,7 +168,7 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     binaries_text = (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
         encoding="utf-8"
     )
-    assert "name: dist-${{ needs.hold-release.outputs.sha }}" in publish_text
+    assert "name: dist-${{ needs.resolve-target.outputs.sha }}" in publish_text
     assert "name: dist-${{ needs.build.outputs.sha }}" in publish_text
     assert "name: dist-${{ needs.smoke-test.outputs.sha }}" in publish_text
     assert '--field target_sha="${TARGET_SHA}"' in publish_text
@@ -174,28 +181,28 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     assert "git rev-parse HEAD" in binaries_text
 
 
-def test_release_please_holds_then_publish_dispatches_binaries(
+def test_release_please_proves_the_tag_then_publish_dispatches_binaries(
     repo_root: Path,
 ) -> None:
-    """Release Please holds stable/latest and starts the sequenced publisher.
+    """The proven release tag starts packages, then their binary consumers.
 
-    Mutation proof: removing the prerelease hold made this assertion fail on
-    the named release-state guard; the hold was restored before the passing
-    run.
+    Mutation proof: inverting the tag-to-proven-commit comparison failed its
+    assertion; restoring the comparison passed immediately.
     """
     text = (repo_root / ".github" / "workflows" / "release-please.yml").read_text(
         encoding="utf-8"
     )
-    hold = text.index(
-        "- name: Hold the release out of latest until artifacts are complete"
-    )
+    prove = text.index("- name: Require the tag on the proven commit")
     publish = text.index("- name: Trigger Publish workflow")
-    hold_section = text[hold:publish]
+    proof_section = text[prove:publish]
     publish_section = text[publish:]
 
-    assert "--prerelease" in hold_section
-    assert "steps.release.outputs.tag_name" in hold_section
-    assert "steps.release.outputs.release_created == 'true'" in publish_section
+    assert "CREATED: ${{ steps.release.outputs.release_created }}" in proof_section
+    assert "TAG: ${{ steps.release.outputs.tag_name }}" in proof_section
+    assert "COMMIT: ${{ steps.merge.outputs.commit }}" in proof_section
+    assert '[ "${CREATED}" != "true" ] || [ -z "${TAG}" ]' in proof_section
+    assert '[ "${tagged}" != "${COMMIT}" ]' in proof_section
+    assert "exit 1" in proof_section
     assert "TAG: ${{ steps.release.outputs.tag_name }}" in publish_section
     assert "--ref main" in publish_section
     assert '--field tag="${TAG}"' in publish_section
@@ -204,12 +211,14 @@ def test_release_please_holds_then_publish_dispatches_binaries(
     downstream = (repo_root / ".github" / "workflows" / "publish.yml").read_text(
         encoding="utf-8"
     )
-    hold = downstream.index("- name: Hold the release as a prerelease")
+    draft = downstream.index("- name: Ensure a draft release exists for the tag")
+    attach = downstream.index("- name: Attach wheel, sdist, and checksums")
     dispatch = downstream.index("- name: Trigger Binaries workflow")
     dispatch_section = downstream[dispatch:]
-    assert "needs: hold-release" in downstream
-    assert "--prerelease" in downstream[hold:dispatch]
-    assert "needs: [resolve-target, github-release]" in downstream
+    assert "--draft" in downstream[draft:attach]
+    assert "--verify-tag" in downstream[draft:attach]
+    assert "needs: [resolve-target, smoke-test]" in downstream
+    assert draft < attach < dispatch
     assert "gh workflow run binaries.yml \\" in dispatch_section
     assert '--field tag="${TAG}"' in dispatch_section
 
@@ -287,14 +296,15 @@ def test_the_release_request_resolvers_check_format_and_existence(
     assert '[ "${sha}" != "${TARGET_SHA}" ]' in binaries
 
 
-def test_promotion_waits_for_checksum_verified_bundle_acquisition(
+def test_published_bundle_acquisition_checks_digests_and_producer_commit(
     repo_root: Path,
 ) -> None:
-    """Public x64/ARM bundles must load before a stable release is promoted."""
+    """Public bundles are acquired after publication with verified provenance.
+
+    Mutation proof: changing the dispatch producer to ``github.sha`` failed
+    the producer environment assertion; restoring it passed immediately.
+    """
     acquisition = (repo_root / ".github" / "workflows" / "acquisition.yml").read_text(
-        encoding="utf-8"
-    )
-    binaries = (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
         encoding="utf-8"
     )
 
@@ -308,28 +318,37 @@ def test_promotion_waits_for_checksum_verified_bundle_acquisition(
     assert "vaultspec-rag-${TRIPLE}" not in acquisition
     assert "vaultspec-search-mcp-${TRIPLE}" not in acquisition
 
-    wait = binaries.index("- name: Require the acquisition check for this release")
-    promote = binaries.index(_PROMOTE)
-    section = binaries[wait:promote]
-    assert '-f target_sha="$TARGET_SHA"' in section
-    assert "before_id=$(gh run list" in section
-    assert ".databaseId > ${before_id}" in section
-    assert 'gh run watch "$run_id"' in section
-    assert "--exit-status" in section
-    assert wait < promote
+    document = _load(repo_root, "acquisition.yml")
+    assert set(document.get("on", document.get(True))) == {
+        "schedule",
+        "workflow_dispatch",
+    }
+    publication = _load(repo_root, "publish.yml")["jobs"]["publish-release"]
+    steps = publication["steps"]
+    flip = next(i for i, step in enumerate(steps) if "--draft=false" in step["run"])
+    dispatch = next(
+        i
+        for i, step in enumerate(steps)
+        if "gh workflow run acquisition.yml" in step["run"]
+    )
+    assert flip < dispatch
+    assert steps[dispatch]["env"]["TARGET_SHA"] == (
+        "${{ needs.publish-pypi.outputs.sha }}"
+    )
+    assert '-f target_sha="$TARGET_SHA"' in steps[dispatch]["run"]
 
 
-def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
-    """PyPI receives only a release the final archive gate promoted.
+def test_package_index_publication_uses_the_proven_drafts_packages(
+    repo_root: Path,
+) -> None:
+    """PyPI receives the checked distribution before the draft is published.
 
-    An index upload cannot be withdrawn, so it must come after the gate and
-    the promotion, never before them in the release chain.
+    An index upload cannot be withdrawn, so it must follow the archive gate.
+    Running it alongside artifact production could publish an incomplete set.
 
     Mutation proof: pointing ``publish-pypi`` back at ``smoke-test`` failed the
-    ``needs`` assertion; dispatching the package-index stage ahead of the
-    promotion failed the ordering assertion; dropping the full-release check
-    failed the ``isDraft or .isPrerelease`` assertion. Each passed again once
-    restored.
+    ``needs`` assertion; inverting the package asset check failed the missing
+    distribution assertion. Each passed again once restored.
     Removing the per-package uniqueness checks failed the exact-entry
     assertion; it passed immediately after restoration.
     """
@@ -346,10 +365,14 @@ def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
     assert index["environment"] == {"name": "pypi"}
     assert index["permissions"]["id-token"] == "write"
     steps = [str(step.get("run", "")) for step in index["steps"]]
-    promoted = next(i for i, run in enumerate(steps) if "isPrerelease" in run)
+    distribution = next(i for i, run in enumerate(steps) if "gh release view" in run)
     upload = next(i for i, run in enumerate(steps) if "uv publish" in run)
-    assert "if .isDraft or .isPrerelease then error(" in steps[promoted]
-    assert promoted < upload
+    assert "--json isDraft,assets" in steps[distribution]
+    assert "[ ${#missing[@]} -ne 0 ]" in steps[distribution]
+    assert '"vaultspec_rag-${version}-py3-none-any.whl"' in steps[distribution]
+    assert '"vaultspec_rag-${version}.tar.gz" SHA256SUMS' in steps[distribution]
+    assert "exit 1" in steps[distribution]
+    assert distribution < upload
     assert "sha256sum -c ../packages.sha256" in steps[upload]
     for package in ("wheel", "sdist"):
         assert (
@@ -358,25 +381,22 @@ def test_package_index_publication_follows_promotion(repo_root: Path) -> None:
         ) in steps[upload], "each package needs exactly one checksum entry"
 
     # The release stage never waits on the index, and every job in it is
-    # skipped with the hardware gate when only the index stage was requested.
-    assert jobs["hardware-validation"]["if"] == (
-        "${{ inputs.stage != 'package-index' }}"
-    )
+    # skipped with the build when only the index stage was requested.
+    assert jobs["build"]["if"] == ("${{ inputs.stage != 'package-index' }}")
     for job_id in jobs:
-        if job_id in {"resolve-target", "hardware-validation", "publish-pypi"}:
+        if job_id in {"resolve-target", "build", "publish-pypi", "publish-release"}:
             continue
         assert "publish-pypi" not in _upstream(jobs, job_id), job_id
-        assert "hardware-validation" in _upstream(jobs, job_id), job_id
+        assert "build" in _upstream(jobs, job_id), job_id
 
     binaries = _workflow(repo_root)
-    verify = binaries.index("- name: Require artifacts on the published release")
-    promote = binaries.index(_PROMOTE)
-    assert "pypi.org" not in binaries[verify:promote]
-    finalizer = binaries[promote:]
-    assert "if: ${{ success() }}" in finalizer
-    assert finalizer.index("--prerelease=false") < finalizer.index(
-        "gh workflow run publish.yml"
+    verify = binaries.index(
+        "- name: Require every declared target on the draft release"
     )
+    handoff = binaries.index(_HANDOFF)
+    assert "pypi.org" not in binaries[verify:handoff]
+    finalizer = binaries[handoff:]
+    assert "if: ${{ success() }}" in finalizer
     assert "-f stage=package-index" in finalizer
 
 

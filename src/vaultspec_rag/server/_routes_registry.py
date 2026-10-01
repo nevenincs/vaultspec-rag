@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
+from .._error_payload import error_payload
 from ._auth import require_token
 from ._runtime import get_request_runtime
 
@@ -61,7 +62,7 @@ async def evict_project_route(request: Request) -> JSONResponse:
         target = Path(root).resolve()
     except (OSError, ValueError) as exc:
         return JSONResponse(
-            {"ok": False, "error": "bad_request", "message": str(exc)},
+            error_payload("bad_request", str(exc)),
             status_code=400,
         )
     evicted, reason = await run_sync(

@@ -52,6 +52,17 @@ class Browser:
     def evaluate(self, expression: str) -> object:
         return self.command("evaluate", expression=expression)
 
+    def wait_ready(self, diagnostic_path: Path) -> None:
+        try:
+            ready = json.loads(self.answers.get(timeout=60))
+        except queue.Empty:
+            diagnostic = diagnostic_path.read_text(encoding="utf-8", errors="replace")
+            pytest.fail(f"Browser startup did not complete: {diagnostic}")
+        assert ready["ready"] is True
+        # innerText forces layout, which can block while Vite compiles Carbon's
+        # stylesheet on a cold CI worker. Wait without requesting layout first.
+        self.wait("document.readyState === 'complete'")
+
 
 @pytest.fixture
 def rendered_monitor(
@@ -107,9 +118,9 @@ def rendered_monitor(
 
         threading.Thread(target=read_answers, daemon=True).start()
         try:
-            ready = json.loads(answers.get(timeout=20))
-            assert ready["ready"] is True
-            yield Browser(process, answers)
+            browser = Browser(process, answers)
+            browser.wait_ready(tmp_path / "browser-errors.log")
+            yield browser
         finally:
             if process.poll() is None:
                 try:
@@ -284,6 +295,17 @@ def _dashboard_artifact(browser: Browser, size: tuple[int, int]) -> Path:
         "screenshot", path=str(artifact / f"carbon-dashboard-{size[0]}.png")
     )
     return artifact
+
+
+def test_browser_wait_uses_its_deadline_for_renderer_commands(
+    rendered_monitor: Browser,
+) -> None:
+    """A renderer response may exceed the ordinary command's ten-second limit."""
+    rendered_monitor.wait(
+        "new Promise(resolve => setTimeout(() => { "
+        "window.monitorWaitFinished = true; resolve(true); }, 11000))"
+    )
+    assert rendered_monitor.evaluate("window.monitorWaitFinished") is True
 
 
 @pytest.mark.parametrize("size", [(1440, 1000), (800, 900), (390, 844), (320, 740)])

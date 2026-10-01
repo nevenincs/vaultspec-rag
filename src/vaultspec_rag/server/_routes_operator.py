@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _server
 
+from .._error_payload import error_payload
 from .._git_repository import git_common_dir
 from .._store_models import root_collection_prefix
 from ..concurrency import limiter_stats
@@ -185,11 +186,7 @@ async def repositories_route(request: Request) -> JSONResponse:
     root = request.query_params.get("root")
     if root is not None and not root.strip():
         return JSONResponse(
-            {
-                "ok": False,
-                "error": "bad_request",
-                "message": "root must be a non-empty path.",
-            },
+            error_payload("bad_request", "root must be a non-empty path."),
             status_code=400,
         )
     if root is not None:
@@ -197,7 +194,7 @@ async def repositories_route(request: Request) -> JSONResponse:
             root = str(Path(root).resolve())
         except (OSError, ValueError) as exc:
             return JSONResponse(
-                {"ok": False, "error": "bad_request", "message": str(exc)},
+                error_payload("bad_request", str(exc)),
                 status_code=400,
             )
     result = await run_sync(
@@ -231,7 +228,7 @@ async def enroll_repository_route(request: Request) -> JSONResponse:
             raise ValueError("root must name an existing directory.")
     except (ValueError, OSError) as exc:
         return JSONResponse(
-            {"ok": False, "error": "bad_request", "message": str(exc)},
+            error_payload("bad_request", str(exc)),
             status_code=400,
         )
     from ..config._settings import get_config

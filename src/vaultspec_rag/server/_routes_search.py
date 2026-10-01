@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse
 
 import vaultspec_rag.server as _m
 
+from .._error_payload import error_payload
 from .._operator_commands import (
     server_status_command,
 )
@@ -308,17 +309,6 @@ class SearchActivityFinalization:
     availability_cause: str | None = None
     error_code: str | None = "unhandled_search_route_exception"
     error_message: str | None = None
-
-
-def _bad_request_invalid_root(exc: ValueError) -> JSONResponse:
-    return JSONResponse(
-        {
-            "ok": False,
-            "error": "bad_request",
-            "message": str(exc),
-        },
-        status_code=400,
-    )
 
 
 def _normalise_search_type(value: object) -> PublicSourceType | JSONResponse:
@@ -927,7 +917,7 @@ def _bad_search_field(error_code: str, message: str) -> SearchRouteError:
     """Build one client-visible scalar validation failure."""
     return SearchRouteError(
         JSONResponse(
-            {"ok": False, "error": "bad_request", "message": message},
+            error_payload("bad_request", message),
             status_code=400,
         ),
         error_code=error_code,
@@ -948,7 +938,7 @@ def _search_root(project_root: object) -> Path | SearchRouteError:
         )
     except ValueError as exc:
         return SearchRouteError(
-            _bad_request_invalid_root(exc),
+            JSONResponse(error_payload("bad_request", str(exc)), status_code=400),
             error_code="bad_request",
             error_message=str(exc),
         )
