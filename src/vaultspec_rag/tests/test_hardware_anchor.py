@@ -304,10 +304,15 @@ def _set_dacl_sddl(path: Path, sddl: str) -> None:
 
 
 @contextmanager
-def _temporary_dacl(path: Path, sddl: str) -> Generator[None]:
+def _temporary_dacl(
+    path: Path, sddl: str, *, retain_existing: bool = False
+) -> Generator[None]:
     """Restore a test file's original permissions even when its guard fails."""
+    path.parent.mkdir(mode=0o700, exist_ok=True)
     path.write_bytes(b"")
     initial = _dacl_sddl(path)
+    if retain_existing:
+        sddl += "".join(re.findall(r"\([^)]*\)", initial))
     try:
         _set_dacl_sddl(path, sddl)
         yield
@@ -376,9 +381,13 @@ def test_a_created_shared_anchor_admits_every_account_on_windows(
     assert not repeat_writes, "repeating a shared ACL must not rewrite permissions"
     assert _dacl_sddl(tmp_path) == shared
 
-    denied = tmp_path / "denied-anchor.lock"
-    with _temporary_dacl(denied, "D:P(D;;FW;;;AU)(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)"):
+    denied = tmp_path / "private" / "denied-anchor.lock"
+    # FILE_WRITE_DATA denies the actual write without also denying
+    # READ_CONTROL, which FILE_GENERIC_WRITE includes. Keep the original
+    # creator permissions so inspection and finally restoration remain usable.
+    with _temporary_dacl(denied, "D:P(D;;0x2;;;AU)", retain_existing=True):
         denied_entries = set(re.findall(r"\(([^)]*)\)", _dacl_sddl(denied)))
+        assert not _authenticated_users_may_write(denied)
         with pytest.raises(PermissionError):
             denied.write_bytes(b"baseline forbidden write")
         assert grant_every_account_access(str(denied))

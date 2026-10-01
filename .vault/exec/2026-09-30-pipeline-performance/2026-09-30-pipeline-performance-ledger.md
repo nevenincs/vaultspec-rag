@@ -5,7 +5,7 @@ tags:
 date: '2026-09-30'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:32f67eb825f76f0fa7709ba102ad703b8a9408f0c8068962437660b71f94769f'
+body_hash: 'sha256:62cffa971f581053e7194ef475a025b8436713bd63f5c9964630238ef52d3105'
 related:
   - "[[2026-09-30-pipeline-performance-plan]]"
 ---
@@ -207,6 +207,15 @@ related:
 - `S04` `verify:` `acceptance-index post-full retention: 9 directories 40 files preserved, no common-Git artifacts recreated` -> `pass`
 - `S04` `verify:` `post-full resident borrowing restoration: models loaded, running admission, borrower unbound, compute tickets 0` -> `pass`
 - `S04` `verify:` `GPT-6.1 Sol integrated local S04 review of final opaque-ACE repair and frozen full gates: no blocker` -> `pass`
+- `S04` `verify:` `full CI36925031642 at3026df9c Windows job110580150087: 1 fixture failure 5844 passes 7 skips; Linux all passed` -> `fail`
+- `S04` `verify:` `whole actual ACL guard under administrator-disabled token: original read/restoration denied, corrected entire guard and cleanup pass` -> `pass`
+- `S04` `verify:` `v15 creator deny null repeat intended guard RED1 exact production-byte restore GREEN0` -> `pass`
+- `S04` `verify:` `v15 exact strict just test-python: 5844 passed 8 existing OS/admin skips zero warnings native exit0` -> `pass`
+- `S04` `verify:` `v15 GPU evidence reuse: only CPU guard changed, production dependencies GPU scope unchanged, v14 reports738+76 passes and zero executed changed cases` -> `pass`
+- `S04` `verify:` `final v15 exact just check-all native0: all configured checks and general vault clean, basedpyright0errors0warnings0notes` -> `pass`
+- `S04` `verify:` `post v15 full CPU and aggregate: 1188-file frozen digest0d3afc33a09487f1e22bd849f3d07c51c596c174a5edf1bad02370fdf74f2859 mismatch0` -> `pass`
+- `S04` `verify:` `post v15 CPU acceptance retention: 9 directories40files intact, no common-Git artifacts recreated` -> `pass`
+- `S04` `verify:` `GPT-6.1 Sol final integrated LOCAL S04 v15 review and root integrity confirmation` -> `pass`
 
 ## Notes
 
@@ -260,3 +269,4 @@ related:
 - `S04` Reopened S04 after actual full CI Windows filesystem failures. Full local v12 checks remain historical passes; CI has not passed and PR stays draft. Independent caller inspection found the shared Windows anchor directory grant replaces prior explicit creator ACL rights; PID-qualified temp separation did not repair this additional non-admin permissions cause. Repair and intended mutation proof are pending.
 - `S04` Additional actual deny probe rejected the initial SetEntriesInAcl `GRANT_ACCESS` repair: it removed an existing AU deny and permitted the forbidden write. Final implementation preserves opaque existing ACE bytes and copies only missing grants. Earlier owner-rights baseline setup failures and unchanged rendered-ACL dedup mutations are not counted as intended RED proof. S04 remains open pending fresh final local full checks, review and exact-head full CI.
 - `S04` Repair-commit full CI is pending; prior exact-head 6cff5b90 run36912341534 failed 16 Windows CPU cases. PR569 remains draft. Separate foreign-project resident health degradation is retained.
+- `S04` S04 reopened for native ACL fixture premise; previous whole CI failed. Prior shared-parent deny mutation passed via deduplication, so that unexercised premise was rejected. Exact final-commit full CI and final local aggregate remain pending; PR569 stays draft.
