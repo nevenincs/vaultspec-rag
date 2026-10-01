@@ -12,9 +12,9 @@ related:
   - '[[2026-06-11-service-jobs-operability-adr]]'
   - '[[2026-07-21-managed-log-contract-adr]]'
   - '[[2026-09-21-typesafe-classifier-adr]]'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: body-v2
-body_hash: 'sha256:c60db71bf3df5e8ba6398ac16538a522abeaa7ceb2d032438e1d12dd7eefb65e'
+body_hash: 'sha256:ad4a247710f8f3c54221bbd7cdafcc7a41a48cca5f16af4e7c37e815211657b4'
 ---
 
 # `monitor-browser` plan
@@ -27,10 +27,13 @@ Authorization: the user requests the Carbon port after the TUI is robust, choose
 
 Reuse the root React/Vite/strict-TypeScript harness and shared lifecycle. Pin official Carbon React and Sass, add an automatic server-only local bridge over existing routes, then render separate health/TypeSafe, indexing lifecycle, queued/active/recent serving, scoped logs and source-grouped service logs. Job controls preserve existing capability and revision contracts. Local monitoring has no login or credential entry.
 
+2026-10-01 S03 authorization: the user explicitly requires binding to 0.0.0.0, access for Tailscale nodes, canonical strict-port attach/recreate behavior and the devservers CI action. Correct the overly narrow frontend loopback policy, retain internal local RAG service access and credential handling, and verify the existing canonical recipe and workflow rather than creating parallel lifecycle code. Reverse-proxy mappings use the devservers-owned port offset; HTTPS requires Tailscale Serve enablement.
+
 ## Steps
 
 - [x] `S01` - Implement and verify an automatic local-only monitoring adapter, pin Carbon dependencies, and reconcile frontend decision wording; `src/monitor/server, vite.config.ts, package.json/package-lock.json, bridge covering checks and enrolled Node runtime in existing test workflows, monitor-browser ADR and monitor-tooling ADR`.
 - [x] `S02` - Implement the responsive Carbon operator UI with independent polling, lifecycle views, TypeSafe details, work/global logs and existing job controls; verify and review the integrated browser monitor; `src/monitor, real bridge and installed-browser checks, dev/monitor-browser.mjs, existing test workflows, docs/service-mode.md, frontend verification configuration as needed, monitor-browser audit and focused prior audit formatting maintenance`.
+- [ ] `S03` - Correct monitor enrollment for the shared all-interface devserver and Tailscale reverse proxy; verify strict-port lifecycle, CI parity and live peer access; `package.json, server request-origin/network policy and covering tests, docs/service-mode.md, browser/tooling ADR reconciliations, existing devserver recipe/workflow parity, runtime proxy mapping and audit`.
 
 ## Parallelization
 

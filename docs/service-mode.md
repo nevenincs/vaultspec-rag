@@ -217,6 +217,20 @@ credential entry, or admin role. Start the service through the usual service
 command; opening the monitor observes it. A stopped service shows a connection
 message and retains any previous observations with their timestamps.
 
+Dev and preview bind to `0.0.0.0` on their strict declared ports. The shared
+`just dev` harness attaches to a healthy owned server and recreates a stale,
+degraded, or foreign server on that port. Its canonical **Dev server** workflow
+runs `just dev ci` to verify start, reattach, and stop.
+
+The devservers repository owns the reverse proxies. Local HTTPS uses
+`https://vaultspec-rag-monitor.localhost`; Tailscale nodes can use
+`http://gw-workstation.taild36992.ts.net:5420` or its managed HTTPS mapping at
+`https://gw-workstation.taild36992.ts.net:15420`. The monitor API accepts local
+and Tailscale clients at its declared host, with matching browser origins.
+The underlying RAG service connection and credential remain on this machine.
+The HTTPS mapping requires Serve to be enabled in the tailnet; the Tailscale
+command provides the account setup link if that prerequisite is missing.
+
 Health and TypeSafe details sit above separate indexing and serving tabs.
 Inspect a job or request for its current details and correlated live logs;
 service and Qdrant logs have their own panels. Job controls follow the service's

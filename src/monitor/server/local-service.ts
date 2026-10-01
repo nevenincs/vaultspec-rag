@@ -1,14 +1,28 @@
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
+import manifest from "../../../package.json" with { type: "json" };
 
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
 
 type Connection = { port: number; token: string };
+
+function tailnetAddress(value: string): boolean {
+  const address = value
+    .toLowerCase()
+    .replace(/^::ffff:/, "")
+    .replace(/^\[|\]$/g, "");
+  if (isIP(address) === 4) {
+    const parts = address.split(".").map(Number);
+    return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+  }
+  return isIP(address) === 6 && address.startsWith("fd7a:115c:a1e0:");
+}
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -21,13 +35,20 @@ function localHost(host: string): boolean {
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host === "127.0.0.1" ||
-    host === "[::1]"
+    host === "[::1]" ||
+    tailnetAddress(host) ||
+    manifest.devserver.allowedHosts.some(
+      (allowed) => !allowed.startsWith(".") && allowed === host,
+    )
   );
 }
 
 function localRequest(request: IncomingMessage): boolean {
   const address = request.socket.remoteAddress;
-  if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address ?? "")) {
+  if (
+    !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address ?? "") &&
+    !tailnetAddress(address ?? "")
+  ) {
     return false;
   }
   const host = request.headers.host;
@@ -176,7 +197,8 @@ async function forward(
   if (!localRequest(request)) {
     reply(response, 403, {
       ok: false,
-      message: "The monitor connects on this machine only.",
+      message:
+        "The monitor accepts local and Tailscale clients at its declared host.",
     });
     return;
   }

@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:cd4362d0447328cceba4fd57a8d56fc577d9a2fa1f5d7dcfbf47586c3ef76646'
+body_hash: 'sha256:5ddbbac4b6f671a1103f0bff1e2f5c9b86539fec79fa59a06dd3fc634ff96522'
 related:
   - "[[2026-09-30-monitor-browser-plan]]"
   - "[[2026-09-30-monitor-browser-adr]]"
@@ -26,6 +26,8 @@ Review completed S01/S02 in 2026-09-30-monitor-browser-plan. Diff base: 39c0365f
 Trace automatic local discovery through the server-only bridge, production HTTP owners, browser validation and independent observers, Carbon presentation, scoped log readers and selected-job actions. Verify local access without credential or admin UI, bounded retained lifecycle views, TypeSafe evidence, diagnostic units, source/identity separation, failure retention, cancellation, responsive layout and exact service-owned controls.
 
 Verification owner is the solo executor/reviewer. Windows, Python 3.13.14, Node 26.10.0/npm 12.1.0, pinned Carbon React 1.117.0 and Sass 1.105.1; real production routes, ledgers, managed files and installed headless Chrome. No resident daemon lifespan, inference, provider call, GPU workload or index recovery was run.
+
+2026-10-01 corrective review: 811c5923 plus the S03 working tree. The user explicitly requires 0.0.0.0 binding, Tailscale-node access, strict-port attach/recreate semantics, and canonical devservers CI. Browser/tooling decisions were reconciled with this authorization. Shared lifecycle and workflow remain byte-identical; changes are limited to the manifest binding, request network/host policy, tests, guide and records.
 
 ## Findings
 
@@ -55,6 +57,16 @@ Official package styles, IBM Plex, Grid/Column/Stack, status indicators, tables,
 
 All four rendered cases ran locally and passed. The fixture uses an already installed Chrome/Chromium/Edge, isolated profile and owned process; it downloads no browser and skips with an explicit reason if browser infrastructure is absent. Existing correctness workflows enroll Node and install monitor dependencies. A future CI environment without an installed browser will still run bridge/model checks but must supply that browser to run rendered cases.
 
+### tailnet-correction-2026-10-01 | low | Direct access and canonical lifecycle verified; HTTPS rollout pending
+
+The earlier interpretation of local machine service as loopback-only browser access was too narrow. Dev and preview now bind the single manifest host 0.0.0.0. The server-only bridge accepts loopback and Tailscale client ranges at declared authorities, retains matching-origin validation and keeps upstream credentials internal. Tailscale hostname/address and local reverse-proxy page/health probes returned 200 without credential exposure. Existing Node inbound rules cover the private Tailscale interface; a real peer ping succeeded. An SSH-based peer HTTP probe was unavailable because the existing credential was refused; direct peer HTTP remains unverified.
+
+Software verification PASS: frontend lint/format/TypeScript/build; Python lint/format/ty/basedpyright; 22 adapter and shared-harness contract tests; four real rendered Carbon cases; six native canonical lifecycle checks; actual degraded-health process replacement; and the repo's just dev ci. New origin, host and source-address guards failed their intended assertions under deliberate mutations and passed after restoration. Evidence is in the S03 ledger and local .pytest-tmp logs. The user-requested command and CI workflow are the existing canonical copies; no second lifecycle or workflow implementation was added.
+
+HTTPS verification PENDING: the devservers-owned port-offset command cannot install the tailnet HTTPS mapping while Tailscale reports Serve is not enabled. It returned an account setup link supplied to the user. The external account enablement is the next action; S03 remains open. No critical or high code finding was found.
+
 ## Recommendations
 
 Final verdict: PASS. The two-wave implementation and final corrections are reviewable on the feature branch. Use the source-checkout instructions in `docs/service-mode.md`; the normal local service must already be started through its existing lifecycle. Development and built preview both include the automatic local adapter. Standalone static assets do not provide it. Continue to show bounded retained work rather than implying an all-time archive; remote deployment or new service authority requires the decision assessment stated in monitor-browser.
+
+2026-10-01 rollout verdict: PENDING only for external Tailscale Serve enablement and HTTPS mapping verification. Leave the corrected direct Tailscale dev server running and preserve this reviewed source checkpoint. After enablement, finish the devservers-derived mapping, verify live HTTPS page/API access, and close S03. No login, credential entry or admin role was added to the operator application.

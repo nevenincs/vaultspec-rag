@@ -10,6 +10,7 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+from http.client import HTTPConnection
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -39,7 +40,7 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]
         f"import {{ monitorMiddleware }} from {json.dumps(source.as_uri())}; "
         "const server = createServer((req,res) => monitorMiddleware(req,res,() => {"
         "res.writeHead(404); res.end();})); "
-        "server.listen(0,'127.0.0.1',() => console.log(server.address().port));"
+        "server.listen(0,'0.0.0.0',() => console.log(server.address().port));"
     )
     environment = dict(os.environ)
     environment.pop("VAULTSPEC_RAG_PORT", None)
@@ -76,11 +77,18 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]
 
 
 def _read(
-    port: int, path: str, *, origin: str | None = None, prefix: str = "/api/monitor"
+    port: int,
+    path: str,
+    *,
+    origin: str | None = None,
+    host: str | None = None,
+    prefix: str = "/api/monitor",
 ) -> tuple[int, dict[str, object]]:
     request = urllib.request.Request(f"http://127.0.0.1:{port}{prefix}{path}")
     if origin:
         request.add_header("Origin", origin)
+    if host:
+        request.add_header("Host", host)
     try:
         response = urllib.request.urlopen(request, timeout=8)
     except urllib.error.HTTPError as error:
@@ -139,10 +147,63 @@ def test_local_bridge_refuses_foreign_origins_and_unrelated_routes(
     # after restoration. Bypassing allowedRoute similarly exposed /projects.
     status, answer = _read(port, "/health", origin="http://example.invalid")
     assert status == 403
-    assert answer["message"] == "The monitor connects on this machine only."
+    assert answer["message"] == (
+        "The monitor accepts local and Tailscale clients at its declared host."
+    )
     status, answer = _read(port, "/projects")
     assert status == 404
     assert answer["message"] == "Unknown monitor operation."
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "gw-workstation.taild36992.ts.net:15420",
+        "100.84.254.21:5420",
+        "[fd7a:115c:a1e0::2c01:feb6]:5420",
+    ],
+)
+def test_bridge_accepts_tailnet_proxy_authorities(
+    browser_bridge: tuple[int, Path], host: str
+) -> None:
+    port, _ = browser_bridge
+    status, health = _read(port, "/health", host=host, origin=f"https://{host}")
+    assert status == 200
+    assert "service_token" not in health
+    assert "token" not in health
+    # Bypassing origin matching failed this assertion; restored it passed.
+    status, _ = _read(
+        port, "/health", host=host, origin="https://other.taild36992.ts.net"
+    )
+    assert status == 403
+
+
+@pytest.mark.parametrize("host", ["other.taild36992.ts.net", "100.128.0.1"])
+def test_bridge_refuses_undeclared_proxy_authorities(
+    browser_bridge: tuple[int, Path], host: str
+) -> None:
+    port, _ = browser_bridge
+    # Bypassing host validation failed here; restoring the check passed.
+    status, _ = _read(port, "/health", host=host, origin=f"https://{host}")
+    assert status == 403
+
+
+def test_bridge_refuses_a_client_outside_local_and_tailnet_ranges(
+    browser_bridge: tuple[int, Path],
+) -> None:
+    port, _ = browser_bridge
+    # Removing client-address validation failed this real-source assertion;
+    # restoring it passed. Proof: .pytest-tmp/tailnet-client-{broken,restored}.log.
+    connection = HTTPConnection(
+        "127.0.0.1", port, timeout=8, source_address=("127.0.0.2", 0)
+    )
+    try:
+        connection.request("GET", "/api/monitor/health")
+        response = connection.getresponse()
+        assert response.status == 403
+        response.read()
+    finally:
+        connection.close()
 
 
 def test_local_bridge_reports_missing_discovery(

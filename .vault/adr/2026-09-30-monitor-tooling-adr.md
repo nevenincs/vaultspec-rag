@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:ff811e0a0676e3bdb2c615ffdb9793e48db89429292db89ce0da01a237247483'
+body_hash: 'sha256:b509d07de66dbb11e9313636c7132e1b2d0d3cad35c0b7590de93dd2b17447b6'
 related:
   - "[[2026-09-30-monitor-tooling-reference]]"
   - '[[2026-09-21-automatic-merge-gate-adr]]'
@@ -71,7 +71,7 @@ The user separately authorized fixing the canonical trust condition on a
 devservers feature branch. The adopted correction is commit
 `b15e302441c426ba3604ec8ce2178bcfe8b394af`; it restricts pull requests to ready
 owner/collaborator work or an explicit human-applied full-run label.
-Canonical main-copy parity remains pending that upstream branch landing.
+The correction has since landed upstream: on 2026-10-01 the adopted copy matches the current devservers main harness byte-for-byte.
 
 On 2026-09-30 the user explicitly authorized treating the shared Python script
 as externally maintained code: check it with its owner's Ruff rules and verify
@@ -85,8 +85,7 @@ byte guard joins the existing accelerator-free test collection.
 interface. Reserving a frontend home does not replace it or authorize a second
 implementation of service behavior. The local automatic browser transport and bounded independent polling are now
 settled in `2026-09-30-monitor-browser-adr`; the service-domain contracts remain
-unchanged. The monitor manifest binds dev and preview to loopback for the
-explicitly local operator scope.
+unchanged. The user's 2026-10-01 correction explicitly requires the monitor manifest to bind dev and preview to 0.0.0.0 and enable access for Tailscale nodes. Both strict-port services use that declared host. Local automatic service connection remains internal to the workstation; the browser's network reach follows the shared devservers reverse-proxy and tailnet configuration.
 
 ## Implementation
 

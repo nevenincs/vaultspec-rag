@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:58be9f4c863f447da92aa3f56df8d5ef4391dc86315c43f377c3951513859266'
+body_hash: 'sha256:dc8102dd26e7c66b590e526896b4ec28f420018b0de4adf620a15229db0480ec'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -32,14 +32,16 @@ The daemon already publishes its current port/token in the managed service.json 
 
 - A same-origin loopback Vite/preview adapter over existing service routes is chosen. It uses local discovery automatically and keeps domain behavior with the daemon.
 - A browser credential form and persistent token storage are rejected: the user explicitly requests neither, and the daemon's local discovery already resolves credentials for operator clients.
-- A new daemon monitoring API or a remotely accessible dashboard is rejected for this scope: existing endpoints suffice and this is a local development machine interface.
+- A new daemon monitoring API or public dashboard is rejected for this scope: existing endpoints suffice. The 2026-10-01 user correction requires the workstation operator interface to be reachable by Tailscale nodes through the shared devservers configuration.
 - Recreating Carbon controls/styles is rejected in favor of official React components, tokens and compiled component SCSS.
 
 ## Constraints
 
 Authorization: the user's wave-2 request and explicit local/no-credentials/no-admin-gates direction authorize this ruling and implementation. The TUI remains the canonical terminal owner; the browser is a presentation adapter, not a second service-domain implementation.
 
-The frontend and its API bridge bind to loopback and accept same-origin local clients. The bridge only targets the port in managed service discovery or an explicit local port override, never an arbitrary upstream URL. It reads the daemon credential internally, refreshes it through existing health recovery when necessary, and never returns it to browser code. The UI has no login, credential prompt, persisted token, or admin role. Restrict forwarding to monitor reads and exact job controls; forward service capability/revision semantics rather than inventing control authority. No service-start, inference or index-recovery action is added.
+2026-10-01 authorized correction: the user explicitly requires dev/preview binding to 0.0.0.0, access for Tailscale nodes, canonical strict-port start/reattach/recreate behavior, and the devservers CI workflow. The earlier loopback-only browser assumption was too narrow; the RAG service itself remains a local machine service.
+
+The frontend and its API bridge bind to the manifest's 0.0.0.0 host and accept matching-origin local or Tailscale clients at declared hosts or Tailscale addresses. The devservers repository owns local reverse-proxy aliases and private tailnet HTTPS mappings. Tailscale's IPv4 100.64.0.0/10 and IPv6 fd7a:115c:a1e0::/48 client ranges are recognized; forwarded headers do not expand client authority. The bridge only targets the port in managed service discovery or an explicit local port override, never an arbitrary upstream URL. It reads the daemon credential internally, refreshes it through existing health recovery when necessary, and never returns it to browser code. The UI has no login, credential prompt, persisted token, or admin role. Restrict forwarding to monitor reads and exact job controls; forward service capability/revision semantics rather than inventing control authority. No service-start, inference or index-recovery action is added.
 
 Preserve service-owned bounded jobs, queued/active/recent requests, correct diagnostic units, scoped job/request logs, and distinct raw service/Qdrant groups with visible freshness, failures and truncation. Poll independently with cancellation and stale-response protection; retain prior evidence on transport failures. Missing measurements are unreported. No all-time archive or persistent query/result storage is introduced.
 
@@ -55,4 +57,4 @@ A local automatic adapter gives the browser the same operator connection as the 
 
 ## Consequences
 
-npm dev/preview owns the local browser process through the existing harness. A built static bundle needs that local adapter to read the service. A remote dashboard, changed retention, new service endpoint or alternate transport requires fresh decision assessment. No resident service, GPU workload or provider call is needed for implementation verification.
+npm dev/preview owns the local browser process through the existing harness. A built static bundle needs that local adapter to read the service. A public or multi-user dashboard, changed retention, new service endpoint or alternate transport requires fresh decision assessment. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.

@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-09-30'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:dfae4b59fbc01f5c5d76b73edf14b96b84bdf3ed25f88701d560c48589d5d95b'
+body_hash: 'sha256:49afb2eed96d6ef1aba1e318d285dcd5da3194b2990fbf79ad78048d3e28095b'
 related:
   - "[[2026-09-30-monitor-browser-plan]]"
 ---
@@ -78,3 +78,35 @@ related:
 - `S02` `verify:` `vaultspec-core vault check all --feature monitor-browser --fix: all checks clean` -> `pass`
 - `S02` `verify:` `vaultspec-core vault check all --feature monitor-refinement --fix: all checks clean` -> `pass`
 - `S02` `verify:` `vaultspec-core vault plan check monitor-browser: 2 of 2 Steps complete` -> `pass`
+- `S03` `M` `package.json`
+- `S03` `M` `src/monitor/server/local-service.ts`
+- `S03` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S03` `M` `docs/service-mode.md`
+- `S03` `M` `.vault/adr/2026-09-30-monitor-browser-adr.md`
+- `S03` `M` `.vault/adr/2026-09-30-monitor-tooling-adr.md`
+- `S03` `M` `.vault/plan/2026-09-30-monitor-browser-plan.md`
+- `S03` `verify:` `just check-monitor (lint, format, strict TypeScript, production build); .pytest-tmp/monitor-tailnet-frontend-final.log` -> `pass`
+- `S03` `verify:` `package Ruff and changed browser-test format, ty and basedpyright` -> `pass`
+- `S03` `verify:` `pytest unit browser adapter and shared devserver guards: 22 passed in 5.48s; .pytest-tmp/monitor-tailnet-contract-final.log` -> `pass`
+- `S03` `verify:` `pytest rendered Carbon monitor: 4 passed in 65.78s; .pytest-tmp/monitor-tailnet-render-final.log` -> `pass`
+- `S03` `verify:` `canonical owner lifecycle and contract tests: 6 passed in 10.59s; .pytest-tmp/monitor-tailnet-owner-lifecycle.log` -> `pass`
+- `S03` `verify:` `real degraded HTTP health on owned process caused replacement and recovered health; .pytest-tmp/monitor-tailnet-degraded-proof.log` -> `pass`
+- `S03` `verify:` `just dev ci conform, attach, attach, stop; .pytest-tmp/monitor-tailnet-lifecycle-final.log` -> `pass`
+- `S03` `verify:` `just dev subsequently started and left running on strict 5420 with 0.0.0.0 host` -> `pass`
+- `S03` `verify:` `just dev check and just check-workflow; canonical recipe/workflow and byte digest guards` -> `pass`
+- `S03` `verify:` `Tailscale origin, undeclared host and real client-source mutations: intended assertion failed and restored passed; .pytest-tmp/tailnet-{origin,host,client}-{broken,restored}.log` -> `pass`
+- `S03` `verify:` `live page at 100.84.254.21:5420, health at gw-workstation.taild36992.ts.net:5420 and local reverse proxy: 200 with no daemon credential exposed` -> `pass`
+- `S03` `verify:` `Tailscale peer gw-server connectivity and existing private-interface Node firewall allowances` -> `pass`
+- `S03` `M` `.vault/audit/2026-09-30-monitor-browser-audit.md`
+- `S03` `verify:` `guide mdformat check` -> `pass`
+- `S03` `verify:` `live process command --port 5420 --strictPort --host 0.0.0.0 and listening address 0.0.0.0 verified` -> `pass`
+- `S03` `verify:` `vaultspec-core vault check all --feature monitor-browser --fix` -> `pass`
+- `S03` `verify:` `vaultspec-core vault check all --feature monitor-tooling --fix` -> `pass`
+- `S03` `verify:` `vaultspec-core vault plan check monitor-browser` -> `pass`
+- `S03` `verify:` `just check-markdown; .pytest-tmp/monitor-tailnet-markdown-final.log` -> `pass`
+- `S03` `verify:` `corrective review: software checks PASS, tailnet HTTPS rollout pending external Serve enablement` -> `pass`
+
+## Notes
+
+- `S03` HTTPS rollout remains pending. The devservers-derived tailscale serve command reports Serve is not enabled on the tailnet and waits for account enablement. Setup link was given through the user-input tool; direct Tailscale HTTP and the local reverse proxy already work. Keep S03 open until HTTPS mapping and reachability can be verified.
+- `S03` Remote peer HTTP probing over SSH could not run because the existing client credential was refused; live interface-address probes, private-interface firewall allowances and real peer ping are applicable local network evidence.
