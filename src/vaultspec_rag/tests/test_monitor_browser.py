@@ -416,7 +416,7 @@ def test_browser_projection_rejects_misattributed_production_observations(
         assert node is not None
         script = (
             "import assert from 'node:assert/strict';"
-            "import { logs, activity, diagnostic, safeLog } from "
+            "import { logs, activity, compareValues, safeLog } from "
             f"{json.dumps(source.as_uri())};"
             "const [payload, serving, id] = JSON.parse(process.argv[1]);"
             "const work = {kind:'job',id};"
@@ -430,10 +430,9 @@ def test_browser_projection_rejects_misattributed_production_observations(
             # assertion; restoring validation passed.
             "assert.throws(() => activity({...serving,recent:["
             "{...serving.active[0],state:'terminal'}],returned:2}), /identities/);"
-            "assert.equal(diagnostic('typesafe_latency_ms',125),'125 ms');"
-            "assert.equal(diagnostic('typesafe_confidence',0.9),Number(0.9).toLocaleString());"
-            "assert.equal(diagnostic('rerank_seconds',0.05),"
-            "Number(0.05).toLocaleString()+' s');"
+            "assert(compareValues(145000,150)>0);"
+            "assert(compareValues('145000','150')>0);"
+            "assert(compareValues(0.95,0.1)>0);"
             "assert.equal(safeLog(String.fromCharCode(27)+'[31mrecord'+String.fromCharCode(0)),'record�');"
         )
         result = subprocess.run(

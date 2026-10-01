@@ -220,7 +220,8 @@ function redact(value: unknown): unknown {
 function timeout(path: string): number {
   if (path === "/lifecycle/start") return 900000;
   if (path === "/lifecycle/stop") return 120000;
-  if (path === "/lifecycle" || path === "/storage/survey") return 30000;
+  if (["/lifecycle", "/repositories", "/storage/survey"].includes(path))
+    return 30000;
   if (
     ["/pause", "/resume", "/repositories/enroll", "/projects/evict"].includes(
       path,
@@ -265,10 +266,15 @@ async function pythonRuntime(signal: AbortSignal): Promise<string> {
   throw new Error("No local Python runtime is available for service controls.");
 }
 
-async function lifecycle(
-  verb: LifecycleVerb,
+async function runOwner(
+  args: string[],
+  path: string,
+  maxBuffer: number,
   signal: AbortSignal,
-): Promise<{ status: number; payload: Record<string, unknown> }> {
+): Promise<{
+  error: (Error & { code?: string | number; killed?: boolean }) | null;
+  payload: Record<string, unknown>;
+}> {
   const python = await pythonRuntime(signal);
   const { error, stdout } = await new Promise<{
     error: (Error & { code?: string | number; killed?: boolean }) | null;
@@ -276,7 +282,7 @@ async function lifecycle(
   }>((resolve) => {
     execFile(
       python,
-      ["-P", "-m", "vaultspec_rag", "server", verb, "--json"],
+      ["-P", "-m", ...args],
       {
         cwd: checkout,
         env: {
@@ -287,10 +293,8 @@ async function lifecycle(
         encoding: "utf8",
         shell: false,
         windowsHide: true,
-        timeout: timeout(
-          verb === "status" ? "/lifecycle" : `/lifecycle/${verb}`,
-        ),
-        maxBuffer: 1024 * 1024,
+        timeout: timeout(path),
+        maxBuffer,
         signal,
       },
       (error, stdout) => resolve({ error, stdout }),
@@ -298,6 +302,19 @@ async function lifecycle(
   });
   if (error && (error.killed || typeof error.code !== "number")) throw error;
   const payload = object(JSON.parse(stdout));
+  return { error, payload };
+}
+
+async function lifecycle(
+  verb: LifecycleVerb,
+  signal: AbortSignal,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  const { error, payload } = await runOwner(
+    ["vaultspec_rag", "server", verb, "--json"],
+    verb === "status" ? "/lifecycle" : `/lifecycle/${verb}`,
+    1024 * 1024,
+    signal,
+  );
   if (typeof payload.ok !== "boolean" || payload.command !== `service.${verb}`)
     throw new Error("The lifecycle owner returned an invalid response.");
   if (verb === "status") {
@@ -309,6 +326,27 @@ async function lifecycle(
     return { status: 200, payload };
   }
   return { status: error || !payload.ok ? 503 : 200, payload };
+}
+
+async function persistedInventory(
+  route: URL,
+  signal: AbortSignal,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  const { error, payload } = await runOwner(
+    [
+      "vaultspec_rag.monitor_inventory",
+      route.pathname.slice(1),
+      JSON.stringify(Object.fromEntries(route.searchParams)),
+    ],
+    route.pathname,
+    maxResponseBytes,
+    signal,
+  );
+  if (error && ![2, 3].includes(Number(error.code))) throw error;
+  return {
+    status: error ? (Number(error.code) === 2 ? 400 : 503) : 200,
+    payload,
+  };
 }
 
 function reply(
@@ -350,6 +388,12 @@ async function forward(
     controller.signal,
     AbortSignal.timeout(timeout(route.pathname)),
   ]);
+  const inventory =
+    method === "GET" &&
+    ["/repositories", "/storage/survey"].includes(route.pathname);
+  const upstreamSignal = inventory
+    ? AbortSignal.any([signal, AbortSignal.timeout(5000)])
+    : signal;
   try {
     const body =
       method === "PUT" || method === "POST"
@@ -395,13 +439,16 @@ async function forward(
           "Content-Type": "application/json",
         },
         redirect: "error",
-        signal,
+        signal: upstreamSignal,
       });
     let result = await send(local.token);
     let payload = await responseJSON(result);
     if (result.status === 401) {
       const health = await responseJSON(
-        await fetch(`${base}/health`, { signal, redirect: "error" }),
+        await fetch(`${base}/health`, {
+          signal: upstreamSignal,
+          redirect: "error",
+        }),
       );
       const token = health.service_token;
       if (typeof token === "string" && token) {
@@ -417,6 +464,15 @@ async function forward(
         message: error.message,
       });
       return;
+    }
+    if (inventory && !signal.aborted) {
+      try {
+        const result = await persistedInventory(route, signal);
+        reply(response, result.status, result.payload);
+        return;
+      } catch {
+        // An unavailable disk reader must not turn missing inventory into zero.
+      }
     }
     const message =
       error instanceof Error && error.message.startsWith("No local service")

@@ -3,6 +3,7 @@ import {
   DataTable,
   Accordion,
   AccordionItem,
+  Pagination,
   Stack,
   Table,
   TableBody,
@@ -25,7 +26,8 @@ import {
   type Work,
 } from "./model";
 import { Metrics, Status } from "./presentation";
-import { DataTree } from "./DataTree";
+import { RequestDetails } from "./RequestDetails";
+import { ListFilters, type ListOptions } from "./ListFilters";
 import { JobControls } from "./JobControls";
 import { Logs } from "./Logs";
 
@@ -36,6 +38,8 @@ export function WorkPage({
   stale,
   refresh,
   onRefresh,
+  options,
+  onOptionsChange,
 }: {
   kind: Work["kind"];
   data?: Jobs | Activity;
@@ -43,11 +47,20 @@ export function WorkPage({
   stale: boolean;
   refresh: number;
   onRefresh: () => void;
+  options: ListOptions;
+  onOptionsChange: (options: ListOptions) => void;
 }) {
   const [mobile, setMobile] = useState(
     () => matchMedia("(max-width: 41.98rem)").matches,
   );
-  const [expanded, setExpanded] = useState<string>();
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggle = (id: string) =>
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   useEffect(() => {
     const media = matchMedia("(max-width: 41.98rem)");
     const change = () => setMobile(media.matches);
@@ -90,10 +103,7 @@ export function WorkPage({
           onRefresh={onRefresh}
         />
       )}
-      <DataTree
-        value={record}
-        label={indexing ? "Index request" : "Query evidence"}
-      />
+      <RequestDetails record={record} kind={kind} />
       <Logs work={{ kind, id: identity }} paused={paused} refresh={refresh} />
     </Stack>
   );
@@ -118,10 +128,52 @@ export function WorkPage({
               ]
         }
       />
-      <p className="cds--type-label-01 monitor-muted">
-        {records.length} retained {indexing ? "index requests" : "queries"} ·
-        Limit 100
-      </p>
+      <ListFilters
+        id={indexing ? "index-requests" : "queries"}
+        options={options}
+        onChange={onOptionsChange}
+        placeholder={
+          indexing
+            ? "Search requests or repositories"
+            : "Search queries or repositories"
+        }
+        states={(indexing
+          ? [
+              "queued",
+              "running",
+              "pausing",
+              "paused",
+              "cancelling",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "interrupted",
+            ]
+          : ["queued", "active", "terminal"]
+        ).map((state) => [
+          state,
+          state === "terminal"
+            ? "Finished"
+            : state.replace(/^./, (letter) => letter.toUpperCase()),
+        ])}
+        sorts={
+          indexing
+            ? [
+                ["priority", "Status priority"],
+                ["created_at", "Created"],
+                ["updated_at", "Last updated"],
+                ["root", "Repository"],
+                ["state", "Status"],
+              ]
+            : [
+                ["priority", "Status priority"],
+                ["started_at", "Started"],
+                ["query", "Query"],
+                ["total_seconds", "Duration"],
+                ["state", "Status"],
+              ]
+        }
+      />
       {mobile ? (
         <Accordion size="lg" className="monitor-mobile-work">
           {rows.map((row) => {
@@ -132,10 +184,8 @@ export function WorkPage({
               <AccordionItem
                 key={row.id}
                 data-work-id={row.id}
-                open={expanded === row.id}
-                onHeadingClick={() =>
-                  setExpanded(expanded === row.id ? undefined : row.id)
-                }
+                open={expanded.has(row.id)}
+                onHeadingClick={() => toggle(row.id)}
                 title={
                   <Stack gap={3} className="monitor-work-title">
                     <Status state={text(record.outcome, row.state)} />
@@ -146,14 +196,14 @@ export function WorkPage({
                   </Stack>
                 }
               >
-                {expanded === row.id && detail(record, row.id)}
+                {expanded.has(row.id) && detail(record, row.id)}
               </AccordionItem>
             );
           })}
         </Accordion>
       ) : (
         <div className="monitor-table-window monitor-desktop-work">
-          <DataTable rows={rows} headers={headers} size="lg" isSortable>
+          <DataTable rows={rows} headers={headers} size="lg">
             {({
               rows,
               headers,
@@ -190,6 +240,8 @@ export function WorkPage({
                       <Fragment key={key}>
                         <TableExpandRow
                           {...props}
+                          isExpanded={expanded.has(row.id)}
+                          onExpand={() => toggle(row.id)}
                           aria-label={`Expand ${indexing ? "index request" : "query"} ${row.id}`}
                         >
                           <TableCell>
@@ -208,8 +260,11 @@ export function WorkPage({
                           <TableCell>{row.cells[2].value}</TableCell>
                           <TableCell>{row.cells[3].value}</TableCell>
                         </TableExpandRow>
-                        {row.isExpanded && (
-                          <TableExpandedRow colSpan={5}>
+                        {expanded.has(row.id) && (
+                          <TableExpandedRow
+                            colSpan={5}
+                            className="monitor-request-expansion"
+                          >
                             {detail(record, row.id)}
                           </TableExpandedRow>
                         )}
@@ -225,6 +280,22 @@ export function WorkPage({
       {!rows.length && (
         <p className="monitor-empty">No {label.toLowerCase()} to show.</p>
       )}
+      <Pagination
+        className="monitor-work-pagination"
+        id={`${kind}-pagination`}
+        page={options.page}
+        pageSize={options.pageSize}
+        pageSizes={[10, 25, 50, 100]}
+        totalItems={data?.matched ?? records.length}
+        itemsPerPageText="Requests per page"
+        onChange={({ page, pageSize }) =>
+          onOptionsChange({
+            ...options,
+            page: pageSize === options.pageSize ? page : 1,
+            pageSize,
+          })
+        }
+      />
     </Stack>
   );
 }

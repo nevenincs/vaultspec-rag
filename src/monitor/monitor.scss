@@ -108,6 +108,21 @@ body {
   outline-offset: -2px;
 }
 
+// Keep the right-pointing Carbon disclosure icons aligned with their state.
+.monitor-root .cds--table-expand__button > .cds--table-expand__svg,
+.monitor-root .cds--accordion__heading > .cds--accordion__arrow {
+  transform: rotate(0deg);
+}
+
+.monitor-root
+  .cds--table-expand__button[aria-expanded="true"]
+  > .cds--table-expand__svg,
+.monitor-root
+  .cds--accordion__heading[aria-expanded="true"]
+  > .cds--accordion__arrow {
+  transform: rotate(90deg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -127,7 +142,44 @@ body {
   padding-inline: 0;
 }
 .monitor-expanded {
-  padding: spacing.$spacing-05;
+  padding: 0;
+}
+
+.monitor-root .monitor-nested-table {
+  margin: 0;
+}
+.monitor-root .monitor-nested-table th,
+.monitor-root .monitor-nested-table td {
+  padding-inline: spacing.$spacing-05;
+}
+.monitor-root .cds--data-table tr.cds--expandable-row[data-child-row] > td,
+.monitor-root
+  .cds--data-table
+  tr.cds--expandable-row[data-child-row]
+  > td
+  > .cds--child-row-inner-container {
+  padding: 0;
+  margin: 0;
+}
+// Expanded-row indentation must not cascade into nested table cells.
+.monitor-root .cds--data-table .cds--data-table > tbody > tr > td,
+.monitor-root .cds--data-table .cds--data-table > thead > tr > th {
+  padding-inline: spacing.$spacing-05;
+}
+.monitor-root .monitor-data-details {
+  padding: 0;
+  margin: 0;
+}
+.monitor-request-summary,
+.monitor-list-filters {
+  padding-inline: 0;
+  align-items: end;
+}
+.monitor-request-details section > h3 {
+  margin-block-end: spacing.$spacing-03;
+}
+.monitor-root .monitor-mobile-work .cds--accordion__content {
+  padding-inline: 0;
 }
 .monitor-value {
   white-space: pre-wrap;
@@ -209,7 +261,7 @@ html {
     gap: spacing.$spacing-05;
   }
   .monitor-expanded {
-    padding: spacing.$spacing-03;
+    padding: 0;
   }
   .monitor-work-title {
     overflow-wrap: anywhere;

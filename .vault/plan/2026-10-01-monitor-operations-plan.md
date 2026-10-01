@@ -12,7 +12,7 @@ related:
   - '[[2026-07-14-storage-namespace-hygiene-adr]]'
 modified: '2026-10-01'
 body_schema: body-v2
-body_hash: 'sha256:29923c21c331244784aac1a7712c6453ba4f40e86f8b69c040d30437947e765d'
+body_hash: 'sha256:faabda5e409d72502f1718e95239a57bef0c763a0e58fcfd4a6a994dbc85e69e'
 ---
 
 <!-- RETIRED: S02 -->
@@ -33,6 +33,7 @@ User clarifications: Dashboard is the opening service/system overview; Index Req
 - [x] `S03` - Build and verify separate Carbon dashboard and operational pages with relational evidence; `src/monitor frontend components/styles, package.json/package-lock.json and rendered browser checks`.
 - [x] `S04` - Verify and review integrated operator workflows and checkpoint results; `monitor covering checks, vault execution and audit records`.
 - [x] `S05` - Repair theme switching, collapsible navigation, canonical service-state presentation and responsive mobile workflows; verify rendered interactions and notification colors; `src/monitor shell, controls, styles, tables and lifecycle bridge, package.json/package-lock.json, dev/monitor-browser.mjs, browser and bridge tests`.
+- [x] `S06` - Correct disclosure direction and preserve expansion through polling, replace split-pane request envelopes with readable inline details, remove all nested wrapper spacing, support numeric sorting and paginated filtered request/log lists, and keep repository/storage inventory available without the daemon; `src/monitor, canonical service list/log and persisted inventory owners, corresponding backend and rendered tests`.
 
 ## Parallelization
 

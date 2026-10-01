@@ -70,7 +70,7 @@ export function InventoryPage({
       ]
     : [
         { key: "root", header: "Repository / worktree" },
-        { key: "status", header: "Enrollment" },
+        { key: "status", header: "Status" },
         { key: "watching", header: "Watcher" },
         { key: "resident", header: "Resident seats" },
       ];
@@ -80,14 +80,21 @@ export function InventoryPage({
     status: storage
       ? text(row.status)
       : row.enrolled === true
-        ? "Enrolled"
+        ? "Added"
         : "Discovered worktree",
-    size: bytes(row.footprint_bytes),
-    points: `${row.points_verified === false ? "≥ " : ""}${reading(row.points)}`,
-    watching: row.watching === true ? "Watching" : "Inactive",
+    size: typeof row.footprint_bytes === "number" ? row.footprint_bytes : -1,
+    points: typeof row.points === "number" ? row.points : -1,
+    watching:
+      row.watching === null
+        ? "Service offline"
+        : row.watching === true
+          ? "Watching"
+          : "Inactive",
     resident: row.resident
       ? `${reading(object(row.resident).ref_count)} active references`
-      : "Not resident",
+      : observation.data?.live_available === false
+        ? "Service offline"
+        : "Not resident",
   }));
   const act = async (path: string, body?: RecordValue) => {
     if (pending) return;
@@ -131,7 +138,17 @@ export function InventoryPage({
         typeof row.footprint_bytes === "number" && row.footprint_bytes > 0,
     )
     .map((row) => ({
-      group: text(row.root, text(row.prefix)),
+      group:
+        text(
+          row.project_name,
+          text(
+            row.name,
+            text(row.root, text(row.repository_root, text(row.prefix))),
+          ),
+        )
+          .replace(/[\\/]+$/, "")
+          .split(/[\\/]+/)
+          .at(-1) || "Unnamed project",
       value: Number(row.footprint_bytes) / 1024 ** 3,
     }));
   return (
@@ -154,10 +171,16 @@ export function InventoryPage({
               : setEnroll(true)
           }
         >
-          {storage ? "Refresh storage survey" : "Enroll repository"}
+          {storage ? "Refresh storage" : "Add repository"}
         </Button>
       </Stack>
       <Evidence observation={observation} paused={paused} />
+      {observation.data?.live_available === false && (
+        <p className="cds--type-label-01 monitor-muted">
+          Showing saved repositories and storage on disk. Live usage is
+          available when the service is running.
+        </p>
+      )}
       {feedback && (
         <InlineNotification
           lowContrast
@@ -185,7 +208,7 @@ export function InventoryPage({
           }}
         />
       )}
-      {!storage && (
+      {!storage && Boolean(observation.data?.seats) && (
         <DataTree
           value={object(observation.data?.seats)}
           label="Service seats"
@@ -237,7 +260,15 @@ export function InventoryPage({
                       >
                         {row.cells.map((cell) => (
                           <TableCell key={cell.id}>
-                            <span className="monitor-value">{cell.value}</span>
+                            <span className="monitor-value">
+                              {cell.info.header === "size"
+                                ? bytes(record.footprint_bytes)
+                                : cell.info.header === "points"
+                                  ? record.points === null
+                                    ? "Service offline"
+                                    : `${record.points_verified === false ? "≥ " : ""}${reading(record.points)}`
+                                  : cell.value}
+                            </span>
                           </TableCell>
                         ))}
                       </TableExpandRow>
@@ -280,15 +311,17 @@ export function InventoryPage({
           )}
         </DataTable>
       </div>
-      {!records.length && (
+      {!records.length && !observation.error && observation.data && (
         <p className="monitor-empty">
-          No {storage ? "storage namespaces" : "repository paths"} reported.
+          {storage
+            ? "No storage namespaces found on disk."
+            : "No repositories have been added."}
         </p>
       )}
       <Modal
         open={enroll}
-        modalHeading="Enroll repository"
-        primaryButtonText={pending ? "Enrolling…" : "Enroll"}
+        modalHeading="Add repository"
+        primaryButtonText={pending ? "Adding…" : "Add repository"}
         primaryButtonDisabled={pending || !root.trim()}
         secondaryButtonText="Cancel"
         onRequestClose={() => setEnroll(false)}
@@ -300,7 +333,7 @@ export function InventoryPage({
           <InlineNotification
             lowContrast
             kind="error"
-            title="Enrollment failed"
+            title="Could not add repository"
             subtitle={feedback.message}
             hideCloseButton
           />

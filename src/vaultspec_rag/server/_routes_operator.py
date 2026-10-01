@@ -28,7 +28,7 @@ _DEFAULT_LIMIT = 200
 _MAX_LIMIT = 1000
 
 
-def _inventory_limit(raw: str | None) -> int:
+def inventory_limit(raw: str | None) -> int:
     try:
         value = int(raw) if raw is not None else _DEFAULT_LIMIT
     except ValueError:
@@ -106,7 +106,7 @@ def _repository_row(
     common: Path | None,
     entry: ManifestEntry | None,
     slot: dict[str, Any] | None,
-    watching: bool,
+    watching: bool | None,
 ) -> dict[str, object]:
     repository_root = (
         common.parent if common is not None and common.name == ".git" else None
@@ -132,12 +132,16 @@ def _repository_row(
 
 
 def repository_inventory(
-    registry: ServiceRegistry, *, root: str | None, limit: int
+    registry: ServiceRegistry | None, *, root: str | None, limit: int
 ) -> dict[str, object]:
     """Join existing manifest, slot, watcher and Git facts without opening stores."""
     entries = {Path(entry.root): entry for entry in load_manifest().values()}
-    slots = {Path(str(slot["root"])): slot for slot in registry.snapshot()}
-    watching = _watching_roots()
+    slots = (
+        {Path(str(slot["root"])): slot for slot in registry.snapshot()}
+        if registry is not None
+        else {}
+    )
+    watching: set[Path] = _watching_roots() if registry is not None else set()
     roots = set(entries) | set(slots) | watching
     families, discovery_truncated = _discover_families(roots)
     target = Path(root).resolve() if root is not None else None
@@ -148,7 +152,7 @@ def repository_inventory(
             families[path] if path in families else git_common_dir(path),
             entries.get(path),
             slots.get(path),
-            path in watching,
+            path in watching if registry is not None else None,
         )
         for path in selected[:limit]
     ]
@@ -159,6 +163,8 @@ def repository_inventory(
         "limit": limit,
         "truncated": len(selected) > limit,
         "discovery_truncated": discovery_truncated,
+        "source": "live" if registry is not None else "persisted",
+        "live_available": registry is not None,
         "seats": {
             "projects": {
                 "used": len(slots),
@@ -166,7 +172,9 @@ def repository_inventory(
                 "leases_held": sum(int(slot["ref_count"]) for slot in slots.values()),
             },
             **limiter_stats(),
-        },
+        }
+        if registry is not None
+        else None,
     }
 
 
@@ -197,7 +205,7 @@ async def repositories_route(request: Request) -> JSONResponse:
             repository_inventory,
             get_request_runtime(request).registry,
             root=root,
-            limit=_inventory_limit(request.query_params.get("limit")),
+            limit=inventory_limit(request.query_params.get("limit")),
         )
     )
     return JSONResponse(result)

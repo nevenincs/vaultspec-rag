@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from ..storage_survey import NamespaceSurvey
 
 __all__ = [
+    "_STORAGE_SURVEY_STATUSES",
+    "_SurveyPayloadRequest",
     "_clamp_survey_limit",
     "_fetch_surveys",
     "_gather_storage_survey",
@@ -156,16 +158,22 @@ def _shape_survey_payload(request: _SurveyPayloadRequest) -> dict[str, Any]:
     )
     bounded = surveys[: request.limit]
     generations = _generation_reports(bounded)
+    namespaces = [_namespace_entry(s, generations.get(s.root or "")) for s in bounded]
+    totals = _backend_rollup(request.surveys)
+    if request.source == "disk":
+        count_fields = ("points", "vault_points", "code_points", "document_points")
+        for namespace in namespaces:
+            namespace.update(dict.fromkeys(count_fields))
+        totals.update(dict.fromkeys(count_fields))
     payload: dict[str, object] = {
-        "namespaces": [
-            _namespace_entry(s, generations.get(s.root or "")) for s in bounded
-        ],
+        "namespaces": namespaces,
         "returned": len(bounded),
         "total": len(surveys),
         "limit": request.limit,
         "computed_at": request.computed_at,
         "source": request.source,
-        "totals": _backend_rollup(request.surveys),
+        "live_available": request.source != "disk",
+        "totals": totals,
     }
     if queried_root is not None:
         payload["queried_root"] = queried_root

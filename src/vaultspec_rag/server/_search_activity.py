@@ -9,6 +9,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+from .._operator_lists import list_offset, list_order
 from .._search_state import SearchWaitCause, WaitObservation
 from ._search_evidence import (
     MAX_LEDGER_EVIDENCE_BYTES,
@@ -27,7 +28,6 @@ __all__ = [
     "DEFAULT_MAX_QUEUED_SEARCHES",
     "DEFAULT_MAX_RECENT_SEARCHES",
     "DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS",
-    "DEFAULT_SEARCH_ACTIVITY_ROWS",
     "MAX_SEARCH_ACTIVITY_QUERY_CHARS",
     "SearchActivityAdmissionError",
     "SearchActivityCompletion",
@@ -43,15 +43,6 @@ DEFAULT_MAX_RECENT_SEARCHES = 512
 DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS = 30.0
 MAX_SEARCH_ACTIVITY_QUERY_CHARS = 10_000
 
-#: Rows an unfiltered activity read returns when the caller names no limit.
-#:
-#: The retention bounds above are a memory ceiling, not a response size: all
-#: 1280 records carrying queries of the length allowed above serialize to
-#: several megabytes, built in one pass while every other route waits. An
-#: operator list is bounded by default and widened on request, so the ceiling
-#: is what the caller asked for rather than what the ledger happens to hold.
-DEFAULT_SEARCH_ACTIVITY_ROWS = 200
-
 type ActivityState = Literal["queued", "active", "terminal"]
 
 
@@ -62,9 +53,12 @@ class _SearchActivityFilters(TypedDict):
     request_id: str | None
     since: float | None
     limit: int | None
+    query: str | None
+    outcome: str | None
 
 
 class _SearchActivitySnapshot(TypedDict):
+    records: list[dict[str, object]]
     queued: list[dict[str, object]]
     queued_count: int
     active: list[dict[str, object]]
@@ -73,6 +67,12 @@ class _SearchActivitySnapshot(TypedDict):
     all_counts: dict[str, int]
     returned: int
     filters: _SearchActivityFilters
+    matched: int
+    offset: int
+    limit: int | None
+    sort: str
+    order: str
+    has_more: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +117,11 @@ class SearchActivityFilters:
     request_id: str | None = None
     since: float | None = None
     limit: int | None = None
+    offset: int = 0
+    query: str | None = None
+    outcome: str | None = None
+    sort: str = "priority"
+    order: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,45 +510,43 @@ class SearchActivityLedger:
                 **counts,
                 "total": len(queued) + counts["total"],
             }
-        active_matches = _filter_records(
-            active,
+        matches = _sort_records(
+            _filter_records(queued + active + recent, selected_filters),
             selected_filters,
         )
-        queued_matches = _filter_records(
-            queued,
-            selected_filters,
-        )
-        recent_matches = _filter_records(
-            recent,
-            selected_filters,
-        )
+        matched = len(matches)
+        matches = matches[selected_filters.offset :]
         if selected_filters.limit is not None:
-            queued_matches = queued_matches[: selected_filters.limit]
-            remaining = max(0, selected_filters.limit - len(queued_matches))
-            active_matches = active_matches[:remaining]
-            remaining = max(0, remaining - len(active_matches))
-            recent_matches = recent_matches[:remaining]
+            matches = matches[: selected_filters.limit]
+        shaped_matches = [
+            _serialise_queued(
+                record, now=time.perf_counter(), include_query=include_query
+            )
+            if record.state == "queued"
+            else record.serialise(include_query=include_query)
+            for record in matches
+        ]
         return {
+            "records": shaped_matches,
             "queued": [
-                _serialise_queued(
-                    record,
-                    now=time.perf_counter(),
-                    include_query=include_query,
-                )
-                for record in queued_matches
+                record for record in shaped_matches if record["state"] == "queued"
             ],
             "queued_count": len(queued),
             "active": [
-                record.serialise(include_query=include_query)
-                for record in active_matches
+                record for record in shaped_matches if record["state"] == "active"
             ],
             "recent": [
-                record.serialise(include_query=include_query)
-                for record in recent_matches
+                record for record in shaped_matches if record["state"] == "terminal"
             ],
             "counts": counts,
             "all_counts": all_counts,
-            "returned": len(queued_matches) + len(active_matches) + len(recent_matches),
+            "returned": len(matches),
+            "matched": matched,
+            "offset": selected_filters.offset,
+            "limit": selected_filters.limit,
+            "sort": selected_filters.sort,
+            "order": selected_filters.order or "asc",
+            "has_more": selected_filters.offset + len(matches) < matched,
             "filters": {
                 "state": selected_filters.state,
                 "type": selected_filters.search_type,
@@ -551,6 +554,8 @@ class SearchActivityLedger:
                 "request_id": selected_filters.request_id,
                 "since": selected_filters.since,
                 "limit": selected_filters.limit,
+                "query": selected_filters.query,
+                "outcome": selected_filters.outcome,
             },
         }
 
@@ -695,6 +700,17 @@ def _normalise_limit(value: object | None) -> int | None:
 
 def _normalise_filters(filters: SearchActivityFilters) -> SearchActivityFilters:
     """Normalize one route-provided filter object before taking the lock."""
+    sort = filters.sort.strip().lower()
+    if sort not in {
+        "priority",
+        "started_at",
+        "total_seconds",
+        "state",
+        "type",
+        "root",
+        "query",
+    }:
+        sort = "priority"
     return SearchActivityFilters(
         state=_normalise_state(filters.state),
         search_type=_normalise_filter(filters.search_type),
@@ -702,6 +718,13 @@ def _normalise_filters(filters: SearchActivityFilters) -> SearchActivityFilters:
         request_id=_normalise_filter(filters.request_id),
         since=_normalise_since(filters.since),
         limit=_normalise_limit(filters.limit),
+        offset=list_offset(filters.offset),
+        query=(_normalise_filter(filters.query) or "").casefold() or None,
+        outcome=(_normalise_filter(filters.outcome) or "").lower() or None,
+        sort=sort,
+        order=list_order(
+            filters.order, default="asc" if sort == "priority" else "desc"
+        ),
     )
 
 
@@ -717,4 +740,38 @@ def _filter_records(
         and (filters.root is None or record.root == filters.root)
         and (filters.request_id is None or record.request_id == filters.request_id)
         and (filters.since is None or record.started_at >= filters.since)
+        and (filters.outcome is None or record.outcome == filters.outcome)
+        and (
+            filters.query is None
+            or filters.query
+            in " ".join(
+                value or ""
+                for value in (
+                    record.query,
+                    record.request_id,
+                    record.root,
+                    record.error_message,
+                )
+            ).casefold()
+        )
     ]
+
+
+def _sort_records(
+    records: list[_SearchActivity], filters: SearchActivityFilters
+) -> list[_SearchActivity]:
+    if filters.sort == "priority":
+        return records if filters.order == "asc" else list(reversed(records))
+
+    def key(record: _SearchActivity) -> tuple[str | float, str]:
+        values: dict[str, str | float] = {
+            "started_at": record.started_at,
+            "total_seconds": record.total_seconds or 0.0,
+            "state": record.state,
+            "type": record.source,
+            "root": (record.root or "").casefold(),
+            "query": record.query.casefold(),
+        }
+        return values[filters.sort], record.request_id
+
+    return sorted(records, key=key, reverse=filters.order == "desc")

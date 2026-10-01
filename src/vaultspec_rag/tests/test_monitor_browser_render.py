@@ -153,8 +153,27 @@ def _expand(browser: Browser, kind: str, identity: str) -> None:
     selector = json.dumps(
         f'button[aria-label="{label}"], [data-work-id="{identity}"] button'
     )
+    _expand_button(browser, selector)
+
+
+def _expand_button(browser: Browser, selector: str) -> None:
     browser.wait(f"!!document.querySelector({selector})")
+    direction = (
+        "(() => { const button = document.querySelector("
+        + selector
+        + "); const matrix = new DOMMatrix(getComputedStyle("
+        "button.querySelector('svg')).transform); "
+        "return button.getAttribute('aria-expanded') === 'true' "
+        "? Math.abs(matrix.a) < 0.01 && Math.abs(matrix.b - 1) < 0.01 "
+        ": Math.abs(matrix.a - 1) < 0.01 && Math.abs(matrix.b) < 0.01; })()"
+    )
+    assert browser.evaluate(direction), "Collapsed chevrons must point right"
     browser.evaluate(f"document.querySelector({selector}).click()")
+    browser.wait(direction)
+    browser.evaluate(f"document.querySelector({selector}).click()")
+    browser.wait(direction)
+    browser.evaluate(f"document.querySelector({selector}).click()")
+    browser.wait(direction)
 
 
 def _check_retention(
@@ -428,26 +447,55 @@ def test_carbon_relational_query_results_and_enrollment_validation(
         completion=SearchActivityCompletion(
             "succeeded",
             200,
-            result_count=1,
-            response={"results": [{"path": "src/example.py", "score": 0.95}]},
+            result_count=2,
+            response={
+                "results": [
+                    {
+                        "path": "src/example.py",
+                        "score": 0.95,
+                        "size": 145000,
+                        "metadata": {"language": "python"},
+                    },
+                    {"path": "src/small.py", "score": 0.1, "size": 150},
+                ]
+            },
         ),
     )
     _page(browser, "queries")
     _expand(browser, "query", request_id)
-    browser.wait("document.body.innerText.includes('response')")
-    browser.evaluate(
-        "[...document.querySelectorAll('[role=treeitem]')].find(item => "
-        "item.textContent.trim().startsWith('response')).click()"
-    )
-    browser.wait("!!document.querySelector('button[aria-label=\"Expand results\"]')")
-    browser.evaluate(
-        "document.querySelector('button[aria-label=\"Expand results\"]').click()"
-    )
     browser.wait("document.body.innerText.includes('src/example.py')")
     assert browser.evaluate("document.body.innerText.includes('0.95')") is True
+    browser.evaluate(
+        '[...document.querySelectorAll(\'table[aria-label="Query results"] '
+        "th button')]"
+        ".find(button => button.textContent.trim() === 'size').click()"
+    )
+    browser.wait(
+        "document.querySelector('table[aria-label=\"Query results\"] > tbody > tr')"
+        ".innerText.includes('src/small.py')"
+    )
+    browser.evaluate(
+        '[...document.querySelectorAll(\'table[aria-label="Query results"] '
+        "th button')]"
+        ".find(button => button.textContent.trim() === 'size').click()"
+    )
+    browser.wait(
+        "document.querySelector('table[aria-label=\"Query results\"] > tbody > tr')"
+        ".innerText.includes('src/example.py')"
+    )
+    _expand_button(browser, json.dumps('button[aria-label="Expand 1"]'))
+    _expand_button(browser, json.dumps('button[aria-label="Expand metadata"]'))
+    browser.wait("document.body.innerText.includes('python')")
+    assert browser.evaluate("document.querySelector('[role=tree]') === null")
+    assert browser.evaluate(
+        "[...document.querySelectorAll('tr[data-child-row] > td, "
+        "tr[data-child-row] > td > .cds--child-row-inner-container')].every(node => "
+        "getComputedStyle(node).padding === '0px' && "
+        "getComputedStyle(node).margin === '0px')"
+    ), "Every nested expansion container must have zero padding and margin"
     _page(browser, "repositories")
-    browser.wait("document.body.innerText.includes('Enroll repository')")
-    _click(browser, "Enroll repository")
+    browser.wait("document.body.innerText.includes('Add repository')")
+    _click(browser, "Add repository")
     browser.evaluate(
         "(() => { const input = document.querySelector('#repository-root'); "
         "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')"
@@ -456,14 +504,95 @@ def test_carbon_relational_query_results_and_enrollment_validation(
     )
     browser.wait(
         "[...document.querySelectorAll('[role=dialog] button')].some(button => "
-        "button.textContent === 'Enroll' && !button.disabled)"
+        "button.textContent === 'Add repository' && !button.disabled)"
     )
-    _click(browser, "Enroll")
+    browser.evaluate(
+        "[...document.querySelectorAll('[role=dialog] button')].find(button => "
+        "button.textContent === 'Add repository').click()"
+    )
     browser.wait(
         "[...document.querySelectorAll('[role=dialog]')].some(dialog => "
-        "dialog.innerText.includes('Enrollment failed'))"
+        "dialog.innerText.includes('Could not add repository'))"
     )
     assert cast("dict[str, object]", browser.command("evidence"))["errors"] == []
+
+
+def test_request_details_stay_open_and_lists_are_pageable(
+    rendered_monitor: Browser, monitor_http: tuple[int, Path]
+) -> None:
+    browser = rendered_monitor
+    _, directory = monitor_http
+    job_id = record_start(JobSource.CODE, "tool", project_root=directory)
+    _page(browser, "indexing")
+    _expand(browser, "index request", job_id)
+    browser.evaluate(
+        "window.openDetails = document.querySelector('.monitor-request-details'); true"
+    )
+    browser.evaluate(
+        "[...document.querySelectorAll('.monitor-request-details button')].find(button "
+        "=> button.textContent.includes('Timing and diagnostics')).click()"
+    )
+    _expand_button(browser, json.dumps('button[aria-label="Expand runtime"]'))
+    record_finish(job_id, result="Indexing finished while open")
+    browser.wait("document.body.innerText.includes('Indexing finished while open')")
+    assert browser.evaluate(
+        "window.openDetails === document.querySelector('.monitor-request-details')"
+    ), "Polling must not replace an open request detail view"
+    assert browser.evaluate(
+        "document.querySelector('button[aria-label=\"Expand runtime\"]')"
+        ".getAttribute('aria-expanded') === 'true'"
+    ), "Polling must preserve nested expansion state"
+    for index in range(27):
+        other = record_start(
+            JobSource.CODE, "tool", project_root=directory / f"project-{index:02}"
+        )
+        record_finish(other, result=f"Finished {index:02}")
+    browser.evaluate(
+        "(() => { const input = document.querySelector('#index-requests-search'); "
+        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')"
+        f".set.call(input, {json.dumps(str(directory))}); "
+        "input.dispatchEvent(new Event('input', {bubbles:true})); })()"
+    )
+    browser.wait(
+        "document.querySelector('.monitor-work-pagination')"
+        ".innerText.includes('28 items')"
+    )
+    browser.wait(
+        "!document.querySelector('.monitor-work-pagination "
+        ".cds--pagination__button--forward').disabled"
+    )
+    browser.evaluate(
+        "document.querySelector('.monitor-work-pagination "
+        ".cds--pagination__button--forward').click()"
+    )
+    browser.wait(
+        "document.querySelectorAll('.monitor-work-table > tbody > "
+        "tr[data-parent-row]').length === 3"
+    )
+    browser.evaluate(
+        "(() => { const input = document.querySelector('#index-requests-search'); "
+        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')"
+        ".set.call(input, 'project-19'); "
+        "input.dispatchEvent(new Event('input', {bubbles:true})); })()"
+    )
+    browser.wait(
+        "document.querySelectorAll('.monitor-work-table > tbody > "
+        "tr[data-parent-row]').length === 1"
+    )
+    assert browser.evaluate(
+        "document.querySelector('.monitor-work-table').innerText.includes('project-19')"
+    )
+    path = directory / get_config().log_file
+    path.write_text(
+        "".join(f"pageable-log-{index:03}\n" for index in range(60)), encoding="utf-8"
+    )
+    _page(browser, "logs")
+    browser.wait("document.body.innerText.includes('pageable-log-059')")
+    browser.evaluate(
+        "document.querySelector('button[aria-label=\"Older log records\"]').click()"
+    )
+    browser.wait("document.body.innerText.includes('pageable-log-010')")
+    assert not browser.evaluate("document.body.innerText.includes('pageable-log-059')")
 
 
 def test_carbon_stopped_service_and_theme_notifications(

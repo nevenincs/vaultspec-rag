@@ -512,6 +512,8 @@ def test_search_activity_filters_active_and_recent_records() -> None:
         "request_id": None,
         "since": None,
         "limit": 1,
+        "query": None,
+        "outcome": None,
     }
 
     active = ledger.snapshot(

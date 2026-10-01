@@ -1,9 +1,5 @@
 import { Fragment, useId, useState } from "react";
 import {
-  Column,
-  DataTable,
-  Grid,
-  Stack,
   Table,
   TableBody,
   TableCell,
@@ -13,186 +9,174 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TreeNode,
-  TreeView,
 } from "@carbon/react";
-import { diagnostic, object } from "./model";
+import { compareValues, object } from "./model";
 
-function scalar(value: unknown): string {
-  if (value === null) return "Not reported";
-  if (value === undefined) return "Not reported";
-  if (typeof value === "object")
-    return Array.isArray(value)
-      ? `${value.length} records`
-      : `${Object.keys(object(value)).length} fields`;
+function display(value: unknown): string {
+  if (value === null || value === undefined) return "Not reported";
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") return `${Object.keys(value).length} fields`;
+  if (typeof value === "boolean") return value ? "Yes" : "No";
   return String(value);
 }
 
-function ValueTable({ value, label }: { value: unknown; label: string }) {
-  const entries = Array.isArray(value)
-    ? value.map((item, index) => [String(index + 1), item] as const)
-    : Object.entries(object(value));
-  const tabular =
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((item) => Object.keys(object(item)).length > 0);
-  const columns = tabular
-    ? [...new Set(value.flatMap((item) => Object.keys(object(item))))].slice(
-        0,
-        8,
-      )
-    : [];
-  const headers = tabular
-    ? columns.map((key, index) => ({
-        key: `column${index}`,
-        header: key.replaceAll("_", " "),
-      }))
-    : [
-        { key: "field", header: Array.isArray(value) ? "Record" : "Field" },
-        { key: "value", header: "Value" },
-      ];
-  const rows = entries.map(([key, item]) => ({
-    id: key,
-    field: key.replaceAll("_", " "),
-    value: typeof item === "number" ? diagnostic(key, item) : scalar(item),
-    ...Object.fromEntries(
-      columns.map((column, index) => [
-        `column${index}`,
-        typeof object(item)[column] === "number"
-          ? diagnostic(column, object(item)[column])
-          : scalar(object(item)[column]),
-      ]),
-    ),
-  }));
-  if (!entries.length)
-    return (
-      <p className="monitor-empty">
-        {typeof value === "object" ? "No records reported." : scalar(value)}
-      </p>
-    );
-  return (
-    <DataTable rows={rows} headers={headers} size="sm">
-      {({ rows, headers, getTableProps, getRowProps, getHeaderProps }) => (
-        <Table {...getTableProps()} aria-label={label}>
-          <TableHead>
-            <TableRow>
-              <TableExpandHeader />
-              <>
-                {headers.map((header) => {
-                  const { key, ...props } = getHeaderProps({ header });
-                  return (
-                    <TableHeader key={key} {...props}>
-                      {header.header}
-                    </TableHeader>
-                  );
-                })}
-              </>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map((row) => {
-              const item = entries.find(([key]) => key === row.id)?.[1];
-              const nested = item !== null && typeof item === "object";
-              const { key, ...props } = getRowProps({ row });
-              return (
-                <Fragment key={key}>
-                  {nested ? (
-                    <TableExpandRow {...props} aria-label={`Expand ${row.id}`}>
-                      {row.cells.map((cell) => (
-                        <TableCell key={cell.id}>
-                          <span className="monitor-value">{cell.value}</span>
-                        </TableCell>
-                      ))}
-                    </TableExpandRow>
-                  ) : (
-                    <TableRow>
-                      <TableCell />
-                      {row.cells.map((cell) => (
-                        <TableCell key={cell.id}>
-                          <span className="monitor-value">{cell.value}</span>
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  )}
-                  {row.isExpanded && nested && (
-                    <TableExpandedRow colSpan={headers.length + 1}>
-                      <ValueTable value={item} label={`${label} / ${row.id}`} />
-                    </TableExpandedRow>
-                  )}
-                </Fragment>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-    </DataTable>
-  );
-}
-
-/** A structural tree and its nested table share the same parent record. */
-export function DataTree({
-  value,
-  label,
-  initialPath = [],
-}: {
-  value: unknown;
-  label: string;
-  initialPath?: string[];
-}) {
+/** One inline hierarchy; expansion belongs to the field path, not a poll result. */
+export function DataTree({ value, label }: { value: unknown; label: string }) {
   const id = useId();
-  const [path, setPath] = useState<string[]>(initialPath);
-  let selected: unknown = value;
-  for (const part of path)
-    selected = Array.isArray(selected)
-      ? selected[Number(part)]
-      : object(selected)[part];
-  const nodes = (item: unknown, trail: string[], depth: number) => {
-    if (depth > 5 || item === null || typeof item !== "object") return null;
-    return Object.entries(item)
-      .filter(([, child]) => child !== null && typeof child === "object")
-      .slice(0, 100)
-      .map(([key, child]) => {
-        const next = [...trail, key];
-        return (
-          <TreeNode
-            key={key}
-            id={`${id}-${JSON.stringify(next)}`}
-            label={`${key.replaceAll("_", " ")}${Array.isArray(child) ? ` (${child.length})` : ""}`}
-            onSelect={() => setPath(next)}
-          >
-            {nodes(child, next, depth + 1)}
-          </TreeNode>
-        );
-      });
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [sorting, setSorting] = useState<
+    Record<string, { key: string; direction: "ASC" | "DESC" }>
+  >({});
+  const toggle = (key: string) =>
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const table = (data: unknown, path: string[], title: string) => {
+    if (data === null || typeof data !== "object")
+      return <p className="monitor-value">{display(data)}</p>;
+    const entries = Object.entries(data);
+    if (!entries.length) return <p className="monitor-muted">No items.</p>;
+    const records =
+      Array.isArray(data) &&
+      data.every(
+        (item) =>
+          item !== null && typeof item === "object" && !Array.isArray(item),
+      );
+    const columns = records
+      ? [...new Set(data.flatMap((item) => Object.keys(object(item))))]
+          .filter((key) =>
+            data.some(
+              (item) =>
+                object(item)[key] !== null &&
+                typeof object(item)[key] !== "object",
+            ),
+          )
+          .slice(0, 8)
+      : [];
+    const needsDetails = (item: unknown) =>
+      item !== null &&
+      typeof item === "object" &&
+      (!columns.length ||
+        Object.keys(item).some((key) => !columns.includes(key)) ||
+        Object.values(item).some(
+          (value) => value !== null && typeof value === "object",
+        ));
+    const hasChildren = entries.some(([, item]) => needsDetails(item));
+    const headers = columns.length
+      ? columns
+      : [Array.isArray(data) ? "Item" : "Field", "Value"];
+    const tableKey = JSON.stringify(path);
+    const sort = sorting[tableKey];
+    const ordered = sort
+      ? [...entries].sort(([a, left], [b, right]) => {
+          const av = columns.length
+            ? object(left)[sort.key]
+            : sort.key === "Value"
+              ? left
+              : a;
+          const bv = columns.length
+            ? object(right)[sort.key]
+            : sort.key === "Value"
+              ? right
+              : b;
+          return compareValues(av, bv) * (sort.direction === "ASC" ? 1 : -1);
+        })
+      : entries;
+    return (
+      <Table size="sm" aria-label={title} className="monitor-nested-table">
+        <TableHead>
+          <TableRow>
+            {hasChildren && <TableExpandHeader />}
+            {headers.map((key) => (
+              <TableHeader
+                key={key}
+                isSortable
+                isSortHeader={sort?.key === key}
+                sortDirection={sort?.key === key ? sort.direction : "NONE"}
+                onClick={() =>
+                  setSorting((previous) => ({
+                    ...previous,
+                    [tableKey]: {
+                      key,
+                      direction:
+                        sort?.key === key && sort.direction === "ASC"
+                          ? "DESC"
+                          : "ASC",
+                    },
+                  }))
+                }
+              >
+                {key.replaceAll("_", " ")}
+              </TableHeader>
+            ))}
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {ordered.map(([key, item]) => {
+            const identity = JSON.stringify([...path, key]);
+            const open = expanded.has(identity);
+            const nested = needsDetails(item);
+            const rowLabel = Array.isArray(data)
+              ? String(Number(key) + 1)
+              : key.replaceAll("_", " ");
+            const cells = columns.length ? (
+              columns.map((column) => (
+                <TableCell key={column}>
+                  <span className="monitor-value">
+                    {display(object(item)[column])}
+                  </span>
+                </TableCell>
+              ))
+            ) : (
+              <>
+                <TableCell>{rowLabel}</TableCell>
+                <TableCell>
+                  <span className="monitor-value">{display(item)}</span>
+                </TableCell>
+              </>
+            );
+            return (
+              <Fragment key={identity}>
+                {nested ? (
+                  <TableExpandRow
+                    isExpanded={open}
+                    onExpand={() => toggle(identity)}
+                    aria-label={`Expand ${rowLabel}`}
+                    aria-controls={`${id}-${encodeURIComponent(identity)}`}
+                    expandIconDescription={
+                      open ? "Collapse details" : "Expand details"
+                    }
+                  >
+                    {cells}
+                  </TableExpandRow>
+                ) : (
+                  <TableRow>
+                    {hasChildren && <TableCell />}
+                    {cells}
+                  </TableRow>
+                )}
+                {nested && open && (
+                  <TableExpandedRow
+                    id={`${id}-${encodeURIComponent(identity)}`}
+                    colSpan={headers.length + Number(hasChildren)}
+                    className="monitor-nested-expansion"
+                  >
+                    {table(item, [...path, key], `${title} / ${rowLabel}`)}
+                  </TableExpandedRow>
+                )}
+              </Fragment>
+            );
+          })}
+        </TableBody>
+      </Table>
+    );
   };
   return (
-    <Grid narrow className="monitor-grid monitor-relation">
-      <Column sm={4} md={3} lg={4}>
-        <TreeView
-          label={label}
-          size="sm"
-          active={`${id}-${JSON.stringify(path)}`}
-        >
-          <TreeNode
-            id={`${id}-[]`}
-            label={label}
-            isExpanded
-            onSelect={() => setPath([])}
-          >
-            {nodes(value, [], 0)}
-          </TreeNode>
-        </TreeView>
-      </Column>
-      <Column sm={4} md={5} lg={12}>
-        <Stack gap={3}>
-          <p className="cds--type-label-01 monitor-muted">
-            {[label, ...path].join(" / ")}
-          </p>
-          <div className="monitor-table-window">
-            <ValueTable value={selected} label={[label, ...path].join(" / ")} />
-          </div>
-        </Stack>
-      </Column>
-    </Grid>
+    <div className="monitor-table-window monitor-data-details">
+      {table(value, [], label)}
+    </div>
   );
 }

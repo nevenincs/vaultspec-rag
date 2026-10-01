@@ -31,6 +31,7 @@ import { ServiceControls } from "./ServiceControls";
 import { DataTree } from "./DataTree";
 import { InventoryPage } from "./Inventory";
 import { Status } from "./presentation";
+import { defaultListOptions, type ListOptions } from "./ListFilters";
 
 const pages = {
   dashboard: "Dashboard",
@@ -117,6 +118,19 @@ export function App() {
   }, [themeSetting]);
   const [paused, setPaused] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [indexOptions, setIndexOptions] = useState(defaultListOptions);
+  const [queryOptions, setQueryOptions] = useState(defaultListOptions);
+  const listPath = (path: string, options: ListOptions) => {
+    const params = new URLSearchParams({
+      limit: String(options.pageSize),
+      offset: String((options.page - 1) * options.pageSize),
+      sort: options.sort,
+      order: options.order,
+    });
+    if (options.search) params.set("query", options.search);
+    if (options.state) params.set("state", options.state);
+    return `${path}?${params}`;
+  };
   useEffect(() => {
     const change = () => {
       setPage(locationPage());
@@ -173,13 +187,13 @@ export function App() {
     3000,
   );
   const indexing = usePolling(
-    "/jobs?limit=100",
+    listPath("/jobs", indexOptions),
     jobs,
     !paused && page === "indexing",
     refresh,
   );
   const serving = usePolling(
-    "/search-activity?limit=100",
+    listPath("/search-activity", queryOptions),
     activity,
     !paused && page === "queries",
     refresh,
@@ -324,7 +338,10 @@ export function App() {
                       onRefresh={refreshNow}
                     />
                   </div>
-                  {offline && ["stopped", "warming"].includes(serviceStatus) ? (
+                  {["repositories", "storage"].includes(
+                    page,
+                  ) ? null : offline &&
+                    ["stopped", "warming"].includes(serviceStatus) ? (
                     <Tile id="service-state-notice">
                       <p>
                         {serviceStatus === "stopped"
@@ -388,6 +405,8 @@ export function App() {
                   {page === "indexing" && (
                     <WorkPage
                       kind="job"
+                      options={indexOptions}
+                      onOptionsChange={setIndexOptions}
                       data={indexing.data}
                       paused={paused}
                       stale={Boolean(indexing.error)}
@@ -398,6 +417,8 @@ export function App() {
                   {page === "queries" && (
                     <WorkPage
                       kind="request"
+                      options={queryOptions}
+                      onOptionsChange={setQueryOptions}
                       data={serving.data}
                       paused={paused}
                       stale={Boolean(serving.error)}

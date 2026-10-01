@@ -4,11 +4,13 @@ export type Jobs = {
   records: RecordValue[];
   summary: RecordValue;
   total: number | null;
+  matched: number | null;
 };
 export type Activity = {
   records: RecordValue[];
   counts: RecordValue;
   returned: number;
+  matched: number | null;
 };
 export type LogGroup = {
   source: string;
@@ -16,12 +18,49 @@ export type LogGroup = {
   marker: string;
   truncated: boolean;
   truncation: RecordValue;
+  matched: number;
+};
+export type LogOptions = {
+  source: string;
+  lines: number;
+  offset: number;
+  contains: string;
+  order: string;
+};
+const defaultLogOptions: LogOptions = {
+  source: "all",
+  lines: 200,
+  offset: 0,
+  contains: "",
+  order: "asc",
 };
 
 export function object(value: unknown): RecordValue {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as RecordValue)
     : {};
+}
+
+/** Compare source values before adding units or localized number formatting. */
+export function compareValues(left: unknown, right: unknown): number {
+  if (left === null || left === undefined)
+    return right === null || right === undefined ? 0 : 1;
+  if (right === null || right === undefined) return -1;
+  const numeric = (value: unknown) =>
+    typeof value === "number"
+      ? value
+      : typeof value === "string" &&
+          /^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(value.trim())
+        ? Number(value)
+        : NaN;
+  const a = numeric(left),
+    b = numeric(right);
+  return Number.isFinite(a) && Number.isFinite(b)
+    ? a - b
+    : String(left).localeCompare(String(right), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
 }
 
 export function text(value: unknown, fallback = "Not reported"): string {
@@ -44,13 +83,6 @@ export function reading(value: unknown, unit = ""): string {
   return result === null
     ? "—"
     : `${Number(result.toFixed(3)).toLocaleString()}${unit}`;
-}
-
-export function diagnostic(name: string, value: unknown): string {
-  return reading(
-    value,
-    name.endsWith("_ms") ? " ms" : name.endsWith("_seconds") ? " s" : "",
-  );
 }
 
 export function clock(value: unknown): string {
@@ -112,6 +144,7 @@ export function jobs(payload: RecordValue): Jobs {
     records: records(payload.jobs, "id"),
     summary: object(payload.summary),
     total: count(payload.total),
+    matched: count(payload.matched ?? payload.total),
   };
 }
 
@@ -152,30 +185,47 @@ export function activity(payload: RecordValue): Activity {
   if (payload.all_counts !== undefined && count(counts.queued) === null)
     throw new Error("Invalid serving queue summary.");
   return {
-    records: rows,
+    records: Array.isArray(payload.records)
+      ? records(payload.records, "request_id")
+      : rows,
     counts: { ...counts, queued: counts.queued ?? payload.queued_count },
     returned,
+    matched: count(payload.matched ?? counts.total),
   };
 }
 
-export function logPath(work?: Work): string {
+export function logPath(
+  work?: Work,
+  options: LogOptions = defaultLogOptions,
+): string {
   const filters = new URLSearchParams({
-    source: work ? "service" : "all",
-    lines: "200",
+    source: work ? "service" : options.source,
+    lines: String(options.lines),
+    offset: String(options.offset),
+    order: options.order,
   });
-  if (work) filters.set(work.kind === "job" ? "job_id" : "contains", work.id);
+  if (work) filters.set(work.kind === "job" ? "job_id" : "request_id", work.id);
+  if (options.contains) filters.set("contains", options.contains);
   return `/logs/json?${filters}`;
 }
 
-export function logs(payload: RecordValue, work?: Work): LogGroup[] {
-  const sources = work ? ["service"] : ["service", "qdrant"];
-  const filters = work
-    ? { [work.kind === "job" ? "job_id" : "contains"]: work.id }
+export function logs(
+  payload: RecordValue,
+  work?: Work,
+  options: LogOptions = defaultLogOptions,
+): LogGroup[] {
+  const source = work ? "service" : options.source;
+  const sources = source === "all" ? ["service", "qdrant"] : [source];
+  const filters: Record<string, string> = work
+    ? { [work.kind === "job" ? "job_id" : "request_id"]: work.id }
     : {};
+  if (options.contains) filters.contains = options.contains;
   const actual = object(payload.filters);
   if (
-    payload.source !== (work ? "service" : "all") ||
-    payload.limit !== 200 ||
+    payload.source !== source ||
+    payload.limit !== options.lines ||
+    (payload.offset ?? 0) !== options.offset ||
+    (payload.order ?? "asc") !== options.order ||
     Object.keys(actual).length !== Object.keys(filters).length ||
     Object.entries(filters).some(([key, value]) => actual[key] !== value) ||
     !Array.isArray(payload.groups) ||
@@ -189,7 +239,7 @@ export function logs(payload: RecordValue, work?: Work): LogGroup[] {
     if (
       group.source !== sources[index] ||
       !Array.isArray(group.lines) ||
-      group.lines.length > 200 ||
+      group.lines.length > options.lines ||
       group.lines.some((line) => typeof line !== "string")
     ) {
       throw new Error("The service returned an invalid log window.");
@@ -237,6 +287,7 @@ export function logs(payload: RecordValue, work?: Work): LogGroup[] {
       marker,
       truncated: group.truncated === true,
       truncation,
+      matched: count(group.matched) ?? lines.length,
     };
   });
 }

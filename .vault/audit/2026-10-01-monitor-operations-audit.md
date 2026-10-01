@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:db7ee1e0512d1f63b37a33cc4a1b295c3b6e351ab3722b218fe5fb23ca043897'
+body_hash: 'sha256:f00b50d8ed8b99b33ffd4cb4a5b59d31d2d517401b713e4f10a3a4ccf90e3d20'
 related:
   - "[[2026-10-01-monitor-operations-plan]]"
 ---
@@ -58,6 +58,26 @@ The bridge resolves the installed uv tool interpreter before the checkout enviro
 
 Header containment failed before setting the global action bar to Carbon's 48px header height. Isolated browser Vite caches prevent tests from invalidating the operator's dev assets. Carbon static audit repeats the native HeaderMenuButton keyboard false positive: it renders a native button. Page-heading focus is a navigation focus target, not a trap. Final rendered checks are recorded in the execution ledger.
 
+### request-review | medium | Inline request review and stable expansion
+
+S06 replaces the split tree/table panes with a single inline hierarchy. Expanded requests expose labeled summary values, query/input, progress/results, errors and related logs. Additional diagnostics remain expandable. Request expansion is controlled by request ID, nested expansion and sorting by field path, so polling does not reset user review state. Raw scalar values are preserved. Numeric sorting compares source values before formatting, including 145000 versus 150 and fractional scores. Storage chart labels use a project name or a Windows/Unix basename, while detail rows retain full paths.
+
+### nested-layout | medium | Universal nested container reset
+
+The Carbon expanded-row selector indented descendant cells and its table/accordion chevrons pointed down when collapsed and up when expanded. Scoped rules now map disclosure state to right/down and reset every expanded table cell/container to zero padding and margin. Normal table-cell spacing no longer inherits expanded-row indentation. Rendered checks cover nested rows, sorting and state retention. The original chevron assertion failed before the direction correction, then passed for desktop, mobile and nested rows.
+
+### list-navigation | medium | Filter and sort before pagination
+
+Canonical jobs and search activity owners now filter and sort before slicing bounded pages. Query projections preserve existing lanes and expose ordered records. Logs page within the bounded managed-log scan and combine exact request identity with text filtering. UI pagination, status/text filters and sorting use these routes. The page ceiling, negative-offset rejection and exact request-token guards were each deliberately broken, failed their named assertion, restored and passed.
+
+### disk-inventory | medium | Service availability does not own persisted storage
+
+Read-only fallback reuses canonical repository/manifest and filesystem inventory without opening Qdrant or loading GPU models. Missing live seats, watcher readings and point counts remain null; unavailable disk storage returns an error rather than fabricated zero inventory. Mutation proofs detect writes and torch imports. On the actual machine, the stopped service still exposed 58 saved repositories and 20 disk storage entries. After restart the service reported ready, and live paginated jobs/logs returned offset 10 with ten records.
+
+### carbon-inline-tables | low | Composition audit reviewed against supplied examples
+
+The static Carbon audit requires a DataTable state wrapper around every Table component. Carbon MCP itself supplies standalone Table examples; this implementation uses those public table building blocks with controlled expansion and sorting to retain state across polls. Native TableHeader sort buttons provide keyboard interaction. Browser checks validate the actual interaction and nesting.
+
 ## Recommendations
 
 PASS for the implemented operations scope at backend 1f970999 and frontend ebed4441. No unresolved critical or high findings. Backend suite: 124 passed without skips. Installed-browser suite: 5 passed at 1440/800/390 widths, including nested returned results, invalid enrollment, scoped logs, retained evidence, live updates and exact selected-record deletion. Frontend lint/format/types/build and changed Python lint/format/ty/basedpyright pass. Backend guard mutation proofs and the persistent-sidebar fail/restore proof are recorded in the ledger and local check logs.
@@ -65,3 +85,5 @@ PASS for the implemented operations scope at backend 1f970999 and frontend ebed4
 The production build reports upstream Carbon Sass deprecations and a bundle-size advisory; it succeeds. Keep the live-validation limitation explicit: resident service start/stop and loaded GPU telemetry were not exercised. Storage management exposes survey refresh and canonical resident-seat release; destructive storage deletion remains outside the accepted HTTP surface. The prior external tailnet rollout is independent and remains open.
 
 S05 follow-up: rendered suite passes all seven cases at 1440/800/390/320 widths, including the adjacent header actions, theme cycling, collapsible navigation, stopped-service display and dark notification styling. Bridge suite passes fourteen tests. The earlier operations verification remains historical evidence; the S05 ledger records the updated shell checks and deliberately failing layout guard.
+
+S06 PASS: all eight installed-browser cases pass (142.96s), including 1440/800/390/320 layouts, live request/nested expansion retention, direct returned-result review, 145000 versus 150 ordering, zero nested wrapper spacing, request filtering/pagination and older log pages. Final monitor bridge/numeric projection suite: 14 passed. Backend pagination and persisted-inventory regression suites passed as recorded in the ledger. Lint, format, types, production build and feature vault checks pass. The actual service was idle before restart, persisted repository/storage inventory remained available while stopped, and the restarted service reported ready with new live pagination routes. Log history remains bounded by the managed-log scan, and offline point counts are explicitly unavailable.

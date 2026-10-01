@@ -5,7 +5,7 @@ tags:
 date: '2026-10-01'
 modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:0c9e9811ac8988c749869ec57504258db364faba66e0d0f6d3944295a3840fb8'
+body_hash: 'sha256:c0d9345714633d5ff3567dd25964d7bcc382dfbbb37545ba213a1be17415d16b'
 related:
   - "[[2026-10-01-monitor-operations-plan]]"
 ---
@@ -113,9 +113,57 @@ related:
 - `S05` `verify:` `pytest desktop size0 after chart resize repair` -> `pass`
 - `S05` `verify:` `vault check all --fix --feature monitor-operations` -> `pass`
 - `S05` `verify:` `vault plan check monitor-operations` -> `pass`
+- `S06` `M` `src/monitor/App.tsx`
+- `S06` `M` `src/monitor/DataTree.tsx`
+- `S06` `M` `src/monitor/Inventory.tsx`
+- `S06` `M` `src/monitor/Logs.tsx`
+- `S06` `M` `src/monitor/Work.tsx`
+- `S06` `M` `src/monitor/model.ts`
+- `S06` `M` `src/monitor/monitor.scss`
+- `S06` `M` `src/monitor/server/local-service.ts`
+- `S06` `A` `src/monitor/ListFilters.tsx`
+- `S06` `A` `src/monitor/RequestDetails.tsx`
+- `S06` `A` `src/vaultspec_rag/_operator_lists.py`
+- `S06` `A` `src/vaultspec_rag/monitor_inventory.py`
+- `S06` `M` `src/vaultspec_rag/logging_config.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes_jobs.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes_operator.py`
+- `S06` `M` `src/vaultspec_rag/server/_routes_storage.py`
+- `S06` `M` `src/vaultspec_rag/server/_search_activity.py`
+- `S06` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_browser_render.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_activity.py`
+- `S06` `A` `src/vaultspec_rag/tests/test_operator_list_pages.py`
+- `S06` `A` `src/vaultspec_rag/tests/test_monitor_inventory.py`
+- `S06` `verify:` `npm run lint` -> `pass`
+- `S06` `verify:` `npm run format:check` -> `pass`
+- `S06` `verify:` `npm run typecheck` -> `pass`
+- `S06` `verify:` `npm run build` -> `pass`
+- `S06` `verify:` `ruff check src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `changed Python format/ty/basedpyright checks` -> `pass`
+- `S06` `verify:` `pagination backend suite (49 tests)` -> `pass`
+- `S06` `verify:` `pagination bridge/TUI regression suite (72 tests)` -> `pass`
+- `S06` `verify:` `persisted inventory regression suite (71 tests)` -> `pass`
+- `S06` `verify:` `monitor bridge and numeric projection suite (14 tests)` -> `pass`
+- `S06` `verify:` `disclosure direction before correction` -> `fail`
+- `S06` `verify:` `disclosure direction after correction (3 browser cases)` -> `pass`
+- `S06` `verify:` `exact request_id / page ceiling / negative offset guard mutants` -> `fail`
+- `S06` `verify:` `exact request_id / page ceiling / negative offset guard restored` -> `pass`
+- `S06` `verify:` `read-only inventory / torch-free guard mutants` -> `fail`
+- `S06` `verify:` `read-only inventory / torch-free guards restored` -> `pass`
+- `S06` `verify:` `production stopped inventory:58 repositories and20 namespaces` -> `pass`
+- `S06` `verify:` `production restart healthy and offset10/limit10 job/log pages` -> `pass`
+- `S06` `by:` `Codex`
+- `S06` `verify:` `final integrated browser suite (8 tests,142.96s)` -> `pass`
+- `S06` `verify:` `final production build` -> `pass`
+- `S06` `verify:` `vault check all feature monitor-operations` -> `pass`
 
 ## Notes
 
 - `S03` Installed-browser evidence .pytest-tmp/operations-render-final.log and carbon-dashboard-{1440,800,390}.png; no resident daemon lifecycle or GPU compute exercised. Carbon static audit false positives manually adjudicated in the audit.
 - `S04` Reused unchanged S01/S03 evidence: 124 backend tests, 5 browser cases and frontend gates/build. Audit PASS with resident lifecycle, loaded GPU telemetry and independent tailnet rollout limitations recorded.
 - `S05` Carbon audit native-button keyboard warning reviewed as a false positive. Browser startup timeouts occurred under concurrent machine load; complete rerun passed. Live frontend routes returned HTTP 200 after restart. Resident RAG service was not restarted.
+- `S06` Final integrated browser run pending. Inventory reads are bounded and log pagination covers the bounded managed-log scan, not unlimited file history. Native Carbon table composition warnings reviewed against supplied standalone Table examples.
+- `S06` Integrated pagination fixture explicitly scopes its own persisted records; the earlier failed count assertion included preceding tests' real job records. Final integrated run passes. Numeric ordering, nested zero-wrapper-spacing and live request expansion are checked in the rendered browser.

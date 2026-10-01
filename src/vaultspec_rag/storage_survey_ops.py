@@ -326,6 +326,17 @@ def gather_survey(
     return surveys
 
 
+def gather_disk_survey(storage_dir: Path) -> list[NamespaceSurvey]:
+    """Classify actual collection directories without a server or point reader."""
+    names = sorted(path.name for path in storage_dir.iterdir() if path.is_dir())
+    return classify_namespaces(
+        names,
+        load_manifest(),
+        point_counts=dict.fromkeys(names),
+        footprints=collection_footprints(names, storage_dir),
+    )
+
+
 def forget_root_index_claims(root: str) -> tuple[str, ...]:
     """Drop a torn-down root's on-disk claims over collections now deleted.
 
