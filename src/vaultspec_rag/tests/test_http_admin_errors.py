@@ -16,22 +16,31 @@ import socket
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import pytest
 
 from ..config._types import EnvVar
 from ..serviceclient._transport import (
     DEFAULT_ADMIN_TIMEOUT_SECONDS,
+    MAX_SERVICE_RESPONSE_BYTES,
+    ServiceResponseTooLargeError,
     _get_admin_timeout,
+    _send_call,
     _try_http_admin,
+    _try_http_health,
 )
 from ._http_stubs import QuietHandler
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
+    from types import FrameType
+
+    from _typeshed import TraceFunction
 
 pytestmark = [pytest.mark.unit]
 
@@ -212,6 +221,79 @@ def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, 
     return server, port
 
 
+@contextlib.contextmanager
+def _observed_http_errors() -> Generator[list[urllib.error.HTTPError]]:
+    """Retain the actual wire error to observe closure independently of GC."""
+    errors: list[urllib.error.HTTPError] = []
+    previous = sys.gettrace()
+
+    def observe(frame: FrameType, event: str, argument: object) -> TraceFunction:
+        if (
+            frame.f_code in (_try_http_health.__code__, _send_call.__code__)
+            and event == "exception"
+        ):
+            exception = cast("tuple[object, BaseException, object]", argument)[1]
+            if isinstance(exception, urllib.error.HTTPError):
+                errors.append(exception)
+        return observe
+
+    sys.settrace(observe)
+    try:
+        yield errors
+    finally:
+        sys.settrace(previous)
+
+
+class _OversizedErrorHandler(QuietHandler):
+    def do_GET(self) -> None:
+        body = b"x" * (MAX_SERVICE_RESPONSE_BYTES + 2)
+        self.send_response(503)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        with contextlib.suppress(
+            BrokenPipeError, ConnectionAbortedError, ConnectionResetError
+        ):
+            self.wfile.write(body)
+
+
+@pytest.mark.usefixtures("isolated_status_dir")
+class TestHTTPErrorResponseLifetime:
+    def test_health_error_response_closes_before_return(self) -> None:
+        server, port = _serve(_ErrorJSONArrayHandler)
+        errors: list[urllib.error.HTTPError] = []
+        try:
+            with _observed_http_errors() as errors:
+                result = _try_http_health(port)
+            assert result == {"status": "error", "http_code": 503}
+            assert errors
+            # Removing the health error context fails this closure assertion.
+            assert all(error.closed for error in errors)
+        finally:
+            server.shutdown()
+            server.server_close()
+            for error in errors:
+                error.close()
+
+    def test_error_response_closes_when_the_body_exceeds_its_limit(self) -> None:
+        server, port = _serve(_OversizedErrorHandler)
+        errors: list[urllib.error.HTTPError] = []
+        try:
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/projects")
+            with (
+                _observed_http_errors() as errors,
+                pytest.raises(ServiceResponseTooLargeError, match="client limit"),
+            ):
+                _send_call(request, 5.0)
+            assert errors
+            # Removing the error-body context fails this closure assertion.
+            assert all(error.closed for error in errors)
+        finally:
+            server.shutdown()
+            server.server_close()
+            for error in errors:
+                error.close()
+
+
 @pytest.fixture
 def refused_port() -> Iterator[int]:
     """Yield a port that deterministically refuses connections.
@@ -263,6 +345,7 @@ class TestAdminErrorSurfacing:
             result = _try_http_admin("list_projects", {}, port)
         finally:
             server.shutdown()
+            server.server_close()
         assert result is not None, "a live-but-broken call must not look unreachable"
         assert result != {}, "the failure must not be swallowed into a bare empty dict"
         assert result.get("ok") is False
@@ -283,6 +366,7 @@ class TestAdminErrorSurfacing:
             result = _try_http_admin("list_projects", {}, port)
         finally:
             server.shutdown()
+            server.server_close()
         assert result is not None, "a live-but-broken call must not look unreachable"
         assert isinstance(result, dict), "the caller contract is a mapping"
         assert result.get("ok") is False
@@ -300,6 +384,7 @@ class TestAdminErrorSurfacing:
             result = _try_http_admin("list_projects", {}, port)
         finally:
             server.shutdown()
+            server.server_close()
         assert result is not None
         assert isinstance(result, dict)
         assert result.get("ok") is False
@@ -316,6 +401,7 @@ class TestAdminErrorSurfacing:
             result = _try_http_admin("list_projects", {}, port)
         finally:
             server.shutdown()
+            server.server_close()
         assert result == _PopulatedJSONHandler.payload
 
     def test_genuinely_empty_result_stays_empty_dict(self) -> None:
@@ -326,6 +412,7 @@ class TestAdminErrorSurfacing:
             result = _try_http_admin("list_projects", {}, port)
         finally:
             server.shutdown()
+            server.server_close()
         assert result == {}
 
     def test_unreachable_service_returns_none(self, refused_port: int) -> None:

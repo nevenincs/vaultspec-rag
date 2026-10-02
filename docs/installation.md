@@ -111,45 +111,15 @@ service. Neither platform falls back to the CPU.
 
 ### The model cache and its first download
 
-By default, search uses a sparse model,
-[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), which matches exact terms.
-The model is gated, and its CC-BY-NC-SA-4.0 licence restricts commercial use and adds
-attribution and share-alike obligations.
+Search uses public dense, sparse and reranker models. The sparse encoder is
+[`Linkup-Platform/linkup-sparseup-embed-v1`](https://huggingface.co/Linkup-Platform/linkup-sparseup-embed-v1),
+a ModernBERT SPARSEUP model pinned to revision
+`08314498d4f6a3a205b930ab9f27001404ea94b8`. Downloads require no account setup.
+Repository setup, `server warmup`, and `server doctor` share that revision.
 
-If the licence doesn't fit your use, or you don't want a Hugging Face account, turn the
-sparse model off and skip the login:
-
-- Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` persistently in the environment that runs the
-  repository setup and starts the service.
-- Indexes and searches then use dense vectors only, so exact-term matching and hybrid
-  fusion are absent. Dense embedding and reranking still run on the GPU.
-- After switching, rebuild existing indexes so stored vector schemas match.
-
-Otherwise, give the account that runs vaultspec-rag access before the first download:
-
-1. Sign in to Hugging Face, open the model page, and accept its access conditions.
-
-1. Log in:
-
-   ```bash
-   uvx --from huggingface_hub hf auth login
-   ```
-
-   If the `hf` command is already on your `PATH`, `hf auth login` works too. A
-   standalone tool exposes only vaultspec-rag's own commands, so `hf` isn't on the
-   `PATH` there.
-
-Instead of logging in, set `HF_TOKEN` persistently in your user environment, so both
-the repository setup and `vaultspec-rag server start` see it. `HF_TOKEN` takes
-precedence over the stored login. A token alone isn't enough until its account has
-accepted the model's conditions. The [configuration guide](configuration.md#hugging-face-cache)
-explains the `.env` rules for `HF_TOKEN`, the cache location, and offline mode.
-
-The repository setup's model download, `server warmup`, and the `server doctor` cache
-check all honour `VAULTSPEC_RAG_SPARSE_ENABLED=0`. With it, they never download, warm,
-or probe the gated model, so a dense-only configuration needs no Hugging Face login.
-The other two models still download from the Hugging Face Hub, and the repository
-setup may still print a token warning; ignore it.
+Set `VAULTSPEC_RAG_SPARSE_ENABLED=0` to use dense vectors only and reduce GPU
+memory usage. Provisioning, warmup and readiness then omit the sparse model.
+Rebuild existing indexes after changing the model or this toggle.
 
 Model files use the [Hugging Face cache](configuration.md#hugging-face-cache). To choose
 where downloads go, set `HF_HOME` to a persistent location before the repository setup.
@@ -406,14 +376,14 @@ the [install command reference](cli.md#install) for every flag.
 The run's own report is the `data` member, and `status` is one word from the shared
 vocabulary:
 
-| Status      | Meaning                                                                          |
-| ----------- | -------------------------------------------------------------------------------- |
-| `created`   | Install only. The install completed and was not an upgrade                       |
-| `updated`   | Install only. An existing installation was upgraded (`--upgrade`)                |
-| `unchanged` | A preview (`--dry-run`), or a run that changed nothing                           |
-| `removed`   | Uninstall only. Uninstall removed the installation                               |
-| `skipped`   | Install only. The run completed but a required step was skipped for consent      |
-| `failed`    | The run failed                                                                   |
+| Status      | Meaning                                                                     |
+| ----------- | --------------------------------------------------------------------------- |
+| `created`   | Install only. The install completed and was not an upgrade                  |
+| `updated`   | Install only. An existing installation was upgraded (`--upgrade`)           |
+| `unchanged` | A preview (`--dry-run`), or a run that changed nothing                      |
+| `removed`   | Uninstall only. Uninstall removed the installation                          |
+| `skipped`   | Install only. The run completed but a required step was skipped for consent |
+| `failed`    | The run failed                                                              |
 
 Uninstall reports only `failed`, `unchanged`, or `removed`.
 
@@ -455,7 +425,7 @@ Check the version:
 vaultspec-rag --version
 ```
 
-This reports `vaultspec-rag v0.5.3`. <!-- x-release-please-version -->
+This reports `vaultspec-rag v0.6.0`. <!-- x-release-please-version -->
 
 Then run the readiness report:
 
@@ -675,14 +645,12 @@ For a project dependency, rerun the [repository setup](#set-up-each-repository) 
 a tool's environment. After making changes, rerun the checks in
 [start and verify](#start-and-verify).
 
-### The model download is refused
+### The model download fails
 
-A `401`, `403`, `GatedRepoError`, or "repository not found" during the repository setup
-or `server start` usually means missing authorization, not a missing repository.
-Accept the conditions on the [model page](https://huggingface.co/naver/splade-v3), then
-log in again as described in
-[the model cache and its first download](#the-model-cache-and-its-first-download). To
-avoid the gated model, turn the sparse model off there.
+Check network access to the Hugging Face Hub or your configured `HF_ENDPOINT`,
+and confirm that `HF_HOME` is writable. With offline mode enabled, the cache
+must already contain the pinned model revision. Rerun `vaultspec-rag server warmup`
+to download missing files before starting an index.
 
 ### The GPU runs out of memory
 

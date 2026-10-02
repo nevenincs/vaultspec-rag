@@ -7,6 +7,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -429,7 +430,7 @@ def test_origin_cleanup_journals_bounded_batches(
         )
         assert store.count_code() == 0
         journal_path = tmp_path / get_config().data_dir / "route_migrations.sqlite3"
-        with sqlite3.connect(journal_path) as connection:
+        with closing(sqlite3.connect(journal_path)) as connection:
             batches = [
                 json.loads(raw)
                 for (raw,) in connection.execute(

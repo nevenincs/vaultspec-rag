@@ -815,6 +815,11 @@ class JobManagerExecution(JobManagerState):
                     state=JobState.SUCCEEDED,
                     result=result.summary if result is not None else None,
                     reuse=result.reuse if result is not None else None,
+                    drift=(
+                        result.drift
+                        if result is not None and result.drift is not None
+                        else ...
+                    ),
                 ),
             )
 

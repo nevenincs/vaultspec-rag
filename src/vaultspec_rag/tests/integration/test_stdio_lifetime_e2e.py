@@ -17,6 +17,7 @@ alone. The lifetime scenarios (issue #229) then compose on top:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -62,6 +63,21 @@ def _spawn_shim(env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
         stderr=subprocess.DEVNULL,
         env=merged,
     )
+
+
+def _reap_owned_process(process: subprocess.Popen[bytes]) -> None:
+    """Reap this harness's child and close every pipe even on timeout."""
+    with contextlib.ExitStack() as cleanup:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                cleanup.callback(stream.close)
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=15)
 
 
 def _send(shim: subprocess.Popen[bytes], message: dict[str, object]) -> None:
@@ -141,8 +157,7 @@ def test_shim_serves_the_five_tool_surface_then_exits_on_eof() -> None:
         shim.stdin.close()
         assert shim.wait(timeout=60) == 0
     finally:
-        if shim.poll() is None:
-            shim.kill()
+        _reap_owned_process(shim)
 
 
 def test_degraded_search_vault_reports_service_down_through_the_wire(
@@ -192,8 +207,7 @@ def test_degraded_search_vault_reports_service_down_through_the_wire(
             or ("server start" in text)
         ), f"degraded guidance missing from wire payload: {text[:500]}"
     finally:
-        if shim.poll() is None:
-            shim.kill()
+        _reap_owned_process(shim)
 
 
 _CLIENT_SCRIPT = """
@@ -297,20 +311,22 @@ def test_shim_reaps_instantly_when_its_serving_client_dies(tmp_path: Path) -> No
             "shim survived its client's death; the pipe-creator anchor never fired"
         )
     finally:
-        if client.poll() is None:
-            client.kill()
-        if report_file.exists():
-            leftover_report = cast(
-                "dict[str, object]",
-                json.loads(report_file.read_text(encoding="utf-8")),
-            )
-            leftover = int(str(leftover_report["shim_pid"]))
-            if _pid_alive(leftover) and sys.platform == "win32":
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", str(leftover)],
-                    capture_output=True,
-                    check=False,
+        try:
+            _reap_owned_process(client)
+        finally:
+            if report_file.exists():
+                leftover_report = cast(
+                    "dict[str, object]",
+                    json.loads(report_file.read_text(encoding="utf-8")),
                 )
+                leftover = int(str(leftover_report["shim_pid"]))
+                if _pid_alive(leftover) and sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(leftover)],
+                        capture_output=True,
+                        check=False,
+                        timeout=15,
+                    )
 
 
 # First generation: spawns the second and exits at once. Its death is what
@@ -324,11 +340,13 @@ import os
 import subprocess
 import sys
 
-subprocess.Popen(
+child = subprocess.Popen(
     [sys.executable, "-c", sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4],
      sys.argv[5], str(os.getpid()), sys.argv[6], sys.argv[7]],
     stdin=subprocess.DEVNULL,
 )
+# Deliberate launcher death is the scenario, not normal interpreter teardown.
+os._exit(0)
 """
 
 # Second generation: waits out the first, spawns the orphan, then exits the
@@ -341,6 +359,7 @@ subprocess.Popen(
 # [4] stderr log, [5] first-generation pid, [6] grace seconds,
 # [7] re-arm seconds.
 _SECOND_LAUNCHER = """
+import os
 import subprocess
 import sys
 import time
@@ -355,14 +374,23 @@ while first_pid in w._snapshot_processes()[0] and time.monotonic() < deadline:
 
 pid_file = Path(sys.argv[3])
 with open(sys.argv[4], "w", encoding="utf-8") as log:
-    subprocess.Popen(
+    child = subprocess.Popen(
         [sys.argv[1], "-c", sys.argv[2], sys.argv[3], sys.argv[6], sys.argv[7]],
         stdin=subprocess.DEVNULL,
         stderr=log,
     )
-    deadline = time.monotonic() + 60
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
+    try:
+        deadline = time.monotonic() + 60
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert pid_file.exists(), 'orphan watchdog readiness was never published'
+    except BaseException:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=15)
+        raise
+# Keep the child's Popen owner alive through this intentional crash simulation.
+os._exit(0)
 """
 
 # The orphan: installs the real watchdog, then blocks forever WITHOUT ever
@@ -414,7 +442,6 @@ def _veto_diagnosis(orphan_pid: int) -> str:
     return f"Live ancestors vetoing the reap (recycled pid slots?): {chain}"
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestry semantics")
 def _trampoline_free_child_env() -> dict[str, str]:
     """Return an environment that puts this checkout and its libs on the path."""
     src_root = Path(__file__).resolve().parents[3]
@@ -468,6 +495,7 @@ def _assert_reaped_after_confirming_rounds(
     )
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestry semantics")
 def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
     tmp_path: Path,
 ) -> None:
@@ -517,33 +545,36 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
 
     pid_file = tmp_path / "orphan.pid"
     log_file = tmp_path / "orphan.stderr"
-    first = subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            _FIRST_LAUNCHER,
-            _SECOND_LAUNCHER,
-            base_python,
-            _ORPHAN_WORKER,
-            str(pid_file),
-            str(log_file),
-            str(grace_seconds),
-            str(rearm_seconds),
-        ],
-        stdin=subprocess.DEVNULL,
-        env=env,
-    )
-    first.wait(timeout=60)
-
-    deadline = time.monotonic() + 90
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.2)
-    assert pid_file.exists(), "the orphan worker never started; stderr: " + (
-        log_file.read_text(encoding="utf-8") if log_file.exists() else "(none)"
-    )
-    orphan_pid = int(pid_file.read_text(encoding="utf-8"))
-
+    launcher_stderr = tmp_path / "launchers.stderr"
+    with launcher_stderr.open("wb") as launcher_errors:
+        first = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _FIRST_LAUNCHER,
+                _SECOND_LAUNCHER,
+                base_python,
+                _ORPHAN_WORKER,
+                str(pid_file),
+                str(log_file),
+                str(grace_seconds),
+                str(rearm_seconds),
+            ],
+            stdin=subprocess.DEVNULL,
+            env=env,
+            stderr=launcher_errors,
+        )
+    orphan_pid: int | None = None
     try:
+        first.wait(timeout=60)
+
+        deadline = time.monotonic() + 90
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert pid_file.exists(), "the orphan worker never started; stderr: " + (
+            log_file.read_text(encoding="utf-8") if log_file.exists() else "(none)"
+        )
+        orphan_pid = int(pid_file.read_text(encoding="utf-8"))
         assert _pid_alive(orphan_pid)
 
         budget = grace_seconds + rearm_seconds * (_ORPHAN_CONFIRM_ROUNDS + 2) + 30.0
@@ -562,10 +593,23 @@ def test_orphaned_shim_reaps_itself_once_its_whole_chain_is_gone(
         )
 
         _assert_reaped_after_confirming_rounds(events, _ORPHAN_CONFIRM_ROUNDS)
+        # Both launcher generations inherit this owned file, so detached Popen
+        # destructor warnings cannot disappear outside pytest's warning hooks.
+        launcher_output = launcher_stderr.read_text(encoding="utf-8")
+        assert launcher_output == "", launcher_output
+        orphan_output = log_file.read_text(encoding="utf-8")
+        assert "ResourceWarning" not in orphan_output, orphan_output
+        assert "Exception ignored in:" not in orphan_output, orphan_output
     finally:
-        if _pid_alive(orphan_pid):
-            subprocess.run(
-                ["taskkill", "/F", "/PID", str(orphan_pid)],
-                capture_output=True,
-                check=False,
-            )
+        try:
+            _reap_owned_process(first)
+        finally:
+            if orphan_pid is None and pid_file.exists():
+                orphan_pid = int(pid_file.read_text(encoding="utf-8"))
+            if orphan_pid is not None and _pid_alive(orphan_pid):
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(orphan_pid)],
+                    capture_output=True,
+                    check=False,
+                    timeout=15,
+                )

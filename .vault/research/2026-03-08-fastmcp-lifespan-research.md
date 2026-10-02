@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:a5da381b3e1f5ef77d3245a4d990765942b8d6b7d7e414a1c4fc0cfe77534697'
+modified: '2026-09-30'
+body_hash: 'sha256:d43f387b229280dee363ddaba9d17a0c60aaa231dc0e88ae947c1a39f9317b9e'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
@@ -80,7 +80,7 @@ ______________________________________________________________________
 Time 0.0s: Server process starts and listens for requests
 Time 0.1s: Server is ready, client connects
 Time 5.0s: Client makes first search request
-Time 5.1s: get_comp() initializes GPU (Qwen3 1024d + SPLADE + CrossEncoder)
+Time 5.1s: get_comp() initializes GPU (Qwen3 1024d + previous BERT sparse encoder + CrossEncoder)
 Time 20.0s: First search completes
 ```
 

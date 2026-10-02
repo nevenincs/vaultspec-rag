@@ -43,6 +43,8 @@ from .state import (
 )
 
 if TYPE_CHECKING:
+    from types import EllipsisType
+
     from .. import job_persistence as _job_persistence
     from .models import (
         QuiescedDispatchClaim,
@@ -113,6 +115,7 @@ class AttemptTerminal:
     result: str | None = None
     error_kind: str | None = None
     reuse: dict[str, object] | None = None
+    drift: dict[str, object] | EllipsisType | None = ...
 
 
 class JobManagerControl(JobManagerQuiesceControl):
@@ -714,6 +717,7 @@ class JobManagerControl(JobManagerQuiesceControl):
                     result=terminal.result,
                     error_kind=terminal.error_kind,
                     reuse=terminal.reuse,
+                    drift=terminal.drift,
                 ),
             )
             self._archive_terminal_locked(managed)

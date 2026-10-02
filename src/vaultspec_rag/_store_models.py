@@ -237,8 +237,8 @@ class VaultDocument:
         body_line: 1-based file line on which ``content`` begins, so offsets
             into the body map back to lines of the file.
         vector: Dense embedding vector.
-        sparse_indices: Sparse vector indices (SPLADE).
-        sparse_values: Sparse vector values (SPLADE).
+        sparse_indices: Sparse vector indices (SPARSEUP).
+        sparse_values: Sparse vector values (SPARSEUP).
     """
 
     id: str
@@ -290,8 +290,8 @@ class VaultChunk:
         passages: The chunk's answer-sized passages, their offsets relative
             to ``text``.
         vector: Dense embedding vector.
-        sparse_indices: Sparse vector indices (SPLADE).
-        sparse_values: Sparse vector values (SPLADE).
+        sparse_indices: Sparse vector indices (SPARSEUP).
+        sparse_values: Sparse vector values (SPARSEUP).
     """
 
     doc_id: str
@@ -337,8 +337,8 @@ class CodeChunk:
         function_name: Name of the function/method this chunk belongs to, if any.
         class_name: Name of the enclosing class/struct/impl, if any.
         vector: Dense embedding vector.
-        sparse_indices: Sparse vector indices (SPLADE).
-        sparse_values: Sparse vector values (SPLADE).
+        sparse_indices: Sparse vector indices (SPARSEUP).
+        sparse_values: Sparse vector values (SPARSEUP).
         source_path: For a chunk produced by a preprocess hook, the original
             source file path (e.g. a PDF). ``None`` for ordinary code chunks.
         preprocessor_id: The id of the preprocessor that produced this chunk,

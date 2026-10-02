@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -124,7 +125,7 @@ def test_generation_finalization_refuses_proof_pair_incompatible_with_generation
         key=key,
         evidence=(),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             UPDATE publication_proofs
@@ -166,7 +167,7 @@ def test_generation_finalization_refuses_an_open_receipt_even_if_proof_points_at
         successor_id,
         expected_parent_revision=3,
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             UPDATE publication_proofs SET generation_id = ?
@@ -205,7 +206,7 @@ def test_generation_finalization_refuses_a_noncommitted_latest_receipt(
         key=key,
         evidence=(),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         ledger_test_insert_reserved_receipt(
             connection,
             receipt_id="rolled-back-latest",
@@ -243,7 +244,7 @@ def test_generation_finalization_requires_receipt_for_delta_derived_proof(
         key=ledger_test_proof_key_for_signature(generation.signature),
         evidence=(),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             UPDATE publication_proofs
@@ -287,7 +288,7 @@ def test_generation_finalization_refuses_mismatched_committed_receipt(
     )
     target_revision = 4 if mismatch == "revision" else 3
     reservation_sequence = 6 if mismatch == "sequence" else 5
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         if mismatch != "provenance":
             connection.execute(
                 """
@@ -362,7 +363,7 @@ def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(
     ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
 
     def durable_projection() -> tuple[tuple[object, ...], ...]:
-        with sqlite3.connect(ledger.path) as connection:
+        with closing(sqlite3.connect(ledger.path)) as connection, connection:
             return tuple(
                 tuple(row)
                 for table in (
@@ -375,7 +376,7 @@ def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(
             )
 
     before = durable_projection()
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             CREATE TRIGGER reject_receipt_commit
@@ -399,7 +400,7 @@ def test_late_receipt_transition_failure_rolls_back_the_entire_proof_commit(
         old.rel_path: old
     }
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("DROP TRIGGER reject_receipt_commit")
         connection.commit()
     committed = ledger.commit_publication_receipt(receipt.receipt_id)
@@ -428,12 +429,12 @@ def test_changed_parent_revision_refuses_proof_commit_without_mutation(
         point_ids=("point-a-old",),
     )
     ledger.advance_finalization(successor_id, FinalizationPhase.STALE_RECONCILED)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("UPDATE publication_proofs SET revision = revision + 1")
         connection.commit()
 
     def durable_projection() -> tuple[tuple[object, ...], ...]:
-        with sqlite3.connect(ledger.path) as connection:
+        with closing(sqlite3.connect(ledger.path)) as connection, connection:
             return tuple(
                 tuple(row)
                 for table in (
@@ -453,7 +454,7 @@ def test_changed_parent_revision_refuses_proof_commit_without_mutation(
         ledger.commit_publication_receipt(receipt.receipt_id)
 
     assert durable_projection() == before
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         state = connection.execute(
             "SELECT state FROM publication_receipts WHERE receipt_id = ?",
             (receipt.receipt_id,),

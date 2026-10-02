@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#ci-self-hosted-gpu-runner'
 date: '2026-07-23'
-modified: '2026-07-24'
-body_hash: 'sha256:3e2cd892adad43201711ecf21ef7ae0dcdff0a1cce2ad8ffd959aa83e621db2f'
+modified: '2026-09-30'
+body_hash: 'sha256:869dd3dc815a7d203a96615f6e77641eeb6b2a390a15d03d7179f888c39ebc83'
 related: []
 ---
 
@@ -24,11 +24,9 @@ the cheap tier, and a trusted-event gate as the security boundary.
 
 ### The GPU tier is real work that a hosted runner cannot do
 
-The suite splits cleanly by cost. The tokenless unit population runs anywhere;
+The suite splits cleanly by cost. The portable unit population runs anywhere;
 the rest needs a real CUDA device. `pyproject.toml` registers the markers and
-the root `conftest.py` gate (`pytest_runtestloop`) hard-fails the run if a
-GPU-marked test is collected without `HF_TOKEN`, because the gated model
-`naver/splade-v3` must be pullable. Marker census on 2026-07-23:
+the historical root `conftest.py` gate required model accessibility for GPU-marked tests. That acquisition restriction is retired by `2026-09-30-sparseencode-adr`; GPU ownership and public model availability remain prerequisites. Marker census on 2026-07-23:
 `cuda` 3, `integration` 694, `quality` 24, `performance` 14, `robustness` 3,
 `subprocess_gpu` 66. The device is an RTX 4080 SUPER, 16 GB VRAM; the in-process
 `gpu_lock` serialises compute, but `subprocess_gpu` tests spawn a second

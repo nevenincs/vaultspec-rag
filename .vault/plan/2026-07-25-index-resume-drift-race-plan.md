@@ -3,8 +3,6 @@ tags:
   - '#plan'
   - '#index-resume-drift-race'
 date: '2026-07-25'
-modified: '2026-07-27'
-body_hash: 'sha256:7a9982bfe6e122a14feb7ff96ff68e0568291f0a593f943e1407bce013fc4a93'
 tier: L3
 related:
   - '[[2026-07-25-index-resume-drift-race-adr]]'
@@ -12,6 +10,8 @@ related:
   - '[[2026-07-25-document-index-drift-parity-adr]]'
   - '[[2026-07-25-index-resume-drift-race-research]]'
   - '[[2026-07-21-large-index-resilience-adr]]'
+modified: '2026-10-01'
+body_hash: 'sha256:3ad85cd526ad4ddf04bfe666f5eb87c819753b540590a2982db838c3321d9df8'
 ---
 
 # `index-resume-drift-race` plan
@@ -22,7 +22,7 @@ No separate description is recorded in the retained prior plan body. Source: ret
 
 ## Steps
 
-### Wave `W01` - Seam the codebase indexer
+## Wave `W01` - Seam the codebase indexer
 
 Extract the responsibility clusters that one 3601-line class currently holds, behaviour-preserving, with the existing suite as the only oracle. Extraction runs ahead of the fix so the drift owner has somewhere to live that is not a seventh concern in the monolith.
 
@@ -45,7 +45,7 @@ One extraction per responsibility cluster, each landing green before the next be
 - [x] `W01.P02.S06` - Extract drift ownership into its own collaborator that holds the drop-points-then-remove-units ordering as a property of the type; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W01.P02.S17` - Collapse the duplicated stat-failure classification so an admitted file is stat-ed once per scan rather than twice, treating it as the behaviour change it is; `src/vaultspec_rag/indexer/_content_discovery.py`.
 
-### Wave `W02` - Give drift a single owner and close the window
+## Wave `W02` - Give drift a single owner and close the window
 
 Turn the ledger collision into a distinguishable signal and let the drift owner supersede and re-record the racing path, so detection and remedy reason over the same evidence at the same instant.
 
@@ -63,7 +63,7 @@ Remedy the drift through its owner, bounded, with deferral as the visible fallba
 - [x] `W02.P04.S09` - Route the drift signal to the drift owner so it supersedes the racing path and the run re-records it instead of aborting; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 - [x] `W02.P04.S10` - Bound the per-path retry and defer on exhaustion, emitting a warning that names the path and the exhausted budget; `src/vaultspec_rag/indexer/_codebase_indexer.py`.
 
-### Wave `W03` - Accounting, gate, and verification
+## Wave `W03` - Accounting, gate, and verification
 
 Stop the breaker reacting to edit rate, restart the module-length ratchet the tooling already documents, and verify the whole change against a live service.
 

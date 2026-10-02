@@ -251,6 +251,11 @@ class StartupStatusReporter:
             spinner,
             console=console,
             refresh_per_second=_REFRESH_PER_SECOND,
+            # Every line uses the owning console, and download bars buffer
+            # their own output. Avoid lending transient FileProxy streams to
+            # dependency callbacks that survive the live region.
+            redirect_stdout=False,
+            redirect_stderr=False,
             # The final frame is the operator's evidence of the last completed
             # activity. Keeping it also makes a redirected terminal stream
             # retain the real live output instead of erasing it at teardown.

@@ -986,31 +986,35 @@ class DocumentIndexer:
         # The unscoped selection sees the full discovered membership, so it
         # both consults the stat-evidence gate and prunes its evidence for
         # files that no longer exist.
-        gate = self._stat_gate_cache.acquire()
-        outcome = _stat_gate.hash_paths(
-            gate,
-            [(rel, path) for rel, path in discovered.items() if rel in previous_files],
-        )
-        if outcome.failures:
-            # The ungated selection raised on the first unreadable file;
-            # surface the same failure rather than silently deselecting it.
-            raise outcome.failures[0][1]
-        selected = {
-            rel
-            for rel in discovered
-            if rel not in previous_files
-            or outcome.hashes[rel] != previous_files[rel].content_fingerprint
-        }
-        gate.prune(discovered.keys())
-        gate.persist()
-        if gate.reused:
-            logger.debug(
-                "stat gate reused %d document hashes, rehashed %d",
-                gate.reused,
-                gate.rehashed,
+        with self._stat_gate_cache.acquire() as gate:
+            outcome = _stat_gate.hash_paths(
+                gate,
+                [
+                    (rel, path)
+                    for rel, path in discovered.items()
+                    if rel in previous_files
+                ],
             )
-        selected.update(set(previous_files) - set(discovered))
-        return selected
+            if outcome.failures:
+                # The ungated selection raised on the first unreadable file;
+                # surface the same failure rather than silently deselecting it.
+                raise outcome.failures[0][1]
+            selected = {
+                rel
+                for rel in discovered
+                if rel not in previous_files
+                or outcome.hashes[rel] != previous_files[rel].content_fingerprint
+            }
+            gate.prune(discovered.keys())
+            gate.persist()
+            if gate.reused:
+                logger.debug(
+                    "stat gate reused %d document hashes, rehashed %d",
+                    gate.reused,
+                    gate.rehashed,
+                )
+            selected.update(set(previous_files) - set(discovered))
+            return selected
 
     def _reconcile_incremental_paths(
         self,

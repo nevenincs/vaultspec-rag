@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#cli-backend-parity'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:02bc94844e16617892a8b6c54732ed1bba712ac2ad1ab33b047d84c3c5f38830'
+body_hash: 'sha256:f93d3d79aabbc7cbb03aa31aee67ec059d77e196af9b9a9492131b4b04923790'
 related:
   - '[[2026-05-28-cli-backend-parity-adr]]'
+  - '[[2026-05-28-cli-backend-parity-ledger]]'
   - '[[2026-05-28-cli-backend-parity-plan]]'
   - '[[2026-05-28-cli-backend-parity-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#cli-backend-parity`.
 ### adr
 
 - `2026-05-28-cli-backend-parity-adr` - `cli-backend-parity` adr: `cli-mcp parity wires and fail-hard fast path` | (**status:** `accepted`)
+
+### exec
+
+- `2026-05-28-cli-backend-parity-ledger` - `cli-backend-parity` ledger
 
 ### plan
 

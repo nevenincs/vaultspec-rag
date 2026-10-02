@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#index-observability'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:2bac1f677d17be36d2c05505aa41b2ea7edcbd456e7dd5552b9e4f99e84cc2c1'
+body_hash: 'sha256:02cb1bf9899f8a3c51d3c82866a057e832f2ea1f8ee306506f719932a090fbc6'
 related:
   - '[[2026-07-28-index-observability-adr]]'
+  - '[[2026-07-28-index-observability-ledger]]'
   - '[[2026-07-28-index-observability-plan]]'
   - '[[2026-07-28-index-observability-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#index-observability`.
 ### adr
 
 - `2026-07-28-index-observability-adr` - `index-observability` adr: `Degradation truth for long encode phases` | (**status:** `accepted`)
+
+### exec
+
+- `2026-07-28-index-observability-ledger` - `index-observability` ledger
 
 ### plan
 

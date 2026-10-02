@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#cli-index-default'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:a0416176fbe73e090ecf538e3b85dc2fa2e608053c3fb9a7b3efb5727fa3731b'
+body_hash: 'sha256:d01852d849088926dbc57963e286a8b4c5a98452409e5c78371230cb44a28744'
 related:
   - '[[2026-05-30-cli-index-default-adr]]'
+  - '[[2026-05-30-cli-index-default-ledger]]'
   - '[[2026-05-30-cli-index-default-plan]]'
   - '[[2026-05-30-cli-index-default-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#cli-index-default`.
 ### adr
 
 - `2026-05-30-cli-index-default-adr` - `cli-index-default` adr: `require --type with --rebuild, scope drop to collection` | (**status:** `accepted`)
+
+### exec
+
+- `2026-05-30-cli-index-default-ledger` - `cli-index-default` ledger
 
 ### plan
 

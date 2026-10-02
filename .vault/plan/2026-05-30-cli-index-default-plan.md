@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#cli-index-default'
 date: '2026-05-30'
-modified: '2026-07-25'
-body_hash: 'sha256:d4378222acc08965f87613caa831a33963b05e9763736437fc30b0650c4bc6c6'
+tier: L2
 related:
   - '[[2026-05-30-cli-index-default-adr]]'
   - '[[2026-05-30-cli-index-default-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:723d817d75bd5f81c03ee5471f0ae1518d29c264e759eea001d217b852fac1a0'
 ---
 
 # `cli-index-default` `index rebuild safety: require --type, scoped drop` plan
@@ -58,10 +59,10 @@ Cover the refusal in both output modes, prove a scoped rebuild leaves the other 
 
 ## Steps
 
-### Phase 1 — CLI guard
+### Phase 1 - CLI guard
 
 1. In `handle_index`, change the signature to take a
-   `typer.Context` parameter (already present — verify).
+   `typer.Context` parameter (already present - verify).
 1. Right after the dry-run early return, query
    `ctx.get_parameter_source("index_type")`. When `rebuild` is
    `True` and the source is `ParameterSource.DEFAULT`, emit a
@@ -71,7 +72,7 @@ Cover the refusal in both output modes, prove a scoped rebuild leaves the other 
    spells out the three valid invocations
    (`--rebuild --type vault|code|all`).
 
-### Phase 2 — Scoped rebuild
+### Phase 2 - Scoped rebuild
 
 1. Replace the in-process rebuild block (`cli.py:849-871`):
    - Drop the `shutil.rmtree(store.db_path)` call.
@@ -88,7 +89,7 @@ Cover the refusal in both output modes, prove a scoped rebuild leaves the other 
      `store.ensure_table()` / `store.ensure_code_table()` after
      the drop.
 
-### Phase 3 — Docs
+### Phase 3 - Docs
 
 1. `README.md:98`: replace `vaultspec-rag index --rebuild` with
    `vaultspec-rag index --rebuild --type all` (or split into two
@@ -98,7 +99,7 @@ Cover the refusal in both output modes, prove a scoped rebuild leaves the other 
 1. `.vaultspec/rules/rules/vaultspec-rag.builtin.md`: extend the
    `index` summary line with the rebuild rule.
 
-### Phase 4 — Tests
+### Phase 4 - Tests
 
 1. Unit test: `vaultspec-rag index --rebuild` (no `--type`) exits
    2, output contains `rebuild_requires_explicit_type` or the
@@ -116,7 +117,7 @@ Cover the refusal in both output modes, prove a scoped rebuild leaves the other 
    in-process; assert the code collection still has the
    original count.
 
-### Phase 5 — Smoke + commit
+### Phase 5 - Smoke + commit
 
 1. Smoke: bare `vaultspec-rag index` against the rag worktree
    itself, confirm it still works (no friction). Then

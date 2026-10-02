@@ -17,6 +17,7 @@ import inspect
 import logging
 import pathlib
 import pkgutil
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from types import CodeType
 from typing import TYPE_CHECKING, cast
@@ -93,16 +94,21 @@ def server_mode_store(
     del isolated_status_dir
     from ..config._settings import reset_config
     from ..store_runtime import VaultStore
+    from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
 
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", _DEAD_QDRANT_URL)
     reset_config()
     root = tmp_path / "root"
     root.mkdir()
-    store = VaultStore(root)
     try:
-        yield store
+        with ExitStack() as lifetime:
+            with pytest.warns(
+                UserWarning, match="Failed to obtain server version"
+            ) as captured:
+                store = lifetime.enter_context(VaultStore(root))
+                await_client_warnings(captured, [VERSION_WARNING])
+            yield store
     finally:
-        store.close()
         reset_config()
 
 

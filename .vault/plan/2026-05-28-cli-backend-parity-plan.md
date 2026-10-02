@@ -3,12 +3,13 @@ tags:
   - '#plan'
   - '#cli-backend-parity'
 date: '2026-05-28'
-modified: '2026-07-25'
-body_hash: 'sha256:6537491e0ca82728b4cbc2619478f0d4ba44662eb842983082e855e3aad6cba4'
+tier: L2
 related:
   - '[[2026-05-28-cli-backend-parity-adr]]'
   - '[[2026-05-28-cli-backend-parity-research]]'
   - '[[2026-05-28-cli-search-filters-plan]]'
+modified: '2026-10-01'
+body_hash: 'sha256:6537491e0ca82728b4cbc2619478f0d4ba44662eb842983082e855e3aad6cba4'
 ---
 
 # `cli-backend-parity` `cli backend parity bundle plan` plan

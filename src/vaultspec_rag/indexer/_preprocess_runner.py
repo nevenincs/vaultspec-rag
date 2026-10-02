@@ -32,11 +32,13 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING, Literal, cast
 
 from pydantic import ValidationError
 
+from .._process_probe import kill_process_descendants, process_lineage, wait_for_exit
 from ._hook_sandbox import curated_child_env, default_popen_handle
 from ._preprocess_schema import (
     PREPROCESS_INVOCATION_ENV,
@@ -252,52 +254,123 @@ def _child_env(
     return env
 
 
-def _drain_stdout_bounded(
-    pipe: IO[bytes], stdout_cap: int, captured: dict[str, bytes]
+@dataclass(frozen=True, slots=True)
+class _PipeCapture:
+    output: dict[str, bytes]
+    stopped: threading.Event
+    errors: list[Exception]
+
+
+def _drain_pipe(
+    pipe: IO[bytes],
+    key: str,
+    cap: int,
+    capture: _PipeCapture,
 ) -> None:
-    """Drain stdout while retaining at most one byte beyond its hard cap."""
+    """Drain a nonblocking pipe without holding a BufferedReader's read lock."""
     buf = bytearray()
-    while chunk := pipe.read(65536):
-        if len(buf) <= stdout_cap:
-            buf += chunk
-    captured["stdout"] = bytes(buf[: stdout_cap + 1])
-
-
-def _drain_stderr_bounded(pipe: IO[bytes], captured: dict[str, bytes]) -> None:
-    """Drain stderr while retaining only its bounded diagnostic prefix."""
-    captured["stderr"] = pipe.read(_STDERR_CAP)
-    while pipe.read(65536):
-        pass
+    try:
+        while not capture.stopped.is_set():
+            try:
+                chunk = os.read(pipe.fileno(), 65536)
+            except BlockingIOError:
+                capture.stopped.wait(0.01)
+                continue
+            if not chunk:
+                break
+            buf.extend(chunk[: max(0, cap - len(buf))])
+    except Exception as exc:
+        capture.errors.append(exc)
+    finally:
+        capture.output[key] = bytes(buf)
 
 
 def _wait_for_child(
     handle: subprocess.Popen[bytes],
-    timeout_s: float | None,
+    deadline: float | None,
     checkpoint: Callable[[], None] | None,
 ) -> None:
     """Poll one child at cooperative cancellation and timeout safe points."""
-    started = time.monotonic()
     while handle.poll() is None:
         if checkpoint is not None:
             checkpoint()
-        if timeout_s is not None and time.monotonic() - started >= timeout_s:
-            raise subprocess.TimeoutExpired(handle.args, timeout_s)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(handle.args, 0)
         try:
             handle.wait(timeout=0.1)
         except subprocess.TimeoutExpired:
             continue
 
 
+def _join_readers(
+    threads: tuple[threading.Thread, ...],
+    deadline: float,
+    errors: list[Exception],
+    checkpoint: Callable[[], None] | None,
+) -> None:
+    """Await EOF only within the invocation's remaining output-drain budget."""
+    while any(thread.is_alive() for thread in threads):
+        if checkpoint is not None:
+            checkpoint()
+        if errors:
+            raise errors[0]
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired("preprocessor pipe drain", 0)
+        for thread in threads:
+            thread.join(timeout=0.01)
+    if errors:
+        raise errors[0]
+
+
+def _stop_readers(threads: tuple[threading.Thread, ...], deadline: float) -> None:
+    """Join only started readers within the shared cleanup deadline."""
+    for thread in threads:
+        if thread.ident is not None:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                raise RuntimeError("preprocessor pipe reader did not terminate")
+
+
 def _terminate_and_join(
     handle: subprocess.Popen[bytes],
-    stdout_thread: threading.Thread,
-    stderr_thread: threading.Thread,
+    threads: tuple[threading.Thread, ...],
+    stopped: threading.Event,
 ) -> None:
-    """Terminate a child and join both pipe drains on every exceptional exit."""
-    handle.kill()
-    handle.wait()
-    stdout_thread.join(timeout=5)
-    stderr_thread.join(timeout=5)
+    """Stop readers, kill witnessed descendants first, then reap the owned child."""
+    pending_readers = sum(thread.is_alive() for thread in threads)
+    stopped.set()
+    deadline = time.monotonic() + 5.0
+    cleanup_error: Exception | None = None
+    descendants = ()
+    try:
+        if handle.poll() is None:
+            lineage = process_lineage(handle.pid)
+            if not lineage or lineage[0].pid != handle.pid:
+                raise ProcessLookupError("preprocessor parent identity is unreadable")
+            descendants = kill_process_descendants(lineage[0])
+        elif pending_readers:
+            raise ProcessLookupError(
+                "parent exited before descendant witness; "
+                f"pending_pipe_readers={pending_readers}, descendant_count=unknown"
+            )
+    except Exception as exc:
+        cleanup_error = exc
+    finally:
+        try:
+            if handle.poll() is None:
+                handle.kill()
+            handle.wait(timeout=max(0.0, deadline - time.monotonic()))
+            for descendant in descendants:
+                if not wait_for_exit(
+                    descendant.pid, timeout=max(0.0, deadline - time.monotonic())
+                ):
+                    raise RuntimeError(
+                        f"preprocessor descendant {descendant.pid} survived cleanup"
+                    )
+        finally:
+            _stop_readers(threads, deadline)
+    if cleanup_error is not None:
+        raise cleanup_error
 
 
 def _drain_and_wait(
@@ -306,46 +379,65 @@ def _drain_and_wait(
     stdout_cap: int,
     checkpoint: Callable[[], None] | None = None,
 ) -> tuple[int, bytes, str]:
-    """Drain a launched child's pipes on threads, then wait with a timeout.
+    """Own pipes through bounded waiting; never wait indefinitely in Popen.__exit__."""
+    with ExitStack() as cleanup:
+        for pipe in (handle.stdout, handle.stderr):
+            if pipe is not None:
+                cleanup.callback(pipe.close)
+        return _drain_child(handle, timeout_s, stdout_cap, checkpoint)
 
-    Reads both pipes on dedicated threads (deadlock-free) but stops *storing*
-    stdout past the cap, so a runaway extractor cannot spike memory before the
-    emitted-size cap fires (review PREPROCESS-003). The wall-clock ``timeout_s``
-    still bounds a child that keeps producing output.
 
-    Returns ``(returncode, stdout_bytes, stderr_text)``; ``stdout_bytes`` is at
-    most ``stdout_cap + 1`` so the caller can detect truncation.
-
-    Raises:
-        _PreprocessSkipError: On a timeout or missing pipes.
-    """
+def _drain_child(
+    handle: subprocess.Popen[bytes],
+    timeout_s: float | None,
+    stdout_cap: int,
+    checkpoint: Callable[[], None] | None = None,
+) -> tuple[int, bytes, str]:
+    """Capture capped output using stoppable readers within one timeout budget."""
     captured: dict[str, bytes] = {"stdout": b"", "stderr": b""}
-
-    if handle.stdout is None or handle.stderr is None:  # pragma: no cover - PIPE set
-        handle.kill()
-        msg = "preprocessor pipes unavailable"
-        raise _PreprocessSkipError(msg)
-    t_out = threading.Thread(
-        target=_drain_stdout_bounded,
-        args=(handle.stdout, stdout_cap, captured),
-    )
-    t_err = threading.Thread(
-        target=_drain_stderr_bounded,
-        args=(handle.stderr, captured),
-    )
-    t_out.start()
-    t_err.start()
+    stopped = threading.Event()
+    errors: list[Exception] = []
+    capture = _PipeCapture(captured, stopped, errors)
+    threads: tuple[threading.Thread, ...] = ()
+    deadline = time.monotonic() + timeout_s if timeout_s is not None else None
     try:
-        _wait_for_child(handle, timeout_s, checkpoint)
-    except subprocess.TimeoutExpired as exc:
-        _terminate_and_join(handle, t_out, t_err)
-        msg = f"preprocessor timed out after {timeout_s}s"
-        raise _PreprocessSkipError(msg) from exc
-    except BaseException:
-        _terminate_and_join(handle, t_out, t_err)
+        if handle.stdout is None or handle.stderr is None:
+            raise _PreprocessSkipError("preprocessor pipes unavailable")
+        # Windows pipe descriptors support this on every supported Python version.
+        # A refused/unsupported flag is an explicit failure, never a blocking fallback.
+        os.set_blocking(handle.stdout.fileno(), False)
+        os.set_blocking(handle.stderr.fileno(), False)
+        threads = tuple(
+            threading.Thread(
+                target=_drain_pipe,
+                args=(pipe, key, cap, capture),
+                name=f"preprocessor-{key}",
+            )
+            for pipe, key, cap in (
+                (handle.stdout, "stdout", stdout_cap + 1),
+                (handle.stderr, "stderr", _STDERR_CAP),
+            )
+        )
+        for thread in threads:
+            thread.start()
+        _wait_for_child(handle, deadline, checkpoint)
+        _join_readers(
+            threads,
+            deadline if deadline is not None else time.monotonic() + 5.0,
+            errors,
+            checkpoint,
+        )
+    except BaseException as exc:
+        try:
+            _terminate_and_join(handle, threads, stopped)
+        except Exception as cleanup_exc:
+            exc.add_note(f"preprocessor cleanup failed: {cleanup_exc}")
+        if isinstance(exc, subprocess.TimeoutExpired):
+            msg = f"preprocessor timed out after {timeout_s}s"
+            if notes := getattr(exc, "__notes__", None):
+                msg += "; " + "; ".join(notes)
+            raise _PreprocessSkipError(msg) from exc
         raise
-    t_out.join(timeout=5)
-    t_err.join(timeout=5)
     stderr_text = captured["stderr"].decode("utf-8", errors="replace").strip()
     returncode = handle.returncode if handle.returncode is not None else -1
     return returncode, captured["stdout"], stderr_text

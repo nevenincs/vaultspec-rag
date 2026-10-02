@@ -838,13 +838,25 @@ class TestStorageProgress:
 
         assert "Migrating 1/1: r0123456789ab_docs -> docs" in _plain(buffer.getvalue())
 
-    def test_prune_names_each_orphaned_namespace(self, isolated_singleton_dirs: Path):
+    def test_prune_names_each_orphaned_namespace(
+        self, tmp_path: Path, isolated_singleton_dirs: Path
+    ):
         """Reclamation reports the namespace it is working through."""
         from ..storage_manifest import record_root
         from ..storage_survey_ops import prune_orphaned
 
         del isolated_singleton_dirs
-        vanished = "C:/definitely/not/a/real/root/for/this/test"
+        vanished = str(
+            tmp_path
+            / "definitely"
+            / "not"
+            / "a"
+            / "real"
+            / "root"
+            / "for"
+            / "this"
+            / "test"
+        )
         entry = record_root(vanished, backend="server")
         client = self._client_with((f"{entry.prefix}docs",))
         buffer = io.StringIO()
@@ -867,9 +879,19 @@ class TestStorageProgress:
     ):
         """The survey's machine channel stays a single document."""
         from ..cli import app
+        from ..config._types import EnvVar
+        from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
+        from .conftest import managed_env
 
         del isolated_singleton_dirs
-        result = runner.invoke(app, ["server", "storage", "survey", "--json"])
+        with (
+            managed_env(**{EnvVar.QDRANT_URL.value: "http://127.0.0.1:9"}),
+            pytest.warns(
+                UserWarning, match="Failed to obtain server version"
+            ) as captured,
+        ):
+            result = runner.invoke(app, ["server", "storage", "survey", "--json"])
+            await_client_warnings(captured, [VERSION_WARNING])
 
         payload = cast("dict[str, object]", json.loads(result.output))
         assert payload["command"] == "server.storage.survey"

@@ -3,7 +3,7 @@
 Every test declares which lane it belongs to. The fast lane is selected by
 EXCLUDING the slow tiers rather than by naming the fast one, so a test that
 declares nothing is not skipped - it is pulled into the fast lane and run on a
-machine that may have neither a GPU nor a Hugging Face token. The inverse costs
+machine that may have no supported GPU. The inverse costs
 just as much: a module-level ``pytestmark`` is ADDED to a test's own decorator
 rather than overridden by it, so a blanket module default drags GPU tests into
 ``-m unit``.

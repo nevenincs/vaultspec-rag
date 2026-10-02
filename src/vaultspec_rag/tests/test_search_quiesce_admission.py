@@ -168,7 +168,9 @@ def test_quiesced_search_returns_the_retryable_envelope_for_every_source(
     assert snapshot.safe_to_borrow_gpu
 
 
-def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
+def test_search_transport_preserves_the_exact_quiesce_envelope(
+    tmp_path: Path,
+) -> None:
     """The client returns the service's rejection unchanged, without fallback."""
     from ..serviceclient._search_transport import try_http_search
 
@@ -181,7 +183,7 @@ def test_search_transport_preserves_the_exact_quiesce_envelope() -> None:
             search_type="vault",
             top_k=1,
             port=httpd.server_address[1],
-            project_root="C:/loopback-vault",
+            project_root=str(tmp_path / "loopback-vault"),
         )
     finally:
         httpd.shutdown()

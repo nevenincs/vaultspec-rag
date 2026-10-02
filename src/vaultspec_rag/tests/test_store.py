@@ -10,6 +10,7 @@ import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -552,13 +553,20 @@ class TestQdrantServerMode:
         os.environ[EnvVar.STORE_OPERATION_TIMEOUT_SECONDS.value] = "1.25"
         reset_config()
         try:
-            store = VaultStore(tmp_path)
-            try:
+            # This deliberately refused endpoint cannot answer the SDK's version
+            # probe; the operation-timeout contract still applies to its client.
+            from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
+
+            with (
+                pytest.warns(
+                    UserWarning, match="Failed to obtain server version"
+                ) as warnings,
+                VaultStore(tmp_path) as store,
+            ):
+                await_client_warnings(warnings, [VERSION_WARNING])
                 remote = store.client._client
                 assert isinstance(remote, QdrantRemote)
                 assert remote._timeout == 2
-            finally:
-                store.close()
         finally:
             for variable, value in previous.items():
                 if value is None:
@@ -573,26 +581,43 @@ class TestQdrantServerMode:
         """When VAULTSPEC_RAG_QDRANT_URL is set, VaultStore bypasses FileLock."""
         from ..config._settings import reset_config
         from ..store_runtime import VaultStore
+        from ._qdrant_warnings import (
+            INSECURE_KEY_WARNING,
+            VERSION_WARNING,
+            await_client_warnings,
+        )
 
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_URL", "http://localhost:65432")
         monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "test-api-key")
         reset_config()
 
         try:
-            store = VaultStore(tmp_path)
-            assert store.db_path == "http://localhost:65432"
-            assert store._lock_helper is None
+            # The fake HTTP endpoint and key intentionally exercise both SDK
+            # warnings; no credentials or version probe reach a real server.
+            with (
+                pytest.warns(
+                    UserWarning,
+                    match=(
+                        "Api key is used with an insecure connection"
+                        "|Failed to obtain server version"
+                    ),
+                ) as warnings,
+                VaultStore(tmp_path) as store,
+            ):
+                await_client_warnings(warnings, [INSECURE_KEY_WARNING, VERSION_WARNING])
+                assert store.db_path == "http://localhost:65432"
+                assert store._lock_helper is None
 
-            # Lock file should not be created
-            lock_file = (
-                tmp_path
-                / ".vault"
-                / "data"
-                / "search-data"
-                / "qdrant"
-                / "exclusive.lock"
-            )
-            assert not lock_file.exists()
+                # Lock file should not be created
+                lock_file = (
+                    tmp_path
+                    / ".vault"
+                    / "data"
+                    / "search-data"
+                    / "qdrant"
+                    / "exclusive.lock"
+                )
+                assert not lock_file.exists()
         finally:
             reset_config()
 
@@ -1202,34 +1227,37 @@ class TestServerModeNamespacing:
         os.environ[EnvVar.QDRANT_URL.value] = "http://127.0.0.1:9"
         reset_config()
         try:
-            store_a = VaultStore(root_a)
-            store_b = VaultStore(root_b)
-            try:
-                assert store_a._server_mode is True
-                assert (
-                    f"{root_collection_prefix(root_a)}vault_docs"
-                ) == store_a.TABLE_NAME
-                assert (
-                    f"{root_collection_prefix(root_a)}codebase_docs"
-                ) == store_a.CODE_TABLE_NAME
-                assert store_a.TABLE_NAME != store_b.TABLE_NAME
-                assert (
-                    f"{root_collection_prefix(root_a)}document_docs"
-                ) == store_a.DOCUMENT_TABLE_NAME
-                assert store_a.CODE_TABLE_NAME != store_b.CODE_TABLE_NAME
-                assert store_a.DOCUMENT_TABLE_NAME != store_b.DOCUMENT_TABLE_NAME
-                assert store_a.TABLE_NAME.endswith("vault_docs")
-                # The point-lock dict is keyed by the resolved names: one
-                # reentrant lock per collection, including the document
-                # collection, and never a single store-wide mutex.
-                assert set(store_a._collection_locks) == {
-                    store_a.TABLE_NAME,
-                    store_a.CODE_TABLE_NAME,
-                    store_a.DOCUMENT_TABLE_NAME,
-                }
-            finally:
-                store_a.close()
-                store_b.close()
+            with pytest.warns(
+                UserWarning, match="Failed to obtain server version"
+            ) as warnings:
+                from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
+
+                with ExitStack() as clients:
+                    store_a = clients.enter_context(VaultStore(root_a))
+                    store_b = clients.enter_context(VaultStore(root_b))
+                    await_client_warnings(warnings, [VERSION_WARNING, VERSION_WARNING])
+                    assert store_a._server_mode is True
+                    assert (
+                        f"{root_collection_prefix(root_a)}vault_docs"
+                    ) == store_a.TABLE_NAME
+                    assert (
+                        f"{root_collection_prefix(root_a)}codebase_docs"
+                    ) == store_a.CODE_TABLE_NAME
+                    assert store_a.TABLE_NAME != store_b.TABLE_NAME
+                    assert (
+                        f"{root_collection_prefix(root_a)}document_docs"
+                    ) == store_a.DOCUMENT_TABLE_NAME
+                    assert store_a.CODE_TABLE_NAME != store_b.CODE_TABLE_NAME
+                    assert store_a.DOCUMENT_TABLE_NAME != store_b.DOCUMENT_TABLE_NAME
+                    assert store_a.TABLE_NAME.endswith("vault_docs")
+                    # The point-lock dict is keyed by the resolved names: one
+                    # reentrant lock per collection, including the document
+                    # collection, and never a single store-wide mutex.
+                    assert set(store_a._collection_locks) == {
+                        store_a.TABLE_NAME,
+                        store_a.CODE_TABLE_NAME,
+                        store_a.DOCUMENT_TABLE_NAME,
+                    }
         finally:
             if prev is None:
                 os.environ.pop(EnvVar.QDRANT_URL.value, None)

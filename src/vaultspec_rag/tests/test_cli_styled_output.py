@@ -39,6 +39,11 @@ def _capture(monkeypatch: pytest.MonkeyPatch, *, terminal: bool) -> io.StringIO:
     """
     buffer = io.StringIO()
     monkeypatch.delenv("NO_COLOR", raising=False)
+    # These cases exercise a known colour terminal, independent of the caller
+    # environment (the recipe runner may correctly advertise TERM=dumb).
+    # Red/green: TERM=dumb failed both exact cyan/bold assertions before this
+    # premise was explicit; the same invocation passed with this fixture.
+    monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setattr(
         _cli, "console", _build_console(interactive=terminal, file=buffer)
     )

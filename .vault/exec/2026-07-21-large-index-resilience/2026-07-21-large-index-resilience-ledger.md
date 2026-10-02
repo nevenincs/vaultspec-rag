@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:f2f1eb1e3bd42231237742fdca4316883320ce0c348e2d009e7c336f4a33bcda'
+body_hash: 'sha256:48a2a4a8047d56cbd0b4d4cec1b437f3647957130ef291a12623b95cba123b6c'
 related:
   - "[[2026-07-21-large-index-resilience-plan]]"
 ---
@@ -122,3 +122,10 @@ related:
 - `S77` `T` `src/vaultspec_rag/tests/test_service_quiesce_routes.py`
 - `S78` `T` `src/vaultspec_rag/cli/_service_start.py`
 - `S78` `T` `src/vaultspec_rag/cli/_service_lifecycle.py`
+- `S51` `A` `.vault/audit/2026-07-23-large-index-resilience-closing-review-audit.md`
+- `S50` `verify:` `Historical repository commit gate recorded in 2026-07-22-large-index-resilience-audit (Ruff formatting Ty passed; complexity policy failed existing blocks)` -> `fail`
+
+## Notes
+
+- `S51` Historical mapping reconciliation: existing closing audit records this review; file addition is preserved in Git commit d4ac5aa3d98b1429f0778eaf6f3b4642e0f924fc. No fresh implementation or runtime verification is asserted.
+- `S50` Retained July 22 audit explicitly records the attempted repository gate failing its complexity policy after Ruff, formatting, and Ty passed. This preserves the observed historical failed result; no later historical pass or fresh runtime execution is invented.

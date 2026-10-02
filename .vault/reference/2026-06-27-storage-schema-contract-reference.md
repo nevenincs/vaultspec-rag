@@ -3,8 +3,8 @@ tags:
   - '#reference'
   - '#storage-schema-contract'
 date: '2026-06-27'
-modified: '2026-07-03'
-body_hash: 'sha256:cc1dea68d93be7dde2686fedcb0a5c9fbc2f55a239e72a3e58bfb9838952c7b1'
+modified: '2026-09-30'
+body_hash: 'sha256:437060bb128c8eb06951cde94c4eed337aaf674255f4429571d390c36865bad9'
 related:
   - "[[2026-06-26-storage-schema-contract-adr]]"
 ---
@@ -40,10 +40,10 @@ local mode the names are bare.
 
 Each collection carries one dense named vector and one sparse named vector:
 
-| Vector | Name     | Type        | Params                                                 |
-| ------ | -------- | ----------- | ------------------------------------------------------ |
-| dense  | `dense`  | float dense | size = effective dim (default 1024), distance `Cosine` |
-| sparse | `sparse` | SPLADE      | qdrant sparse vector                                   |
+| Vector | Name     | Type                         | Params                                                 |
+| ------ | -------- | ---------------------------- | ------------------------------------------------------ |
+| dense  | `dense`  | float dense                  | size = effective dim (default 1024), distance `Cosine` |
+| sparse | `sparse` | previous BERT sparse encoder | qdrant sparse vector                                   |
 
 The dense default dimension is the Qwen3-Embedding-0.6B default (1024). The EFFECTIVE
 dimension is the value in the runtime descriptor; validate against that, not the default.

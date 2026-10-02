@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
@@ -87,7 +88,7 @@ def test_run_ledger_installs_and_verifies_normalized_publication_schema(
         "file_state_tombstones",
     }
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
@@ -103,7 +104,7 @@ def test_publication_schema_enforces_open_receipt_and_state_constraints(
     ledger = RunLedger(tmp_path / "runs.sqlite3")
     generation = ledger.start_generation(ledger_test_signature(tmp_path))
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
         ledger_test_insert_reserved_receipt(
             connection,
@@ -212,7 +213,7 @@ def test_old_ledger_format_requires_rebuild_without_mutation(
 ) -> None:
     """Mutation: requesting WAL before the version gate mutates this database."""
     path = tmp_path / "runs.sqlite3"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("CREATE TABLE old_runs (value TEXT NOT NULL)")
         connection.execute("INSERT INTO old_runs VALUES ('preserve-me')")
         connection.execute(f"PRAGMA user_version = {schema_version}")
@@ -266,7 +267,7 @@ def test_live_wal_old_ledger_requires_rebuild_without_durable_mutation(
 def test_nonempty_schema_zero_requires_rebuild_without_mutation(tmp_path: Path) -> None:
     """Mutation: treating every schema-zero database as fresh overwrites its shape."""
     path = tmp_path / "runs.sqlite3"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("CREATE TABLE foreign_state (value TEXT NOT NULL)")
         connection.execute("INSERT INTO foreign_state VALUES ('preserve-me')")
         connection.commit()
@@ -297,12 +298,12 @@ def test_fresh_schema_creation_is_atomic_and_retryable(
         with pytest.raises(RuntimeError, match="injected schema-creation interruption"):
             RunLedger(path)
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 0
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []
 
     ledger = RunLedger(path)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
@@ -323,7 +324,7 @@ def test_concurrent_fresh_schema_openers_observe_only_empty_or_current(
     assert not second.is_alive()
     assert errors == []
     assert len(ledgers) == 2
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
@@ -349,7 +350,7 @@ def test_a_schema_committed_mid_preflight_is_not_read_as_pre_proof(
 
     # The snapshot held the peer off, so the opener created the schema itself.
     assert landed == [False]
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
@@ -382,7 +383,7 @@ def test_existing_empty_file_receives_the_exact_current_schema(tmp_path: Path) -
 
     ledger = RunLedger(path)
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == (
             SCHEMA_VERSION
         )
@@ -403,7 +404,7 @@ def test_open_refuses_a_preexisting_incompatible_publication_index(
 ) -> None:
     """Mutation proving this can fail: skip exact current-index verification."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("DROP INDEX publication_receipts_open")
         connection.execute(
@@ -427,7 +428,7 @@ def test_open_refuses_a_preexisting_publication_table_without_constraints(
 ) -> None:
     """Mutation proving this can fail: skip exact table-definition verification."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute("DROP TABLE file_state_tombstones")
@@ -457,7 +458,7 @@ def test_open_refuses_unexpected_current_schema_objects_without_mutation(
 ) -> None:
     """Mutation: checking only required names admits a second durable authority."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute("CREATE TABLE shadow_proof (value TEXT NOT NULL)")
         connection.commit()
@@ -490,7 +491,7 @@ def test_open_refuses_unexpected_schema_authorities_without_mutation(
 ) -> None:
     """Mutation: ignoring views or triggers admits another durable authority."""
     ledger = RunLedger(tmp_path / "runs.sqlite3")
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA journal_mode = DELETE")
         connection.execute(ddl)
         connection.commit()

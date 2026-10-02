@@ -40,13 +40,12 @@ import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from ._index_integrity import VERDICT_CONSISTENT, VERDICT_SHRUNKEN
+from ._index_integrity import IntegrityVerdict
 from .indexer._run_ledger_models import RunAuthority
 
 if TYPE_CHECKING:
     import pathlib
 
-    from ._index_integrity import IntegrityVerdict
     from ._source_types import PublicSourceType
 
 logger = logging.getLogger(__name__)
@@ -186,11 +185,11 @@ def _record_verdict(
     allows, asks for one repair.
     """
     key = _observation_key(root, source.value)
-    if verdict == VERDICT_CONSISTENT:
+    if verdict == IntegrityVerdict.CONSISTENT:
         with _STATE_LOCK:
             _OBSERVATIONS.pop(key, None)
         return (False, None)
-    if verdict != VERDICT_SHRUNKEN:
+    if verdict != IntegrityVerdict.SHRUNKEN:
         return (False, None)
 
     request_repair = False

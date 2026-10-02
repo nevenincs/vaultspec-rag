@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-09-14'
-body_hash: 'sha256:1910d4cce4d614140aeca8d84e82168eaa1d563410f4df9ba70a0b303cf28a1f'
+modified: '2026-09-30'
+body_hash: 'sha256:ac6d056f63ea73e12d3436e809e86e219370e87b014f7748100fe60d0b2e92f2'
 ---
 
 # Round 33: Integration Test Coverage Gap & Compliance Audit
@@ -217,18 +217,18 @@ ______________________________________________________________________
 
 ### Test Files and What They Cover
 
-| Test File                        | Scope            | Markers                    | Key Methods Tested                                                           |
-| -------------------------------- | ---------------- | -------------------------- | ---------------------------------------------------------------------------- |
-| **test_indexer_integration.py**  | Vault indexing   | `@pytest.mark.integration` | `full_index()`, `incremental_index()` (both default clean=False)             |
-| **test_codebase_integration.py** | Code indexing    | `@pytest.mark.integration` | `full_index()` (no clean=True test), `incremental_index()`                   |
-| **test_search_integration.py**   | Search & rerank  | `@pytest.mark.integration` | `search()`, `search_vault()`, `search_codebase()`, `search_all()` (API)      |
-| **test_store_integration.py**    | Qdrant ops       | `@pytest.mark.integration` | `hybrid_search()`, `delete_documents()`, `context_manager`                   |
-| **test_api_integration.py**      | Public facade    | `@pytest.mark.integration` | `search()`, `index()`, `list_documents()`, `get_related()`, engine singleton |
-| **test_cli_integration.py**      | CLI commands     | `@pytest.mark.integration` | `status`, `index`, `search` subcommands (subprocess)                         |
-| **test_quality.py**              | Ranking quality  | `@pytest.mark.quality`     | Known-answer precision, filter correctness, authority boost                  |
-| **test_performance.py**          | Latency/resource | `@pytest.mark.performance` | Query latency, graph cache reuse, FTS rebuild                                |
-| **test_robustness.py**           | Edge cases       | `@pytest.mark.robustness`  | Stories without frontmatter, nonstandard metadata, orphan docs               |
-| **test_embeddings.py**           | GPU inference    | `@pytest.mark.integration` | Qwen3 dense + SPLADE sparse encoding, document-query similarity              |
+| Test File                        | Scope            | Markers                    | Key Methods Tested                                                                    |
+| -------------------------------- | ---------------- | -------------------------- | ------------------------------------------------------------------------------------- |
+| **test_indexer_integration.py**  | Vault indexing   | `@pytest.mark.integration` | `full_index()`, `incremental_index()` (both default clean=False)                      |
+| **test_codebase_integration.py** | Code indexing    | `@pytest.mark.integration` | `full_index()` (no clean=True test), `incremental_index()`                            |
+| **test_search_integration.py**   | Search & rerank  | `@pytest.mark.integration` | `search()`, `search_vault()`, `search_codebase()`, `search_all()` (API)               |
+| **test_store_integration.py**    | Qdrant ops       | `@pytest.mark.integration` | `hybrid_search()`, `delete_documents()`, `context_manager`                            |
+| **test_api_integration.py**      | Public facade    | `@pytest.mark.integration` | `search()`, `index()`, `list_documents()`, `get_related()`, engine singleton          |
+| **test_cli_integration.py**      | CLI commands     | `@pytest.mark.integration` | `status`, `index`, `search` subcommands (subprocess)                                  |
+| **test_quality.py**              | Ranking quality  | `@pytest.mark.quality`     | Known-answer precision, filter correctness, authority boost                           |
+| **test_performance.py**          | Latency/resource | `@pytest.mark.performance` | Query latency, graph cache reuse, FTS rebuild                                         |
+| **test_robustness.py**           | Edge cases       | `@pytest.mark.robustness`  | Stories without frontmatter, nonstandard metadata, orphan docs                        |
+| **test_embeddings.py**           | GPU inference    | `@pytest.mark.integration` | Qwen3 dense + previous BERT sparse encoder sparse encoding, document-query similarity |
 
 ### Code Paths NOT Exercised in Integration
 

@@ -689,18 +689,15 @@ def current_identity() -> CollectionIdentity:
 class ConformanceVerdict:
     """Whether a collection may be trusted, and why.
 
-    ``geometry_fatal`` separates the two failure modes that share the
-    ``nonconforming`` verdict. A width, distance, or vector-name disagreement
-    makes the stored vectors unscorable, so the caller refuses. A model
-    disagreement at matching geometry leaves the collection readable and merely
-    meaningless to rank by, so the caller degrades and lets a rebuild fix it -
-    refusing there would remove search for the duration of the rebuild that is
-    the remedy.
+    Geometry disagreements refuse scoring. Sparse model disagreements also
+    refuse reads and writes because term IDs and weights belong to that model.
+    Dense model disagreement at matching geometry retains its degraded policy.
     """
 
     verdict: str
     reason: str
     geometry_fatal: bool = False
+    sparse_model_fatal: bool = False
 
     @property
     def is_conforming(self) -> bool:
@@ -812,6 +809,16 @@ def _model_conformance(
     expected: CollectionIdentity,
 ) -> ConformanceVerdict:
     """Judge provenance after geometry has established readable vectors."""
+    if stamped.sparse_model != expected.sparse_model:
+        return ConformanceVerdict(
+            NONCONFORMING,
+            f"the collection's sparse vectors were produced by "
+            f"{stamped.sparse_model or 'no sparse model'} but "
+            f"{expected.sparse_model or 'no sparse model'} is configured; "
+            "rebuild the affected index before "
+            "reading or writing sparse vectors",
+            sparse_model_fatal=True,
+        )
     if stamped.dense_model != expected.dense_model:
         return ConformanceVerdict(
             NONCONFORMING,
@@ -819,12 +826,5 @@ def _model_conformance(
             f"but {expected.dense_model} is configured; equal width makes the "
             "mismatch invisible to scoring, so ranking is meaningless until a "
             "rebuild",
-        )
-    if stamped.sparse_model != expected.sparse_model:
-        return ConformanceVerdict(
-            NONCONFORMING,
-            f"the collection's sparse vectors were produced by "
-            f"{stamped.sparse_model or 'no sparse model'} but "
-            f"{expected.sparse_model or 'no sparse model'} is configured",
         )
     return ConformanceVerdict(CONFORMING, "")

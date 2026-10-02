@@ -3,20 +3,21 @@ tags:
   - '#plan'
   - '#vaultragignore'
 date: '2026-04-04'
-modified: '2026-09-14'
-body_hash: 'sha256:4c4660eb6ff53554ac0f52995774304500f14922400432b161af56e933ce49a6'
+tier: L2
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
   - '[[2026-04-04-vaultragignore-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:1f7b1879555d30bb7cc6d29120e112fdb3becdc88fc7ade32cb1e6baa3299e34'
 ---
 
 # `vaultragignore` implementation plan
 
-Add `.vaultragignore` support to `CodebaseIndexer` — gitignore-syntax file at project
+Add `.vaultragignore` support to `CodebaseIndexer` - gitignore-syntax file at project
 root that excludes git-tracked files from codebase indexing. Plus CLI `--dry-run` and
 `--exclude` options.
 
-See `2026-04-04-vaultragignore-adr` for design decisions (D1–D9).
+See `2026-04-04-vaultragignore-adr` for design decisions (D1 - D9).
 See `2026-04-04-vaultragignore-research` for investigation.
 
 ### Phase `P01` - Ignore-file support in the codebase indexer
@@ -41,7 +42,7 @@ Cover the combined specification, the root-only scope, the preview scoping and o
 - [x] `P03.S06` - Cover the two-specification combination, the root-only lookup, and the extra-exclude merge with unit tests over the scan; `src/vaultspec_rag/tests/`.
 - [x] `P03.S07` - Prove end-to-end against a real index that a path named by the ignore file is absent afterwards, and cover the preview scoping and its ordering ahead of delegation; `src/vaultspec_rag/tests/integration/`.
 
-## Phase 1: Core — `indexer.py`
+## Phase 1: Core - `indexer.py`
 
 ### 1.1 Add `extra_excludes` to constructor
 
@@ -61,7 +62,7 @@ def __init__(
 
 ### 1.2 Extract `_build_gitignore_spec()`
 
-Move the existing pattern-collection logic (lines 1112–1141) into a private method:
+Move the existing pattern-collection logic (lines 1112 - 1141) into a private method:
 
 ```python
 def _build_gitignore_spec(self) -> pathspec.GitIgnoreSpec:
@@ -119,13 +120,13 @@ def _scan_codebase(self) -> list[pathlib.Path]:
 def scan_files(self) -> list[pathlib.Path]:
     """Return the list of files that would be indexed.
 
-    Does not require GPU or vector store — safe to call with
+    Does not require GPU or vector store  -  safe to call with
     ``model=None`` and ``store=None`` for dry-run usage.
     """
     return self._scan_codebase()
 ```
 
-## Phase 2: CLI — `cli.py`
+## Phase 2: CLI - `cli.py`
 
 ### 2.1 Add `--dry-run` and `--exclude` to `handle_index`
 
@@ -144,7 +145,7 @@ def handle_index(
 ) -> None:
 ```
 
-### 2.2 Dry-run early return (before `--port` block — D9)
+### 2.2 Dry-run early return (before `--port` block - D9)
 
 Must come before the `--port` MCP delegation block. Dry-run is always local.
 
@@ -187,7 +188,7 @@ c_indexer = CodebaseIndexer(target, emb_model, store, extra_excludes=exclude or 
 
 ## Phase 3: Tests
 
-### 3.1 Unit tests (`test_indexer_unit.py`) — no GPU
+### 3.1 Unit tests (`test_indexer_unit.py`) - no GPU
 
 New class `TestVaultragignore`:
 
@@ -204,7 +205,7 @@ New class `TestVaultragignore`:
 Pattern: use `CodebaseIndexer.__new__()` + set `root_dir` and `_extra_excludes` manually
 (same as existing gitignore unit tests at line 666+).
 
-### 3.2 Integration test (`test_codebase_integration.py`) — real GPU
+### 3.2 Integration test (`test_codebase_integration.py`) - real GPU
 
 | Test                                           | Verifies                                                                                                                                                            |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -227,7 +228,7 @@ depend on both Phase 1 and Phase 2.
 
 ### Automated
 
-- `just ci` (ruff + pytest) passes — all existing 220+ tests unaffected
+- `just ci` (ruff + pytest) passes - all existing 220+ tests unaffected
 - New unit tests verify each ADR decision: D1 (two-spec OR), D2 (root-only),
   D3 (silent missing), D4 (extra_excludes), D5 (scan_files), D7 (extracted builders)
 - New integration test verifies end-to-end: `.vaultragignore` → `full_index()` → excluded
@@ -236,9 +237,9 @@ depend on both Phase 1 and Phase 2.
 ### Manual (post-implementation)
 
 - Create a `.vaultragignore` in the test-project with `*.md` and run
-  `vaultspec-rag index --dry-run --type code` — verify markdown files absent from output
-- Run `vaultspec-rag index --dry-run --exclude "*.py"` — verify Python files absent
-- Run `vaultspec-rag index --type code` with and without `.vaultragignore` — verify
+  `vaultspec-rag index --dry-run --type code` - verify markdown files absent from output
+- Run `vaultspec-rag index --dry-run --exclude "*.py"` - verify Python files absent
+- Run `vaultspec-rag index --type code` with and without `.vaultragignore` - verify
   Qdrant chunk counts differ as expected
 
 ## Description

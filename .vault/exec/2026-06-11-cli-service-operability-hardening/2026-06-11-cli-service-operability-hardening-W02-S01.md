@@ -1,8 +1,8 @@
 ---
 tags: ['#exec', '#cli-service-operability-hardening']
 date: '2026-06-11'
-modified: '2026-07-27'
-body_hash: 'sha256:cf743f56d5148dcf76a25dd11dfac0dbda34aa326ff67f70b8ea77cb6772d257'
+modified: '2026-10-01'
+body_hash: 'sha256:38efea1626017b0a4a6b9336b8c8b6ec7a4e37bfb4b13155f7ab643ed68bf334'
 related:
   - '[[2026-06-11-cli-service-operability-hardening-epic-plan]]'
   - '[[2026-06-11-service-jobs-operability-adr]]'
@@ -70,7 +70,7 @@ Observed:
 - trigger `tool`
 - initiator `cli`
 - command `reindex_codebase`
-- project root `C:\projects\worktrees\feature-server-supervision`
+- project root `<supervision-checkout>`
 - runtime about 8.37s
 - progress `write metadata (1/1)`
 - failed filter returned an empty, bounded result with `failed: true` in filters.
@@ -164,3 +164,5 @@ Post-review correction:
   requested tail size. This prevents `server logs --job-id <id>` from returning empty
   just because unrelated recent log noise pushed the matching job line outside the last
   N unfiltered lines.
+
+Historical workstation locations in this record are rendered as named portable placeholders; the observed commands, outcomes, timings, and identifiers are retained.

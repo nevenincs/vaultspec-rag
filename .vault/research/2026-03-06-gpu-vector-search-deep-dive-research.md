@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-27'
-body_hash: 'sha256:28f13ac7f881a5d1b838786d639f63c8bf086f67494b505de927307141b788e4'
+modified: '2026-09-30'
+body_hash: 'sha256:81e182b62a69fac7c8b55d3dd4978e2c104c63dd7b6f2cec7360c76ec16de36e'
 ---
 
 # GPU Vector Search Deep Dive
@@ -209,7 +209,7 @@ reranked = sorted(zip(top_k_results, scores), key=lambda x: x[1], reverse=True)
 - **Latency**: ~5-10ms for reranking 20 documents on GPU (MiniLM-L6)
 - **Quality**: Significant improvement in relevance ordering, especially for ambiguous queries
 - **VRAM**: ~0.1-0.5 GB additional (MiniLM models are tiny)
-- **Total VRAM with our stack**: ~1.5 GB (Qwen3-0.6B) + ~0.5 GB (SPLADE) + ~0.1 GB (reranker) = ~2.1 GB
+- **Total VRAM with our stack**: ~1.5 GB (Qwen3-0.6B) + ~0.5 GB (previous BERT sparse encoder) + ~0.1 GB (reranker) = ~2.1 GB
 
 ### Recommendation
 
@@ -235,7 +235,7 @@ ______________________________________________________________________
 ### Final Architecture Recommendation
 
 ```
-[GPU: Qwen3-0.6B dense] + [GPU: SPLADE v3 sparse]
+[GPU: Qwen3-0.6B dense] + [GPU: previous BERT sparse encoder sparse]
         |                           |
         v                           v
 [Qdrant local mode: named vectors, CPU HNSW search, RRF fusion]
@@ -253,13 +253,13 @@ ______________________________________________________________________
 
 ### 6. Risks & Caveats
 
-| Item                                         | Detail                                                                |
-| -------------------------------------------- | --------------------------------------------------------------------- |
-| Qdrant GPU requires Docker (Linux x86_64)    | Cannot use with `QdrantClient(path=...)` local mode                   |
-| FAISS-GPU benchmarks use H100                | Consumer GPUs (RTX 3060-4090) will see smaller speedups               |
-| CrossEncoder adds latency                    | ~5-10ms per query for 20 docs; acceptable but not free                |
-| SPLADE + dense + reranker = 3 models in VRAM | ~2.1 GB total in fp16; fits on any modern GPU                         |
-| Reranker model selection                     | MiniLM-L6-v2 is English-only; use BGE-reranker-v2-m3 for multilingual |
+| Item                                                               | Detail                                                                |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Qdrant GPU requires Docker (Linux x86_64)                          | Cannot use with `QdrantClient(path=...)` local mode                   |
+| FAISS-GPU benchmarks use H100                                      | Consumer GPUs (RTX 3060-4090) will see smaller speedups               |
+| CrossEncoder adds latency                                          | ~5-10ms per query for 20 docs; acceptable but not free                |
+| previous BERT sparse encoder + dense + reranker = 3 models in VRAM | ~2.1 GB total in fp16; fits on any modern GPU                         |
+| Reranker model selection                                           | MiniLM-L6-v2 is English-only; use BGE-reranker-v2-m3 for multilingual |
 
 ## Sources
 

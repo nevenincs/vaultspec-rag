@@ -54,8 +54,8 @@ def test_uvicorn_release_probe_uses_the_shared_hard_cutoff() -> None:
 def test_release_qdrant_clients_override_the_short_transport_default() -> None:
     """Real-server clients receive the shared hard cutoff explicitly.
 
-    Mutation: remove either shared-cutoff ``timeout`` keyword. The guarded
-    call count then falls below the two real-server clients.
+    Mutation: remove each of the three shared-cutoff ``timeout`` keywords in
+    turn. The exact timeout-expression assertion then fails for that client.
     """
     path = _TEST_ROOT / "integration" / "test_service_storage_migration.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -75,7 +75,7 @@ def test_release_qdrant_clients_override_the_short_transport_default() -> None:
         )
         real_server_clients.append(timeout)
 
-    assert len(real_server_clients) == 2
+    assert len(real_server_clients) == 3
     assert all(
         isinstance(timeout, ast.Call)
         and isinstance(timeout.func, ast.Name)

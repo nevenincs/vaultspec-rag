@@ -217,7 +217,6 @@ class ASTChunker:
             context.top_nodes,
             context.out,
         )
-        text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")
         node_type: str = node.type
 
         is_class, _is_func, function_name, class_name = self._get_node_metadata(
@@ -225,8 +224,13 @@ class ASTChunker:
         )
 
         is_container = node_type in _CONTAINER_NODES
+        text = (
+            None
+            if is_container
+            else source_bytes[node.start_byte : node.end_byte].decode("utf-8")
+        )
 
-        if len(text) <= self.chunk_size and not is_container:
+        if text is not None and len(text) <= self.chunk_size:
             line_start = node.start_point[0] + 1
             line_end = node.end_point[0] + 1
             label = node_type if node_type in top_nodes else None
@@ -235,6 +239,8 @@ class ASTChunker:
 
         children = node.children
         if not children:
+            if text is None:
+                text = source_bytes[node.start_byte : node.end_byte].decode("utf-8")
             self._split_large_leaf(node, text, function_name, class_name, out)
             return
 
@@ -284,7 +290,6 @@ class ASTChunker:
                 buffer_len = 0
 
         for child in children:
-            child_text = source_bytes[child.start_byte : child.end_byte].decode("utf-8")
             child_type: str = child.type
 
             is_structural = (
@@ -294,13 +299,14 @@ class ASTChunker:
                 or child_type == "decorated_definition"
             )
 
-            if len(child_text) > self.chunk_size or is_structural:
+            child_text = (
+                None
+                if is_structural
+                else source_bytes[child.start_byte : child.end_byte].decode("utf-8")
+            )
+            if child_text is None or len(child_text) > self.chunk_size:
                 _flush_buffer()
-                self._collect_chunks(
-                    child,
-                    context,
-                    child_class_name,
-                )
+                self._collect_chunks(child, context, child_class_name)
             elif buffer_len + len(child_text) + 1 > self.chunk_size:
                 _flush_buffer()
                 buffer_parts = [child_text]

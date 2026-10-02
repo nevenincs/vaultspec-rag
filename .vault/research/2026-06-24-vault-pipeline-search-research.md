@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#vault-pipeline-search'
 date: '2026-06-24'
-modified: '2026-07-27'
-body_hash: 'sha256:9c680f1f553e77c173edbc43d3c20411bde9b044e1b28fcc1270bec3ca5225f7'
+modified: '2026-09-30'
+body_hash: 'sha256:a23ecc3e4982179890f6ea24c75992c9bf8f5650f4a461c79b7b0a32612e9b68'
 related: []
 ---
 
@@ -47,7 +47,7 @@ first; a debugging query should rank the step record first. The value of a docum
 ### F2 â€” Current search pipeline and where a prior must compose
 
 The vault path in `src/vaultspec_rag/search/_searcher.py` (`_search_vault_encoded`) runs:
-encode (Qwen3 dense + SPLADE sparse, cached) â†’ Qdrant hybrid search with RRF fusion â†’
+encode (Qwen3 dense + previous BERT sparse encoder sparse, cached) â†’ Qdrant hybrid search with RRF fusion â†’
 map rows to `SearchResult` â†’ CrossEncoder rerank (replaces the score with a calibrated
 sigmoid [0,1] value, re-sorts) â†’ `_group_chunks_by_document` (one row per document) â†’
 `rerank_with_graph` (additive graph nudges, re-sort) â†’ truncate to `top_k`.

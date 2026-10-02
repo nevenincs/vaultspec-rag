@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#mcp-server-deconflation'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:2742e85a233c6b86b89d82fec6de647a030c621bf3db255731c3c854db0e760e'
+body_hash: 'sha256:f514d7c0e9814bf89046ec5812467449e27cc6fee0a93eba622033c8355aaecc'
 related:
   - '[[2026-06-07-mcp-server-deconflation-P01-S01]]'
   - '[[2026-06-07-mcp-server-deconflation-P01-S02]]'
@@ -18,6 +18,7 @@ related:
   - '[[2026-06-07-mcp-server-deconflation-P01-summary]]'
   - '[[2026-06-07-mcp-server-deconflation-P02-S09]]'
   - '[[2026-06-07-mcp-server-deconflation-adr]]'
+  - '[[2026-06-07-mcp-server-deconflation-ledger]]'
   - '[[2026-06-07-mcp-server-deconflation-plan]]'
   - '[[2026-06-07-mcp-server-deconflation-research]]'
   - '[[2026-06-08-mcp-server-deconflation-P02-S10]]'
@@ -37,6 +38,7 @@ Auto-generated index of all documents tagged with `#mcp-server-deconflation`.
 
 ### exec
 
+- `2026-06-07-mcp-server-deconflation-ledger` - `mcp-server-deconflation` ledger
 - `2026-06-07-mcp-server-deconflation-P01-S01` - `mcp-server-deconflation` step P01.S01
 - `2026-06-07-mcp-server-deconflation-P01-S02` - `mcp-server-deconflation` step P01.S02
 - `2026-06-07-mcp-server-deconflation-P01-S03` - `mcp-server-deconflation` step P01.S03

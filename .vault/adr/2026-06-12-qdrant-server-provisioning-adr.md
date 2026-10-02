@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#qdrant-server-provisioning'
 date: '2026-06-12'
-modified: '2026-07-27'
-body_hash: 'sha256:2972a862f6eaeaa89960564562717a43388ea9c48c2caebf70a02bef56154b1e'
+modified: '2026-09-30'
+body_hash: 'sha256:1945e6c7ca834b4a5d8ca5a6a84a076ac7cf147b5d49c60a5e6b512aaa25d6a9'
 related:
   - "[[2026-06-12-qdrant-server-provisioning-research]]"
   - "[[2026-06-12-serving-runtime-research]]"
@@ -18,7 +18,7 @@ related:
 
 Every saturation benchmark on the 6.3 GB corpus chokes on `QdrantLocal`, the
 pure-Python local engine: 149 s mean search scans, O(N^2) GIL-pinned id scrolls, a
-linear SPLADE scan over ~114k chunks, and zero read concurrency within a collection.
+linear previous BERT sparse encoder scan over ~114k chunks, and zero read concurrency within a collection.
 The serving-runtime research concluded the fix is not a language rewrite but swapping
 the toy engine for the real Rust `qdrant` server, which the store already supports
 behind the `qdrant_url` seam with no point-operation locks. What is missing is the

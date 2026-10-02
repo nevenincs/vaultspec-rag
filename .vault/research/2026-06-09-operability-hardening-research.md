@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-07-27'
-body_hash: 'sha256:fc9b1f16d1e06f35df1ebe2c5c1a57aa85d868d3c7bd9e125d996d0fae3f002e'
+modified: '2026-09-30'
+body_hash: 'sha256:f871dd0a13a167adbc09317747166ee43b27314c99ad995e4f8d5e77f5ad3b60'
 related: []
 ---
 
@@ -72,11 +72,7 @@ A4/A6 small; A1/A5 moderate (both extend the startup/poll path, no GPU/store ris
   `google._upb._message`) fails under CPython 3.14's metaclass `tp_new` restriction. Not
   an app bug — resolved once B1 spawns the pinned 3.13 interpreter. Add a defensive
   `sys.version_info` guard in `store.py` `_check_rag_deps()` for an actionable error.
-- **B3 — gated HF model silent crash (#176).** `embeddings.py` constructs
-  `SentenceTransformer`/`SparseEncoder`; a gated repo (e.g. `naver/splade-v3`) raises
-  `huggingface_hub.errors.GatedRepoError` (401) that propagates uncaught and kills daemon
-  startup with no remediation. Fix: wrap with a `RuntimeError` carrying `HF_TOKEN` /
-  `huggingface-cli login` / model-URL guidance. Graceful degrade is infeasible (no
+- **B3 — model acquisition silent crash (#176).** Historical `embeddings.py` model construction propagated an acquisition failure uncaught and killed daemon startup with no remediation. The retained finding is fatal, actionable download diagnostics with model URL, revision, cache and network guidance; obsolete acquisition mechanics are retired by `2026-09-30-sparseencode-adr`. Graceful degrade is infeasible (no
   CPU/sparse-only mode) — a clear fatal error is correct.
 - **B4 — in-process reindex "EmbeddingModel not loaded" (#180).** `jobs.py` `_bg_run`
   closures call `get_registry().lease(root)` without a prior `load_model()`; on the
@@ -96,7 +92,7 @@ run on Windows); the rest are independent at the code level.
   `service_logs`): short prose summary + per-option `help=`. Fix: strip the dev sections;
   optionally add `rich_help_panel` groupings. Small, mechanical.
 - **C2 — indexing architecture docs gap (#172).** No user-facing guide. Technical content
-  fully grounded: Qwen3-Embedding-0.6B (1024d fp16, asymmetric query prompt), SPLADE-v3
+  fully grounded: Qwen3-Embedding-0.6B (1024d fp16, asymmetric query prompt), previous BERT sparse encoder
   (`encode_document`/`encode_query`), bge-reranker-v2-m3 (Sigmoid, OOM backoff), Qdrant
   hybrid `RrfQuery(Rrf(k=60))` with per-Prefetch filters, blake2b incremental hashing,
   spawn ProcessPool chunking + single GPU consumer thread, watcher auto-reindex. Author
@@ -115,7 +111,7 @@ run on Windows); the rest are independent at the code level.
   actually run — prerequisite for any live-service validation.
 - **Then service correctness:** Cluster A fixes (A1–A7), independent of each other; A6
   (Job Object) pairs naturally with B1 in the spawn path.
-- **Error-quality pair:** B3 before B4 (so a gated-model failure surfaces a useful message
+- **Error-quality pair:** B3 before B4 (so a model-download failure surfaces a useful message
   rather than the "not loaded" sentinel).
 - **UX/docs last:** C1 → C2 → C3, with C3 gated on A-cluster + C1 landing.
 

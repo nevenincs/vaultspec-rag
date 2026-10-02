@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#gpu-admission-gate'
 date: '2026-07-29'
-modified: '2026-07-29'
+modified: '2026-09-30'
 body_schema: 'body-v1'
-body_hash: 'sha256:ff14dba5eefc64366158d212523e7aee43522735c9b5fd6c296ce6ec95c52f7d'
+body_hash: 'sha256:e1478f203908cd9ad547afc7c1df73cca90d6a935a57a8d465bf319038e105ed'
 related: []
 ---
 
@@ -264,8 +264,7 @@ the lock file itself is unreachable (I/O error, unwritable temp dir) is a
 policy choice between refusing all compute on a filesystem hiccup and
 degrading to detection-only with a logged warning.
 
-Test-session admission: a `pytest_runtestloop` preflight mirroring the
-HF-token precedent - try-acquire a machine-global GPU-session lock when
+Test-session admission: a `pytest_runtestloop` preflight - try-acquire a machine-global GPU-session lock when
 selected items carry any slow tier, `pytest.exit` naming the holder on
 refusal, hold for the session. Within-session ban: refuse the session at
 collection time when slow-tier items are selected under xdist distribution,

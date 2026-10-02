@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#worktree-index-reuse'
 date: '2026-07-24'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:69e7208a41f4bb2ce77f91bbb5243837d53a8239cfcba7d31c0071813633d37f'
+body_hash: 'sha256:f2a71e658b973c305af66017e5862ae3f06e43c5f89819594cdb472496d2aaa2'
 related:
   - "[[2026-07-24-worktree-index-reuse-plan]]"
 ---
@@ -49,3 +49,8 @@ related:
 - `S20` `T` `src/vaultspec_rag/indexer/_run_checkpoint.py`
 - `S20` `T` `storage delete surface`
 - `S20` `T` `tests`
+- `S19` `verify:` `Read-only GitHub main ancestry of why-focused feature commit820c4b782f70193590327dbf2a8648bdf5d39995` -> `pass`
+
+## Notes
+
+- `S19` Current GitHub compare820c4b78...main returns ahead with `behind_by0` and `merge_base` equal to the feature commit; local merge-base ancestor check also exits0. GitHub commit metadata retains the why-focused donor-reuse change message. This proves the actual feature commit is present on remote main, not an invented historical push command or timing. No Git mutation performed.

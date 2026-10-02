@@ -3,9 +3,9 @@ tags:
   - '#audit'
   - '#gpu-single-owner'
 date: '2026-09-26'
-modified: '2026-09-26'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:ab314e9776cdd3599724ed3cb4e455bff8467b9ef5c8cd14e69c7d37537a9c89'
+body_hash: 'sha256:7cbe79549293d6aebd5e2df97405140eb5fcf6ff00170b21773c2c4cf95940c6'
 related: []
 ---
 
@@ -14,7 +14,7 @@ related: []
 ## Scope
 
 A field run of `vaultspec-rag install --upgrade` from a 0.4.35 `uv tool`
-environment against the workspace `Y:\code\cadrumo-worktrees\mcp` refused with a
+environment against the workspace `<benchmark-workspace>` refused with a
 tool CUDA repair, listed four holder pids, and printed three different repair
 commands. This audit traces that output through the 0.4.35 wheel and the 0.5.2
 source on `chore/deps-upgrade-hf-hub-2` (`d18045e8`), verifies the holder list
@@ -458,3 +458,5 @@ only callers.
   doctor print the command that the status fix promises.
 - tool-detection-heuristic, wheel-platform-unchecked: classify tool environments
   by their receipt, and refuse a platform PyTorch publishes no CUDA wheel for.
+
+Historical workstation locations in this record are rendered as named portable placeholders; the observed commands, outcomes, timings, and identifiers are retained.

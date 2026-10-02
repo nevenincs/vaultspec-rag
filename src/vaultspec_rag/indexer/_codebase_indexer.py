@@ -1138,33 +1138,33 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         files that no longer exist.
         """
         run_control.checkpoint()
-        gate = self._stat_gate_cache.acquire()
-        reporter.phase_start("hash files", len(to_hash))
-        try:
-            outcome = _stat_gate.hash_paths(
-                gate,
-                list(to_hash.items()),
-                reporter=reporter,
-                run_control=run_control,
-            )
-        finally:
-            reporter.phase_end()
-        run_control.checkpoint()
-        changed_hashes = outcome.hashes
-        for rel, _error in outcome.failures:
-            logger.warning("Cannot hash file, skipping: %s", rel)
-        if full_membership:
-            gate.prune(to_hash.keys())
-        gate.persist()
-        if gate.reused:
-            logger.debug(
-                "stat gate reused %d code hashes, rehashed %d",
-                gate.reused,
-                gate.rehashed,
-            )
-        for rel in set(to_hash) - set(changed_hashes):
-            del to_hash[rel]
-        return changed_hashes
+        with self._stat_gate_cache.acquire() as gate:
+            reporter.phase_start("hash files", len(to_hash))
+            try:
+                outcome = _stat_gate.hash_paths(
+                    gate,
+                    list(to_hash.items()),
+                    reporter=reporter,
+                    run_control=run_control,
+                )
+            finally:
+                reporter.phase_end()
+            run_control.checkpoint()
+            changed_hashes = outcome.hashes
+            for rel, _error in outcome.failures:
+                logger.warning("Cannot hash file, skipping: %s", rel)
+            if full_membership:
+                gate.prune(to_hash.keys())
+            gate.persist()
+            if gate.reused:
+                logger.debug(
+                    "stat gate reused %d code hashes, rehashed %d",
+                    gate.reused,
+                    gate.rehashed,
+                )
+            for rel in set(to_hash) - set(changed_hashes):
+                del to_hash[rel]
+            return changed_hashes
 
     def _scoped_incremental_locked(
         self,

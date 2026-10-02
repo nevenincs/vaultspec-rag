@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
+import sqlite3
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -73,7 +78,10 @@ def test_real_local_to_service_document_migration_is_idempotent(
     """Copy a real local document collection once and safely skip its replay."""
     from qdrant_client import QdrantClient
 
-    local = QdrantClient(path=str(tmp_path / "local-qdrant"))
+    local = QdrantClient(
+        path=str(tmp_path / "local-qdrant"),
+        force_disable_check_same_thread=sqlite3.threadsafety == 3,
+    )
     server = QdrantClient(
         url=migration_qdrant_server.url,
         timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
@@ -105,6 +113,72 @@ def test_real_local_to_service_document_migration_is_idempotent(
     finally:
         local.close()
         server.close()
+
+
+def test_canonical_local_migration_closes_sqlite_resources_in_fresh_process(
+    migration_qdrant_server: QdrantSupervisor,
+    isolated_status_dir: Path,  # noqa: ARG001
+    tmp_path: Path,
+) -> None:
+    """Real CLI migration must not strand the SDK's SQLite thread-mode probe."""
+    from qdrant_client import QdrantClient
+
+    source = root_collection_prefix(tmp_path) + store_schema.DOCUMENT_COLLECTION
+    server = QdrantClient(
+        url=migration_qdrant_server.url,
+        timeout=int(CHILD_PROCESS_TIMEOUT_SECONDS),
+    )
+    try:
+        _make_document_collection(server, source)
+    finally:
+        server.close()
+    script = """
+import gc
+import sqlite3
+import sys
+from qdrant_client import QdrantClient
+from qdrant_client.local.persistence import CollectionPersistence
+from vaultspec_rag import store_schema
+from vaultspec_rag.cli._service_storage import _local_store_path, storage_migrate
+
+assert CollectionPersistence.CHECK_SAME_THREAD is None
+storage_migrate(
+    sys.argv[1], to_backend="local", yes=True, dry_run=False, json_mode=True
+)
+client = QdrantClient(
+    path=str(_local_store_path(sys.argv[1])),
+    force_disable_check_same_thread=sqlite3.threadsafety == 3,
+)
+try:
+    points, _ = client.scroll(collection_name=store_schema.DOCUMENT_COLLECTION)
+    assert len(points) == 1
+    assert points[0].id == 1
+    assert points[0].payload == {"source_path": "inputs/reference.bin"}
+finally:
+    client.close()
+gc.collect()
+"""
+    child = subprocess.run(
+        [sys.executable, "-W", "error", "-c", script, str(tmp_path)],
+        env={
+            **os.environ,
+            "PYTHONWARNINGS": "error",
+            "VAULTSPEC_RAG_QDRANT_URL": migration_qdrant_server.url,
+        },
+        capture_output=True,
+        text=True,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
+        check=False,
+    )
+    assert child.returncode == 0, child.stderr
+    assert child.stderr == "", child.stderr
+    envelope = json.loads(child.stdout)
+    assert envelope["ok"] is True
+    document = next(
+        item for item in envelope["data"]["results"] if item["source"] == source
+    )
+    assert document["status"] == "migrated"
+    assert document["points"] == 1
 
 
 def test_real_document_pruning_debris_and_maintenance_route(

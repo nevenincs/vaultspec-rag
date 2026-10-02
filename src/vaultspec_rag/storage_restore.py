@@ -402,6 +402,9 @@ def _rollback_restore(
             )
     for name in reversed(restored):
         with suppress(OSError, RuntimeError):
+            from ._qdrant_local_lifetime import close_local_collection
+
+            close_local_collection(client, name)
             client.delete_collection(collection_name=name)
 
 

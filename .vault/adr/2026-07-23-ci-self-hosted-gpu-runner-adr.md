@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#ci-self-hosted-gpu-runner'
 date: '2026-07-23'
-modified: '2026-07-23'
-body_hash: 'sha256:43756f034ce01ea0a0e9032cd2b7edf0122a2dd4856203308dd0c03582709326'
+modified: '2026-09-30'
+body_hash: 'sha256:aa53fcf8d9239683343119dedd187448ef95fdbee23e3aa284b8e0496b5b29e7'
 related:
   - "[[2026-07-23-ci-self-hosted-gpu-runner-research]]"
 ---
@@ -15,7 +15,7 @@ related:
 
 CI runs only on GitHub-hosted Linux with no GPU, so the entire GPU-bearing test
 tier is deselected by marker exclusion and never executes. A green CI light
-certifies only the tokenless unit subset, while integration, quality,
+certifies only the portable unit subset, while integration, quality,
 performance, robustness, subprocess-GPU, and CUDA coverage is left to
 "run it on a quiet machine later." The project is GPU-only; the gate that
 matters is exactly the one that never runs. The host of this work is itself a
@@ -26,7 +26,7 @@ public, how to keep untrusted fork code off the workstation.
 ## Considerations
 
 - The suite splits by cost into a portable unit tier and a CUDA-bound heavy
-  tier that additionally needs `HF_TOKEN` for a gated model
+  tier that needs admitted GPU ownership and available public model artifacts
   (`2026-07-23-ci-self-hosted-gpu-runner-research`).
 - A self-hosted runner on a public repo executes fork PR code on the host by
   default — remote code execution plus secret exfiltration
@@ -61,8 +61,7 @@ public, how to keep untrusted fork code off the workstation.
 - 16 GB VRAM: `subprocess_gpu` tests must run in a separate pytest invocation
   from the serialized markers so their out-of-lock process VRAM does not
   co-schedule.
-- The heavy tier needs `HF_TOKEN`; it is a repo secret, exposed only to the
-  trusted-event-gated job.
+- The heavy tier acquires public model artifacts without authentication setup. GPU admission and the trusted-event gate remain required.
 - The runner install, its `_work` tree, and its registration credential live
   outside the repo; workflow files reference generic labels only, and
   `.github/actionlint.yaml` must enumerate every custom label.
@@ -88,7 +87,7 @@ labels and executes the complement of the hosted unit selector: the serialized
 GPU markers plus `cuda` in one pytest invocation, then `subprocess_gpu` in a
 second, both driven through a single shared `just dev test gpu` recipe so local
 and CI stay identical. The job verifies CUDA visibility, provisions the Qdrant
-binary, and passes `HF_TOKEN` from a secret. It is guarded by
+binary, and acquires public model artifacts. It is guarded by
 `github.event_name != 'pull_request' || head.repo.full_name == github.repository`
 so pushes, manual dispatch, and same-repo PRs run it while fork PRs are refused
 before any secret is in scope. Event triggers across the workflow were audited

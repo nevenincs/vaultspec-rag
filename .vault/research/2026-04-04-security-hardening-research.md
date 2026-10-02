@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#security-hardening'
 date: 2026-04-04
-modified: '2026-07-27'
-body_hash: 'sha256:c49ac455532730b8809b90eac74f0711124e12722b02362e1636470660628c67'
+modified: '2026-10-01'
+body_hash: 'sha256:ca29601dc404399c3e175f06611db83f0b9f656be45284ce22eccad8e8808d50'
 related:
   - '[[2026-04-02-service-graph-code-review-audit]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -23,7 +23,7 @@ readiness.
 
 **Current state:** `_resolve_root()` in `mcp_server.py` calls
 `Path(project_root).resolve()` with no validation. Any MCP client can pass
-an arbitrary path (`/etc`, `C:\Windows\System32`) and the service will index
+an arbitrary path (`/etc`, `%SystemRoot%\System32`) and the service will index
 and expose its contents.
 
 **Analysis:**
@@ -102,7 +102,7 @@ credentials files, and `service.json`.
   "status": "ready",
   "cuda": true,
   "models_loaded": true,
-  "projects": ["C:/projects/worktrees/main"],
+  "projects": ["<companion-checkout>"],
   "uptime_s": 42.5
 }
 ```

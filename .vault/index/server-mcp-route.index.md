@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#server-mcp-route'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:b736f9817a2fb9fcb3f42fda4b8deffeff4f6b86af1a9502427408c8c9a6a87b'
+body_hash: 'sha256:0e319671147408e03c63aba9840253d0739f1386625ef2c9f40b0d8290cd7772'
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
+  - '[[2026-05-31-server-mcp-route-ledger]]'
   - '[[2026-05-31-server-mcp-route-plan]]'
   - '[[2026-05-31-server-mcp-route-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#server-mcp-route`.
 ### adr
 
 - `2026-05-31-server-mcp-route-adr` - `server-mcp-route` adr: `asgi path-rewrite middleware to skip starlette mount redirect` | (**status:** `superseded`)
+
+### exec
+
+- `2026-05-31-server-mcp-route-ledger` - `server-mcp-route` ledger
 
 ### plan
 

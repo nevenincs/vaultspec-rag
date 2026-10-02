@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-09'
-modified: '2026-09-14'
-body_hash: 'sha256:8e5bf61f88e99d1c52c31a5e931a678e4be1a483d21ad80cdcdc4566968077a4'
+modified: '2026-09-30'
+body_hash: 'sha256:652f2ff0eb5efe938ae0644133cec1078bafafc6d53719572b70ca72dde25cfc'
 ---
 
 # Research Topic 21: Qwen3 Embedding Task Prefixes â€” Deep Verification
@@ -102,7 +102,7 @@ sparse_vector = self.model.encode_query_sparse(query)
 
 ### 5. SentenceTransformer.encode() â€” Batch Behavior
 
-**Verified:** When `encode()` is called with a batch of texts, it applies the same prompt to **every item in the batch uniformly**. This is the expected behavior and matches SPLADE sparse encoding.
+**Verified:** When `encode()` is called with a batch of texts, it applies the same prompt to **every item in the batch uniformly**. This is the expected behavior and matches previous BERT sparse encoder sparse encoding.
 
 The indexer sometimes calls:
 

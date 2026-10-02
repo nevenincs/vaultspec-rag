@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#store-eviction-log-rotation'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:a05f3b10681c7b14cf9392f1338f489ebb3e3ccb69df90d2b248b37a9b6c6886'
+body_hash: 'sha256:67aeee700e931d3eb7cdf8264cf33dc95026eb586595eb34969f730e34ae0bfd'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
+  - '[[2026-04-12-store-eviction-log-rotation-ledger]]'
   - '[[2026-04-12-store-eviction-log-rotation-phase1-plan]]'
   - '[[2026-04-12-store-eviction-log-rotation-phase1-step1-exec]]'
   - '[[2026-04-12-store-eviction-log-rotation-phase1-step10-exec]]'
@@ -37,6 +38,7 @@ Auto-generated index of all documents tagged with `#store-eviction-log-rotation`
 
 ### exec
 
+- `2026-04-12-store-eviction-log-rotation-ledger` - `store-eviction-log-rotation` ledger
 - `2026-04-12-store-eviction-log-rotation-phase1-step1-exec` - 2026-04-12-store-eviction-log-rotation-phase1-step1-exec
 - `2026-04-12-store-eviction-log-rotation-phase1-step10-exec` - 2026-04-12-store-eviction-log-rotation-phase1-step10-exec
 - `2026-04-12-store-eviction-log-rotation-phase1-step11-exec` - 2026-04-12-store-eviction-log-rotation-phase1-step11-exec

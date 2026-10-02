@@ -4,12 +4,13 @@ tags:
   - '#index'
   - '#service-graph'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:b85e815d3ff48718d105a8b9ced2a7feb12bdd5af6c29ec5103f63220d2671bc'
+body_hash: 'sha256:ceb4777cb71ef00561c860b9a7187e7f63403705efe99775c6113e16c2c4e232'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-code-review-audit]]'
+  - '[[2026-04-02-service-graph-ledger]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
   - '[[2026-04-02-service-graph-phase1-step1-exec]]'
   - '[[2026-04-02-service-graph-phase2-step1-exec]]'
@@ -17,6 +18,7 @@ related:
   - '[[2026-04-02-service-graph-phase4-step1-exec]]'
   - '[[2026-04-02-service-graph-phase5-step1-exec]]'
   - '[[2026-04-02-service-graph-research]]'
+  - '[[2026-04-02-service-graph-roadmap-ledger]]'
   - '[[2026-04-02-service-graph-roadmap-plan]]'
 ---
 
@@ -36,11 +38,13 @@ Auto-generated index of all documents tagged with `#service-graph`.
 
 ### exec
 
+- `2026-04-02-service-graph-ledger` - `service-graph` ledger
 - `2026-04-02-service-graph-phase1-step1-exec` - service-graph phase-1 step-1: graph cache unification (D3, R36-C1)
 - `2026-04-02-service-graph-phase2-step1-exec` - service-graph phase-2 step-1: ServiceRegistry module
 - `2026-04-02-service-graph-phase3-step1-exec` - service-graph phase-3 step-1: fastmcp lifespan + health endpoint
 - `2026-04-02-service-graph-phase4-step1-exec` - service-graph phase-4 step-1: service daemon commands
 - `2026-04-02-service-graph-phase5-step1-exec` - service-graph phase-5 step-1: model prefetch (warmup command)
+- `2026-04-02-service-graph-roadmap-ledger` - `service-graph` ledger
 
 ### plan
 

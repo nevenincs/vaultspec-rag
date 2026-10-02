@@ -206,7 +206,7 @@ def _canonical_resilience_server(
         assert stopped
 
 
-def _cli_jobs_payload(now: float) -> dict[str, object]:
+def _cli_jobs_payload(tmp_path: Path, now: float) -> dict[str, object]:
     return {
         "jobs": [
             {
@@ -223,7 +223,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": "C:\\projects\\proj-a",
+                    "project_root": str(tmp_path / "proj-a"),
                 },
                 "runtime": {"pid": 123, "user": "operator"},
                 "resources": {"current": {"rss_mib": 10.0}},
@@ -242,7 +242,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "cli",
                     "command": "reindex_vault",
-                    "project_root": "C:\\projects\\proj-b",
+                    "project_root": str(tmp_path / "proj-b"),
                 },
                 "runtime": {"pid": 124, "user": "operator"},
                 "resources": {"finished": {"rss_mib": 11.0}},
@@ -261,7 +261,7 @@ def _cli_jobs_payload(now: float) -> dict[str, object]:
                 "initiator": {
                     "kind": "cli",
                     "command": "reindex_codebase",
-                    "project_root": "C:\\projects\\proj-c",
+                    "project_root": str(tmp_path / "proj-c"),
                 },
                 "runtime": {"pid": 125, "user": "operator"},
                 "resources": {"finished": {"rss_mib": 12.0}},
