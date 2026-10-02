@@ -310,6 +310,9 @@ class TestStoreVerifiesOnEnsure:
         Mutation it catches: not raising on ``geometry_fatal``. Without the
         raise the store proceeds and the disagreement resurfaces much later as
         a rejected upsert that burns the full retry budget labelled transient.
+
+        Mutation proof: weakening the production error to OTHER failed the
+        canonical rebuild-kind assertion; restoring FULL_REINDEX_REQUIRED passed.
         """
         from ..store_runtime import StorageGeometryError
 
@@ -321,8 +324,15 @@ class TestStoreVerifiesOnEnsure:
 
         reopened = self._open(tmp_path, dim=128)
         try:
-            with pytest.raises(StorageGeometryError, match="128"):
+            with pytest.raises(StorageGeometryError, match="128") as refusal:
                 reopened.ensure_table()
+            from .._job_errors import JobErrorKind, classify_error_text
+
+            assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert (
+                classify_error_text(str(refusal.value))
+                is JobErrorKind.FULL_REINDEX_REQUIRED
+            )
         finally:
             reopened.close()
 
@@ -366,6 +376,9 @@ class TestStoreVerifiesOnEnsure:
         Mutation proof observed 2026-09-30: disabling the sparse_model_fatal
         raise in _verify_conformance failed with DID NOT RAISE StorageModelError.
         Restoring the refusal passed.
+
+        Mutation proof: weakening the production error to OTHER failed the
+        canonical rebuild-kind assertion; restoring FULL_REINDEX_REQUIRED passed.
         """
         from ..store_runtime import StorageModelError
 
@@ -383,8 +396,15 @@ class TestStoreVerifiesOnEnsure:
         path.write_text(json.dumps(raw), encoding="utf-8")
         reopened = self._open(tmp_path)
         try:
-            with pytest.raises(StorageModelError, match="rebuild"):
+            with pytest.raises(StorageModelError, match="rebuild") as refusal:
                 reopened.ensure_table()
+            from .._job_errors import JobErrorKind, classify_error_text
+
+            assert refusal.value.error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+            assert (
+                classify_error_text(str(refusal.value))
+                is JobErrorKind.FULL_REINDEX_REQUIRED
+            )
             verdict = reopened.conformance_verdicts()["vault_docs"]
             assert verdict.sparse_model_fatal
             assert not verdict.geometry_fatal

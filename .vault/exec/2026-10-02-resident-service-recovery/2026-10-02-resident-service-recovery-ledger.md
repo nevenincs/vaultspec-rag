@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:e5c00a75b3ca1686083bf511e3fed5d2f57fed89b462ffd2267eb00b0d6b1323'
+body_hash: 'sha256:2b1bece93b4b5b9d0a34e6da52ef80f7f2f1b383a75505562e1c98cdcdd24b1d'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -69,3 +69,14 @@ related:
 - `S01` `verify:` `37 watcher guard fail restore pass sequences (forensic watcher-proof-summary.json)` -> `pass`
 - `S01` `verify:` `jobs completion off-loop guard mutation failed intended thread assertion then restored passed` -> `pass`
 - `S01` `by:` `vaultspec-execute`
+- `S06` `M` `src/vaultspec_rag/store_runtime.py`
+- `S06` `M` `src/vaultspec_rag/capabilities.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_storage_identity.py`
+- `S06` `A` `src/vaultspec_rag/tests/test_backend_capabilities.py`
+- `S06` `verify:` `ruff check --no-cache src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `ruff format --check --no-cache src/vaultspec_rag` -> `pass`
+- `S06` `verify:` `basedpyright S06 four paths` -> `pass`
+- `S06` `verify:` `pytest storage identity capabilities server HTTP admin/search watcher controller (227 tests, exit 0)` -> `pass`
+- `S06` `verify:` `process-isolated conformance kind mutation failed intended rebuild assertion then restore passed` -> `pass`
+- `S06` `verify:` `process-isolated backend projection mutation failed managed-server assertion then restore passed` -> `pass`
+- `S06` `by:` `vaultspec-execute`
