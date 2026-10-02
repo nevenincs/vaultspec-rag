@@ -619,16 +619,16 @@ class JobsLogView(RetainedLog[LogEntry]):
 
     def jump_top(self) -> None:
         self.auto_scroll = False
-        self.scroll_home(animate=False)
+        self.scroll_home(animate=False, immediate=True)
 
     def jump_end(self) -> None:
         self.auto_scroll = True
-        self.scroll_end(animate=False)
+        self.scroll_end(animate=False, immediate=True)
 
     def scroll_followed_tail(self) -> None:
         """Honor manual navigation that happened after a tail scroll was queued."""
         if self.auto_scroll:
-            self.scroll_end(animate=False)
+            self.scroll_end(animate=False, immediate=True)
 
     def jump_next_error(self) -> bool:
         """Scroll to the error after the last one jumped to, wrapping."""
@@ -636,7 +636,9 @@ class JobsLogView(RetainedLog[LogEntry]):
             return False
         self.auto_scroll = False
         self._error_cursor = (self._error_cursor + 1) % len(self._error_offsets)
-        self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
+        self.scroll_to(
+            y=self._error_offsets[self._error_cursor], animate=False, immediate=True
+        )
         return True
 
     def jump_previous_error(self) -> bool:
@@ -645,7 +647,9 @@ class JobsLogView(RetainedLog[LogEntry]):
             return False
         self.auto_scroll = False
         self._error_cursor = (self._error_cursor - 1) % len(self._error_offsets)
-        self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
+        self.scroll_to(
+            y=self._error_offsets[self._error_cursor], animate=False, immediate=True
+        )
         return True
 
     # -- rendering ----------------------------------------------------------
