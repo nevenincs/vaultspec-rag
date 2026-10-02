@@ -54,6 +54,16 @@ def compiled_monitor_required() -> None:
     )
 
 
+def _assert_monitor_port_released(port: int) -> None:
+    with socket.socket() as released:
+        # POSIX TIME_WAIT is not a live listener; Windows must keep the bind
+        # exclusive because its address-reuse option permits live sharing.
+        option = socket.SO_EXCLUSIVEADDRUSE if os.name == "nt" else socket.SO_REUSEADDR
+        released.setsockopt(socket.SOL_SOCKET, option, 1)
+        released.bind(("127.0.0.1", port))
+        released.listen()
+
+
 def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
     isolated_singleton_dirs: Path,
 ) -> None:
@@ -107,13 +117,14 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
                 )
                 envelope = json.loads(stdout.getvalue())
                 assert envelope["data"]["monitor_port"] == backend_port + 3
+            with pytest.raises(OSError):
+                _assert_monitor_port_released(backend_port + 3)
             asyncio.run(
                 _shutdown_components([], None, publisher, publisher.runtime.registry)
             )
             assert process.poll() is not None
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            with socket.socket() as released:
-                released.bind(("127.0.0.1", backend_port + 3))
+            _assert_monitor_port_released(backend_port + 3)
         finally:
             monitor.stop()
             publisher.quiesce()
@@ -184,8 +195,7 @@ def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(
             envelope = json.loads(result.stdout)
             assert envelope["ok"] is True
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            with socket.socket() as released:
-                released.bind(("127.0.0.1", fields["monitor_port"]))
+            _assert_monitor_port_released(cast("int", fields["monitor_port"]))
         finally:
             if parent.poll() is None:
                 parent.kill()
