@@ -48,7 +48,8 @@ jobs:
   channels:
     name: "Build: Release channel pointers (Linux)"
     timeout-minutes: 150
-    runs-on: [self-hosted, Linux, X64, build]
+    # Pointer generation and validation need Python/gh, not a native build.
+    runs-on: [self-hosted, Linux, X64]
     env:
       CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
