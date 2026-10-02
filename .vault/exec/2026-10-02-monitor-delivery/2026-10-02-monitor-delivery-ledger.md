@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:194861c26c492e2f1ec1afc6cf32273dcebcb003cef2d3ac4aca2e8a8f429ef2'
+body_hash: 'sha256:d2aa254479073aadffc14f609fa8b2d9eb3ec472611f846f261063bfc814d87b'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -230,6 +230,8 @@ related:
 - `S06` `verify:` `candidate/public workflow admission guard` -> `pass`
 - `S06` `verify:` `actionlint acquisition` -> `pass`
 - `S06` `verify:` `prettier acquisition` -> `pass`
+- `S06` `M` `src/monitor/server/standalone.ts`
+- `S06` `verify:` `npm lint,typecheck,build=pass; Prettier=pass; Ruff lint,format=pass; ty=pass; affected tooling/compiled owner tests 22=pass; rebuilt Windows native shared smoke 94 assets=pass; native candidate 37010060614=fail; uv unused-cache prune` -> `fail`
 
 ## Notes
 
@@ -254,3 +256,4 @@ related:
 - `S06` Native/OS/public proof remains open; user authorized private verification dispatch. CI setup correction avoids operator process stop.
 - `S06` Public latest 0.5.3 has no committed monitor pins; fail-closed before extraction. All four native offline results pending. No publication performed.
 - `S06` Shared system disk below 40 GiB reserve blocks Windows/Linux x64; private frontend moves to macOS to obtain remaining independent native proof. No reserve changes or unrelated cache deletion.
+- `S06` BSD loopback conflict exposed by actual macOS smoke; corrected client-address reservation awaiting native rerun. ARM64 browser absent; Windows/Linux x64 fleet admission capacity unavailable. Cache cleanup respected in-use lock and removed nothing. Public release/catalog prerequisite absent; S06 remains open.

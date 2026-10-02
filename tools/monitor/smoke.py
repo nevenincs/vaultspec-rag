@@ -57,9 +57,20 @@ def isolated_environment(directory: Path) -> dict[str, str]:
 
 def installed_browser() -> Path:
     """Use enrolled Chromium-family browsers; release checks never download one."""
+    if configured := os.environ.get("CHROME_BIN"):
+        browser = Path(configured)
+        if not browser.is_absolute() or not browser.is_file():
+            raise RuntimeError("CHROME_BIN must identify an installed absolute browser")
+        return browser
     for name in ("google-chrome", "chromium", "chromium-browser", "msedge"):
         if executable := shutil.which(name):
             return Path(executable)
+    for root in (Path("/ms-playwright"), Path.home() / ".cache/ms-playwright"):
+        for executable in sorted(
+            root.glob("chromium-*/chrome-linux*/chrome"), reverse=True
+        ):
+            if executable.is_file():
+                return executable
     for candidate in (
         Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
         Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),

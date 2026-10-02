@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:1fc96bcb20f1111191ece07477166f79bdfb27d16eae907d0f95a97c0adef1eb'
+body_hash: 'sha256:00ce2a06e2f5d1908b0545a7e377ed555738bd8003ac4d08133e7cad468c7972'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -113,3 +113,9 @@ Both new negative guards were intentionally bypassed, failed (exit 1), restored 
 ### Native fleet capacity | low | Shared system disk prevents Windows and Linux x64 admission
 
 The local enrolled Windows runner diagnostics and fleet admission runtime log identify the actual wait: system disk free space is below the 40 GiB reserve (about 36.7-37.6 GiB observed). Windows candidate setup has not reached source checkout or the capability probe. The user's requested verification does not authorize deleting unrelated operator caches or reducing that reserve. Our failed-run retained pytest artifacts total only 12,683 bytes and cannot resolve it. Asked the user to free about 3 GiB or identify a disposable cache. Move only the private common frontend build to the available macOS ARM64 runner, retaining one clean producer/version/lock handoff and native target guards. This lets macOS/ARM64 proof proceed independently while the other hosts await real capacity. Release frontend topology remains unchanged. Superseded private runs with a known CLI typo and old PR tests with the outdated guard were cancelled; main CI was not cancelled. S06 remains open.
+
+### Native runtime correction | low | macOS must refuse an occupied client port
+
+Private run 37010060614 built its common frontend successfully on macOS, then finalized Linux ARM64 and macOS binaries. The macOS smoke exposed a real strict-port failure: Bun's BSD wildcard listener could coexist with the smoke's occupied 127.0.0.1 port and keep running. Reserve the actual client address before the canonical HTTP bind so readiness cannot refer to an unrelated listener. The production bind and middleware remain canonical. The rebuilt local Windows candidate (SHA256 169b3d972dc1facd463a0e1e515f89f37683e6785c823de1fd7bbfea868dfb49, development build) passes the real shared smoke: 94 assets, browser render, strict occupied port, cancellation, EOF and partial-request bounds. Twenty-two affected tooling/compiled-owner tests pass; npm lint/typecheck/build, Prettier, Ruff lint/format and ty pass. Actual macOS execution of the correction is still required.
+
+The ARM64 runner has no installed browser; its fleet-owned Dockerfile confirms that prerequisite is absent. Expand discovery to an explicit absolute CHROME_BIN and existing Playwright browser locations without downloading or skipping browser proof. This cannot manufacture a missing installation. Windows and Linux x64 remain held by the host admission reserve; free space subsequently fell further. The current-user uv unused-cache prune used its normal in-use protection, timed out on the active lock, and deleted nothing. Do not force that lock or bypass fleet admission. This checkpoint has no remaining known local source defect; native OS proof, fleet prerequisites, current-head full CI and independently pinned public acquisition remain PENDING. S06 stays open.
