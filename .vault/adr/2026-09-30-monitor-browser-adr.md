@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-01'
+modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:1ccea40cc1a84b93a4b2fcd1ecd20f0a06410a9afac07d780a2dfc3209ea6c76'
+body_hash: 'sha256:a9d4a7121c1c2efeb49706c59ed2f181b4cc959c16b6ed7237c48eeb4f1781ba'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -59,4 +59,4 @@ A local automatic adapter gives the browser the same operator connection as the 
 
 ## Consequences
 
-npm dev/preview owns the local browser process through the existing harness. A built static bundle needs that local adapter to read the service. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.
+Standalone npm dev/preview owns the local browser process through the existing harness. The user's 2026-10-02 request authorizes managed server start/stop to own an additional monitor instance under `2026-10-02-monitor-lifecycle-adr`, including dynamic backend-relative allocation and scratch-state discovery. Both entry paths reuse the existing bridge and network/origin policy; stopping the managed instance ends its browser web server. A built static bundle needs that local adapter to read the service. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.

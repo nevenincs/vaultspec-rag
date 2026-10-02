@@ -4,6 +4,9 @@ Run vaultspec-rag as a long-lived background service to keep the models loaded a
 
 This guide assumes the workspace is already installed and provisioned. "Provisioned" means `install` has fetched the model files and the Qdrant binary. It also means the environment has a PyTorch build for CUDA or Metal Performance Shaders (MPS). If you haven't done that, start with the [installation guide](installation.md).
 
+Starting the service also requires the compiled browser monitor executable; see
+[local browser monitor setup](#local-carbon-browser-monitor).
+
 For the choice between the managed server and the local-only store, see the [backends guide](backends.md). For the vocabulary used here, see the [glossary](glossary.md).
 
 Examples use the `uv run` prefix, which runs the command inside a project environment.
@@ -202,6 +205,48 @@ An index job that reused vectors from an already-indexed sibling worktree carrie
 
 ### Local Carbon browser monitor
 
+Use the service commands to start and stop the managed browser monitor:
+
+```bash
+uv run vaultspec-rag server start
+uv run vaultspec-rag server stop
+```
+
+Start prints a `Monitor: http://127.0.0.1:<assigned-port>` line. Open that URL
+in a browser on the machine running the service. `server status` reports the
+backend address; its human, verbose and JSON output do not currently report
+the monitor URL. To redisplay a recorded monitor URL, run `server start` again:
+an already-running owned service is reused. For scripts, `server start --json`
+returns the assignment as `data.monitor_port` and `data.monitor_url` when
+recorded.
+
+The monitor port starts at the backend's actual port plus one and advances
+until free. With the default backend port 8766, it first tries 8767. For a
+custom backend port:
+
+```bash
+uv run vaultspec-rag server start --port 9000
+```
+
+The monitor tries 9001, then 9002 if 9001 is occupied. Use the printed URL
+because a later start may choose another port. The backend itself still
+refuses an occupied requested port.
+
+The daemon records the actual monitor port and process identity in its managed
+user scratch directory. `server stop` stops both processes and removes their
+assignments. A forced daemon death also closes the monitor's parent pipe and
+stops its web server; a later stop cleans any remaining scratch identity.
+Stopping the service from this managed browser also closes its web server.
+
+Managed startup requires the compiled `vaultspec-rag-monitor` command on
+`PATH`, or its absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. The monitor
+contains the frontend resources and runtime; startup does not compile sources
+or require a checkout, Node or Bun. A missing or failed executable fails the
+coupled start and cleans up the frontend child. Building and bundling the
+executable are separate from this lifecycle integration.
+
+For a standalone development monitor, use the shared harness below.
+
 From a source checkout with the Node/npm versions pinned in `.nvmrc` and
 `package.json`, run:
 
@@ -213,8 +258,8 @@ just dev
 
 Open `http://127.0.0.1:5420`. The monitor automatically connects to the local
 service recorded in the managed status directory. It requires no login,
-credential entry, or admin role. Start the service through the usual service
-command; opening the monitor observes it. A stopped service shows a connection
+credential entry, or admin role. The standalone monitor has its own lifecycle.
+A stopped service shows a connection
 message and retains any previous observations with their timestamps.
 
 Dev and preview bind to `0.0.0.0` on their strict declared ports. The shared
@@ -291,6 +336,9 @@ uv run vaultspec-rag server preflight
 ```
 uv run vaultspec-rag server stop
 ```
+
+This also stops the managed browser monitor and clears its recorded port
+assignment. A separately launched development monitor keeps its own lifecycle.
 
 To restart, stop and start again. No single restart command exists.
 

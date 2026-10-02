@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-tooling'
 date: '2026-09-30'
-modified: '2026-10-01'
+modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:b509d07de66dbb11e9313636c7132e1b2d0d3cad35c0b7590de93dd2b17447b6'
+body_hash: 'sha256:1d89bc05833d796bfaac60f1cded968c03db6788b2c4ba6cfb6b66898c6527d7'
 related:
   - "[[2026-09-30-monitor-tooling-reference]]"
   - '[[2026-09-21-automatic-merge-gate-adr]]'
@@ -50,7 +50,7 @@ refined by the user's explicit Carbon request: official Carbon component SCSS
 and token-based custom SCSS are authorized under monitor-browser. Node follows the enrolled portfolio frontend's installed 26.10.0
 runtime; the shared harness does not pin Node itself.
 
-The frontend manifest is the only source of service ports. Allocate
+For standalone development, the frontend manifest is the only source of service ports. Allocate
 5420-5439 with dev on 5420 and preview on 5421. Both Vite modes use strict
 ports and bind to the declared host. Name the proxy route
 `vaultspec-rag-monitor`. Keep state and generated artifacts outside Git.
@@ -106,8 +106,7 @@ control and process ownership rather than another implementation.
 
 ## Consequences
 
-Frontend dependencies remain separate from Python packaging and the resident
-RAG service. The initial browser entry was blank; the user's subsequent feature request
+Frontend dependencies remain separate from Python packaging. The user's 2026-10-02 request authorizes a daemon-owned monitor for managed server start/stop under `2026-10-02-monitor-lifecycle-adr`. Its actual port starts at the backend port plus one and advances until free; the fixed manifest allocation and canonical harness continue to govern standalone development. The initial browser entry was blank; the user's subsequent feature request
 now authorizes the Carbon application after the passing TUI review.
 The registry can inspect this branch with `--worktree monitor`; ordinary
 main-only registry and tailnet generation pick it up after landing.
