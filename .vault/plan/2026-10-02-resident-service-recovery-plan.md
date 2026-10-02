@@ -12,7 +12,7 @@ related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:e33c803079a34edf26d92e26d9a73d4475c997bdee908a0cf216b0f9ab3a4a59'
+body_hash: 'sha256:db56f51f17fceb872e1c4b6b0b3fcac94cc2a90d8449183eaf0e1b02d6a91064'
 ---
 
 # `resident-service-recovery` plan
@@ -25,7 +25,7 @@ The user explicitly authorized fixing all defects discovered in the resident-ser
 
 ## Steps
 
-- [ ] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
+- [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
 - [x] `S02` - Recover abandoned receipts before certification, preserve unsafe reader fences until explicit rebuild proof commit, and enforce proof before generation publication; `shared publication recovery and checkpoint owner, code/document/vault source entry paths, CPU real-storage recovery and ledger regression tests`.
 - [x] `S03` - Stabilize membership identity by pruning unreachable ignore files and verify legitimate nested ignore changes still invalidate proof; `src/vaultspec_rag/indexer/_ignore_specs.py, ignore/policy regression tests`.
 - [x] `S05` - Remove stale relevance-feedback anchors before hybrid or dense queries and verify search remains available after point replacement; `src/vaultspec_rag/_store_search.py and store search regression tests`.

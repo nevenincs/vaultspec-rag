@@ -40,7 +40,11 @@ from .watcher_durability import (
     persist_watcher_observations,
     raise_if_cancellation_requested,
 )
-from .watcher_execution import controller_scope_from_retry_state, submit_watcher_job
+from .watcher_execution import (
+    controller_retry_at_from_retry_state,
+    controller_scope_from_retry_state,
+    submit_watcher_job,
+)
 from .watcher_policy import (
     CONFIG_FILENAMES,
     is_code_change,
@@ -249,9 +253,16 @@ def _new_controller(retry_policy: WatcherRetryPolicy) -> WatcherController:
             remediation=(
                 "Run an explicit full reindex before resuming automatic updates."
             ),
+            scope=scope,
         )
     elif scope.pending or scope.captured:
-        controller.observe(scope)
+        controller.observe(
+            scope,
+            circuit_state=state.circuit_state,
+            retry_at=controller_retry_at_from_retry_state(
+                state, monotonic_now=monotonic_now, wall_now=wall_now
+            ),
+        )
     return controller
 
 
@@ -272,6 +283,7 @@ def _register_controller_binding(binding: _ControllerBinding) -> None:
                         "Run an explicit full reindex before resuming "
                         "automatic updates."
                     ),
+                    scope=controller_scope_from_retry_state(state),
                 )
             else:
                 binding.controller.observe(
@@ -279,7 +291,9 @@ def _register_controller_binding(binding: _ControllerBinding) -> None:
                         state,
                         monotonic_now=time.monotonic(),
                         wall_now=time.time(),
-                    )
+                    ),
+                    circuit_state=state.circuit_state,
+                    retry_at=controller_retry_at_from_retry_state(state),
                 )
         measurement_generation += 1
         observed_at = time.monotonic()
@@ -293,10 +307,8 @@ def _register_controller_binding(binding: _ControllerBinding) -> None:
                 observed_at=observed_at,
             )
         )
-        retry_at = (
-            observed_at + max(0.0, state.next_retry_at - time.time())
-            if state.next_retry_at
-            else None
+        retry_at = controller_retry_at_from_retry_state(
+            state, monotonic_now=observed_at
         )
         binding.controller.evaluate(
             measurement.controller,
@@ -379,6 +391,7 @@ async def _persist_and_observe_batch(
                 remediation=(
                     "Run an explicit full reindex before resuming automatic updates."
                 ),
+                scope=controller_scope_from_retry_state(state),
             )
         else:
             binding.controller.observe(
@@ -386,7 +399,9 @@ async def _persist_and_observe_batch(
                     binding.retry_policy.state,
                     monotonic_now=time.monotonic(),
                     wall_now=time.time(),
-                )
+                ),
+                circuit_state=state.circuit_state,
+                retry_at=controller_retry_at_from_retry_state(state),
             )
     return cancellation_requested
 

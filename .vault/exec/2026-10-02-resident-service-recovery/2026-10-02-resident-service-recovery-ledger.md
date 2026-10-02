@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:ceb5ed645dec954c5246fdb6793e967e94758c3b2f8ce3dafa98020ebfe1eb2e'
+body_hash: 'sha256:e5c00a75b3ca1686083bf511e3fed5d2f57fed89b462ffd2267eb00b0d6b1323'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -46,3 +46,26 @@ related:
 - `S02` `by:` `vaultspec-high-executor`
 - `S02` `verify:` `basedpyright S02 seven paths` -> `pass`
 - `S02` `by:` `vaultspec-execute`
+- `S01` `M` `src/vaultspec_rag/jobs.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_jobs_rebuild_reconciliation.py`
+- `S01` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S01` `M` `src/vaultspec_rag/watcher_retry.py`
+- `S01` `M` `src/vaultspec_rag/watcher_controller.py`
+- `S01` `M` `src/vaultspec_rag/watcher_execution.py`
+- `S01` `M` `src/vaultspec_rag/watcher_runtime.py`
+- `S01` `M` `src/vaultspec_rag/watcher_intake.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_watcher_retry.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_watcher_controller.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_watcher_controller_intake.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_watcher_recovery.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_adr_regression.py`
+- `S01` `verify:` `ruff check --no-cache src/vaultspec_rag` -> `pass`
+- `S01` `verify:` `ruff format --check --no-cache src/vaultspec_rag` -> `pass`
+- `S01` `verify:` `basedpyright all S01 fourteen changed Python paths` -> `pass`
+- `S01` `verify:` `pytest watcher retry controller recovery intake durable scope rebuild reconciliation (138 tests, exit 0)` -> `pass`
+- `S01` `verify:` `pytest watcher scheduler load route quiesce controller projection ADR (67 tests, exit 0)` -> `pass`
+- `S01` `verify:` `pytest jobs rebuild reconciliation and lifecycle (36 tests, exit 0)` -> `pass`
+- `S01` `verify:` `37 watcher guard fail restore pass sequences (forensic watcher-proof-summary.json)` -> `pass`
+- `S01` `verify:` `jobs completion off-loop guard mutation failed intended thread assertion then restored passed` -> `pass`
+- `S01` `by:` `vaultspec-execute`

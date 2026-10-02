@@ -7,7 +7,7 @@ re-indexing when changes are detected.
 
 from __future__ import annotations
 
-import asyncio  # noqa: TC003
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -501,7 +501,26 @@ async def reconcile_restarted_slot(
         )
     generation = state.attempt_generation
     job_id = state.attempt_job_id
+    if generation is not None and job_id is not None:
+        for completed in manager.terminal():
+            if await asyncio.to_thread(
+                slot.retry_policy.reconcile_rebuild,
+                completed,
+                resolve_abandoned_attempt=True,
+            ):
+                with slot.lock:
+                    slot.pending_paths.update(
+                        slot.root / item.relative_path
+                        for item in slot.retry_policy.state.pending_paths
+                    )
+                return
     if generation is None or job_id is None:
+        if state.scope_refusal is not None:
+            for completed in manager.terminal():
+                if await asyncio.to_thread(
+                    slot.retry_policy.reconcile_rebuild, completed
+                ):
+                    break
         return
 
     snapshot = manager.get(job_id)
@@ -559,6 +578,47 @@ def _is_exact_watcher_job(slot: WatcherConvergenceSlot, snapshot: JobSnapshot) -
         and os.path.normcase(str(Path(snapshot.initiator.project_root).resolve()))
         == canonical_root
     )
+
+
+def reconcile_completed_rebuild(snapshot: JobSnapshot) -> bool:
+    """Durably reconcile an operator rebuild without creating absent watcher state.
+
+    Call on a worker thread after canonical job success is persisted. The
+    publication and retry ledgers are read and written here; inference and
+    corpus discovery are never needed.
+    """
+    from .config._settings import get_config
+    from .indexer._run_ledger_models import RunAuthority
+    from .watcher_retry import STATE_DIRECTORY
+    from .watcher_retry_policy import WatcherRetryPolicy
+
+    if (
+        snapshot.state is not JobState.SUCCEEDED
+        or snapshot.spec.operation is not JobOperation.INDEX
+        or snapshot.spec.mode is not JobMode.REBUILD
+        or snapshot.spec.authority is not RunAuthority.REBUILD
+        or not snapshot.spec.source.is_corpus
+        or snapshot.spec.project_root is None
+    ):
+        return False
+    root = Path(snapshot.spec.project_root).resolve()
+    source = WatcherSource(snapshot.spec.source.value)
+    state_path = root / get_config().data_dir / STATE_DIRECTORY / f"{source.value}.json"
+    if not state_path.is_file():
+        return False
+    policy = WatcherRetryPolicy.for_root(root, source, recover_abandoned_attempt=False)
+    if not policy.reconcile_rebuild(snapshot):
+        return False
+    log_event(
+        logger,
+        "service.watcher",
+        "rebuild_reconciled",
+        root=root,
+        source=source.value,
+        job_id=snapshot.id,
+        pending_paths=len(policy.state.pending_paths),
+    )
+    return True
 
 
 async def _settle_recovered_attempt(

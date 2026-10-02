@@ -302,13 +302,13 @@ def test_newer_convergence_generation_survives_older_success(tmp_path: Path) -> 
     first = _policy(state_path, tmp_path)
     second = _policy(state_path, tmp_path)
 
-    dirty = first.mark_convergence_pending(now=1.0)
+    dirty = first.mark_scope_pending((_path_observation("src/a.py"),), now=1.0)
     assert dirty.convergence_generation == 1
     admitted = first.admit(now=1.0)
     assert admitted.admitted
     assert admitted.attempt_generation == 1
 
-    newer = second.mark_convergence_pending(now=2.0)
+    newer = second.mark_scope_pending((_path_observation("src/b.py"),), now=2.0)
     assert newer.convergence_generation == 2
     completed = first.record_success(1, now=3.0)
     assert completed.last_durable_progress_at == 3.0
@@ -404,9 +404,84 @@ def test_full_reindex_required_is_terminal_and_clears_pending_intent(
     assert not policy.admit(now=1000.0).admitted
 
     renewed = policy.mark_convergence_pending(now=1001.0)
-    assert renewed.last_error_kind is None
-    assert renewed.circuit_state is WatcherCircuitState.CLOSED
-    assert policy.admit(now=1001.0).admitted
+    assert renewed.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
+    assert renewed.circuit_state is WatcherCircuitState.OPEN
+    assert not policy.admit(now=1001.0).admitted
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_exact_events_preserve_terminal_rebuild_refusal(
+    tmp_path: Path, restart: bool
+) -> None:
+    # Mutation: resetting failure fields in mark_scope_pending admits the new
+    # event even though the publication still requires an explicit rebuild.
+    state_path = tmp_path / "code.json"
+    policy = _policy(state_path, tmp_path)
+    policy.mark_scope_pending((_path_observation("src/a.py"),), now=2.0)
+    failed = _fail_once(
+        policy,
+        JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "membership proof changed"),
+        now=3.0,
+        random_unit=0.5,
+    )
+    if restart:
+        policy = _policy(state_path, tmp_path, now=4.0)
+
+    observed = policy.mark_scope_pending(
+        (_path_observation("src/b.py", first=4.0, latest=4.0),), now=4.0
+    )
+
+    assert observed.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    assert observed.last_error_kind is failed.last_error_kind
+    assert observed.last_error_detail == failed.last_error_detail
+    assert observed.consecutive_failures == failed.consecutive_failures
+    assert observed.circuit_state is WatcherCircuitState.OPEN
+    assert observed.next_retry_at == 0.0
+    assert [item.relative_path for item in observed.pending_paths] == ["src/b.py"]
+    assert not policy.admit(now=1000.0).admitted
+
+
+def test_exact_events_preserve_failure_backoff_and_circuit(tmp_path: Path) -> None:
+    # Mutation: clearing retry history on intake admits before the backoff and
+    # prevents repeated transient failures from ever opening the circuit.
+    policy = _policy(tmp_path / "code.json", tmp_path)
+    policy.mark_scope_pending((_path_observation("src/a.py"),), now=2.0)
+    failed = _fail_once(policy, TimeoutError("timeout"), now=3.0, random_unit=0.5)
+
+    observed = policy.mark_scope_pending(
+        (_path_observation("src/b.py", first=4.0, latest=4.0),), now=4.0
+    )
+
+    assert not policy.admit(now=4.0).admitted
+    assert observed.next_retry_at == failed.next_retry_at
+    assert observed.consecutive_failures == 1
+    assert [item.relative_path for item in observed.pending_paths] == [
+        "src/a.py",
+        "src/b.py",
+    ]
+    _fail_once(policy, TimeoutError("timeout"), now=13.0, random_unit=0.5)
+    failed = _fail_once(policy, TimeoutError("timeout"), now=33.0, random_unit=0.5)
+    observed = policy.mark_scope_pending(
+        (_path_observation("src/c.py", first=34.0, latest=34.0),), now=34.0
+    )
+    assert observed.circuit_state is WatcherCircuitState.OPEN
+    assert observed.consecutive_failures == 3
+    assert observed.next_retry_at == failed.next_retry_at
+    assert not policy.admit(now=34.0).admitted
+
+
+def test_exact_event_cannot_replace_unknown_scope_after_restart(tmp_path: Path) -> None:
+    # Mutation: clearing the restart refusal on an exact event loses the older
+    # unknown scope while admitting only the newest path.
+    state_path = tmp_path / "code.json"
+    policy = _policy(state_path, tmp_path)
+    policy.mark_convergence_pending(now=0.0)
+    restarted = _policy(state_path, tmp_path, now=1.0)
+
+    observed = restarted.mark_scope_pending((_path_observation("src/new.py"),), now=2.0)
+
+    assert observed.scope_refusal is WatcherScopeRefusal.FULL_REINDEX_REQUIRED
+    assert not restarted.admit(now=1000.0).admitted
 
 
 def test_missing_publication_proof_is_a_terminal_rebuild_refusal(
@@ -497,7 +572,9 @@ def test_nonretryable_failure_opens_immediately(
     assert state.convergence_pending
 
 
-def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
+def test_restart_refuses_unsettled_attempt_until_explicit_rebuild(
+    tmp_path: Path,
+) -> None:
     state_path = tmp_path / "code.json"
     script = "\n".join(
         (
@@ -542,7 +619,8 @@ def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
     assert state.consecutive_failures == 3
     assert state.last_error_kind is JobErrorKind.FULL_REINDEX_REQUIRED
     assert state.circuit_state is WatcherCircuitState.OPEN
-    assert state.next_retry_at == 65.0
+    assert state.next_retry_at == 0.0
+    assert state.last_failure_at == 40.0
     assert state.attempt_generation is None
     assert not state.unscoped_required
     assert not restarted.admit(now=64.9).admitted
@@ -554,8 +632,10 @@ def test_restart_reopens_unsettled_attempt_with_delay(tmp_path: Path) -> None:
 def test_live_attempt_owner_is_not_reclaimed(tmp_path: Path) -> None:
     state_path = tmp_path / "code.json"
     policy = _policy(state_path, tmp_path)
-    policy.mark_convergence_pending(now=0.0)
-    decision = policy.admit(now=0.0)
+    policy.mark_scope_pending((_path_observation("src/a.py"),), now=0.0)
+    decision = policy.admit_reserved(
+        policy.reserve_admission(), now=0.0, job_id="job-1"
+    )
     assert decision.attempt_generation == 1
 
     overlapping = _policy(state_path, tmp_path, now=5.0)

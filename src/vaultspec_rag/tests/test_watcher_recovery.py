@@ -47,6 +47,11 @@ class _History:
         assert job_id == "job-1"
         return self.snapshot
 
+    def terminal(self) -> tuple[JobSnapshot, ...]:
+        if self.snapshot is None or not self.snapshot.state.is_terminal:
+            return ()
+        return (self.snapshot,)
+
 
 def _options(root: Path) -> _WatcherRetryOptions:
     return _WatcherRetryOptions(

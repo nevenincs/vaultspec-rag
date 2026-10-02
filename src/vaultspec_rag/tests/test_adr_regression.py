@@ -1144,7 +1144,8 @@ class TestAdaptiveWatcherArchitecture:
         # Mutation check: changing this identity comparison to never match fails
         # on the refusal predicate assertion, not merely module import.
         assert (
-            "terminal_scope_loss = ( state.last_error_kind is "
+            "terminal_scope_loss = ( state.scope_refusal is not None "
+            "or state.last_error_kind is "
             "JobErrorKind.FULL_REINDEX_REQUIRED )"
         ) in normalized
         assert "if not state.convergence_pending or terminal_scope_loss" in admission, (

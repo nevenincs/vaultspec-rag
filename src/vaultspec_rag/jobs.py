@@ -6,6 +6,7 @@ along with async task execution helpers for background reindexing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -46,6 +47,7 @@ from ._runtime_identity import process_identity_fields
 from .job_manager.models import JobAttemptContext, JobExecutionResult
 from .job_models import (
     DesiredJobState,
+    JobMode,
     JobOperation,
     JobOutcome,
     JobOutcomeStatus,
@@ -57,6 +59,7 @@ from .logging_config import log_event
 from .registry import discard_job_manager, get_registry
 
 if TYPE_CHECKING:
+    from asyncio import Future
     from collections.abc import Callable
 
     from .indexer._codebase_indexer import (
@@ -892,6 +895,8 @@ def _sync_legacy_finished(
                 drift=result.drift if result is not None else None,
             ),
         )
+        if snapshot.spec.mode is JobMode.REBUILD:
+            _schedule_rebuild_reconciliation(snapshot)
     elif snapshot.state is JobState.FAILED:
         record_finish(snapshot.id, error=snapshot.result or str(error or "job failed"))
     elif snapshot.state is JobState.INTERRUPTED:
@@ -918,6 +923,37 @@ def _sync_legacy_finished(
             callback(duration_seconds)
         except Exception:
             logger.exception("Error in job complete callback")
+
+
+def _reconcile_rebuilt_watcher(snapshot: JobSnapshot) -> bool:
+    """Reconcile durable publication off-loop and wake its watcher on success."""
+    from .server._watcher import _wake_watcher_scheduler
+    from .watcher_runtime import reconcile_completed_rebuild
+
+    reconciled = reconcile_completed_rebuild(snapshot)
+    if reconciled:
+        _wake_watcher_scheduler()
+    return reconciled
+
+
+def _log_rebuild_reconciliation(future: Future[bool]) -> None:
+    try:
+        future.result()
+    except asyncio.CancelledError:
+        logger.warning("Watcher rebuild reconciliation interrupted during shutdown")
+    except Exception:
+        logger.exception("Watcher rebuild reconciliation failed")
+
+
+def _schedule_rebuild_reconciliation(snapshot: JobSnapshot) -> None:
+    """Keep ledger reads and durable watcher writes off the serving event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _reconcile_rebuilt_watcher(snapshot)
+        return
+    future = loop.run_in_executor(None, _reconcile_rebuilt_watcher, snapshot)
+    future.add_done_callback(_log_rebuild_reconciliation)
 
 
 def _bind_index_dispatch(
