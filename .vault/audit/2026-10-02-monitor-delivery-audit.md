@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:e87f5db6b13770f1cd386e452c6f6b5e3ac7b8fb10f58b73a0e0c3c3a035a824'
+body_hash: 'sha256:904cb830bd07f76af223003812bcac9a1d343354c74e0583866bd1aca5bcba8b'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -71,6 +71,16 @@ The current-head CodeQL check on PR #570 reported a high cache-poisoning finding
 ### release-node-auto-cache-resolution | low | Release frontend caching is explicitly disabled and guarded
 
 Follow-up review of S04 against base `b60a6859` and the uncommitted correction: setup-node now receives package-manager-cache=false and has no explicit cache input. A dispatch-supplied manifest therefore cannot enable the pinned action's automatic npm cache. The new guard failed at its named automatic-cache assertion when the opt-out was removed (exit 1), and exact restoration passed (exit 0). The YAML helper annotations also now describe parsed mapping keys and dependency lists; strict type checks cover the guard without suppressions. Ruff across the package and binary tooling, affected format, ty/basedpyright, actionlint and workflow Prettier pass. The release-workflow and developer-guard suite passes 151 tests. This resolves release-node-auto-cache; corrective S04 review is **PASS**. The next push must obtain current-head CI and CodeQL results before the requested merge. S06 remains **PENDING** for the previously recorded remaining native hosts, executable OS egress denial and first reviewed public acquisition.
+
+### release-input-propagation | high | Automatic-cache opt-out does not complete the CodeQL correction
+
+The CodeQL result at `d5114a9d` still reports execution from inputs.target_sha at npm ci. Disabling automatic cache saves is useful, but does not itself remove runner cache capabilities from executed code. The existing request resolver already proves tag format, remote existence and exact requested SHA; downstream jobs must consume that proven remote result rather than re-read the raw dispatch input. S04 reopened; corrective verdict is **REVISION REQUIRED** until the output boundary is explicit. Two medium Python annotations also concern bounded test port reservations; the native smoke reservation is corrected in S04, with the lifecycle helper correction assigned to S09.
+
+### release-input-propagation-resolution | low | Every binary release consumer uses the resolver's proven SHA
+
+Follow-up S04 review against `d5114a9d`: the existing resolver emits its remote-derived SHA only after the request comparison succeeds. Every downstream checkout, provenance input and artifact name consumes needs.validate.outputs.sha, and every consumer declares that dependency. The always-running draft verifier additionally requires successful validation before checkout. This follows the existing publication resolver pattern and preserves the tag-based release contract. A real execution of the unchanged resolver script against vaultspec-rag-v0.5.1 accepted its remote SHA `b2077e369cb439d86626f7c1bdded2a387a69849`; the mismatched request failed with no output. Changing the frontend back to raw input failed the named guard assertion, and exact restoration passed.
+
+The combined release/developer-guard run initially passed 151 tests with one stale assertion expecting the old dependency shape. That assertion now checks the designed validation dependency. The full corrected suite passes 152 tests; Ruff package/binary/monitor tooling, affected formatting, ty/basedpyright, canonical workflow actionlint and Prettier pass. The native smoke probe now reserves only loopback and still proves strict occupied-port refusal against actual Windows binary `ccc2b857d4c05de58bf1369cdc5522a4e5717b9351f712df379105db95a1fa41`, 94 assets, browser rendering, bounds, cancellation and EOF/partial-request shutdown. Corrective S04 review is **PASS** locally; the next pushed head must clear CodeQL and the merge gate. S06 remains **PENDING** for the recorded release evidence.
 
 ## Recommendations
 

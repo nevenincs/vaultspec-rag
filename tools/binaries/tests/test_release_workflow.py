@@ -175,10 +175,13 @@ def test_release_artifacts_stay_bound_to_one_exact_commit(repo_root: Path) -> No
     assert '--field target_sha="${TARGET_SHA}"' in publish_text
     triggers = binaries.get("on", binaries.get(True))
     assert triggers["workflow_dispatch"]["inputs"]["target_sha"]["required"] is True
-    assert "name: project-wheel-${{ inputs.target_sha }}" in binaries_text
-    assert "name: binaries-${{ inputs.target_sha }}-${{ matrix.name }}" in binaries_text
-    assert "pattern: binaries-${{ inputs.target_sha }}-*" in binaries_text
-    assert "ref: ${{ inputs.target_sha }}" in binaries_text
+    assert "name: project-wheel-${{ needs.validate.outputs.sha }}" in binaries_text
+    assert (
+        "name: binaries-${{ needs.validate.outputs.sha }}-${{ matrix.name }}"
+        in binaries_text
+    )
+    assert "pattern: binaries-${{ needs.validate.outputs.sha }}-*" in binaries_text
+    assert "ref: ${{ needs.validate.outputs.sha }}" in binaries_text
     assert "git rev-parse HEAD" in binaries_text
 
 
@@ -519,8 +522,8 @@ def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
     jobs = _load(repo_root, "binaries.yml")["jobs"]
     frontend = jobs["frontend"]
     assert "matrix" not in frontend
-    assert frontend["needs"] == "wheel"
-    assert set(jobs["build"]["needs"]) == {"wheel", "frontend"}
+    assert set(frontend["needs"]) == {"validate", "wheel"}
+    assert set(jobs["build"]["needs"]) == {"validate", "wheel", "frontend"}
     front_scripts = "\n".join(str(s.get("run", "")) for s in frontend["steps"])
     assert front_scripts.count("just release-monitor-frontend") == 1
     assert "npm ci" in front_scripts
@@ -580,6 +583,40 @@ def test_release_frontend_cannot_write_dependency_cache(repo_root: Path) -> None
     assert not node["with"].get("cache"), "release checkout enables explicit caching"
 
 
+def test_binary_consumers_use_the_validated_remote_revision(repo_root: Path) -> None:
+    """Build jobs consume the resolver's proven SHA rather than raw input.
+
+    Mutation proof: replacing the frontend checkout with inputs.target_sha
+    failed the named raw-input assertion; exact restoration passed.
+    """
+    jobs = _load(repo_root, "binaries.yml")["jobs"]
+    validate = jobs.pop("validate")
+    assert jobs["verify-release-assets"]["if"] == (
+        "${{ always() && needs.validate.result == 'success' }}"
+    ), "draft verification can start without a proven release SHA"
+    assert validate["outputs"]["sha"] == "${{ steps.commit.outputs.sha }}"
+    commit = next(step for step in validate["steps"] if step.get("id") == "commit")
+    script = str(commit["run"])
+    assert script.index('[ "${sha}" != "${TARGET_SHA}" ]') < script.index(
+        'echo "sha=${sha}" >> "$GITHUB_OUTPUT"'
+    ), "resolver emits its SHA before it proves the release request"
+    for name, job in jobs.items():
+        assert "validate" in job["needs"], f"{name} cannot read the validated SHA"
+        assert "inputs.target_sha" not in yaml.safe_dump(job), (
+            f"{name} still consumes the raw release SHA"
+        )
+        checkouts = [
+            step
+            for step in job["steps"]
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        assert checkouts, f"{name} does not check out the release"
+        assert all(
+            step["with"]["ref"] == "${{ needs.validate.outputs.sha }}"
+            for step in checkouts
+        ), f"{name} does not check out the validated release SHA"
+
+
 def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
     repo_root: Path,
 ) -> None:
@@ -591,7 +628,7 @@ def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
     assert "fetch --no-tags origin main" in gate
     assert '--catalog-revision "$catalog_sha"' in gate
     assert "tools.monitor.pins propose" in binaries
-    assert "monitor-pin-proposal-${{ inputs.target_sha }}" in binaries
+    assert "monitor-pin-proposal-${{ needs.validate.outputs.sha }}" in binaries
     assert "git push" not in binaries
     publication = _load(repo_root, "publish.yml")["jobs"]["publish-pypi"]
     publish = next(

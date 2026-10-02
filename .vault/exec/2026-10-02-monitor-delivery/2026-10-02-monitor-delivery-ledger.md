@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:3a01f7d8b11e654f3940c8a6933bd73b038e57940c1cbdfa42c4e1cff5cf36df'
+body_hash: 'sha256:7728ebbd7cd04f4514b9ad5781d57db91e00987a184070f73a43332dae8fbb31'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -173,6 +173,16 @@ related:
 - `S04` `verify:` `intentional cache opt-out removal named guard` -> `fail`
 - `S04` `verify:` `exact cache opt-out restoration guard` -> `pass`
 - `S04` `verify:` `PR570 CodeQL at b60a6859` -> `fail`
+- `S04` `verify:` `Ruff package binary monitor tooling` -> `pass`
+- `S04` `verify:` `affected format` -> `pass`
+- `S04` `verify:` `ty and strict basedpyright affected files` -> `pass`
+- `S04` `verify:` `canonical actionlint and workflow Prettier` -> `pass`
+- `S04` `verify:` `release workflow and developer guards 152 tests` -> `pass`
+- `S04` `verify:` `raw frontend SHA guard intentional mutation` -> `fail`
+- `S04` `verify:` `raw frontend SHA guard exact restoration` -> `pass`
+- `S04` `verify:` `real remote tag resolver and mismatch refusal` -> `pass`
+- `S04` `verify:` `actual Windows native loopback smoke 94 assets browser port EOF` -> `pass`
+- `S04` `verify:` `PR570 CodeQL at d5114a9d` -> `fail`
 
 ## Notes
 
@@ -191,3 +201,4 @@ related:
 - `S09` User explicitly authorized combining feature/monitor-delivery into existing feature/monitor PR570, pushing it and merging to main. Mechanically resolved only inherited Git hash conflicts before owning vault edit regenerated final metadata. Source integration passes review. S06 retains native other-host, OS egress denial and first public acquisition evidence obligations.
 - `S09` The light aggregate exposed redundant IPv6 probing in the test-only IPv4 wildcard port reservation helper. Removed that probe to meet the unchanged nesting gate and match the actual compiled listener. All other light dimensions passed and remain applicable.
 - `S04` Reopened S04 for current-head CodeQL cache-poisoning finding; explicitly opt out of setup-node automatic caching and leave explicit cache absent. Local corrective review PASS. Parsed YAML helper annotations and optional triggers now satisfy strict typing without suppressions. CodeQL must rerun at the next pushed head before authorized main merge. S06 release evidence remains pending.
+- `S04` Explicit cache opt-out retained; existing validated remote tag SHA now crosses the job boundary through resolver output, all build and evidence consumers bind to it, and always-running draft verification requires validation success. One stale exact dependency guard corrected to the intended shape; final 152 tests pass. Native smoke socket restricted to loopback; unchanged verified test binary passes complete probe. Corrective local review PASS, fresh CodeQL still required before merge. Lifecycle socket helper medium finding assigned to S09.

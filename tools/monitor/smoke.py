@@ -345,7 +345,7 @@ def probe(
                 "The monitor does not report the requested release identity"
             )
         with socket.socket() as occupied:
-            occupied.bind(("0.0.0.0", 0))
+            occupied.bind(("127.0.0.1", 0))
             occupied.listen()
             starting_port = int(occupied.getsockname()[1])
             verify_native_binary(binary, expected_sha256)
