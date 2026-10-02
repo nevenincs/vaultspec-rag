@@ -187,6 +187,25 @@ async def test_focused_logs_report_the_actual_tail_and_server_truncation(
             assert log_view.scroll_offset.y == 0, (
                 "queued tail scroll overrode navigation"
             )
+
+            def repaint_twice() -> None:
+                log_view.toggle_expanded()
+                log_view.toggle_expanded()
+
+            # Each step scrolls to the tail while following. Deferring that
+            # scroll unchecked to the next frame failed exactly its own label
+            # (exit 1) - jump_end, scroll_followed_tail, or the per-line writes
+            # of a repaint - and scrolling at once passed (exit 0).
+            for label, follow in (
+                ("jump to end", lambda: None),
+                ("delivered tail scroll", log_view.scroll_followed_tail),
+                ("repaint", repaint_twice),
+            ):
+                log_view.jump_end()
+                follow()
+                log_view.jump_top()
+                await pilot.pause()
+                assert log_view.scroll_offset.y == 0, f"{label} overrode navigation"
             with path.open("a", encoding="utf-8") as log:
                 log.write(f"job_id={job_id} latest-while-reading\n")
             app.refresh_focused_logs()

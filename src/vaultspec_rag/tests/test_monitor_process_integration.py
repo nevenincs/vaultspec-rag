@@ -7,7 +7,6 @@ import json
 import os
 import queue
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -32,6 +31,7 @@ from ..server._lifespan import _shutdown_components
 from ..server._runtime import ServerRouteRuntime
 from ..service import ServiceRegistry
 from ..serviceclient._discovery import read_service_status
+from ._ports import bind_released_loopback_port
 from .test_monitor_logs import monitor_http as monitor_http
 from .test_monitor_process import _ports
 
@@ -112,8 +112,7 @@ def test_monitor_allocates_after_custom_backend_and_republishes_discovery(
             )
             assert process.poll() is not None
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            with socket.socket() as released:
-                released.bind(("127.0.0.1", backend_port + 3))
+            bind_released_loopback_port(backend_port + 3)
         finally:
             monitor.stop()
             publisher.quiesce()
@@ -184,8 +183,7 @@ def test_forced_parent_death_closes_frontend_and_stop_clears_assignment(
             envelope = json.loads(result.stdout)
             assert envelope["ok"] is True
             assert not (isolated_singleton_dirs / "monitor.json").exists()
-            with socket.socket() as released:
-                released.bind(("127.0.0.1", fields["monitor_port"]))
+            bind_released_loopback_port(fields["monitor_port"])
         finally:
             if parent.poll() is None:
                 parent.kill()
