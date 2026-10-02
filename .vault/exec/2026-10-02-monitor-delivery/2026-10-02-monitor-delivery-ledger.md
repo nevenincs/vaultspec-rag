@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:567a9181662bf196b3c5c8ffaca443bd904bdb008ec7a4d80cc13bb8c4dbbe19'
+body_hash: 'sha256:13847bd4f0a7bbdfed3f60ea25782066199574856ee803531aa53919d2748864'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -208,6 +208,25 @@ related:
 - `S06` `verify:` `actionlint acquisition/merge-gate` -> `pass`
 - `S06` `verify:` `ruff package and affected tooling` -> `pass`
 - `S06` `verify:` `ty affected guards` -> `pass`
+- `S06` `M` `.github/workflows/binaries.yml`
+- `S06` `A` `tools/monitor/offline.py`
+- `S06` `A` `tools/monitor/linux_exec.py`
+- `S06` `A` `tools/monitor/tests/test_offline.py`
+- `S06` `M` `tools/monitor/smoke.py`
+- `S06` `M` `tools/monitor/release.py`
+- `S06` `M` `tools/monitor/acquire.py`
+- `S06` `M` `tools/packaging/bundles.py`
+- `S06` `M` `tools/packaging/tests/test_bundles.py`
+- `S06` `M` `tools/binaries/tests/test_release_workflow.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_search_quiesce_admission.py`
+- `S06` `M` `RELEASING.md`
+- `S06` `verify:` `72 affected release/OS/archive/HTTP checks` -> `pass`
+- `S06` `verify:` `three offline/public admission mutation proofs` -> `pass`
+- `S06` `verify:` `Linux installed kernel TCP/UDP denial and loopback replies` -> `pass`
+- `S06` `verify:` `pinned native Bun exact-launcher positive/negative control` -> `pass`
+- `S06` `verify:` `public latest acquisition` -> `fail`
+- `S06` `verify:` `broad unchanged tools advisory complexity` -> `fail`
+- `S06` `verify:` `new OS owners complexity` -> `pass`
 
 ## Notes
 
@@ -230,3 +249,4 @@ related:
 - `S09` Reopened S09 to resolve CodeQL medium wildcard-listener annotation. Test reservations now bind loopback only, preserving exclusive Windows socket admission and avoiding the ephemeral range. Real compiled allocation, backend HTTP and cleanup checks pass. Corrective review PASS; fresh remote checks still required before authorized merge. S06 remains pending release evidence.
 - `S04` Bind binary workflow dispatch to the existing release tag contract. Existing resolver additionally refuses a different workflow ref or SHA, checkouts use its fixed GitHub commit and all provenance uses the equal proven SHA. Update the publication caller and manual repair command together. Query source reviewed to establish why dynamic outputs remained flagged; no dismissal or suppression. Local corrective review PASS, fresh remote CodeQL required before merge. Existing native smoke and lifecycle evidence remains applicable; S06 release evidence pending.
 - `S06` Native/OS/public proof remains open; user authorized private verification dispatch. CI setup correction avoids operator process stop.
+- `S06` Public latest 0.5.3 has no committed monitor pins; fail-closed before extraction. All four native offline results pending. No publication performed.

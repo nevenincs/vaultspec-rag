@@ -226,6 +226,30 @@ This makes reruns idempotent and preserves the other workflow's completed
 entries. Do not replace the remote file with a binary-only checksum list, edit
 it by hand, or attach raw staging files to repair a release.
 
+## Verifying a monitor candidate
+
+Before cutting a release, dispatch the private native verification lane on the
+commit to be checked:
+
+```sh
+gh workflow run acquisition.yml --repo "$REPO" --ref main \
+  --field mode=candidate --field tag=vaultspec-rag-v0.6.0
+```
+
+The version input names the candidate; this command creates no tag or release.
+One frontend build is bound to the dispatched commit and npm lock, then embedded
+by the verified native compiler on all four targets. Each target renders the
+finalized monitor in an installed browser and repeats the smoke under OS outbound
+denial. The private Actions artifacts retain binaries, hashes and smoke reports.
+
+Linux uses a process-scoped kernel filter; macOS uses a process sandbox allowing
+loopback. Windows requires an elevated runner and enabled firewall profiles. Its
+temporary rules cover the monitor, a pinned network control and a private browser
+copy; the probe removes only its own rules. The external TCP control must connect
+before isolation and fail under it, while the compiled monitor serves loopback
+HTTP. Failure leaves release admission closed. Candidate verification is separate
+from acquisition of the final published archives.
+
 ## Reviewing monitor release pins
 
 The binary release job uploads a private Actions artifact named
@@ -236,7 +260,8 @@ verifier until a maintainer completes this review.
 Review the candidate against the four actual draft archives and their native smoke
 results. Check the release tag, full producer commit, npm lock digest, common frontend
 manifest digest, and the finalized archive and monitor executable hashes. Confirm that
-all four native browser probes passed and that the archives carry the same frontend.
+all four native browser and OS-offline probes passed and that the archives carry
+the same frontend.
 Merge the reviewed release entry into
 [tools/monitor/release-pins.json](tools/monitor/release-pins.json), preserving previous
 entries, and land that catalog change on `main` through the normal review process.

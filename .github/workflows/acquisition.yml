@@ -21,7 +21,7 @@ on:
         required: false
         type: string
       target_sha:
-        description: "Expected immutable producer commit"
+        description: "Expected public release producer commit (public mode only)"
         required: false
         type: string
 
@@ -155,7 +155,9 @@ jobs:
             --tag "$TAG" --source-revision "$PRODUCER" --frontend dist-monitor-frontend \
             --frontend-sha256 "$FRONTEND_SHA256" --outdir dist-bin
           uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
-            --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --raw-dir dist-bin
+            --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin
+          uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
+            --tag "$TAG" --source-revision "$PRODUCER" --target "$TARGET" --directory dist-bin --os-offline
       - name: Verify public delivery against committed pins and render native bytes
         if: inputs.mode != 'candidate'
         shell: bash
@@ -167,7 +169,7 @@ jobs:
           set -euo pipefail
           uv run --no-project --python 3.13 -- python -m tools.monitor.acquire \
             --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" \
-            --report "dist-release-evidence/acquisition-$TARGET.json"
+            --report "dist-release-evidence/acquisition-$TARGET.json" --os-offline
       - name: Upload native acquisition evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

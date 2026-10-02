@@ -321,6 +321,7 @@ def probe(
     expected_sha256: str,
     identity: dict[str, object],
     browser: Path | None,
+    launch_prefix: tuple[str, ...] = (),
 ) -> dict[str, object]:
     binary = binary.absolute()
     target = host_target_triple()
@@ -330,7 +331,7 @@ def probe(
         environment = isolated_environment(directory)
         verify_native_binary(binary, expected_sha256)
         version = subprocess.run(
-            [str(binary), "--version", "--json"],
+            [*launch_prefix, str(binary), "--version", "--json"],
             cwd=directory,
             env=environment,
             capture_output=True,
@@ -350,7 +351,7 @@ def probe(
             starting_port = int(occupied.getsockname()[1])
             verify_native_binary(binary, expected_sha256)
             refused = subprocess.run(
-                [str(binary), "--port", str(starting_port)],
+                [*launch_prefix, str(binary), "--port", str(starting_port)],
                 cwd=directory,
                 env=environment,
                 capture_output=True,
@@ -362,7 +363,13 @@ def probe(
                 raise RuntimeError("A strict occupied monitor port was not refused")
             verify_native_binary(binary, expected_sha256)
             process = subprocess.Popen(
-                [str(binary), "--managed", "--port", str(starting_port)],
+                [
+                    *launch_prefix,
+                    str(binary),
+                    "--managed",
+                    "--port",
+                    str(starting_port),
+                ],
                 cwd=directory,
                 env=environment,
                 stdin=subprocess.PIPE,
