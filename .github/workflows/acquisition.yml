@@ -35,8 +35,8 @@ concurrency:
 jobs:
   frontend:
     if: inputs.mode == 'candidate'
-    name: "Build: Candidate monitor frontend (Linux)"
-    runs-on: [self-hosted, Linux, X64, build]
+    name: "Build: Candidate monitor frontend (macOS)"
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 140
     env:
       CI_EXEC_BUDGET_MINUTES: 20
@@ -70,7 +70,9 @@ jobs:
       - name: Record the common frontend digest
         id: identity
         shell: bash
-        run: echo "digest=$(sha256sum dist-monitor-frontend/frontend.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+        run: |
+          digest=$(uv run --no-project --python 3.13 -- python -c 'import hashlib; from pathlib import Path; print(hashlib.sha256(Path("dist-monitor-frontend/frontend.json").read_bytes()).hexdigest())')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Upload the common frontend
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

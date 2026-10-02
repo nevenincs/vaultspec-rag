@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:13847bd4f0a7bbdfed3f60ea25782066199574856ee803531aa53919d2748864'
+body_hash: 'sha256:194861c26c492e2f1ec1afc6cf32273dcebcb003cef2d3ac4aca2e8a8f429ef2'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -227,6 +227,9 @@ related:
 - `S06` `verify:` `public latest acquisition` -> `fail`
 - `S06` `verify:` `broad unchanged tools advisory complexity` -> `fail`
 - `S06` `verify:` `new OS owners complexity` -> `pass`
+- `S06` `verify:` `candidate/public workflow admission guard` -> `pass`
+- `S06` `verify:` `actionlint acquisition` -> `pass`
+- `S06` `verify:` `prettier acquisition` -> `pass`
 
 ## Notes
 
@@ -250,3 +253,4 @@ related:
 - `S04` Bind binary workflow dispatch to the existing release tag contract. Existing resolver additionally refuses a different workflow ref or SHA, checkouts use its fixed GitHub commit and all provenance uses the equal proven SHA. Update the publication caller and manual repair command together. Query source reviewed to establish why dynamic outputs remained flagged; no dismissal or suppression. Local corrective review PASS, fresh remote CodeQL required before merge. Existing native smoke and lifecycle evidence remains applicable; S06 release evidence pending.
 - `S06` Native/OS/public proof remains open; user authorized private verification dispatch. CI setup correction avoids operator process stop.
 - `S06` Public latest 0.5.3 has no committed monitor pins; fail-closed before extraction. All four native offline results pending. No publication performed.
+- `S06` Shared system disk below 40 GiB reserve blocks Windows/Linux x64; private frontend moves to macOS to obtain remaining independent native proof. No reserve changes or unrelated cache deletion.
