@@ -398,6 +398,40 @@ def test_cuda_ceiling_auto_is_absolute_over_free_plus_resident_baseline() -> Non
     assert clamped == 16000.0 - 2048.0
 
 
+def test_sparse_token_budget_default_and_override_are_independent() -> None:
+    saved_sparse = set_env(EnvVar.EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET, "")
+    saved_dense = set_env(EnvVar.EMBEDDING_ENCODE_TOKEN_BUDGET, "")
+    try:
+        reset_config()
+        assert get_config().embedding_sparse_encode_token_budget == 24_000
+        assert get_config().embedding_encode_token_budget == 24_000
+        set_env(EnvVar.EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET, "8192")
+        reset_config()
+        assert get_config().embedding_sparse_encode_token_budget == 8192
+        assert get_config().embedding_encode_token_budget == 24_000
+        set_env(EnvVar.EMBEDDING_ENCODE_TOKEN_BUDGET, "12000")
+        reset_config()
+        assert get_config().embedding_sparse_encode_token_budget == 8192
+        assert get_config().embedding_encode_token_budget == 12000
+    finally:
+        restore_env(EnvVar.EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET, saved_sparse)
+        restore_env(EnvVar.EMBEDDING_ENCODE_TOKEN_BUDGET, saved_dense)
+        reset_config()
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "invalid"])
+def test_sparse_token_budget_rejects_invalid_values(value: str) -> None:
+    saved = set_env(EnvVar.EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET, value)
+    try:
+        reset_config()
+        # Mutation proof: allowing zero failed the rejection; restored passed.
+        with pytest.raises(ValueError, match="embedding_sparse_encode_token_budget"):
+            get_config()
+    finally:
+        restore_env(EnvVar.EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET, saved)
+        reset_config()
+
+
 def test_document_encode_batch_is_independent_of_vault_and_code() -> None:
     # Document fragments are window-sized after chunk-bounding, so the document
     # encode sub-batch is decoupled from the vault and code sub-batches and

@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#server-watch-observability'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:662a9e99790b7e844e4acc303cc848f77dfd2c9cb2c2a82209c5445d0b2ee695'
+body_hash: 'sha256:c5c8317c4bd833bf94cafb269dba27d08433f24e1480d27e0a7989fafa436a39'
 related:
   - '[[2026-07-29-server-watch-observability-adr]]'
+  - '[[2026-07-29-server-watch-observability-ledger]]'
   - '[[2026-07-29-server-watch-observability-plan]]'
   - '[[2026-07-29-server-watch-observability-reference]]'
   - '[[2026-07-29-server-watch-observability-research]]'
@@ -30,6 +31,10 @@ Auto-generated index of all documents tagged with `#server-watch-observability`.
 
 - `2026-07-29-server-watch-observability-tui-integration-audit` - `server-watch-observability` audit: `P03 dual-lane TUI integration`
 - `2026-07-30-server-watch-observability-closeout-audit` - `server-watch-observability` audit: `server-watch-observability closeout review`
+
+### exec
+
+- `2026-07-29-server-watch-observability-ledger` - `server-watch-observability` ledger
 
 ### plan
 

@@ -3,12 +3,12 @@ tags:
   - '#plan'
   - '#sparse-search-latency'
 date: '2026-06-08'
-modified: '2026-07-27'
-body_hash: 'sha256:23702299c0d03fa3642f7862376af09f035b145a33541ac4055fbc5b01f744d3'
 tier: L2
 related:
   - '[[2026-06-07-sparse-search-latency-adr]]'
   - '[[2026-06-07-sparse-search-latency-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:e56076daf94fee61c696015d89e36ee13a405482788337b472ec47ed679301af'
 ---
 
 <!-- RETIRED: S09 -->
@@ -23,10 +23,10 @@ This plan implements latency optimizations for the VaultSpec RAG service to addr
 
 ### Phase `P01` - Dense-Only Fallback
 
-Introduce sparse_enabled toggle in configuration to bypass SPLADE and accelerate dense-only queries.
+Introduce sparse_enabled toggle in configuration to bypass sparse inference and accelerate dense-only queries.
 
 - [x] `P01.S01` - Add sparse_enabled to \_RAG_DEFAULTS; `src/vaultspec_rag/config.py`.
-- [x] `P01.S02` - Skip SPLADE computation and index fetching when sparse_enabled is False; `src/vaultspec_rag/search/_searcher.py`.
+- [x] `P01.S02` - Skip sparse computation and index fetching when sparse_enabled is False; `src/vaultspec_rag/search/_searcher.py`.
 - [x] `P01.S03` - Update tests to assert dense-only fallback works; `src/vaultspec_rag/tests/`.
 
 ### Phase `P02` - Glob Pre-Filtering via Qdrant MatchPattern
@@ -59,7 +59,7 @@ Fix all 43 failing tests caused by the CLI refactor drift and the new MCP REST b
 
 The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP requests into REST calls to the daemon. No direct imports from `server`, `store`, `service`, or `registry`.
 
-- [x] `P05.S15` - Remove `_resources.py` direct Qdrant access: replace `_m._registry.lease(root)` + `slot.store.get_by_id()` with a REST call to a new `/vault-document` daemon endpoint; `src/vaultspec_rag/mcp/_resources.py`, `src/vaultspec_rag/server/_routes.py`.
+- [x] `P05.S15` - Remove `_resources.py` direct Qdrant access: replace `_m._registry.lease(root)` + `slot.store.get_by_id()` with a REST call to a new `/vault-document` daemon endpoint; `src/vaultspec_rag/mcp/_resources.py, src/vaultspec_rag/server/_routes.py`.
 - [x] `P05.S16` - Remove `_resources.py` server internal imports: eliminate `import vaultspec_rag.server as _m`, `from ..server._utils import _default_root`, and `_m._http_mode` reads; `src/vaultspec_rag/mcp/_resources.py`.
 - [x] `P05.S17` - Add `/vault-document` REST route to daemon serving document content by stem ID; `src/vaultspec_rag/server/_routes.py`.
 - [x] `P05.S18` - Integration tests asserting `mcp/` has zero imports from `server/`, `store`, `service`, or `registry`; `src/vaultspec_rag/tests/`.
@@ -68,10 +68,10 @@ The `mcp/` package must be a pure protocol adapter: translate MCP stdio/HTTP req
 
 Purge all semantic conflation where "MCP server" is used to mean "REST daemon" or where function/variable/docstring names use `mcp` when they mean `service` or `daemon`. The CLI in-process fallback path is acceptable per existing ADRs and stays.
 
-- [x] `P06.S19` - Rename `server/__init__.py` docstring from "MCP server" to "RAG daemon HTTP service"; `rename`\_main.py`docstring from "Console-script entry point for the MCP server" to "Console-script entry point for the RAG daemon";`src/vaultspec_rag/server/__init__.py`,`src/vaultspec_rag/server/\_main.py`,`src/vaultspec_rag/server/\_models.py`,`src/vaultspec_rag/server/\_state.py\`.
-- [x] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_render.py`, `src/vaultspec_rag/cli/__init__.py`.
-- [x] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py`, `src/vaultspec_rag/cli/_index.py`, `src/vaultspec_rag/cli/_store.py`, `src/vaultspec_rag/cli/_service_lifecycle.py`.
-- [x] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py`, `src/vaultspec_rag/service.py`.
+- [x] `P06.S19` - Rename the server package docstring to RAG daemon HTTP service and the console entry-point docstring to Console-script entry point for the RAG daemon; `src/vaultspec_rag/server/__init__.py, src/vaultspec_rag/server/_main.py, src/vaultspec_rag/server/_models.py, src/vaultspec_rag/server/_state.py`.
+- [x] `P06.S20` - Rename CLI identifiers: `_handle_mcp_results` → `_handle_service_results`, `mcp_results` → `service_results`, `_display_mcp_error` → `_display_service_error`, `_try_mcp_delegation` → `_try_service_delegation`, `_print_mcp_results` → `_print_service_results`; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/cli/_render.py, src/vaultspec_rag/cli/__init__.py`.
+- [x] `P06.S21` - Fix CLI user-facing strings: replace "Port of running MCP server" with "Port of running RAG service", replace `"via": "mcp"` with `"via": "service"`, fix all `--help` text and error messages that say "MCP server" when they mean the daemon; `src/vaultspec_rag/cli/_search.py, src/vaultspec_rag/cli/_index.py, src/vaultspec_rag/cli/_store.py, src/vaultspec_rag/cli/_service_lifecycle.py`.
+- [x] `P06.S22` - Fix stale docstring references: update `registry.py` and `service.py` docstrings that reference the deleted `mcp_server.py` module name; `src/vaultspec_rag/registry.py, src/vaultspec_rag/service.py`.
 - [x] `P06.S23` - Integration test asserting no `.py` file in `cli/` or `server/` contains the string "MCP server" in docstrings, help text, or user-facing output (the `mcp/` package itself is exempt); `src/vaultspec_rag/tests/`.
 
 ### Phase `P07` - Pre-Merge Code Review
@@ -101,7 +101,7 @@ Empirically validate the live RAG service end-to-end: lifecycle, index, search/f
 
 ## Verification
 
-- Running codebase search with `--no-sparse` (or `sparse_enabled=False`) skips the SPLADE encoding and executes in ~0.5s instead of ~20s.
+- Running codebase search with `--no-sparse` (or `sparse_enabled=False`) skips sparse encoding and executes in ~0.5s instead of ~20s.
 - `include_paths` and `exclude_paths` glob parameters continue to correctly filter results, but the filtering executes natively inside Qdrant.
 - Integration tests and search unit tests fully pass.
 - `mcp/` imports nothing from `server/`, `store`, `service`, or `registry`.

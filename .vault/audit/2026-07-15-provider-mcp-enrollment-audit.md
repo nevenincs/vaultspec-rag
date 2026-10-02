@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#provider-mcp-enrollment'
 date: '2026-07-15'
-modified: '2026-07-23'
-body_hash: 'sha256:1834a64641f2df4778c47c096771cd8c7895969f0492c58c674eafecd5ea14fb'
+modified: '2026-09-30'
+body_hash: 'sha256:308af2b74058b8fcaf01defaf09728407247a51d5936bc26831fbac560738836'
 related:
   - "[[2026-07-15-provider-mcp-enrollment-adr]]"
   - "[[2026-07-15-provider-mcp-enrollment-research]]"
@@ -1441,7 +1441,7 @@ absent from the marker-selected set, yielding the exact mandated Windows campaig
 1,834 selected and 437 excluded items.
 
 The exact-commit POSIX archive was then collected in WSL2 Ubuntu with Python 3.13,
-published `vaultspec-core==0.1.45`, and the real Hugging Face credential source. It
+published `vaultspec-core==0.1.45`, and available model artifacts. It
 collected 2,259 items, not 2,272. The `not integration` expression selected 1,829 and
 excluded 430. The same six promoted S49 items were present and disjoint, yielding
 1,835 selected and 424 excluded items. The selected count happens to equal the mandate,

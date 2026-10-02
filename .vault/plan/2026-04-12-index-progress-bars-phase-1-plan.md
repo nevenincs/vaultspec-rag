@@ -3,19 +3,20 @@ tags:
   - '#plan'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-25'
-body_hash: 'sha256:56f40508afef0efd1ea916d237fa3762282116e8d7a90707f5f324c30c6b9e75'
+tier: L2
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
   - '[[2026-04-12-index-progress-bars-reference]]'
   - '[[2026-04-12-index-progress-bars-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:b1427a4f8d8e73aeaa2e3ffcad1418243b2bfd62dc2cd2e34742b3cff54c604b'
 ---
 
 # `index-progress-bars` `phase-1` plan
 
 Straight re-implementation of the `vaultspec-rag index` progress-reporting
-surface so every pipeline phase emits visible, granular feedback — with a
-per-document progress bar driving the long embed phase — without coupling
+surface so every pipeline phase emits visible, granular feedback - with a
+per-document progress bar driving the long embed phase - without coupling
 the indexer or embeddings modules to Rich. Grounded in the accepted ADR and
 the reference audit linked above.
 
@@ -52,7 +53,7 @@ The accepted ADR commits to a `ProgressReporter` Protocol owned by a new
 `src/vaultspec_rag/progress.py` module, with a Null implementation for
 silent callers and a TTY-aware Rich adapter driven exclusively from the
 CLI. The indexer entry points are re-implemented to take `reporter` as a
-**required** keyword argument — no default, no shim, no deprecation path.
+**required** keyword argument - no default, no shim, no deprecation path.
 Every in-tree call site is updated in the same change.
 
 The embed phase is sliced at the indexer layer (not inside `embeddings.py`)
@@ -66,7 +67,7 @@ unavoidable slicing overhead.
 
 ## Steps
 
-- `Phase 1 — progress module`
+- `Phase 1  -  progress module`
 
   1. Add `src/vaultspec_rag/progress.py` containing the
      `ProgressReporter` Protocol (`phase_start`, `advance`, `phase_end`,
@@ -85,7 +86,7 @@ unavoidable slicing overhead.
      hammer test asserting total counter correctness under contention.
      No mocks, no skips.
 
-- `Phase 2 — VaultIndexer re-implementation`
+- `Phase 2  -  VaultIndexer re-implementation`
 
   1. Re-implement `VaultIndexer.full_index` in `src/vaultspec_rag/indexer.py`
      to take `reporter: ProgressReporter` as a required keyword argument.
@@ -104,7 +105,7 @@ unavoidable slicing overhead.
   1. Update `VaultIndexer` docstrings to document the new required
      parameter. No default, no backwards-compatible overload.
 
-- `Phase 3 — CodebaseIndexer re-implementation`
+- `Phase 3  -  CodebaseIndexer re-implementation`
 
   1. Re-implement `CodebaseIndexer.full_index` with the same reporter
      contract. Phase labels reflect the unit of work: "scan", "hash",
@@ -116,7 +117,7 @@ unavoidable slicing overhead.
   1. Verify via grep that no code path inside either indexer touches
      `rich` directly; all Rich usage must stay on the CLI side.
 
-- `Phase 4 — CLI handle_index rewrite`
+- `Phase 4  -  CLI handle_index rewrite`
 
   1. In `src/vaultspec_rag/cli.py`, rewrite `handle_index` to construct a
      single `RichProgressReporter` wrapping a `rich.Progress` with
@@ -132,29 +133,29 @@ unavoidable slicing overhead.
      with the constructed reporter. Final summary table remains printed
      after the Progress context closes.
   1. Dry-run and MCP-delegation branches are updated only as needed to
-     take the new required argument plumbing — dry-run can pass a
+     take the new required argument plumbing - dry-run can pass a
      `NullProgressReporter`; MCP delegation already returns before any
      in-process indexing and remains unchanged.
 
-- `Phase 5 — call-site lockstep update`
+- `Phase 5  -  call-site lockstep update`
 
-  1. `src/vaultspec_rag/api.py` — public facade entry points that invoke
+  1. `src/vaultspec_rag/api.py` - public facade entry points that invoke
      the indexers. Update to accept an optional `reporter` parameter and
      forward it; construct a `NullProgressReporter` internally when the
      caller supplies none, so the facade stays ergonomic for library
      consumers.
-  1. `src/vaultspec_rag/mcp_server.py` — MCP tool handlers that call
+  1. `src/vaultspec_rag/mcp_server.py` - MCP tool handlers that call
      `full_index` / `incremental_index`. MCP has no terminal; pass a
      `NullProgressReporter`. Phase events are not yet wired to MCP
-     streaming in this phase (out of scope — the ADR keeps it as a
+     streaming in this phase (out of scope - the ADR keeps it as a
      future consideration).
-  1. `src/vaultspec_rag/watcher.py` — the watcher calls
+  1. `src/vaultspec_rag/watcher.py` - the watcher calls
      `incremental_index` on debounce. Pass a `NullProgressReporter`.
-  1. `src/vaultspec_rag/service.py` — HTTP service entry points that
+  1. `src/vaultspec_rag/service.py` - HTTP service entry points that
      reach the indexers. Pass `NullProgressReporter` unless the service
      already has a compatible progress surface (verify; do not invent
      new surfaces here).
-  1. Test call sites — update every fixture and test that constructs a
+  1. Test call sites - update every fixture and test that constructs a
      `VaultIndexer` or `CodebaseIndexer` and calls `full_index` or
      `incremental_index`: `tests/test_indexer_unit.py`,
      `tests/integration/test_indexer_integration.py`,
@@ -167,31 +168,31 @@ unavoidable slicing overhead.
      `NullProgressReporter` unless the test is specifically validating
      progress behaviour.
 
-- `Phase 6 — tests for progress behaviour`
+- `Phase 6  -  tests for progress behaviour`
 
   1. Extend `test_progress_unit.py` (from Phase 1) with a
      `CountingProgressReporter` fixture class that records every
      `phase_start`/`advance`/`phase_end` event as a tuple list.
   1. Add `src/vaultspec_rag/tests/integration/test_indexer_progress_integration.py`
-     — a real-GPU smoke test that runs `VaultIndexer.full_index` and
-     `CodebaseIndexer.full_index` against the existing integration
-     corpora with a `CountingProgressReporter`. Assertions: every
-     expected phase appears exactly once, per-phase `advance` totals
-     match the corpus document/chunk counts, and `phase_end` follows
-     each `phase_start`. No mocks, no patches, no `pytest.skip` — uses
-     the real GPU fixtures already in `integration/conftest.py`.
+     - a real-GPU smoke test that runs `VaultIndexer.full_index` and
+       `CodebaseIndexer.full_index` against the existing integration
+       corpora with a `CountingProgressReporter`. Assertions: every
+       expected phase appears exactly once, per-phase `advance` totals
+       match the corpus document/chunk counts, and `phase_end` follows
+       each `phase_start`. No mocks, no patches, no `pytest.skip` - uses
+       the real GPU fixtures already in `integration/conftest.py`.
   1. Ruff and pytest green across the affected modules.
 
 ## Parallelization
 
 Phase 1 (the `progress.py` module) is the strict prerequisite for
 everything else and must land first. Phases 2 and 3 are independent of
-each other and can be executed in parallel once Phase 1 is green —
+each other and can be executed in parallel once Phase 1 is green -
 `VaultIndexer` and `CodebaseIndexer` share no mutable state. Phase 4
 (CLI rewrite) depends on Phases 2 and 3 because it exercises the new
 indexer signatures end-to-end. Phase 5 (call-site updates) can run in
 parallel with Phase 4, but the full test suite cannot go green until
-both Phase 4 and Phase 5 have landed together — partial updates will
+both Phase 4 and Phase 5 have landed together - partial updates will
 break the required-kwarg contract. Phase 6 (progress-specific tests)
 comes last because it depends on the final indexer surface.
 
@@ -213,12 +214,12 @@ Mission success criteria, mapped to the ADR:
   runs with the required `reporter` kwarg; `ruff check` and
   `pytest src/vaultspec_rag/tests/` pass on the full suite.
 - The integration progress test asserts the counting reporter observed
-  the right totals on real corpora — not a tautology, not a mock.
+  the right totals on real corpora - not a tautology, not a mock.
 - Non-TTY behaviour verified manually by piping `vaultspec-rag index`
   to a file and confirming the output is one clean line per phase with
   no ANSI escapes and no live-frame spam. The ADR commits to this as a
   first-class requirement, and it cannot be confirmed by the test
-  suite alone — a manual pipe test is part of sign-off.
+  suite alone - a manual pipe test is part of sign-off.
 
 Verification commands:
 

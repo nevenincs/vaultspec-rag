@@ -11,14 +11,16 @@ disk, and an inherited root was never reclaimed at all.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from .._test_isolation import reclaim_singleton_paths, singleton_child_names
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from ._child_signal import CHILD_PROCESS_TIMEOUT_SECONDS
 
 
 def _populate(root: Path, worker: str | None = None) -> tuple[Path, Path]:
@@ -146,3 +148,96 @@ def test_a_nested_subprocess_never_reclaims_its_live_parents_pair(
 
     assert machine_singleton.exists()
     assert (basetemp / "test_something0" / "evidence.log").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("worker", [None, "gw3"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_nested_pytest_tmp_path_preserves_live_parent_files(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    worker: str | None,
+    fails: bool,
+) -> None:
+    """A real nested factory must not erase the running parent's basetemp.
+
+    Before process-qualified names, the real child tmp_path fixture erased
+    parent-sentinel and this test failed with FileNotFoundError. After repair,
+    successful and failing children preserved it and their own cleanup contract.
+    """
+    sentinel = tmp_path / "parent-sentinel"
+    sentinel.write_text("parent remains live", encoding="utf-8")
+    storage = Path(os.environ["VAULTSPEC_RAG_QDRANT_STORAGE_DIR"])
+    storage.mkdir(parents=True, exist_ok=True)
+    lock = storage.parent / "parent-lock-witness"
+    lock.write_text("parent storage remains", encoding="utf-8")
+    child_test = tmp_path / "test_nested_factory.py"
+    child_config = tmp_path / "pytest.ini"
+    child_config.write_text(
+        "[pytest]\nasyncio_default_fixture_loop_scope = function\n"
+        "markers =\n    unit: CPU-only isolation test\n",
+        encoding="utf-8",
+    )
+    child_test.write_text(
+        "import json, os\nfrom pathlib import Path\nimport pytest\n"
+        "@pytest.mark.unit\n"
+        "def test_factory(tmp_path):\n"
+        "    storage = Path(os.environ['VAULTSPEC_RAG_QDRANT_STORAGE_DIR'])\n"
+        "    print('CHILD_DIRS=' + json.dumps({\n"
+        "        'singleton': storage.parent.parent.name,\n"
+        "        'basetemp': tmp_path.parent.name}), flush=True)\n"
+        "    (tmp_path / 'child-evidence').write_text('child failure')\n"
+        f"    assert {not fails!r}\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    if worker is None:
+        environment.pop("PYTEST_XDIST_WORKER", None)
+    else:
+        environment["PYTEST_XDIST_WORKER"] = worker
+    root = Path(environment["_VAULTSPEC_RAG_PYTEST_SINGLETON_ROOT"])
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            str(child_config),
+            "-p",
+            "conftest",
+            f"--confcutdir={tmp_path}",
+            str(child_test),
+            "-q",
+            "-s",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_PROCESS_TIMEOUT_SECONDS,
+        env=environment,
+    )
+    assert sentinel.read_text(encoding="utf-8") == "parent remains live"
+    assert lock.read_text(encoding="utf-8") == "parent storage remains"
+    assert result.returncode == int(fails), result.stdout + result.stderr
+    records = [
+        json.loads(line.removeprefix("CHILD_DIRS="))
+        for line in result.stdout.splitlines()
+        if line.startswith("CHILD_DIRS=")
+    ]
+    assert len(records) == 1
+    match records[0]:
+        case {"singleton": str() as singleton_name, "basetemp": str() as temp_name}:
+            assert Path(singleton_name).name == singleton_name
+            assert Path(temp_name).name == temp_name
+            child_singleton = root / singleton_name
+            child_temp = root / temp_name
+        case _:
+            pytest.fail("child did not identify its own session directories")
+    assert not child_singleton.exists()
+    if fails:
+        evidence = list(child_temp.rglob("child-evidence"))
+        assert len(evidence) == 1
+        assert evidence[0].read_text() == "child failure"
+    else:
+        assert not child_temp.exists()
+    assert Path(request.config.option.basetemp).is_dir()

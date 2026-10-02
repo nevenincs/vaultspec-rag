@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#cuda-provisioning'
 date: '2026-09-04'
-modified: '2026-09-14'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:3bd08356d3779c9f95e7fc141930dda54057f5fc34b8619c60e769c111921839'
+body_hash: 'sha256:dcfcf7ee7e095ca60348a9725cc7492249a5afdb467671cd7d8aefd19c8a1de4'
 related:
   - "[[2026-09-04-cuda-provisioning-plan]]"
 ---
@@ -230,9 +230,9 @@ related:
 - `S11` `assert holders.scanned is False`. Restored; zero MUTATION markers remain.
 - `S11` Gates: ruff, ty, 26 readiness and holder tests green.
 - `S12` The research flagged as inference that this test class needs no GPU, model
-- `S12` cache or Hugging Face token. Confirmed before relying on it: every file in the
+- `S12` cache. Confirmed before relying on it: every file in the
 - `S12` class imports only package modules, all five declare the fast tier, and the
-- `S12` token gate in the root conftest fires for `GPU_MARKERS | {SUBPROCESS_GPU}`
+- `S12` GPU admission gate in the root conftest applies to `GPU_MARKERS | {SUBPROCESS_GPU}`
 - `S12` only, which the fast tier is not in. Measured locally at 45 tests in 52
 - `S12` seconds, against a 25 minute ceiling.
 - `S12` CI calls `just test provisioning` rather than an inline pytest invocation, so

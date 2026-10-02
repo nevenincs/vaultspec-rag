@@ -842,6 +842,7 @@ class TestMcpFastPath:
             AbsenceAuthority,
             SearchAvailability,
             SearchFreshness,
+            SearchReasonCode,
             SearchSourceFact,
         )
         from .._source_types import IndexSource, PublicSourceType
@@ -859,7 +860,7 @@ class TestMcpFastPath:
                 availability=SearchAvailability.UNAVAILABLE,
                 freshness=SearchFreshness.UNVERIFIABLE,
                 absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
-                reason_code="index_unavailable",
+                reason_code=SearchReasonCode.INDEX_UNAVAILABLE,
                 retryable=True,
                 remediation="vaultspec-rag server status --verbose",
             )

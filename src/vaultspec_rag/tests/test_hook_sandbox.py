@@ -40,22 +40,35 @@ def _drain(
 
     t_out = threading.Thread(target=_read, args=(handle.stdout, "out"))
     t_err = threading.Thread(target=_read, args=(handle.stderr, "err"))
-    t_out.start()
-    t_err.start()
-    rc = handle.wait(timeout=timeout)
-    t_out.join(timeout=10)
-    t_err.join(timeout=10)
+    with handle:
+        t_out.start()
+        t_err.start()
+        try:
+            rc = handle.wait(timeout=timeout)
+        finally:
+            if handle.poll() is None:
+                handle.kill()
+                handle.wait(timeout=timeout)
+            t_out.join(timeout=10)
+            t_err.join(timeout=10)
+        assert not t_out.is_alive()
+        assert not t_err.is_alive()
     return rc, captured["out"], captured["err"]
 
 
 def test_curated_child_env_strips_secrets_keeps_path(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every credential-bearing and VAULTSPEC_RAG_* knob is dropped; the small
-    path/locale allow-list is kept."""
+    path/locale allow-list is kept.
+
+    Mutation proof: adding the Typesafe credential to the production allow-list
+    failed the scoped-name assertion; restoring the allow-list passed.
+    """
     monkeypatch.setenv("VAULTSPEC_RAG_QDRANT_API_KEY", "super-secret")
-    monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", "C:/managed")
-    monkeypatch.setenv("HF_TOKEN", "hf-secret")
+    monkeypatch.setenv("VAULTSPEC_RAG_STATUS_DIR", str(tmp_path / "managed"))
+    monkeypatch.setenv("VAULTSPEC_RAG_TYPESAFE_API_KEY", "typesafe-secret")
     monkeypatch.setenv("QDRANT_API_KEY", "q-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "gh-secret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
@@ -64,13 +77,13 @@ def test_curated_child_env_strips_secrets_keeps_path(
 
     assert "PATH" in env
     assert not any(name.upper().startswith("VAULTSPEC_RAG_") for name in env)
-    assert "HF_TOKEN" not in env
+    assert "VAULTSPEC_RAG_TYPESAFE_API_KEY" not in env
     assert "QDRANT_API_KEY" not in env
     assert "GITHUB_TOKEN" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
     # The allow-list only re-admits path-bearing startup vars, never secrets.
     assert "super-secret" not in env.values()
-    assert "hf-secret" not in env.values()
+    assert "typesafe-secret" not in env.values()
 
 
 def test_curated_child_env_is_a_strict_allow_list(

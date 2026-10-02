@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#service-lifecycle'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:557fe7b60d2d5f6c0ddb2a7f9096bbd75022d4bdcd3b761b58eb767d8f5bec4b'
+body_hash: 'sha256:40cb3143e99fdb2cc894b6683fca744c89147b21434525c06de2bd9e82f8b59e'
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'
+  - '[[2026-05-30-service-lifecycle-ledger]]'
   - '[[2026-05-30-service-lifecycle-plan]]'
   - '[[2026-05-30-service-lifecycle-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#service-lifecycle`.
 ### adr
 
 - `2026-05-30-service-lifecycle-adr` - `service-lifecycle` adr: `atexit unlink, async heartbeat, structured lifecycle log` | (**status:** `accepted`)
+
+### exec
+
+- `2026-05-30-service-lifecycle-ledger` - `service-lifecycle` ledger
 
 ### plan
 

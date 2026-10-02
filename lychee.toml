@@ -13,7 +13,6 @@ exclude = [
   "http://blog.modelcontextprotocol.io/.*",
 ]
 exclude_path = [
-  "README.md",
   ".vault/audit/",
   ".vault/research/",
   ".vault\\\\audit\\\\",

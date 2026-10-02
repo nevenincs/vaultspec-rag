@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#platform-backend-selection'
 date: '2026-08-28'
-modified: '2026-09-01'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:47a3ad352f3b6d462bb1b063ce88a17a533491a23a7046c434ff8d2bfb73cf61'
+body_hash: 'sha256:5b68bfc6105b9a306e28409b7e403c5f1e86b9620e16fadcd87da89c9bba8e7d'
 related:
   - '[[2026-08-28-platform-backend-selection-research]]'
   - '[[2026-09-01-platform-backend-selection-reference]]'
@@ -74,6 +74,6 @@ Keeping packaging outside this implementation lane limits blast radius and respe
 
 Apple silicon becomes a supported accelerator target without weakening the CPU prohibition. Model placement, recovery, and diagnostics gain one canonical backend contract, and capability output stops reporting unified-memory hardware as GPU-absent or zero-VRAM.
 
-MPS cannot reject transient system-wide memory pressure before load as precisely as CUDA rejects foreign VRAM pressure. It may therefore fail during allocation on a heavily pressured Mac, and that failure must remain explicit rather than falling back to CPU. The self-hosted macOS tier gains a real-model support guard whose runtime and gated model access must stay bounded and controlled.
+MPS cannot reject transient system-wide memory pressure before load as precisely as CUDA rejects foreign VRAM pressure. It may therefore fail during allocation on a heavily pressured Mac, and that failure must remain explicit rather than falling back to CPU. The self-hosted macOS tier gains a real-model support guard whose runtime and public model acquisition must stay bounded and controlled.
 
 Adding another accelerator now requires resolution, backend operations, honest memory semantics, and real full-stack evidence. Linux packaging remains unresolved by this implementation and must not be inferred complete from MPS support.

@@ -306,6 +306,7 @@ class TestQdrantClientOpTimeout:
         import time
 
         from ..server import _lifespan
+        from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
 
         stall = socket.socket()
         stall.bind(("127.0.0.1", 0))
@@ -323,9 +324,13 @@ class TestQdrantClientOpTimeout:
             monkeypatch.setenv(EnvVar.QDRANT_URL.value, f"http://127.0.0.1:{port}")
             reset_config()
 
-            started = time.monotonic()
-            _lifespan._reconcile_storage_manifest(timeout=1)
-            elapsed = time.monotonic() - started
+            with pytest.warns(
+                UserWarning, match="Failed to obtain server version"
+            ) as captured:
+                started = time.monotonic()
+                _lifespan._reconcile_storage_manifest(timeout=1)
+                elapsed = time.monotonic() - started
+                await_client_warnings(captured, [VERSION_WARNING])
         finally:
             reset_config()
             stall.close()

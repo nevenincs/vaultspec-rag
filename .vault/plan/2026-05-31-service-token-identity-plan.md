@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#service-token-identity'
 date: '2026-05-31'
-modified: '2026-07-25'
-body_hash: 'sha256:b15a491af7860cf16259830336d908031dd2585d1ca7d2ee140b361c641b5070'
+tier: L2
 related:
   - '[[2026-05-31-service-token-identity-adr]]'
   - '[[2026-05-31-service-token-identity-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:a5e6fa53fbf26d956a07fe56d0bc1b0eff8273ca57e6896d7295048f35c5ed87'
 ---
 
 # `service-token-identity` `service_token implementation: daemon-side + cli-side validation` plan
@@ -56,7 +57,7 @@ Cover the token default, the heartbeat write, and all three round-trip outcomes,
 
 ## Steps
 
-### Phase 1 — daemon side (mcp_server.py)
+### Phase 1 - daemon side (mcp_server.py)
 
 1. Add module global `_SERVICE_TOKEN: str = ""` near other
    startup-state globals.
@@ -72,7 +73,7 @@ Cover the token default, the heartbeat write, and all three round-trip outcomes,
 1. In `health_handler`, include
    `"service_token": _SERVICE_TOKEN` in the JSON response.
 
-### Phase 2 — CLI side (cli.py)
+### Phase 2 - CLI side (cli.py)
 
 1. Update `_is_our_service` signature to
    `(pid, port=None, expected_token=None)`. Implement the
@@ -86,7 +87,7 @@ Cover the token default, the heartbeat write, and all three round-trip outcomes,
 1. `_health_probe` broad-except: add
    `logger.debug("health probe failed: %s", exc, exc_info=True)` before the `return None`.
 
-### Phase 3 — tests
+### Phase 3 - tests
 
 1. `tests/test_mcp_server.py`:
    - `TestPydanticModels::test_health_response`: assert
@@ -109,18 +110,18 @@ Cover the token default, the heartbeat write, and all three round-trip outcomes,
      and debug-logs the fallback.
    - `TestServiceTokenIdentity::test_token_absent_in_status_file_uses_exe_name`:
      monkeypatch `_read_service_status` to return dict without
-     `service_token` key — `_is_our_service` invoked with
+     `service_token` key - `_is_our_service` invoked with
      `expected_token=None` uses the exe-name path (current
      behaviour preserved).
 
-### Phase 4 — smoke
+### Phase 4 - smoke
 
 1. Start service on free port. Read `service.json`, assert
    `service_token` field present and 32 hex chars. Hit
    `/health`, assert response includes same token. Stop
    service.
 
-### Phase 5 — commit + push + PR + merge
+### Phase 5 - commit + push + PR + merge
 
 1. One commit with vault docs + daemon + CLI + tests in the
    same changeset.

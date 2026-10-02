@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:3077569b5951273d075ee617b79aa80881f5fbf9017374f0c0b6591720d9f2bf'
+modified: '2026-09-30'
+body_hash: 'sha256:f32d11f14f42693d045f9ab4f0bdface6511dc0b2e3e1ec001dbace00d0b9bb9'
 ---
 
 # Qdrant Filter API Correctness Audit
@@ -136,7 +136,7 @@ self._client.create_collection(
 **Verdict: CORRECT.** Named vectors API is exactly as specified. The collection uses:
 
 - Dense vector: named `"dense"`, 1024 dimensions, cosine distance
-- Sparse vector: named `"sparse"`, SPLADE format
+- Sparse vector: named `"sparse"`, previous BERT sparse encoder format
 
 ______________________________________________________________________
 

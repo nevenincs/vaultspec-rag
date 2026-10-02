@@ -65,7 +65,6 @@ _EXTERNAL: Final = frozenset(
         EnvVar.HF_HOME,
         EnvVar.HF_HUB_OFFLINE,
         EnvVar.HF_HUB_DOWNLOAD_TIMEOUT,
-        EnvVar.HF_TOKEN,
         EnvVar.HF_DEACTIVATE_ASYNC_LOAD,
         EnvVar.HF_HUB_DISABLE_PROGRESS_BARS,
         EnvVar.TRANSFORMERS_OFFLINE,
@@ -89,7 +88,6 @@ _SECRETS: Final = frozenset(
     {
         EnvVar.TYPESAFE_API_KEY,
         EnvVar.QDRANT_API_KEY,
-        EnvVar.HF_TOKEN,
     }
 )
 
@@ -101,7 +99,6 @@ _SECRETS: Final = frozenset(
 _WORKSPACE_DOTENV: Final = frozenset(
     {
         EnvVar.TYPESAFE_API_KEY,
-        EnvVar.HF_TOKEN,
     }
 )
 
@@ -172,12 +169,6 @@ _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
         "blank or an unrecognised word leaves it armed: it is a protective "
         "switch, so a typo warns rather than turning the guard off. The "
         "shared VAULTSPEC_STDIO_WATCHDOG is read behind it."
-    ),
-    EnvVar.HF_TOKEN: (
-        "Hugging Face access token, honoured by huggingface_hub for gated "
-        "model repositories. Read from the process environment first; a "
-        "workspace-root .env supplies it under the same gate as the hosted "
-        "classifier key."
     ),
     EnvVar.HF_ENDPOINT: (
         "Hugging Face Hub endpoint, honoured by huggingface_hub. Named here "

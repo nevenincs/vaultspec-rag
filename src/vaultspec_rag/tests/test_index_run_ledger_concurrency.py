@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -176,7 +177,7 @@ def test_independent_connection_observes_an_active_publication_receipt(
         assert len(receipts) == 1
         receipt = receipts[0]
 
-        with sqlite3.connect(ledger.path) as independent:
+        with closing(sqlite3.connect(ledger.path)) as independent, independent:
             stored = independent.execute(
                 """
                 SELECT receipt_id, state FROM publication_receipts

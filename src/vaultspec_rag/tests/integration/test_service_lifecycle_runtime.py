@@ -1,7 +1,8 @@
 """Integration tests for service daemon lifecycle.
 
 Exercises real subprocess spawning, real GPU model loading, and real
-Qdrant operations.  No mocks, patches, stubs, or skips.
+Qdrant operations. A child-only scheduling witness coordinates shutdown after
+real confirmed storage; model, storage and lifecycle behavior remain real.
 
 Closes TESTGAP-001 (_terminate_pid), TESTGAP-002 (_spawn_service),
 TESTGAP-003 (service_start), TESTGAP-004 (service_stop happy path),
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from typer.testing import CliRunner
 
+from ..._job_values import count
 from ..._process_probe import pid_alive
 from ...cli import app
 from ...cli._process import _spawn_service, _terminate_pid
@@ -38,14 +40,13 @@ from ._service_lifecycle_helpers import (
     _job_owns_full_pipeline,
     _signal_service_shutdown,
     _signalable_live_service,
+    _wait_for_confirmed_storage,
     _wait_for_listeners_closed,
     _wait_for_persisted_job,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import httpx
 
     from ...synthetic import CorpusManifest
 
@@ -322,23 +323,100 @@ def test_daemon_restart_restores_queued_work_and_preserves_paused_intent(
     )
 
 
-def _assert_interrupted_index_search_response(response: httpx.Response) -> None:
-    """Require an interrupted rebuild to remain explicitly unverifiable."""
-    assert response.status_code in (200, 503), response.text
+def _request_lifecycle_code_index(port: int, root: Path, *, clean: bool) -> str:
+    """Submit the same strict served indexing envelope for both real attempts."""
+    import httpx
+
+    health = _poll_health(port)
+    response = httpx.post(
+        f"http://127.0.0.1:{port}/reindex",
+        headers={"Authorization": f"Bearer {health['service_token']}"},
+        json={
+            "type": "code",
+            "clean": clean,
+            "authority": "rebuild" if clean else "publication",
+            "project_root": str(root),
+        },
+        timeout=30.0,
+    )
+    assert response.status_code == 200, response.text
+    payload = cast("dict[str, object]", response.json())
+    assert payload["ok"] is True
+    job_id = payload.get("job_id")
+    assert isinstance(job_id, str) and job_id
+    return job_id
+
+
+def _lifecycle_code_search(port: int, root: Path) -> dict[str, object]:
+    """Require real useful rows and parse their canonical integrity envelope."""
+    import httpx
+
+    health = _poll_health(port)
+    response = httpx.post(
+        f"http://127.0.0.1:{port}/search",
+        headers={"Authorization": f"Bearer {health['service_token']}"},
+        json={
+            "type": "code",
+            "query": "worker release probe",
+            "top_k": 1,
+            "project_root": str(root),
+        },
+        timeout=30.0,
+    )
+    assert response.status_code == 200, response.text
     body = cast("dict[str, object]", response.json())
+    results = body.get("results")
+    assert isinstance(results, list) and results
     raw_index_state = body.get("index_state")
     assert isinstance(raw_index_state, dict)
     index_state = cast("dict[str, object]", raw_index_state)
     raw_integrity = index_state.get("index_integrity")
     assert isinstance(raw_integrity, dict)
-    integrity = cast("dict[str, object]", raw_integrity)
-    assert integrity.get("verdict") == "unverifiable"
-    if response.status_code == 503:
-        assert body["error"] == "index_unverifiable"
-        assert "results" not in body
-    else:
-        results = body.get("results")
-        assert isinstance(results, list) and results
+    return cast("dict[str, object]", raw_integrity)
+
+
+def _consistent_code_search(port: int, root: Path) -> dict[str, object]:
+    """The initial complete publication certifies positive breadth and identity."""
+    integrity = _lifecycle_code_search(port, root)
+    assert integrity.get("verdict") == "consistent", integrity
+    claimed_count = count(integrity.get("claimed_count"))
+    assert claimed_count is not None and claimed_count > 0
+    generation_id = integrity.get("generation_id")
+    assert isinstance(generation_id, str) and generation_id
+    return integrity
+
+
+def _establish_lifecycle_publication(
+    port: int, root: Path, state_path: Path
+) -> dict[str, object]:
+    """Publish the initial clean generation before arming interruption control."""
+    from ...job_models import JobState
+
+    baseline_job = _request_lifecycle_code_index(port, root, clean=True)
+    _wait_for_persisted_job(
+        state_path,
+        baseline_job,
+        lambda job: job.state is JobState.SUCCEEDED,
+        "initial complete code publication never succeeded",
+    )
+    return _consistent_code_search(port, root)
+
+
+def _assert_retained_lifecycle_publication(
+    port: int, root: Path, baseline: dict[str, object]
+) -> None:
+    """Retain useful incremental rows while an open receipt refuses certification."""
+    integrity = _lifecycle_code_search(port, root)
+    assert integrity.get("verdict") == "unverifiable", integrity
+    assert integrity.get("reason") == "proof_unreadable", integrity
+    assert "claimed_count" in integrity and integrity["claimed_count"] is None
+    assert "generation_id" in integrity and integrity["generation_id"] is None
+    baseline_count = count(baseline["claimed_count"])
+    live_count = count(integrity.get("live_count"))
+    assert baseline_count is not None
+    # Reporting zero only after the incremental source appeared failed here
+    # with 0 > 512; exact restoration passed the real shutdown/restart case.
+    assert live_count is not None and live_count > baseline_count
 
 
 @pytest.mark.timeout(600)
@@ -347,8 +425,6 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
     required_host_provisioned_qdrant_source: tuple[Path, Path],
 ) -> None:
     """Graceful daemon stop releases every owner before store teardown."""
-    import httpx
-
     from ...job_models import JobState
 
     root = tmp_path / "live-code"
@@ -363,10 +439,14 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         )
 
     state_path = tmp_path / "jobs-state.json"
+    control = tmp_path / "shutdown-storage-control"
+    control.mkdir()
     with _signalable_live_service(
         tmp_path,
         required_host_provisioned_qdrant_source,
+        storage_witness=(root, control),
     ) as (port, shutdown_pid):
+        assert (control / "installed").read_text(encoding="utf-8") == "1"
         health = _poll_health(port)
         service_pid = int(str(health["pid"]))
         status = read_service_status()
@@ -374,21 +454,15 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         status = cast("dict[str, object]", status)
         qdrant_pid = int(str(status["qdrant_pid"]))
         qdrant_port = int(str(status["qdrant_port"]))
-        response = httpx.post(
-            f"http://127.0.0.1:{port}/reindex",
-            headers={"Authorization": f"Bearer {health['service_token']}"},
-            json={
-                "type": "code",
-                "clean": True,
-                "authority": "rebuild",
-                "project_root": str(root),
-            },
-            timeout=30.0,
+        baseline = _establish_lifecycle_publication(port, root, state_path)
+        assert not (control / "stored").exists()
+        (source_dir / "shutdown_incremental_probe.py").write_text(
+            "def shutdown_incremental_probe() -> str:\n"
+            "    return 'worker release probe retained incremental storage'\n",
+            encoding="utf-8",
         )
-        assert response.status_code == 200, response.text
-        payload = cast("dict[str, object]", response.json())
-        assert payload["ok"] is True
-        job_id = str(payload["job_id"])
+        (control / "armed").touch()
+        job_id = _request_lifecycle_code_index(port, root, clean=False)
 
         live = _wait_for_persisted_job(
             state_path,
@@ -399,6 +473,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         assert live.resources.started is not None
         assert live.resources.finished is None
 
+        _wait_for_confirmed_storage(state_path, job_id, control)
         _signal_service_shutdown(shutdown_pid)
         interrupted = _wait_for_persisted_job(
             state_path,
@@ -407,6 +482,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             "shutdown-signalled attempt did not become interrupted",
         )
         _assert_interrupted_after_release(interrupted)
+        assert (control / "restored").read_text(encoding="utf-8") == "1"
 
         assert _wait_for_exit(service_pid, timeout=90.0)
         assert _wait_for_exit(qdrant_pid, timeout=30.0)
@@ -419,7 +495,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
         tmp_path,
         required_host_provisioned_qdrant_source,
     ) as (restart_port, _shutdown_pid):
-        restarted_health = _poll_health(restart_port)
+        _poll_health(restart_port)
         restarted_status = read_service_status()
         assert restarted_status is not None
         restarted_status = cast("dict[str, object]", restarted_status)
@@ -431,18 +507,7 @@ def test_shutdown_interrupts_only_after_worker_release_then_reopens_store(
             "interrupted result was not retained after daemon restart",
         )
         assert restored.runtime.task_active is False
-        search = httpx.post(
-            f"http://127.0.0.1:{restart_port}/search",
-            headers={"Authorization": f"Bearer {restarted_health['service_token']}"},
-            json={
-                "type": "code",
-                "query": "worker release probe",
-                "top_k": 1,
-                "project_root": str(root),
-            },
-            timeout=30.0,
-        )
-        _assert_interrupted_index_search_response(search)
+        _assert_retained_lifecycle_publication(restart_port, root, baseline)
 
 
 def test_start_already_running(request: pytest.FixtureRequest, tmp_path: Path) -> None:

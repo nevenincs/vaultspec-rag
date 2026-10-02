@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#sparse-search-latency'
 date: '2026-06-07'
-modified: '2026-07-27'
-body_hash: 'sha256:29847f5af4e4e8d3400f00e4f39b2f5fa56331f94db5e255d8ce7af818d88446'
+modified: '2026-09-30'
+body_hash: 'sha256:9ff255ca9329956b464443846e981f13e2157a96b16c33e8e0cf65407f4a78c7'
 related: []
 ---
 
@@ -25,7 +25,7 @@ The CLI and MCP entry points must act solely as thin transport layers containing
 
 ### 2. Local-Mode Search Latency & Scaling Bottlenecks
 
-For full-codebase queries (e.g., 114k chunks), the local Qdrant in-process store forces a linear scan of SPLADE embeddings because it lacks inverted index support for sparse vectors in local mode.
+For full-codebase queries (e.g., 114k chunks), the local Qdrant in-process store forces a linear scan of previous BERT sparse encoder embeddings because it lacks inverted index support for sparse vectors in local mode.
 
 - Dense-only latency: ~0.48s
 - Sparse-only latency: ~18.9s
@@ -35,7 +35,7 @@ For full-codebase queries (e.g., 114k chunks), the local Qdrant in-process store
 
 Based on codebase investigation within `search.py`, `store.py`, and `config.py`:
 
-- **Dense-Only Fallback**: Highly feasible. `src/vaultspec_rag/config.py` contains settings for `sparse_model: "naver/splade-v3"` but lacks an explicit toggle. We can easily add a `sparse_enabled: True` setting (analogous to the existing `reranker_enabled: True` setting in `_RAG_DEFAULTS`) and wire it up to selectively disable sparse queries. If `sparse_enabled` is False, the fallback skips sparse index fetching and SPLADE computation.
+- **Dense-Only Fallback**: Highly feasible. `src/vaultspec_rag/config.py` contains settings for `sparse_model: "previous BERT sparse encoder"` but lacks an explicit toggle. We can easily add a `sparse_enabled: True` setting (analogous to the existing `reranker_enabled: True` setting in `_RAG_DEFAULTS`) and wire it up to selectively disable sparse queries. If `sparse_enabled` is False, the fallback skips sparse index fetching and previous BERT sparse encoder computation.
 - **Dedicated Qdrant Server**: Already supported by the configuration. `src/vaultspec_rag/config.py` reads `EnvVar.QDRANT_URL` and `qdrant_api_key`. `src/vaultspec_rag/store.py` checks `if cfg.qdrant_url:` and correctly provisions a remote connection (`_QdrantClient(url=cfg.qdrant_url, api_key=cfg.qdrant_api_key)`).
 - **Pre-Filtering (ABORTED)**: We initially explored structurally supporting glob filtering natively in Qdrant. While `src/vaultspec_rag/store.py` registers `PayloadSchemaType.KEYWORD` indexes for path attributes, Qdrant (`1.18.0`) natively lacks any `MatchPattern` or regular expression capabilities on payload fields. Trying to filter payload strings using translated glob-to-regex patterns fails Pydantic validation on the `qdrant-client`. Consequently, avoiding post-query Python filtering for globs is impossible with the current backend.
 

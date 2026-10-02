@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:a1fc8aca7abebeb18a8ac41d63f8646398cba9d8efa8067468826f4c76ce7ac2'
+modified: '2026-10-01'
+body_hash: 'sha256:f43ebebb626534e986520491cbec6bd19722ad00b86b6b5391d5081023b0fa79'
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-05-service-lifecycle-tests-adr]]'
@@ -333,7 +333,7 @@ Returns:
 {
   "projects": [
     {
-      "root": "C:/code/foo",
+      "root": "<project-root>",
       "last_access_iso": "2026-04-12T10:14:33Z",
       "idle_seconds": 42.1,
       "ref_count": 0,
@@ -353,9 +353,9 @@ other tools — admin tools are global, not project-scoped.
 Returns:
 
 ```
-{"evicted": true,  "root": "C:/code/foo", "reason": null}
-{"evicted": false, "root": "C:/code/foo", "reason": "busy",     "ref_count": 2}
-{"evicted": false, "root": "C:/code/foo", "reason": "not_found"}
+{"evicted": true,  "root": "<project-root>", "reason": null}
+{"evicted": false, "root": "<project-root>", "reason": "busy",     "ref_count": 2}
+{"evicted": false, "root": "<project-root>", "reason": "not_found"}
 ```
 
 The tool resolves `root` via `Path(root).resolve()` before lookup (same

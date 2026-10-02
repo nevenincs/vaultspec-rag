@@ -14,7 +14,6 @@ the indexing rework must preserve:
 
 from __future__ import annotations
 
-import gc
 import hashlib
 import os
 import shlex
@@ -22,7 +21,6 @@ import sys
 import textwrap
 import threading
 import time
-from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -31,6 +29,7 @@ from .. import CodebaseIndexer
 from ..config._settings import reset_config
 from ..config._types import EnvVar
 from ..indexer import _chunk_worker
+from ..indexer._chunk_producer import CodeChunkProducer, _PoolDrainRequest
 from ..indexer._content_policy import ContentKind
 from ..indexer._preprocess_cache import preprocess_cache_dir
 from ..indexer._preprocess_config import (
@@ -44,6 +43,7 @@ from ._chunk_production import produce_chunks
 from ._import_probe import assert_fresh_import_excludes, import_probe_source
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
     from pathlib import Path
 
     from .._store_models import CodeChunk
@@ -329,13 +329,28 @@ class _Workers:
         reset_config()
 
 
-def _pending_futures() -> set[Future[object]]:
-    """Return live executor futures for scheduler-retention assertions."""
-    pending: set[Future[object]] = set()
-    for candidate in gc.get_objects():
-        if isinstance(candidate, Future) and not candidate.done():
-            pending.add(cast("Future[object]", candidate))
-    return pending
+def _scheduler_pending_futures(
+    runner: threading.Thread, producer: CodeChunkProducer
+) -> set[Future[_chunk_worker.FileChunkResult]]:
+    """Read only this running producer's real submitted-future window."""
+    assert runner.ident is not None
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        frame = sys._current_frames().get(runner.ident)
+        try:
+            while frame is not None:
+                if (
+                    frame.f_code is CodeChunkProducer._drain_pending_pool.__code__
+                    and frame.f_locals.get("self") is producer
+                ):
+                    request = frame.f_locals["request"]
+                    assert isinstance(request, _PoolDrainRequest)
+                    return set(request.pending)
+                frame = frame.f_back
+        finally:
+            del frame
+        time.sleep(0.02)
+    raise AssertionError("the running producer never reached its pool drain")
 
 
 def _wait_for_started(marker_dir: Path, minimum: int) -> list[Path]:
@@ -431,7 +446,6 @@ class TestSingleFileScheduler:
             release_dir,
         )
 
-        baseline_futures = _pending_futures()
         chunks: list[CodeChunk] = []
         failures: list[BaseException] = []
 
@@ -446,7 +460,14 @@ class TestSingleFileScheduler:
             runner.start()
             try:
                 started = _wait_for_started(marker_dir, workers)
-                scheduler_futures = _pending_futures() - baseline_futures
+                scheduler_futures = _scheduler_pending_futures(
+                    runner, indexer._producer
+                )
+                # Observe the actual owner, never unrelated GC objects: the
+                # former heap scan invoked deprecated Torch proxy properties.
+                # Mutation proof: increasing the actual submitted window from
+                # four to five failed this cardinality assertion (5 != 4);
+                # restoring production bytes passed the real spawn-pool test.
                 assert len(scheduler_futures) == workers * 2
 
                 # Keep one worker occupied while the other completes enough

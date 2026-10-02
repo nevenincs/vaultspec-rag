@@ -1,5 +1,6 @@
 """Unit tests for sparse-tensor conversion parity and the query cache."""
 
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from types import ModuleType
 from typing import ClassVar
@@ -74,7 +75,16 @@ class TestSparseTensorConversionParity:
     def test_sparse_csr_path(self):
         import torch
 
-        tensor = torch.tensor(_ROWS, dtype=torch.float32).to_sparse_csr()
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            tensor = torch.tensor(_ROWS, dtype=torch.float32).to_sparse_csr()
+        assert all(
+            warning.category is UserWarning
+            and str(warning.message).startswith(
+                "Sparse CSR tensor support is in beta state."
+            )
+            for warning in captured
+        )
         self._assert_matches_reference(
             _sparse_tensor_to_results(tensor, _test_accelerator(torch))
         )

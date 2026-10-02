@@ -539,7 +539,8 @@ def _try_http_health(
     except urllib.error.HTTPError as exc:
         # The service answered, so report the code rather than "unreachable" -
         # a caller must be able to tell a sick daemon from an absent one.
-        return {"status": "error", "http_code": exc.code}
+        with exc:
+            return {"status": "error", "http_code": exc.code}
     except Exception as exc:
         if is_timeout(exc):
             # A timeout is not absence: something accepted the connection (or
@@ -695,17 +696,18 @@ def _send_call(
                 return code, _non_object_body(code, req.full_url, parsed)
             return code, cast("dict[str, object]", parsed)
     except urllib.error.HTTPError as e:
-        raw = read_service_response(e).decode("utf-8")
-        try:
-            error_body: object = json.loads(raw)
-        except json.JSONDecodeError:
-            detail = raw.strip() or "(empty response body)"
-            return e.code, _foreign_peer_body(
-                e.code, req.full_url, f"a non-JSON body: {detail}"
-            )
-        if not isinstance(error_body, dict):
-            return e.code, _non_object_body(e.code, req.full_url, error_body)
-        return e.code, cast("dict[str, object]", error_body)
+        with e:
+            raw = read_service_response(e).decode("utf-8")
+            try:
+                error_body: object = json.loads(raw)
+            except json.JSONDecodeError:
+                detail = raw.strip() or "(empty response body)"
+                return e.code, _foreign_peer_body(
+                    e.code, req.full_url, f"a non-JSON body: {detail}"
+                )
+            if not isinstance(error_body, dict):
+                return e.code, _non_object_body(e.code, req.full_url, error_body)
+            return e.code, cast("dict[str, object]", error_body)
 
 
 def _raise_deadline_exhausted(

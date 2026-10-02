@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:c46ec617e8b7a2a05719bb8d2a856e0f1753f1293903561fee7d0ee6b0ead79a'
+modified: '2026-09-30'
+body_hash: 'sha256:389a914ab6fcaf83d7783e7e14f993eddd1a19a9d422646f93d5615eb374a98d'
 related:
   - '[[2026-04-02-service-graph-phase1-plan]]'
 ---
@@ -55,8 +55,7 @@ Created `src/vaultspec_rag/service.py` with `ServiceRegistry` class and
 
 ### Test results
 
-- 13/13 tests pass (`HF_HUB_OFFLINE=1` required â€” SPLADE v3 is gated,
-  no HF_TOKEN configured in this environment)
+- 13/13 tests pass (offline cached artifacts were used in this historical run)
 - 10/10 existing graph cache tests pass (no regressions)
 - `ruff check` and `ruff format --check` clean on both files
 
@@ -66,5 +65,4 @@ Created `src/vaultspec_rag/service.py` with `ServiceRegistry` class and
   as-is per the plan (full delegation to `ServiceRegistry` deferred to
   Phase 3 when `mcp_server.py` is refactored)
 - `ServiceRegistry` is importable but not yet wired into any entry point
-- Environment needs `HF_TOKEN` or `HF_HUB_OFFLINE=1` for SPLADE v3
-  gated model access
+- The historical run depended on available cached model artifacts.

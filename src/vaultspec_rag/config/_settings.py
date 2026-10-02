@@ -18,6 +18,7 @@ from vaultspec_core.config import (
 from vaultspec_core.env_values import BOOL_SHAPE, parse_bool
 from vaultspec_core.logging_config import resolve_log_level
 
+from .._sparse_profile import SPARSE_MODEL_ID
 from ._paths import read_persisted_local_only
 from ._registry import entry
 from ._schema import ENV_OVERRIDE_MAP, SETTING_BOUNDS, setting_rejection
@@ -201,8 +202,7 @@ class VaultSpecConfigWrapper:
         # budget; the OOM-backoff in ``encode_documents`` still halves it under
         # pressure.
         "embedding_document_encode_batch_size": 12,
-        # Token budget per planned encode bucket, shared by the dense and
-        # sparse document paths. The encode input is partitioned into
+        # Token budget per planned dense encode bucket. Inputs are split into
         # contiguous buckets whose estimated footprint (items x padded
         # longest item, at the calibration divisor below) stays within
         # this budget, bounding activation memory by construction where a
@@ -217,6 +217,9 @@ class VaultSpecConfigWrapper:
         # learned OOM ceiling clamps this budget under pressure and stays
         # the safety authority.
         "embedding_encode_token_budget": 24_000,
+        # Sparse vocabulary-wide activations have a different footprint from
+        # dense encoding, so their budget can be tuned independently.
+        "embedding_sparse_encode_token_budget": 24_000,
         # Chars-to-tokens calibration divisor for the bucket planner's
         # estimate. 3 deliberately equals the documented-conservative
         # ``document_chunk_chars_per_token``: both sit on a memory-safety
@@ -263,7 +266,7 @@ class VaultSpecConfigWrapper:
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dimension": 1024,
         "sparse_enabled": True,
-        "sparse_model": "naver/splade-v3",
+        "sparse_model": SPARSE_MODEL_ID,
         "reranker_enabled": True,
         "reranker_model": "BAAI/bge-reranker-v2-m3",
         "reranker_batch_size": 32,
@@ -1151,6 +1154,7 @@ class VaultSpecConfigWrapper:
     embedding_code_encode_batch_size: int
     embedding_document_encode_batch_size: int
     embedding_encode_token_budget: int
+    embedding_sparse_encode_token_budget: int
     embedding_encode_chars_per_token: int
     index_cache_flush_slices: int
     vault_cache_flush_slices: int
@@ -1436,15 +1440,14 @@ if _undeclared_settings:
 def configured_model_repos() -> tuple[tuple[str, str], ...]:
     """Return every model repo this build needs, label first.
 
-    Sparse (SPLADE) is omitted when ``sparse_enabled`` is false: a dense-only
+    Sparse (SPARSEUP) is omitted when ``sparse_enabled`` is false: a dense-only
     configuration never loads the sparse encoder, so provisioning, warmup, and
-    readiness must not require it either - including its gated Hugging Face
-    access and licence terms.
+    readiness must not require its cached files either.
     """
     cfg = get_config()
     repos: list[tuple[str, str]] = [("Dense (Qwen3)", str(cfg.embedding_model))]
     if bool(cfg.sparse_enabled):
-        repos.append(("Sparse (SPLADE)", str(cfg.sparse_model)))
+        repos.append(("Sparse (SPARSEUP)", str(cfg.sparse_model)))
     repos.append(("Reranker (CrossEncoder)", str(cfg.reranker_model)))
     return tuple(repos)
 

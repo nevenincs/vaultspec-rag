@@ -22,11 +22,12 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import pytest
 
-from .._process_probe import iter_process_info, pid_alive
+from .._process_probe import _holder_of, iter_process_info, pid_alive
 from ..cli._process import _may_carry_launch_witness, _resolve_daemon_interpreter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 
@@ -218,3 +219,33 @@ class TestTheImageGateAdmitsEveryDaemon:
             assert not _may_carry_launch_witness(image), image
         for image in ("python.exe", "python", "python3.13", "Python", "python3"):
             assert _may_carry_launch_witness(image), image
+
+
+@pytest.mark.unit
+def test_holder_scan_does_not_read_parent_of_a_nonholder(tmp_path: Path) -> None:
+    """Discarded processes must not pay a full-system parent snapshot."""
+    process = _spawn_marked_sleeper("vaultspec-holder-parent-cost-witness")
+    try:
+        info = next(
+            entry
+            for entry in iter_process_info(["pid", "ppid", "exe", "cwd", "cmdline"])
+            if entry["pid"] == process.pid
+        )
+        assert _holder_of(info, tmp_path, tmp_path, frozenset(), {}) is None
+        process.kill()
+        process.wait(timeout=10)
+        deadline = time.monotonic() + 10.0
+        while pid_alive(process.pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert not pid_alive(process.pid)
+        # Mutation proof: moving ppid back before relation classification
+        # caches this parent's PID and fails the assertion after child exit.
+        # Deferring it to identified holders returns to green without skipping
+        # any image, launch-path or working-directory discrimination.
+        assert info["ppid"] != os.getpid(), (
+            "holder classification eagerly read a nonholder parent"
+        )
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)

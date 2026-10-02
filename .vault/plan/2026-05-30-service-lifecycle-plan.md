@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#service-lifecycle'
 date: '2026-05-30'
-modified: '2026-07-25'
-body_hash: 'sha256:e6596e4158353eaad75a20af9e26839d8dae4e20ec43f557bff7ae4677336c62'
+tier: L2
 related:
   - '[[2026-05-30-service-lifecycle-adr]]'
   - '[[2026-05-30-service-lifecycle-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:0d765c0a020140f5c8de615709505dfb97b7fece4bdedaa39578056922fb9c39'
 ---
 
 # `service-lifecycle` `silent-death cluster (atexit + heartbeat + divergence + log)` plan
@@ -58,7 +59,7 @@ Cover the heartbeat, every shutdown path, and each divergent signal combination,
 
 ## Steps
 
-### Phase 1 — daemon heartbeat + atexit
+### Phase 1 - daemon heartbeat + atexit
 
 1. Add module-level constants `_HEARTBEAT_INTERVAL_SECONDS = 15`
    and `_HEARTBEAT_STALENESS_SECONDS = 60` to
@@ -95,10 +96,10 @@ Cover the heartbeat, every shutdown path, and each divergent signal combination,
    - Finally block: cancel the heartbeat task with `await`+
      `CancelledError` swallow, log
      `event=shutdown reason=clean`, unlink `service.json`
-     (idempotent — the atexit/signal path may have already done
+     (idempotent - the atexit/signal path may have already done
      it).
 
-### Phase 2 — CLI status divergence
+### Phase 2 - CLI status divergence
 
 1. `_read_service_status` (`src/vaultspec_rag/cli.py`): surface
    `last_heartbeat` in the returned dict when present (no
@@ -124,7 +125,7 @@ Cover the heartbeat, every shutdown path, and each divergent signal combination,
    - Exit code: 0 for `running`, 3 for `stopped`, 4 for any
      `crashed*` or `divergent` state.
 
-### Phase 3 — config + docs
+### Phase 3 - config + docs
 
 1. `src/vaultspec_rag/config.py`: add optional
    `service_heartbeat_interval_seconds` and
@@ -139,7 +140,7 @@ Cover the heartbeat, every shutdown path, and each divergent signal combination,
 1. `.vaultspec/rules/rules/vaultspec-rag.builtin.md`: mention
    `service status` exit code 4 in the table.
 
-### Phase 4 — tests
+### Phase 4 - tests
 
 1. Unit tests in `tests/test_cli.py`:
    - `_heartbeat_age_seconds` parses valid + missing + malformed.
@@ -165,14 +166,14 @@ Cover the heartbeat, every shutdown path, and each divergent signal combination,
      `service status` reports `crashed (heartbeat stale)` with
      exit code 4.
 
-### Phase 5 — smoke + commit + PR
+### Phase 5 - smoke + commit + PR
 
 1. Smoke walkthrough: start service, `service status` reports
    `running` + fresh heartbeat. Clean stop, file gone, log shows
    `event=shutdown reason=clean`. Start, `kill -9` /
    PowerShell `Stop-Process -Force`, `service status` reports
    `crashed (heartbeat stale)` after 60s.
-1. Commit each phase separately or as one `feat(service): daemon-side lifecycle + status divergence + log entries (#113)` — pick based on diff size at end of Phase 4.
+1. Commit each phase separately or as one `feat(service): daemon-side lifecycle + status divergence + log entries (#113)` - pick based on diff size at end of Phase 4.
 1. Push, open PR linking #113. Ignore Gemini per standing
    instruction. Merge after CI green.
 
@@ -195,13 +196,13 @@ test of the live integration depends on Phase 1 + 2 both shipping.
     (`Service JSON: present`, `PID Alive: yes`, `PID Matches Service: yes`, `Port Listening: yes`, `Heartbeat: 9s ago`)
     plus `State: running` + full health/capabilities.
   - `last_heartbeat` advanced from 17:01:10 -> 17:01:25 over an
-    18s sleep — exactly one `_HEARTBEAT_INTERVAL_SECONDS` tick.
+    18s sleep - exactly one `_HEARTBEAT_INTERVAL_SECONDS` tick.
   - `service.lifecycle event=startup pid=...` line lands in
     `service.log` at WARNING level (visible at the default
     threshold).
   - `server service stop`: `service.json` removed, exit clean.
 - **Known Windows limitation**: `os.kill(pid, SIGTERM)` is
-  `TerminateProcess` on Windows — the daemon never runs its
+  `TerminateProcess` on Windows - the daemon never runs its
   atexit handler or lifespan `finally` on a `server service stop`, so the `event=shutdown reason=clean` line never reaches
   `service.log` on Windows. The CLI parent unlinks
   `service.json` itself (existing behaviour) so the file

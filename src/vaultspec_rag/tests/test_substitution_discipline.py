@@ -31,12 +31,66 @@ _NEEDLES = ("monkeypatch." + "setattr", "monkeypatch." + "delattr")
 # real). The reason belongs at the call site too; it is repeated here so a
 # reader hitting a failure learns what bar a new entry has to clear.
 _ALLOWED: dict[str, tuple[int, str]] = {
+    # Reducing this bound to zero failed count growth; exact restoration passed.
+    "integration/_shutdown_storage_control.py": (
+        1,
+        "root-scoped scheduling instrumentation in the canonical server child: "
+        "the wrapper delegates real confirmed storage accounting before "
+        "publishing a witness and waiting at the normal cooperative checkpoint. "
+        "Live inference cannot reliably schedule shutdown after storage but "
+        "before publication. Models, storage, checkpoint interruption, release "
+        "ordering and HTTP diagnostics remain real. The parent releases the "
+        "barrier on failure and the wrapper restores itself on every exit",
+    ),
+    "test_service_launcher_lifetime.py": (
+        1,
+        "fresh CPU child refuses only the named launcher-waiter thread start; "
+        "exhausting host threads cannot safely or repeatably cause this branch. "
+        "Canonical process creation, detached flags, argv witness discovery, "
+        "termination and launcher reaping remain real. The patch restores in "
+        "its context, and both successful and failed handoffs retain strict "
+        "ResourceWarning checks. Missing declaration fails; a second site "
+        "exceeds this exact bound",
+    ),
+    "integration/_served_drift_control.py": (
+        2,
+        "root-scoped fault and scheduling instrumentation in the canonical "
+        "server child: one wrapper delegates the actual durable source commit "
+        "before failing once; one delegates the actual indexing pipeline after "
+        "a parent-controlled source edit following admission. A natural disk "
+        "failure risks unrelated storage and live inference cannot schedule "
+        "the edit repeatably. Models, storage, retry, drift classification and "
+        "HTTP health remain real. Both wrappers restore themselves on exit. "
+        "Mutation proof: reducing two to one fails the count-growth assertion; "
+        "restoring two passes",
+    ),
+    "test_gpu_profile_harness.py": (
+        17,
+        "CPU unit seams: one native-process tripwire rejects any unverified "
+        "profiler launch; six accelerator-load, work and memory observations "
+        "force teardown ordering and failure without allocating CUDA; one "
+        "integration-boundary tripwire proves insufficient power samples never "
+        "reach arithmetic; four clock, encode, memory and ceiling observations "
+        "stage sustained-arm ordering and actual bucket/OOM telemetry; one argv "
+        "substitution supplies parser bounds; two encode/window boundaries "
+        "exercise paired budget planning with real adaptive ceilings; and two "
+        "parity/window boundaries prove failed output parity prevents timing. "
+        "Untrusted native execution, device exhaustion and exact scheduling "
+        "cannot be safely or repeatably induced in CPU unit tests. The real "
+        "guard, planner, artifact writes and cleanup execute; separate admitted "
+        "CUDA/energy measurements and verified-profiler runs exercise the live "
+        "workload. The allowance is exactly these seventeen sites. Mutation "
+        "proof: reducing it to sixteen failed the count-growth assertion; "
+        "restoring seventeen passed",
+    ),
     "test_cli_styled_output.py": (
         1,
         "styling reaches only a colour terminal, and the CLI builds its one "
         "console at import from the real stdout, so the styled bytes can only "
         "be read by handing the unchanged production renderers a real recording "
-        "console; the substitute is the output sink, not any behaviour",
+        "console; the substitute is the output sink, not any behaviour. "
+        "Mutation proof: setting this allowance to zero failed the count-growth "
+        "assertion; restoring one passed",
     ),
     "test_typesafe_search.py": (
         26,
@@ -271,15 +325,6 @@ _ALLOWED: dict[str, tuple[int, str]] = {
         "environment's classification and its receipt verdict, so the count "
         "is of one known state rather than of whatever this host happens to "
         "be",
-    ),
-    "test_install_client_role.py": (
-        1,
-        "forces the Hugging Face token absent to prove a client installation is "
-        "never asked for one. The hub fixes its token file location when it is "
-        "imported, so the token cannot be redirected in-process, and a "
-        "developer's stored login would hide the warning whether or not the "
-        "client gate works; the real install runs and only the token lookup is "
-        "replaced",
     ),
     "conftest.py": (
         3,

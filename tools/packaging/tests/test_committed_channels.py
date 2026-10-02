@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.repo, pytest.mark.unit]
 
 def _workflow(repo_root: Path) -> str:
     """Read the workflow whose release edge these assertions protect."""
-    return (repo_root / ".github" / "workflows" / "binaries.yml").read_text(
+    return (repo_root / ".github" / "workflows" / "channels.yml").read_text(
         encoding="utf-8"
     )
 
@@ -38,10 +38,17 @@ def test_release_workflow_generates_archive_based_channels(repo_root: Path) -> N
     generation = workflow[start:commit]
     justfile = (repo_root / "justfile").read_text(encoding="utf-8")
 
-    assert 'run: just release-channels "${TAG}" channels dist-bundles/SHA256SUMS' in (
+    assert 'run: just release-channels "$TAG" channels published/SHA256SUMS' in (
         generation
     )
     assert "dist-bin/SHA256SUMS" not in generation
+    refuse = workflow.index("- name: Refuse to point at an unpublished release")
+    download = workflow.index("- name: Download the published checksums")
+    assert refuse < download < start < commit
+    assert "--json isDraft --jq '.isDraft'" in workflow[refuse:download]
+    assert "exit 1" in workflow[refuse:download]
+    assert "--pattern SHA256SUMS --dir published" in workflow[download:start]
+    assert "[ ! -s published/SHA256SUMS ]" in workflow[download:start]
     generate = justfile.index("python -m tools.packaging.generate")
     validate = justfile.index("python -m tools.packaging.validate")
     assert generate < validate

@@ -28,6 +28,7 @@ from ..storage_manifest import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from ..store_runtime import VaultStore
@@ -358,6 +359,99 @@ class TestStoreVerifiesOnEnsure:
         assert verdict.verdict == store_schema.NONCONFORMING
         assert not verdict.geometry_fatal
         assert "superseded/model" in verdict.reason
+
+    def test_sparse_model_swap_refuses_reads_and_writes(self, tmp_path: Path) -> None:
+        """A missing sparse refusal must fail before a collection is used.
+
+        Mutation proof observed 2026-09-30: disabling the sparse_model_fatal
+        raise in _verify_conformance failed with DID NOT RAISE StorageModelError.
+        Restoring the refusal passed.
+        """
+        from ..store_runtime import StorageModelError
+
+        store = self._open(tmp_path)
+        local_dir = store.db_path
+        try:
+            store.ensure_table()
+        finally:
+            store.close()
+        path = sidecar_path(local_dir)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["collections"]["vault_docs"]["sparse_model"] = "superseded/sparse"
+        # A simultaneous dense mismatch cannot hide the sparse refusal.
+        raw["collections"]["vault_docs"]["dense_model"] = "superseded/dense"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        reopened = self._open(tmp_path)
+        try:
+            with pytest.raises(StorageModelError, match="rebuild"):
+                reopened.ensure_table()
+            verdict = reopened.conformance_verdicts()["vault_docs"]
+            assert verdict.sparse_model_fatal
+            assert not verdict.geometry_fatal
+            assert not reopened._ensured.get("vault_docs", False)
+        finally:
+            reopened.close()
+
+    @pytest.mark.parametrize("domain", ["vault", "code", "document"])
+    def test_sparse_rebuild_recreates_without_copying_old_vectors(
+        self, tmp_path: Path, domain: str
+    ) -> None:
+        """The existing clean-rebuild recovery catches sparse incompatibility."""
+        from typing import cast
+
+        from qdrant_client import models
+
+        from ..store_runtime import StorageGeometryError, StorageModelError
+
+        methods = {
+            "vault": ("ensure_table", "drop_table", "TABLE_NAME"),
+            "code": ("ensure_code_table", "drop_code_table", "CODE_TABLE_NAME"),
+            "document": (
+                "ensure_document_table",
+                "drop_document_table",
+                "DOCUMENT_TABLE_NAME",
+            ),
+        }
+        ensure_name, drop_name, collection_name = methods[domain]
+        store = self._open(tmp_path)
+        local_dir = store.db_path
+        collection = cast("str", getattr(store, collection_name))
+        try:
+            cast("Callable[[], None]", getattr(store, ensure_name))()
+            store.client.upsert(
+                collection_name=collection,
+                points=[
+                    models.PointStruct(
+                        id=1,
+                        vector={
+                            "dense": [0.0] * 64,
+                            "sparse": models.SparseVector(indices=[7], values=[1.0]),
+                        },
+                        payload={"old": True},
+                    )
+                ],
+            )
+        finally:
+            store.close()
+        path = sidecar_path(local_dir)
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["collections"][collection]["sparse_model"] = "superseded/sparse"
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        reopened = self._open(tmp_path)
+        try:
+            ensure = cast("Callable[[], None]", getattr(reopened, ensure_name))
+            try:
+                ensure()
+            except StorageGeometryError as exc:
+                assert isinstance(exc, StorageModelError)
+                cast("Callable[[], None]", getattr(reopened, drop_name))()
+                ensure()
+            else:
+                pytest.fail("sparse incompatibility did not reach clean recovery")
+            assert reopened.client.count(collection_name=collection).count == 0
+            assert reopened.conformance_verdicts()[collection].is_conforming
+        finally:
+            reopened.close()
 
     def test_missing_stamp_is_unverifiable_and_does_not_raise(
         self, tmp_path: Path

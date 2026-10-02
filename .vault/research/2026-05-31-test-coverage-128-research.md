@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#test-coverage-128'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:6145b18b82cf1852ab3e73ad48a1c57198aa50371cb94432c5a660fabcc84406'
+modified: '2026-09-30'
+body_hash: 'sha256:8c50d0961fb6dba35c153c382dd74e709faf5ccbc332d452b217e4f83dfc4272'
 related: []
 ---
 
@@ -44,16 +44,13 @@ gap. Audited existing `TestJsonOutputMode` test class
 ### CI integration trigger
 
 `gpu-integration.yml` runs on a self-hosted `[self-hosted, gpu]`
-runner with `HF_TOKEN` secret. Adding `pull_request:` with a
+runner. Adding `pull_request:` with a
 `branches: [main]` filter would make the integration suite gate
 every PR before merge. Path filter is already in place on push;
 mirror it on pull_request to avoid spinning up the GPU runner for
 docs-only PRs.
 
-External PRs (from forks) cannot access the `HF_TOKEN` secret, so
-the job will skip or fail. Acceptable: this repo is solo-maintained
-and external contributions are rare. Document the constraint in
-the workflow comment.
+The original proposal did not resolve safe execution of fork code on the self-hosted runner. The later trusted-event ruling in `2026-07-23-ci-self-hosted-gpu-runner-adr` owns that boundary; public model acquisition adds no secret requirement.
 
 ### tqdm purity subprocess test
 

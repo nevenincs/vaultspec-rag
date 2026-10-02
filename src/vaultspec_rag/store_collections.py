@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from . import store_schema
+from ._qdrant_local_lifetime import close_local_collection
 
 if TYPE_CHECKING:
     import pathlib
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 from .store_runtime import (  # noqa: E402
     StorageGeometryError,
+    StorageModelError,
     suppress_local_qdrant_warnings,
 )
 
@@ -190,10 +192,7 @@ class _VaultCollectionMixin:
         """
         with suppress_local_qdrant_warnings():
             if not self._server_mode:
-                local = getattr(self.client, "_client", None)
-                collection = getattr(local, "collections", {}).get(name)
-                if collection is not None:
-                    collection.close()
+                close_local_collection(self.client, name)
             self.client.delete_collection(name)
         if not self._server_mode:
             import pathlib as _pathlib
@@ -440,11 +439,8 @@ class _VaultCollectionMixin:
     def _verify_conformance(self, collection: str) -> None:
         """Judge one collection against what this process expects, and record it.
 
-        Raises on a geometry disagreement and only on a geometry disagreement.
-        A model disagreement is recorded and logged so the health surface can
-        report it with a rebuild command; the collection stays readable because
-        a rebuild is the remedy and refusing would remove search for its
-        duration.
+        Geometry and sparse model disagreements refuse before reads or writes.
+        Dense model disagreement retains the reported degraded behavior.
         """
         from .storage_identity import load_identity
 
@@ -461,6 +457,11 @@ class _VaultCollectionMixin:
             live_dense_dim=self._live_dense_dim(collection),
         )
         self._conformance[collection] = verdict
+        if verdict.sparse_model_fatal:
+            raise StorageModelError(
+                f"collection {collection!r} has incompatible sparse vectors: "
+                f"{verdict.reason}"
+            )
         if verdict.geometry_fatal:
             raise StorageGeometryError(
                 f"collection {collection!r} cannot hold this configuration's "

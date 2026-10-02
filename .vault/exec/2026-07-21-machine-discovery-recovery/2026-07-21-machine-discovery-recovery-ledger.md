@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:293566c4cb9cd9b8ea52a6b4a909fa2e3d9acace58c64ff13bd6421350078285'
+body_hash: 'sha256:2dacc8baad34069bbae7e40b0437b58adfdb569305b8c0193029ea158a927dc2'
 related:
   - "[[2026-07-21-machine-discovery-recovery-plan]]"
 ---
@@ -56,3 +56,10 @@ related:
 - `S31` `T` `tests/test_machine_discovery.py`
 - `S32` `T` `src/vaultspec_rag/cli/_service_stop.py`
 - `S33` `T` `src/vaultspec_rag/tests/integration/conftest.py`
+- `S24` `verify:` `Historical focused discovery status doctor transport lifecycle singleton suites and 32 of 32 lifecycle tests at 61ce0d79 recorded in 2026-07-21-machine-discovery-recovery-W04-P10-summary` -> `pass`
+- `S26` `A` `.vault/audit/2026-07-23-machine-discovery-recovery-closing-review-audit.md`
+
+## Notes
+
+- `S24` Retrospective summary attribution preserves its explicit statement that earlier Steps lacked their original execution records. This logs the actual retained focused and lifecycle results, not invented earlier per-agent records or a fresh run.
+- `S26` Historical operation attributed from Git commit d4ac5aa3d98b1429f0778eaf6f3b4642e0f924fc. The commit explicitly names the S26 closing review; this is its actual audit addition, without inventing earlier absent per-agent execution records.

@@ -15,7 +15,6 @@ from ._cli_helpers import (
     _empty_search_contract_server,
     _expected_code_search_request,
     _invoke_search_contract,
-    _label_values,
     _plain_lines,
     _search_output_contract_server,
     _slow_search_contract_server,
@@ -316,18 +315,20 @@ class TestSearchSafetyContract:
             ],
         )
 
-        assert result.exit_code == 0, result.output
-        lines = _plain_lines(result.output)
-        assert lines[0].endswith("missing local symbol")
-        labels = _label_values(result.output)
-        assert labels["Why"].startswith("No matching vault documents")
-        assert "local index" in labels["Why"]
-        assert labels["Project"] == str(tmp_path)
-        next_actions = lines[lines.index("Next actions:") + 1 :]
-        assert next_actions == [
-            "- vaultspec-rag index --type vault",
-            "- vaultspec-rag status",
-        ]
+        assert result.exit_code == 1, result.output
+        normalized = " ".join(_plain_lines(result.output))
+        compact = "".join(normalized.split())
+        assert "".join(str(tmp_path).split()) in compact
+        assert "Code: index_unavailable" in normalized
+        assert "Readiness: unavailable / unverifiable / non_authoritative" in normalized
+        assert "vault: unavailable, unverifiable, reason=index_not_built" in normalized
+        assert "The index has not been built yet" in normalized
+        assert "cannot establish that no matching content exists" in normalized
+        assert "server jobs --state active --index vault" in normalized
+        assert (
+            "".join(f"--target {tmp_path} index --rebuild --type vault".split())
+            in compact
+        )
         assert "No vault results found" not in result.output
         _assert_no_table_borders(result.output)
 

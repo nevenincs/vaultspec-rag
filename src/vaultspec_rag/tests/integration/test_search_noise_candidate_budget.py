@@ -8,9 +8,9 @@ import pytest
 
 from ..._store_models import CodeChunk
 from ...search._noise import NoisePolicy
+from ...search._options import CodebaseSearchOptions
 from ...search._parsing import parse_query
 from ...search._searcher import (
-    CodebaseSearchOptions,
     VaultSearcher,
     _CodebaseCandidateRequest,
     _EncodedSearchQuery,

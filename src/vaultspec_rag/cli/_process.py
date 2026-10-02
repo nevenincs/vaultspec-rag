@@ -573,6 +573,32 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
             )
     finally:
         os.close(log_fd)  # child has the fd now (or the spawn failed)
+    try:
+        _retain_detached_launcher(proc)
+    except BaseException as exc:
+        cleanup_started = time.monotonic()
+        try:
+            cleanup_error = _cleanup_late_service_spawn(
+                launcher_pid=proc.pid,
+                launcher_start_time=pid_start_time(
+                    proc.pid, timeout=_PROBE_BUDGET_SECONDS
+                ),
+                port=port,
+                launch_token=launch_token,
+                timeout=cleanup_timeout,
+            )
+        except Exception as cleanup_exc:
+            cleanup_error = f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+        remaining = max(0.0, cleanup_timeout - (time.monotonic() - cleanup_started))
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            cleanup_error = (
+                cleanup_error or "spawned launcher survived ownership failure"
+            )
+        if cleanup_error:
+            exc.add_note(f"detached launcher ownership cleanup failed: {cleanup_error}")
+        raise
     # Inert in production; under pytest this is what stops a hard-killed run
     # from stranding the daemon it spawned. It must follow the spawn because
     # the daemon breaks away from its birth Job Object first, and it covers the
@@ -594,6 +620,20 @@ def _spawn_service_request(request: _ServiceSpawnRequest) -> int:
             f"budget{detail}"
         )
     return proc.pid
+
+
+def _retain_detached_launcher(proc: subprocess.Popen[bytes]) -> threading.Thread:
+    """Own and reap a detached launcher without delaying or terminating its daemon.
+
+    Returning only its PID would discard a still-running Popen. The waiter keeps
+    its real process handle until exit; being daemonic lets the launching CLI exit
+    while the detached service continues under its existing platform policy.
+    """
+    waiter = threading.Thread(
+        target=proc.wait, name="service-launcher-reaper", daemon=True
+    )
+    waiter.start()
+    return waiter
 
 
 def _discover_extra_late_candidates(

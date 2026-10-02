@@ -385,14 +385,24 @@ class TestStoreCallSitesRouteThroughTheRetry:
                 max_delay=0.01,
             ),
         ):
-            store = VaultStore(tmp_path)
-            assert store._server_mode
-            raised: BaseException | None = None
-            with caplog.at_level(logging.WARNING, logger="vaultspec_rag._store_writes"):
-                try:
-                    store._collection_exists("any_collection")
-                except BaseException as exc:
-                    raised = exc
+            from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
+
+            with (
+                pytest.warns(
+                    UserWarning, match="Failed to obtain server version"
+                ) as warnings,
+                VaultStore(tmp_path) as store,
+            ):
+                await_client_warnings(warnings, [VERSION_WARNING])
+                assert store._server_mode
+                raised: BaseException | None = None
+                with caplog.at_level(
+                    logging.WARNING, logger="vaultspec_rag._store_writes"
+                ):
+                    try:
+                        store._collection_exists("any_collection")
+                    except BaseException as exc:
+                        raised = exc
 
         assert raised is not None
         # Three attempts emit exactly two "retrying" records, each naming

@@ -3,15 +3,16 @@ tags:
   - '#adr'
   - '#encode-batch-adaptivity'
 date: '2026-07-29'
-modified: '2026-07-29'
+modified: '2026-09-30'
 body_schema: 'body-v1'
-body_hash: 'sha256:dbb7ebca37eb923b5635b8d7ef5b6bdd161999d0c147af068fce80237665862c'
+body_hash: 'sha256:ee6a3b41e91d8da4df5b1babfe378f1439284a2925cc28a74b9f56b633981c43'
 related:
   - "[[2026-07-29-encode-batch-adaptivity-research]]"
   - "[[2026-07-28-index-observability-adr]]"
   - "[[2026-07-24-index-throughput-adr]]"
   - "[[2026-07-24-index-cuda-ceiling-adr]]"
   - "[[2026-07-24-index-cuda-shared-device-adr]]"
+  - '[[2026-09-30-sparseencode-adr]]'
 ---
 
 # `encode-batch-adaptivity` adr: `token-budget encode batching with sub-batch retry and encode-stage truth` | (**status:** `accepted`)
@@ -37,7 +38,7 @@ an OOM costs, and what truth the encode stage owes the jobs surface.
   discards minutes of completed GPU work (research, retry-granularity finding).
 - The canonical-code rule forbids mirroring library logic: a hand-rolled
   tokenize/forward/pool loop would duplicate `sentence-transformers` behaviour
-  and drift; `sentence-transformers>=5.0` is the pinned encode surface.
+  and drift. Dense encoding retains the Sentence Transformers surface. `2026-09-30-sparseencode-adr` permits a canonical ModernBERT sparse adapter that delegates preprocessing and forward/pooling semantics to the pinned upstream custom model; it does not authorize recreating those semantics.
 - GPU rules are invariant: one consumer thread; the GPU lock brackets forward
   passes only; slice chunks arrive already length-sorted.
 - The index-observability record rejected sub-batching the encode call *as a
@@ -55,12 +56,12 @@ an OOM costs, and what truth the encode stage owes the jobs surface.
   learned ceiling re-denominated in tokens and OOM retry scoped to one bucket.**
   Pro: bounds activation memory by construction, makes the ceiling regime-aware
   with one number, caps OOM waste at one bucket, keeps the library owning
-  tokenise/forward/pool. Con: needs a chars-to-tokens estimate for planning and
+  dense tokenise/forward/pool; the sparse adapter delegates its model-specific preprocessing and forward/pooling semantics to the pinned upstream implementation. Con: needs a chars-to-tokens estimate for planning and
   a calibration guard. CHOSEN.
 - **Fully custom encode loop (own tokenise/forward/pool).** Maximum control and
   the same memory bound, but duplicates library behaviour the canonical-code
   rule forbids and adds permanent divergence risk for marginal gain over
-  per-bucket calls. Rejected.
+  per-bucket calls. Rejected for dense encoding and for reimplementing sparse model semantics. The delegated pinned sparse adapter in `2026-09-30-sparseencode-adr` is a scoped exception for loading, CPU preparation, forward locking and CPU result conversion.
 - **Ceiling hysteresis or regime keying alone (keep count batching).** Cheapest;
   stops the oscillation but leaves clamped-size throughput overhead-dominated
   and the count-vs-length mismatch unfixed - it caps the loss instead of
@@ -76,9 +77,7 @@ an OOM costs, and what truth the encode stage owes the jobs surface.
 
 ## Constraints
 
-- `sentence-transformers>=5.0` `encode` accepts an explicit `batch_size` per
-  call and length-sorts internally; per-bucket calls must pass buckets that are
-  already length-homogeneous so the internal sort is a no-op in effect.
+- Dense Sentence Transformers `encode` accepts an explicit `batch_size` per call and length-sorts internally; dense per-bucket calls must pass already length-homogeneous buckets. Sparse buckets use the pinned ModernBERT adapter under `2026-09-30-sparseencode-adr`, preserving upstream preprocessing and forward semantics while keeping CPU preparation/conversion outside the forward lock.
 - Bucket planning must not tokenise twice: the planner uses a character-based
   token estimate under the existing 8,000-char truncation, and the learned
   token ceiling - not the estimate - is the safety authority.
@@ -104,7 +103,7 @@ knob. The learned ceiling is re-denominated from items to tokens: an OOM records
 the failing token footprint, and future buckets are planned under it; recovery
 probes raise the token budget, not an item count, so a probe on short chunks no
 longer certifies a size that long chunks will fail. Each bucket runs as one
-library `encode` call under its own GPU-lock hold; an OOM discards and splits
+dense library `encode` call or delegated sparse-model forward under its own GPU-lock hold; an OOM discards and splits
 only that bucket, retaining every completed bucket's output. `empty_cache` runs
 only on an actual OOM. The dense and sparse ceilings both adopt the token
 denomination through the shared ceiling class.
@@ -124,8 +123,7 @@ what the OOM ladder exists to guard, so the ladder stops being load-bearing and
 its oscillation cost disappears for planned batches
 (`2026-07-29-encode-batch-adaptivity-research`, root-collision and oscillation
 findings). Per-bucket library calls beat a custom loop because the bucket
-planner adds no mirrored logic - planning stays outside, execution stays in the
-library - which is the canonical-code rule applied to the frontier risk. Scoping
+planner adds no mirrored logic: dense execution stays in the library, and the sparse adapter delegates model preprocessing and forward/pooling semantics to the pinned upstream implementation. Planning and CPU preparation/conversion remain outside the forward lock; the scoped sparse exception does not change the dense library policy. Scoping
 retry to a bucket converts the residual OOM cost from minutes of discarded work
 to one sub-batch. The observability additions reconcile rather than reverse the
 index-observability record: that record rejected sub-batching *motivated by*

@@ -1,6 +1,6 @@
 """Qdrant vector store layer for vault semantic search.
 
-Manages a persistent Qdrant local database with hybrid search (dense + SPLADE sparse).
+Manages a persistent Qdrant local database with hybrid search (dense + SPARSEUP sparse).
 All heavy imports are guarded so core vault tools work without RAG deps.
 """
 
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import pathlib
     from collections.abc import Callable, Generator, Sequence
     from contextlib import AbstractContextManager
+    from typing import Self
 
     from qdrant_client import QdrantClient
     from qdrant_client.conversions.common_types import (
@@ -161,7 +162,7 @@ class IngestVerificationError(RuntimeError):
 
 
 class StorageGeometryError(RuntimeError):
-    """A collection's vector geometry cannot carry this process's vectors.
+    """A collection's vector coordinates cannot carry this process's vectors.
 
     Raised when the width, distance, or dense vector name of an existing
     collection disagrees with what the running configuration would produce.
@@ -170,10 +171,13 @@ class StorageGeometryError(RuntimeError):
     that burns the whole retry budget under a "transient" label, or as a
     hybrid-search fallback that blames the wrong subsystem.
 
-    Deliberately NOT raised for a model disagreement at matching geometry:
-    that collection is readable, and refusing would remove search for exactly
-    the duration of the rebuild that is the remedy.
+    Sparse model incompatibility raises StorageModelError; a dense model
+    disagreement at matching geometry retains its degraded behavior.
     """
+
+
+class StorageModelError(StorageGeometryError):
+    """Stored sparse vectors must be rebuilt before this model can use them."""
 
 
 @contextmanager
@@ -199,7 +203,7 @@ def suppress_local_qdrant_warnings() -> Generator[None]:
 # disagreeing means an interpreter installs cleanly and then refuses to run.
 #
 # The floor is the oldest syntax and stdlib the code uses. The exclusive ceiling
-# is the first interpreter nobody has run the suite on — it is a statement about
+# is the first interpreter nobody has run the suite on â€” it is a statement about
 # what was tested, NOT about a known defect, so raising it is a matter of adding
 # the version to the CI matrix and moving this tuple.
 MIN_PYTHON: Final[tuple[int, int]] = (3, 13)
@@ -218,7 +222,7 @@ def _interpreter_is_supported(version_info: Sequence[int | str]) -> bool:
     """Return True when *version_info* falls in the supported range.
 
     Args:
-        version_info: A ``(major, minor, ...)`` tuple — pass ``sys.version_info`` or a
+        version_info: A ``(major, minor, ...)`` tuple â€” pass ``sys.version_info`` or a
             plain ``(major, minor, micro)`` tuple in tests.
 
     Returns:
@@ -246,7 +250,7 @@ def _check_rag_deps() -> None:
         raise RuntimeError(
             f"vaultspec-rag supports CPython {_format_version_range()}; the running "
             f"interpreter is {running} ({sys.version.split()[0]}).  "
-            "Install under a supported interpreter — 'uv tool install --python "
+            "Install under a supported interpreter â€” 'uv tool install --python "
             f"{MIN_PYTHON[0]}.{MIN_PYTHON[1]} vaultspec-rag[mcp]' for a tool "
             "install, or run via 'uv run vaultspec-rag ...' inside a project so uv "
             "selects the interpreter from its virtual environment."
@@ -425,6 +429,8 @@ class VaultStore(
 
     def _open_local_client(self, cfg: VaultSpecConfigWrapper) -> None:
         """Create (or open) the embedded local Qdrant store and set its fields."""
+        import sqlite3
+
         from qdrant_client import QdrantClient as _QdrantClient
 
         data_dir = _typed_setting(cfg.data_dir, str, "data_dir")
@@ -443,6 +449,9 @@ class VaultStore(
             with suppress_local_qdrant_warnings():
                 self._client = _QdrantClient(
                     path=str(self.db_path),
+                    # Supported Python reports the compiled SQLite mode directly.
+                    # Only serialized SQLite can share connections across threads.
+                    force_disable_check_same_thread=sqlite3.threadsafety == 3,
                 )
         except RuntimeError as exc:
             self._lock_helper.release()
@@ -783,7 +792,7 @@ class VaultStore(
         if hasattr(self, "_lock_helper") and self._lock_helper is not None:
             self._lock_helper.release()
 
-    def __enter__(self) -> VaultStore:
+    def __enter__(self) -> Self:
         """Return *self* to support use as a context manager.
 
         Returns:

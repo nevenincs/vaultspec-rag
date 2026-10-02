@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#test-coverage-128'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:aaa9f4b724a765ee00eb6f8f1f403034820da525cd1ff8b217941d67e101a76d'
+modified: '2026-09-30'
+body_hash: 'sha256:89cb98fb2293f9000173400b194e8eac1673950b7eccfa95c3d5163b0b2a9bc8'
 related:
   - '[[2026-05-31-test-coverage-128-research]]'
 ---
@@ -25,8 +25,7 @@ consumers.
 - Integration suite already exists as `gpu-integration.yml` on a
   self-hosted GPU runner. Adding a `pull_request:` trigger reuses
   the existing infrastructure.
-- Fork PRs do not get `secrets.HF_TOKEN`. Acceptable: this repo is
-  solo-maintained; document the constraint.
+- Fork PRs must obey the self-hosted runner trusted-event boundary in `2026-07-23-ci-self-hosted-gpu-runner-adr`; public model acquisition adds no secret requirement.
 - tqdm purity at encode time requires GPU + a real index; belongs
   in integration. At import time it can be asserted from a
   GPU-less subprocess of `vaultspec-rag --help`.

@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:4613a34375b95ce7ef352386a0f2d3205d497a1325d862992784385d3184be73'
+modified: '2026-09-30'
+body_hash: 'sha256:93efb27ca31891cca7ec46fba45252a65870fe37d437037d620606485df78240'
 related:
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-release-readiness-audit]]'
@@ -203,7 +203,7 @@ Merge the two graph caching mechanisms into a single `GraphCache` class:
 Add a **`service warmup`** command (separate from `service start`):
 
 - Calls `huggingface_hub.snapshot_download()` for all 3 model repos
-  (Qwen3-Embedding-0.6B, splade-v3, bge-reranker-v2-m3) with progress
+  (Qwen3-Embedding-0.6B, previous BERT sparse encoder, bge-reranker-v2-m3) with progress
   bars.
 - Verifies CUDA availability first (fail fast).
 - Sets `HF_HUB_DOWNLOAD_TIMEOUT=60` if not already set.

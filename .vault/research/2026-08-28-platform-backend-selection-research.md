@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#platform-backend-selection'
 date: '2026-08-28'
-modified: '2026-09-01'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:8a27156def1c27bb391a9d30c5c32699be001e3634ef24af5f5874d720d268d9'
+body_hash: 'sha256:0b9f2c2b0138c2dda773c78af15f540aed18008e8e9ade8de1e85d5b682ea092'
 related:
   - '[[2026-03-06-gpu-only-rag-stack-adr]]'
   - '[[2026-09-01-platform-backend-selection-reference]]'
@@ -33,11 +33,11 @@ Admission is the deepest coupling. It interrogates free VRAM on a discrete CUDA 
 
 ### The exact production model stack runs concurrently on MPS without CPU fallback
 
-The fleet host `Gergelys-MacBook-Neo.local` ran macOS 26.5.1 build 25F80 on Apple ARM64 with 8 GiB unified memory. A bounded probe used Python 3.13.11, torch 2.13.0, sentence-transformers 5.7.0, transformers 5.16.1, and `PYTORCH_ENABLE_MPS_FALLBACK=0`. The exact production revisions for Qwen dense embedding, SPLADE sparse encoding, and the BGE reranker all loaded together on `mps:0` and completed forward passes with finite outputs.
+The fleet host `Gergelys-MacBook-Neo.local` ran macOS 26.5.1 build 25F80 on Apple ARM64 with 8 GiB unified memory. A bounded probe used Python 3.13.11, torch 2.13.0, sentence-transformers 5.7.0, transformers 5.16.1, and `PYTORCH_ENABLE_MPS_FALLBACK=0`. The exact production revisions for Qwen dense embedding, previous BERT sparse encoder sparse encoding, and the BGE reranker all loaded together on `mps:0` and completed forward passes with finite outputs.
 
 With all three models resident, torch reported 3,720.1 MiB current MPS allocation and 4,218.5 MiB driver allocation against its 5,461.3 MiB recommended working-set limit. After all forwards the driver allocation was 4,228.7 MiB. This establishes functional support on the fleet's smallest-memory Mac; it does not establish throughput or thermal behavior.
 
-The probe used one cleanup-trapped `/tmp` directory. Package downloads, a virtual environment, and transient gated model copies stayed within it; peak scratch was 4.0 GiB and cleanup was verified. Persistent uv and Hugging Face caches and the runner checkout were unchanged. The implementation surface and exact model revisions are recorded in `2026-09-01-platform-backend-selection-reference`.
+The probe used one cleanup-trapped `/tmp` directory. Package downloads, a virtual environment, and transient model copies stayed within it; peak scratch was 4.0 GiB and cleanup was verified. Persistent uv and Hugging Face caches and the runner checkout were unchanged. The implementation surface and exact model revisions are recorded in `2026-09-01-platform-backend-selection-reference`.
 
 ### The CUDA weight on Linux comes from PyPI, not from this project
 
@@ -66,5 +66,5 @@ No sustained indexing benchmark, battery/thermal run, or long-lived service soak
 - `torch@2.13.0` PyPI metadata and wheel listing
 - https://docs.pytorch.org/docs/stable/notes/mps.html
 - https://docs.pytorch.org/docs/stable/mps_environment_variables.html
-- https://huggingface.co/naver/splade-v3
+- [retired sparse-model source locator removed; historical claim is not re-fetchable from this record]
 - https://huggingface.co/BAAI/bge-reranker-v2-m3

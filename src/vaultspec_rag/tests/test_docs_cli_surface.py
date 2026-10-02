@@ -24,11 +24,13 @@ choice.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 import typer.main
+from typer.core import TyperOption
 
 if TYPE_CHECKING:
     # Typer vendors its own copy of Click, so the command tree this module
@@ -155,18 +157,70 @@ def _parse_invocation_tail(tail: str) -> tuple[list[str], list[str]]:
     """Split an invocation tail into command words and long options."""
     words: list[str] = []
     options: list[str] = []
-    for token in tail.split():
+    root_options = {
+        option: param
+        for param in _command_tree().params
+        if isinstance(param, TyperOption)
+        for option in (*param.opts, *param.secondary_opts)
+    }
+    lexer = shlex.shlex(tail, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    lexer.escape = ""  # Documented Windows paths retain their backslashes.
+    tokens = iter(lexer)
+    past_arguments = False
+    for token in tokens:
         if token.startswith("--"):
-            options.append(token.split("=", 1)[0])
+            option = token.split("=", 1)[0]
+            options.append(option)
+            root_option = root_options.get(option) if not words else None
+            if root_option is not None:
+                if not root_option.is_flag and "=" not in token:
+                    for _ in range(root_option.nargs):
+                        next(tokens, None)
+                continue
+            past_arguments = True
             continue
-        if options or _ARG_START.match(token):
-            # Past the first option or the first argument-shaped token,
-            # nothing else can be a subcommand name.
-            if not options:
-                break
+        if past_arguments or _ARG_START.match(token):
+            past_arguments = True
             continue
         words.append(token)
     return words, options
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "--target <project> index --rebuild --type all",
+        '--target "C:\\project with spaces" index --rebuild --type all',
+        '--target="C:\\project with spaces" index --rebuild --type all',
+        '--target="/project with spaces" index --rebuild --type all',
+        "--target=<project> index --rebuild --type all",
+        "--verbose --target <project> index --rebuild --type all",
+    ],
+)
+def test_root_options_preserve_documented_command_path(tail: str) -> None:
+    words, options = _parse_invocation_tail(tail)
+    root = _command_tree()
+    command, consumed = _resolve(root, words)
+    assert words == ["index"]
+    assert command is not None
+    assert consumed == 1
+    assert "--target" in options
+    assert "--rebuild" in options
+    assert "--type" in options
+    assert set(options) <= _option_names(command) | _option_names(root)
+
+
+def test_root_options_do_not_hide_invalid_command_or_option() -> None:
+    root = _command_tree()
+    words, _ = _parse_invocation_tail("--target <project> nonexistent --rebuild")
+    assert _resolve(root, words) == (None, 0)
+    words, options = _parse_invocation_tail("--target <project> index --nonexistent")
+    command, _ = _resolve(root, words)
+    assert command is not None
+    assert "--nonexistent" in options
+    assert "--nonexistent" not in _option_names(command) | _option_names(root)
 
 
 def _invocations(text: str) -> list[tuple[list[str], list[str]]]:

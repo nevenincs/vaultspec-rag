@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#server-first-default'
 date: '2026-06-13'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:f52137694afa933bf2778673aaa361e62c6769dd487551ebc6596959d284c853'
+body_hash: 'sha256:562107a4d107793bc58bb9b47d1c5c8696a853af8c4b7a5cc72e170664348256'
 related:
   - "[[2026-06-13-server-first-default-plan]]"
 ---
@@ -56,3 +56,10 @@ related:
 - `S38` `T` `.vaultspec/rules/rules/vaultspec-rag.builtin.md`
 - `S39` `T` `src/vaultspec_rag/cli/_service_lifecycle.py`
 - `S42` `T` `docs/cli.md`
+- `S40` `A` `.vault/audit/2026-06-13-server-first-default-audit.md`
+- `S41` `verify:` `Historical 1218 unit and 44 feature integration tests recorded in 2026-06-13-server-first-default-W04-P10-summary` -> `pass`
+
+## Notes
+
+- `S40` Historical operation attributed from Git commit 304ff0ee52d1088b3404aaf6a429e2da091e348a. Actual retained persona audit addition and W04-P10 summary establish doctor human/JSON, install/start help, and local-only install dry-run. Actual default/local-only daemon start and setup are not established by those narrower observations.
+- `S41` This preserves the reported unit/feature-integration result. No full repository integration run or fresh execution is asserted.

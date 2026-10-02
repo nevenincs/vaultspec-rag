@@ -192,6 +192,210 @@ def create_kill_on_close_job(*, purpose: str) -> int | None:
     return int(job)
 
 
+class _AclHeader(ctypes.Structure):
+    """ACL header from winnt.h; no pointer-sized or platform-long fields."""
+
+    revision: int
+    ace_count: int
+    _fields_ = [
+        ("revision", ctypes.c_uint8),
+        ("reserved", ctypes.c_uint8),
+        ("size", ctypes.c_uint16),
+        ("ace_count", ctypes.c_uint16),
+        ("reserved2", ctypes.c_uint16),
+    ]
+
+
+class _AceHeader(ctypes.Structure):
+    """The common header precedes opaque standard, object and callback ACEs."""
+
+    size: int
+    _fields_ = [
+        ("type", ctypes.c_uint8),
+        ("flags", ctypes.c_uint8),
+        ("size", ctypes.c_uint16),
+    ]
+
+
+_ACL_REVISION_DS: Final = 4
+_INHERITED_ACE: Final = 0x10
+_MAXDWORD: Final = 0xFFFFFFFF
+
+
+def _anchor_acl_api() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
+    """Bind the documented ACL calls on private library instances."""
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    pointer = ctypes.c_void_p
+    pointer_out = ctypes.POINTER(pointer)
+    kernel32.LocalFree.argtypes = (pointer,)
+    kernel32.LocalFree.restype = pointer
+    advapi32.GetNamedSecurityInfoW.argtypes = (
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+        wintypes.DWORD,
+        pointer_out,
+        pointer_out,
+        pointer_out,
+        pointer_out,
+        pointer_out,
+    )
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        pointer_out,
+        ctypes.POINTER(wintypes.ULONG),
+    )
+    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = (
+        wintypes.BOOL
+    )
+    advapi32.GetSecurityDescriptorDacl.argtypes = (
+        pointer,
+        ctypes.POINTER(wintypes.BOOL),
+        pointer_out,
+        ctypes.POINTER(wintypes.BOOL),
+    )
+    advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+    advapi32.GetAce.argtypes = (pointer, wintypes.DWORD, pointer_out)
+    advapi32.GetAce.restype = wintypes.BOOL
+    advapi32.InitializeAcl.argtypes = (pointer, wintypes.DWORD, wintypes.DWORD)
+    advapi32.InitializeAcl.restype = wintypes.BOOL
+    advapi32.AddAce.argtypes = (
+        pointer,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        pointer,
+        wintypes.DWORD,
+    )
+    advapi32.AddAce.restype = wintypes.BOOL
+    advapi32.SetNamedSecurityInfoW.argtypes = (
+        wintypes.LPWSTR,
+        ctypes.c_int,
+        wintypes.DWORD,
+        pointer,
+        pointer,
+        pointer,
+        pointer,
+    )
+    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    return advapi32, kernel32
+
+
+def _read_acl_aces(api: ctypes.WinDLL, acl: ctypes.c_void_p) -> tuple[int, list[bytes]]:
+    """Copy existing entries without interpreting or rewriting trustee rights."""
+    assert acl.value is not None
+    header = _AclHeader.from_address(acl.value)
+    entries: list[bytes] = []
+    for index in range(header.ace_count):
+        ace = ctypes.c_void_p()
+        if not api.GetAce(acl, index, ctypes.byref(ace)):
+            raise ctypes.WinError(ctypes.get_last_error() or 1)
+        assert ace.value is not None
+        size = _AceHeader.from_address(ace.value).size
+        entries.append(ctypes.string_at(ace.value, size))
+    return header.revision, entries
+
+
+def _apply_augmented_acl(
+    api: ctypes.WinDLL,
+    path: str,
+    existing: ctypes.c_void_p,
+    grants: ctypes.c_void_p,
+) -> int:
+    """Preserve each old ACE and append missing grants before inherited entries."""
+    revision, old = _read_acl_aces(api, existing)
+    _, requested = _read_acl_aces(api, grants)
+    seen = set(old)
+    added: list[bytes] = []
+    for entry in requested:
+        if entry not in seen:
+            added.append(entry)
+            seen.add(entry)
+    if not added:
+        return 0
+    boundary = next(
+        (index for index, entry in enumerate(old) if entry[1] & _INHERITED_ACE),
+        len(old),
+    )
+    ordered = old[:boundary] + added + old[boundary:]
+    size = ctypes.sizeof(_AclHeader) + sum(map(len, ordered))
+    merged = ctypes.create_string_buffer(size)
+    revision = max(revision, _ACL_REVISION_DS)
+    if not api.InitializeAcl(merged, size, revision):
+        raise ctypes.WinError(ctypes.get_last_error() or 1)
+    for entry in ordered:
+        blob = ctypes.create_string_buffer(entry, len(entry))
+        if not api.AddAce(merged, revision, _MAXDWORD, blob, len(entry)):
+            raise ctypes.WinError(ctypes.get_last_error() or 1)
+    return int(
+        api.SetNamedSecurityInfoW(
+            path,
+            _SE_FILE_OBJECT,
+            _DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            merged,
+            None,
+        )
+    )
+
+
+def _augment_anchor_dacl(path: str, *, directory: bool) -> int:
+    """Merge grants with the existing DACL and return the native status."""
+    from ctypes import wintypes
+
+    advapi32, kernel32 = _anchor_acl_api()
+    pointer = ctypes.c_void_p
+    existing_descriptor = pointer()
+    grant_descriptor = pointer()
+    existing_acl = pointer()
+    try:
+        status = advapi32.GetNamedSecurityInfoW(
+            path,
+            _SE_FILE_OBJECT,
+            _DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            ctypes.byref(existing_acl),
+            None,
+            ctypes.byref(existing_descriptor),
+        )
+        if status != 0 or not existing_acl.value:
+            # A successful read with a null DACL already permits everyone;
+            # return its zero status without installing a restrictive ACL.
+            # A failed read retains its original native error status.
+            return int(status)
+        sddl = _SHARED_ANCHOR_DIRECTORY_SDDL if directory else _SHARED_ANCHOR_SDDL
+        if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl,
+            _SDDL_REVISION_1,
+            ctypes.byref(grant_descriptor),
+            None,
+        ):
+            return ctypes.get_last_error() or 1
+        grant_acl = pointer()
+        present = wintypes.BOOL()
+        defaulted = wintypes.BOOL()
+        if not advapi32.GetSecurityDescriptorDacl(
+            grant_descriptor,
+            ctypes.byref(present),
+            ctypes.byref(grant_acl),
+            ctypes.byref(defaulted),
+        ):
+            return ctypes.get_last_error() or 1
+        return _apply_augmented_acl(advapi32, path, existing_acl, grant_acl)
+    except OSError as exc:
+        return exc.winerror or 1
+    finally:
+        # ACL pointers are borrowed from these two API-owned descriptors.
+        # The rebuilt ACL and opaque ACE copies are Python-owned buffers.
+        kernel32.LocalFree(grant_descriptor)
+        kernel32.LocalFree(existing_descriptor)
+
+
 def grant_every_account_access(path: str, *, directory: bool = False) -> bool:
     """Let every authenticated account read and write the file at *path*.
 
@@ -210,6 +414,10 @@ def grant_every_account_access(path: str, *, directory: bool = False) -> bool:
     lock, so the fault surfaces as a borrower being refused rather than as a
     permission error anyone reads.
 
+    Existing creator, inherited, custom and deny entries are preserved; only
+    the new read/write grants are merged into the current DACL. A null DACL
+    remains unrestricted.
+
     Named rather than taking the caller's descriptor, because changing an
     access list needs a handle opened for ``WRITE_DAC`` and the descriptor a
     caller has is opened for reading and writing data. The name cannot be
@@ -224,71 +432,7 @@ def grant_every_account_access(path: str, *, directory: bool = False) -> bool:
     """
     if sys.platform != "win32":
         return False
-    from ctypes import wintypes
-
-    # Private library handles, so these declarations cannot collide with any
-    # other module's use of the process-global ``ctypes.windll`` cache.
-    advapi32 = ctypes.WinDLL("advapi32")
-    kernel32 = ctypes.WinDLL("kernel32")
-    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
-    kernel32.LocalFree.restype = ctypes.c_void_p
-    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        ctypes.POINTER(ctypes.c_void_p),
-        ctypes.POINTER(wintypes.ULONG),
-    )
-    advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = (
-        wintypes.BOOL
-    )
-    advapi32.GetSecurityDescriptorDacl.argtypes = (
-        ctypes.c_void_p,
-        ctypes.POINTER(wintypes.BOOL),
-        ctypes.POINTER(ctypes.c_void_p),
-        ctypes.POINTER(wintypes.BOOL),
-    )
-    advapi32.GetSecurityDescriptorDacl.restype = wintypes.BOOL
-    advapi32.SetNamedSecurityInfoW.argtypes = (
-        wintypes.LPWSTR,
-        ctypes.c_int,
-        wintypes.DWORD,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-    )
-    advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
-
-    descriptor = ctypes.c_void_p()
-    sddl = _SHARED_ANCHOR_DIRECTORY_SDDL if directory else _SHARED_ANCHOR_SDDL
-    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-        sddl, _SDDL_REVISION_1, ctypes.byref(descriptor), None
-    ):
-        logger.warning("could not build the shared anchor's access list")
-        return False
-    try:
-        acl = ctypes.c_void_p()
-        present = wintypes.BOOL()
-        defaulted = wintypes.BOOL()
-        if not advapi32.GetSecurityDescriptorDacl(
-            descriptor,
-            ctypes.byref(present),
-            ctypes.byref(acl),
-            ctypes.byref(defaulted),
-        ):
-            logger.warning("could not read the shared anchor's access list")
-            return False
-        status = advapi32.SetNamedSecurityInfoW(
-            path,
-            _SE_FILE_OBJECT,
-            _DACL_SECURITY_INFORMATION,
-            None,
-            None,
-            acl,
-            None,
-        )
-    finally:
-        kernel32.LocalFree(descriptor)
+    status = _augment_anchor_dacl(path, directory=directory)
     if status == _ERROR_ACCESS_DENIED:
         logger.debug("%s belongs to another account, which alone may widen it", path)
         return False

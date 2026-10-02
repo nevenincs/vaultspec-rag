@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, cast
+from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import quote
+
+from .._model_cache import cached_snapshot_is_complete
+from .._sparse_profile import sparse_model_revision
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,15 +25,6 @@ _OUTPUT_TAIL_CHARS = 12_000
 _TERMINATE_GRACE_SECONDS = 5.0
 _KILL_REAP_SECONDS = 5.0
 _DESCENDANT_EXIT_SECONDS = 0.25
-_TOKENIZER_FILENAMES = frozenset(
-    {
-        "tokenizer.json",
-        "tokenizer.model",
-        "vocab.json",
-        "vocab.txt",
-        "spiece.model",
-    },
-)
 
 
 def model_setup_timeout_seconds() -> float:
@@ -294,73 +287,8 @@ def _missing_model_ids(
     return [
         model_id
         for model_id in model_ids
-        if not _cached_snapshot_is_complete(model_id, cache_dir=cache_dir)
+        if not cached_snapshot_is_complete(model_id, cache_dir=cache_dir)
     ]
-
-
-def _cached_snapshot_is_complete(
-    model_id: str,
-    *,
-    cache_dir: Path | None,
-) -> bool:
-    """Validate config, tokenizer, and complete local model weights offline."""
-    from huggingface_hub import (
-        snapshot_download,  # pyright: ignore[reportUnknownVariableType]  # stubs partially unknown
-    )
-    from huggingface_hub.errors import LocalEntryNotFoundError
-
-    try:
-        snapshot_value = snapshot_download(
-            model_id,
-            cache_dir=cache_dir,
-            local_files_only=True,
-        )
-    except (LocalEntryNotFoundError, OSError):
-        return False
-    snapshot = Path(snapshot_value)
-    if not (snapshot / "config.json").is_file():
-        return False
-    if not any(
-        path.name in _TOKENIZER_FILENAMES
-        for path in snapshot.rglob("*")
-        if path.is_file()
-    ):
-        return False
-    return _snapshot_has_complete_weights(snapshot)
-
-
-def _snapshot_has_complete_weights(snapshot: Path) -> bool:
-    """Return whether a snapshot has an unsharded weight or every indexed shard."""
-    index_files = [
-        path
-        for path in snapshot.rglob("*.index.json")
-        if "weight" in path.name or "model" in path.name
-    ]
-    saw_weight_index = False
-    for index_path in index_files:
-        try:
-            payload = cast(
-                "dict[str, object]",
-                json.loads(index_path.read_text(encoding="utf-8")),
-            )
-            weight_map = payload.get("weight_map", {})
-        except (OSError, json.JSONDecodeError, AttributeError):
-            continue
-        if isinstance(weight_map, dict) and weight_map:
-            saw_weight_index = True
-            shard_values = list(
-                cast("dict[object, object]", weight_map).values(),
-            )
-            if all(isinstance(value, str) for value in shard_values) and all(
-                (snapshot / cast("str", shard)).is_file() for shard in shard_values
-            ):
-                return True
-
-    if saw_weight_index:
-        return False
-    return any(snapshot.rglob("*.safetensors")) or any(
-        snapshot.rglob("pytorch_model*.bin"),
-    )
 
 
 def _setup_context(
@@ -421,7 +349,8 @@ def _worker(
         )
         metadata_url = (
             f"{effective_endpoint.rstrip('/')}/api/models/"
-            f"{quote(model_id, safe='/')}/revision/main"
+            f"{quote(model_id, safe='/')}/revision/"
+            f"{sparse_model_revision(model_id) or 'main'}"
         )
         print(
             f"acquiring model={model_id!r} metadata_url={metadata_url!r} "
@@ -430,6 +359,7 @@ def _worker(
         )
         snapshot = snapshot_download(
             model_id,
+            revision=sparse_model_revision(model_id),
             cache_dir=cache_dir,
             endpoint=endpoint,
         )

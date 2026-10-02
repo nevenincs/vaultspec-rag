@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#vault-index-perf-memory'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:bb1f646084e36c433e220f4b90abe86018bcecdc79132226c72c64c4f3ae981d'
+modified: '2026-09-30'
+body_hash: 'sha256:9195f0c2dd4cce13579510cfeb8f17949e19c099f4c486e24951b8b608bbf3b8'
 related:
   - '[[2026-03-06-indexer-pipeline-audit]]'
 ---
@@ -591,7 +591,7 @@ per-item slowdown. Confirmed by inspecting
   cannot allocate position-embedding / attention buffers for
   the 32 k context. `max_embed_chars=8000` truncates raw text
   to ~2000 BPE tokens for Qwen3, so 2048 is the right ceiling.
-  **Sparse encoder is intentionally NOT capped**: SPLADE is
+  **Sparse encoder is intentionally NOT capped**: previous BERT sparse encoder is
   BERT-based (`max_position_embeddings=512`) and a 2048 cap
   causes a position-embedding shape mismatch at forward time.
   The sparse path already truncates internally.

@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:bb0de4d3bd239cfd30eb596946da9ba88eb5027c97fd5bf43d128c57627738a6'
+modified: '2026-10-01'
+body_hash: 'sha256:91b6802cadf0423a1547c4ce7bcb8d5930f8b9bd052daf0bf7041d6dd0251c87'
 tier: L3
 related:
   - '[[2026-07-21-machine-discovery-recovery-adr]]'
@@ -30,7 +30,7 @@ the operator service.
 
 ## Steps
 
-### Wave `W01` - owner authority and isolation
+## Wave `W01` - owner authority and isolation
 
 Establish fail-closed test isolation, retained singleton ownership, and self-healing publication before any client or adapter depends on the new discovery states.
 
@@ -63,7 +63,7 @@ Reproduce the singleton race with real HTTP processes and authorize no productio
 
 - [x] `W01.P04.S09` - Prove a losing real HTTP daemon exits nonzero before listener, Qdrant, pointer, watcher, or maintenance startup; `src/vaultspec_rag/tests/integration/test_machine_singleton.py`.
 
-### Wave `W02` - typed resolution and canonical operability
+## Wave `W02` - typed resolution and canonical operability
 
 Replace ambiguous optional-port discovery with one service-domain resolution and migrate operator and transport consumers after owner publication is trustworthy.
 
@@ -91,7 +91,7 @@ Carry degraded discovery reasons through service-dependent transport errors with
 - [x] `W02.P07.S17` - Propagate typed degraded discovery through service-dependent transport errors without compatibility fallback; `src/vaultspec_rag/serviceclient/_transport.py`.
 - [x] `W02.P07.S18` - Verify service clients fail fast with holder and pointer evidence for every degraded resolution; `src/vaultspec_rag/tests/test_http_admin_errors.py`.
 
-### Wave `W03` - bounded reconcile and public contract
+## Wave `W03` - bounded reconcile and public contract
 
 Expose non-destructive owner-driven reconciliation and update the consumer-facing discovery contract after typed status behavior is stable.
 
@@ -110,7 +110,7 @@ Revise the consumer-facing discovery contract through the mandatory documentatio
 
 - [x] `W03.P09.S23` - Revise the public discovery schema, ownership, degraded-state, and reconcile contract through vaultspec-documentation; `docs/service-discovery.md`.
 
-### Wave `W04` - system verification and review
+## Wave `W04` - system verification and review
 
 Prove the complete discovery lifecycle with real processes and finish with the mandatory architecture and safety review.
 

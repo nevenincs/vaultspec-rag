@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:0af7dda9607627f7dedb39fb279afd0f8bca967025ee3a16e656fa0e878aa201'
+modified: '2026-09-30'
+body_hash: 'sha256:171086270df9901d166536f1c3051ec9973310b950fc9538c020c1f9315ad51a'
 ---
 
 # Round 10 Audit -- embeddings.py (deep dive)
@@ -43,7 +43,7 @@ sparse_tensor = self._sparse_model.encode_query([query[:max_chars]])
 
 Uses `encode_query()` -- the correct SparseEncoder method for queries.
 
-**Verdict: PASS.** Both document and query sparse encoding use the correct role-specific methods (`encode_document` / `encode_query`), enabling SPLADE's asymmetric query/document prompts.
+**Verdict: PASS.** Both document and query sparse encoding use the correct role-specific methods (`encode_document` / `encode_query`), enabling previous BERT sparse encoder's asymmetric query/document prompts.
 
 ______________________________________________________________________
 
@@ -211,7 +211,7 @@ if sparse_tensor.is_sparse or sparse_tensor.is_sparse_csr:
 
 **File:** `embeddings.py:80`
 
-**Verdict: PASS overall.** All three tensor formats are handled correctly. The scipy path is the most likely for SparseEncoder output (SPLADE returns scipy sparse matrices).
+**Verdict: PASS overall.** All three tensor formats are handled correctly. The scipy path is the most likely for SparseEncoder output (previous BERT sparse encoder returns scipy sparse matrices).
 
 ______________________________________________________________________
 

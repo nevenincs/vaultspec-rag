@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, TypedDict, Unpack, cast
 
@@ -45,8 +47,6 @@ from ..store_schema import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from qdrant_client import QdrantClient
 
     from ..storage_reclamation import MaintenanceResult, ReclaimDecision
@@ -93,7 +93,7 @@ def _survey(
 ) -> NamespaceSurvey:
     return NamespaceSurvey(
         prefix=prefix,
-        root=f"C:/gone/{prefix}",
+        root=str(Path(Path(tempfile.gettempdir()).anchor) / "gone" / prefix),
         status=status,
         collections=[f"{prefix}vault_docs"],
         points=points,

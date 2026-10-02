@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#cicl'
 date: '2026-04-01'
-modified: '2026-07-25'
-body_hash: 'sha256:e5bdf3568759685054ad9840b56a897a8aa4473ccba07f295e99df88119d2a1b'
+tier: L2
 related:
   - '[[2026-04-01-cicl-pipeline-adr]]'
   - '[[2026-04-01-cicl-pipeline-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:8f8c0a98bbac0a72e592df8068d097085d3c0cf2a8f7d6c3852005b284e9bc70'
 ---
 
 # `cicl` phase-1 plan
@@ -48,25 +49,25 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
 
 - Phase 1: Source preparation
 
-  1. Fix vaultspec-core dependency in `pyproject.toml` — change from
+  1. Fix vaultspec-core dependency in `pyproject.toml` - change from
      `file:///` path to `"vaultspec-core>=0.1.0"` in `[project.dependencies]`.
      Add `vaultspec-core = { path = "../worktrees/main", editable = true }` to `[tool.uv.sources]` (alongside existing torch
-     entry). The static `version = "0.1.0"` stays — release-please bumps
+     entry). The static `version = "0.1.0"` stays - release-please bumps
      it in `pyproject.toml` directly. Verify `uv lock` succeeds.
   1. Add `__version__` to `src/vaultspec_rag/__init__.py` via
      `importlib.metadata.version("vaultspec-rag")` with `0.0.0.dev0`
      fallback. Add to `__all__`. This reads from installed package metadata
      which hatchling populates from the static version field.
-  1. Create `release-please-config.json` — python release-type,
+  1. Create `release-please-config.json` - python release-type,
      package-name `vaultspec-rag`, `include-component-in-tag: true` (produces
      `vaultspec-rag-vX.Y.Z` tags), bump-minor-pre-major,
      bump-patch-for-minor-pre-major, same changelog sections as vaultspec-core.
-  1. Create `.release-please-manifest.json` — initial version `"0.1.0"`.
+  1. Create `.release-please-manifest.json` - initial version `"0.1.0"`.
   1. Remove `.github/workflows/.gitkeep` placeholder (if it exists).
 
 - Phase 2: Workflow authoring (mirror vaultspec-core patterns precisely)
 
-  1. Create `.github/workflows/ci.yml` — 4 jobs with shared setup pattern
+  1. Create `.github/workflows/ci.yml` - 4 jobs with shared setup pattern
      (actions/checkout@v4, actions/setup-python@v6 3.13,
      astral-sh/setup-uv@v7 with enable-cache). Top-level
      `permissions: contents: read`, env `NO_COLOR: "1"` / `FORCE_COLOR: "0"`.
@@ -74,15 +75,15 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
      cancel-in-progress: true. Jobs: workflow-lint (actionlint docker),
      lint-and-type (ruff check, ty check, taplo lint via direct `uv run`),
      tests (`uv run pytest -m unit --timeout=60`), dependency-audit
-     (`uv audit --locked` — built-in, no extra tooling needed). Triggers: push to
+     (`uv audit --locked` - built-in, no extra tooling needed). Triggers: push to
      main, pull_request, workflow_dispatch.
-  1. Create `.github/workflows/release-please.yml` — permissions:
+  1. Create `.github/workflows/release-please.yml` - permissions:
      contents: write, pull-requests: write. Concurrency: release-please,
      cancel-in-progress: false. `googleapis/release-please-action@v4` with
      config-file and manifest-file refs. Conditional uv.lock regen:
      `if: steps.release.outputs.pr && !steps.release.outputs.release_created`,
      checkout release branch, `uv lock`, commit and push if changed.
-  1. Create `.github/workflows/publish.yml` — concurrency: publish,
+  1. Create `.github/workflows/publish.yml` - concurrency: publish,
      cancel-in-progress: false. Triggered on release publication +
      workflow_dispatch with tag input. 3 stages: build (checkout tag via
      `${{ inputs.tag || github.event.release.tag_name }}`, `uv build`,
@@ -94,7 +95,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
 
 - Phase 3: Smoke test and validation
 
-  1. Create `tests/smoke_check.py` — non-pytest script (intentionally in
+  1. Create `tests/smoke_check.py` - non-pytest script (intentionally in
      `tests/` to match vaultspec-core convention; exempt from the
      "deprecated tests/ dir" rule since it's not a pytest suite). Functions:
      `check_import`, `check_version_metadata`, `check_entry_points_registered`
@@ -109,7 +110,7 @@ Implement all 8 decisions from the accepted ADR. The work breaks into
 
 - Phase 1 steps 1-4 are independent and can execute in parallel.
 - Phase 2 steps 1-3 are independent (separate workflow files).
-- Phase 1 and Phase 2 can partially overlap — workflow files don't depend
+- Phase 1 and Phase 2 can partially overlap - workflow files don't depend
   on source changes.
 - Phase 3 is sequential (each step validates the previous).
 

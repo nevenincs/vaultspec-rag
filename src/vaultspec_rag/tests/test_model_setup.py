@@ -76,11 +76,49 @@ class _ThreadingGatewayTimeoutServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
 
+def test_sparse_cache_requires_reviewed_revision_and_complete_files(
+    tmp_path: Path,
+) -> None:
+    """Main or a config-only snapshot cannot satisfy the pinned sparse model.
+
+    Mutation proof observed 2026-09-30: omitting the sparse revision from the
+    cache lookup failed the first assertion, assert not True. Restoring the
+    pinned lookup passed.
+    """
+    from .._model_cache import cached_snapshot_is_complete
+    from .._sparse_profile import SPARSE_MODEL_ID, SPARSE_MODEL_REVISION
+
+    cache = tmp_path / "cache"
+    repo = cache / "models--Linkup-Platform--linkup-sparseup-embed-v1"
+    main_revision = "0123456789abcdef0123456789abcdef01234567"
+    main = repo / "snapshots" / main_revision
+    main.mkdir(parents=True)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text(main_revision, encoding="utf-8")
+    files = (
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "modeling_splade.py",
+        "model.safetensors",
+    )
+    for name in files:
+        (main / name).write_bytes(b"fixture")
+    assert not cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
+    pinned = repo / "snapshots" / SPARSE_MODEL_REVISION
+    pinned.mkdir()
+    for name in files[:-1]:
+        (pinned / name).write_bytes(b"fixture")
+    assert not cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
+    (pinned / "model.safetensors").write_bytes(b"fixture")
+    assert cached_snapshot_is_complete(SPARSE_MODEL_ID, cache_dir=cache)
+
+
 def test_configured_service_models_cover_eager_startup() -> None:
     """The bounded preparation set includes every default eager service model."""
     assert configured_service_model_ids() == (
         "Qwen/Qwen3-Embedding-0.6B",
-        "naver/splade-v3",
+        "Linkup-Platform/linkup-sparseup-embed-v1",
         "BAAI/bge-reranker-v2-m3",
     )
 
@@ -212,7 +250,7 @@ def test_offline_verification_omits_disabled_reranker_marker(
     ):
         assert configured_service_model_ids() == (
             "Qwen/Qwen3-Embedding-0.6B",
-            "naver/splade-v3",
+            "Linkup-Platform/linkup-sparseup-embed-v1",
         )
         detail = _verify_offline_service_startup(log_path, [])
 

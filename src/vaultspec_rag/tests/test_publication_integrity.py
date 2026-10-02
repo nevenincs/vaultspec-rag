@@ -5,8 +5,7 @@ from pathlib import Path
 import pytest
 
 from .._index_integrity import (
-    VERDICT_CONSISTENT,
-    VERDICT_SHRUNKEN,
+    IntegrityVerdict,
     acquire_index_integrity_snapshot,
 )
 from .._source_types import PublicSourceType
@@ -36,8 +35,8 @@ def test_integrity_classifies_a_stable_canonical_proof(tmp_path: Path) -> None:
     _published_empty_vault(tmp_path)
     snapshot = acquire_index_integrity_snapshot(tmp_path, PublicSourceType.VAULT)
 
-    assert snapshot.finish(0).verdict == VERDICT_CONSISTENT
-    assert snapshot.finish(-1).verdict == VERDICT_SHRUNKEN
+    assert snapshot.finish(0).verdict == IntegrityVerdict.CONSISTENT
+    assert snapshot.finish(-1).verdict == IntegrityVerdict.SHRUNKEN
 
 
 def test_integrity_token_rejects_publication_started_during_backend_work(

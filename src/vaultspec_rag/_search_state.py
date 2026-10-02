@@ -43,8 +43,12 @@ __all__ = [
     "FreshnessWaitPolicy",
     "GenerationEvidence",
     "SearchAvailability",
+    "SearchAvailabilityCause",
+    "SearchEmptyReason",
     "SearchFreshness",
+    "SearchIndexStatus",
     "SearchReadinessAggregate",
+    "SearchReasonCode",
     "SearchSourceFact",
     "SearchWaitCause",
     "WaitObservation",
@@ -80,6 +84,128 @@ class SearchFreshness(StrEnum):
     UPDATING = "updating"
     UNVERIFIABLE = "unverifiable"
     REBUILD_REQUIRED = "rebuild_required"
+
+
+class SearchIndexStatus(StrEnum):
+    """Observed state of the source collection behind a search."""
+
+    MISSING = "missing"
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    REBUILDING = "rebuilding"
+    UPDATING = "updating"
+
+
+class SearchAvailabilityCause(StrEnum):
+    """Evidence explaining an unavailable search response."""
+
+    MATCHING_INDEX_JOB = "matching_index_job"
+    COLLECTION_MISSING = "collection_missing"
+    STORAGE_BACKEND = "storage_backend"
+
+
+class SearchEmptyReason(StrEnum):
+    """Why an authoritative search returned no matches."""
+
+    PUBLISHED_EMPTY = "published_empty"
+    NO_MATCH = "no_match"
+    NO_MATCH_PATH_FILTER = "no_match_path_filter"
+
+
+class SearchReasonCode(StrEnum):
+    """Canonical diagnostic and failure vocabulary for search readiness."""
+
+    INDEX_NOT_BUILT = "index_not_built"
+    INDEX_UNAVAILABLE = "index_unavailable"
+    INDEX_UNVERIFIABLE = "index_unverifiable"
+    INDEX_UPDATING = "index_updating"
+    INDEX_TRANSITION = "index_transition"
+    PUBLISHED_GENERATION_CURRENT = "published_generation_current"
+    REBUILD_REQUIRED = "rebuild_required"
+    REBUILD_REFUSED = "rebuild_refused"
+    FRESHNESS_WAIT_TIMEOUT = "freshness_wait_timeout"
+    CAPACITY_LIMITED = "capacity_limited"
+    BACKEND_UNAVAILABLE = "backend_unavailable"
+    BAD_REQUEST = "bad_request"
+    QUIESCE_ADMISSION_CLOSED = "quiesce_admission_closed"
+
+    @property
+    def failure_code(self) -> SearchReasonCode:
+        """Map setup and transition reasons onto the stable failure contract."""
+        if self in {self.INDEX_NOT_BUILT, self.INDEX_UPDATING}:
+            return self.INDEX_UNAVAILABLE
+        return self
+
+    @property
+    def label(self) -> str:
+        """Explain the index condition without inferring service health."""
+        return {
+            self.INDEX_NOT_BUILT: (
+                "The index has not been built yet in the selected backend. "
+                "Initial indexing is required; this does not by itself indicate "
+                "a degraded service. Search cannot establish that no matching "
+                "content exists until the index is published."
+            ),
+            self.INDEX_UPDATING: (
+                "An index job is active for this worktree and source. The index "
+                "is not yet ready to establish that no matches exist. Inspect "
+                "the matching job before submitting another index request, "
+                "then verify publication and retry the search."
+            ),
+            self.INDEX_UNAVAILABLE: "The index is unavailable for this search.",
+            self.INDEX_UNVERIFIABLE: (
+                "The empty search result is not authoritative for this source."
+            ),
+            self.INDEX_TRANSITION: "The index publication is changing.",
+            self.PUBLISHED_GENERATION_CURRENT: "The published generation is current.",
+            self.REBUILD_REQUIRED: "An explicit index rebuild is required.",
+            self.REBUILD_REFUSED: "The requested index rebuild was refused.",
+            self.FRESHNESS_WAIT_TIMEOUT: (
+                "The index did not reach the requested publication before the bound."
+            ),
+            self.CAPACITY_LIMITED: "Search capacity is currently limited.",
+            self.BACKEND_UNAVAILABLE: "The search backend is unavailable.",
+            self.BAD_REQUEST: "The search request is invalid.",
+            self.QUIESCE_ADMISSION_CLOSED: (
+                "Search is temporarily unavailable while service compute admission "
+                "is closed; retry after the service returns to running."
+            ),
+        }[self]
+
+    def remediation(
+        self, source: IndexSource, *, port: int | None, target: str
+    ) -> str | None:
+        """Name the operator action for this service-owned diagnosis."""
+        from ._operator_commands import (
+            IndexCommandOptions,
+            index_command,
+            server_jobs_command,
+            server_status_command,
+        )
+
+        if self is self.INDEX_NOT_BUILT:
+            status = server_status_command(port, verbose=True)
+            jobs = server_jobs_command(port, index=source)
+            build = index_command(
+                source, IndexCommandOptions(rebuild=True, port=port, target=target)
+            )
+            return (
+                f"Check service status with `{status}` and active jobs with `{jobs}`. "
+                f"If no job is building this root and source, run `{build}`. "
+                "After publication, verify this root's index status "
+                "and retry the search."
+            )
+        if self is self.REBUILD_REQUIRED:
+            return index_command(
+                source, IndexCommandOptions(rebuild=True, port=port, target=target)
+            )
+        if self is self.INDEX_UNVERIFIABLE:
+            return server_status_command(port, verbose=True)
+        if self in {self.INDEX_UPDATING, self.CAPACITY_LIMITED}:
+            return server_jobs_command(port, index=source)
+        if self is self.INDEX_UNAVAILABLE:
+            return index_command(source, IndexCommandOptions(port=port, target=target))
+        return None
 
 
 class AbsenceAuthority(StrEnum):
@@ -244,7 +370,7 @@ class SearchSourceFact:
     wait_policy: FreshnessWaitPolicy = FreshnessWaitPolicy.IMMEDIATE
     waits: tuple[WaitObservation, ...] = ()
     evidence: tuple[str, ...] = ()
-    reason_code: str | None = None
+    reason_code: SearchReasonCode | None = None
     retryable: bool = False
     remediation: str | None = None
 
@@ -256,11 +382,10 @@ class SearchSourceFact:
             raise ValueError("source evidence exceeds the bounded evidence limit")
         for item in self.evidence:
             _bounded_text(item, field="evidence item", limit=_MAX_IDENTIFIER_LENGTH)
-        _bounded_text(
-            self.reason_code,
-            field="reason_code",
-            limit=_MAX_IDENTIFIER_LENGTH,
-        )
+        if self.reason_code is not None and not isinstance(
+            cast("object", self.reason_code), SearchReasonCode
+        ):
+            raise ValueError("reason_code must be a SearchReasonCode or None")
         _bounded_text(
             self.remediation,
             field="remediation",
@@ -303,10 +428,33 @@ class SearchSourceFact:
             "retryable": self.retryable,
         }
         if self.reason_code is not None:
-            block["reason_code"] = self.reason_code
+            block["reason_code"] = self.reason_code.value
         if self.remediation is not None:
             block["remediation"] = self.remediation
         return block
+
+    def failure_response(
+        self,
+        *,
+        request_id: str,
+        index_state: dict[str, object],
+        sources: tuple[SearchSourceFact, ...] | None = None,
+    ) -> dict[str, object]:
+        """Serialize a service-owned readiness failure for every adapter."""
+        reason = self.reason_code or SearchReasonCode.INDEX_UNVERIFIABLE
+        return {
+            "ok": False,
+            "error": reason.failure_code.value,
+            "message": (
+                f"{self.source} index for {index_state.get('requested_target_root')}: "
+                f"{reason.label}"
+            ),
+            "request_id": request_id,
+            "index_state": index_state,
+            "retryable": self.retryable,
+            "readiness": search_readiness_block(sources or (self,)),
+            "remediation": self.remediation,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,15 +690,25 @@ def search_index_state(
     requested_target = str(requested_root)
     source = parse_source_type(search_type, allow_aliases=True).value
     count = int(indexed_count)
+    found = findings or BreadthFindings()
+    from ._index_integrity import IntegrityVerdict
+
+    unpublished_empty = count == 0 and (
+        found.integrity is None
+        or found.integrity.verdict is not IntegrityVerdict.CONSISTENT
+    )
     state: dict[str, object] = {
         "source": source,
         "indexed_count": count,
         "indexed_target_root": requested_target,
         "requested_target_root": requested_target,
         "target_matches": True,
-        "status": "missing" if count == 0 else "available",
+        "status": (
+            SearchIndexStatus.MISSING
+            if unpublished_empty
+            else SearchIndexStatus.AVAILABLE
+        ).value,
     }
-    found = findings or BreadthFindings()
     if found.shortfall is not None:
         state["shortfall"] = found.shortfall.as_index_state_block()
     if found.collapse is not None:

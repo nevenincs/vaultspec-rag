@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#search-postprocess'
 date: '2026-05-31'
-modified: '2026-07-25'
-body_hash: 'sha256:3572d2be8142c915b6bdb95864191d825337dd3843e8cd92e64b4dfa85afbb3f'
+tier: L2
 related:
   - '[[2026-05-31-search-postprocess-adr]]'
   - '[[2026-05-31-search-postprocess-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:d8e256cdeeae24dec36fdacc0482b900383b6b5c3155137548ad8bc84c0d538d'
 ---
 
 # `search-postprocess` `search post-process: --dedup-locales + --prefer prod/tests/docs` plan
@@ -50,7 +51,7 @@ Cover both post-processors and their forwarding, and document that each is opt-i
 
 ## Steps
 
-### Phase 1 — backend (search.py)
+### Phase 1 - backend (search.py)
 
 1. Add `_LOCALE_DEDUP_SCORE_WINDOW = 0.10` and
    `_PREFER_SCORE_NUDGE = 0.05` near `_GLOB_FETCH_MULTIPLIER`.
@@ -92,7 +93,7 @@ Cover both post-processors and their forwarding, and document that each is opt-i
 1. Define `_collapse_locale_variants(results: list[SearchResult]) -> list[SearchResult]`: group by locale key, keep top-scoring,
    annotate snippet with the collapsed locale set.
 
-### Phase 2 — public surface
+### Phase 2 - public surface
 
 1. `search.VaultSearcher.search_codebase`: forward both
    kwargs.
@@ -113,7 +114,7 @@ Cover both post-processors and their forwarding, and document that each is opt-i
    `_emit_filter_mismatch` helper (or matching JSON-aware
    `_emit_json_error_and_exit`).
 
-### Phase 3 — tests
+### Phase 3 - tests
 
 1. `tests/test_search_unit.py`:
    - `TestLocaleVariantKey`: positive matches for
@@ -137,13 +138,13 @@ Cover both post-processors and their forwarding, and document that each is opt-i
    - Seed a `tests/` file mirroring a `src/` file;
      `--prefer prod` ranks `src/` above `tests/`.
 
-### Phase 4 — smoke
+### Phase 4 - smoke
 
 1. Against the rag worktree itself:
    `vaultspec-rag search "service status" --type code --prefer tests` should surface `test_*.py` results above
    `cli.py`. `--prefer prod` reverses.
 
-### Phase 5 — commit + push + PR + merge
+### Phase 5 - commit + push + PR + merge
 
 1. One commit with vault docs + helpers + plumbing + tests in
    the same changeset.

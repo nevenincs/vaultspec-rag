@@ -3,9 +3,9 @@ tags:
   - '#reference'
   - '#platform-backend-selection'
 date: '2026-09-01'
-modified: '2026-09-01'
+modified: '2026-09-30'
 body_schema: 'body-v1'
-body_hash: 'sha256:d8c7624d14f3a8c21fd795c5cf40d6faf2d6bdbe900ce0cb253b3ad00ac986c6'
+body_hash: 'sha256:eb8eeac41b55753386c58167427e6104cc9ed2b43230ccaf5d28b5a00e671b0e'
 related:
   - "[[2026-08-28-platform-backend-selection-research]]"
   - "[[2026-08-28-platform-backend-selection-adr]]"
@@ -37,8 +37,8 @@ These are read-only probes and deliberate exceptions to the compute loader. They
 
 ### The production model stack runs concurrently on the smallest fleet Mac
 
-On `Gergelys-MacBook-Neo.local` (macOS 26.5.1 build 25F80, Apple ARM64, 8 GiB unified memory), Python 3.13.11, torch 2.13.0, sentence-transformers 5.7.0, and transformers 5.16.1 ran with `PYTORCH_ENABLE_MPS_FALLBACK=0`. The exact configured revisions were Qwen embedding `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, SPLADE `fdfeceb91d7b9de7985b38addd3ba9f53a59a355`, and BGE reranker `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`.
+On `Gergelys-MacBook-Neo.local` (macOS 26.5.1 build 25F80, Apple ARM64, 8 GiB unified memory), Python 3.13.11, torch 2.13.0, sentence-transformers 5.7.0, and transformers 5.16.1 ran with `PYTORCH_ENABLE_MPS_FALLBACK=0`. The exact configured revisions were Qwen embedding `97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3`, previous BERT sparse encoder `fdfeceb91d7b9de7985b38addd3ba9f53a59a355`, and BGE reranker `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`.
 
 All three models stayed resident together on `mps:0`. Dense encoding returned a finite `(1, 1024)` vector, sparse query encoding returned `(1, 30522)` with 26 nonzero terms, and reranking returned one finite score. After all loads, torch reported 3,720.1 MiB current allocation and 4,218.5 MiB driver allocation against a 5,461.3 MiB recommended MPS working set; after all forwards the driver figure was 4,228.7 MiB. This is backend execution evidence without silent CPU fallback, not a throughput benchmark.
 
-The probe used one guarded `/tmp` root, a private uv cache and environment, and transient copies of the gated model snapshots. Peak scratch was 4.0 GiB and cleanup was verified. The runner checkout and persistent caches were unchanged.
+The probe used one guarded `/tmp` root, a private uv cache and environment, and transient copies of the model snapshots. Peak scratch was 4.0 GiB and cleanup was verified. The runner checkout and persistent caches were unchanged.

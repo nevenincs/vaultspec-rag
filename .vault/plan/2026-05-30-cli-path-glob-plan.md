@@ -3,16 +3,17 @@ tags:
   - '#plan'
   - '#cli-path-glob'
 date: '2026-05-30'
-modified: '2026-07-25'
-body_hash: 'sha256:1edb3be5fed138878f6614be2350ad324c046e2a272dcc97b6759ca3a1e682f0'
+tier: L2
 related:
   - '[[2026-05-30-cli-path-glob-adr]]'
   - '[[2026-05-30-cli-path-glob-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:b8fb15f82d8ae096f1245493d3ac4736e7531ac33233d426367752e39d4a63a9'
 ---
 
 # `cli-path-glob` `include-path exclude-path glob filter` plan
 
-Implements gh issue #114 — the substantive `#108` ask. Adds
+Implements gh issue #114 - the substantive `#108` ask. Adds
 `--include-path PATTERN` and `--exclude-path PATTERN` (both
 repeatable, fnmatch syntax) to `vaultspec-rag search --type code`,
 applied post-query in Python against the POSIX-normalised `path`
@@ -77,7 +78,7 @@ Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP para
 
 ## Steps
 
-### Phase 1 — backend post-filter
+### Phase 1 - backend post-filter
 
 1. Add `_GLOB_FETCH_MULTIPLIER = 10` module-level constant to
    `src/vaultspec_rag/search.py`.
@@ -92,14 +93,14 @@ Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP para
 1. After `raw_results = self.store.hybrid_search_codebase(...)`,
    filter in place: keep if `not include_norm or any(fnmatch(p, pat) for pat in include_norm)` AND `not any(fnmatch(p, pat) for pat in exclude_norm)`.
 
-### Phase 2 — facade + MCP
+### Phase 2 - facade + MCP
 
 1. `search.VaultSearcher.search_codebase`: forward both lists.
 1. `api.search_codebase`: forward both lists.
 1. `mcp_server.search_codebase`: declare the two params on the
    tool signature; forward to `slot.searcher.search_codebase`.
 
-### Phase 3 — CLI
+### Phase 3 - CLI
 
 1. `handle_search`: add two `typer.Option(..., list[str] | None, "--include-path", help=...)` repeatable flags. Reject
    with `--type vault` (same exit-2 usage error as the code
@@ -109,7 +110,7 @@ Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP para
 1. In-process branch of `handle_search`: forward to
    `searcher.search_codebase`.
 
-### Phase 4 — docs
+### Phase 4 - docs
 
 1. `README.md`: example showing `--exclude-path 'locales/*.yml' --exclude-path 'tests/**'`.
 1. `src/vaultspec_rag/README.md`: filter list under "Searching"
@@ -119,7 +120,7 @@ Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP para
 1. `.vaultspec/rules/rules/vaultspec-rag.builtin.md`: code
    filters table gains the two new flags.
 
-### Phase 5 — tests + smoke
+### Phase 5 - tests + smoke
 
 1. Unit tests in `tests/test_search_unit.py` for the fnmatch
    filter against synthetic results.
@@ -133,7 +134,7 @@ Cover the filter, the CLI forwarding, the vault-type rejection, and the MCP para
 1. Smoke: live service on port 18877, index, search with and
    without the new flags, confirm exclusion.
 
-### Phase 6 — commit + push + PR + merge
+### Phase 6 - commit + push + PR + merge
 
 Conventional-commit prefixes; PR links #114 and references #108.
 Ignore Gemini per standing instruction. Merge after CI green.

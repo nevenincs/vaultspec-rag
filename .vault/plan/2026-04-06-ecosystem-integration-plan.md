@@ -3,13 +3,14 @@ tags:
   - '#plan'
   - '#ecosystem-integration'
 date: '2026-04-06'
-modified: '2026-07-27'
-body_hash: 'sha256:b44e4d69ab2beb46945a6da4cbb8b95626cd418cf1fc85727c3105d13510b81d'
-revised: 2026-04-11
+tier: L2
 related:
   - '[[2026-04-06-ecosystem-integration-adr]]'
   - '[[2026-04-06-ecosystem-integration-research]]'
   - '[[2026-04-11-ecosystem-integration-deep-audit]]'
+modified: '2026-10-01'
+body_hash: 'sha256:43a42e76c9134c4582bd5b10cb0dbd8f3246372eb303e0cf4a927b14aabf8d61'
+revised: 2026-04-11
 ---
 
 # `ecosystem-integration` `full-scope` plan (revised 2026-04-11)
@@ -50,7 +51,7 @@ Confirm the rule content matches the shipped surface and that enrollment reaches
 
 **Out of scope (separate issues filed):**
 
-- #54 (install/uninstall CLI): deferred — requires further design
+- #54 (install/uninstall CLI): deferred - requires further design
 - #59 (workspace.py re-implementation): technical debt, pre-beta
 
 ## Description
@@ -65,7 +66,7 @@ standardization via canonical patterns, and git config normalization.
 
 Created `.vaultspec/rules/rules/vaultspec-rag.builtin.md` with CLI
 commands, MCP tool signatures, decision guide, data directory contract,
-env var namespace. Verified via code review — all signatures match
+env var namespace. Verified via code review - all signatures match
 `mcp_server.py` and `cli.py` exactly.
 
 ### Task 2: sync and verify provider enrollment (DONE)
@@ -101,7 +102,7 @@ Core's #50 fix replaced blanket `.vault/` with fine-grained entries
 
 ### Task 7: pymarkdown config (DONE)
 
-Added `vaultspec` to `allowed_elements` in `.pymarkdown.json` — required
+Added `vaultspec` to `allowed_elements` in `.pymarkdown.json` - required
 for `<vaultspec>` tags in core-generated `CLAUDE.md`.
 
 ## Verification

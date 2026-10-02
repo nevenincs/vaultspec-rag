@@ -1,8 +1,8 @@
 """Where this package's credentials come from, and who may supply them.
 
-Two of the registered names hold secrets a workspace may legitimately supply:
-the hosted-classifier key and the Hugging Face token. Everything about how
-they are found belongs to the framework - the process environment first, then
+The hosted-classifier key is the registered secret a workspace may supply.
+Everything about how it is found belongs to the framework: the process
+environment first, then
 the workspace-root ``.env``, and that file only when the running interpreter
 lives inside the workspace and this package is resolved there as a project
 dependency. This module is only the list of which names are asked for and the
@@ -32,11 +32,11 @@ if TYPE_CHECKING:
 __all__ = ["DAEMON_CREDENTIALS", "credential_assignments", "workspace_credential"]
 
 #: The credentials a spawned daemon needs in order to serve requests: the
-#: hosted classifier it may be asked to call, and the token a gated model
-#: repository requires. The Qdrant key is absent because it is not eligible
+#: hosted classifier it may be asked to call. The Qdrant key is absent because
+#: it is not eligible
 #: for a workspace ``.env`` at all, so the daemon's inherited environment is
 #: already the whole of its resolution.
-DAEMON_CREDENTIALS: Final = (EnvVar.TYPESAFE_API_KEY, EnvVar.HF_TOKEN)
+DAEMON_CREDENTIALS: Final = (EnvVar.TYPESAFE_API_KEY,)
 
 
 def workspace_credential(

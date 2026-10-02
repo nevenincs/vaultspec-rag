@@ -1,13 +1,13 @@
 """The accelerator tiers are defined once and provision what they read.
 
 The MPS and CUDA tiers refuse to run when a precondition is missing: an empty
-model cache, no Hugging Face token, no pinned Qdrant binary, or no resident
+model cache, no pinned Qdrant binary, or no resident
 service to borrow. A refusal fails the job, and the release requires the job,
 so a tier copied into a second workflow without its provisioning steps blocks
 every release while measuring nothing.
 
 So the tiers have exactly one home, every job running one provisions its
-preconditions before it, and every caller hands that home the token.
+preconditions before it, and every caller supplies the Typesafe key.
 """
 
 from __future__ import annotations
@@ -35,9 +35,6 @@ PRECONDITIONS = {
         "server start",
     ),
 }
-
-#: The secret the model-cache warm-up reads.
-TOKEN = "HF_TOKEN"
 
 _LIVE_SERVICE_FIXTURES = {"live_service", "live_service_with_watch"}
 
@@ -139,8 +136,8 @@ def _run(step: dict[str, object]) -> str:
     return run if isinstance(run, str) else ""
 
 
-def _reads_token(step: dict[str, object], token: str = TOKEN) -> bool:
-    """Whether *step* hands the job the Hugging Face token from a secret."""
+def _reads_token(step: dict[str, object], token: str) -> bool:
+    """Whether *step* hands the job the named credential from a secret."""
     env = step.get("env")
     if not isinstance(env, dict):
         return False
@@ -173,6 +170,8 @@ def test_every_tier_provisions_its_preconditions_first() -> None:
 
     Mutation proof: deleting the CUDA job's Qdrant provisioning step makes
     this fail naming ``server qdrant install``; restoring it makes this pass.
+    Removing ``just warm-models`` also failed this assertion; restoring it
+    passed after public model acquisition replaced the credential prerequisite.
     """
     findings: list[str] = []
     seen: set[str] = set()
@@ -183,19 +182,11 @@ def test_every_tier_provisions_its_preconditions_first() -> None:
                 if f"just {recipe}" not in _run(step):
                     continue
                 seen.add(recipe)
-                earlier = job.steps[:index]
                 findings.extend(
                     f"{job.job_id}: `just {recipe}` has no earlier `{fragment}` step"
                     for fragment in needed
                     if not any(fragment in text for text in runs[:index])
                 )
-                if not any(
-                    WARM in _run(prior) and _reads_token(prior) for prior in earlier
-                ):
-                    findings.append(
-                        f"{job.job_id}: the cache warm-up before `just {recipe}` "
-                        f"does not read {TOKEN} from a secret"
-                    )
     missing = sorted(set(PRECONDITIONS) - seen)
     assert not missing, f"{Workflow.HARDWARE} no longer runs {missing}"
     assert not findings, (
@@ -223,16 +214,17 @@ def test_the_cuda_tier_always_stops_the_service_it_started() -> None:
     )
 
 
-@pytest.mark.parametrize("token", [TOKEN, "VAULTSPEC_RAG_TYPESAFE_API_KEY"])
+@pytest.mark.parametrize("token", ["VAULTSPEC_RAG_TYPESAFE_API_KEY"])
 def test_every_caller_hands_the_hardware_workflow_its_token(token: str) -> None:
     """The token is declared by the tiers and passed by every caller.
 
     A reusable workflow sees no secret its caller does not pass, so a caller
-    that omits it warms nothing and the tier refuses.
+    that omits it cannot run the live classification checks.
 
     Mutation proof: deleting the ``secrets:`` block from ``release-please.yml``'s
     hardware job makes this fail naming ``release-please.yml``; restoring it makes
-    this pass.
+    this pass. Removing the Typesafe key from ``ci.yml`` likewise failed the
+    caller assertion; restoring the key passed.
     """
     triggers = workflows.triggers(workflows.document(Workflow.HARDWARE))
     call = (

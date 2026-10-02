@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#comprehensive-code-review'
 date: '2026-06-08'
-modified: '2026-07-27'
-body_hash: 'sha256:f6b45646ee449c1bfa15250ad7b09e8c2bdc73657384bf7baced3a8eb97ad503'
+modified: '2026-09-30'
+body_hash: 'sha256:3e908a82fc67af614171ebe35e02a63c7f17d88c88a449d3356a63b6aa59fd0d'
 related:
   - '[[2026-06-01-module-split-adr]]'
 ---
@@ -21,7 +21,7 @@ In `src/vaultspec_rag/search/_searcher.py`, the `_get_graph()` method catches a 
 
 ## Sparse Fallback Boundaries-001 | HIGH | Indexer ignores `sparse_enabled` config
 
-While `src/vaultspec_rag/search/_searcher.py` cleanly falls back to dense-only queries when `sparse_enabled` is False, the streaming indexer in `src/vaultspec_rag/indexer/_streaming.py` completely ignores this config. `_stream_encode_and_upsert_vault` and `encode_and_upsert_code_slice` unconditionally call `model.encode_documents_sparse(slice_texts)`. This forces SPLADE model loading and sparse vector computation on the GPU during every index run, wasting significant VRAM and compute even when the operator has explicitly disabled sparse features.
+While `src/vaultspec_rag/search/_searcher.py` cleanly falls back to dense-only queries when `sparse_enabled` is False, the streaming indexer in `src/vaultspec_rag/indexer/_streaming.py` completely ignores this config. `_stream_encode_and_upsert_vault` and `encode_and_upsert_code_slice` unconditionally call `model.encode_documents_sparse(slice_texts)`. This forces previous BERT sparse encoder model loading and sparse vector computation on the GPU during every index run, wasting significant VRAM and compute even when the operator has explicitly disabled sparse features.
 
 ## MCP Deconflation-001 | CRITICAL | Benchmark and Quality tools bypass REST, violating process lock
 

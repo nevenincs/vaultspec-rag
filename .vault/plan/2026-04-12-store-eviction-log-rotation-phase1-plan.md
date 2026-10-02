@@ -3,19 +3,20 @@ tags:
   - '#plan'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-07-25'
-body_hash: 'sha256:604164d784d18b3af1bce22928270505999284873987c9a56a49103b16b661a7'
+tier: L2
 related:
   - '[[2026-04-12-store-eviction-log-rotation-adr]]'
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'
+modified: '2026-10-01'
+body_hash: 'sha256:1350eb7369fe128ed4222d0f05acda3dc676e0512d2f95482041dc4d209db7aa'
 ---
 
 # `store-eviction-log-rotation` `phase-1` plan | (**status:** `approved`)
 
 Reviewer trail: Reviewed by: 2 parallel reviewers (code-fit/integration risk, tests/mandate compliance), 2026-04-12; all critical and major findings addressed. Plan status: Approved.
 
-Phase-1 plan for vaultspec-rag issue #45 — bounded multi-tenant service with
+Phase-1 plan for vaultspec-rag issue #45 - bounded multi-tenant service with
 evictable project slots and rotated daemon logs. Implements the ten decisions
 recorded in the accepted ADR (`2026-04-12-store-eviction-log-rotation-adr.md`)
 in twelve traceable steps. Every step ties back to a specific ADR decision and
@@ -100,19 +101,19 @@ plan. Violations block merge:
   project's type checker (`ty`) complains, the fix is to the code,
   not the checker.
 - **No silent reverts** of behavior established by the service-graph ADR
-  (`2026-04-02`) — the three-level lock dance, `_on_close_project`
+  (`2026-04-02`) - the three-level lock dance, `_on_close_project`
   callback ordering, and the shared reranker stay exactly as they are.
-- **Test mandate parity with service-lifecycle tests ADR** — new
+- **Test mandate parity with service-lifecycle tests ADR** - new
   integration tests layer onto the existing `_service_env(tmp_path)`
   subprocess fixture in `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`.
 
 ## Steps
 
 Twelve ordered steps. Every step is one commit (see "Commit cadence"
-below). Steps 1–9 implement the behavior; step 10 adds the integration
-tests; steps 11–12 cover verification.
+below). Steps 1 - 9 implement the behavior; step 10 adds the integration
+tests; steps 11 - 12 cover verification.
 
-### Step 1 — Config keys and `EnvVar` members
+### Step 1 - Config keys and `EnvVar` members
 
 **Goal.** Extend `VaultSpecConfigWrapper` with the four ADR D8 knobs so
 that every later step can read `cfg.service_idle_ttl_seconds`,
@@ -162,12 +163,12 @@ that every later step can read `cfg.service_idle_ttl_seconds`,
 **Dependencies.** None. Step 1 is the foundation every later step reads
 from.
 
-### Step 2 — Relocate `GraphCache` to `graph_cache.py`
+### Step 2 - Relocate `GraphCache` to `graph_cache.py`
 
 **Goal.** Move `GraphCache` out of `api.py` into its own module
 (`src/vaultspec_rag/graph_cache.py`) to clear the way for step 5's
 collapse of `api.py._engine`. This is a separate commit on purpose so
-that step 5 starts from a clean base — it is also the ADR D5
+that step 5 starts from a clean base - it is also the ADR D5
 "GraphCache relocation" decision.
 
 **Files touched.**
@@ -182,7 +183,7 @@ that step 5 starts from a clean base — it is also the ADR D5
 - `src/vaultspec_rag/watcher.py` (update the TYPE_CHECKING import at
   line 21)
 - `src/vaultspec_rag/__init__.py` (the existing public re-export at
-  lines 27-50 keeps its path through `api.py` for now — step 5 decides
+  lines 27-50 keeps its path through `api.py` for now - step 5 decides
   its final fate)
 - `src/vaultspec_rag/tests/test_graph_cache.py` (update the import at
   line 19: `from vaultspec_rag.graph_cache import GraphCache`)
@@ -197,11 +198,11 @@ that step 5 starts from a clean base — it is also the ADR D5
   module `logger = logging.getLogger(__name__)`.
 - In `api.py`, delete the class body, replace with
   `from .graph_cache import GraphCache` at the top of the module (after
-  the existing imports). Leave `"GraphCache"` in `__all__` — it is a
+  the existing imports). Leave `"GraphCache"` in `__all__` - it is a
   compat shim for this commit only; step 5 decides whether to keep it.
 - Update all three non-test callsite imports (`service.py`,
   `watcher.py` TYPE_CHECKING, and `api.py._Engine.__init__` at
-  line 72 which uses the local `GraphCache` by name — after the import
+  line 72 which uses the local `GraphCache` by name - after the import
   rewrite it resolves to the re-exported symbol, no change needed).
 - Update the two test-file imports explicitly (no wildcard imports).
 
@@ -230,11 +231,11 @@ runs. Combining them destroys the blast-radius isolation that lets
 step 5 focus entirely on the `_engine` collapse without touching
 `GraphCache` code.
 
-### Step 3 — `DaemonRotatingFileHandler` and `install_daemon_log_rotation`
+### Step 3 - `DaemonRotatingFileHandler` and `install_daemon_log_rotation`
 
 **Goal.** Introduce the rotating file handler subclass and its install
 helper per ADR D1, but do NOT wire it into `mcp_server.main()` yet
-(that is step 9, by design — the integration tests in step 10 are the
+(that is step 9, by design - the integration tests in step 10 are the
 only coverage for the wiring, because a unit test would require
 mocks).
 
@@ -249,7 +250,7 @@ mocks).
   overridden `doRollover(self) -> None` that acquires `self.acquire()`,
   calls `super().doRollover()`, then `os.dup2(self.stream.fileno(), 1)`
   and `os.dup2(self.stream.fileno(), 2)`, then releases. Exception
-  handling exactly as specified in the ADR D1 code block — best-effort,
+  handling exactly as specified in the ADR D1 code block - best-effort,
   log via `logger.exception`, re-raise. The RLock reentrancy guarantee
   (Python's `Handler.createLock()` returns a reentrant lock) is
   load-bearing and is cited in a one-line comment above the acquire.
@@ -263,7 +264,7 @@ mocks).
 **Tests added.**
 
 - `src/vaultspec_rag/tests/test_logging_config.py` (new file):
-  `test_daemon_rotating_handler_doRollover_re_dups_stdio` — writes
+  `test_daemon_rotating_handler_doRollover_re_dups_stdio` - writes
   enough bytes to a tempfile-backed handler to force one rollover,
   then verifies fd-identity via marker bytes (cross-platform).
   Verification mechanism (cross-platform): after the post-rollover
@@ -274,12 +275,12 @@ mocks).
   in the active file (`service.log`), and reads
   `Path(log_path + '.1').read_bytes()` and asserts the markers are
   NOT present there. Linux-only `/proc/self/fd` introspection is
-  forbidden — the marker-write approach is the ONLY portable path.
+  forbidden - the marker-write approach is the ONLY portable path.
   Tests must save the original fds via
   `saved_stdout = os.dup(1); saved_stderr = os.dup(2)` at setup,
   restore via `os.dup2(saved_stdout, 1); os.dup2(saved_stderr, 2); os.close(saved_stdout); os.close(saved_stderr)` in `finally` to
   keep pytest's own captures alive.
-  `test_install_attaches_to_root_logger_is_idempotent` — asserts
+  `test_install_attaches_to_root_logger_is_idempotent` - asserts
   exactly ONE `DaemonRotatingFileHandler` is on the root logger
   after the first `install_daemon_log_rotation()` call, AND that
   calling it a second time leaves the count at exactly one (the
@@ -288,7 +289,7 @@ mocks).
 - Critical: these tests run as REAL unit tests (no mocks) by writing
   to real filesystem paths under `tmp_path` and performing real
   `os.dup2` calls. The fd save/restore dance described above is NOT
-  a mock — it is the only safe way to unit-test `os.dup2` behavior.
+  a mock - it is the only safe way to unit-test `os.dup2` behavior.
 
 **Definition of done.**
 
@@ -302,7 +303,7 @@ mocks).
 **Dependencies.** Step 1 (knobs must exist so the helper can accept
 `max_bytes`/`backup_count` values that match the config surface).
 
-### Step 4 — `ServiceRegistry` lease API with refcount and eviction
+### Step 4 - `ServiceRegistry` lease API with refcount and eviction
 
 **Goal.** Grow `ServiceRegistry` into the ADR D3/D4/D6 shape: lease
 context manager, `peek_project`, per-slot `last_access` +
@@ -338,7 +339,7 @@ largest code step and the heart of the feature.
   `_get_or_create_locked(root)` that runs under `_lock` (for the dict
   read) and then outside `_lock` during `_create_slot()` (for GPU init
   parallelism).
-- Rename the existing public `get_project` to `peek_project` — it
+- Rename the existing public `get_project` to `peek_project` - it
   keeps the three-level lock dance, keeps returning the slot
   unchanged, but does NOT bump `ref_count` or update `last_access`.
   Callers that are non-request (watcher wiring, lifespan, tests)
@@ -349,7 +350,7 @@ largest code step and the heart of the feature.
   `_projects` for slots with `ref_count == 0 AND (now - last_access) >= _idle_ttl_seconds`; release `_lock` before
   calling `_close_evicted(root, reason="idle")` for each victim;
   re-acquire `_lock` before return. The release-reacquire dance is
-  the load-bearing detail (see ADR D4 "Idle sweep" — the `_lock` is
+  the load-bearing detail (see ADR D4 "Idle sweep" - the `_lock` is
   `threading.Lock`, NOT reentrant, so `_close_evicted` → `close_project`
   → `with self._lock` would deadlock without the release). A comment
   above the dance must cite ADR D4 "Idle sweep" by name.
@@ -370,15 +371,15 @@ largest code step and the heart of the feature.
   force-close any remaining slots (logging a `WARNING` for each
   still-busy slot). The 5.0 second constant is an inline literal with
   a comment citing ADR D6. It is intentionally NOT configurable.
-- Add `def busy_roots(self) -> list[Path]` — returns list of resolved
+- Add `def busy_roots(self) -> list[Path]` - returns list of resolved
   roots with `ref_count > 0` under `_lock`. Used by step 6's MCP error
   shape and by step 10's tests.
-- Add `def snapshot(self) -> list[dict]` — returns one dict per slot
+- Add `def snapshot(self) -> list[dict]` - returns one dict per slot
   with `root`, `last_access`, `ref_count`, `idle_seconds`
   (derived from `time.monotonic() - last_access`). Used by the
   `list_projects` MCP tool in step 7.
 - Keep the existing `close_project(root)` as the single teardown
-  path. Do NOT inline its body — `_close_evicted` delegates to it.
+  path. Do NOT inline its body - `_close_evicted` delegates to it.
 
 **Tests added.**
 
@@ -387,8 +388,8 @@ largest code step and the heart of the feature.
   eight integration-marked tests (each decorated with
   `@pytest.mark.integration`, each using the session-scoped
   `embedding_model` fixture and a real `VaultStore(root)` against
-  `tmp_path`). These tests are NOT pure unit tests — they are
-  integration tests in disguise (no Qdrant subprocess — uses Qdrant
+  `tmp_path`). These tests are NOT pure unit tests - they are
+  integration tests in disguise (no Qdrant subprocess - uses Qdrant
   local/embedded mode via real `VaultStore(root)` against `tmp_path`,
   real GPU, real embedded Qdrant):
   - `test_lease_increments_refcount`
@@ -402,12 +403,12 @@ largest code step and the heart of the feature.
 - Every test constructs a real `ServiceRegistry`, real
   `EmbeddingModel` (via the existing session-scoped fixture
   `embedding_model`), real temp vault roots with a single markdown
-  file each, and real `VaultStore` via `_create_slot`. No mocks —
-  no Qdrant subprocess — uses Qdrant local/embedded mode via real
+  file each, and real `VaultStore` via `_create_slot`. No mocks -
+  no Qdrant subprocess - uses Qdrant local/embedded mode via real
   `VaultStore(root)` against `tmp_path`.
 - `test_sweep_evicts_idle` manipulates `slot.last_access` by assigning
   a past monotonic time directly (the dataclass is non-frozen). This
-  is NOT a mock — it is a legitimate test seam into a public mutable
+  is NOT a mock - it is a legitimate test seam into a public mutable
   field.
 - `test_close_all_drains_then_force` spawns a thread that holds a
   lease for longer than the 5-second deadline, asserts `close_all()`
@@ -432,7 +433,7 @@ makes `service.py`'s imports cleaner). Step 4 explicitly adds a
 temporary `get_project = peek_project` alias so step 6 can migrate
 callsites in a separate commit without breaking the tree.
 
-### Step 5 — Collapse `api.py._engine` onto `ServiceRegistry.lease`
+### Step 5 - Collapse `api.py._engine` onto `ServiceRegistry.lease`
 
 **Goal.** Delete the parallel `_Engine` / `_engine` / `get_engine` /
 `reset_engine` cache in `api.py` and rewire every facade function
@@ -442,13 +443,13 @@ callsites in a separate commit without breaking the tree.
 
 **Files touched.**
 
-- `src/vaultspec_rag/registry.py` (NEW — module-level singleton holder)
+- `src/vaultspec_rag/registry.py` (NEW - module-level singleton holder)
 - `src/vaultspec_rag/api.py`
 - `src/vaultspec_rag/mcp_server.py` (replace module-level
   `_registry = ServiceRegistry()` with `_registry = get_registry()`)
-- `src/vaultspec_rag/__init__.py` (verify — see N1 below)
+- `src/vaultspec_rag/__init__.py` (verify - see N1 below)
 - `src/vaultspec_rag/tests/test_adr_regression.py` (lines 114 and
-  183 currently import `_engine_lock`; must be updated — see below)
+  183 currently import `_engine_lock`; must be updated - see below)
 - any test fixture that called `reset_engine()` (migrate to
   `_registry.close_all()`)
 
@@ -468,7 +469,7 @@ callsites in a separate commit without breaking the tree.
   `_engine_lock` import; rewrite the assertions to test
   ServiceRegistry's lock semantics instead (either delete the
   obsolete `_engine_lock` sanity assertions or rewrite them to
-  assert the new ServiceRegistry-based path — whichever is more
+  assert the new ServiceRegistry-based path - whichever is more
   faithful to each test's original intent).
 - Before deleting `GraphCache` re-export: run `grep -rn "from vaultspec_rag.api import GraphCache" "from .api import GraphCache"` across `src/` and the tests dir. If
   there are ZERO consumers after step 2, the re-export can be
@@ -516,7 +517,7 @@ integration tests.
 deleted. Step 4 must have landed first so the lease API actually
 exists.
 
-### Step 6 — Migrate MCP tool handlers to `lease()` and wrap `RegistryFullError`
+### Step 6 - Migrate MCP tool handlers to `lease()` and wrap `RegistryFullError`
 
 **Goal.** Convert every MCP tool handler callsite in
 `src/vaultspec_rag/mcp_server.py` from `_registry.get_project(root)`
@@ -543,7 +544,7 @@ per ADR D4 "Error propagation".
   `except RegistryFullError as e: return {"ok": False, "error": "registry_full", "message": str(e), "max_projects": _registry.max_projects, "busy_projects": [str(p) for p in _registry.busy_roots()]}`.
 - The `_ensure_watcher(root)` call (lines 564, 625, 762, 808) stays
   INSIDE the `with` block so the watcher install happens while a
-  lease is held — but `_ensure_watcher` itself uses `peek_project`,
+  lease is held - but `_ensure_watcher` itself uses `peek_project`,
   so it does not double-increment the refcount.
 - Preserve all existing `_shutting_down` guards and the
   `anyio.to_thread.run_sync` wiring.
@@ -584,7 +585,7 @@ per ADR D4 "Error propagation".
 5 ensures `api.py` no longer holds a parallel cache that could
 absorb some of the traffic.
 
-### Step 7 — `list_projects` and `evict_project` MCP tools
+### Step 7 - `list_projects` and `evict_project` MCP tools
 
 **Goal.** Add the two admin MCP tools from ADR D7 so that operators
 can observe and surgically evict project slots.
@@ -615,7 +616,7 @@ can observe and surgically evict project slots.
   `{"evicted": True, "reason": "forced"}`.
 - Both tools use `anyio.to_thread.run_sync` per the project-wide MCP
   tool convention.
-- The `reason="idle"` value is reserved for internal logging — never
+- The `reason="idle"` value is reserved for internal logging - never
   returned by `evict_project` per ADR D7.
 
 **Tests added.**
@@ -633,7 +634,7 @@ can observe and surgically evict project slots.
   `get_config().service_max_projects` and
   `get_config().service_idle_ttl_seconds` separately and assert that
   `result['max_projects']` and `result['idle_ttl_seconds']` match
-  those configured defaults — not assume the numeric constants.
+  those configured defaults - not assume the numeric constants.
 
 **Definition of done.**
 
@@ -645,7 +646,7 @@ can observe and surgically evict project slots.
 **Dependencies.** Step 6 (lease API + error propagation wiring must
 be in place so the admin tools speak the same error vocabulary).
 
-### Step 8 — CLI `service projects list|evict` subcommands
+### Step 8 - CLI `service projects list|evict` subcommands
 
 **Goal.** Expose the two new MCP tools through the existing Typer
 CLI at `vaultspec-rag service projects {list,evict}` per ADR D7.
@@ -661,7 +662,7 @@ CLI at `vaultspec-rag service projects {list,evict}` per ADR D7.
   register it: `service_app.add_typer(service_projects_app, name="projects")`.
 - Add helper `_try_mcp_admin(tool_name: str, args: dict, port: int | None) -> dict | None` modeled after the existing `_try_mcp_search`
   at `cli.py:619` and `_try_mcp_reindex` at `cli.py:557`. It MUST be
-  a brand-new helper, NOT a generalization (per ADR D7 — keeping
+  a brand-new helper, NOT a generalization (per ADR D7 - keeping
   the existing fast-path helpers stable). Behavior per ADR D7:
   returns `None` only for "service unreachable" (connection refused),
   returns the raw dict otherwise so the caller can distinguish "tool
@@ -681,10 +682,10 @@ CLI at `vaultspec-rag service projects {list,evict}` per ADR D7.
   service unreachable (helper returned `None`). Exit-code
   propagation via `raise typer.Exit(n)`.
 
-**Tests added.** Tests are split into two files — pure in-process
+**Tests added.** Tests are split into two files - pure in-process
 CLI tests (no live service) and real-subprocess integration tests:
 
-- `src/vaultspec_rag/tests/test_cli.py` — in-process, no live
+- `src/vaultspec_rag/tests/test_cli.py` - in-process, no live
   service. Four tests using Typer's `CliRunner`:
   - `test_projects_list_help_renders`
   - `test_projects_evict_help_renders`
@@ -693,10 +694,10 @@ CLI tests (no live service) and real-subprocess integration tests:
     The two `*_service_down_*` tests exercise the case where
     `_try_mcp_admin` returns `None` (service unreachable), triggered
     by pointing the CLI at an unused port via `--port` or
-    `VAULTSPEC_RAG_PORT`. NO mocks — the unreachability is real
+    `VAULTSPEC_RAG_PORT`. NO mocks - the unreachability is real
     because no service is running.
 - `src/vaultspec_rag/tests/integration/test_service_projects_cli.py`
-  (NEW FILE) — real subprocess. Four tests that start a real
+  (NEW FILE) - real subprocess. Four tests that start a real
   service via `_helpers._service_env`, run `vaultspec-rag service projects list/evict ...` via `subprocess.run`, and assert exit
   codes plus stdout content:
   - `test_projects_list_against_running_service`
@@ -720,7 +721,7 @@ CLI tests (no live service) and real-subprocess integration tests:
 **Dependencies.** Step 7 (MCP tools must exist before the CLI can
 call them).
 
-### Step 9 — Wire `install_daemon_log_rotation` into `mcp_server.main()`
+### Step 9 - Wire `install_daemon_log_rotation` into `mcp_server.main()`
 
 **Goal.** Install the rotating file handler inside the child process
 immediately after `configure_logging()` and before `uvicorn.run()`
@@ -729,7 +730,7 @@ per ADR D1 "Install ordering (CRITICAL)".
 **Files touched.**
 
 - `src/vaultspec_rag/mcp_server.py`
-- `src/vaultspec_rag/logging_config.py` (no new code — just a
+- `src/vaultspec_rag/logging_config.py` (no new code - just a
   potential export addition if needed)
 
 **Changes.**
@@ -738,9 +739,9 @@ per ADR D1 "Install ordering (CRITICAL)".
 - Inside `main()`, immediately after argparse and BEFORE
   constructing or running uvicorn, call `configure_logging()`.
   Reviewer-verified: `mcp_server.main()` currently does NOT call
-  `configure_logging()` at all — it is called by the CLI layer at
+  `configure_logging()` at all - it is called by the CLI layer at
   `cli.py:243`, which is the parent process, not the daemon. This
-  is a behavior change — the daemon previously inherited the
+  is a behavior change - the daemon previously inherited the
   parent's `configure_logging()` state via the inherited stderr fd;
   with rotation it must call its own to install the rotating
   handler on its OWN root logger after the inherited handler list
@@ -757,7 +758,7 @@ per ADR D1 "Install ordering (CRITICAL)".
   currently have a log-path resolver, add `_resolve_log_file()` in
   `mcp_server.py` that composes `cfg.status_dir / cfg.log_file`
   identically to `cli._log_file()`. Do NOT cross-import from
-  `cli.py` — the resolver is small enough to duplicate.
+  `cli.py` - the resolver is small enough to duplicate.
 - The stdio-mode branch (`mcp_server.py:932-942`) does NOT install
   the handler. stdio mode is for one-shot CLI tooling, not long-lived
   daemon use. Add a comment explaining the asymmetry.
@@ -787,10 +788,10 @@ deliberate design choice per the no-mocks mandate.
 - The stdio-mode branch is untouched.
 
 **Dependencies.** Step 3 (handler + helper must exist). Step 10 (the
-tests covering this wiring come next — step 9's correctness is
+tests covering this wiring come next - step 9's correctness is
 demonstrated by step 10 passing).
 
-### Step 10 — Integration tests (real subprocess + GPU + Qdrant)
+### Step 10 - Integration tests (real subprocess + GPU + Qdrant)
 
 **Goal.** Add six end-to-end integration tests under a new file
 `src/vaultspec_rag/tests/integration/test_service_eviction.py` that
@@ -799,7 +800,7 @@ drain-busy-slots guarantee from ADR D6.
 
 **Files touched.**
 
-- `src/vaultspec_rag/tests/integration/_helpers.py` (NEW — shared
+- `src/vaultspec_rag/tests/integration/_helpers.py` (NEW - shared
   helpers module; underscore prefix keeps pytest from collecting it
   as a test file)
 - `src/vaultspec_rag/tests/integration/test_service_lifecycle.py`
@@ -811,7 +812,7 @@ drain-busy-slots guarantee from ADR D6.
 
 **Changes.**
 
-- **Sub-step 10.0 — Extract integration helpers (FIRST sub-task of
+- **Sub-step 10.0 - Extract integration helpers (FIRST sub-task of
   Step 10, a precondition for all other Step 10 work):** Move
   `_service_env`, `_get_ephemeral_port`, `_poll_health`,
   `_wait_for_exit` from
@@ -830,11 +831,11 @@ drain-busy-slots guarantee from ADR D6.
   granular runtime requirement). The EXACT names from the ADR D9
   matrix plus the `close_all_drains_busy_slots` addition from the
   supervisor:
-  - `test_idle_ttl_evicts_quiescent_slots` (ADR D9 item 1) —
+  - `test_idle_ttl_evicts_quiescent_slots` (ADR D9 item 1) -
     markers: `integration`, `subprocess_gpu`.
-  - `test_lru_cap_evicts_oldest` (ADR D9 item 2) — markers:
+  - `test_lru_cap_evicts_oldest` (ADR D9 item 2) - markers:
     `integration`, `subprocess_gpu`.
-  - `test_evict_busy_returns_busy` (ADR D9 item 3) — markers:
+  - `test_evict_busy_returns_busy` (ADR D9 item 3) - markers:
     `integration`, `subprocess_gpu`, `robustness`. Run
     `N = 20` evict_project calls in a tight loop while a parallel
     thread fires `search_vault` at the same project. Assert
@@ -843,15 +844,15 @@ drain-busy-slots guarantee from ADR D6.
     hardware. The robustness marker indicates it may be re-run on
     flake; CI must run it at least once but flakes do not block
     merge." If on a future RTX 5090-class card the busy window
-    closes entirely, the test will need a slower mechanism —
+    closes entirely, the test will need a slower mechanism -
     out-of-scope for #45.
-  - `test_log_rotation_creates_backups` (ADR D9 item 4) — markers:
+  - `test_log_rotation_creates_backups` (ADR D9 item 4) - markers:
     `integration`, `subprocess_gpu`. With `max_bytes=4096`,
     `backup_count=2`, driving DEBUG-level search output past
     several rotation thresholds, polling the filesystem for
     rotated files with a 2-second deadline.
   - `test_log_rotation_post_rollover_writes_to_active` (ADR D9
-    item 5) — markers: `integration`, `subprocess_gpu`. Fully
+    item 5) - markers: `integration`, `subprocess_gpu`. Fully
     specified sequence:
     1. Start service via
        `_helpers._service_env(env_overrides={"VAULTSPEC_RAG_SERVICE_LOG_MAX_BYTES": "4096", "VAULTSPEC_RAG_SERVICE_LOG_BACKUP_COUNT": "3", "VAULTSPEC_RAG_LOG_LEVEL": "DEBUG"})`.
@@ -873,7 +874,7 @@ drain-busy-slots guarantee from ADR D6.
        include the test's `t0_iso = datetime.now().isoformat()`
        captured AFTER step 3 in any subsequent search query string,
        so the daemon's request log echoes it.
-  - `test_close_all_drains_busy_slots` (ADR D6) — markers:
+  - `test_close_all_drains_busy_slots` (ADR D6) - markers:
     `integration`, `subprocess_gpu`. Start the service. Issue 8
     concurrent `search_vault` calls from a thread pool to keep
     multiple slots busy with overlapping latency (use 8 different
@@ -887,7 +888,7 @@ drain-busy-slots guarantee from ADR D6.
     fresh project roots each take >1s of cold-load + index time,
     exceeding the 5s drain). If the warning is absent on a
     particular run (slots happened to drain in time), the test
-    still passes provided shutdown was clean — but assert the
+    still passes provided shutdown was clean - but assert the
     registry was cleanly torn down by checking `service.json` was
     removed.
 - Every test sets up a fresh temp `status_dir` via `_service_env`
@@ -899,7 +900,7 @@ drain-busy-slots guarantee from ADR D6.
   `VAULTSPEC_RAG_LOG_LEVEL` as needed.
 - `test_log_rotation_creates_backups` MUST flush the handler after
   each batch (per ADR D9 flake note) via an MCP tool call that
-  triggers `handler.flush()` — or, lacking a tool, by sending
+  triggers `handler.flush()` - or, lacking a tool, by sending
   enough records that CPython's `RotatingFileHandler.shouldRollover`
   naturally fires. Poll the filesystem for rotated files with a
   2-second deadline rather than asserting immediately.
@@ -916,11 +917,11 @@ drain-busy-slots guarantee from ADR D6.
 - Each test's assertions are specific to the ADR behavior (not
   tautological).
 
-**Dependencies.** Steps 1–9. This is the end-to-end verification
+**Dependencies.** Steps 1 - 9. This is the end-to-end verification
 step; every earlier change has to be in place for these tests to
 pass.
 
-### Step 11 — Lint, type, docs, changelog
+### Step 11 - Lint, type, docs, changelog
 
 **Goal.** Bring the modified surface back to a known-clean state and
 update user-facing docs for the new knobs and CLI commands.
@@ -930,7 +931,7 @@ update user-facing docs for the new knobs and CLI commands.
 - All files modified in earlier steps (for final pre-commit pass)
 - `README.md` (CLI reference section for `service projects`)
 - `CHANGELOG.md` (new `## Unreleased` entries for the beta gate fix)
-- `docs/` if applicable — the `.vaultspec` rule at
+- `docs/` if applicable - the `.vaultspec` rule at
   `.claude/rules/vaultspec-rag.builtin.md` lists the current CLI
   surface; updating it is optional and at the executor's
   discretion.
@@ -941,7 +942,7 @@ update user-facing docs for the new knobs and CLI commands.
   covers ruff (check + format), `ty check src/vaultspec_rag` (the
   project's type checker), `taplo` (TOML linter),
   `mdformat-check` (the README change), and any other configured
-  hooks. Every violation must be fixed in-place — NO `# noqa` and
+  hooks. Every violation must be fixed in-place - NO `# noqa` and
   NO `# type: ignore` escape hatches.
 - mypy is NOT configured in this project (verified: no
   `[tool.mypy]` section in `pyproject.toml`, no mypy in any
@@ -952,7 +953,7 @@ update user-facing docs for the new knobs and CLI commands.
   and `service projects evict` commands, and a one-paragraph
   explanation of the idle TTL + LRU semantics.
 - Add one `CHANGELOG.md` entry under `## Unreleased` summarizing
-  issue #45 and linking to the ADR wiki link (the ADR stem only —
+  issue #45 and linking to the ADR wiki link (the ADR stem only -
   no absolute paths in changelog).
 - Do NOT touch `vaultspec-core` or any cross-repo shared rule file.
 
@@ -964,9 +965,9 @@ update user-facing docs for the new knobs and CLI commands.
 - `README.md` diff includes the new subsection.
 - `CHANGELOG.md` diff includes the new Unreleased entry.
 
-**Dependencies.** Steps 1–10 (everything).
+**Dependencies.** Steps 1 - 10 (everything).
 
-### Step 12 — Final verification
+### Step 12 - Final verification
 
 **Goal.** Run the full test suite and a manual smoke walkthrough
 before opening the PR.
@@ -984,22 +985,22 @@ before opening the PR.
 - Manual smoke walkthrough:
   - `uv run vaultspec-rag server service start` (starts the daemon
     on the default port).
-  - `uv run vaultspec-rag search "service eviction"` — hits project
+  - `uv run vaultspec-rag search "service eviction"` - hits project
     A, populates one slot.
-  - `cd <other-project> && uv run vaultspec-rag search "ADR"` —
+  - `cd <other-project> && uv run vaultspec-rag search "ADR"` -
     hits project B, populates second slot.
-  - `uv run vaultspec-rag service projects list` — should render a
+  - `uv run vaultspec-rag service projects list` - should render a
     Rich table with two rows, non-zero idle seconds, ref_count=0,
     footer `2/16 slots, idle TTL 1800s`.
-  - `uv run vaultspec-rag service projects evict <project-A>` —
+  - `uv run vaultspec-rag service projects evict <project-A>` -
     should print a success message and exit 0.
-  - `uv run vaultspec-rag service projects list` — should show one
+  - `uv run vaultspec-rag service projects list` - should show one
     row (project B only).
-  - Inspect `~/.vaultspec-rag/service.log` — should exist and be
+  - Inspect `~/.vaultspec-rag/service.log` - should exist and be
     non-empty. Bump `VAULTSPEC_RAG_LOG_LEVEL=DEBUG` and drive enough
     searches to trigger one rollover, then inspect
     `service.log.1` for the rotated content.
-  - `uv run vaultspec-rag server service stop` — should exit
+  - `uv run vaultspec-rag server service stop` - should exit
     cleanly within the 5-second drain window.
 - If any step of the walkthrough fails, the PR is not ready. Fix
   and re-run.
@@ -1013,32 +1014,32 @@ before opening the PR.
   the plan with rationale, the manual smoke walkthrough output,
   and the final test counts (unit + integration).
 
-**Dependencies.** Steps 1–11.
+**Dependencies.** Steps 1 - 11.
 
 ## Parallelization
 
-Steps 1–3 are largely independent of each other and each other's
+Steps 1 - 3 are largely independent of each other and each other's
 modifications to `config.py`, `graph_cache.py`/`api.py`, and
 `logging_config.py`. They could in theory run on parallel branches
 and merge, but because this plan mandates one commit per step in
 sequence (see "Commit cadence"), parallelization is left to future
 work with independent ADRs.
 
-Steps 4–6 form a strict linear chain (lease API → api.py collapse →
+Steps 4 - 6 form a strict linear chain (lease API → api.py collapse →
 MCP migration) and must run serially.
 
-Steps 7–9 each depend on step 6 and can theoretically parallelize,
+Steps 7 - 9 each depend on step 6 and can theoretically parallelize,
 but step 9 should land last of the three because it is the
 "everything wired up" step and makes step 10's integration tests
 executable.
 
-Step 10 depends on steps 1–9. Steps 11 and 12 are sequential tails.
+Step 10 depends on steps 1 - 9. Steps 11 and 12 are sequential tails.
 
 ## Risks & mitigations
 
 The top five implementation risks and their concrete mitigations:
 
-**Risk 1 — Deadlock in `_sweep_idle` release-reacquire dance.** The
+**Risk 1 - Deadlock in `_sweep_idle` release-reacquire dance.** The
 ADR D4 "Idle sweep" specifies releasing `_lock` before calling
 `_close_evicted` (which itself takes `_lock` via `close_project`)
 because `_lock` is a `threading.Lock`, not an `RLock`. A subtle bug
@@ -1052,7 +1053,7 @@ a sweep completes without hang. Step 10's
 `test_close_all_drains_busy_slots` adds a real-subprocess concurrent
 stressor.
 
-**Risk 2 — Windows FD re-`dup2` regression.** If a future refactor
+**Risk 2 - Windows FD re-`dup2` regression.** If a future refactor
 replaces `DaemonRotatingFileHandler` with a plain `RotatingFileHandler`,
 fds 1 and 2 will silently "stick" on the first rotated file and the
 backup count accounting goes wrong with no error message.
@@ -1063,7 +1064,7 @@ deterministically on Windows. Step 3 also has a fd-aware unit test
 real `os.dup`/`os.dup2` fd save-and-restore so the doRollover path
 is covered without integration overhead.
 
-**Risk 3 — `RegistryFullError` blocking operators who hit a valid
+**Risk 3 - `RegistryFullError` blocking operators who hit a valid
 workload.** ADR D8 ships with `service_max_projects=16`. An operator
 running 17+ workspaces simultaneously will see a structured error
 dict on the 17th and must retry after a slot frees. This is
@@ -1075,7 +1076,7 @@ one manually. The structured error in step 6 includes
 in step 11 documents the knob prominently so operators know the
 cap exists.
 
-**Risk 4 — Silent double-cache if step 5 is skipped or partial.** If
+**Risk 4 - Silent double-cache if step 5 is skipped or partial.** If
 any `api.py` facade function is missed during the step 5 rewrite, it
 will keep routing through the (now-deleted) `_engine` and crash with
 `NameError: _engine`, or worse, if the deletion is not followed
@@ -1088,7 +1089,7 @@ Step 5 is a full deletion, not a stub replacement. Step 6's tests
 exercise every MCP tool handler path against a registry that is the
 only cache in play.
 
-**Risk 5 — Integration test flakiness on Windows.** Step 10's
+**Risk 5 - Integration test flakiness on Windows.** Step 10's
 log-rotation tests depend on CPython's `RotatingFileHandler`
 flushing behavior, which can lag on Windows due to filesystem
 buffering. A flaky test is worse than no test because it trains
@@ -1099,7 +1100,7 @@ rotated files to appear, flushes the handler explicitly (or uses
 triggers deterministically on a handful of records. The
 `test_evict_busy_returns_busy` test asserts "at least one of N"
 rather than a single timing-sensitive call. No `pytest.skip` is
-ever added — if a test is flaky, the fix is bounded retries with
+ever added - if a test is flaky, the fix is bounded retries with
 monotonic deadlines.
 
 ## Commit cadence
@@ -1118,7 +1119,7 @@ commit subject lines:
 - Step 9: `feat(service): install daemon log rotation in mcp_server.main`
 - Step 10: `test(integration): end-to-end eviction and log rotation coverage`
 - Step 11: `chore: lint, type, README and CHANGELOG for #45`
-- Step 12: `chore: final verification (no code changes)` — or, if no
+- Step 12: `chore: final verification (no code changes)` - or, if no
   changes resulted, skip the commit and note the verification in the
   PR description instead.
 
@@ -1161,7 +1162,7 @@ Mission success for this phase is:
   output at every stage.
 
 Honest limitation: step 9's wiring (`install_daemon_log_rotation` into
-`mcp_server.main`) has no unit-test coverage on purpose — a unit test
+`mcp_server.main`) has no unit-test coverage on purpose - a unit test
 would require mocking either `configure_logging`, `uvicorn.run`, or
 the install helper itself, which violates the project-wide no-mocks
 mandate. The two integration tests

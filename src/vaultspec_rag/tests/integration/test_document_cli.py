@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..._search_state import SearchReasonCode
 from ...indexer._preprocess_config import PREPROCESS_CONFIG_FILENAME
 from .._cli_helpers import app, runner
 from .._scaffold import make_workspace
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from ..._source_types import IndexSource
 
 pytestmark = pytest.mark.integration
 
@@ -121,35 +124,88 @@ def test_legacy_docs_alias_remains_vault_not_document(tmp_path: Path) -> None:
     assert envelope["error"] == "dry_run_requires_supported_type"
 
 
+@pytest.mark.parametrize("source", ["document", "combined"])
 def test_empty_document_and_combined_search_are_real_model_free_cli_calls(
     tmp_path: Path,
+    source: str,
 ) -> None:
     root = make_workspace(tmp_path)
-    for source in ("document", "combined"):
-        result = runner.invoke(
-            app,
-            [
-                "--target",
-                str(root),
-                "search",
-                "query",
-                "--type",
-                source,
-                "--allow-fallback",
-                "--json",
-            ],
+    result = runner.invoke(
+        app,
+        [
+            "--target",
+            str(root),
+            "search",
+            "query",
+            "--type",
+            source,
+            "--allow-fallback",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    envelope = json.loads(result.output)
+    assert envelope["ok"] is False
+    assert envelope["error"] == "index_unavailable"
+    assert "results" not in envelope
+    assert "data" not in envelope
+    assert envelope["retryable"] is False
+    state = envelope["index_state"]
+    assert state["source"] == source
+    assert state["indexed_count"] == 0
+    assert state["requested_target_root"] == str(root)
+    assert state["indexed_target_root"] == str(root)
+    assert state["target_matches"] is True
+    assert state["status"] == "missing"
+    integrity = state["index_integrity"]
+    assert integrity["verdict"] == "unverifiable"
+    assert integrity["reason"] == "proof_missing"
+    assert integrity["live_count"] == 0
+
+    expected_sources = (
+        ["vault", "code", "document"] if source == "combined" else [source]
+    )
+    readiness = envelope["readiness"]
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert [fact["source"] for fact in facts] == expected_sources
+    for fact in facts:
+        assert fact["availability"] == "unavailable"
+        assert fact["freshness"] == "unverifiable"
+        assert fact["reason_code"] == SearchReasonCode.INDEX_NOT_BUILT.value
+        assert fact["absence_authority"] == "non_authoritative"
+        assert fact["retryable"] is False
+        assert fact["evidence"] == []
+        generation = cast("dict[str, object]", fact["generation"])
+        assert generation == {}
+        assert fact["remediation"] == SearchReasonCode.INDEX_NOT_BUILT.remediation(
+            source=cast("IndexSource", fact["source"]), port=None, target=str(root)
         )
-        assert result.exit_code == 0, result.output
-        envelope = json.loads(result.output)
-        assert envelope["data"]["search_type"] == source
-        assert envelope["data"]["results"] == []
-        if source == "combined":
-            assert envelope["data"]["partial"] is False
-            assert set(envelope["data"]["domains"]) == {
-                "vault",
-                "code",
-                "document",
+    aggregate = readiness["aggregate"]
+    assert aggregate["availability"] == "unavailable"
+    assert aggregate["freshness"] == "unverifiable"
+    assert aggregate["absence_authority"] == "non_authoritative"
+    assert aggregate["source_count"] == len(expected_sources)
+    assert aggregate["usable_source_count"] == 0
+    assert envelope["message"] == (
+        f"{expected_sources[0]} index for {root}: "
+        f"{SearchReasonCode.INDEX_NOT_BUILT.label}"
+    )
+    assert envelope["remediation"] == facts[0]["remediation"]
+    if source == "combined":
+        domains = envelope["domains"]
+        assert set(domains) == set(expected_sources)
+        for fact in facts:
+            domain = domains[fact["source"]]
+            assert domain == {
+                "ok": True,
+                "results_count": 0,
+                "error_kind": None,
+                "detail": None,
+                "readiness": fact,
             }
+            assert domain["ok"] is True
+    else:
+        assert "domains" not in envelope
 
 
 def test_clean_and_status_expose_document_domain_and_support_profile(

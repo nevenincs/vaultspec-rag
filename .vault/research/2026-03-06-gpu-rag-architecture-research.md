@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-09-14'
-body_hash: 'sha256:00e2e55a6124430503a9dcf60bbaef9eeec4103cd69e324ad26edc5c7dce606b'
+modified: '2026-09-30'
+body_hash: 'sha256:9391747701b48a374b949750eb8c54e299eb186720587962f594b50a124bbeb6'
 ---
 
 # GPU-Only RAG Architecture: Grounding Report
@@ -35,14 +35,14 @@ ______________________________________________________________________
 
 ### Option A: sentence-transformers (RECOMMENDED)
 
-The most mature GPU embedding inference library. Version 5.0+ adds native `SparseEncoder` for SPLADE models on GPU.
+The most mature GPU embedding inference library. Version 5.0+ adds native `SparseEncoder` for previous BERT sparse encoder models on GPU.
 
 **Pros:**
 
 - Direct `.encode()` with `device="cuda"`, fp16/bf16 support
 - Built-in batching, progress bars, multi-GPU encode
 - flash_attention_2 support for Qwen3/newer models
-- SparseEncoder for SPLADE on GPU (same API)
+- SparseEncoder for previous BERT sparse encoder on GPU (same API)
 - Benchmarked: fp16 gives ~1.54x speedup, ONNX-O4 gives ~1.83x on RTX 3090
 
 **API:**
@@ -148,15 +148,15 @@ ______________________________________________________________________
 
 ### 3. Sparse/Hybrid Search on GPU (Without BM42/fastembed)
 
-### Option A: SPLADE on GPU via sentence-transformers SparseEncoder (RECOMMENDED)
+### Option A: previous BERT sparse encoder on GPU via sentence-transformers SparseEncoder (RECOMMENDED)
 
-sentence-transformers v5+ has a `SparseEncoder` class that runs SPLADE models on CUDA.
+sentence-transformers v5+ has a `SparseEncoder` class that runs previous BERT sparse encoder models on CUDA.
 
 ```python
 from sentence_transformers import SparseEncoder
 
 sparse_model = SparseEncoder(
-    "naver/splade-v3",
+    "previous BERT sparse encoder",
     device="cuda",
     model_kwargs={"torch_dtype": "float16"},
 )
@@ -171,8 +171,8 @@ sparse_query_emb = sparse_model.encode(["search query"])
 
 **Key models:**
 
-- `naver/splade-v3` -- latest SPLADE, GPU-native
-- `naver/splade-cocondenser-ensembledistil` -- older but well-tested
+- `previous BERT sparse encoder` -- latest previous BERT sparse encoder, GPU-native
+- `previous BERT sparse encoder` -- older but well-tested
 - `opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill`
 
 **GPU optimizations:** fp16, bf16, ONNX backend available.
@@ -214,7 +214,7 @@ bm25_scores = bm25.get_scores(query.split())
 
 ### Recommendation
 
-**Use Option A (SPLADE via SparseEncoder) for hybrid search.** It runs on GPU, integrates cleanly with Qdrant's sparse vector support, and sentence-transformers provides a unified API for both dense (SentenceTransformer) and sparse (SparseEncoder) models on CUDA.
+**Use Option A (previous BERT sparse encoder via SparseEncoder) for hybrid search.** It runs on GPU, integrates cleanly with Qdrant's sparse vector support, and sentence-transformers provides a unified API for both dense (SentenceTransformer) and sparse (SparseEncoder) models on CUDA.
 
 If single-model simplicity is preferred and you accept the FlagEmbedding dependency, **Option B (BGE-M3)** is also viable.
 
@@ -277,7 +277,7 @@ dense_model = SentenceTransformer(
     },
 )
 sparse_model = SparseEncoder(
-    "naver/splade-v3",
+    "previous BERT sparse encoder",
     device="cuda",
     model_kwargs={"torch_dtype": "float16"},
 )
@@ -294,10 +294,10 @@ dense_embeddings = dense_model.encode(
     normalize_embeddings=True,
 )
 
-# Sparse: SPLADE
+# Sparse: previous BERT sparse encoder
 sparse_embeddings = sparse_model.encode(
     documents,
-    batch_size=32,  # SPLADE may need smaller batch
+    batch_size=32,  # previous BERT sparse encoder may need smaller batch
 )
 ```
 
@@ -325,13 +325,13 @@ ______________________________________________________________________
 
 ### 6. Recommended GPU-Only Stack
 
-| Component            | Choice                                                     | Rationale                                                    |
-| -------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
-| **Dense embedding**  | `sentence-transformers` + `Qwen/Qwen3-Embedding-0.6B`      | Best quality/VRAM ratio, MRL, flash_attn2, native ST support |
-| **Sparse embedding** | `sentence-transformers.SparseEncoder` + `naver/splade-v3`  | GPU-native SPLADE, same library as dense                     |
-| **Vector DB**        | `qdrant-client` (local mode)                               | Named vectors, RRF fusion, persistence, filtering, proven    |
-| **Inference dtype**  | `float16` with `flash_attention_2`                         | ~1.5x speedup, halves VRAM                                   |
-| **Hybrid search**    | Qdrant `query_points` with `Prefetch` + `FusionQuery(RRF)` | Server-side fusion, no manual RRF                            |
+| Component            | Choice                                                                 | Rationale                                                      |
+| -------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Dense embedding**  | `sentence-transformers` + `Qwen/Qwen3-Embedding-0.6B`                  | Best quality/VRAM ratio, MRL, flash_attn2, native ST support   |
+| **Sparse embedding** | `sentence-transformers.SparseEncoder` + `previous BERT sparse encoder` | GPU-native previous BERT sparse encoder, same library as dense |
+| **Vector DB**        | `qdrant-client` (local mode)                                           | Named vectors, RRF fusion, persistence, filtering, proven      |
+| **Inference dtype**  | `float16` with `flash_attention_2`                                     | ~1.5x speedup, halves VRAM                                     |
+| **Hybrid search**    | Qdrant `query_points` with `Prefetch` + `FusionQuery(RRF)`             | Server-side fusion, no manual RRF                              |
 
 ### pyproject.toml Dependencies
 
@@ -348,30 +348,30 @@ rag = [
 
 ### Key Differences from Previous (fastembed/ONNX/CPU) Stack
 
-| Aspect               | Old (CPU/ONNX)                | New (GPU/torch)                            |
-| -------------------- | ----------------------------- | ------------------------------------------ |
-| Dense embedding lib  | fastembed (ONNX)              | sentence-transformers (torch+CUDA)         |
-| Dense model          | nomic-embed-text-v1.5 (768d)  | Qwen3-Embedding-0.6B (1024d, MRL)          |
-| Sparse embedding lib | fastembed SparseTextEmbedding | sentence-transformers SparseEncoder        |
-| Sparse model         | BM42 or SPLADE (ONNX)         | SPLADE v3 (torch+CUDA)                     |
-| Inference device     | CPU                           | CUDA GPU                                   |
-| VRAM required        | 0                             | ~3 GB (dense + sparse models in fp16)      |
-| Dependencies         | fastembed, onnxruntime        | torch, sentence-transformers, transformers |
-| Vector DB            | Qdrant (local)                | Qdrant (local) -- UNCHANGED                |
-| Hybrid search        | Qdrant query_points + RRF     | Qdrant query_points + RRF -- UNCHANGED     |
+| Aspect               | Old (CPU/ONNX)                              | New (GPU/torch)                            |
+| -------------------- | ------------------------------------------- | ------------------------------------------ |
+| Dense embedding lib  | fastembed (ONNX)                            | sentence-transformers (torch+CUDA)         |
+| Dense model          | nomic-embed-text-v1.5 (768d)                | Qwen3-Embedding-0.6B (1024d, MRL)          |
+| Sparse embedding lib | fastembed SparseTextEmbedding               | sentence-transformers SparseEncoder        |
+| Sparse model         | BM42 or previous BERT sparse encoder (ONNX) | previous BERT sparse encoder (torch+CUDA)  |
+| Inference device     | CPU                                         | CUDA GPU                                   |
+| VRAM required        | 0                                           | ~3 GB (dense + sparse models in fp16)      |
+| Dependencies         | fastembed, onnxruntime                      | torch, sentence-transformers, transformers |
+| Vector DB            | Qdrant (local)                              | Qdrant (local) -- UNCHANGED                |
+| Hybrid search        | Qdrant query_points + RRF                   | Qdrant query_points + RRF -- UNCHANGED     |
 
 ______________________________________________________________________
 
 ### 7. Risks & Open Questions
 
-| Risk                                                          | Severity | Mitigation                                                 |
-| ------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
-| flash-attn installation complexity (CUDA version sensitivity) | Medium   | Make it optional; bf16 still gives good speedup without it |
-| torch CUDA version mismatch                                   | Medium   | Pin torch version to match target CUDA                     |
-| SPLADE sparse tensor -> Qdrant SparseVector conversion        | Low      | Convert COO tensor to indices/values lists                 |
-| Qwen3 0.6B quality vs nomic 768d tradeoff                     | Low      | Qwen3 scores higher on MTEB multilingual (64.33 vs 62.28)  |
-| BGE-M3 alternative needs FlagEmbedding dependency             | Low      | Only if single-model hybrid is desired                     |
-| SparseEncoder v5 maturity (released 2025)                     | Low      | Well-documented, backed by Hugging Face/UKP Lab            |
+| Risk                                                                         | Severity | Mitigation                                                 |
+| ---------------------------------------------------------------------------- | -------- | ---------------------------------------------------------- |
+| flash-attn installation complexity (CUDA version sensitivity)                | Medium   | Make it optional; bf16 still gives good speedup without it |
+| torch CUDA version mismatch                                                  | Medium   | Pin torch version to match target CUDA                     |
+| previous BERT sparse encoder sparse tensor -> Qdrant SparseVector conversion | Low      | Convert COO tensor to indices/values lists                 |
+| Qwen3 0.6B quality vs nomic 768d tradeoff                                    | Low      | Qwen3 scores higher on MTEB multilingual (64.33 vs 62.28)  |
+| BGE-M3 alternative needs FlagEmbedding dependency                            | Low      | Only if single-model hybrid is desired                     |
+| SparseEncoder v5 maturity (released 2025)                                    | Low      | Well-documented, backed by Hugging Face/UKP Lab            |
 
 ## Sources
 

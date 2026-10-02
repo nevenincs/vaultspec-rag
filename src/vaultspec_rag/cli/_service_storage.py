@@ -14,6 +14,7 @@ impossible without an explicit manifest attribution.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -995,7 +996,10 @@ def storage_migrate(
         _emit_or_echo_error(
             _MIGRATE_CMD, "unsafe_path", f"Refusing migrate: {exc}", 2, json_mode
         )
-    local = QdrantClient(path=str(local_path))
+    local = QdrantClient(
+        path=str(local_path),
+        force_disable_check_same_thread=sqlite3.threadsafety == 3,
+    )
     server = QdrantClient(url=url)
     src, dst = (local, server) if to_server else (server, local)
     preview = dry_run or not yes

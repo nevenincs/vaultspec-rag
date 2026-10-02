@@ -1009,6 +1009,9 @@ def _drop_generation_collections(
             results.append(DeleteResult(collection, "would_remove", [collection]))
             continue
         try:
+            from ._qdrant_local_lifetime import close_local_collection
+
+            close_local_collection(client, collection)
             client.delete_collection(collection_name=collection)
         except TRANSPORT_FAILURES as exc:
             results.append(DeleteResult(collection, "failed", reason=str(exc)))

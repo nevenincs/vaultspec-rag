@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-hardware-singleton'
 date: '2026-06-24'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:89b9409f4dc3262c9999fb522e827a63d7e2b3380e7b382e8256f98e29e5a7e4'
+body_hash: 'sha256:5281ec3406bd2d4650cec28f57f6dbf65eae904a12509d4afaae39d5b159e3be'
 related:
   - "[[2026-06-24-service-hardware-singleton-plan]]"
 ---
@@ -49,3 +49,8 @@ related:
 - `S31` `T` `.vaultspec/rules/rules/`
 - `S32` `T` `src/vaultspec_rag/qdrant_runtime/_resolve.py`
 - `S33` `T` `src/vaultspec_rag/qdrant_runtime/_supervise.py`
+- `S27` `A` `.vault/audit/2026-06-24-service-hardware-singleton-audit.md`
+
+## Notes
+
+- `S27` Historical change attribution from Git commit 8747786796d44c7bcb2f5e01b434da003253a008; commit records this Step's scoped implementation or review. No fresh runtime verification or historical unrecorded pass is asserted.

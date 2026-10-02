@@ -168,20 +168,28 @@ class TestEmbeddingModelLoadArguments:
             )
         )
 
-    def test_sparse_model_does_not_force_pickle_weights(self):
-        import ast
+    def test_sparse_model_requires_pinned_safetensors(self):
+        """2026-09-30: safetensors=False failed its assertion; restored passed."""
+        import inspect
+        import textwrap
 
-        kwargs = self._call_kwargs(self._load_ast(), "SparseEncoder")
-        model_kwargs = kwargs["model_kwargs"]
-        assert isinstance(model_kwargs, ast.Dict)
+        from .._sparse_encoder import SparseModelAdapter
 
-        keys = [
-            key.value
-            for key in model_kwargs.keys
-            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        tree = ast.parse(textwrap.dedent(inspect.getsource(SparseModelAdapter)))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "from_pretrained"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "loader"
         ]
-        assert "torch_dtype" in keys
-        assert "use_safetensors" not in keys
+        kwargs = {kw.arg: kw.value for kw in calls[0].keywords}
+        assert ast.literal_eval(kwargs["trust_remote_code"]) is True
+        assert ast.literal_eval(kwargs["use_safetensors"]) is True
+        assert "revision" in kwargs and "code_revision" in kwargs
+        assert "local_files_only" in kwargs
 
 
 def _constructs(path: Path, class_name: str) -> bool:

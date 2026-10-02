@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ...cli import app
 from ._service_jobs_support import (
@@ -18,7 +22,9 @@ from ._service_jobs_support import (
 
 
 @pytest.mark.unit
-def test_jobs_state_active_only_shows_processing_jobs() -> None:
+def test_jobs_state_active_only_shows_processing_jobs(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -30,7 +36,7 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
                 "started_at": now - 30,
                 "progress": {"step": "queued", "completed": 0},
                 "runtime_seconds": 30.0,
-                "initiator": {"project_root": r"C:\projects\waiting-project"},
+                "initiator": {"project_root": str(tmp_path / "waiting-project")},
             },
             {
                 "id": "active-job",
@@ -40,7 +46,7 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
                 "started_at": now - 10,
                 "progress": {"step": "embed", "completed": 2, "total": 4},
                 "runtime_seconds": 10.0,
-                "initiator": {"project_root": r"C:\projects\active-project"},
+                "initiator": {"project_root": str(tmp_path / "active-project")},
             },
         ],
         "total": 7,
@@ -82,7 +88,9 @@ def test_jobs_state_active_only_shows_processing_jobs() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
+def test_jobs_state_waiting_only_shows_queued_jobs(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -94,7 +102,7 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
                 "started_at": now - 10,
                 "progress": {"step": "embed", "completed": 2, "total": 4},
                 "runtime_seconds": 10.0,
-                "initiator": {"project_root": r"C:\projects\active-project"},
+                "initiator": {"project_root": str(tmp_path / "active-project")},
             },
             {
                 "id": "waiting-job",
@@ -104,7 +112,7 @@ def test_jobs_state_waiting_only_shows_queued_jobs() -> None:
                 "started_at": now - 30,
                 "progress": {"step": "queued", "completed": 0},
                 "runtime_seconds": 30.0,
-                "initiator": {"project_root": r"C:\projects\waiting-project"},
+                "initiator": {"project_root": str(tmp_path / "waiting-project")},
             },
         ],
         "total": 7,
@@ -209,6 +217,7 @@ def test_jobs_missing_context_uses_reported_absence_language(
 
 @pytest.mark.unit
 def test_jobs_humanizes_cancelled_automatic_update(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ...cli._service_jobs_presentation import render_jobs_result
@@ -227,7 +236,7 @@ def test_jobs_humanizes_cancelled_automatic_update(
                     "result": "watcher task cancelled",
                     "initiator": {
                         "kind": "watcher",
-                        "project_root": r"C:\projects\example",
+                        "project_root": str(tmp_path / "example"),
                     },
                 }
             ],

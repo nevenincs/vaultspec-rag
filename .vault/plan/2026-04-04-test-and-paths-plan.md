@@ -3,17 +3,18 @@ tags:
   - '#plan'
   - '#test-and-paths'
 date: '2026-04-04'
-modified: '2026-07-25'
-body_hash: 'sha256:14faf5331653a3eb80b2cb901e32e50179d93c55e8dbb021d5c35456f856802c'
+tier: L2
 related:
   - '[[2026-04-04-test-and-paths-adr]]'
   - '[[2026-04-04-test-and-paths-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:e15d54ea97a42778e55f11623c233582e024c460a840765490bc4847c41bfc48'
 ---
 
 # `test-and-paths` plan
 
 Centralize all RAG data paths under `.vault/data/search-data/` and replace
-the static `test-project/` corpus with a synthetic generator. Clean break —
+the static `test-project/` corpus with a synthetic generator. Clean break -
 no backwards compatibility. `.vault/data/` is the shared project data
 namespace (owned by vaultspec-core); RAG owns only the `search-data/`
 subtree.
@@ -45,12 +46,12 @@ Confirm no stale path literal or bare environment read survives anywhere in the 
 
 These are non-negotiable constraints that apply to every step.
 
-**M1 — Complete source audit.** Every `.py` file under `src/vaultspec_rag/`
+**M1 - Complete source audit.** Every `.py` file under `src/vaultspec_rag/`
 MUST be read and audited for path declarations, hardcoded directories,
 config lookups, and `Path.home()` usage. No file may be skipped. The
 audit covers production code AND test code equally.
 
-**M2 — Dual-control overrides.** Every path declaration MUST be overridable
+**M2 - Dual-control overrides.** Every path declaration MUST be overridable
 via BOTH:
 
 - **CLI argument** (e.g. `--data-dir`, `--qdrant-dir`, `--status-dir`)
@@ -61,23 +62,23 @@ CLI takes precedence over env var. Env var takes precedence over config
 default. This mirrors the existing `--target` pattern. Document every
 override in `.env.example`.
 
-**M3 — Centralized definitions.** All path defaults MUST live in
+**M3 - Centralized definitions.** All path defaults MUST live in
 `config.py` `_RAG_DEFAULTS`. No module may construct a path from a
 hardcoded string. Every path is either:
 
 - Read from config (`cfg.data_dir`, `cfg.qdrant_dir`, etc.), or
 - Passed as a function/constructor parameter that traces back to config.
 
-**M4 — Test fixture rewrite.** Every test fixture and conftest that
+**M4 - Test fixture rewrite.** Every test fixture and conftest that
 references `TEST_PROJECT`, `TEST_VAULT`, `QDRANT_SUFFIX_*`, or
 constructs `.qdrant*` paths MUST be rewritten to use synthetic corpus +
 `tmp_path` isolation + config overrides. No exceptions.
 
-**M5 — Zero stale references.** After completion, `grep -r` for `.qdrant`,
+**M5 - Zero stale references.** After completion, `grep -r` for `.qdrant`,
 `test-project`, `TEST_PROJECT`, `TEST_VAULT`, `QDRANT_SUFFIX`,
 `GPU_FAST_CORPUS_STEMS` MUST return zero hits in `src/`.
 
-**M6 — No bare `os.environ`.** No production module may call
+**M6 - No bare `os.environ`.** No production module may call
 `os.environ.get()` or `os.environ[...]` directly for configuration.
 All env var wrangling MUST be centralized in `config.py` through:
 
@@ -91,78 +92,78 @@ All env var wrangling MUST be centralized in `config.py` through:
 
 Current violations in production code (6 files, all must be fixed):
 
-- `cli.py:103,768` — sets `VAULTSPEC_ROOT`
-- `cli.py:824` — reads `VAULTSPEC_RAG_STATUS_DIR`
-- `cli.py:1309` — sets `HF_HUB_DOWNLOAD_TIMEOUT`
-- `mcp_server.py:53` — reads `VAULTSPEC_ROOT`
-- `mcp_server.py:81` — reads `HF_HOME`
-- `logging_config.py:75` — reads `VAULTSPEC_RAG_LOG_LEVEL`
-- `embeddings.py:199` — reads `HF_HOME`
+- `cli.py:103,768` - sets `VAULTSPEC_ROOT`
+- `cli.py:824` - reads `VAULTSPEC_RAG_STATUS_DIR`
+- `cli.py:1309` - sets `HF_HUB_DOWNLOAD_TIMEOUT`
+- `mcp_server.py:53` - reads `VAULTSPEC_ROOT`
+- `mcp_server.py:81` - reads `HF_HOME`
+- `logging_config.py:75` - reads `VAULTSPEC_RAG_LOG_LEVEL`
+- `embeddings.py:199` - reads `HF_HOME`
 
 Test code may use `os.environ` for fixture setup (setting/restoring
 env vars around tests), but the string keys MUST reference the enum
 members, not bare string literals.
 
-**M7 — RAG namespace isolation.** `vaultspec-core` and `vaultspec-rag` are
+**M7 - RAG namespace isolation.** `vaultspec-core` and `vaultspec-rag` are
 complementary but separate projects. Every env var, config key, CLI arg,
 log name, and user-facing string in the RAG codebase MUST use the
-`VAULTSPEC_RAG_` prefix — never bare `VAULTSPEC_`. The existing
+`VAULTSPEC_RAG_` prefix - never bare `VAULTSPEC_`. The existing
 `VAULTSPEC_ROOT` env var (set in `cli.py:103`, read in
 `mcp_server.py:53`, tested in `test_mcp_server.py`) MUST be renamed to
 `VAULTSPEC_RAG_ROOT`. This prevents collision when both vaultspec-core
 and vaultspec-rag are installed in the same environment.
 
-## Full source audit — files requiring changes
+## Full source audit - files requiring changes
 
 Audit conducted against current codebase. Every file below MUST be
 modified.
 
 **Production code (7 files):**
 
-- `config.py` — `_RAG_DEFAULTS` lines 29-41: `qdrant_dir=".qdrant"`,
+- `config.py` - `_RAG_DEFAULTS` lines 29-41: `qdrant_dir=".qdrant"`,
   `index_metadata_file="index_meta.json"`. No `data_dir`. No
   `code_index_metadata_file`. No env var resolution.
-- `store.py` — line 146: `self.db_path = self.root_dir / cfg.qdrant_dir`.
+- `store.py` - line 146: `self.db_path = self.root_dir / cfg.qdrant_dir`.
   Resolves directly from config, no `data_dir` indirection.
-- `indexer.py` — line 791: vault meta
+- `indexer.py` - line 791: vault meta
   `root_dir / cfg.qdrant_dir / cfg.index_metadata_file`. Line 1060: code
   meta `root_dir / cfg.qdrant_dir / "code_index_meta.json"` (hardcoded
   filename). Line 1097: prune list contains `".qdrant/"`.
-- `cli.py` — line 103: sets `os.environ["VAULTSPEC_ROOT"]` (must rename
+- `cli.py` - line 103: sets `os.environ["VAULTSPEC_ROOT"]` (must rename
   to `VAULTSPEC_RAG_ROOT`). Line 768: same. Line 825:
   `Path.home() / ".vaultspec-rag"` for status dir (has env override but
   no CLI arg). Line 1507: hardcoded `test-project/` path in
   `handle_quality()`. Line 1077: service port default (already has env
   override, needs CLI arg audit).
-- `logging_config.py` — line 75: `VAULTSPEC_RAG_LOG_LEVEL` env override
+- `logging_config.py` - line 75: `VAULTSPEC_RAG_LOG_LEVEL` env override
   (needs CLI arg).
-- `mcp_server.py` — line 53: reads `os.environ.get("VAULTSPEC_ROOT")`
+- `mcp_server.py` - line 53: reads `os.environ.get("VAULTSPEC_ROOT")`
   (must rename to `VAULTSPEC_RAG_ROOT`). Lines 446-728: 7 docstrings
   reference `VAULTSPEC_ROOT` (must update).
-- `api.py` — line 111: `Path(root_dir).resolve()` for engine cache key
-  (takes root_dir param, traces to caller — OK).
+- `api.py` - line 111: `Path(root_dir).resolve()` for engine cache key
+  (takes root_dir param, traces to caller - OK).
 
 **Test code (11 files):**
 
-- `tests/constants.py` — `TEST_PROJECT`, `TEST_VAULT`,
+- `tests/constants.py` - `TEST_PROJECT`, `TEST_VAULT`,
   `GPU_FAST_CORPUS_STEMS`, `QDRANT_SUFFIX_FAST`, `QDRANT_SUFFIX_FULL`,
   `QDRANT_SUFFIX_UNIT`.
-- `tests/conftest.py` — `_build_rag_components` with `.qdrant{suffix}`
+- `tests/conftest.py` - `_build_rag_components` with `.qdrant{suffix}`
   hack, `_fast_index`, `_vault_snapshot_reset` (git checkout
   test-project/).
-- `tests/integration/conftest.py` — `QDRANT_SUFFIX_CODE`, TEST_PROJECT
+- `tests/integration/conftest.py` - `QDRANT_SUFFIX_CODE`, TEST_PROJECT
   usage.
-- `tests/benchmarks/conftest.py` — benchmark suffix hack.
-- `tests/test_indexer_unit.py` — TEST_PROJECT, `.qdrant` references.
-- `tests/integration/test_quality.py` — TEST_PROJECT.
-- `tests/integration/test_search_integration.py` — TEST_PROJECT,
+- `tests/benchmarks/conftest.py` - benchmark suffix hack.
+- `tests/test_indexer_unit.py` - TEST_PROJECT, `.qdrant` references.
+- `tests/integration/test_quality.py` - TEST_PROJECT.
+- `tests/integration/test_search_integration.py` - TEST_PROJECT,
   `.qdrant`.
-- `tests/integration/test_codebase_integration.py` — TEST_PROJECT,
+- `tests/integration/test_codebase_integration.py` - TEST_PROJECT,
   `.qdrant`.
-- `tests/integration/test_indexer_integration.py` — TEST_PROJECT.
-- `tests/integration/test_cli_integration.py` — TEST_PROJECT.
-- `tests/integration/test_performance.py` — `.qdrant`.
-- `tests/test_mcp_server.py` — 8 references to `VAULTSPEC_ROOT` env var
+- `tests/integration/test_indexer_integration.py` - TEST_PROJECT.
+- `tests/integration/test_cli_integration.py` - TEST_PROJECT.
+- `tests/integration/test_performance.py` - `.qdrant`.
+- `tests/test_mcp_server.py` - 8 references to `VAULTSPEC_ROOT` env var
   (must rename to `VAULTSPEC_RAG_ROOT`).
 
 ## Dual-control override registry
@@ -185,7 +186,7 @@ Resolution order: CLI arg > env var > config default.
 
 ## Steps
 
-- Phase 1 — Centralize data paths (#33)
+- Phase 1 - Centralize data paths (#33)
 
   1. Rewrite `config.py`:
      - Add `EnvVar(str, Enum)` defining every recognized env var as a
@@ -227,12 +228,12 @@ Resolution order: CLI arg > env var > config default.
        with `os.environ[EnvVar.RAG_ROOT] = ...` (or route through
        config setter)
      - `cli.py:824`: remove `os.environ.get("VAULTSPEC_RAG_STATUS_DIR")`
-       — `cfg.status_dir` already resolves it via `__getattr__`
+       - `cfg.status_dir` already resolves it via `__getattr__`
      - `cli.py:1309`: `HF_HUB_DOWNLOAD_TIMEOUT` is a third-party env
-       var — wrap in an `EnvVar` member or a named constant
+       var - wrap in an `EnvVar` member or a named constant
      - `mcp_server.py:53`: replace with `cfg` lookup or `EnvVar.RAG_ROOT`
      - `mcp_server.py:81`, `embeddings.py:199`: `HF_HOME` is third-party
-       — add as `EnvVar.HF_HOME` member so the string is defined once
+       - add as `EnvVar.HF_HOME` member so the string is defined once
      - `logging_config.py:75`: replace with `cfg.log_level` or
        `EnvVar.LOG_LEVEL`
      - In test code: replace all bare string env var names with
@@ -247,7 +248,7 @@ Resolution order: CLI arg > env var > config default.
      `.qdrant` hardcoded defaults and no bare `VAULTSPEC_ROOT` in
      production code.
 
-- Phase 2 — Synthetic test corpus (#32)
+- Phase 2 - Synthetic test corpus (#32)
 
   1. Create `src/vaultspec_rag/tests/corpus.py`:
      - `build_synthetic_vault(root, *, n_docs, include_malformed, graph_density, seed)` returns `CorpusManifest`
@@ -268,8 +269,8 @@ Resolution order: CLI arg > env var > config default.
        backed by `build_synthetic_vault()` + `tmp_path_factory`
      - Remove `_vault_snapshot_reset` (no test-project/ to reset)
      - Each fixture gets its own `tmp_path`-based data dir via config
-       override — no suffix hacks
-  1. Rewrite `tests/integration/conftest.py`: same pattern — synthetic
+       override - no suffix hacks
+  1. Rewrite `tests/integration/conftest.py`: same pattern - synthetic
      corpus, `tmp_path` isolation, config overrides. Remove
      `QDRANT_SUFFIX_CODE`.
   1. Rewrite `tests/benchmarks/conftest.py`: same pattern.
@@ -303,19 +304,19 @@ final gate.
 
 **Automated (must all pass):**
 
-- `uv run pytest src/vaultspec_rag/tests/ -x` — all tests pass
-- `uv run ruff check src/` — zero violations
+- `uv run pytest src/vaultspec_rag/tests/ -x` - all tests pass
+- `uv run ruff check src/` - zero violations
 
 **Grep sweeps (must all return zero hits in `src/`):**
 
-- `grep -r '\.qdrant' src/` — zero (old qdrant path gone)
-- `grep -r 'test-project' src/` — zero
-- `grep -r 'TEST_PROJECT' src/` — zero
-- `grep -r 'TEST_VAULT' src/` — zero
-- `grep -r 'QDRANT_SUFFIX' src/` — zero
-- `grep -r 'GPU_FAST_CORPUS_STEMS' src/` — zero
-- `grep -rP 'VAULTSPEC_(?!RAG_)' src/` — zero (no bare VAULTSPEC\_ without RAG\_ prefix)
-- `grep -rP 'os\.environ.*(get|set|pop|\[).*"[A-Z_]+"' src/vaultspec_rag/*.py` — zero in production code (no bare string env var names outside `config.py`)
+- `grep -r '\.qdrant' src/` - zero (old qdrant path gone)
+- `grep -r 'test-project' src/` - zero
+- `grep -r 'TEST_PROJECT' src/` - zero
+- `grep -r 'TEST_VAULT' src/` - zero
+- `grep -r 'QDRANT_SUFFIX' src/` - zero
+- `grep -r 'GPU_FAST_CORPUS_STEMS' src/` - zero
+- `grep -rP 'VAULTSPEC_(?!RAG_)' src/` - zero (no bare VAULTSPEC\_ without RAG\_ prefix)
+- `grep -rP 'os\.environ.*(get|set|pop|\[).*"[A-Z_]+"' src/vaultspec_rag/*.py` - zero in production code (no bare string env var names outside `config.py`)
 
 **Override registry verification:**
 

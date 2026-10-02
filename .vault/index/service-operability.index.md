@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#service-operability'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:ad0347359cc052f209fd0cdfbf1824026a11c045a555532fd48fb447a931723e'
+body_hash: 'sha256:e3d32f1f4c562123ec2975ae71f7c5df11505523933c9e9173e6301ded67e2b3'
 related:
   - '[[2026-06-01-service-operability-adr]]'
+  - '[[2026-06-01-service-operability-ledger]]'
   - '[[2026-06-01-service-operability-plan]]'
   - '[[2026-06-01-service-operability-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#service-operability`.
 ### adr
 
 - `2026-06-01-service-operability-adr` - `service-operability` adr: auto-reindex + watcher control — CLI/MCP parity contract | (**status:** `accepted`)
+
+### exec
+
+- `2026-06-01-service-operability-ledger` - `service-operability` ledger
 
 ### plan
 

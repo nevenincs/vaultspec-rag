@@ -97,7 +97,7 @@ def _canonical_root(value: object) -> str:
 def _concrete_source(value: object) -> IndexSource:
     if not isinstance(value, str) or value not in INDEX_SOURCES:
         raise ValueError("source must be a concrete index source")
-    return cast("IndexSource", value)
+    return value
 
 
 def _identity(value: object, *, field: str) -> None:

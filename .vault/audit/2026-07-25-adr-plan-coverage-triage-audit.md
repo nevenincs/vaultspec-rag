@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#adr-plan-coverage-triage'
 date: '2026-07-25'
-modified: '2026-07-27'
-body_hash: 'sha256:9b392a4693b83076b0d9b26c5f34f4de1d511072b862d97535c71cd6c528a126'
+modified: '2026-09-30'
+body_hash: 'sha256:febf70add38c35826a2b54de1732028d68c52b08f78f9ec2cf72a0fbcf6f4b72'
 related:
   - "[[2026-07-25-index-drift-circuit-accounting-adr]]"
   - "[[2026-07-25-document-index-drift-parity-adr]]"
@@ -92,8 +92,7 @@ because it governs a future contributor's decision to copy the mechanism across.
 
 `[[2026-07-23-ci-self-hosted-gpu-runner-adr]]` decides a tier split with the GPU
 tier on a self-hosted runner behind a trusted-event gate. The `gpu-tests` job
-exists at `.github/workflows/ci.yml:145-222`: `runs-on: [self-hosted, windows, gpu, cuda]`, a CUDA visibility check, Qdrant binary provisioning, `HF_TOKEN` from
-a repo secret, and the tier driven through the shared `just dev test gpu` recipe
+exists at `.github/workflows/ci.yml:145-222`: `runs-on: [self-hosted, windows, gpu, cuda]`, a CUDA visibility check, Qdrant binary provisioning, and the tier driven through the shared `just dev test gpu` recipe
 (`justfile:289-324`), with `.github/actionlint.yaml` enumerating the custom
 labels.
 

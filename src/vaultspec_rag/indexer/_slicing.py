@@ -71,8 +71,8 @@ def _sparse_lifetime_bytes(
 ) -> int:
     """Return the sparse bytes reserved for one point.
 
-    SPLADE applies ReLU and pooling across its vocabulary without a production
-    top-k. Any output dimension can therefore survive as a nonzero entry, so an
+    SPARSEUP pools learned vocabulary weights without a final-vector top-k. Any
+    output dimension can therefore survive as a nonzero entry, so an
     unpopulated chunk still reserves the loaded model's full output dimension
     and a populated one uses whichever count is larger. Runtime memory probes
     remain the authority for allocator overhead.

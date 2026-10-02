@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#install-cuda'
 date: 2026-04-22
-modified: '2026-07-27'
-body_hash: 'sha256:083dd9a4c04c638f60d75e90429e2a8ec6b717350b13aeb88af9bf4956c3a608'
+modified: '2026-09-30'
+body_hash: 'sha256:6c0d644e79a6d20d125b8ad8255fb0b55e54a09f05ac5e81f3e1b73cc53da529'
 related:
   - '[[2026-04-22-install-cuda-plan]]'
   - '[[2026-04-22-install-cuda-adr]]'
@@ -58,7 +58,7 @@ uv run ruff format --check <changed>     # clean
 uv run ty check src/vaultspec_rag/torch_config.py src/vaultspec_rag/commands.py  # All checks passed!
 ```
 
-Integration tests under `src/vaultspec_rag/tests/integration/` require `HF_TOKEN` (gated SPLADE model). They were not executed in this session; the torch-config path does not require GPU or network, and its coverage is provided by the 37 new non-GPU tests.
+Integration tests under `src/vaultspec_rag/tests/integration/` depended on the previous sparse model being accessible. They were not executed in this session; the torch-config path does not require GPU or network, and its coverage is provided by the 37 new non-GPU tests.
 
 ## follow-ups
 

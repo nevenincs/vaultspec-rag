@@ -289,19 +289,19 @@ class VaultIncrementalMixin:
         ``full_membership``, which additionally prunes gate evidence for
         documents that no longer exist.
         """
-        gate = self._stat_gate_cache.acquire()
-        outcome = _stat_gate.hash_paths(
-            gate,
-            list(current_docs.items()),
-            reporter=reporter,
-            run_control=run_control,
-        )
-        for doc_id, _error in outcome.failures:
-            logger.warning("Cannot hash file, skipping: %s", doc_id)
-        if full_membership:
-            gate.prune(current_docs.keys())
-        gate.persist()
-        return outcome.hashes
+        with self._stat_gate_cache.acquire() as gate:
+            outcome = _stat_gate.hash_paths(
+                gate,
+                list(current_docs.items()),
+                reporter=reporter,
+                run_control=run_control,
+            )
+            for doc_id, _error in outcome.failures:
+                logger.warning("Cannot hash file, skipping: %s", doc_id)
+            if full_membership:
+                gate.prune(current_docs.keys())
+            gate.persist()
+            return outcome.hashes
 
     def _parse_documents(
         self,

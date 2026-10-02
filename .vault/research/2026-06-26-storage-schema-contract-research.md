@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#storage-schema-contract'
 date: '2026-06-26'
-modified: '2026-07-27'
-body_hash: 'sha256:40b0e5c308fff38a52c7a72b0aa67ce58c017940edb04cdd5a0030243a66096f'
+modified: '2026-09-30'
+body_hash: 'sha256:34980e15c46f343b413418903debf750d553a47b6a58930bf08a2754ee02b1db'
 related: []
 ---
 
@@ -35,7 +35,7 @@ The Qdrant data shape is fully determined by code in `store.py` and the model id
 - **Vectors**: one dense named vector `dense` (`size = EMBEDDING_DIM = 1024`, distance
   `COSINE`) plus one sparse named vector `sparse` (`SparseVectorParams`). The `1024`
   is the Qwen3-Embedding-0.6B default; the dense model is `Qwen/Qwen3-Embedding-0.6B`
-  and sparse is `naver/splade-v3` (`embeddings.py` `MODEL_NAME` / `SPARSE_MODEL_NAME` /
+  and sparse is `previous BERT sparse encoder` (`embeddings.py` `MODEL_NAME` / `SPARSE_MODEL_NAME` /
   `DEFAULT_DIMENSION`).
 - **Vault payload** (per chunk): `chunk_ordinal`, `chunk_count`, `path`, `doc_type`,
   `feature`, `date`, `tags`, `related`, `title`, `status`, `content`, and optionally

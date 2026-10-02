@@ -7,9 +7,12 @@ import http.server
 import json
 import threading
 import time
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from typer.testing import CliRunner
 
 from ...cli import app
@@ -48,7 +51,9 @@ def _jobs_http_server(
         thread.join(timeout=5)
 
 
-def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
+def test_jobs_running_output_flags_jobs_without_recent_progress(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -66,7 +71,7 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": "C:\\projects\\fresh-project",
+                    "project_root": str(tmp_path / "fresh-project"),
                 },
             },
             {
@@ -87,7 +92,7 @@ def test_jobs_running_output_flags_jobs_without_recent_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_vault_index",
-                    "project_root": "C:\\projects\\quiet-project",
+                    "project_root": str(tmp_path / "quiet-project"),
                 },
             },
         ],

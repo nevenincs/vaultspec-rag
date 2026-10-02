@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#rag-index-performance'
 date: '2026-06-02'
-modified: '2026-07-27'
-body_hash: 'sha256:b5862b71fc1fcd4df6d250d63682ba8f6c68bd2457916784584e66abc8e97945'
+modified: '2026-09-30'
+body_hash: 'sha256:4894bb57d11984195aa35791985677330bf7f79a542d9276917bb401f1428f4d'
 related: []
 ---
 
@@ -76,7 +76,7 @@ Profiled directly on the real codebase (17,895 files -> 112,574 chunks) with the
 chunking parallel vs encoding swept across batch sizes:
 
 - Chunking (parallel): **9.0s** for all 112,574 chunks.
-- Encode throughput (dense Qwen3 + sparse SPLADE), extrapolated to the full corpus:
+- Encode throughput (dense Qwen3 + sparse previous BERT sparse encoder), extrapolated to the full corpus:
   - `bs=8`: 61 chunks/s -> ~1832s (~30 min)
   - `bs=32`: **112 chunks/s -> ~1002s (~17 min)** (current code-path default)
   - `bs=64`: 5 chunks/s -> ~24,600s (catastrophic)
@@ -85,9 +85,9 @@ chunking parallel vs encoding swept across batch sizes:
 Two decisive conclusions: **the embed stage dominates total wall-clock by two orders of
 magnitude over chunking** (17 min vs 9s), so the dedicated GPU consumer thread that keeps the
 GPU saturated while chunking is hidden behind it is the architecturally correct win; and
-**`bs=32` is the measured optimum** on this hardware (Qwen3 + SPLADE on a 16 GB RTX 4080) —
+**`bs=32` is the measured optimum** on this hardware (Qwen3 + previous BERT sparse encoder on a 16 GB RTX 4080) —
 `bs=8` (the prior vault default) is half the speed, and `bs>=64` collapses ~200x because
-SPLADE exhausts VRAM and the OOM-backoff thrashes. The P03 change from 8 to 32 is therefore
+previous BERT sparse encoder exhausts VRAM and the OOM-backoff thrashes. The P03 change from 8 to 32 is therefore
 the single largest measured win in this work (~1.8x on the dominant stage), and raising it
 further is a measured disaster.
 
@@ -106,7 +106,7 @@ regressive on this hardware:
   length-sorts each call's input and processes length-uniform sub-batches, so at
   `slice_size=64` the cross-slice bucketing gain is marginal. Low ROI here. Deferred.
 - **Raise the code encode batch beyond 32 (toward 64/128).** Profiled and closed: `bs=32`
-  is the measured optimum; `bs>=64` regresses ~200x (SPLADE VRAM exhaustion + OOM-backoff
+  is the measured optimum; `bs>=64` regresses ~200x (previous BERT sparse encoder VRAM exhaustion + OOM-backoff
   thrashing on the 16 GB GPU). The current default is correct; raising it is a hard
   regression. Rejected on measurement.
 - **Tokenise-in-workers.** Deprioritised by the profile: the encode cost is dominated by the
@@ -117,7 +117,7 @@ regressive on this hardware:
   it here.
 - **ONNX-O4 encoder backend (~1.83x on short text).** The one remaining real embed-stage
   lever, and the embed stage is the bottleneck. Officially supported by sentence-transformers
-  but requires exporting Qwen3 + SPLADE and version-pinning the runtime; a separate,
+  but requires exporting Qwen3 + previous BERT sparse encoder and version-pinning the runtime; a separate,
   substantial feature with export risk, out of scope for this change. Documented as the next
   investment if the ~17 min embed time must drop further.
 - **torch.compile / CUDA graphs / multi-stream / multiple consumer threads.** Rejected with

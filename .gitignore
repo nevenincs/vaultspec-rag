@@ -187,3 +187,7 @@ actions-runner-*.tar.gz
 
 # stray provider-mirror lock artifacts
 .agents/*.lock
+
+# Private VaultSpec environment (never commit)
+/.vaultspec/.env
+/.vaultspec/.env.*

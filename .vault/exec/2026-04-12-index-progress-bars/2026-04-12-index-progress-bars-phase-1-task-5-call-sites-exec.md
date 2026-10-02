@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:0fd544ced23690322f19a0077524f93d1afe7ddf7bf3bfa6098b0a38195365a7'
+modified: '2026-09-30'
+body_hash: 'sha256:b805a36fa3c4dcfe49aad40235e2b917a54ef01a517fc9188133a19d5e2dcb7e'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---
@@ -47,8 +47,7 @@ are exercised from `mcp_server.py` and tests, both already updated.
 ## Tests
 
 Full unit suite (329 tests, excluding pre-existing GPU-gated
-`test_service_registry.py` / `test_store_codebase.py` fixtures that
-require `HF_TOKEN`) green. Ruff check and format pass for the entire
+`test_service_registry.py` / `test_store_codebase.py` fixtures) green. Ruff check and format pass for the entire
 package.
 
 ## Notes

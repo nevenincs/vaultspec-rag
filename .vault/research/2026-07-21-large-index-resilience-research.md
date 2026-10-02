@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#large-index-resilience'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:b627e54e9250b2d02b293d908ef66c09b24d03edb45cf0b4d50ba1a42f9b80f8'
+modified: '2026-10-01'
+body_hash: 'sha256:0613026622f565b317c985421142f350ac58a54ac940a2a6685329bcb3f4bdeb'
 related:
   - "[[2026-07-21-large-index-resilience-reference]]"
   - "[[2026-06-02-index-gpu-pipeline-adr]]"
@@ -23,7 +23,7 @@ from about 3.6 GB to 30 GB on a 16 GB GPU. It exposed no cancellation route and 
 complete a corpus below the project's accepted large-repository target.
 
 Primary incident evidence is
-`C:/Users/user/AppData/Local/Temp/claude/copy.markdown:42-131`, with B7 through B10 at
+`<temporary-evidence-directory>/copy.markdown:42-131`, with B7 through B10 at
 lines 94, 99, 105, and 109.
 
 ## Findings

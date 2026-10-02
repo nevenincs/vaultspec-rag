@@ -57,12 +57,13 @@ class _MeasurementEvidence:
 def _controller(
     clock: _Clock,
     *,
+    tmp_path: Path,
     scope: ControllerScope | None = None,
     limits: ControllerLimits | None = None,
 ) -> WatcherController:
     return WatcherController(
         ControllerSnapshot(
-            canonical_root="C:/work/project",
+            canonical_root=str(tmp_path / "project"),
             source=WatcherSource.CODE,
             state=ControllerState.IDLE,
             reason=ControllerReason.CONVERGED,
@@ -205,7 +206,9 @@ def test_scope_keeps_later_pending_event_for_a_captured_path() -> None:
     assert scope.pending == scope.captured
 
 
-def test_snapshot_composes_scope_measurement_transition_and_deadlines() -> None:
+def test_snapshot_composes_scope_measurement_transition_and_deadlines(
+    tmp_path: Path,
+) -> None:
     measurement = ControllerMeasurement(
         generation=9,
         observed_at=20.0,
@@ -225,7 +228,7 @@ def test_snapshot_composes_scope_measurement_transition_and_deadlines() -> None:
         measurement_generation=measurement.generation,
     )
     snapshot = ControllerSnapshot(
-        canonical_root="C:/work/project",
+        canonical_root=str(tmp_path / "project"),
         source=WatcherSource.CODE,
         state=ControllerState.BACKPRESSURED,
         reason=ControllerReason.GPU_PRESSURE,
@@ -243,10 +246,12 @@ def test_snapshot_composes_scope_measurement_transition_and_deadlines() -> None:
     assert snapshot.scope.pending[0].relative_path == "src/example.py"
 
 
-def test_snapshot_rejects_non_backpressure_reason_in_backpressure_evidence() -> None:
+def test_snapshot_rejects_non_backpressure_reason_in_backpressure_evidence(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError, match="backpressure reasons"):
         ControllerSnapshot(
-            canonical_root="C:/work/project",
+            canonical_root=str(tmp_path / "project"),
             source=WatcherSource.VAULT,
             state=ControllerState.COLLECTING,
             reason=ControllerReason.CHANGE_OBSERVED,
@@ -261,7 +266,9 @@ def test_measurement_rejects_negative_counts() -> None:
         ControllerMeasurement(generation=1, observed_at=2.0, job_backlog=-1)
 
 
-def test_observation_uses_adaptive_coalescing_bounded_by_freshness() -> None:
+def test_observation_uses_adaptive_coalescing_bounded_by_freshness(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
     controller = _controller(
         clock,
@@ -270,6 +277,7 @@ def test_observation_uses_adaptive_coalescing_bounded_by_freshness() -> None:
             coalesce_max_seconds=10.0,
             maximum_freshness_seconds=15.0,
         ),
+        tmp_path=tmp_path,
     )
     scope = ControllerScope(generation=3, pending=(_observation(),))
 
@@ -285,9 +293,13 @@ def test_observation_uses_adaptive_coalescing_bounded_by_freshness() -> None:
     assert collecting.reason is ControllerReason.COALESCE_WINDOW_ACTIVE
 
 
-def test_batch_limit_and_quiet_deadline_make_work_ready() -> None:
+def test_batch_limit_and_quiet_deadline_make_work_ready(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
 
     assert (
@@ -296,7 +308,7 @@ def test_batch_limit_and_quiet_deadline_make_work_ready() -> None:
     )
 
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     observed = controller.observe(
         ControllerScope(generation=3, pending=(_observation(),))
     )
@@ -316,13 +328,14 @@ def test_batch_limit_and_quiet_deadline_make_work_ready() -> None:
     ],
 )
 def test_ordinary_pressure_defers_only_to_freshness(
+    tmp_path: Path,
     job_backlog: int | None,
     search_in_flight: int | None,
     gpu_pressure: bool | None,
     reason: ControllerReason,
 ) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     observed = controller.observe(
         ControllerScope(generation=3, pending=(_observation(),))
     )
@@ -355,12 +368,13 @@ def test_ordinary_pressure_defers_only_to_freshness(
     ],
 )
 def test_safety_pressure_may_exceed_freshness(
+    tmp_path: Path,
     service_quiesced: bool | None,
     storage_available: bool | None,
     reason: ControllerReason,
 ) -> None:
     clock = _Clock(400.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
 
     snapshot = controller.evaluate(
@@ -378,9 +392,11 @@ def test_safety_pressure_may_exceed_freshness(
     assert snapshot.freshness_deadline == 310.0
 
 
-def test_retry_delay_circuit_and_retry_admission_are_deterministic() -> None:
+def test_retry_delay_circuit_and_retry_admission_are_deterministic(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
 
     delayed = controller.evaluate(_measurement(clock), retry_at=20.0)
@@ -396,14 +412,16 @@ def test_retry_delay_circuit_and_retry_admission_are_deterministic() -> None:
     assert admitted.reason is ControllerReason.RETRY_ADMITTED
 
 
-def test_open_circuit_becomes_ready_once_its_retry_time_passes() -> None:
+def test_open_circuit_becomes_ready_once_its_retry_time_passes(
+    tmp_path: Path,
+) -> None:
     # The reevaluation reports the persisted circuit, which stays open until an
     # admission moves it to half-open. Holding an elapsed open circuit in
     # retrying therefore never probed, and its decision deadline stayed due,
     # so the scheduler spun on it. Mutation: gating the open-circuit branch on
     # the circuit alone fails the READY assertion below.
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
 
     held = controller.evaluate(
@@ -424,9 +442,11 @@ def test_open_circuit_becomes_ready_once_its_retry_time_passes() -> None:
     assert probed.reason is ControllerReason.RETRY_ADMITTED
 
 
-def test_open_circuit_without_a_retry_time_stays_held() -> None:
+def test_open_circuit_without_a_retry_time_stays_held(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
 
     held = controller.evaluate(
@@ -439,13 +459,17 @@ def test_open_circuit_without_a_retry_time_stays_held() -> None:
     assert held.next_decision_at is None
 
 
-def test_admission_binds_a_controller_a_change_returned_to_collection() -> None:
+def test_admission_binds_a_controller_a_change_returned_to_collection(
+    tmp_path: Path,
+) -> None:
     # The intake task observes changes while the manager persists the job, and
     # observation moves the controller back to collecting. Refusing to bind it
     # stranded the created job with nothing to dispatch it. Mutation: limiting
     # admission to ready raises here instead of binding.
     clock = _Clock(12.0)
-    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
     controller.evaluate(_measurement(clock))
     controller.advance(ControllerReason.FAIR_TURN_SELECTED)
@@ -463,9 +487,11 @@ def test_admission_binds_a_controller_a_change_returned_to_collection() -> None:
     assert admitted.job_id == "job-1"
 
 
-def test_admission_still_rejects_a_refused_controller() -> None:
+def test_admission_still_rejects_a_refused_controller(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
     controller.refuse(
         ControllerReason.FULL_REINDEX_REQUIRED,
@@ -476,9 +502,13 @@ def test_admission_still_rejects_a_refused_controller() -> None:
         controller.admit("job-1")
 
 
-def test_fair_selection_admission_start_and_successful_convergence() -> None:
+def test_fair_selection_admission_start_and_successful_convergence(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
     controller.observe(ControllerScope(generation=3, pending=(_observation(),)))
     controller.evaluate(_measurement(clock))
 
@@ -501,9 +531,13 @@ def test_fair_selection_admission_start_and_successful_convergence() -> None:
     assert completed.job_id is None
 
 
-def test_success_with_later_work_cools_and_freshness_caps_delay() -> None:
+def test_success_with_later_work_cools_and_freshness_caps_delay(
+    tmp_path: Path,
+) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
     scope = ControllerScope(generation=3, pending=(_observation(),))
     controller.observe(scope)
     controller.evaluate(_measurement(clock))
@@ -522,9 +556,11 @@ def test_success_with_later_work_cools_and_freshness_caps_delay() -> None:
 
 
 @pytest.mark.parametrize("superseded", [False, True])
-def test_release_restores_exact_scope(superseded: bool) -> None:
+def test_release_restores_exact_scope(tmp_path: Path, superseded: bool) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock, limits=ControllerLimits(batch_path_limit=1))
+    controller = _controller(
+        clock, limits=ControllerLimits(batch_path_limit=1), tmp_path=tmp_path
+    )
     scope = ControllerScope(generation=3, pending=(_observation(),))
     controller.observe(scope)
     controller.evaluate(_measurement(clock))
@@ -545,10 +581,11 @@ def test_release_restores_exact_scope(superseded: bool) -> None:
 
 @pytest.mark.parametrize("reason", list(ControllerReason)[-5:-1])
 def test_typed_refusal_stops_admission_with_remediation(
+    tmp_path: Path,
     reason: ControllerReason,
 ) -> None:
     clock = _Clock(12.0)
-    controller = _controller(clock)
+    controller = _controller(clock, tmp_path=tmp_path)
 
     refused = controller.refuse(reason, remediation="run an explicit full index")
 
@@ -557,7 +594,9 @@ def test_typed_refusal_stops_admission_with_remediation(
     assert refused.remediation == "run an explicit full index"
 
 
-def test_generated_pressure_sequences_never_defer_past_freshness() -> None:
+def test_generated_pressure_sequences_never_defer_past_freshness(
+    tmp_path: Path,
+) -> None:
     for seed in range(64):
         generator = random.Random(seed)
         clock = _Clock(12.0)
@@ -567,7 +606,7 @@ def test_generated_pressure_sequences_never_defer_past_freshness() -> None:
             maximum_freshness_seconds=60.0,
             measurement_reevaluation_seconds=5.0,
         )
-        controller = _controller(clock, limits=limits)
+        controller = _controller(clock, limits=limits, tmp_path=tmp_path)
         observed = controller.observe(
             ControllerScope(generation=3, pending=(_observation(),))
         )
@@ -597,7 +636,9 @@ def test_generated_pressure_sequences_never_defer_past_freshness() -> None:
         assert due.reason is ControllerReason.MAXIMUM_FRESHNESS_DUE
 
 
-def test_every_eligible_controller_can_claim_selection_independently() -> None:
+def test_every_eligible_controller_can_claim_selection_independently(
+    tmp_path: Path,
+) -> None:
     controllers: list[WatcherController] = []
     for index, source in enumerate(WatcherSource):
         clock = _Clock(20.0)
@@ -611,7 +652,7 @@ def test_every_eligible_controller_can_claim_selection_independently() -> None:
         )
         controller = WatcherController(
             ControllerSnapshot(
-                canonical_root=f"C:/work/project-{index}",
+                canonical_root=str(tmp_path / f"project-{index}"),
                 source=source,
                 state=ControllerState.IDLE,
                 reason=ControllerReason.CONVERGED,

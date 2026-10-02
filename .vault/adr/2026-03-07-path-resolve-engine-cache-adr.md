@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:f23fe9dc275b9f4552083d60fcec82eef300e5a36eab66985914cd95ce371058'
+modified: '2026-10-01'
+body_hash: 'sha256:3aba6d9357e0cff5e3c736ff2a3daf415bc99155e3c505e7a17b00f9e0036fe3'
 related:
   - '[[2026-03-07-continuous-research]]'
 ---
@@ -58,7 +58,7 @@ if key not in self._engines:
    should share one engine (same data, same index).
 
 1. **Windows compatibility**: `resolve()` normalizes drive letter case and
-   UNC paths. `Path("c:/foo").resolve() == Path("C:/foo").resolve()`.
+   UNC paths. The symbolic forms `<drive-lowercase>:/<root>` and `<drive-uppercase>:/<root>` represent the same drive and root with only the drive-letter case changed.
 
 1. **Negligible cost**: `resolve()` does ~5-15us of stat() syscalls. Engine
    creation loads GPU models (seconds). The normalization cost is invisible.

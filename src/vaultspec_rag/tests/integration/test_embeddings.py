@@ -86,6 +86,36 @@ class TestEmbeddingModel:
         assert hasattr(sparse_vecs[0], "values")
 
     @pytest.mark.cuda
+    @pytest.mark.parametrize("kind", ["query", "document"])
+    def test_pinned_sparse_upstream_parity(
+        self, embedding_model: EmbeddingModel, kind: str
+    ) -> None:
+        """The adapter preserves prefix masks, truncation, folding and row order."""
+        import torch
+
+        adapter = embedding_model._require_sparse_model()
+        texts = [
+            "Vector database architecture",
+            "",
+            "Mixed CASE, punctuation! café and retrieval. " * 180,
+            "short unrelated cake recipe",
+        ]
+        prepared = adapter.prepare(texts, kind=kind)
+        assert all(tensor.device.type == "cpu" for tensor in prepared)
+        ids, attention, pooling = prepared
+        assert ids.shape[1] <= (128 if kind == "query" else 512)
+        assert (attention != pooling).any()
+        actual = adapter.forward(prepared).float().cpu()
+        expected = adapter._model.encode(texts, kind=kind, batch_size=len(texts))
+        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+        single = torch.cat(
+            [adapter._model.encode([text], kind=kind, batch_size=1) for text in texts]
+        )
+        torch.testing.assert_close(actual, single, rtol=1e-4, atol=1e-4)
+        assert actual.shape == (len(texts), 50370)
+        assert (actual[0] > 0).any()
+
+    @pytest.mark.cuda
     @pytest.mark.timeout(180)
     def test_sparse_document_slices_release_cuda_outputs(
         self,

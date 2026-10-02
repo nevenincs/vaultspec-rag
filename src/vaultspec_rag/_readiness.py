@@ -11,11 +11,10 @@ It reports, per dependency, whether it is provisioned and usable:
 - **torch**: is a supported accelerator compute path available? Read from the already
   imported torch's observable attributes, never by loading a model onto
   the GPU.
-- **models**: are the configured dense, sparse, and reranker repos
-  present in the Hugging Face cache? Probed with
-  ``try_to_load_from_cache`` - the same idempotency probe the warmup
-  verb and the model provisioning step use - so no download and no GPU
-  load happens.
+- **models**: are complete snapshots of the configured dense, sparse, and
+  reranker repos cached at their required revisions? Uses the shared offline
+  snapshot probe from warmup and provisioning, without downloading or loading
+  models onto the GPU.
 - **qdrant**: where does the qdrant binary resolve from (managed /
   operator-supplied / on PATH / absent), and - when server mode is the
   effective backend - is the supervised child live?
@@ -365,15 +364,15 @@ def _torch_readiness(compute: ComputeReport) -> DependencyReadiness:
 def _models_readiness() -> DependencyReadiness:
     """Report model presence by probing the Hugging Face cache.
 
-    Checks the configured dense, sparse, and reranker repos with
-    ``try_to_load_from_cache`` - the same probe the warmup verb and the
-    model provisioning step use - so this neither downloads nor loads a
-    model onto the GPU.
+    Checks complete snapshots offline at the configured model revisions. This
+    neither downloads files nor imports torch or loads a model onto the GPU.
     """
+    from ._model_cache import cached_snapshot_is_complete
+    from .config._settings import configured_model_repos
+
+    repos = [repo for _label, repo in configured_model_repos()]
     try:
-        from huggingface_hub import (
-            try_to_load_from_cache,
-        )
+        cached = {repo: cached_snapshot_is_complete(repo) for repo in repos}
     except ImportError:
         return DependencyReadiness(
             name="models",
@@ -382,13 +381,6 @@ def _models_readiness() -> DependencyReadiness:
             info={"repos": {}},
         )
 
-    from .config._settings import configured_model_repos
-
-    repos = [repo for _label, repo in configured_model_repos()]
-
-    cached: dict[str, bool] = {
-        repo: try_to_load_from_cache(repo, "config.json") is not None for repo in repos
-    }
     missing = [repo for repo, present in cached.items() if not present]
 
     info: dict[str, object] = {"repos": cached}

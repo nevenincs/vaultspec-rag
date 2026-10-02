@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:c3cbefd56815750a21acb31b60fd6fe83ca11a5f926b482bac50a907bfb37a9c'
+modified: '2026-09-30'
+body_hash: 'sha256:401c945041c401a79cf86fb07dbf418f9d59c969edab3f00315dd7282ed971de'
 ---
 
 # api.py and ADR Regression Tests Audit
@@ -149,7 +149,7 @@ Only 4 of the 10 expected ADR regression test classes exist:
 - **ISSUE:** CLAUDE.md says the reranker model is `cross-encoder/ms-marco-MiniLM-L6-v2`, but `config.py` line 29 and this test both say `BAAI/bge-reranker-v2-m3`. **Either CLAUDE.md is outdated or the config/test are wrong.** The test matches the actual implementation (config.py), but contradicts CLAUDE.md.
 - **Would fail if reversed?** YES -- different model name would fail the assertion.
 - **Uses real code?** YES -- calls real `get_config()`.
-- **Missing assertions:** Does not verify dense model name (`Qwen/Qwen3-Embedding-0.6B`), sparse model name (`naver/splade-v3`), or `torch_dtype=float16`.
+- **Missing assertions:** Does not verify dense model name (`Qwen/Qwen3-Embedding-0.6B`), sparse model name (`previous BERT sparse encoder`), or `torch_dtype=float16`.
 - **Verdict: PARTIAL PASS -- test is correct for config but CLAUDE.md mismatch needs resolution**
 
 ### Missing tests (6 of 10)

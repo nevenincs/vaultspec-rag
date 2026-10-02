@@ -3,12 +3,13 @@ tags:
   - '#plan'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-25'
-body_hash: 'sha256:0d315c69c630f7dd2faabad7d308e1b5fb4e7d7b8c5155d847df3d1ea5133545'
+tier: L2
 related:
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
   - '[[2026-04-12-vaultspec-rag-install-research]]'
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
+modified: '2026-10-01'
+body_hash: 'sha256:486a17052d8c8b7a1fbd3599ac75a9499ac8d94637806a161eb1c9bc8b15de5f'
 ---
 
 # `install-command` `feature` plan
@@ -69,7 +70,7 @@ bundling mechanism (hatch `force-include`), the CLI flag-name
 alignment with core (verbatim), and the test mandate (no mocks,
 real filesystem, real core).
 
-The plan introduces no `install.py` module — orchestration lives
+The plan introduces no `install.py` module - orchestration lives
 in a new `src/vaultspec_rag/commands.py` mirroring core's role for
 `core/commands.py`. CLI wiring stays in the existing `src/vaultspec_rag/cli.py`
 and consists of two thin Typer wrappers that delegate immediately.
@@ -79,12 +80,12 @@ explicitly out of scope here.
 
 ## Steps
 
-The plan is split into six phases. Phases 2–6 cannot start until
+The plan is split into six phases. Phases 2 - 6 cannot start until
 Phase 1 lands and rag's dependency pin is bumped to the new core
 release. Within each phase, steps are intended to be sequential
 unless flagged otherwise in the Parallelization section.
 
-- `Phase 1` — vaultspec-core sister PR: reconciling sync
+- `Phase 1` - vaultspec-core sister PR: reconciling sync
 
   1. Create a new core worktree branch off `main`. Read the existing
      core sync surfaces in `core/mcps.py`, `core/rules.py`,
@@ -114,13 +115,13 @@ unless flagged otherwise in the Parallelization section.
      suite. Fix all failures at the root cause (no skips, no
      bypasses).
   1. Commit and push the core branch. Open a PR titled
-     `feat: reconciling sync — prune orphans on companion uninstall`.
+     `feat: reconciling sync  -  prune orphans on companion uninstall`.
      Reference the rag-side issues #54/#55 and this plan.
   1. Wait for the core PR to merge. Once merged, ensure
      `vaultspec-core==0.1.10` is published or installable from
      the relevant source so the rag PR can pin it.
 
-- `Phase 2` — rag bundling foundation
+- `Phase 2` - rag bundling foundation
 
   1. Bump `vaultspec-core>=0.1.10` in rag's `pyproject.toml`
      `[project] dependencies` block.
@@ -135,7 +136,7 @@ unless flagged otherwise in the Parallelization section.
      Confirm the lockfile updates cleanly with no other unexpected
      drift.
 
-- `Phase 3` — `vaultspec_rag.builtins` module
+- `Phase 3` - `vaultspec_rag.builtins` module
 
   1. Create `src/vaultspec_rag/builtins/__init__.py` exposing
      `seed_builtins(target_rules_dir, *, force=False) -> list[str]`
@@ -143,7 +144,7 @@ unless flagged otherwise in the Parallelization section.
      `vaultspec_core/builtins/__init__.py` exactly.
   1. Use `importlib.resources.files("vaultspec_rag.builtins")` for
      resource enumeration; use `vaultspec_core.core.helpers.atomic_write`
-     for the actual file writes — no hand-rolled helper.
+     for the actual file writes - no hand-rolled helper.
   1. Add unit tests at `src/vaultspec_rag/tests/test_builtins_unit.py`
      covering: enumeration returns the expected two relative paths;
      seeding into an empty target writes both files; seeding when
@@ -152,7 +153,7 @@ unless flagged otherwise in the Parallelization section.
      scenario (simulate via interruption-safe assertion of either
      fully-written or absent).
 
-- `Phase 4` — `vaultspec_rag.commands` module
+- `Phase 4` - `vaultspec_rag.commands` module
 
   1. Create `src/vaultspec_rag/commands.py`. Public surface:
      `install_run(path, *, upgrade=False, dry_run=False, force=False, skip=None) -> dict`
@@ -175,11 +176,11 @@ unless flagged otherwise in the Parallelization section.
      if `remove_data`, `rmtree` `.vault/data/`; return result dict
      shaped like core's `uninstall_run` return value.
   1. Both functions raise core's `VaultSpecError` subclasses on
-     failure — no new exception types.
+     failure - no new exception types.
   1. Add module-level docstring noting the layer role (orchestration,
      not CLI; importable independently of Typer).
 
-- `Phase 5` — CLI wiring in `cli.py`
+- `Phase 5` - CLI wiring in `cli.py`
 
   1. Modify `src/vaultspec_rag/cli.py` to add two new Typer commands
      registered against the existing root `app`: `cmd_install` and
@@ -206,7 +207,7 @@ unless flagged otherwise in the Parallelization section.
      the expected flag list; `--dry-run` does not invoke writes;
      `uninstall` without `--force` exits zero with a preview.
 
-- `Phase 6` — End-to-end integration tests
+- `Phase 6` - End-to-end integration tests
 
   1. Create `src/vaultspec_rag/tests/integration/test_install.py`
      using real filesystem via `tmp_path` and the real `vaultspec_core`
@@ -243,7 +244,7 @@ unless flagged otherwise in the Parallelization section.
        workspace to a state byte-equivalent (modulo `.vault/data/`)
        to its pre-install state.
 
-- `Phase 7` — Verification, commit, PR
+- `Phase 7` - Verification, commit, PR
 
   1. Run pre-commit hooks on all modified files. Fix all failures at
      the root cause.
@@ -258,7 +259,7 @@ unless flagged otherwise in the Parallelization section.
      (companion-package enrollment, symmetric mirror of core,
      direct delegation) not the what.
   1. Push the branch.
-  1. Open the PR: title `feat: vaultspec-rag install/uninstall — companion enrollment via core sync`. Body closes #54 and #55,
+  1. Open the PR: title `feat: vaultspec-rag install/uninstall  -  companion enrollment via core sync`. Body closes #54 and #55,
      references the core sister PR, sets milestone
      "Alpha: Core Compatibility".
   1. Mark phase tasks complete in this plan file as the work
@@ -266,15 +267,15 @@ unless flagged otherwise in the Parallelization section.
 
 ## Parallelization
 
-Phase 1 is strictly serial — the core PR must land and be installable
+Phase 1 is strictly serial - the core PR must land and be installable
 before any rag-side work that touches the new pin.
 
-Within Phase 1, steps 1–3 (investigation) can be parallelized across
+Within Phase 1, steps 1 - 3 (investigation) can be parallelized across
 sub-agents by file/module: one agent reads `mcps.py`, one reads the
 shared `sync.py`, one reads the rules/agents/skills sync surfaces.
-Steps 4–6 (implementation) are sequential.
+Steps 4 - 6 (implementation) are sequential.
 
-Within the rag side (Phases 2–6):
+Within the rag side (Phases 2 - 6):
 
 - Phases 2 (bundling) and 3 (builtins module) can run in parallel
   because they touch independent files. Phase 4 (commands.py) depends
@@ -299,15 +300,15 @@ symmetric round-trip test (install → uninstall → state matches
 pre-install) is the strongest single signal that both flows are
 correct and that core's reconciling sync (Phase 1) is working as
 designed. If that test fails, either Phase 1 is wrong or rag's
-flow is wrong — both are diagnosable from the test output.
+flow is wrong - both are diagnosable from the test output.
 
 **Architectural alignment.** Verify by manual review that:
 
 - No file named `install.py` exists in the rag tree.
 - `commands.py` imports only from `vaultspec_core.*` and
   `vaultspec_rag.builtins`, never from `vaultspec_rag.cli`.
-- `cli.py` additions are thin wrappers — under ~80 lines for both
-  commands combined — and contain no orchestration logic.
+- `cli.py` additions are thin wrappers - under ~80 lines for both
+  commands combined - and contain no orchestration logic.
 - Flag names in rag's `cmd_install` / `cmd_uninstall` match core's
   verbatim. Diff against core's `cli/root.py` declarations.
 - rag never reads or writes `.gitignore`, `.gitattributes`,
@@ -319,7 +320,7 @@ all pre-commit hooks pass. No skips, no `# type: ignore`, no
 `# noqa` introduced. If a check fails, fix the underlying issue.
 
 **Honesty about limits.** Tests cannot prove that the modular
-ecosystem story scales to multiple companion packages — only that
+ecosystem story scales to multiple companion packages - only that
 rag's single companion enrollment works. The discovery API,
 `.gitignore` companion entries, `.gitattributes` companion entries,
 and manifest companion tracking are all tracked in the ADR's

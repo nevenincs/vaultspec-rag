@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from starlette.testclient import TestClient
 
-from ..._search_state import SearchWaitCause, WaitObservation
+from ..._search_state import SearchReasonCode, SearchWaitCause, WaitObservation
 from ...server import ServerRouteRuntime, create_http_app
 from ...server import _routes_search as search_routes
 from ...server import _state as server_state
@@ -302,7 +302,7 @@ def test_direct_http_code_search_reports_code_index_state(
     assert isinstance(result, dict)
     assert_request_id(result)
     assert result["ok"] is False
-    assert result["error"] == "index_unverifiable"
+    assert result["error"] == "index_unavailable"
     assert "results" not in result
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
@@ -316,8 +316,33 @@ def test_direct_http_code_search_reports_code_index_state(
         "target_matches",
         "status",
         "index_integrity",
+        "matching_jobs",
+        "matching_jobs_truncated",
     }
-    assert "server status" in str(result["remediation"])
+    assert index_state["requested_target_root"] == str(root)
+    assert index_state["indexed_target_root"] == str(root)
+    assert index_state["target_matches"] is True
+    assert index_state["status"] == "missing"
+    integrity = cast("dict[str, object]", index_state["index_integrity"])
+    assert integrity["verdict"] == "unverifiable"
+    assert integrity["reason"] == "proof_missing"
+    assert integrity["live_count"] == 0
+    assert index_state["matching_jobs"] == []
+    assert index_state["matching_jobs_truncated"] is False
+    assert result["retryable"] is False
+    readiness = cast("dict[str, object]", result["readiness"])
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert len(facts) == 1
+    assert facts[0]["source"] == "code"
+    assert facts[0]["reason_code"] == SearchReasonCode.INDEX_NOT_BUILT.value
+    assert facts[0]["absence_authority"] == "non_authoritative"
+    assert (
+        result["message"]
+        == f"code index for {root}: {SearchReasonCode.INDEX_NOT_BUILT.label}"
+    )
+    assert result["remediation"] == SearchReasonCode.INDEX_NOT_BUILT.remediation(
+        source="code", port=port, target=str(root)
+    )
 
 
 @pytest.mark.subprocess_gpu

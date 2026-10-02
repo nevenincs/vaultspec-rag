@@ -3,12 +3,13 @@ tags:
   - '#adr'
   - '#storage-conformance'
 date: '2026-07-25'
-modified: '2026-07-25'
-body_hash: 'sha256:fdc874a4aa97be2fb287d1db315926b8b873f6747bb8c8db262e95f46e9c808a'
+modified: '2026-09-30'
+body_hash: 'sha256:84e6ad3b961e5b5eb952ab9511752179b797d9509113713b704c159f5c9eee21'
 related:
   - "[[2026-07-25-storage-conformance-research]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"
   - "[[2026-07-24-worktree-index-reuse-adr]]"
+  - '[[2026-09-30-sparseencode-adr]]'
 ---
 
 # `storage-conformance` adr: `prove a collection was built by the models the code expects` | (**status:** `accepted`)
@@ -86,8 +87,7 @@ the survey and reclamation surfaces already read.
 
 **Refuse every non-conforming read.** Rejected as the general rule: a model swap
 would brick all search until a full rebuild completed, and a rebuild is exactly
-the window in which a collection is legitimately mixed. Retained for geometry
-only, where the vectors cannot be scored at all.
+the window in which a collection is legitimately mixed. Retained for geometry, where the vectors cannot be scored at all. `2026-09-30-sparseencode-adr` adds a scoped exception: stamped sparse-model disagreement is refused because token coordinates from different vocabularies cannot be meaningfully mixed. Dense-model disagreement at matching geometry retains degradation.
 
 **Report but never act.** Rejected: it reproduces the current failure with better
 logging. The point of the decision is that a non-conforming index changes what the
@@ -152,13 +152,11 @@ failure: it does not degrade the service, does not block a read, and never
 authorises destruction. It is reported as exactly what it is - an unknown - so
 that the absence of evidence is legible instead of being silently scored as pass.
 
-**D4 - Geometry refuses; model identity degrades.** A dense width, distance, or
-vector-name disagreement is refused at the ensure step with a message naming the
-dimension, because such vectors cannot be scored and the current behaviour buries
-the cause under a retry budget and a misattributed hybrid-search log line (F5). A
-model-identity disagreement at matching geometry does not refuse: the collection
-is readable, a rebuild is the remedy, and refusing would remove search for the
-duration of that rebuild. It is surfaced as a degradation instead.
+**D4 - Geometry and sparse-vocabulary identity refuse; dense-model identity degrades.** A dense width, distance, or vector-name disagreement is refused at the ensure step with a message naming the dimension, because such vectors cannot be scored and the current behaviour buries the cause under a retry budget and a misattributed hybrid-search log line (F5).
+
+`2026-09-30-sparseencode-adr` refines the sparse case: a stamped sparse-model disagreement is refused on collection ensure for both reads and writes with a distinct typed model-identity error and actionable rebuild guidance. Sparse vector coordinates refer to tokenizer vocabulary entries; equal sparse wire shape does not make differing vocabularies compatible. Do not mix the previous encoder's coordinates with the replacement vocabulary or append replacement vectors to the previous collection. Rebuild through existing publication machinery; a model-only swap retains storage wire-shape version 2.
+
+A dense-model identity disagreement at matching geometry remains readable and is surfaced as a degradation with rebuild remediation. The sparse exception does not change that dense-model availability policy, the unknown-identity verdict in D3, or the non-destructive rebuild policy.
 
 **D5 - The manifest stops relabelling itself.** Recording a root preserves the
 stored schema generation and identity rather than overwriting them with current
@@ -202,10 +200,7 @@ live geometry read off the query path.
 The split in D4 follows the failure modes rather than a uniform policy. F5 shows a
 geometry mismatch is already fatal, just slowly and with the wrong explanation;
 moving that failure earlier and naming it correctly is a strict improvement with
-no availability cost. F1 shows a model mismatch is not fatal to the mechanism at
-all - it is fatal to the meaning of the results - and the honest remedy is a
-rebuild the operator must be told to run. Refusing there would convert a
-wrong-answers problem into an outage during precisely the rebuild that fixes it.
+no availability cost. F1's dense-model case remains scoreable at matching geometry, with a degradation and an explicit rebuild remedy. The sparse refinement in `2026-09-30-sparseencode-adr` introduces a different failure: coordinates name different vocabulary entries even when the wire shape matches. Refusal at ensure prevents both incompatible scoring and mixed-model writes; the established publication/rebuild machinery owns recovery. This exception preserves the dense-model policy while fencing sparse vocabulary incompatibility.
 
 D5 is not incidental. F3 establishes that the existing version gate is disarmed by
 ordinary store opens; persisting richer identity into that same record without
@@ -221,8 +216,7 @@ word for exactly this shape of unknown.
 
 ## Consequences
 
-The silent case from F1 becomes observable: a model swap now produces a named
-degradation with a rebuild command instead of quietly wrong rankings. The vault
+The silent dense-model case from F1 becomes observable: a dense-model swap at matching geometry produces a named degradation with a rebuild command instead of quietly wrong rankings. A stamped sparse-model mismatch now refuses reads and writes with its own typed error and rebuild remedy under `2026-09-30-sparseencode-adr`. The vault
 index, which had no recovery path at all, gains one by the same mechanism as code
 and document.
 

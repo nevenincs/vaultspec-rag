@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#machine-discovery-recovery'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:9fd5f7fce6f1ef0c7c11790ef18b45b2b6c8770619ab44181cbb76d173ca438e'
+modified: '2026-10-01'
+body_hash: 'sha256:7b833beb29e803d289aafee4bb33b7652e11da8b6fd44edf52ec272af2112def'
 related:
   - "[[2026-07-21-machine-discovery-recovery-reference]]"
   - "[[2026-06-11-service-status-convergence-adr]]"
@@ -21,7 +21,7 @@ apparently live losing process. This research separates established mechanisms f
 unverified process attribution and defines the decision boundary for repair.
 
 Primary incident evidence is
-`C:/Users/user/AppData/Local/Temp/claude/copy.markdown:42-131`, with B1 through B6 at
+`<temporary-evidence-directory>/copy.markdown:42-131`, with B1 through B6 at
 lines 56, 62, 68, 75, 79, and 88.
 
 ## Findings

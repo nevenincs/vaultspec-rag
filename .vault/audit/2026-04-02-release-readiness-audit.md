@@ -1,8 +1,8 @@
 ---
 title: release-readiness-audit
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:09f2de5c8af0d752aa924e9c1165f97a25dcb4df640d00575168b6646ec38969'
+modified: '2026-09-30'
+body_hash: 'sha256:46380146cb7ed37cbbed0b054104fbc3f1432799836a072672b6bc1c87642d01'
 tags:
   - '#audit'
   - '#release-readiness'
@@ -79,7 +79,7 @@ merge-without-overwrite pattern as core. Entry should be:
 
 **Action:** Write from scratch:
 
-- `README.md` — full project overview, prerequisites (GPU, HF_TOKEN),
+- `README.md` — full project overview, prerequisites (GPU and available model artifacts),
   installation, quickstart, development workflow
 - `.vaultspec/CLI.md` — all commands/subcommands with options tables
 - `.vaultspec/MCP.md` — 7 tools, 1 resource, 1 prompt, parameters, responses
@@ -228,7 +228,7 @@ would allow `python -m vaultspec_rag` invocation (which core supports).
 
 **RAG** has `vaultspec-rag status` which shows GPU/index info but doesn't
 diagnose problems (missing models, broken Qdrant DB, stale indexes,
-HF_TOKEN not set, CUDA unavailable).
+CUDA unavailable).
 
 **Action:** Add a `doctor` command or extend `status` to include diagnostic
 checks with actionable remediation hints.

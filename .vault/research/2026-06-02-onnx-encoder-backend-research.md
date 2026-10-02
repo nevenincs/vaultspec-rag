@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#onnx-encoder-backend'
 date: '2026-06-02'
-modified: '2026-07-27'
-body_hash: 'sha256:95b215563d2a13ed8e2803e3b534bb8a82aed81bd12d98be2e5e6571f13b70f6'
+modified: '2026-09-30'
+body_hash: 'sha256:0412c0e3dfddfe3a024ff18c80048119898240c1af4b75fcf67d34f2d9adaa48'
 related:
   - "[[2026-06-02-rag-index-performance-research]]"
 ---
@@ -14,7 +14,7 @@ related:
 ## Problem
 
 The rag-index-performance profile established that embedding dominates indexing wall-clock
-(~17 min for 112k chunks at the optimal `bs=32`), with dense Qwen3 + sparse SPLADE on one
+(~17 min for 112k chunks at the optimal `bs=32`), with dense Qwen3 + sparse previous BERT sparse encoder on one
 16 GB GPU. The documented next lever was an ONNX-O4 encoder backend (sentence-transformers
 cites ~1.83x on short text). This document grounds whether and how to adopt it.
 
@@ -30,11 +30,11 @@ Two-step: export once, then load by file. Dense:
 Install extra `sentence-transformers[onnx-gpu]`. Source: SBERT efficiency docs; backends
 landed in v5.1.0. Confidence: high.
 
-### SPLADE / SparseEncoder also supports ONNX, but it is the wrong half
+### previous BERT sparse encoder / SparseEncoder also supports ONNX, but it is the wrong half
 
-`SparseEncoder("naver/splade-v3", backend="onnx")` is supported, but the ONNX export covers
-only the BERT encoder; `SpladePooling` (max-pool + ReLU over the 30k MLM head) stays in
-torch. SPLADE-v3 is BERT-base scale (~110M params) versus Qwen3-0.6B (~600M, 1024-d), so the
+`SparseEncoder("previous BERT sparse encoder", backend="onnx")` is supported, but the ONNX export covers
+only the BERT encoder; `historical sparse pooling` (max-pool + ReLU over the 30k MLM head) stays in
+torch. previous BERT sparse encoder is BERT-base scale (~110M params) versus Qwen3-0.6B (~600M, 1024-d), so the
 dense pass dominates encode cost — a **dense-only** ONNX path captures most of any win. The
 exact split is not published; it must be measured. Confidence: high on API + pooling caveat,
 medium on the split.
@@ -55,7 +55,7 @@ Workable: onnxruntime-gpu 1.2x builds against CUDA 12 + cuDNN 9; torch >= 2.4 us
 a CUDA-12/cuDNN-9 torch build pairs cleanly. Import torch before onnxruntime (or call
 `onnxruntime.preload_dlls()`) to avoid duplicate-DLL conflicts. onnxruntime's CUDA EP keeps a
 separate VRAM arena (cap with `gpu_mem_limit`); on 16 GB with tiny weights (Qwen3 ~1.2 GB,
-SPLADE ~0.13 GB) this is fine but adds overhead alongside the torch CrossEncoder. Confidence:
+previous BERT sparse encoder ~0.13 GB) this is fine but adds overhead alongside the torch CrossEncoder. Confidence:
 high.
 
 ### The decisive risk: wrong batch regime
@@ -135,7 +135,7 @@ environment is **not** a blocker — the onnxruntime CUDA-13 nightly coexists wi
 - Are `onnxruntime-gpu >= 1.25.0` and a recent `optimum` installable in this uv environment
   with the existing CUDA torch build (cuDNN 9 match), and does Qwen3-Embedding-0.6B actually
   export with O4 here?
-- Dense-only now, or leave a seam for SPLADE-encoder ONNX later?
+- Dense-only now, or leave a seam for previous BERT sparse encoder ONNX later?
 - Where the parity gate lives (a new real-GPU test) and the cosine/top-k thresholds.
 - Default-on vs opt-in is decided by the benchmark, not pre-committed.
 

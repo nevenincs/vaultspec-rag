@@ -6,6 +6,8 @@ import pathlib
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
+from ._index_integrity import IntegrityVerdict
+from ._search_state import BreadthFindings, search_index_state
 from ._source_types import PublicSourceType
 from .registry import get_registry
 from .search import validate_search_filters
@@ -19,6 +21,7 @@ from .server._search_availability import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from ._index_integrity import IndexIntegrity
     from ._search_state import SearchSourceFact
     from .search import DocumentSearchResult, SearchFilterOptions
     from .search._outcomes import AnySearchResult
@@ -178,7 +181,7 @@ def _combined_source_fact(
     source: PublicSourceType,
     registry: ServiceRegistry,
     *,
-    collection_present: bool | None,
+    observation: IndexIntegrity | None,
     job_snapshot: list[dict[str, object]],
 ) -> SearchSourceFact:
     """Project one domain through the canonical availability authority."""
@@ -212,7 +215,10 @@ def _combined_source_fact(
         desired_revision=(
             snapshot.controller_revision if snapshot is not None else None
         ),
-        collection_present=collection_present,
+        collection_present=True if observation is not None else None,
+        target_matches=True,
+        integrity_verified=observation is not None
+        and observation.verdict is IntegrityVerdict.CONSISTENT,
     )
     classification = classify_search_response(
         {},
@@ -222,14 +228,14 @@ def _combined_source_fact(
             requested_root=root,
             source=concrete_source,
             request_id="combined-search",
-            index_state={
-                "source": concrete_source,
-                "indexed_count": 1 if collection_present is True else 0,
-                "indexed_target_root": None,
-                "requested_target_root": str(root),
-                "target_matches": False,
-                "status": "available" if collection_present is True else "unverifiable",
-            },
+            index_state=search_index_state(
+                indexed_count=observation.live_count or 0
+                if observation is not None
+                else 0,
+                requested_root=root,
+                search_type=source,
+                findings=BreadthFindings(integrity=observation),
+            ),
             port=None,
             canonical_evidence=evidence,
         ),
@@ -256,18 +262,23 @@ def _count_combined_domains(
     failures: dict[PublicSourceType, SearchDomainOutcome] = {}
     facts: dict[PublicSourceType, SearchSourceFact] = {}
     timings: dict[str, float] = {}
+    from ._index_integrity import acquire_index_integrity_snapshot_if_proven
     from .server._routes import canonical_job_snapshot
 
     jobs = canonical_job_snapshot()
     for source, operation in operations.items():
         try:
+            integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
+                root, source
+            )
             count = operation()
+            integrity = integrity_snapshot.finish(count)
         except Exception as exc:
             source_fact = _combined_source_fact(
                 root,
                 source,
                 registry,
-                collection_present=None,
+                observation=None,
                 job_snapshot=jobs,
             )
             facts[source] = source_fact
@@ -283,7 +294,7 @@ def _count_combined_domains(
                 root,
                 source,
                 registry,
-                collection_present=True,
+                observation=integrity,
                 job_snapshot=jobs,
             )
             timings[f"{source.value}_indexed_count"] = float(count)

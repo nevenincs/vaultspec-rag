@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:49853ac4261bfb8d4d07bd95eaee60caf7c6489918e9f01da6bb19dec68e628f'
+modified: '2026-09-30'
+body_hash: 'sha256:e20c9022e462a2f1f548bce036ff47e4b92690fd9bf2da0f919a0892d8151ec2'
 ---
 
 # Round 26 Audit: embeddings.py Deep Dive
@@ -17,7 +17,7 @@ Provenance gap: the manifest locator for this record is `intro_commit=none; temp
 
 **Date:** 2026-03-08
 **Scope:** `src/vaultspec_rag/embeddings.py` with cross-references to `search.py`, `indexer.py`
-**Focus Areas:** Model loading, SPLADE asymmetry, CrossEncoder sigmoid, prompt_name handling, batch sizing, thread safety, GPU memory, error handling
+**Focus Areas:** Model loading, previous BERT sparse encoder asymmetry, CrossEncoder sigmoid, prompt_name handling, batch sizing, thread safety, GPU memory, error handling
 
 ______________________________________________________________________
 
@@ -57,7 +57,7 @@ SparseEncoder also uses `torch.float16` (line 189), consistent with design.
 
 ______________________________________________________________________
 
-### 2. SPLADE Asymmetry: encode_document() vs encode_query()
+### 2. previous BERT sparse encoder Asymmetry: encode_document() vs encode_query()
 
 **Status:** ✅ CORRECT AND COMPREHENSIVE
 
@@ -74,15 +74,15 @@ ______________________________________________________________________
   - `search.py:318-319`: Calls `encode_query()` + `encode_query_sparse()` for queries ✅
 
 **Analysis:**
-All callers use the correct asymmetric SPLADE methods:
+All callers use the correct asymmetric previous BERT sparse encoder methods:
 
 - Indexer always uses `encode_document()` for batch document encoding
 - Searcher always uses `encode_query()` for individual query encoding
 
-The asymmetry enables Qwen3/SPLADE's instruction-tuned prompt prefixes:
+The asymmetry enables Qwen3/previous BERT sparse encoder's instruction-tuned prompt prefixes:
 
-- `encode_document()` uses the "document" prompt (no explicit prompt_name arg in code, relies on SPLADE default)
-- `encode_query()` uses the "query" prompt (no explicit prompt_name arg in code, relies on SPLADE default)
+- `encode_document()` uses the "document" prompt (no explicit prompt_name arg in code, relies on previous BERT sparse encoder default)
+- `encode_query()` uses the "query" prompt (no explicit prompt_name arg in code, relies on previous BERT sparse encoder default)
 
 This design is correct per SparseEncoder API.
 
@@ -342,7 +342,7 @@ ______________________________________________________________________
 The `embeddings.py` module is **production-ready and correct**:
 
 1. ✅ Dense model (Qwen3) loaded with fp16 + flash_attention_2
-1. ✅ Sparse model (SPLADE v3) uses asymmetric encode_document/encode_query
+1. ✅ Sparse model (previous BERT sparse encoder) uses asymmetric encode_document/encode_query
 1. ✅ CrossEncoder reranker uses sigmoid activation
 1. ✅ Qwen3 prompt_name handling matches ADR (no prompt for docs, "query" for queries)
 1. ✅ Batch sizing is reasonable with OOM retry logic

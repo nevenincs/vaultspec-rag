@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#index-perf-hardening'
 date: '2026-06-02'
-modified: '2026-07-27'
-body_hash: 'sha256:ec7d23ac7103c1c6fe46a9b87963894ecb8aa1b1654de2c3fd4140d128de8d65'
+modified: '2026-09-30'
+body_hash: 'sha256:44491aa3078ca14f2a2544096243f6ff737f31bbf2657be4a3e682c2c4d5b56c'
 related:
   - "[[2026-06-02-index-perf-hardening-research]]"
 ---
@@ -30,7 +30,7 @@ not threads.
 
 The embed workload is GPU-bound and single-writer: one CUDA device, already serialized
 behind a `gpu_lock` shared with search. Running two compute-bound encoders (dense Qwen3
-and sparse SPLADE) on separate CUDA streams does not help — research O5 confirmed they
+and sparse previous BERT sparse encoder) on separate CUDA streams does not help — research O5 confirmed they
 serialize on the tensor cores regardless of stream. The only available overlap is
 CPU-vs-GPU: keep the GPU fed while CPU workers chunk.
 

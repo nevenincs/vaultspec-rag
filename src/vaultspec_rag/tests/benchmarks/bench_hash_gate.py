@@ -94,39 +94,39 @@ def test_hash_gate_overhead_breakdown_and_throughput(
     )
 
     # --- production batched loop, cold then warm ---
-    gate = StatEvidenceGate.load(root / "gate.json")
-    start = time.perf_counter()
-    cold = hash_paths(gate, items, run_control=token)
-    cold_s = time.perf_counter() - start
-    gate.persist()
-    assert not cold.failures
-    assert len(cold.hashes) == _N_FILES
+    with StatEvidenceGate.load(root / "gate.json") as gate:
+        start = time.perf_counter()
+        cold = hash_paths(gate, items, run_control=token)
+        cold_s = time.perf_counter() - start
+        gate.persist()
+        assert not cold.failures
+        assert len(cold.hashes) == _N_FILES
 
-    warm_gate = StatEvidenceGate.load(root / "gate.json")
-    start = time.perf_counter()
-    warm = hash_paths(warm_gate, items, run_control=token)
-    warm_s = time.perf_counter() - start
-    assert warm.hashes == cold.hashes
-    assert warm_gate.reused == _N_FILES
+        with StatEvidenceGate.load(root / "gate.json") as warm_gate:
+            start = time.perf_counter()
+            warm = hash_paths(warm_gate, items, run_control=token)
+            warm_s = time.perf_counter() - start
+            assert warm.hashes == cold.hashes
+            assert warm_gate.reused == _N_FILES
 
-    cold_fps = _N_FILES / cold_s
-    warm_fps = _N_FILES / warm_s
-    print(
-        f"\n[hash-gate benchmark] files={_N_FILES} size={_FILE_BYTES}B\n"
-        f"  raw open+digest      {digest_ms:8.4f} ms/file\n"
-        f"  os.stat              {stat_ms:8.4f} ms/file\n"
-        f"  checkpoint           {checkpoint_ms:8.4f} ms/call\n"
-        f"  advance persist      {advance_persist_ms:8.4f} ms/call\n"
-        f"  batched loop cold    {cold_s / _N_FILES * 1000:8.4f} ms/file"
-        f"  ({cold_fps:,.0f} files/s)\n"
-        f"  batched loop warm    {warm_s / _N_FILES * 1000:8.4f} ms/file"
-        f"  ({warm_fps:,.0f} files/s)",
-    )
+            cold_fps = _N_FILES / cold_s
+            warm_fps = _N_FILES / warm_s
+            print(
+                f"\n[hash-gate benchmark] files={_N_FILES} size={_FILE_BYTES}B\n"
+                f"  raw open+digest      {digest_ms:8.4f} ms/file\n"
+                f"  os.stat              {stat_ms:8.4f} ms/file\n"
+                f"  checkpoint           {checkpoint_ms:8.4f} ms/call\n"
+                f"  advance persist      {advance_persist_ms:8.4f} ms/call\n"
+                f"  batched loop cold    {cold_s / _N_FILES * 1000:8.4f} ms/file"
+                f"  ({cold_fps:,.0f} files/s)\n"
+                f"  batched loop warm    {warm_s / _N_FILES * 1000:8.4f} ms/file"
+                f"  ({warm_fps:,.0f} files/s)",
+            )
 
-    # The attribution the loops are built around: one unbatched progress
-    # persist outweighs the entire per-file hashing work by an order of
-    # magnitude, and a warm stat probe undercuts a full read.
-    assert advance_persist_ms > 10 * digest_ms
-    assert stat_ms < digest_ms
-    # The warm gate must beat cold hashing - the reason the gate exists.
-    assert warm_s < cold_s
+            # The attribution the loops are built around: one unbatched progress
+            # persist outweighs the entire per-file hashing work by an order of
+            # magnitude, and a warm stat probe undercuts a full read.
+            assert advance_persist_ms > 10 * digest_ms
+            assert stat_ms < digest_ms
+            # The warm gate must beat cold hashing - the reason the gate exists.
+            assert warm_s < cold_s

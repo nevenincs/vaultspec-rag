@@ -59,6 +59,7 @@ __all__ = [
     "environment_holders",
     "is_server_launch",
     "iter_process_info",
+    "kill_process_descendants",
     "open_process_handle",
     "pid_alive",
     "pid_cmdline",
@@ -428,6 +429,43 @@ class LineageEntry:
 
     pid: int
     start_time: float
+
+
+def kill_process_descendants(parent: LineageEntry) -> tuple[LineageEntry, ...]:
+    """Kill only descendants witnessed under this exact live parent incarnation.
+
+    Snapshot before terminating the parent: after it exits the ancestry can no
+    longer be established. psutil checks the parent's identity during children()
+    and each child's identity during kill(), so PID reuse cannot widen the tree.
+    The caller owns terminating/reaping the parent and awaiting these witnesses.
+    """
+    import psutil
+
+    if parent.pid <= 0 or parent.pid == os.getpid() or parent.start_time <= 0:
+        raise ValueError("descendant cleanup requires an external parent identity")
+    try:
+        process = psutil.Process(parent.pid)
+        if process.create_time() != parent.start_time:
+            raise ProcessLookupError(
+                "parent identity changed before descendant cleanup"
+            )
+        children = process.children(recursive=True)
+        witnesses: list[LineageEntry] = []
+        for child in children:
+            try:
+                witnesses.append(LineageEntry(child.pid, child.create_time()))
+            except psutil.NoSuchProcess:
+                continue
+        for child in reversed(children):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                continue
+        return tuple(witnesses)
+    except psutil.Error as exc:
+        raise OSError(
+            f"could not contain descendants of pid {parent.pid}: {exc}"
+        ) from exc
 
 
 #: The deepest ancestry a lineage walk follows. A real chain - a terminal, a
@@ -927,7 +965,6 @@ def _holder_of(
     if not isinstance(pid, int) or pid in excluded:
         return None
     image = info["exe"]
-    parent = info["ppid"]
     working_directory: object = None
     if _resolves_under(image, resolved, resolved_paths):
         relation = HolderRelation.IMAGE
@@ -943,6 +980,9 @@ def _holder_of(
             return None
     if working_directory is None:
         working_directory = info["cwd"]
+    # Parent lookup is a full-system snapshot on Windows. Only identified
+    # holders need it for launcher pairing; discarded processes never do.
+    parent = info["ppid"]
     return EnvironmentHolder(
         pid=pid,
         relation=relation,

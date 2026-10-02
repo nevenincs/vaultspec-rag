@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:2c1ddff20aae921b5d1fd0315bada167d31355bfbed56f9ec7856af0fe621e16'
+modified: '2026-09-30'
+body_hash: 'sha256:480816d5553b5c194de242061932d3a2958ca252e3511ebad396d31ae22c580b'
 ---
 
 # Continuous Audit Log — 2026-03-08
@@ -101,7 +101,7 @@ The `.jsonl` log files (75 files) are NOT scanned by `scan_vault()` because it o
 
 ### MAJOR findings
 
-- **CLI model loading is a 5-15s overhead per invocation** — Every CLI command (index, search, benchmark, quality) creates a fresh `EmbeddingModel()`, loading Qwen3-Embedding-0.6B (~1.2GB) + SPLADE v3 into GPU VRAM from scratch. For a `search` command that should feel interactive, 5-15 seconds of model loading before the actual search executes is a severe UX problem. The search itself takes \<100ms, but the total wall time is dominated by model init.
+- **CLI model loading is a 5-15s overhead per invocation** — Every CLI command (index, search, benchmark, quality) creates a fresh `EmbeddingModel()`, loading Qwen3-Embedding-0.6B (~1.2GB) + previous BERT sparse encoder into GPU VRAM from scratch. For a `search` command that should feel interactive, 5-15 seconds of model loading before the actual search executes is a severe UX problem. The search itself takes \<100ms, but the total wall time is dominated by model init.
 
   - **File**: `cli.py:198,294,486,608`
   - **Impact**: Unusable latency for interactive CLI usage. Users will avoid CLI search.
@@ -166,7 +166,7 @@ However, if a test session runs BOTH unit and integration tests, up to 5 `Embedd
 
 ### MEDIUM findings
 
-- **Up to 5 EmbeddingModel instances in one test session** — Each `_build_rag_components()` call creates its own model. With Qwen3 (~600MB) + SPLADE (~300MB) per instance, 5 instances = ~4.5GB GPU memory for models alone, plus Qdrant storage. Could OOM on GPUs with \<8GB VRAM.
+- **Up to 5 EmbeddingModel instances in one test session** — Each `_build_rag_components()` call creates its own model. With Qwen3 (~600MB) + previous BERT sparse encoder (~300MB) per instance, 5 instances = ~4.5GB GPU memory for models alone, plus Qdrant storage. Could OOM on GPUs with \<8GB VRAM.
 
   - **Fix**: Create a single session-scoped `embedding_model` fixture and pass it to `_build_rag_components()` instead of instantiating inside.
 

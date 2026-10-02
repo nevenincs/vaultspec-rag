@@ -1,7 +1,8 @@
 """Integration tests for service daemon lifecycle.
 
 Exercises real subprocess spawning, real GPU model loading, and real
-Qdrant operations.  No mocks, patches, stubs, or skips.
+Qdrant operations. Optional child-only scheduling waits follow real storage
+confirmation without replacing model, storage or lifecycle behavior.
 
 Closes TESTGAP-001 (_terminate_pid), TESTGAP-002 (_spawn_service),
 TESTGAP-003 (service_start), TESTGAP-004 (service_stop happy path),
@@ -66,6 +67,7 @@ __all__ = [
     "_spawn_posix_qdrant_owner",
     "_spawn_running_phase_lock_holder",
     "_terminate_test_processes",
+    "_wait_for_confirmed_storage",
     "_wait_for_discovery_repair",
     "_wait_for_listeners_closed",
     "_wait_for_persisted_job",
@@ -299,6 +301,8 @@ def _signal_service_shutdown(pid: int) -> None:
 def _signalable_live_service(
     tmp_path: Path,
     qdrant_source: tuple[Path, Path],
+    *,
+    storage_witness: tuple[Path, Path] | None = None,
 ) -> Generator[tuple[int, int]]:
     """Run the real daemon in a Windows-signalable process group."""
     from ...cli._process import _build_service_child_env, _ServiceChildEnvRequest
@@ -323,6 +327,29 @@ def _signalable_live_service(
             str(port),
         ]
         child_env = _build_service_child_env(_ServiceChildEnvRequest(watch=False))
+        if storage_witness is not None:
+            root, control = storage_witness
+            bootstrap = control / "bootstrap"
+            bootstrap.mkdir()
+            (bootstrap / "sitecustomize.py").write_text(
+                "import os, sys, traceback\n"
+                "from pathlib import Path\n"
+                "if any(sys.orig_argv[i:i+2] == ['-m', 'vaultspec_rag.server'] "
+                "for i in range(len(sys.orig_argv)-1)):\n"
+                "    try:\n"
+                "        from vaultspec_rag.tests.integration."
+                "_shutdown_storage_control "
+                "import install\n"
+                f"        install(Path({str(root.resolve())!r}), "
+                f"Path({str(control)!r}))\n"
+                "    except BaseException:\n"
+                "        traceback.print_exc()\n"
+                "        os._exit(1)\n",
+                encoding="utf-8",
+            )
+            child_env["PYTHONPATH"] = os.pathsep.join(
+                (str(bootstrap), child_env.get("PYTHONPATH", ""))
+            )
         creationflags = (
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             if sys.platform == "win32"
@@ -344,12 +371,44 @@ def _signalable_live_service(
             _poll_health(port, timeout=model_setup_timeout_seconds())
             yield port, process.pid
         finally:
-            _cleanup_service_process(
-                pid=process.pid,
-                port=port,
-                log_path=log_path,
-                timeout=30.0,
-            )
+            cleanup_deadline = time.monotonic() + 30.0
+            try:
+                if storage_witness is not None:
+                    (storage_witness[1] / "release").touch()
+            finally:
+                try:
+                    _cleanup_service_process(
+                        pid=process.pid,
+                        port=port,
+                        log_path=log_path,
+                        timeout=max(0.0, cleanup_deadline - time.monotonic()),
+                    )
+                finally:
+                    # PID cleanup observes native exit; this retained Popen must
+                    # also record that exit before releasing its owned handle.
+                    process.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+
+
+def _wait_for_confirmed_storage(
+    state_path: Path, job_id: str, control: Path
+) -> JobSnapshot:
+    """Require confirmed storage and every active owner in one bounded wait."""
+
+    def owns_stored_slice(job: JobSnapshot) -> bool:
+        if not _job_owns_full_pipeline(job):
+            return False
+        try:
+            stored = (control / "stored").read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return stored.isdecimal() and int(stored) > 0
+
+    return _wait_for_persisted_job(
+        state_path,
+        job_id,
+        owns_stored_slice,
+        "real confirmed storage never retained complete active worker ownership",
+    )
 
 
 def _job_owns_full_pipeline(job: JobSnapshot) -> bool:
@@ -544,10 +603,17 @@ def _terminate_identity_process(
     """Stop the spawned identity child, and its serving pid when they differ."""
     # A plain ``Popen`` helper is not a process-group leader, so a Windows
     # console-group break must not be addressed to it.
-    _terminate_pid(process.pid, console_group_signal=False)
-    if serving_pid != process.pid:
-        _terminate_pid(serving_pid, console_group_signal=False)
-        _wait_for_exit(serving_pid, timeout=15.0)
+    try:
+        _terminate_pid(process.pid, console_group_signal=False)
+        try:
+            process.wait(timeout=15.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=15.0)
+    finally:
+        if serving_pid != process.pid:
+            _terminate_pid(serving_pid, console_group_signal=False)
+            _wait_for_exit(serving_pid, timeout=15.0)
     assert _wait_for_exit(process.pid, timeout=15.0), (
         "identity health process did not stop; log="
         + log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
@@ -622,21 +688,19 @@ finally:
                 stdout=log_stream,
                 stderr=subprocess.STDOUT,
             )
-            health = _poll_own_health(process, port, token=token, timeout=20.0)
-            if health is None:
-                failures.append(f"port={port} rc={process.poll()}")
-                _terminate_pid(process.pid, console_group_signal=False)
-                _wait_for_exit(process.pid, timeout=15.0)
-                continue
-            # The real serving pid equals the Popen pid normally, or a descendant
-            # when the interpreter relaunches through a stub; the token match
-            # already proved this is the child either way.
-            serving_pid = int(str(health["pid"]))
+            serving_pid = process.pid
             try:
+                health = _poll_own_health(process, port, token=token, timeout=20.0)
+                if health is None:
+                    failures.append(f"port={port} rc={process.poll()}")
+                    continue
+                # The token match establishes ownership even when an interpreter
+                # stub launches a separate serving process.
+                serving_pid = int(str(health["pid"]))
                 yield serving_pid, port, token
+                return
             finally:
                 _terminate_identity_process(process, serving_pid, log_path)
-            return
         raise AssertionError(
             "identity health child never bound its own port in 5 attempts "
             f"({'; '.join(failures)}); log="

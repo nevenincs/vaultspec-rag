@@ -39,7 +39,8 @@ from ..progress import NullProgressReporter
 from ._model_setup import ensure_model_snapshots, model_setup_timeout_seconds
 from .corpus import CorpusManifest, build_synthetic_vault
 
-# GPU-only: sentence-transformers + Qwen3-Embedding-0.6B + SPLADE v3. Requires CUDA.
+# GPU-only: Sentence Transformers with Qwen3 dense and ModernBERT SPARSEUP sparse.
+# Requires CUDA.
 
 
 def _force_machine_singleton_test_paths(paths: Mapping[str, str]) -> None:

@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#sparse-search-latency'
 date: '2026-06-09'
-modified: '2026-07-27'
-body_hash: 'sha256:ea4ecf63f730ac3a30a29d328f8060ee875a7156996583eb09ffb75e96e2a4bf'
+modified: '2026-09-30'
+body_hash: 'sha256:f1fa9063748274ef7e1e9390a9202cf039ad3d587794424057b0d268286914c1'
 related:
   - "[[2026-06-07-sparse-search-latency-adr]]"
   - "[[2026-06-08-sparse-search-latency-plan]]"
@@ -44,7 +44,7 @@ retained.
 
 ### Why the abort outcome holds (with a corrected rationale)
 
-- The dominant local-mode cost is the SPLADE sparse linear scan (~20s across ~114k chunks
+- The dominant local-mode cost is the previous BERT sparse encoder sparse linear scan (~20s across ~114k chunks
   per the ADR). A payload filter applied during that scan does not avoid the scan, so a
   local pushdown yields little or no latency win.
 - `MatchText` is tokenized text matching, not glob: it cannot reproduce `fnmatch` semantics
@@ -59,7 +59,7 @@ retained.
 
 In server / dedicated Qdrant (`VAULTSPEC_RAG_QDRANT_URL`, already formalized in the ADR),
 payload indexes — including full-text — take effect, and the sparse inverted index removes
-the SPLADE full-scan. There, a `TEXT` payload index on the project-relative path plus a
+the previous BERT sparse encoder full-scan. There, a `TEXT` payload index on the project-relative path plus a
 coarse `MatchText` or prefix pre-filter can narrow candidates natively before RRF, with
 `fnmatch` retained only as an exact-glob refinement. This is a server-mode optimization,
 not a local one.

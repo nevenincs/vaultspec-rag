@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 from anyio.to_thread import run_sync as _run_in_thread
 from qdrant_client.http.exceptions import UnexpectedResponse
 
+from .._index_integrity import IntegrityVerdict
 from .._operator_commands import (
     IndexCommandOptions,
     index_command,
@@ -17,11 +18,17 @@ from .._operator_commands import (
 from .._search_state import (
     AbsenceAuthority,
     FreshnessWaitPolicy,
+    SearchEmptyReason,
+    SearchReasonCode,
     SearchSourceFact,
     search_readiness_block,
 )
 from .._source_types import INDEX_SOURCES, IndexSource, PublicSourceType
 from ..concurrency import get_search_limiter
+from ..search._outcomes import (
+    COMBINED_SEARCH_FAILED,
+    COMBINED_SEARCH_FAILED_MESSAGE,
+)
 from ._search_availability import (
     CanonicalSearchEvidence,
     SearchAvailabilityContext,
@@ -35,6 +42,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .._index_integrity import IndexIntegrity, IndexIntegritySnapshot
+    from ..search._outcomes import CombinedSearchOutcome
     from ..service import ServiceRegistry
     from ._routes_search import SearchRequest
     from ._search_readiness import PublicationTarget, ReadinessRevisionSnapshot
@@ -114,7 +122,7 @@ class SearchAvailabilityRequestFacts:
         )
         integrity_verified = (
             integrity_block is not None
-            and integrity_block.get("verdict") == "consistent"
+            and integrity_block.get("verdict") == IntegrityVerdict.CONSISTENT
         )
         snapshot = self.readiness_snapshot
         target = self.readiness_target
@@ -196,7 +204,7 @@ def _integrity_source(request: SearchRequest) -> PublicSourceType:
 
 def acquire_search_integrity_snapshot(
     request: SearchRequest,
-) -> IndexIntegritySnapshot | None:
+) -> IndexIntegritySnapshot | IndexIntegrity:
     """Capture integrity evidence before retrieval runs, when it is provable."""
     from .._index_integrity import acquire_index_integrity_snapshot_if_proven
 
@@ -208,7 +216,7 @@ def acquire_search_integrity_snapshot(
 def search_integrity_for_route(
     request: SearchRequest,
     phase_timing: dict[str, float],
-    snapshot: IndexIntegritySnapshot | None,
+    snapshot: IndexIntegritySnapshot | IndexIntegrity,
 ) -> tuple[IndexIntegrity, str | None]:
     """Settle the serve-time breadth verdict for one dispatched search.
 
@@ -223,12 +231,9 @@ def search_integrity_for_route(
     shrink turns into at most one supervised repair, whose job id (when known)
     rides back on the envelope beside the verdict that motivated it.
     """
-    from .._index_integrity import unverifiable_integrity
     from .._integrity_remediation import note_integrity_verdict
 
     source = _integrity_source(request)
-    if snapshot is None:
-        return unverifiable_integrity(source), None
     if request.search_type is PublicSourceType.COMBINED:
         code_count = phase_timing.get("code_indexed_count")
         integrity = snapshot.finish(None if code_count is None else int(code_count))
@@ -244,15 +249,17 @@ def _empty_search_diagnostics(
     port: int | None,
     path_filter: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    """Explain an empty result after its publication authority is verified."""
     source = index_state["source"]
     remediation = [
         index_command(source, IndexCommandOptions(port=port)),
-        server_status_command(),
+        server_status_command(port),
         server_jobs_command(port),
     ]
     if index_state["indexed_count"] == 0:
-        reason = "index_missing"
-        message = f"No indexed {source} items are available."
+        reason = SearchEmptyReason.PUBLISHED_EMPTY
+        message = f"The published {source} index is empty."
+        remediation = []
     elif path_filter is not None:
         # The search proved this: candidates matched the query and the path
         # patterns removed every one. Saying so, with the patterns, is the
@@ -262,7 +269,7 @@ def _empty_search_diagnostics(
         patterns = ", ".join(
             str(p) for p in cast("list[object]", path_filter["patterns"])
         )
-        reason = "no_match_path_filter"
+        reason = SearchEmptyReason.NO_MATCH_PATH_FILTER
         message = (
             f"{path_filter['candidates_before_filter']} indexed items matched "
             f"the query, and the path filter ({patterns}) excluded every one. "
@@ -274,11 +281,11 @@ def _empty_search_diagnostics(
             "widen the pattern, or check it against a path from an unfiltered result",
         ]
     else:
-        reason = "no_match"
+        reason = SearchEmptyReason.NO_MATCH
         message = "The index is available, but no indexed item matched the query."
 
     return {
-        "reason": reason,
+        "reason": reason.value,
         "message": message,
         "remediation": remediation,
     }
@@ -362,30 +369,14 @@ def _non_authoritative_empty_result(
     request_id: str,
 ) -> dict[str, object]:
     """Suppress an empty result list that cannot prove absence."""
-    stable_error = (
-        source_fact.reason_code
-        if source_fact.reason_code
-        in {
-            "index_unavailable",
-            "index_unverifiable",
-            "rebuild_required",
-            "capacity_limited",
-        }
-        else "index_unverifiable"
-    )
     return {
         key: value
         for key, value in result.items()
         if key not in {"results", "summary", "empty"}
-    } | {
-        "ok": False,
-        "error": stable_error,
-        "message": "The empty search result is not authoritative for this source.",
-        "retryable": source_fact.retryable,
-        "request_id": request_id,
-        "readiness": _readiness_block(source_fact),
-        "remediation": source_fact.remediation,
-    }
+    } | source_fact.failure_response(
+        request_id=request_id,
+        index_state=cast("dict[str, object]", result.get("index_state", {})),
+    )
 
 
 def _classify_collection_disappearance(
@@ -393,10 +384,7 @@ def _classify_collection_disappearance(
     facts: SearchAvailabilityRequestFacts,
 ) -> SearchResponseClassification | None:
     """Classify one instantaneous missing-collection search observation."""
-    from .._index_integrity import (
-        acquire_index_integrity_snapshot_if_proven,
-        unverifiable_integrity,
-    )
+    from .._index_integrity import acquire_index_integrity_snapshot_if_proven
     from ._routes import canonical_job_snapshot
 
     disappeared_source = PublicSourceType(facts.source)
@@ -417,11 +405,7 @@ def _classify_collection_disappearance(
                     # and carrying it keeps the daemon envelope uniform - every
                     # route response has the block, so absence still means only
                     # "old daemon".
-                    integrity=(
-                        unverifiable_integrity(disappeared_source)
-                        if disappeared is None
-                        else disappeared.finish(None)
-                    ),
+                    integrity=disappeared.finish(None),
                     search_type=facts.source,
                 )
             ),
@@ -444,3 +428,101 @@ async def run_search_with_availability(
         if classification is None:
             raise
         return classification.response, classification
+
+
+def dominant_combined_failure(
+    source_facts: tuple[SearchSourceFact, ...],
+) -> tuple[SearchReasonCode, bool, str | None]:
+    """Select the strongest carried failure without erasing its retry policy."""
+    priority = (
+        SearchReasonCode.REBUILD_REQUIRED,
+        SearchReasonCode.REBUILD_REFUSED,
+        SearchReasonCode.CAPACITY_LIMITED,
+        SearchReasonCode.BACKEND_UNAVAILABLE,
+        SearchReasonCode.FRESHNESS_WAIT_TIMEOUT,
+        SearchReasonCode.INDEX_UNAVAILABLE,
+        SearchReasonCode.INDEX_NOT_BUILT,
+        SearchReasonCode.INDEX_UPDATING,
+        SearchReasonCode.INDEX_UNVERIFIABLE,
+    )
+    selected_reason = next(
+        (
+            reason
+            for reason in priority
+            if any(fact.reason_code == reason for fact in source_facts)
+        ),
+        SearchReasonCode.INDEX_UNVERIFIABLE,
+    )
+    selected = next(
+        (fact for fact in source_facts if fact.reason_code == selected_reason),
+        source_facts[0],
+    )
+    remediation = next(
+        (
+            fact.remediation
+            for fact in source_facts
+            if fact.reason_code == selected_reason and fact.remediation is not None
+        ),
+        selected.remediation,
+    )
+    stable_error = selected_reason.failure_code
+    return stable_error, selected.retryable, remediation
+
+
+def apply_combined_search_outcome(
+    response: dict[str, object],
+    combined: CombinedSearchOutcome,
+    *,
+    request_id: str,
+    index_state: dict[str, object],
+    has_results: bool,
+) -> None:
+    """Apply domain readiness and failure facts to a combined response."""
+    dominant_error, dominant_retryable, dominant_remediation = (
+        dominant_combined_failure(combined.source_facts)
+    )
+    response["ok"] = combined.ok
+    response["partial"] = combined.partial
+    response["domains"] = combined.domain_status_payload()
+    response["readiness"] = search_readiness_block(combined.source_facts)
+    if not combined.ok:
+        response.pop("results", None)
+        response.update(
+            {
+                "error": COMBINED_SEARCH_FAILED,
+                "message": COMBINED_SEARCH_FAILED_MESSAGE,
+                "summary": "Combined search failed in every domain.",
+                "retryable": dominant_retryable,
+                "remediation": dominant_remediation,
+            }
+        )
+    elif not has_results and (
+        combined.partial
+        or combined.readiness.absence_authority is not AbsenceAuthority.AUTHORITATIVE
+    ):
+        response.pop("results", None)
+        response.pop("summary", None)
+        unbuilt = next(
+            (
+                fact
+                for fact in combined.source_facts
+                if fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
+            ),
+            None,
+        )
+        response.update(
+            {
+                "ok": False,
+                "error": dominant_error.value,
+                "message": (
+                    unbuilt.failure_response(
+                        request_id=request_id, index_state=index_state
+                    )["message"]
+                    if unbuilt is not None
+                    else "The empty combined search is not authoritative for "
+                    "every requested source."
+                ),
+                "retryable": dominant_retryable,
+                "remediation": dominant_remediation,
+            }
+        )

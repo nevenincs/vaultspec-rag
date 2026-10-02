@@ -3,8 +3,8 @@ tags:
   - '#exec'
   - '#index-progress-bars'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:bedbb3cd7e46823beb33e5f3eec56cd4226c4691486a58dcd75b7b61cf2d2e4e'
+modified: '2026-09-30'
+body_hash: 'sha256:ec8874f42373e48b41f582d0253f6d9302d2d866439d5a88e93be02ddc76a1ba'
 related:
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
 ---
@@ -41,7 +41,7 @@ No mocks, no skips. GPU fixtures reuse the session-scoped
 ## Tests
 
 Unit tests green (12 passing in `test_progress_unit.py`). Integration
-tests are GPU-bound and gated on `HF_TOKEN`; they exercise real GPU and
+tests are GPU-bound; they exercise real GPU and
 real Qdrant, compatible with the existing test mandate.
 
 ## Notes

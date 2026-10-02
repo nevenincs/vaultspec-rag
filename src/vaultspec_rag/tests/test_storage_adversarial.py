@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 from ..cli import app
 from ..cli._service_storage import _emit_or_echo_error, _require_yes_for_json
 from ..storage_safety import StorageSafetyError, resolve_within
+from ._qdrant_warnings import VERSION_WARNING, await_client_warnings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -300,20 +301,24 @@ class TestRestoreRefusesInOneEnvelope:
 
         reset_config()
 
-        result = CliRunner().invoke(
-            app,
-            [
-                "server",
-                "storage",
-                "restore",
-                str(archive),
-                "--root",
-                str(tmp_path / "destination"),
-                "--json",
-                "--yes",
-                "--dry-run",
-            ],
-        )
+        with pytest.warns(
+            UserWarning, match="Failed to obtain server version"
+        ) as captured:
+            result = CliRunner().invoke(
+                app,
+                [
+                    "server",
+                    "storage",
+                    "restore",
+                    str(archive),
+                    "--root",
+                    str(tmp_path / "destination"),
+                    "--json",
+                    "--yes",
+                    "--dry-run",
+                ],
+            )
+            await_client_warnings(captured, [VERSION_WARNING])
 
         lines = [line for line in result.stdout.splitlines() if line.strip()]
         assert len(lines) == 1, result.stdout
@@ -474,7 +479,11 @@ class TestUnreachableStorageStillAnswers:
 
         reset_config()
 
-        result = CliRunner().invoke(app, argv)
+        with pytest.warns(
+            UserWarning, match="Failed to obtain server version"
+        ) as captured:
+            result = CliRunner().invoke(app, argv)
+            await_client_warnings(captured, [VERSION_WARNING])
 
         # Count every stdout line, not only the ones that parse: a traceback or
         # a stray human line on the result channel is the defect being pinned.

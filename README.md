@@ -44,7 +44,6 @@ The `vaultspec-rag` command and your AI assistant send it requests. One service 
 every repository on the machine.
 
 1. **Install the host** once per machine. It carries the service and its GPU packages.
-1. **Get a Hugging Face token**, or opt out of the one model that needs it.
 1. **Set up each repository** you want to search, then start the service.
 1. **Index and search.**
 
@@ -87,31 +86,23 @@ The two `--index` options keep the CUDA build of PyTorch on every later
 `uv tool upgrade`. If uv says its tool directory isn't on your `PATH`, run
 `uv tool update-shell` and open a new terminal.
 
-### Get a Hugging Face token
+### Download public models
 
-Search uses three open models from Hugging Face. Two download freely. The third,
-[`naver/splade-v3`](https://huggingface.co/naver/splade-v3), matches exact terms such as
-function names. It's gated: Hugging Face releases its files only to an account that has
-accepted its non-commercial licence (CC BY-NC-SA 4.0), and a token tells Hugging Face
-which account is asking.
+Search uses three public models from Hugging Face. The sparse encoder,
+[`Linkup-Platform/linkup-sparseup-embed-v1`](https://huggingface.co/Linkup-Platform/linkup-sparseup-embed-v1),
+uses ModernBERT SPARSEUP to match terms such as function names. Model acquisition
+needs no account setup. The first repository setup downloads the model files;
+later repositories reuse the cache.
 
-1. Sign in to Hugging Face and accept the licence on the
-   [model page](https://huggingface.co/naver/splade-v3).
+Existing indexes created before version 0.6.0 need a full rebuild after upgrading
+the host and restarting its service:
 
-1. Create a read token under
-   [Access Tokens](https://huggingface.co/settings/tokens).
+```bash
+vaultspec-rag --target <repository> index --rebuild --type all
+```
 
-1. Save the token for the account that runs the service:
-
-   ```bash
-   uvx --from huggingface_hub hf auth login
-   ```
-
-   Or set `HF_TOKEN` in that account's environment. `HF_TOKEN` wins over a saved login.
-
-If you can't accept the licence, set `VAULTSPEC_RAG_SPARSE_ENABLED=0` in the same
-environment instead. Search then matches on meaning alone: no token and no gated
-download, but no exact-term matching either.
+Run this for every indexed repository; the changed sparse vocabulary cannot mix
+with previously stored vectors.
 
 ### Set up each repository
 
@@ -221,6 +212,17 @@ vendored code, and hides generated files and worktree copies. Filters narrow fur
 - `--include-path "src/**"` and `--language python` narrow by place and language.
 - `--doc-type adr,plan` picks record types in a vault search.
 
+Locale variants with similar relevance scores collapse into one representative
+result by default. Use `--no-dedup-locales` to inspect every variant, or `--dedup-locales` to
+enable collapse for a search. Use `--prefer production`, `--prefer tests`, or
+`--prefer documentation` to favor that kind of code in the ranking while keeping
+other results:
+
+```bash
+vaultspec-rag search "translation lookup" --type code --no-dedup-locales
+vaultspec-rag search "encode batch" --type code --prefer tests
+```
+
 [Writing queries](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/query-craft.md)
 explains how to phrase a query and every filter.
 
@@ -279,17 +281,16 @@ Most of them configure the service, so set them where the service starts: in you
 environment, or in the shell that runs `vaultspec-rag server start`. Then stop and start
 the service. Setting them in another shell doesn't change a running service.
 
-| Variable                              | Default                | What it does                                                                                  |
-| ------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------- |
-| `HF_TOKEN`                            | unset                  | Hugging Face token for the gated exact-term model. Wins over a saved `hf auth login`.         |
-| `VAULTSPEC_RAG_SPARSE_ENABLED`        | `1`                    | `0` searches on meaning alone and never downloads the gated model. Reindex after changing it. |
-| `HF_HOME`                             | `~/.cache/huggingface` | Where the models are downloaded and cached.                                                   |
-| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE` | `managed-service`      | `embedded-local` for machines with 8 GiB of memory and 6 GiB of free GPU memory.              |
-| `VAULTSPEC_RAG_TYPESAFE_API_KEY`      | unset                  | Turns on optional hosted ranking from Typesafe, a paid service. See below.                    |
-| `VAULTSPEC_RAG_PORT`                  | `8766`                 | The service's port. Commands and assistants find the service without it.                      |
-| `VAULTSPEC_RAG_STATUS_DIR`            | `~/.vaultspec-rag`     | Where the service keeps its status, logs, and the address that commands read.                 |
+| Variable                              | Default                | What it does                                                                                   |
+| ------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `VAULTSPEC_RAG_SPARSE_ENABLED`        | `1`                    | `0` searches on meaning alone and never downloads the sparse model. Reindex after changing it. |
+| `HF_HOME`                             | `~/.cache/huggingface` | Where the models are downloaded and cached.                                                    |
+| `VAULTSPEC_RAG_INDEX_SUPPORT_PROFILE` | `managed-service`      | `embedded-local` for machines with 8 GiB of memory and 6 GiB of free GPU memory.               |
+| `VAULTSPEC_RAG_TYPESAFE_API_KEY`      | unset                  | Turns on optional hosted ranking from Typesafe, a paid service. See below.                     |
+| `VAULTSPEC_RAG_PORT`                  | `8766`                 | The service's port. Commands and assistants find the service without it.                       |
+| `VAULTSPEC_RAG_STATUS_DIR`            | `~/.vaultspec-rag`     | Where the service keeps its status, logs, and the address that commands read.                  |
 
-A project's `.env` file supplies `HF_TOKEN` and the Typesafe key only when vaultspec-rag
+A project's `.env` file supplies the Typesafe key only when vaultspec-rag
 runs from that project's environment, never for a host installed as a uv tool. The
 [configuration reference](https://github.com/nevenincs/vaultspec-rag/blob/main/docs/configuration.md)
 lists every variable.
@@ -317,7 +318,7 @@ why a result ranked where it did.
 - **Indexing.** Source code is split into function- and class-sized chunks, and records
   into sections. Each chunk is encoded twice: by
   [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) for
-  meaning, and by `naver/splade-v3` for exact terms. The vectors go into Qdrant, one
+  meaning, and by `Linkup-Platform/linkup-sparseup-embed-v1` for exact terms. The vectors go into Qdrant, one
   namespace per repository.
 - **Search.** The query is encoded the same two ways, and the two candidate lists are
   merged by rank. A cross-encoder,

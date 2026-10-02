@@ -4,8 +4,8 @@ tags:
   - '#cli-service-operability-hardening'
 date: '2026-06-11'
 tier: L3
-modified: '2026-07-27'
-body_hash: 'sha256:be5780afbb6d77888631df41b00792e211dc7d2c12ccfa48653597e0e05030f8'
+modified: '2026-10-01'
+body_hash: 'sha256:3e5ff7427561b62d12fa6f23dacd8c3e03f5b8898c349df6633247927fce67fd'
 related:
   - '[[2026-06-11-vaultspec-rag-cli-service-ux-audit]]'
   - '[[2026-06-11-service-status-convergence-adr]]'
@@ -651,10 +651,8 @@ Status/health convergence cluster:
 - [x] `W06.P01.S07` - Treat `server status` as the only default human-facing service-state command; `src/vaultspec_rag/cli/_service_status.py`.
 - [x] `W06.P01.S08` - Keep backend `/health` as a readiness endpoint for automation and adapters; `src/vaultspec_rag/cli/_service_status.py`.
 - [x] `W06.P01.S09` - Do not maintain a second rich human `server health` output that duplicates status; `src/vaultspec_rag/cli/_service_status.py`.
-- [x] `W06.P01.S10` - If CLI `server health` remains, make it minimal and automation-oriented; otherwise
-  de-emphasize, alias, or remove it through an explicit compatibility path.
-- [x] `W06.P01.S11` - Ensure help text tells users to call `server status` when they want to know whether; `src/vaultspec_rag/cli/_service_status.py`.
-  the service is working or what to check next.
+- [x] `W06.P01.S10` - If CLI `server health` remains, make it minimal and automation-oriented, otherwise de-emphasize, alias, or remove it through an explicit compatibility path; `CLI server health compatibility surface`.
+- [x] `W06.P01.S11` - Ensure help text tells users to call `server status` when they want to know whether the service is working or what to check next; `src/vaultspec_rag/cli/_service_status.py`.
 
 Agent brief:
 

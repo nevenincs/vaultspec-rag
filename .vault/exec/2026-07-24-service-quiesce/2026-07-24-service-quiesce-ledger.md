@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-quiesce'
 date: '2026-07-24'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:62dd11c825b43005b541a458a4bfc52672ecc0a8e1d2f88be0d0d2b8d8f4f633'
+body_hash: 'sha256:74ac2ce39fff395ac99cacc3a921dc5b16441cfc12ab41f7f80fd50b7fbf62f6'
 related:
   - "[[2026-07-24-service-quiesce-plan]]"
 ---
@@ -77,3 +77,8 @@ related:
 - `S32` `T` `src/vaultspec_rag/tests/test_gpu_session_lock.py`
 - `S33` `T` `.github/workflows/ci.yml`
 - `S33` `T` `justfile`
+- `S07` `M` `src/vaultspec_rag/server/_routes.py`
+
+## Notes
+
+- `S07` Historical change attribution from Git commit bf439cd7393d8abca1a794d931e4c87cc4a84532; commit records this Step's scoped implementation or review. No fresh runtime verification or historical unrecorded pass is asserted.

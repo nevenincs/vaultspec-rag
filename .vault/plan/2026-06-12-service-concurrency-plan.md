@@ -3,15 +3,31 @@ tags:
   - '#plan'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-06-30'
-body_hash: 'sha256:cd3c35902ef65df840e055245710dbcafa427b9abcdb9c77258e1366cf8064c4'
 tier: L3
 related:
   - '[[2026-06-12-service-concurrency-adr]]'
   - '[[2026-06-12-service-concurrency-research]]'
+modified: '2026-09-30'
+body_hash: 'sha256:6c14f2166059993598486aa3c457ee582ab9cf422b97cc7c6be5285a581042b0'
 ---
 
 # `service-concurrency` `concurrent saturation architecture rework` plan
+
+## Description
+
+Executes the service-concurrency ADR: rework the resident service and search backend
+so they serve multiple agents, concurrent repo roots, and saturated call loads, and
+fix the retrieval-quality defects found in the same review. The plan is
+benchmark-bracketed: W01 builds the adversarial saturation harness and freezes the
+baseline; W02 fixes quality (vault chunking, content reranking, contextual
+embeddings, bounded graph nudge) because quality changes move benchmark numbers and
+must land before lock-surgery measurements; W03 removes lock false-sharing
+(per-collection backend-aware storage locks, forward-pass-only gpu_lock holds); W04
+fixes the async plumbing (MCP transport, capacity limiters, loop hygiene, telemetry);
+W05 is the adversarial acceptance gate against the W01 baseline. Authorising
+documents are carried in this plan's frontmatter `related:` chain.
+
+## Steps
 
 ## Wave `W01` - Adversarial baseline
 
@@ -70,7 +86,7 @@ Forward-pass-only gpu_lock holds, query-embedding LRU, coalesced sparse conversi
 
 - [x] `W03.P06.S15` - Narrow gpu_lock holds to model forward calls only across the search encode and rerank paths; `src/vaultspec_rag/search/_searcher.py`.
 - [x] `W03.P06.S16` - Add a thread-safe LRU query-embedding cache keyed by surface and cleaned query text; `src/vaultspec_rag/embeddings.py`.
-- [x] `W03.P06.S17` - Replace the SPLADE densify-and-loop conversion with a single coalesced sparse-tensor pass; `src/vaultspec_rag/embeddings.py`.
+- [x] `W03.P06.S17` - Replace the sparse densify-and-loop conversion with a single coalesced sparse-tensor pass; `src/vaultspec_rag/embeddings.py`.
 - [x] `W03.P06.S18` - Add GPU tests covering narrowed lock holds, cache behavior, and sparse conversion parity; `src/vaultspec_rag/tests`.
 
 ## Wave `W04` - Service plumbing
@@ -97,22 +113,6 @@ Adversarial matrix vs baseline, quality parity, persona verification.
 - [x] `W05.P08.S23` - Rebuild both corpora under the new schema and run the adversarial saturation matrix against the W01 baseline, recording results; `.vault/exec/2026-06-12-service-concurrency`.
 - [x] `W05.P08.S24` - Run the quality harness comparison and manual persona CLI verification in human and JSON modes; `src/vaultspec_rag/tests/benchmarks`.
 - [x] `W05.P08.S25` - Record the execution summary and prepare the review handoff; `.vault/exec/2026-06-12-service-concurrency`.
-
-## Description
-
-Executes the service-concurrency ADR: rework the resident service and search backend
-so they serve multiple agents, concurrent repo roots, and saturated call loads, and
-fix the retrieval-quality defects found in the same review. The plan is
-benchmark-bracketed: W01 builds the adversarial saturation harness and freezes the
-baseline; W02 fixes quality (vault chunking, content reranking, contextual
-embeddings, bounded graph nudge) because quality changes move benchmark numbers and
-must land before lock-surgery measurements; W03 removes lock false-sharing
-(per-collection backend-aware storage locks, forward-pass-only gpu_lock holds); W04
-fixes the async plumbing (MCP transport, capacity limiters, loop hygiene, telemetry);
-W05 is the adversarial acceptance gate against the W01 baseline. Authorising
-documents are carried in this plan's frontmatter `related:` chain.
-
-## Steps
 
 Step rows live in the Wave blocks above (`W01` - `W05`).
 

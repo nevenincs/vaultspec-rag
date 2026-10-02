@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from .._source_types import PublicSourceType
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -40,7 +42,9 @@ def _current_code_readiness() -> dict[str, object]:
     }
 
 
-def test_search_index_state_uses_selected_source_preflight_count() -> None:
+def test_search_index_state_uses_selected_source_preflight_count(
+    tmp_path: Path,
+) -> None:
     from ..server._search_route_availability import (
         SearchIndexStateInput,
         search_index_state_for_route,
@@ -49,7 +53,7 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
     state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=37,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
         )
     )
@@ -57,20 +61,21 @@ def test_search_index_state_uses_selected_source_preflight_count() -> None:
     assert state == {
         "source": "code",
         "indexed_count": 37,
-        "indexed_target_root": "C:/work/project",
-        "requested_target_root": "C:/work/project",
+        "indexed_target_root": str(tmp_path / "project"),
+        "requested_target_root": str(tmp_path / "project"),
         "target_matches": True,
         "status": "available",
     }
 
 
 def test_empty_search_diagnostics_use_supported_jobs_filter() -> None:
+    """A no-match diagnostic for a populated index uses supported commands."""
     from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
         {
             "source": "code",
-            "indexed_count": 0,
+            "indexed_count": 1284,
         },
         port=8766,
     )
@@ -124,8 +129,8 @@ def test_empty_search_diagnostics_stay_a_plain_no_match_without_a_path_filter() 
     assert diagnostics["reason"] == "no_match"
 
 
-def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
-    """With nothing indexed, the path filter is not the actionable cause."""
+def test_a_published_empty_index_outranks_a_path_filter_explanation() -> None:
+    """After verifying publication, an empty index needs no filter repair."""
     from ..server._search_route_availability import _empty_search_diagnostics
 
     diagnostics = _empty_search_diagnostics(
@@ -137,10 +142,13 @@ def test_an_empty_index_outranks_a_path_filter_explanation() -> None:
         path_filter={"patterns": ["src/**"], "candidates_before_filter": 0},
     )
 
-    assert diagnostics["reason"] == "index_missing"
+    assert diagnostics["reason"] == "published_empty"
+    assert diagnostics["remediation"] == []
 
 
-def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
+def test_search_index_state_carries_a_published_breadth_shortfall(
+    tmp_path: Path,
+) -> None:
     """A short collection must reach the adapters as a settled conclusion.
 
     The service decides completeness once and carries the figures, so no
@@ -162,7 +170,7 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
             published_points=421.0,
         )
@@ -177,7 +185,9 @@ def test_search_index_state_carries_a_published_breadth_shortfall() -> None:
     assert state["status"] == "available"
 
 
-def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> None:
+def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown(
+    tmp_path: Path,
+) -> None:
     """No published figure is "cannot tell", never a shortfall.
 
     A root written by a build that recorded no breadth has nothing to compare
@@ -199,7 +209,7 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
         )
     )
@@ -207,7 +217,9 @@ def test_search_index_state_omits_the_shortfall_when_breadth_is_unknown() -> Non
     assert "shortfall" not in state
 
 
-def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None:
+def test_one_projection_backs_the_shortfall_block_on_both_search_paths(
+    tmp_path: Path,
+) -> None:
     """The in-process path and the daemon must emit one block shape.
 
     The local search path builds its own envelope rather than reading the
@@ -232,7 +244,7 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     daemon_state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
             published_points=421.0,
         )
@@ -246,7 +258,9 @@ def test_one_projection_backs_the_shortfall_block_on_both_search_paths() -> None
     assert block == daemon_state["shortfall"]
 
 
-def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
+def test_the_daemon_route_renders_the_service_domain_index_state(
+    tmp_path: Path,
+) -> None:
     """The route must own no part of the index-state shape.
 
     The block describes the service, not a rendering, so one builder settles
@@ -271,7 +285,7 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     routed = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
             published_points=421.0,
         )
@@ -279,7 +293,7 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
 
     assert routed == search_index_state(
         indexed_count=4,
-        requested_root="C:/work/project",
+        requested_root=str(tmp_path / "project"),
         search_type="codebase",
         findings=BreadthFindings(shortfall=BreadthShortfall(published=421, live=4)),
     )
@@ -294,7 +308,9 @@ def test_the_daemon_route_renders_the_service_domain_index_state() -> None:
     }
 
 
-def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
+def test_the_daemon_route_carries_the_integrity_verdict_verbatim(
+    tmp_path: Path,
+) -> None:
     """The route renders the service-domain integrity block, owning no key.
 
     The verdict is settled by one evaluator and projected by one method, so
@@ -307,15 +323,15 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
     and dropping the ``integrity=input.integrity`` pass-through fails this
     test on the block lookup below, not on a setup error.
     """
-    from .._index_integrity import IndexIntegrity
+    from .._index_integrity import IndexIntegrity, IntegrityVerdict
     from ..server._search_route_availability import (
         SearchIndexStateInput,
         search_index_state_for_route,
     )
 
     verdict = IndexIntegrity(
-        verdict="shrunken",
-        source="code",
+        verdict=IntegrityVerdict.SHRUNKEN,
+        source=PublicSourceType.CODE,
         claimed_count=421,
         live_count=4,
         generation_id="generation-route",
@@ -324,7 +340,7 @@ def test_the_daemon_route_carries_the_integrity_verdict_verbatim() -> None:
     state = search_index_state_for_route(
         SearchIndexStateInput(
             indexed_count=4,
-            requested_root="C:/work/project",
+            requested_root=str(tmp_path / "project"),
             search_type="codebase",
             integrity=verdict,
         )
@@ -534,6 +550,7 @@ def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
         AbsenceAuthority,
         SearchAvailability,
         SearchFreshness,
+        SearchReasonCode,
         SearchSourceFact,
         SearchWaitCause,
         WaitObservation,
@@ -559,7 +576,7 @@ def test_bounded_wait_causes_remain_distinct_through_route_attachment() -> None:
             observed(SearchWaitCause.CONTROLLER_DEFERRAL, 0.2),
             observed(SearchWaitCause.OTHER_SERVICE_CAPACITY, 0.3),
         ),
-        reason_code="index_updating",
+        reason_code=SearchReasonCode.INDEX_UPDATING,
         retryable=True,
     )
     readiness: dict[str, object] = search_readiness_block((fact,))

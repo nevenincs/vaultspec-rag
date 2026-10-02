@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#index-backpressure-storage-hygiene'
 date: '2026-07-21'
-modified: '2026-07-27'
-body_hash: 'sha256:34449bd6116a09c53b291a210f131850bb32f49938c3c4c9259a79ab99816ff4'
+modified: '2026-10-01'
+body_hash: 'sha256:07cefb8a5bebf2e5b438169007ff43e6ae4529708a833fb3763a0cabe2d5ef91'
 related: []
 ---
 
@@ -81,7 +81,7 @@ with file:line evidence, to ground an ADR covering the six handover asks.
   (`src/vaultspec_rag/_store_models.py:53-55`) hashes
   `os.path.normcase(Path(root).resolve())` (blake2b-6). Verified by execution: a
   `\\?\`-prefixed alias survives `resolve()`+`normcase` differently
-  (`c:windows` vs `c:\windows`) and mints a duplicate namespace. Single authority —
+  (`<drive>:<segment>` vs `<drive>:\<segment>`; the historical drive and segment are rendered here as portable placeholders) and mints a duplicate namespace. Single authority —
   also called from `store.py:175`, `storage_manifest.py:219,271,420` — so one fix
   propagates. The manifest `root` field stores `resolve()` without `normcase`
   (`storage_manifest.py:218`).

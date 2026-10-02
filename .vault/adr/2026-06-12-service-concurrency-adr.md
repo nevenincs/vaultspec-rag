@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-09-23'
-body_hash: 'sha256:d1435ff1546f29805dd8f350e8abedc5f50899adb99d211f741c7e955fa13884'
+modified: '2026-09-30'
+body_hash: 'sha256:0c69f237b24f8e89b47b017769e2354d92addd6e248f7efa0804ba53c41df4bb'
 related:
   - "[[2026-06-12-service-concurrency-research]]"
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
@@ -152,7 +152,7 @@ carry the heading path as their `section` instead
 spirit as the existing `--prefer` mechanism, so structural priors break ties instead
 of overriding calibrated relevance.
 
-**D10 — Sparse conversion and hot-path hygiene (F16).** SPLADE output conversion stops
+**D10 — Sparse conversion and hot-path hygiene (F16).** previous BERT sparse encoder output conversion stops
 densifying `[batch × vocab]` tensors and looping per row; a single coalesced-COO (or
 one CPU CSR transfer) pass replaces it, shrinking index-slice `gpu_lock` holds.
 Vector list round-trips are trimmed where the client accepts arrays.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import threading
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -228,7 +229,7 @@ def ledger_test_assert_generation_proof_gate(
     generation_id: str,
 ) -> None:
     """Invoke the strict gate inside one caller-owned ledger snapshot."""
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN")
         ledger.assert_generation_proof_committed(

@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:06f3c876174c1b252f74b4ffdaa60b66c2b6f874eec3c7118cf1e0a0f0e72dd7'
+modified: '2026-09-30'
+body_hash: 'sha256:9681c46d5f85208ddc248cfda36bc47654dd36759010d9e7fd59b8d1b5cae97e'
 ---
 
 # Round 25 Correctness Audit: store.py & api.py
@@ -475,7 +475,7 @@ ______________________________________________________________________
 
 **Next audit targets**:
 
-- Round 26: `embeddings.py` (Qwen3 + SPLADE + CrossEncoder)
+- Round 26: `embeddings.py` (Qwen3 + previous BERT sparse encoder + CrossEncoder)
 - Round 27: `search.py` (RRF normalization, graph reranking)
 - Round 28: `mcp_server.py` (async/threading, tool signatures, resource cleanup)
 

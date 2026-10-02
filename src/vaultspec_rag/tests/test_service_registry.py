@@ -456,7 +456,7 @@ class TestMultiProjectSearch:
                     "---\ntags:\n  - '#research'\ndate: 2026-02-02\n---\n"
                     "# Vector database selection\n\n"
                     "Qdrant in local mode provides hybrid search with "
-                    "dense and SPLADE sparse vectors via the Universal "
+                    "dense and SPARSEUP sparse vectors via the Universal "
                     "Query API and RRF fusion.\n"
                 ),
             },
@@ -569,7 +569,7 @@ class TestMultiProjectSearch:
             ),
             threading.Thread(
                 target=search,
-                args=(root_b, "SPLADE sparse vectors", "b2"),
+                args=(root_b, "SPARSEUP sparse vectors", "b2"),
             ),
         ]
         for t in threads:

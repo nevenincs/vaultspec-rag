@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#storage-autoprune-safety'
 date: '2026-07-13'
-modified: '2026-07-23'
-body_hash: 'sha256:9eedad8979f9442f8bd7fba4ebbdf095416cfd5c7ef16477db8a6ac0a142eef6'
+modified: '2026-10-01'
+body_hash: 'sha256:95a0bbbc21c3131dc5d481e6ac01763a040b296957a91357ee016c507d80acc9'
 related:
   - '[[2026-06-18-storage-lifecycle-adr]]'
   - '[[2026-07-13-control-plane-affordances-adr]]'
@@ -164,7 +164,7 @@ lifecycle-inertness invariant as a codification candidate
 
 ## Sources
 
-- `C:\Users\user\.vaultspec-rag\service.log` lines ~29585, ~50086 (the two
+- `<user-home>/.vaultspec-rag/service.log` lines ~29585, ~50086 (the two
   `cli_terminate` events), qdrant.log recovery window
 - `src/vaultspec_rag/cli/_service_lifecycle.py` - `_terminate_and_confirm`
   and its three stop-flow callers

@@ -468,6 +468,9 @@ def delete_prefix(
     removed: list[str] = []
     for name in targets:
         try:
+            from ._qdrant_local_lifetime import close_local_collection
+
+            close_local_collection(client, name)
             client.delete_collection(collection_name=name)
             removed.append(name)
         except TRANSPORT_FAILURES as exc:

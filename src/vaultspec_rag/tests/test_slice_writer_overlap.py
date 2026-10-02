@@ -209,61 +209,61 @@ class TestVaultEncodeUpsertOverlap:
         # Warm the lazy torch import behind the per-slice cache flush first,
         # so its one-off cost cannot serialize the timed windows.
         _release_cuda_cache()
-        store = _SlowUpsertStore(tmp_path, latency_seconds=0.4)
-        encoder = _RecordingEncoder(encode_seconds=0.05)
-        counts = _stream(store, encoder)
-        assert len(store.upsert_windows) == 3
-        overlapped = any(
-            upsert_start <= encode_start < upsert_end
-            for encode_start, _encode_end in encoder.encode_spans[1:]
-            for upsert_start, upsert_end in store.upsert_windows
-        )
-        assert overlapped, "no encode started while an upsert was in flight"
-        assert set(counts.values()) == {1}
+        with _SlowUpsertStore(tmp_path, latency_seconds=0.4) as store:
+            encoder = _RecordingEncoder(encode_seconds=0.05)
+            counts = _stream(store, encoder)
+            assert len(store.upsert_windows) == 3
+            overlapped = any(
+                upsert_start <= encode_start < upsert_end
+                for encode_start, _encode_end in encoder.encode_spans[1:]
+                for upsert_start, upsert_end in store.upsert_windows
+            )
+            assert overlapped, "no encode started while an upsert was in flight"
+            assert set(counts.values()) == {1}
 
     def test_exactly_one_writer_thread_and_encode_stays_on_the_caller(
         self,
         tmp_path: Path,
     ) -> None:
-        store = _SlowUpsertStore(tmp_path, latency_seconds=0.05)
-        encoder = _RecordingEncoder()
-        caller = threading.get_ident()
-        _stream(store, encoder)
-        # One writer thread only: a mutation adding a second writer (or any
-        # second storage consumer) makes this set grow past one.
-        assert len(set(store.upsert_threads)) == 1
-        # Upserts moved off the encoding thread: a mutation that calls the
-        # store inline on the encoding thread turns this assertion red.
-        assert store.upsert_threads[0] != caller
-        # The caller stays the only encode (GPU-consumer) thread.
-        assert set(encoder.encode_threads) == {caller}
+        with _SlowUpsertStore(tmp_path, latency_seconds=0.05) as store:
+            encoder = _RecordingEncoder()
+            caller = threading.get_ident()
+            _stream(store, encoder)
+            # One writer thread only: a mutation adding a second writer (or any
+            # second storage consumer) makes this set grow past one.
+            assert len(set(store.upsert_threads)) == 1
+            # Upserts moved off the encoding thread: a mutation that calls the
+            # store inline on the encoding thread turns this assertion red.
+            assert store.upsert_threads[0] != caller
+            # The caller stays the only encode (GPU-consumer) thread.
+            assert set(encoder.encode_threads) == {caller}
 
     def test_slices_are_stored_in_encode_order(self, tmp_path: Path) -> None:
-        store = _SlowUpsertStore(tmp_path, latency_seconds=0.05)
-        encoder = _RecordingEncoder()
-        _stream(store, encoder)
+        with _SlowUpsertStore(tmp_path, latency_seconds=0.05) as store:
+            encoder = _RecordingEncoder()
+            _stream(store, encoder)
 
-        # The single FIFO writer preserves the encode-submission order, so
-        # storage confirmations land in exact slice order. Each embed text is
-        # "Doc {n}\n\n{body}", mapping back to the doc id that was upserted.
-        def _expected_ids(texts: list[str]) -> list[str]:
-            return [
-                f"research/doc-{int(text.splitlines()[0].split()[1]):02d}#c0"
-                for text in texts
+            # The single FIFO writer preserves the encode-submission order, so
+            # storage confirmations land in exact slice order. Each embed text is
+            # "Doc {n}\n\n{body}", mapping back to the doc id that was upserted.
+            def _expected_ids(texts: list[str]) -> list[str]:
+                return [
+                    f"research/doc-{int(text.splitlines()[0].split()[1]):02d}#c0"
+                    for text in texts
+                ]
+
+            assert store.upserted_slices == [
+                _expected_ids(texts) for texts in encoder.encoded_slices
             ]
 
-        assert store.upserted_slices == [
-            _expected_ids(texts) for texts in encoder.encoded_slices
-        ]
-
     def test_a_writer_failure_fails_the_run(self, tmp_path: Path) -> None:
-        store = _FailingUpsertStore(tmp_path)
-        encoder = _RecordingEncoder()
-        # The failure surfaces on the encoding side, so callers never reach
-        # their stale-purge or metadata-publish steps. A mutation that stops
-        # recording the writer's failure turns this into a silent success.
-        with pytest.raises(RuntimeError, match="injected upsert failure"):
-            _stream(store, encoder)
+        with _FailingUpsertStore(tmp_path) as store:
+            encoder = _RecordingEncoder()
+            # The failure surfaces on the encoding side, so callers never reach
+            # their stale-purge or metadata-publish steps. A mutation that stops
+            # recording the writer's failure turns this into a silent success.
+            with pytest.raises(RuntimeError, match="injected upsert failure"):
+                _stream(store, encoder)
 
 
 class TestSliceWriterContract:
@@ -394,66 +394,66 @@ class TestSliceWriterContract:
         tmp_path: Path,
     ) -> None:
         """Mutation: bypassing either real slice lifecycle makes this red."""
-        store = VaultStore(tmp_path / "store", embedding_dim=_DIM)
-        encoder = cast("EmbeddingModel", _RecordingEncoder())
-        code_events: list[str] = []
-        code_lifecycle = StoreMutationLifecycle(
-            prepare=lambda: _record_prepare(code_events),
-            mark_applied=lambda: code_events.append("applied"),
-            confirm=lambda: code_events.append("confirmed"),
-            confirm_when_stored=False,
-        )
-        encode_and_upsert_code_slice(
-            CodeSliceRequest(
-                chunks=[
-                    CodeChunk(
-                        id="src/a.py:1-1",
-                        path="src/a.py",
-                        language="python",
-                        content="value = 1",
-                        line_start=1,
-                        line_end=1,
-                    )
-                ],
-                model=encoder,
-                store=store,
-                gpu_lock=None,
-                ingest_wait=False,
-                mutation_lifecycle=code_lifecycle,
+        with VaultStore(tmp_path / "store", embedding_dim=_DIM) as store:
+            encoder = cast("EmbeddingModel", _RecordingEncoder())
+            code_events: list[str] = []
+            code_lifecycle = StoreMutationLifecycle(
+                prepare=lambda: _record_prepare(code_events),
+                mark_applied=lambda: code_events.append("applied"),
+                confirm=lambda: code_events.append("confirmed"),
+                confirm_when_stored=False,
             )
-        )
-        assert code_events == ["prepare", "applied"]
-        store.apply_ingest_barrier(store.CODE_TABLE_NAME, expected_points=1)
-        code_lifecycle.confirm()
-        assert code_events == ["prepare", "applied", "confirmed"]
+            encode_and_upsert_code_slice(
+                CodeSliceRequest(
+                    chunks=[
+                        CodeChunk(
+                            id="src/a.py:1-1",
+                            path="src/a.py",
+                            language="python",
+                            content="value = 1",
+                            line_start=1,
+                            line_end=1,
+                        )
+                    ],
+                    model=encoder,
+                    store=store,
+                    gpu_lock=None,
+                    ingest_wait=False,
+                    mutation_lifecycle=code_lifecycle,
+                )
+            )
+            assert code_events == ["prepare", "applied"]
+            store.apply_ingest_barrier(store.CODE_TABLE_NAME, expected_points=1)
+            code_lifecycle.confirm()
+            assert code_events == ["prepare", "applied", "confirmed"]
 
-        document_events: list[str] = []
-        document_lifecycle = StoreMutationLifecycle(
-            prepare=lambda: _record_prepare(document_events),
-            mark_applied=lambda: document_events.append("applied"),
-            confirm=lambda: document_events.append("confirmed"),
-            confirm_when_stored=True,
-        )
-        encode_and_upsert_document_slice(
-            DocumentSliceRequest(
-                chunks=[
-                    DocumentChunk(
-                        id="docs/a.txt#0",
-                        payload=DocumentPayload(
-                            source_path="docs/a.txt",
-                            unit_ordinal=0,
-                            content_fingerprint="content-v1",
-                            content="document body",
-                        ),
-                    )
-                ],
-                model=encoder,
-                store=store,
-                gpu_lock=None,
-                mutation_lifecycle=document_lifecycle,
+            document_events: list[str] = []
+            document_lifecycle = StoreMutationLifecycle(
+                prepare=lambda: _record_prepare(document_events),
+                mark_applied=lambda: document_events.append("applied"),
+                confirm=lambda: document_events.append("confirmed"),
+                confirm_when_stored=True,
             )
-        )
-        assert document_events == ["prepare", "applied", "confirmed"]
+            encode_and_upsert_document_slice(
+                DocumentSliceRequest(
+                    chunks=[
+                        DocumentChunk(
+                            id="docs/a.txt#0",
+                            payload=DocumentPayload(
+                                source_path="docs/a.txt",
+                                unit_ordinal=0,
+                                content_fingerprint="content-v1",
+                                content="document body",
+                            ),
+                        )
+                    ],
+                    model=encoder,
+                    store=store,
+                    gpu_lock=None,
+                    mutation_lifecycle=document_lifecycle,
+                )
+            )
+            assert document_events == ["prepare", "applied", "confirmed"]
 
     def test_cancellation_during_prepare_never_touches_storage(self) -> None:
         """Mutation: moving preparation after storage makes this guard red."""

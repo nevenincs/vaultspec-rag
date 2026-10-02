@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#index-completeness-guard'
 date: '2026-07-25'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:e8a85d6a6bcd275008ebd3d11e08110243be0e7831ea6ef241b73e03d58f13f7'
+body_hash: 'sha256:d7c792389c1715120bafae37b89b2cc77381405d2b95a827c7a2866781e947d7'
 related:
   - "[[2026-07-25-index-completeness-guard-plan]]"
 ---
@@ -27,3 +27,8 @@ related:
 - `S06` `T` `src/vaultspec_rag/tests/test_service_search_diagnostics.py`
 - `S07` `T` `gates only`
 - `S07` `T` `no source changes`
+- `S08` `A` `.vault/audit/2026-07-25-index-completeness-guard-audit.md`
+
+## Notes
+
+- `S08` Historical mapping reconciliation: existing closing audit records this review; file addition is preserved in Git commit 1332eb26e566bf52c06213c0dd1a4c25133bd9da. No fresh implementation or runtime verification is asserted.

@@ -59,7 +59,7 @@ IndexSource = Literal["vault", "code", "document"]
 #: guards a field typed by the Literal without either noticing the other
 #: moved. Deriving the tuple from the Literal removes that seam entirely -
 #: there is only one spelling left to edit.
-INDEX_SOURCES: tuple[str, ...] = get_args(IndexSource)
+INDEX_SOURCES: tuple[IndexSource, ...] = get_args(IndexSource)
 
 #: ``IndexSource`` itself is still hand-written, because a ``Literal`` cannot
 #: be computed from ``StrEnum`` members at a level a type checker honours.

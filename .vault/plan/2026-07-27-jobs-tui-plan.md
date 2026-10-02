@@ -3,8 +3,8 @@ tags:
   - '#plan'
   - '#jobs-tui'
 date: '2026-07-27'
-modified: '2026-07-27'
-body_hash: 'sha256:a1d2cb00f5982133d8f9e430c2c8cc68a34ce2e27a5c3769c8ab1999b460efb3'
+modified: '2026-10-01'
+body_hash: 'sha256:bf6450e58053c24fb68e9374621fd6b0594893fea8538d14c791ac79fd385b5e'
 tier: L2
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
@@ -25,7 +25,7 @@ Publish a windowed progress rate and a derived remaining-time estimate on the jo
 
 Carry textual as a core dependency and stand up the application that owns the screen behind the live jobs path, refreshing off-thread against the existing bounded query.
 
-- [x] `P02.S04` - Add textual to the core dependency list and refresh the lockfile; `pyproject.toml`, `uv.lock`.
+- [x] `P02.S04` - Add textual to the core dependency list and refresh the lockfile; `pyproject.toml, uv.lock`.
 - [x] `P02.S05` - Create the application module that owns the screen, composing the table, the log region and the footer from one layout; `src/vaultspec_rag/cli/_jobs_tui.py`.
 - [x] `P02.S06` - Refresh off the event loop on an interval through a thread worker over the existing bounded jobs query, keeping the fetch identical to the one-shot path; `src/vaultspec_rag/cli/_jobs_tui.py`.
 
@@ -34,9 +34,9 @@ Carry textual as a core dependency and stand up the application that owns the sc
 Render one multi-line row per job carrying state, operation, full project path, progress, elapsed and remaining time, with a liveness indicator and width breakpoints driving one composition.
 
 - [x] `P03.S07` - Build the multi-line row from the job payload: state, operation, full project path, progress, elapsed and remaining time, keyed so a row survives reordering and removal; `src/vaultspec_rag/cli/_jobs_tui.py`.
-- [x] `P03.S08` - Reuse the existing job label helpers rather than restating their vocabulary, and promote the full project root out of the detail-only render path; `src/vaultspec_rag/cli/_service_jobs.py`, `src/vaultspec_rag/cli/_jobs_tui.py`.
+- [x] `P03.S08` - Reuse the existing job label helpers rather than restating their vocabulary, and promote the full project root out of the detail-only render path; `src/vaultspec_rag/cli/_service_jobs.py, src/vaultspec_rag/cli/_jobs_tui.py`.
 - [x] `P03.S09` - Animate a liveness indicator that distinguishes a refreshing view from a frozen one, and stamp the last successful refresh; `src/vaultspec_rag/cli/_jobs_tui.py`.
-- [x] `P03.S10` - Drive layout and column visibility from reported terminal width, collapsing to tabs when narrow and placing the log region beside the table when wide; `src/vaultspec_rag/cli/_jobs_tui.py`, `src/vaultspec_rag/cli/_jobs_tui.tcss`.
+- [x] `P03.S10` - Drive layout and column visibility from reported terminal width, collapsing to tabs when narrow and placing the log region beside the table when wide; `src/vaultspec_rag/cli/_jobs_tui.py, src/vaultspec_rag/cli/_jobs_tui.tcss`.
 
 ### Phase `P04` - control and logs
 
@@ -53,7 +53,7 @@ Delete the reprint loop it replaces, prove the interface on rendered bytes drive
 
 - [x] `P05.S15` - Route the live jobs path to the application and delete the clear-and-reprint loop, its refresh banner and its watch-status text; `src/vaultspec_rag/cli/_service_jobs.py`.
 - [x] `P05.S16` - Prove the interface on rendered output driven by real key presses: one assertion per action binding, plus the capability gate, the narrow and wide layouts, and the estimate column; `src/vaultspec_rag/tests/`.
-- [x] `P05.S17` - Update the operator documentation for the replaced live view and the new controls; `docs/`, `README.md`.
+- [x] `P05.S17` - Update the operator documentation for the replaced live view and the new controls; `docs/, README.md`.
 - [x] `P05.S18` - Run lint, format, type-check and the touched test modules, then commit by explicit pathspec; `repository gates`.
 
 ## Description

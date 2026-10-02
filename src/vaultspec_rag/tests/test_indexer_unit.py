@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import tracemalloc
+from contextlib import closing
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -837,7 +838,7 @@ class TestCanonicalPublishedBreadth:
 
         ledger_path = index_run_ledger_path(workspace_volume_path(tmp_path.resolve()))
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(ledger_path) as connection:
+        with closing(sqlite3.connect(ledger_path)) as connection, connection:
             connection.execute("CREATE TABLE old_runs (id TEXT PRIMARY KEY)")
             connection.execute("INSERT INTO old_runs VALUES ('old')")
         before = sqlite_contents(ledger_path)

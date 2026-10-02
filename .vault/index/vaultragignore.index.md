@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#vaultragignore'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:e2decbb90f806fc6780df45b4b1078e21caac9f03f2ffeeb523e9457dc53676f'
+body_hash: 'sha256:4c0c57eb0e0c1562f0d75f4638dbcdb4e1933cc55c289a65b06b28d1fe90c293'
 related:
   - '[[2026-04-04-vaultragignore-adr]]'
+  - '[[2026-04-04-vaultragignore-ledger]]'
   - '[[2026-04-04-vaultragignore-plan]]'
   - '[[2026-04-04-vaultragignore-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#vaultragignore`.
 ### adr
 
 - `2026-04-04-vaultragignore-adr` - `vaultragignore` ADR: design decisions | (**status:** `proposed`)
+
+### exec
+
+- `2026-04-04-vaultragignore-ledger` - `vaultragignore` ledger
 
 ### plan
 

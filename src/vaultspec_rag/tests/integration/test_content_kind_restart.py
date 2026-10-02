@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -113,43 +114,47 @@ def test_document_restart_reuses_confirmed_slices_and_publishes_once(
         ("restart-safe document content " * 8000).strip(), encoding="utf-8"
     )
     policy = _document_policy("restart.txt")
-    store = VaultStore(tmp_path)
-    interrupted = _interrupt_document_indexing(tmp_path, embedding_model, store, policy)
+    with VaultStore(tmp_path) as store:
+        interrupted = _interrupt_document_indexing(
+            tmp_path, embedding_model, store, policy
+        )
 
-    with sqlite3.connect(interrupted.ledger_path) as connection:
-        before = dict(
-            connection.execute(
-                "SELECT unit_id, committed_at FROM commit_units "
-                "WHERE generation_id = ?",
-                (interrupted.generation_id,),
-            ).fetchall()
+        with closing(sqlite3.connect(interrupted.ledger_path)) as connection:
+            before = dict(
+                connection.execute(
+                    "SELECT unit_id, committed_at FROM commit_units "
+                    "WHERE generation_id = ?",
+                    (interrupted.generation_id,),
+                ).fetchall()
+            )
+        indexer = DocumentIndexer(
+            tmp_path, embedding_model, store, content_policy=policy
         )
-    indexer = DocumentIndexer(tmp_path, embedding_model, store, content_policy=policy)
-    result = indexer.full_index(
-        reporter=NullProgressReporter(),
-        preflight=indexer.preflight_content(),
-    )
-    ledger = RunLedger(interrupted.ledger_path)
-    published = ledger.latest_generation(
-        ContentKind.DOCUMENT,
-        collection_identity=store_schema.DOCUMENT_COLLECTION,
-    )
-    assert (
-        published is not None and published.generation_id == interrupted.generation_id
-    )
-    with sqlite3.connect(interrupted.ledger_path) as connection:
-        after = dict(
-            connection.execute(
-                "SELECT unit_id, committed_at FROM commit_units "
-                "WHERE generation_id = ?",
-                (interrupted.generation_id,),
-            ).fetchall()
+        result = indexer.full_index(
+            reporter=NullProgressReporter(),
+            preflight=indexer.preflight_content(),
         )
-    assert before.items() <= after.items()
-    assert len(after) > interrupted.committed
-    assert result.preprocess_skipped == 0
-    assert store.count_document() == result.total
-    store.close()
+        ledger = RunLedger(interrupted.ledger_path)
+        published = ledger.latest_generation(
+            ContentKind.DOCUMENT,
+            collection_identity=store_schema.DOCUMENT_COLLECTION,
+        )
+        assert (
+            published is not None
+            and published.generation_id == interrupted.generation_id
+        )
+        with closing(sqlite3.connect(interrupted.ledger_path)) as connection:
+            after = dict(
+                connection.execute(
+                    "SELECT unit_id, committed_at FROM commit_units "
+                    "WHERE generation_id = ?",
+                    (interrupted.generation_id,),
+                ).fetchall()
+            )
+        assert before.items() <= after.items()
+        assert len(after) > interrupted.committed
+        assert result.preprocess_skipped == 0
+        assert store.count_document() == result.total
 
 
 def test_each_kind_replays_only_its_final_unconfirmed_unit(tmp_path: Path) -> None:

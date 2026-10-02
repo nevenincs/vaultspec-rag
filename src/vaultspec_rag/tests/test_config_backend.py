@@ -548,7 +548,7 @@ class TestConfiguredModelRepos:
 
     warmup, and readiness consumer reads its required-model inventory from,
     so gating it here is what keeps a dense-only install from ever being
-    asked to provision the gated SPLADE repo.
+    asked to provision the SPARSEUP repo.
     """
 
     def test_sparse_enabled_includes_all_three_repos(self) -> None:
@@ -562,7 +562,7 @@ class TestConfiguredModelRepos:
             values = [repo for _label, repo in repos]
             assert labels == [
                 "Dense (Qwen3)",
-                "Sparse (SPLADE)",
+                "Sparse (SPARSEUP)",
                 "Reranker (CrossEncoder)",
             ]
             assert str(cfg.sparse_model) in values
@@ -582,7 +582,7 @@ class TestConfiguredModelRepos:
             labels = [label for label, _repo in repos]
             values = [repo for _label, repo in repos]
             # The sparse label and repo are gone entirely, not merely blanked -
-            # a dense-only inventory must never mention the gated repo at all.
+            # a dense-only inventory must never mention the sparse repo at all.
             assert labels == ["Dense (Qwen3)", "Reranker (CrossEncoder)"]
             assert str(cfg.sparse_model) not in values
             assert str(cfg.embedding_model) in values

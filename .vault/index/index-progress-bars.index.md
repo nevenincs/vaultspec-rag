@@ -4,12 +4,13 @@ tags:
   - '#index'
   - '#index-progress-bars'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:688f161124b27cbb09a87e4cf398bde62771728b869f55d793feed6ba4649075'
+body_hash: 'sha256:99478c8eb3323ff8338a549cdf0c4db8f1de863309fe2f06c3c34abdb8c60b32'
 related:
   - '[[2026-04-12-index-progress-bars-adr]]'
   - '[[2026-04-12-index-progress-bars-audit]]'
+  - '[[2026-04-12-index-progress-bars-ledger]]'
   - '[[2026-04-12-index-progress-bars-phase-1-plan]]'
   - '[[2026-04-12-index-progress-bars-phase-1-summary-exec]]'
   - '[[2026-04-12-index-progress-bars-phase-1-task-1-progress-module-exec]]'
@@ -38,6 +39,7 @@ Auto-generated index of all documents tagged with `#index-progress-bars`.
 
 ### exec
 
+- `2026-04-12-index-progress-bars-ledger` - `index-progress-bars` ledger
 - `2026-04-12-index-progress-bars-phase-1-summary-exec` - `index-progress-bars` `phase-1` summary
 - `2026-04-12-index-progress-bars-phase-1-task-1-progress-module-exec` - `index-progress-bars` `phase-1` `task-1-progress-module`
 - `2026-04-12-index-progress-bars-phase-1-task-2-vault-indexer-exec` - `index-progress-bars` `phase-1` `task-2-vault-indexer`

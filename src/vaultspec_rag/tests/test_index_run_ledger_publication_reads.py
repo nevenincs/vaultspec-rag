@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -76,7 +77,7 @@ def test_generation_start_leaves_canonical_publication_projection_unchanged(
     )
 
     def canonical_projection() -> tuple[tuple[object, ...], ...]:
-        with sqlite3.connect(ledger.path) as connection:
+        with closing(sqlite3.connect(ledger.path)) as connection, connection:
             return tuple(
                 tuple(row)
                 for table in (
@@ -93,7 +94,7 @@ def test_generation_start_leaves_canonical_publication_projection_unchanged(
         "publication_evidence",
         "publication_points",
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         for table in canonical_tables:
             for operation in ("INSERT", "UPDATE", "DELETE"):
                 trigger = f"reject_start_{operation.lower()}_{table}"
@@ -116,7 +117,7 @@ def test_generation_start_leaves_canonical_publication_projection_unchanged(
     except sqlite3.IntegrityError as exc:  # pragma: no cover - mutation guard
         pytest.fail(f"generation start wrote canonical publication state: {exc}")
     finally:
-        with sqlite3.connect(ledger.path) as connection:
+        with closing(sqlite3.connect(ledger.path)) as connection, connection:
             for table in canonical_tables:
                 for operation in ("INSERT", "UPDATE", "DELETE"):
                     connection.execute(
@@ -272,7 +273,7 @@ def test_effective_receipt_read_folds_canonical_sparse_and_deleted_state(
     # Sparse state is deliberately inserted without commit_units. The receipt's
     # confirmed mutation journal, not generation ancestry or the old checkpoint
     # table, is the retained-membership owner of this read.
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             INSERT INTO file_states (
@@ -403,7 +404,7 @@ def test_effective_receipt_read_refuses_unbounded_or_ambiguous_state(
         ),
     )
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             INSERT INTO file_states (
@@ -452,7 +453,7 @@ def test_file_state_and_deletion_tombstone_replace_each_other_atomically(
     )
     ledger.record_storage_confirmed_unit(generation.generation_id, deletion)
     ledger.record_path_deleted(generation.generation_id, rel_path)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert connection.execute(
             """
             SELECT 1 FROM file_state_tombstones
@@ -480,7 +481,7 @@ def test_file_state_and_deletion_tombstone_replace_each_other_atomically(
         generation.generation_id,
         FileState.indexed(rel_path, ContentKind.CODE, digest),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert (
             connection.execute(
                 """

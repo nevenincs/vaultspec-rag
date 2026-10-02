@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#cli-argv-expansion'
 date: '2026-07-25'
-modified: '2026-07-25'
-body_hash: 'sha256:7cf910c8926c36ac2233ce6672c7e2ad42d79a312631092f1a5d314889b0840c'
+modified: '2026-10-01'
+body_hash: 'sha256:381a834141be35e0e123fc975fd351eb2fb09807ea55a795686ddb5919bf3a75'
 related: []
 ---
 
@@ -51,7 +51,7 @@ alone. One match silently replaces a pattern with a single concrete file.
 Several turn the remainder into positionals. The two substitutions that precede
 the glob apply unconditionally, so they reach arguments that are not paths at
 all - measured, a query of `cost of %USERPROFILE% expansion` reaches the ranker
-as `cost of C:\Users\user expansion`, and `~approximately equal` is
+as `cost of <user-home> expansion`, and `~approximately equal` is
 expanded into a home-directory path carrying `approximately` as its account segment.
 
 The mixed separator in the reported output - `src/vaultspec_rag/indexer\_ast_chunker.py`,

@@ -23,9 +23,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from .._index_integrity import (
-    VERDICT_CONSISTENT,
-    VERDICT_SHRUNKEN,
-    VERDICT_UNVERIFIABLE,
+    IntegrityVerdict,
 )
 from .._integrity_remediation import (
     REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
@@ -61,7 +59,7 @@ class TestRepairDecision:
         second on the observation it recorded.
         """
         request, job_id = _record_verdict(
-            tmp_path, PublicSourceType.CODE, VERDICT_UNVERIFIABLE, now=100.0
+            tmp_path, PublicSourceType.CODE, IntegrityVerdict.UNVERIFIABLE, now=100.0
         )
         assert request is False
         assert job_id is None
@@ -78,35 +76,43 @@ class TestRepairDecision:
         """
         with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="1"):
             first, _ = _record_verdict(
-                tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0
+                tmp_path, PublicSourceType.CODE, IntegrityVerdict.SHRUNKEN, now=100.0
             )
             assert first is True
             again, _ = _record_verdict(
-                tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=101.0
+                tmp_path, PublicSourceType.CODE, IntegrityVerdict.SHRUNKEN, now=101.0
             )
             assert again is False
             past_interval, _ = _record_verdict(
                 tmp_path,
                 PublicSourceType.CODE,
-                VERDICT_SHRUNKEN,
+                IntegrityVerdict.SHRUNKEN,
                 now=101.0 + REPAIR_REQUEST_MIN_INTERVAL_SECONDS,
             )
             assert past_interval is True
 
     def test_consistent_clears_the_observation(self, tmp_path: Path) -> None:
-        _record_verdict(tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0)
+        _record_verdict(
+            tmp_path, PublicSourceType.CODE, IntegrityVerdict.SHRUNKEN, now=100.0
+        )
         assert "code" in shrunken_observations(tmp_path, now=100.5)
-        _record_verdict(tmp_path, PublicSourceType.CODE, VERDICT_CONSISTENT, now=101.0)
+        _record_verdict(
+            tmp_path, PublicSourceType.CODE, IntegrityVerdict.CONSISTENT, now=101.0
+        )
         # Catches the clear being dropped: a healed collection must stop
         # being reported the moment a search proves it whole.
         assert shrunken_observations(tmp_path, now=101.5) == {}
 
     def test_domains_are_tracked_independently(self, tmp_path: Path) -> None:
-        _record_verdict(tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0)
         _record_verdict(
-            tmp_path, PublicSourceType.DOCUMENT, VERDICT_SHRUNKEN, now=100.0
+            tmp_path, PublicSourceType.CODE, IntegrityVerdict.SHRUNKEN, now=100.0
         )
-        _record_verdict(tmp_path, PublicSourceType.CODE, VERDICT_CONSISTENT, now=101.0)
+        _record_verdict(
+            tmp_path, PublicSourceType.DOCUMENT, IntegrityVerdict.SHRUNKEN, now=100.0
+        )
+        _record_verdict(
+            tmp_path, PublicSourceType.CODE, IntegrityVerdict.CONSISTENT, now=101.0
+        )
         assert set(shrunken_observations(tmp_path, now=102.0)) == {"document"}
 
 
@@ -122,7 +128,7 @@ class TestOperatorSwitch:
         """
         with managed_env(VAULTSPEC_RAG_INTEGRITY_AUTO_REPAIR="0"):
             request, _ = _record_verdict(
-                tmp_path, PublicSourceType.CODE, VERDICT_SHRUNKEN, now=100.0
+                tmp_path, PublicSourceType.CODE, IntegrityVerdict.SHRUNKEN, now=100.0
             )
             assert request is False
             observed = shrunken_observations(tmp_path, now=100.5)
@@ -192,7 +198,7 @@ class TestStatusSurface:
                 _record_verdict(
                     root,
                     PublicSourceType.DOCUMENT,
-                    VERDICT_SHRUNKEN,
+                    IntegrityVerdict.SHRUNKEN,
                     now=time.monotonic(),
                 )
                 status = index_job_status(root)
@@ -218,8 +224,8 @@ class TestEnvelopeCarriesTheRepair:
         from .._search_state import BreadthFindings, search_index_state
 
         integrity = IndexIntegrity(
-            verdict=VERDICT_SHRUNKEN,
-            source="code",
+            verdict=IntegrityVerdict.SHRUNKEN,
+            source=PublicSourceType.CODE,
             claimed_count=5,
             live_count=3,
             generation_id="g",

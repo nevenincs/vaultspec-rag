@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-16'
-body_hash: 'sha256:c61b3522409ede6d08449abf63d933ac67aae5d409f2b7c5f56b3dd2d676dace'
+modified: '2026-09-30'
+body_hash: 'sha256:b651adfca133e676a9149fddcc8bfe977124144bdda4387fb3a921100be11d2d'
 ---
 
 # Round 12 Audit -- config.py and `__init__.py`
@@ -27,20 +27,20 @@ ______________________________________________________________________
 
 `_RAG_DEFAULTS` (lines 18-31) provides defaults for 12 keys:
 
-| Key                    | Default                       | Used by                                      |
-| ---------------------- | ----------------------------- | -------------------------------------------- |
-| `qdrant_dir`           | `".qdrant"`                   | store.py:138, indexer.py:632, indexer.py:874 |
-| `index_metadata_file`  | `"index_meta.json"`           | indexer.py:632 (VaultIndexer only)           |
-| `graph_ttl_seconds`    | `300.0`                       | search.py:184                                |
-| `embedding_batch_size` | `64`                          | embeddings.py:133                            |
-| `max_embed_chars`      | `8000`                        | embeddings.py:140                            |
-| `embedding_model`      | `"Qwen/Qwen3-Embedding-0.6B"` | embeddings.py:161                            |
-| `embedding_dimension`  | `1024`                        | embeddings.py:194                            |
-| `sparse_model`         | `"naver/splade-v3"`           | embeddings.py:163                            |
-| `rag_enabled`          | `True`                        | (not found in source -- dead key)            |
-| `reranker_enabled`     | `True`                        | search.py:191                                |
-| `reranker_model`       | `"BAAI/bge-reranker-v2-m3"`   | search.py:192                                |
-| `reranker_top_k`       | `5`                           | (not found in source -- dead key)            |
+| Key                    | Default                          | Used by                                      |
+| ---------------------- | -------------------------------- | -------------------------------------------- |
+| `qdrant_dir`           | `".qdrant"`                      | store.py:138, indexer.py:632, indexer.py:874 |
+| `index_metadata_file`  | `"index_meta.json"`              | indexer.py:632 (VaultIndexer only)           |
+| `graph_ttl_seconds`    | `300.0`                          | search.py:184                                |
+| `embedding_batch_size` | `64`                             | embeddings.py:133                            |
+| `max_embed_chars`      | `8000`                           | embeddings.py:140                            |
+| `embedding_model`      | `"Qwen/Qwen3-Embedding-0.6B"`    | embeddings.py:161                            |
+| `embedding_dimension`  | `1024`                           | embeddings.py:194                            |
+| `sparse_model`         | `"previous BERT sparse encoder"` | embeddings.py:163                            |
+| `rag_enabled`          | `True`                           | (not found in source -- dead key)            |
+| `reranker_enabled`     | `True`                           | search.py:191                                |
+| `reranker_model`       | `"BAAI/bge-reranker-v2-m3"`      | search.py:192                                |
+| `reranker_top_k`       | `5`                              | (not found in source -- dead key)            |
 
 __Verdict: PASS__ on coverage. All active RAG config keys have defaults.
 

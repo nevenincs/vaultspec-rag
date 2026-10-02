@@ -225,11 +225,11 @@ note = "Unique reasoning for the pull-based metrics tier in this record's findin
 id = "e20"
 query = "In local mode, roughly how long does the sparse encoder's brute-force pass over the chunk set take, and is that the real bottleneck for the glob pushdown idea?"
 kind = "paraphrase"
-note = "Unique measured latency figure attributing local-mode cost to the SPLADE scan."
+note = "Unique measured latency figure attributing local-mode cost to the SPARSEUP scan."
   [[case.gold]]
   doc_id = "research/2026-06-09-sparse-search-latency-research"
   section = "Why the abort outcome holds (with a corrected rationale)"
-  evidence = "The dominant local-mode cost is the SPLADE sparse linear scan (~20s across ~114k chunks per the ADR)."
+  evidence = "The dominant local-mode cost is the SPARSEUP sparse linear scan (~20s across ~114k chunks per the ADR)."
   body_offset = 1796
 
 [[case]]

@@ -112,13 +112,24 @@ def _survivors(pids: list[int], timeout: float) -> list[int]:
 
 def _reap(proc: subprocess.Popen[str], pids: list[int]) -> None:
     """Leave nothing behind when the assertions fail."""
-    if proc.poll() is None:
-        proc.kill()
-        with contextlib.suppress(subprocess.TimeoutExpired):
+    with contextlib.ExitStack() as cleanup:
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is not None:
+                cleanup.callback(stream.close)
+        for pid in pids:
+            cleanup.callback(_kill_worker, pid)
+        if proc.poll() is None:
+            proc.kill()
+        try:
             proc.wait(timeout=10)
-    for pid in pids:
-        with contextlib.suppress(psutil.Error):
-            psutil.Process(pid).kill()
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+def _kill_worker(pid: int) -> None:
+    with contextlib.suppress(psutil.Error):
+        psutil.Process(pid).kill()
 
 
 @pytest.mark.robustness

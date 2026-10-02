@@ -371,7 +371,7 @@ class TestTheAskingCommandIsNotAnObstacle:
                 ),
                 _row(
                     os.getppid(),
-                    exe="C:/Windows/System32/cmd.exe",
+                    exe=str(tmp_path.parent / "foreign" / "cmd.exe"),
                     cwd=str(tmp_path),
                 ),
             ),
@@ -397,7 +397,11 @@ def test_a_launcher_and_its_interpreter_are_one_holder(
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
         _table(
-            _row(4320, exe="C:/Python313/python.exe", cmdline=argv),
+            _row(
+                4320,
+                exe=str(tmp_path.parent / "base-interpreter" / "python.exe"),
+                cmdline=argv,
+            ),
             _row(
                 4321,
                 exe=str(tmp_path / "Scripts" / "python.exe"),
@@ -426,7 +430,11 @@ def test_a_shell_and_the_process_it_started_stay_two_holders(
     monkeypatch.setattr(
         "vaultspec_rag._process_probe.iter_process_info",
         _table(
-            _row(5000, exe="C:/Windows/System32/cmd.exe", cwd=str(tmp_path)),
+            _row(
+                5000,
+                exe=str(tmp_path.parent / "foreign" / "cmd.exe"),
+                cwd=str(tmp_path),
+            ),
             _row(
                 5001,
                 exe=str(tmp_path / "bin" / "python"),

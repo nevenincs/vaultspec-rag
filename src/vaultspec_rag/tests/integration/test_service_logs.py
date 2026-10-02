@@ -592,8 +592,15 @@ def _assert_access_rollover_logs(log_path: Path, marker: str) -> None:
         "service.log.2",
     }
     assert all(path.stat().st_size <= 1024 for path in generations)
+    # Raw-byte rollover may split a record across generations. Larger backup
+    # suffixes are older, so reconstruct the retained stream oldest to active.
+    # Replaying the actual split marker failed 0 == 1 in the original order;
+    # exact restoration passed that replay and the real Uvicorn traffic case.
     assert (
-        b"".join(path.read_bytes() for path in generations).count(marker.encode()) == 1
+        b"".join(path.read_bytes() for path in reversed(generations)).count(
+            marker.encode()
+        )
+        == 1
     )
 
 

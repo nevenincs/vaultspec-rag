@@ -204,15 +204,15 @@ def _root_recently_touched(root: Path, *, now: float) -> bool:
 
 
 def singleton_child_names(worker: str | None) -> tuple[str, str]:
-    """Return the (machine-singleton, basetemp) names *worker* writes under a root.
+    """Return the singleton and basetemp names for a session participant.
 
     The xdist controller and each worker place their own pair side by side in one
-    session root, so reclaiming must address the caller's own pair by name rather
-    than the root wholesale.
+    session root. Session participants include their process id so nested pytest
+    factories cannot clear a live parent's basetemp. Reclaiming addresses only
+    the caller's own pair rather than the root wholesale.
     """
-    if not worker:
-        return "machine-singleton", "pytest-temp"
-    return f"machine-singleton-{worker}", f"pytest-temp-{worker}"
+    suffix = f"-{worker}" if worker else ""
+    return f"machine-singleton{suffix}", f"pytest-temp{suffix}"
 
 
 def reclaim_singleton_paths(
@@ -240,9 +240,9 @@ def reclaim_singleton_paths(
 
     Both removals are gated on *owned_pair*, and the root itself additionally on
     *owned_root*. A nested pytest subprocess inherits the root **and**
-    ``PYTEST_XDIST_WORKER``, so it derives the same pair names as the live parent
-    that spawned it; reclaiming on name alone deletes the parent's basetemp
-    mid-session and its next fixture fails on a missing path.
+    ``PYTEST_XDIST_WORKER``, but configuration adds its process id to the pair
+    names. Ownership still matters: a caller handed an existing pair must not
+    reclaim it merely because it knows its name.
     """
     root_path = Path(root)
     if not owned_pair:

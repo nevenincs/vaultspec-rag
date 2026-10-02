@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:45ab286de1576c545c68d17b39077cd3f224e5f94922f8db44678ac5f63929c0'
+modified: '2026-09-30'
+body_hash: 'sha256:a47cb9ca9f3dc3f40476bdbfe01979db8c011377670053fbcc7ddd44f03114ff'
 ---
 
 # Pending Task Verification — 2026-03-07
@@ -126,7 +126,7 @@ The reranker model `cross-encoder/ms-marco-MiniLM-L6-v2` appears in:
 1. `CLAUDE.md` — update the reference
 1. `search.py` — no code change needed (reads model name from config)
 1. **Batch size concern:** `search.py:228-241` `_rerank()` creates `(query, text)` pairs and calls `reranker.predict(pairs)` in one batch. ms-marco-MiniLM-L6-v2 is 22M params; bge-reranker-v2-m3 is 568M params (~25x larger). With `top_k * 4 = 20` pairs per rerank call, this should fit in VRAM, but the larger model will be slower. No batch_size parameter is currently passed to `predict()` — sentence-transformers defaults to reasonable batching internally.
-1. **VRAM impact:** Current stack uses ~3GB (Qwen3 + SPLADE). Adding 568M-param reranker in fp16 adds ~1.1GB. Total ~4.1GB. Should fit on 8GB+ GPUs but tight on 6GB.
+1. **VRAM impact:** Current stack uses ~3GB (Qwen3 + previous BERT sparse encoder). Adding 568M-param reranker in fp16 adds ~1.1GB. Total ~4.1GB. Should fit on 8GB+ GPUs but tight on 6GB.
 
 ______________________________________________________________________
 

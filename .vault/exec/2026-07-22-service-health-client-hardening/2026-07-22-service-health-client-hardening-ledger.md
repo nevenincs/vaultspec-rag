@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#service-health-client-hardening'
 date: '2026-07-22'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:614d7b12a213fe30819ef67ea50ce9b59b3086d9e31575c56bc05e62169e5fb9'
+body_hash: 'sha256:740354866c9d72fe50da16e8223c41e241966d5b9dc018413e42a0843a80e739'
 related:
   - "[[2026-07-22-service-health-client-hardening-plan]]"
 ---
@@ -37,3 +37,8 @@ related:
 - `S21` `T` `src/vaultspec_rag/serviceclient/_transport.py`
 - `S23` `T` `src/vaultspec_rag/cli/_service_reconcile.py`
 - `S24` `T` `src/vaultspec_rag/tests/test_cli_status.py`
+- `S22` `A` `.vault/audit/2026-07-23-service-health-client-hardening-audit.md`
+
+## Notes
+
+- `S22` Historical mapping reconciliation: existing closing audit records this review; file addition is preserved in Git commit f6e993c88edcfe405731f2d0fc69f037b6a55b14. No fresh implementation or runtime verification is asserted.

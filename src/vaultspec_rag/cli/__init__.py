@@ -2,7 +2,7 @@
 
 VaultSpec RAG is a GPU-accelerated Retrieval-Augmented Generation (RAG) engine
 that provides unified hybrid search over project documentation and source code.
-It uses dense embeddings (Qwen3), sparse embeddings (SPLADE), and learned
+It uses dense embeddings (Qwen3), sparse embeddings (SPARSEUP), and learned
 reranking (CrossEncoder) to find the most relevant context for code generation,
 code review, and documentation discovery.
 

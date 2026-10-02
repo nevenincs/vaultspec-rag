@@ -210,7 +210,7 @@ def test_a_file_outside_the_gate_never_becomes_a_daemon_assignment(
     assert no_session_credentials is None
     root = _dotenv(
         _workspace(tmp_path / "project", package=PACKAGE, mode=InstallMode.DEPENDENCY),
-        EnvVar.HF_TOKEN,
+        EnvVar.TYPESAFE_API_KEY,
     )
     outside = tmp_path / "tools" / "venv"
     outside.mkdir(parents=True)

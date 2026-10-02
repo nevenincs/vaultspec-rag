@@ -154,6 +154,9 @@ class EnvVar(StrEnum):
     )
     # Token-budget bucket planning knobs for the encode paths.
     EMBEDDING_ENCODE_TOKEN_BUDGET = "VAULTSPEC_RAG_EMBEDDING_ENCODE_TOKEN_BUDGET"
+    EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET = (
+        "VAULTSPEC_RAG_EMBEDDING_SPARSE_ENCODE_TOKEN_BUDGET"
+    )
     EMBEDDING_ENCODE_CHARS_PER_TOKEN = "VAULTSPEC_RAG_EMBEDDING_ENCODE_CHARS_PER_TOKEN"
     INDEX_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_INDEX_CACHE_FLUSH_SLICES"
     VAULT_CACHE_FLUSH_SLICES = "VAULTSPEC_RAG_VAULT_CACHE_FLUSH_SLICES"
@@ -273,10 +276,6 @@ class EnvVar(StrEnum):
     HF_HOME = "HF_HOME"
     HF_HUB_OFFLINE = "HF_HUB_OFFLINE"
     HF_HUB_DOWNLOAD_TIMEOUT = "HF_HUB_DOWNLOAD_TIMEOUT"
-    # Access token for gated model repositories, honoured by huggingface_hub.
-    # A credential, so it is resolved and passed explicitly rather than read
-    # off the ambient environment wherever a download happens.
-    HF_TOKEN = "HF_TOKEN"
     TRANSFORMERS_OFFLINE = "TRANSFORMERS_OFFLINE"
     DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
     HF_DEACTIVATE_ASYNC_LOAD = "HF_DEACTIVATE_ASYNC_LOAD"

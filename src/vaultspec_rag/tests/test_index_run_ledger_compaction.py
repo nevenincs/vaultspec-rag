@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -144,7 +145,7 @@ def test_compaction_preserves_every_canonical_publication_owner(
         key=key,
     )
 
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute(
             """
@@ -195,7 +196,7 @@ def test_compaction_preserves_every_canonical_publication_owner(
         )
     with pytest.raises(KeyError):
         ledger.generation(obsolete.generation_id)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         assert connection.execute(
             "SELECT state FROM publication_receipts WHERE receipt_id = 'open-owner'"
         ).fetchone() == (ProofReceiptState.RESERVED.value,)
@@ -226,7 +227,7 @@ def test_compaction_bounds_closed_receipts_per_projection_without_pruning_open(
         ledger_test_proof_compatibility(),
         replace(ledger_test_proof_compatibility(), backend_identity="backend-v2"),
     )
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys = ON")
         for projection_index, projection_key in enumerate(projection_keys):
             for sequence in range(1, history_size + 1):
@@ -301,7 +302,7 @@ def test_compaction_bounds_closed_receipts_per_projection_without_pruning_open(
     assert ledger.compact(keep.generation_id) == 0
     with pytest.raises(KeyError):
         ledger.generation(obsolete.generation_id)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         for projection_key in projection_keys:
             rows = connection.execute(
                 """

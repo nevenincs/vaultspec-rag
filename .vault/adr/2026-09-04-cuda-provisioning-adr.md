@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#cuda-provisioning'
 date: '2026-09-04'
-modified: '2026-09-23'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:abf108faf968d72f80d208151315db09b8c383fff6f39b303bbff8f69c1de3a6'
+body_hash: 'sha256:7761d16d9bb02a6f86b44a621a7302fc89a574b54692ce18cd9639c3556c345c'
 related:
   - "[[2026-09-04-cuda-provisioning-research]]"
   - "[[2026-07-14-tool-env-gpu-continuity-adr]]"
@@ -51,8 +51,7 @@ structure that makes such proofs repeatable across this repository and vaultspec
 - `2026-09-01-gpu-less-install-footprint-adr` introduced a deliberately torch-free install
   that the current defect classifier reads as broken.
 - The torch pin version has two independent sources, which the canonical-code rule forbids.
-- Tier markers in this repository are enforced at collection and coupled to GPU leasing and
-  a Hugging Face token; vaultspec-core enforces nothing but declares comparable markers.
+- Tier markers in this repository are enforced at collection and coupled to GPU leasing; vaultspec-core enforces nothing but declares comparable markers.
 - vaultspec-core gates pull requests on a hosted Windows runner; this repository excludes
   every Windows job from pull requests to keep fork code off self-hosted machines, so its
   existing Windows-only tests cannot block a merge (`2026-09-04-cuda-provisioning-research`).

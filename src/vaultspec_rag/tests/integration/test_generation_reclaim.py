@@ -7,6 +7,7 @@ storage, because the question under test is what actually survives a drop.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,10 @@ _LONG_AGO = "2026-07-01T00:00:00+00:00"
 
 def _client(tmp_path: Path, *names: str) -> QdrantClient:
     """Return a real local client holding one real collection per name."""
-    client = QdrantClient(path=str(tmp_path / "qdrant"))
+    client = QdrantClient(
+        path=str(tmp_path / "qdrant"),
+        force_disable_check_same_thread=sqlite3.threadsafety == 3,
+    )
     for name in names:
         client.create_collection(
             collection_name=name,

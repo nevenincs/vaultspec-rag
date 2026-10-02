@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:a880bf94500c1382371d44d536b56f96c03fc4008f2d5523cf968d9c1c2ccd6c'
+modified: '2026-09-30'
+body_hash: 'sha256:66445e33f2aba4b974600a022311d22449605fe43ee9a684a1fa2cac3a936232'
 ---
 
 # Audit Round 2: search.py & embeddings.py
@@ -171,7 +171,7 @@ ______________________________________________________________________
 
 - **Return type (line 276):** `list[SparseResult]` (dataclass with `.indices` and `.values`).
 
-- **Conversion (line 297):** Calls `_sparse_tensor_to_results(sparse_tensor)` which converts SPLADE output to `list[SparseResult]`.
+- **Conversion (line 297):** Calls `_sparse_tensor_to_results(sparse_tensor)` which converts previous BERT sparse encoder output to `list[SparseResult]`.
 
 - **Caller usage in indexer.py (line 676, 792, 1096, 1192):**
 
