@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:72a62aab5d40d2cede092f2b217a73809fbd071ebd9f2ed6015c71e4db895074'
+body_hash: 'sha256:d31eeb635f0f1086ac06b297aaa3e931aca06ca8afd870b0828a4f37907597a8'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -245,6 +245,11 @@ related:
 - `S06` `verify:` `dev lint workflow (actionlint)` -> `pass`
 - `S06` `verify:` `prettier --check acquisition.yml` -> `pass`
 - `S06` `verify:` `pytest workflow guards (51)` -> `pass`
+- `S06` `M` `src/vaultspec_rag/cli/_jobs_tui_log.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_logs.py`
+- `S06` `verify:` `tail-scroll guard mutations jump_end/scroll_followed_tail/per-line write each fail own label then pass` -> `pass`
+- `S06` `verify:` `pytest jobs TUI and monitor log suites (140)` -> `pass`
+- `S06` `verify:` `ruff check/format, ty, complexity, nesting, size` -> `pass`
 
 ## Notes
 

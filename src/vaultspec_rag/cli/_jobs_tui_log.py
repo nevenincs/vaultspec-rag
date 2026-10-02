@@ -617,18 +617,21 @@ class JobsLogView(RetainedLog[LogEntry]):
 
     # -- navigation ---------------------------------------------------------
 
+    # A deferred scroll_end is not rechecked when it lands, so it would undo
+    # any navigation made before the next frame. Tail scrolls here run at once.
+
     def jump_top(self) -> None:
         self.auto_scroll = False
         self.scroll_home(animate=False)
 
     def jump_end(self) -> None:
         self.auto_scroll = True
-        self.scroll_end(animate=False)
+        self.scroll_end(animate=False, immediate=True)
 
     def scroll_followed_tail(self) -> None:
         """Honor manual navigation that happened after a tail scroll was queued."""
         if self.auto_scroll:
-            self.scroll_end(animate=False)
+            self.scroll_end(animate=False, immediate=True)
 
     def jump_next_error(self) -> bool:
         """Scroll to the error after the last one jumped to, wrapping."""
@@ -678,13 +681,20 @@ class JobsLogView(RetainedLog[LogEntry]):
         return semantic_tones(app.theme)
 
     def _paint(self) -> None:
+        self._render_held()
+        # RichLog's own per-write tail scroll lands after the next frame even
+        # when the reader navigated in between; this one rechecks follow state.
+        if self.auto_scroll:
+            self.call_after_refresh(self.scroll_followed_tail)
+
+    def _render_held(self) -> None:
         self.clear()
         self._error_offsets = []
         self._error_cursor = -1
         width = self._content_width()
         self._rendered_width = width
         if self._message is not None:
-            self.write(Text(self._message))
+            self.write(Text(self._message), scroll_end=False)
             return
         tones = self._tones()
         hidden = 0
@@ -702,7 +712,7 @@ class JobsLogView(RetainedLog[LogEntry]):
                 quiet=entry.is_polling,
                 tones=tones,
             ):
-                self.write(line)
+                self.write(line, scroll_end=False)
         self._flush_hidden(hidden)
 
     def _flush_hidden(self, hidden: int) -> int:
@@ -710,6 +720,7 @@ class JobsLogView(RetainedLog[LogEntry]):
         if hidden:
             noun = "polling line" if hidden == 1 else "polling lines"
             self.write(
-                Text(f"· {hidden} {noun} hidden — x shows them", style="dim italic")
+                Text(f"· {hidden} {noun} hidden — x shows them", style="dim italic"),
+                scroll_end=False,
             )
         return 0
