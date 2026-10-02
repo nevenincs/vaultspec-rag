@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:0679f8c3c667b3dd30f6eb94cea722b7d2b7558f94cf2d5f1e4dc3d8bdc9fe10'
+body_hash: 'sha256:0de975e86f9c521b9d09edaf93b7a19e7f3f502d4ab997f6b08138aa4bdefebe'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -50,7 +50,13 @@ related:
 - `S07` `verify:` `pymarkdown --config .pymarkdown.json approval records` -> `pass`
 - `S07` `verify:` `vault plan check` -> `pass`
 - `S07` `verify:` `vault check all --feature monitor-delivery` -> `fail`
+- `S08` `M` `tools/binaries/bun_pins.py`
+- `S08` `verify:` `ruff check bun_pins.py` -> `pass`
+- `S08` `verify:` `ruff format --check bun_pins.py` -> `pass`
+- `S08` `verify:` `ty check bun_pins.py` -> `pass`
+- `S08` `verify:` `four archive pins verified before member hashing` -> `pass`
 
 ## Notes
 
 - `S07` Isolated worktree awaits the lifecycle session commit. The only vault findings are two dangling related links to its uncommitted ADR; these preparatory toolchain pin Steps do not depend on lifecycle implementation. GitHub bun-v1.4.2 release asset metadata supplied authoring digests, never runtime trust. No archives extracted or binaries executed.
+- `S08` Authoring downloaded over the canonical HTTPS host-pinned transport, matched all archive constants committed by a12e589a, then hashed each unique Bun member in memory. No Bun execution. Lifecycle-related vault links remain pending its owner commit.

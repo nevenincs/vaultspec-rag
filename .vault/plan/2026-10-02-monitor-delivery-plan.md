@@ -14,7 +14,7 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:2d4bd05f5e4b36fada2375c8f79c3c171c920f813805cdef541578d821691be6'
+body_hash: 'sha256:78c9601ee325d580a383e3bbf9783709355bfbee1755f2ac8779e59d02b57892'
 ---
 
 # `monitor-delivery` plan
@@ -30,7 +30,7 @@ Default delivery is a third stable command in current RAG archives. The daemon u
 ## Steps
 
 - [x] `S07` - Commit reviewed Bun archive pins before any extraction; `tools/binaries/bun_pins.py and approval records`.
-- [ ] `S08` - Derive and commit executable pins from verified Bun archives before compiler execution; `tools/binaries/bun_pins.py`.
+- [x] `S08` - Derive and commit executable pins from verified Bun archives before compiler execution; `tools/binaries/bun_pins.py`.
 - [ ] `S01` - Make the bridge and existing lifecycle supervisor accept portable owner/runtime launch, and pin/verify native Bun provisioning; `src/monitor/server/local-service.ts and managed.ts, new vite-plugin.ts and standalone.ts, vite.config.ts, package.json/tsconfig.json, src/vaultspec_rag/monitor_process.py and monitor_inventory.py and cli, new tools/binaries/bun_toolchain.py, bridge/inventory/lifecycle tests`.
 - [ ] `S02` - Embed the exact Vite output, compile versioned monitor binaries, integrate managed readiness/EOF/allocation and add the delivered-binary probe; `new tools/monitor build and smoke tooling, shared src/monitor/server managed and standalone runtime, package scripts/types/lock as needed, justfile, dev/monitor-browser.mjs, compiled and coupled-runtime tests`.
 - [ ] `S03` - Add the monitor to every target archive, evolve the manifest to v2 and verify channel installation of all three commands; `tools/packaging/products.py, bundles.py, scoop.py, homebrew.py, generate.py, validate.py and tests, tools/binaries Windows resource/floor integration`.
