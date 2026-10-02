@@ -18,14 +18,16 @@ related:
   - '[[2026-07-23-service-orphan-reaping-adr]]'
   - '[[2026-07-27-cli-service-operability-hardening-adr]]'
   - '[[2026-06-24-service-hardware-singleton-adr]]'
+  - '[[2026-07-21-large-index-resilience-adr]]'
+  - '[[2026-07-25-index-resume-drift-race-adr]]'
+  - '[[2026-07-21-index-backpressure-storage-hygiene-adr]]'
+  - '[[2026-07-21-code-document-index-boundary-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:945318250b46e6a1418ceb7898c929e546126d856eaa707acbcd6229f6e8fa5c'
+body_hash: 'sha256:89455318cd4296d0ddeecd186605962db09cb38755696fea7d68db00ac0b8c53'
 ---
 
 # `resident-service-recovery` plan
-
-## Description
 
 ## Description
 
@@ -39,6 +41,10 @@ Further live lifecycle testing found an explicit-port stop reporting absence whi
 
 An owned operator maintenance hold pauses new CI grants without cancelling active work; timed cleanup restores enabled action tasks and removes only this operation's hold. The supervisor owns all live operations and serialized Git/vault mutations.
 
+The first live linked code retry exposed S10: checkpoint selection removes already committed file segments before a consumer validates contiguous file/ordinal framing, so a legitimate compatible resume is rejected as a malformed stream. This is an in-scope correction under the existing publication-cost and non-destructive-publication decisions, retaining original durable segment identities and strong rejection of truly malformed producers. Semantic code discovery was attempted but the affected index was unavailable during replacement; exact traceback and source ownership ground the fallback. No schema or public protocol change is proposed. A timed-out later retry did create a linked child; reconciliation must recover its actual identity before submitting more work.
+
+S11 follows a live ingest code rebuild that confirmed every source file, bound its replacement collection, then failed during payload-only route reconciliation against the old-model document origin. The accepted sparse replacement and storage conformance rules still prohibit reading or reusing incompatible vectors; routing metadata and destination-confirmed origin cleanup require a vector-free storage seam. This correction retains existing destination-first migration journals, publication authority, and strict vector search/write/donor checks without changing persisted schemas or public service protocols. Exact traceback and source reads ground the fallback after semantic code discovery failed during replacement.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -49,9 +55,9 @@ An owned operator maintenance hold pauses new CI grants without cancelling activ
 - [x] `S07` - Require rebuild observation and generation creation after structural scope refusal so an in-flight or resumed older full sweep cannot erase lost scope; `watcher_retry_policy.py rebuild certification and real-ledger watcher rebuild reconciliation regressions`.
 - [x] `S08` - Prove lifecycle target identity and process incarnation across stop, reclaim and reaping, preserve successor discovery during cleanup, and retain unknown machine presence on probe faults; `src/vaultspec_rag/_process_probe.py, _machine_lock.py, cli/_process.py, cli/_service_stop.py, cli/_service_start.py, cli/_status_render.py, serviceclient/_discovery.py and focused CPU lifecycle, machine presence, discovery cleanup and compatibility tests`.
 - [ ] `S09` - Prevent CI resident restart while a dependent native attempt is active and roll out the corrected admission runtime after that attempt releases; `isolated ci-fleet resident, protected task compilation and fleet.yml probe declaration, engine/supervisor grant and preparation readiness, runtime/server wiring and affected CPU tests, resident-service ADR refinement and trusted idle local authority deployment`.
+- [x] `S10` - Preserve canonical weighted-stream framing while resuming committed segment gaps, with real-ledger interrupted-run regressions and guarded boundary rejection; `indexer/_consumer_pipeline.py, _run_checkpoint.py, _slicing.py and _streaming_types.py as needed, focused CPU weighted stream and real-ledger resume tests`.
+- [ ] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
-
-## Parallelization
 
 ## Parallelization
 
@@ -62,6 +68,10 @@ For S06 and S07, the supervisor owns S06 capability/collection projections and t
 For S08, the recovery worker owns lifecycle identity, machine presence and stop/start/status discovery cleanup paths and their CPU regressions. The supervisor owns live lifecycle operations, admission maintenance, Git/vault mutations, and final verification. S04 deployment loads S08 before publication repairs resume.
 
 S09 runs in an isolated ci-fleet worktree. The watcher worker owns resident.py, protected task compilation in config.py, the shared engine/server/supervisor/runtime readiness wiring, fleet.yml probe-task declarations, and affected CPU tests. The supervisor owns the resident-service ADR refinement, runtime deployment, shared metadata and Git operations, and admission maintenance. S08 and S09 may run concurrently with disjoint repositories. No active native attempt is interrupted; authority deployment and resident start wait for its release.
+
+For S10, the recovery worker owns resumed weighted-stream framing and checkpoint selection plus their CPU tests. S10 may run concurrently with S09 in disjoint repositories and S04 observation of existing admitted jobs. The supervisor owns all lifecycle, job-control, Git/vault and shared verification actions. Process-only mutation checks never change checkout source bytes. Deployment of S10 waits for controlled checkpoint settlement and then resumes jobs against its committed source.
+
+S11 is assigned to the watcher worker in the monitor checkout, owning cross-kind route reconciliation and vector-free storage metadata/delete seams plus their CPU regressions. Its source paths are disjoint from S10 and may proceed concurrently. The supervisor owns all shared gates, vault/Git changes, runtime control and final rollout.
 
 ## Verification
 

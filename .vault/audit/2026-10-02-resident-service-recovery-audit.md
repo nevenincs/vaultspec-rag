@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:76c9a35f7d79bff4ea495582f25c7bb3024a963baa8444b13de2d75e50b23c6f'
+body_hash: 'sha256:0062274c7e4e4c919633635cbecebfbedce50cdf5cfd31a5588601008e9fdc86'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -113,6 +113,40 @@ Inspection of the authoritative machine-lock probe found that an unreadable lock
 Source review clears the explicit/default stop, singleton reclaim and orphan reaping paths: canonical launch argv and health identity are bracketed by the same OS process birth; termination retains that original incarnation. Conditional status deletion compares PID and port under the existing writer lock across stop, start and status callers. Only confirmed missing machine-lock paths report absence; permission and coordination failures reach degraded discovery.
 
 The final ten-file CPU suite passed 183 tests in 170.83 seconds. Package Ruff lint and format, strict basedpyright/Ty on all thirteen changed paths, design/length and cognitive/cyclomatic gates, and diff checks exited zero. Twenty-two process-only negative guard mutations failed the intended assertions, then restored fresh processes passed with unchanged source hashes. Copies of all four evidence logs are retained in the incident evidence directory. The new operator-context presence task returned the canonical absent result. Actual cold-start stop, ready service and publication repairs remain S04 verification work.
+
+### S08 live cold-start verification, 2026-10-02 21:48 UTC
+
+Checkout commit `06872afb` started an actual resident daemon, PID 65460, with machine-lock ownership and warming status while its port remained closed. The new operator-context Probe task completed freshly with result 2, correctly identifying presence. The explicit-port Stop command exited zero with stopped status for that same PID. Subsequent canonical process and lock observations proved PID 65460 and its managed Qdrant child 83044 were both dead and the machine lock was free. The Start client's failure after its daemon was intentionally stopped was expected and settled before the next start. Evidence is retained in `cold-start-observation.json`, `cold-start-task-probe.json`, `cold-start-explicit-stop.json` and `cold-start-stop-verification.json` under the incident evidence directory.
+
+The checkout service was restarted for publication repair under the owned CI maintenance hold. Cold Qdrant collection recovery is progressing; service readiness and repaired publication acceptance remain pending.
+
+### Scheduled Start budget below canonical readiness budget (MEDIUM)
+
+During the source rollout, Qdrant completed progressive cold recovery in 606.50 seconds. The Start task then ended its launcher at the declared 15-minute limit (result 267014) while the detached daemon PID 70288 remained alive and loading models. The canonical CLI permits the Qdrant readiness ceiling plus 300 seconds of import/model allowance, with accelerator preflight preceding that timer (`cli/_service_start.py`). The action-task limit therefore undercut a legitimate bounded startup. S09 aligns the protected declaration and live Start task to 30 minutes; the operator presence task separately proves warming after launcher exit. No daemon restart or change to model/storage policy was required for this operational correction.
+
+### Compatible resumed stream loses framing (HIGH)
+
+Live linked monitor code retry `b4517037-b249-421f-8ffa-2a530bf475d3` failed after 24 of 999 paths: `a new file in one weighted stream must follow a file-end marker and begin at ordinal zero`. `CodeRunCheckpoint.pending_segments` filters committed segment units before `_slicing.iter_weighted_code_slices` applies the complete-stream transition invariant. Compatible committed prefixes or terminal segments therefore create apparent gaps even though the original producer stream is valid. S10 must retain original ledger unit identities, validate the complete canonical producer stream, and skip already confirmed mutation/encoding work without weakening malformed-boundary rejection. CPU real-ledger resume proof and service rollout remain pending.
+
+The next retry request exceeded its 30-second client bound but created actual TUI child `76907432-189e-45cb-a9fd-7659135e5581`; it is progressing. The supervisor resolved the actual child from canonical job history before further admission, preserving parent lineage and avoiding duplicate retries. The ingest rebuild is also progressing. One sparse-encoding OOM bucket was discarded and replanned under a smaller token budget; progress continued, so this recovered pressure event is not a daemon crash.
+
+### Cross-kind metadata reconciliation rejects an old-model origin | high | S11
+
+At 2026-10-02 22:10:49Z the ingest code rebuild child `17928f13-7d3b-426a-b2eb-d043c82e46b9` failed after confirming 168 files, at write metadata. Its replacement code collection had already been bound; `reconcile_generation_storage` then scanned DOCUMENT payloads through the ordinary vector-conformance path and raised a sparse-model incompatibility on `r44f00d4631ce_document_docs`. No incompatible sparse vector was needed for that payload-only route check. Origin deletion used the same conformance-dependent owner, so bypassing the scan alone would leave real target flips broken. Rebuilding DOCUMENT before retrying CODE can unblock this state, but opposite origin configurations make ordering an incomplete remedy. S11 repairs vector-free metadata enumeration and destination-confirmed origin cleanup, retaining strict vector and donor conformance and journal ordering. The exact trace and canonical source owner were inspected after semantic discovery failed against the replacing monitor index. Source and live verification remain pending.
+
+### S09 source checkpoint
+
+The isolated CI branch `fix/resident-start-admission` committed the verified source as `7386cc3`. Focused 70, admission/lifecycle 162 and task/manifest 66 tests all passed, as did canonical Python/type/YAML gates. Twenty-two actual production-method mutation failures were followed by twenty-two restored fresh subprocess passes, with all ten owned file hashes unchanged. The trusted deploy preview contains exactly six admission runtime paths and only the resident-services configuration change; the launcher is unchanged. The protected live authority reports no granted/quarantined attempts, one waiting unprepared attempt and this recovery operation owned hold. Deployment remains deferred until publication maintenance ends, because the canonical deploy lifts its deployment hold. S09 is still open for runtime verification.
+
+### S10 source verification and S09 formal review checkpoint
+
+S10 is verified and closed for source execution. The complete raw segment stream reaches the single weighted consumer; original ordinal, digest and point identities survive committed prefixes, interior gaps and committed end markers. Raw ordinal transitions, weight bounds and final framing remain guarded. The checkpoint owner records indexed state only after its real ledger confirms every file segment; a newly confirmed interior gap can complete a file whose end marker was already committed. The test-only singular confirmation implementation was removed in favor of the canonical plural atomic owner.
+
+Package Ruff lint/format (868 files), strict basedpyright/Ty on all seven changed paths, configured Pylint/design/length, cognitive max19, Xenon and diff checks exited 0. The affected CPU suite passed 53 tests; its one preexisting CPU-Torch conversion case was deselected on the torch-free development interpreter. Eight actual production-method mutations each failed their intended assertions, then restored fresh subprocesses passed; all seven owned byte hashes matched final gates and proof evidence. The incident archive now retains `s10-source-gates.json`, `s10-weighted-resume-proof.json` and per-direction logs. Formal source review found no remaining issue. Live exact retry verification remains S04.
+
+The first misplaced integration-tier invocation requested canonical service quiesce at 22:29:48Z; its drain timed out at 22:30:08Z and was aborted back to running, with no GPU borrower granted. The large clean rebuild remains inside its protected publication interval and continues confirming units. Final selections use the proper CPU tier. The owned automatic CI-hold restoration deadline was extended from 2026-10-03 00:58:11Z to 02:30:00Z for measured large rebuild progress plus source rollout; earlier restoration remains required when rollout completes. No active CI work was cancelled.
+
+Independent S09 source and verification review passed at CI commit `7386cc3`, confirming all final tests and 22 mutation/restoration pairs against current hashes. Only trusted live authority deployment remains pending for S09.
 
 ## Recommendations
 

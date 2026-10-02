@@ -3,9 +3,9 @@ tags:
   - '#exec'
   - '#resident-service-recovery'
 date: '2026-10-02'
-modified: '2026-10-02'
+modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:d327f07d74409746d7fff55d98e21796100a3ceff1988eca5cc634c65df1c124'
+body_hash: 'sha256:c90b086733a6a17fef557efa6dc3ff2c30dcaf9aa396d8483fd2cca81c8fb1e0'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -109,3 +109,36 @@ related:
 - `S08` `verify:` `22 process-only guard mutation intended-fail restored-fresh-pass sequences sourceSHA unchanged` -> `pass`
 - `S08` `verify:` `git diff --check exit0` -> `pass`
 - `S08` `by:` `vaultspec-high-executor`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/resident.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/config.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/engine.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/server.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/supervisor.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleetctl/host_admission/runtime.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/tests/test_host_admission_resident.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/tests/test_host_admission_config.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/tests/test_schedules.py`
+- `S09` `M` `Y:/code/ci-fleet-worktrees/resident-recovery/fleet.yml`
+- `S09` `verify:` `canonical Python lint format strict typing and YAML all exit0` -> `pass`
+- `S09` `verify:` `focused70 admission lifecycle162 task manifest66 all exit0` -> `pass`
+- `S09` `verify:` `22 actual production-method intended-fail restored-fresh-pass sequences unchanged10 source hashes` -> `pass`
+- `S09` `verify:` `trusted deployment preview exactly6 runtime files and resident_services config only exit0` -> `pass`
+- `S09` `by:` `vaultspec-high-executor`
+- `S10` `M` `src/vaultspec_rag/indexer/_consumer_pipeline.py`
+- `S10` `M` `src/vaultspec_rag/indexer/_run_checkpoint.py`
+- `S10` `M` `src/vaultspec_rag/indexer/_slicing.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_weighted_code_resume.py`
+- `S10` `A` `src/vaultspec_rag/tests/test_content_kind_checkpoint_restart.py`
+- `S10` `M` `src/vaultspec_rag/tests/integration/test_content_kind_restart.py`
+- `S10` `M` `src/vaultspec_rag/tests/integration/test_codebase_integration.py`
+- `S10` `verify:` `package Ruff lint and format 868 files exit0` -> `pass`
+- `S10` `verify:` `strict basedpyright Ty seven changed paths exit0` -> `pass`
+- `S10` `verify:` `complexipy20 max19 XenonC/C/A configuredPylint diffcheck exit0` -> `pass`
+- `S10` `verify:` `CPU affected stream queue checkpoint ledger parity53 passed1existingtorch-only deselected exit0` -> `pass`
+- `S10` `verify:` `eight process-only production mutation intended-fail restored-fresh-pass pairs unchanged7 owned hashes` -> `pass`
+- `S10` `by:` `vaultspec-high-executor`
+
+## Notes
+
+- `S09` Source checkpoint 7386cc3 committed on isolated fix/resident-start-admission for canonical committed-runtime deployment; S09 remains open pending trusted idle live deployment.
+- `S10` An initial mistaken blanket integration invocation issued a canonical drain request and was refused before GPU borrower admission; no GPU lease was granted, service admission was restored, and all final test selections were CPU-only. Live exact linked retries are owned by S04.

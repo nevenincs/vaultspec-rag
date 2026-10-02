@@ -577,13 +577,8 @@ class CodeConsumerPipeline:
             )
         )
         measured_segments = self._measure_code_segments(segments)
-        pending_segments = (
-            checkpoint.pending_segments(measured_segments, result.content_hash)
-            if checkpoint is not None
-            else measured_segments
-        )
         return self._producer.submit_segments(
-            pending_segments,
+            measured_segments,
             SegmentSubmission(
                 segment_queue=consumer_run.segment_queue,
                 consumer=consumer,
@@ -784,12 +779,20 @@ class CodeConsumerPipeline:
                     consumer_run.segment_queue,
                     run_control=consumer_run.run_control,
                 )
+                checkpoint = consumer_run.checkpoint
+
+                def _skip_committed_segment(segment: CodeFileSegment) -> bool:
+                    return checkpoint is not None and checkpoint.segment_committed(
+                        segment, consumer_run.metadata[segment.path]
+                    )
+
                 for slice_index, weighted_slice in enumerate(
                     iter_weighted_code_slices(
                         segments,
                         max_chunks=consumer_run.limits.slice_max_chunks,
                         max_bytes=consumer_run.limits.slice_max_bytes,
                         run_control=consumer_run.run_control,
+                        skip_segment=_skip_committed_segment,
                     )
                 ):
                     self._consume_weighted_slice(
