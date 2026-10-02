@@ -92,17 +92,24 @@ jobs:
           - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
             target: x86_64-unknown-linux-gnu
+            browser_image: ""
           - name: linux-aarch64
-            runner: [self-hosted, Linux, ARM64]
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            browser_image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
           - name: windows-x86_64
-            runner: [self-hosted, Windows, X64]
+            runner: windows-2025
             target: x86_64-pc-windows-msvc
+            browser_image: ""
           - name: macos-arm64
             runner: [self-hosted, macOS, ARM64]
             target: aarch64-apple-darwin
+            browser_image: ""
     timeout-minutes: 150
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.browser_image }}
+      options: --user 1001 --security-opt seccomp=unconfined --security-opt apparmor=unconfined
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:

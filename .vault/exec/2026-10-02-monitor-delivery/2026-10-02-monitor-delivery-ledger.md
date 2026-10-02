@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:ebee8531bf33ef07173ff03ac25c855adf927e5a60d963f765f3874833570071'
+body_hash: 'sha256:89610708640a423064774bbf22641658c654aa60b3ae3e3352d6e4af44e4d8bc'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -234,6 +234,7 @@ related:
 - `S06` `verify:` `npm lint,typecheck,build=pass; Prettier=pass; Ruff lint,format=pass; ty=pass; affected tooling/compiled owner tests 22=pass; rebuilt Windows native shared smoke 94 assets=pass; native candidate 37010060614=fail; uv unused-cache prune` -> `fail`
 - `S06` `M` `tools/monitor/offline.py`
 - `S06` `verify:` `Linux x64 clean finalized native and OS-offline smoke=pass; macOS native smoke 110857268226=pass; macOS harness-wide OS smoke=fail; affected tests 33=pass; Ruff lint,format=pass; ty=pass; offline/admission mutation fail-restore-pass` -> `pass`
+- `S06` `verify:` `macOS ARM64 native/browser/offline CI=pass; Linux x64 native/browser/offline CI=pass; clean Windows native/browser/offline actual firewall and cleanup=pass; affected tests 33 and workflow checks 47=pass; Ruff/type/format/docs/workflow` -> `pass`
 
 ## Notes
 
@@ -260,3 +261,4 @@ related:
 - `S06` Shared system disk below 40 GiB reserve blocks Windows/Linux x64; private frontend moves to macOS to obtain remaining independent native proof. No reserve changes or unrelated cache deletion.
 - `S06` BSD loopback conflict exposed by actual macOS smoke; corrected client-address reservation awaiting native rerun. ARM64 browser absent; Windows/Linux x64 fleet admission capacity unavailable. Cache cleanup respected in-use lock and removed nothing. Public release/catalog prerequisite absent; S06 remains open.
 - `S06` macOS target and network control now use Seatbelt launch prefix; browser harness remains outside policy, matching Linux scope. All gates retained. Corrected native rerun pending.
+- `S06` Immutable native ARM64 browser container and disposable Windows acquisition host address external fleet prerequisites. Same three-platform common frontend proof retained. ARM64 host execution, canonical release host prerequisites and first pinned public acquisition still pending.

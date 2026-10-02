@@ -14,7 +14,7 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:cfcbc9ff9e5e93c34608edfb3fc1222744b7387e8fd12eaa638eec5efcbf877f'
+body_hash: 'sha256:75b1019cced47198ec49311983278316e418ebd81b1297068ba2526c29db1334'
 ---
 
 # `monitor-delivery` plan
@@ -38,7 +38,7 @@ Default delivery is a third stable command in current RAG archives. The daemon u
 - [x] `S05` - Define reviewed release pins and extend public acquisition to native monitor launch on every shipped target with the shared probe; `acquisition.yml four-target public native probe, binaries.yml candidate pin handoff and reviewed catalog gate, publish.yml independent admission before PyPI, tools/monitor committed catalog/pins/acquire and tests, shared checksum uniqueness and pinned GitHub API metadata host. Catalog begins empty, proposal generation never commits or authorizes bytes`.
 - [x] `S10` - Document extraction, direct monitor launch, backend prerequisites and reviewed release pin handoff; `docs/installation.md, docs/service-mode.md, docs/cli.md generation, RELEASING.md and monitor-delivery ADR prose clarification for the citation gate. Split documentation from S06 final integrated review so completed guidance can checkpoint while owner merge and platform evidence remain pending`.
 - [x] `S09` - Integrate the completed delivery branch into the existing monitor PR, admit the actual compiled monitor in the canonical CI test jobs, and verify combined behavior; `feature/monitor-delivery into feature/monitor, src/vaultspec_rag/monitor_process.py and lifecycle tests with loopback-only port reservations, shared bridge conflict reconciliation, tools/monitor/build.py canonical native test preparation, justfile and existing merge-gate.yml test jobs, dev/guards/test_ci_lanes.py admission proof, cli/_jobs_tui_log.py and _jobs_tui_logs.py queued tail-scroll correction with test_monitor_logs.py regression proof, qdrant_runtime/_provision.py early-refusal complexity correction and archive guards, docs/service-mode.md local test preparation, lifecycle ADR and related records`.
-- [ ] `S06` - Review integrated delivery and reconcile governing records after the lifecycle merge and platform evidence arrive; `monitor-delivery audit, authorized monitor-lifecycle ADR refinement, integrated runtime/archive/channel/workflow/documentation review. Documentation checkpoints in S10. Completion requires S09 and applicable native/public CI evidence. Scope includes the existing acquisition workflow's private candidate mode, canonical probe OS isolation, native fleet capability checks, the monitor dependency-restore CI correction, occupied-loopback-port refusal on BSD and installed browser discovery; retain the public pin/publication boundary`.
+- [ ] `S06` - Review integrated delivery and reconcile governing records after the lifecycle merge and platform evidence arrive; `monitor-delivery audit, authorized monitor-lifecycle ADR refinement, integrated runtime/archive/channel/workflow/documentation review. Documentation checkpoints in S10. Completion requires S09 and applicable native/public CI evidence. Scope includes the existing acquisition workflow's private candidate mode, canonical probe OS isolation, native fleet capability checks, the monitor dependency-restore CI correction, occupied-loopback-port refusal on BSD, installed browser discovery and disposable native acquisition test hosts for ARM64/browser and Windows/firewall prerequisites; retain the public pin/publication boundary`.
 
 ## Parallelization
 

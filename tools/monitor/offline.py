@@ -28,14 +28,23 @@ MAC_PROFILE = """(version 1)
 """
 FIREWALL = """
 $ErrorActionPreference = 'Stop'
+if ($env:MONITOR_FIREWALL_ACTION -eq 'check') {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $adminRole = [Security.Principal.WindowsBuiltInRole]::Administrator
+    if (-not $principal.IsInRole($adminRole)) {
+        throw 'Windows OS-offline verification requires an elevated test account'
+    }
+    if ((Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Count -ne 0) {
+        throw 'Every firewall profile must be enabled for offline proof'
+    }
+    exit 0
+}
 $spec = Get-Content -LiteralPath $env:MONITOR_FIREWALL_SPEC -Raw | ConvertFrom-Json
 if ($env:MONITOR_FIREWALL_ACTION -eq 'remove') {
     Get-NetFirewallRule -Group $spec.group -ErrorAction SilentlyContinue |
         Remove-NetFirewallRule
     exit 0
-}
-if ((Get-NetFirewallProfile | Where-Object { -not $_.Enabled }).Count -ne 0) {
-    throw 'Every firewall profile must be enabled for offline proof'
 }
 foreach ($program in $spec.programs) {
     $rule = New-NetFirewallRule -DisplayName $spec.group -Group $spec.group `
@@ -116,6 +125,16 @@ def windows_probe(
     identity: dict[str, object],
     browser: Path,
 ) -> dict[str, object]:
+    powershell = str(
+        Path(os.environ["SYSTEMROOT"])
+        / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", FIREWALL],
+        env={**os.environ, "MONITOR_FIREWALL_ACTION": "check"},
+        check=True,
+        timeout=15,
+    )
     bun = provision_bun(
         Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()
     )
@@ -123,25 +142,22 @@ def windows_probe(
     shutil.copy2(bun, control)
     if not bun_connection(control):
         raise RuntimeError("The external TCP positive control did not connect")
-    # Isolate a copied browser so no operator browser receives a firewall rule.
-    copied_browser = directory / "browser" / browser.name
-    shutil.copytree(browser.parent, copied_browser.parent)
     group = "vaultspec-monitor-" + uuid.uuid4().hex
     specification = directory / "firewall.json"
     specification.write_text(
         json.dumps(
             {
                 "group": group,
-                "programs": [str(binary), str(control), str(copied_browser)],
+                "programs": [str(binary), str(control)],
             }
         ),
         encoding="utf-8",
     )
-    environment = {**os.environ, "MONITOR_FIREWALL_SPEC": str(specification)}
-    powershell = str(
-        Path(os.environ["SYSTEMROOT"])
-        / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    )
+    environment = {
+        **os.environ,
+        "MONITOR_FIREWALL_SPEC": str(specification),
+        "MONITOR_FIREWALL_ACTION": "add",
+    }
     try:
         subprocess.run(
             [powershell, "-NoProfile", "-NonInteractive", "-Command", FIREWALL],
@@ -153,7 +169,7 @@ def windows_probe(
             raise RuntimeError(
                 "OS offline proof refused: blocked control still connects"
             )
-        return probe(binary, digest, identity, copied_browser)
+        return probe(binary, digest, identity, browser)
     finally:
         environment["MONITOR_FIREWALL_ACTION"] = "remove"
         subprocess.run(
@@ -178,7 +194,7 @@ def probe_offline(
                 directory, binary.absolute(), expected_sha256, identity, browser
             )
             mechanism = "Windows Firewall executable rules"
-            scope = "monitor, private browser executable and pinned Bun control"
+            scope = "monitor and pinned Bun control; browser harness outside policy"
         elif sys.platform == "linux":
             bun = provision_bun(
                 Path(tempfile.gettempdir()) / "vaultspec-bun", host_target_triple()

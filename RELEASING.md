@@ -242,10 +242,15 @@ by the verified native compiler on all four targets. Each target renders the
 finalized monitor in an installed browser and repeats the smoke under OS outbound
 denial. The private Actions artifacts retain binaries, hashes and smoke reports.
 
+Acquisition uses a native GitHub ARM64 runner with an immutable Playwright image
+for its installed browser, and a disposable Windows runner for firewall authority.
+Linux x64 and macOS use the enrolled native hosts.
+
 Linux uses a process-scoped kernel filter; macOS uses a process sandbox allowing
 loopback. Windows requires an elevated runner and enabled firewall profiles. Its
-temporary rules cover the monitor, a pinned network control and a private browser
-copy; the probe removes only its own rules. The external TCP control must connect
+temporary rules cover the monitor and a pinned network control; the probe removes
+only its own rules. The browser driver stays outside each platform's OS policy.
+The external TCP control must connect
 before isolation and fail under it, while the compiled monitor serves loopback
 HTTP. Failure leaves release admission closed. Candidate verification is separate
 from acquisition of the final published archives.
