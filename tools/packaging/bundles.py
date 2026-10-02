@@ -159,6 +159,7 @@ def verify_monitor_evidence(
         "development": False,
         "browser_verified": True,
         "isolated_shell": True,
+        "os_offline_verified": True,
         "occupied_port_refused": True,
         "parent_eof_shutdown": True,
         "request_bounds_verified": True,
