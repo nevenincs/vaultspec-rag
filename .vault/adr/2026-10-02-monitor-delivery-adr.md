@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:c7046d60a3972db9720e8e9420edb0c87061df2a38d9aff9b46289916cbdfae3'
+body_hash: 'sha256:4cf4353dc345788150ba7b2dbe506b15a05712276611899126c18f8268047f9c'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -17,7 +17,7 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 ---
 
-# `monitor-delivery` adr: `Ship the React monitor as a Bun executable in RAG bundles` | (**status:** `proposed`)
+# `monitor-delivery` adr: `Ship the React monitor as a Bun executable in RAG bundles` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -25,7 +25,7 @@ The React build does not deliver the local server bridge, and that bridge curren
 
 ## Considerations
 
-- The user requests review and design for acquisition/CI and a compiled self-contained frontend. This authorizes these design records; implementation and the specific distribution/pin process remain proposed.
+- Approved 2026-10-02: the user replied "sounds lovely" to the presented delivery ADR and six-Step implementation plan. This authorizes the recorded distribution/pin contract and implementation scope.
 - React/Vite/npm and the shared devserver contract are accepted in `2026-09-30-monitor-tooling-adr`; local/tailnet transport, credentials and service ownership are accepted in `2026-09-30-monitor-browser-adr`.
 - Concurrent `2026-10-02-monitor-lifecycle-adr` records explicit user authorization for backend-coupled monitor start/stop, backend-plus-one upward allocation and user-scratch discovery. Packaging integrates with that same owner; its source-only Vite requirement is the delivery extension being proposed here.
 - Archive ownership and draft-first publication are accepted in `2026-09-11-binary-release-bundles-adr` and `2026-09-30-release-standard-adr`. Four targets are present in current code, as the new reference establishes.
@@ -54,9 +54,9 @@ The draft completeness gate requires all target archives to contain the monitor,
 
 Publication order remains the accepted release standard. Public acquisition extends to every shipped monitor target and launches checksum-verified downloaded bytes after publication. A reviewed committed pin catalog binds release tag, source revision, target archive SHA256 and monitor executable SHA256; verify before extraction and immediately before launch, with HTTPS/redirect/host checks and explicit member extraction. Live SHA256SUMS and bundle hashes are additional consistency checks. A tag without reviewed pins is unverified and fails closed; generated pin proposals do not authorize themselves. The public launch probe follows the reviewed pin handoff, while native build proof still gates the draft. The exact catalog owner/path and review handoff must be made concrete within this commitment before rollout.
 
-### Proposed reconciliation of accepted records
+### Authorized reconciliation of accepted records
 
-Apply these wording changes only when this ruling is authorized; accepted bodies remain intact during proposal.
+Approval covers these reconciliations. Apply each before its dependent implementation while preserving concurrent accepted lifecycle amendments.
 
 - In `2026-09-11-binary-release-bundles-adr`, replace the first Constraints bullet with: "The public bundle unit is one versioned archive per supported RAG target: ZIP on Windows and TAR.GZ on Unix. It contains stable vaultspec-rag, vaultspec-search-mcp and vaultspec-rag-monitor executables, generated manifest.json, license and usage material. The manifest distinguishes the self-contained monitor frontend from the RAG accelerator/runtime bootstrap requirements." Replace the two-command/three-target Considerations sentence with: "Executable membership and supported targets follow the product declaration and release matrix; current packaging adds a monitor component with its own runtime requirements. Grounding: 2026-10-02-monitor-delivery-reference." Retain the remaining archive and publication commitments.
 - In `2026-09-30-monitor-browser-adr`, replace the first Implementation sentence with: "Implement one server-side local bridge shared by Vite dev/preview and the packaged monitor server; it forwards bounded service operations and invokes portable canonical owner commands without exposing credentials." Replace the first two Consequences sentences with: "npm dev/preview owns development through the existing harness. Release delivery uses the compiled monitor server with embedded frontend assets, as governed by monitor-delivery; static assets alone remain insufficient."

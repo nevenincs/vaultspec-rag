@@ -14,21 +14,23 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:6e54729016856e3963da5fedfd9cd8c1fa0dc71274ad00d0c166937f8a6acaaa'
+body_hash: 'sha256:2d4bd05f5e4b36fada2375c8f79c3c171c920f813805cdef541578d821691be6'
 ---
 
 # `monitor-delivery` plan
 
 ## Description
 
-Draft for implementation. The user's 2026-10-02 request authorizes review and design; no implementation approval or accepted monitor-delivery ruling is recorded. This L1 plan preserves sequencing across sessions. The separate monitor-browser S03 tailnet-enrollment Step stays with its existing plan.
+Approved 2026-10-02. Authorization: the user's 'sounds lovely' approves the presented delivery ADR and implementation plan. This L1 plan preserves sequencing across sessions. The separate monitor-browser S03 tailnet-enrollment Step stays with its existing plan.
 
-Decision coverage: proposed `2026-10-02-monitor-delivery-adr` governs delivery, portable owner launch, pins, manifest evolution and acquisition across all Steps. Accepted monitor-browser governs transport/credential/domain behavior in S01-S02; monitor-tooling governs npm/Vite and canonical harness parity in S01-S04. Concurrent monitor-lifecycle records explicit authorization for daemon-coupled monitor allocation/discovery/shutdown and supplies the shared supervisor seam in S01-S02. Its owning session must normalize the scaffolded accepted body before dependent execution. Binary-release-bundles governs archive/channel finalization in S03-S05; release-standard and automatic-merge-gate govern CI admission/publication order in S04-S05. Apply older-ADR amendments proposed by monitor-delivery only after acceptance, before dependent execution. This draft authorizes no remote publication, dispatch, default-branch change or external channel/Tailscale edit.
+Decision coverage: accepted `2026-10-02-monitor-delivery-adr` governs delivery, portable owner launch, pins, manifest evolution and acquisition across all Steps. Accepted monitor-browser governs transport/credential/domain behavior in S01-S02; monitor-tooling governs npm/Vite and canonical harness parity in S01-S04. Concurrent monitor-lifecycle records explicit authorization for daemon-coupled monitor allocation/discovery/shutdown and supplies the shared supervisor seam in S01-S02. Its owning session has normalized the accepted body; merge its completed lifecycle commit before dependent execution. Binary-release-bundles governs archive/channel finalization in S03-S05; release-standard and automatic-merge-gate govern CI admission/publication order in S04-S05. Apply older-ADR amendments proposed by monitor-delivery only after acceptance, before dependent execution. Scope excludes remote publication, dispatch, default-branch changes and external channel/Tailscale edits.
 
 Default delivery is a third stable command in current RAG archives. The daemon uses that command in installed mode under the same supervisor/readiness/parent-pipe contracts; source dev/preview keep their established manifest ports. S01 selects reviewed exact Bun archive/executable pins for four hosts before using the toolchain. S05 makes the independent release-pin catalog and reviewed handoff concrete; downloaded public bytes cannot launch without it. Backend-control integration uses isolated canonical owners, separately from offline frontend startup.
 
 ## Steps
 
+- [x] `S07` - Commit reviewed Bun archive pins before any extraction; `tools/binaries/bun_pins.py and approval records`.
+- [ ] `S08` - Derive and commit executable pins from verified Bun archives before compiler execution; `tools/binaries/bun_pins.py`.
 - [ ] `S01` - Make the bridge and existing lifecycle supervisor accept portable owner/runtime launch, and pin/verify native Bun provisioning; `src/monitor/server/local-service.ts and managed.ts, new vite-plugin.ts and standalone.ts, vite.config.ts, package.json/tsconfig.json, src/vaultspec_rag/monitor_process.py and monitor_inventory.py and cli, new tools/binaries/bun_toolchain.py, bridge/inventory/lifecycle tests`.
 - [ ] `S02` - Embed the exact Vite output, compile versioned monitor binaries, integrate managed readiness/EOF/allocation and add the delivered-binary probe; `new tools/monitor build and smoke tooling, shared src/monitor/server managed and standalone runtime, package scripts/types/lock as needed, justfile, dev/monitor-browser.mjs, compiled and coupled-runtime tests`.
 - [ ] `S03` - Add the monitor to every target archive, evolve the manifest to v2 and verify channel installation of all three commands; `tools/packaging/products.py, bundles.py, scoop.py, homebrew.py, generate.py, validate.py and tests, tools/binaries Windows resource/floor integration`.
@@ -38,7 +40,7 @@ Default delivery is a third stable command in current RAG archives. The daemon u
 
 ## Parallelization
 
-Execute sequentially in this worktree: S01 -> S02 -> S03 -> S04 -> S05 -> S06. One executor owns shared source, workflow, vault and commit mutations; no parallel agent assignments. Native CI target jobs may run concurrently after the common frontend artifact is proven and handed off.
+Execute sequentially in the isolated feature/monitor-delivery worktree. Commit archive pins, then derive and commit executable pins before S01 -> S02 -> S03 -> S04 -> S05 -> S06. This preparatory split satisfies the committed-pin extraction and execution boundary. One executor owns shared source, workflow, vault and commit mutations; no parallel agent assignments. Native CI target jobs may run concurrently after the common frontend artifact is proven and handed off.
 
 ## Verification
 
