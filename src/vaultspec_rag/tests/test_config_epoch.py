@@ -325,3 +325,52 @@ class TestScopedSnapshot:
         )
         assert not to_hash
         assert deleted == {"a.py"}
+
+
+@pytest.mark.parametrize("ignore_location", ["root", "nested", "rag"])
+def test_unreachable_gitignore_does_not_change_membership(
+    tmp_path: Path, ignore_location: str
+) -> None:
+    parent = tmp_path / "src" if ignore_location == "nested" else tmp_path
+    parent.mkdir(exist_ok=True)
+    ignore_file = (
+        tmp_path / ".vaultragignore"
+        if ignore_location == "rag"
+        else parent / ".gitignore"
+    )
+    ignore_file.write_text("output/\n", encoding="utf-8")
+    (parent / "kept.py").write_text("kept = True\n", encoding="utf-8")
+    indexer = _make_indexer(tmp_path)
+    before = indexer.resolve_policy_snapshot()
+
+    excluded = parent / "output" / "generated"
+    excluded.mkdir(parents=True)
+    (excluded / ".gitignore").write_text("*.poison.py\n", encoding="utf-8")
+    after = indexer.resolve_policy_snapshot()
+
+    # Removing project/RAG pruning admits this unreachable pattern and changes
+    # the fingerprint; the mutation must fail this equality assertion.
+    assert after.fingerprints == before.fingerprints
+    assert not any("poison" in pattern for pattern in after.gitignore_patterns)
+
+
+def test_reachable_nested_gitignore_changes_membership(tmp_path: Path) -> None:
+    nested = tmp_path / "src" / "pkg"
+    nested.mkdir(parents=True)
+    indexer = _make_indexer(tmp_path)
+    before = indexer.resolve_policy_snapshot()
+    (nested / ".gitignore").write_text("*.generated.py\n", encoding="utf-8")
+    after = indexer.resolve_policy_snapshot()
+
+    assert after.fingerprints != before.fingerprints
+    assert "src/pkg/*.generated.py" in after.gitignore_patterns
+
+
+def test_directory_negation_keeps_nested_ignore_reachable(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("output/*\n!output/kept/\n", encoding="utf-8")
+    kept = tmp_path / "output" / "kept"
+    kept.mkdir(parents=True)
+    (kept / ".gitignore").write_text("*.generated.py\n", encoding="utf-8")
+    policy = _make_indexer(tmp_path).resolve_policy_snapshot()
+
+    assert "output/kept/*.generated.py" in policy.gitignore_patterns
