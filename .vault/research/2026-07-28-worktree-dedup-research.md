@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#worktree-dedup'
 date: '2026-07-28'
-modified: '2026-07-28'
+modified: '2026-10-01'
 body_schema: 'body-v1'
-body_hash: 'sha256:96bcbfa5d91ed88bd7ff5aac8dd16c5bfb000ee99a4985c9d3c30fd8183179ff'
+body_hash: 'sha256:4409bca04a8d1ca2d05cdd1d8e5c3176304a60bfdcb5e8817703db9406f219a2'
 related: []
 ---
 
@@ -173,7 +173,7 @@ within a live root have their own unreferenced-hours grace and drop path
 
 Six worktrees of this repository exist - `main` plus five `agent-*` trees under
 `.claude/worktrees/`. The persisted manifest at
-`C:\Users\user\.vaultspec-rag\storage-manifest.json` (schema version 2) records
+`<user-home>\.vaultspec-rag\storage-manifest.json` (schema version 2) records
 seven roots, and none of the five live agent worktrees is among them. The only
 namespace attributable to this repository's live tree is the one for `main`.
 
@@ -296,9 +296,9 @@ In-repo, verified in the working tree at time of writing:
 
 Observed machine state, read-only, at time of writing:
 
-- `C:\Users\user\.vaultspec-rag\storage-manifest.json` - 7 roots, schema
+- `<user-home>\.vaultspec-rag\storage-manifest.json` - 7 roots, schema
   version 2, one entry with an absent root and an empty `first_seen_orphaned`
-- `C:\Users\user\.vaultspec-rag\qdrant-server\storage\collections` - 15
+- `<user-home>\.vaultspec-rag\qdrant-server\storage\collections` - 15
   collection directories, 5.3 GB total; per-directory sizes as tabulated
 - `git worktree list` in this repository - 6 worktrees, 5 of them `agent-*`
   trees under `.claude/worktrees/`

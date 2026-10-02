@@ -1,0 +1,272 @@
+---
+tags:
+  - '#exec'
+  - '#pipeline-performance'
+date: '2026-09-30'
+modified: '2026-10-01'
+body_schema: 'body-v2'
+body_hash: 'sha256:62cffa971f581053e7194ef475a025b8436713bd63f5c9964630238ef52d3105'
+related:
+  - "[[2026-09-30-pipeline-performance-plan]]"
+---
+
+# `pipeline-performance` ledger
+
+## Changes
+
+- `S01` `A` `dev/gpu_pipeline_profile.py`
+- `S01` `A` `dev/_profile_tools.py`
+- `S01` `A` `dev/_profile_workloads.py`
+- `S01` `A` `src/vaultspec_rag/tests/test_gpu_profile_harness.py`
+- `S01` `A` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S01` `A` `.vault/plan/2026-09-30-pipeline-performance-plan.md`
+- `S01` `A` `.vault/index/pipeline-performance.index.md`
+- `S01` `verify:` `pytest test_gpu_profile_harness.py: 11 tests` -> `pass`
+- `S01` `verify:` `ruff check src dev tools` -> `pass`
+- `S01` `verify:` `ruff format --check src dev tools` -> `pass`
+- `S01` `verify:` `ty check profiling tools and harness tests` -> `pass`
+- `S01` `verify:` `profile tool guard mutation intended failures and restored passes: 5 cases` -> `pass`
+- `S01` `verify:` `cpu profiling CLI unprofiled smoke: 7 rounds` -> `pass`
+- `S01` `by:` `vaultspec-high-executor`
+- `S01` `A` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S01` `verify:` `pytest profiling harness and AST unit tests: 74 tests` -> `pass`
+- `S01` `verify:` `consumer teardown guard intended failures and restored passes: 2 cases` -> `pass`
+- `S01` `verify:` `independent re-review closes borrowed-lifetime high finding` -> `pass`
+- `S02` `M` `src/vaultspec_rag/indexer/_ast_chunker.py`
+- `S02` `M` `src/vaultspec_rag/tests/test_indexer_unit_chunking.py`
+- `S02` `M` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S02` `verify:` `exact AST tuple parity on 820 sources at 5 budgets` -> `pass`
+- `S02` `verify:` `20 paired CPU rounds and 36 default-budget repeat pairs` -> `pass`
+- `S02` `verify:` `pytest profiling harness and AST unit tests: 74 tests` -> `pass`
+- `S02` `by:` `vaultspec-high-executor`
+- `S01` `verify:` `isolated profiling harness pytest13` -> `pass`
+- `S01` `verify:` `isolated Ruff lint and format` -> `pass`
+- `S01` `verify:` `isolated focused ty with existing environment` -> `pass`
+- `S01` `M` `dev/_profile_tools.py`
+- `S01` `M` `dev/gpu_pipeline_profile.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_gpu_profile_harness.py`
+- `S01` `M` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S01` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S01` `verify:` `Ruff lint and format on src dev tools` -> `pass`
+- `S01` `verify:` `focused ty using existing interpreter` -> `pass`
+- `S01` `verify:` `pytest harness and AST focused tests74` -> `pass`
+- `S01` `verify:` `nonblocking and no-native guard intended failures and restored passes2` -> `pass`
+- `S01` `verify:` `verified pinned native CPU sampling and corrected nonblocking source-stable sampling` -> `pass`
+- `S02` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S02` `M` `.vault/plan/2026-09-30-pipeline-performance-plan.md`
+- `S02` `verify:` `Ruff lint and format src dev tools` -> `pass`
+- `S02` `verify:` `focused ty current AST and tests` -> `pass`
+- `S02` `verify:` `pytest harness and AST83` -> `pass`
+- `S02` `verify:` `unchanged AST hash exact820input parity at5budgets and paired CPU timings` -> `pass`
+- `S02` `verify:` `independent GPT6.1 Sol S02 review` -> `pass`
+- `S03` `M` `dev/gpu_pipeline_profile.py`
+- `S03` `M` `src/vaultspec_rag/embeddings.py`
+- `S03` `M` `src/vaultspec_rag/config/_types.py`
+- `S03` `M` `src/vaultspec_rag/config/_schema.py`
+- `S03` `M` `src/vaultspec_rag/config/_settings.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_gpu_profile_harness.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_encode_bucket_planner.py`
+- `S03` `M` `src/vaultspec_rag/tests/test_config.py`
+- `S03` `M` `docs/configuration.md`
+- `S03` `M` `.vault/research/2026-09-30-pipeline-performance-research.md`
+- `S03` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S03` `verify:` `ruff check src dev tools` -> `pass`
+- `S03` `verify:` `ruff format --check src dev tools` -> `pass`
+- `S03` `verify:` `ty check --python sparseencode/.venv/Scripts/python.exe (eight changed Python files)` -> `pass`
+- `S03` `verify:` `pytest focused planner/config/harness/AST/documentation/environment preflight (253 passes)` -> `pass`
+- `S03` `verify:` `pytest final config/configuration_doc/env_settings_centralised (94 passes)` -> `pass`
+- `S03` `verify:` `python -m dev.gpu_pipeline_profile encoder --output .pytest-tmp/pipeline-sparse-budget-passing-comparison --rounds 3 --warmups 2 --items 32 --sparse-budgets 8192,24000 --sparse-budget-seconds 30 --budget-comparison-only --skip-trace --py-spy <verified-profiler-executable> --seconds 30 --gil` -> `pass`
+- `S03` `verify:` `explicit restored energy/recovery/parity/argument/native/teardown guard mutation proofs` -> `pass`
+- `S03` `verify:` `mdformat --check docs/configuration.md and five feature records` -> `pass`
+- `S03` `verify:` `vaultspec-core vault check all --feature pipeline-performance --json` -> `pass`
+- `S03` `verify:` `verify-final-resident.py exact-spec retry children succeeded and service admissions open` -> `pass`
+- `S03` `verify:` `three-arm sparse comparison including4096 strict document-weight parity` -> `fail`
+- `S03` `by:` `root with GPT-6.1 Sol encoder, harness and independent review agents`
+- `S03` `verify:` `verify-final-selection.py final selected comparison/default and rejected-arm barrier` -> `pass`
+- `S04` `M` `.vault/audit/2026-09-30-pipeline-performance-audit.md`
+- `S04` `M` `.vault/plan/2026-09-30-pipeline-performance-plan.md`
+- `S04` `verify:` `independent GPT-6.1 Sol integrated review b9d2daf0 through66c8b9c0` -> `pass`
+- `S04` `verify:` `applicable full Ruff/format/eight-file type/253 preflight plus94 final affected tests` -> `pass`
+- `S04` `verify:` `24 paired windows strict parity source stability CUDA trace nonblocking stack evidence and exact-spec service restoration` -> `pass`
+- `S04` `verify:` `vaultspec-core vault check all --feature pipeline-performance --json` -> `pass`
+- `S04` `verify:` `mdformat --check docs/configuration.md and five feature records` -> `pass`
+- `S04` `by:` `root and independent GPT-6.1 Sol reviewer`
+- `S04` `M` `.vault/index/pipeline-performance.index.md`
+- `S04` `verify:` `final feature status all four Steps checked and latest verification pass` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/test_substitution_discipline.py`
+- `S04` `verify:` `Ruff lint and917-file format plus focused ty` -> `pass`
+- `S04` `verify:` `pytest test_substitution_discipline and test_gpu_profile_harness52` -> `pass`
+- `S04` `verify:` `substitution allowance17-to16 intended guard failure restored2guard passes` -> `pass`
+- `S04` `verify:` `independent GPT-6.1 Sol scoped publication policy review` -> `pass`
+- `S04` `by:` `root with GPT-6.1 Sol harness executor and independent reviewer`
+- `S04` `A` `.vault/_archive/audit/2026-09-30-pipeline-performance-audit.md`
+- `S04` `A` `.vault/_archive/exec/2026-09-30-pipeline-performance/2026-09-30-pipeline-performance-ledger.md`
+- `S04` `A` `.vault/_archive/index/pipeline-performance.index.md`
+- `S04` `A` `.vault/_archive/plan/2026-09-30-pipeline-performance-plan.md`
+- `S04` `A` `.vault/_archive/research/2026-09-30-pipeline-performance-research.md`
+- `S04` `verify:` `integrated pytest twelve modules 309 tests` -> `pass`
+- `S04` `verify:` `full Ruff lint and 918-file format plus focused twenty-one-file ty` -> `pass`
+- `S04` `verify:` `relevant Markdown and both feature conformance plus staged diff checks` -> `pass`
+- `S04` `verify:` `five archive SHA256 hashes and twenty-eight historical ledger entries retained` -> `pass`
+- `S04` `verify:` `independent GPT-6.1 Sol integrated publication review` -> `pass`
+- `S04` `by:` `root with GPT-6.1 Sol independent reviewer and record reconciliation`
+- `S04` `verify:` `CI full-lint job 110251725611 run 36826003868 SHA 3b0724c36f3a5b550c436cff3cf9116cc36da965` -> `fail`
+- `S04` `verify:` `CI Windows correctness job 110251725590 run 36826003868 SHA 3b0724c36f3a5b550c436cff3cf9116cc36da965` -> `fail`
+- `S04` `verify:` `just test-python` -> `pass`
+- `S04` `verify:` `./.venv/Scripts/python.exe -m pytest src/vaultspec_rag/tests -q -m "(integration or quality or robustness or cuda or torch) and not performance and not subprocess_gpu" -W error --report-log=.pytest-tmp/remediation-resident-gpu-final.jsonl` -> `fail`
+- `S04` `verify:` `PYTHONWARNINGS=error just test-python at snapshot 8426aa11f9fa9f13bf98fdcbf239f48a5ac021af8d935b2a9d75c60aa4393829` -> `fail`
+- `S04` `verify:` `PYTHONWARNINGS=error just test-python at snapshot f20ae80d16a181b4d4bff7f88d84ebb293d88fcc75fe67af05d91cd42bbd4dfc` -> `pass`
+- `S04` `verify:` `PYTHONWARNINGS=error pytest test_served_resume_drift.py -W error at snapshot f20ae80d16a181b4d4bff7f88d84ebb293d88fcc75fe67af05d91cd42bbd4dfc` -> `fail`
+- `S04` `verify:` `Retained S14 real served retry .pytest-tmp/remediation-served-drift-repaired.log at frozen digest f02581e0a00bc2351080e1454c6c9fab184fc795cf202905f797069ba4dde700, required integrated runtime signal` -> `fail`
+- `S04` `M` `src/vaultspec_rag/indexer/_preprocess_runner.py`
+- `S04` `M` `src/vaultspec_rag/_process_probe.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_preprocess_descendant_lifetime.py`
+- `S04` `M` `src/vaultspec_rag/cli/_process.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_service_launcher_lifetime.py`
+- `S04` `verify:` `Read current PR569 run36826003868 failed lint and Windows logs plus six recent main Merge Gate failed logs` -> `pass`
+- `S04` `verify:` `Strict just test-python frozen v2 5839 passed 8 expected skips zero warnings` -> `pass`
+- `S04` `verify:` `Preprocessor pending reader diagnostic old-code deterministic mutation intended refusal fails; exact restored fix passes` -> `pass`
+- `S04` `verify:` `Strict focused preprocessor and launcher39 passed zero warnings; scoped Ruff format Ty basedpyright` -> `pass`
+- `S04` `verify:` `Strict final just test-python frozen v3 1 failed 5839 passed 8 expected skips zero warnings185.09seconds` -> `fail`
+- `S04` `verify:` `Strict launcher atomic PID witness fixture2 passed zero warnings; scoped Ruff format Ty basedpyright` -> `pass`
+- `S04` `verify:` `Independent GPT6.1 Sol review of atomic PID publication and unchanged lifetime assertions` -> `pass`
+- `S04` `verify:` `Strict exact just test-python frozen v4 5840 passed8 expected skips0 warnings170.10seconds` -> `pass`
+- `S04` `verify:` `Exact just check-all frozen v4 all configured dimensions exit0 including Pylint module size and basedpyright0 errors0 warnings0 notes` -> `pass`
+- `S04` `verify:` `just audit-deps scanned1 binary156 Python pins no unaccepted advisories exit0` -> `pass`
+- `S04` `verify:` `Frozen1184 source files unchanged after CPU and full aggregate digest3c2051d7a5277915e490ca6057e2642981887200e9cb9a120174067ae6a27e62` -> `pass`
+- `S04` `verify:` `Strict full resident GPU frozen v4 observed SQLite connection unraisable in generation-reclaim call phase; run remains active` -> `fail`
+- `S04` `verify:` `Strict full resident GPU frozen v4 completed735 passed2 failed5652 deselected1230.81seconds exit1` -> `fail`
+- `S04` `verify:` `Fresh real Qdrant allocation tracer identifies SDK persistence.py80 in-memory probe; nativeexit0 dirty stderr default versus nativeexit0 clean canonical flag` -> `pass`
+- `S04` `verify:` `Real Windows retained exited process opens signaled; canonical ancestor discovery accepts dead pid; live handle control signals only after exit` -> `pass`
+- `S04` `M` `src/vaultspec_rag/cli/_service_storage.py`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_generation_reclaim.py`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_service_storage_migration.py`
+- `S04` `verify:` `Eight strict accelerator-free existing CLI storage-migrate unit cases and scoped Ruff format Ty basedpyright` -> `pass`
+- `S04` `verify:` `Independent GPT6.1 Sol review of3 canonical thread-policy sites and real fresh-process migration guard` -> `pass`
+- `S04` `A` `src/vaultspec_rag/_qdrant_local_lifetime.py`
+- `S04` `M` `src/vaultspec_rag/storage_reclamation.py`
+- `S04` `M` `src/vaultspec_rag/storage_restore.py`
+- `S04` `M` `src/vaultspec_rag/storage_survey_ops.py`
+- `S04` `M` `src/vaultspec_rag/store_collections.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_qdrant_local_lifetime.py`
+- `S04` `M` `src/vaultspec_rag/server/_stdio_lifetime.py`
+- `S04` `A` `src/vaultspec_rag/tests/test_stdio_retained_ancestor.py`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_stdio_lifetime_e2e.py`
+- `S04` `verify:` `126 strict CPU storage deletion and lifetime cases` -> `pass`
+- `S04` `verify:` `Seven strict real migration generation-reclaim and orphan integration cases at frozen source-v6` -> `pass`
+- `S04` `verify:` `Actual constructor deletion ancestor and discarded-Popen guard mutations reject original faults and exact-byte restored cases pass` -> `pass`
+- `S04` `verify:` `Independent GPT6.1 Sol final code review has no unresolved code findings` -> `pass`
+- `S04` `verify:` `Strict exact just test-python frozen-v6 5843passed8existing-skips1failed172.03s` -> `fail`
+- `S04` `M` `src/vaultspec_rag/tests/test_release_timing_policy.py`
+- `S04` `verify:` `All3 canonical client-timeout omission mutations reject exact HTTP-default assertion and restore green` -> `pass`
+- `S04` `verify:` `Three strict release timing CPU cases plus two-file Ruff format Ty basedpyright` -> `pass`
+- `S04` `verify:` `Independent GPT6.1 Sol timeout-expression and complete3-client guard review` -> `pass`
+- `S04` `verify:` `Strict exact just test-python frozen-v7 5844passed8existing-skips0warnings181.17s` -> `pass`
+- `S04` `verify:` `Exact just check-all frozen-v7 including934-file format Ty imports Pylint basedpyright0errors0warnings0notes vaultclean` -> `pass`
+- `S04` `verify:` `Strict full resident GPU frozen-v7 737passed1quality-failure1293.94s` -> `fail`
+- `S04` `verify:` `First ignored passage observer reproduction aborted on observer SearchResult.doc_id AttributeError6setup-errors113.93s` -> `fail`
+- `S04` `M` `src/vaultspec_rag/tests/integration/conftest.py`
+- `S04` `verify:` `strict full resident GPU v7 737 passed 1 evidence floor failure` -> `fail`
+- `S04` `verify:` `fresh frozen quality reproduction C 5 passed 1 evidence floor failure` -> `fail`
+- `S04` `verify:` `actual fixed-index query-vector retrieval diagnostic D 1 passed observer errors empty` -> `pass`
+- `S04` `verify:` `ambient-enrollment real-fixture context-removal RED then exact-byte restoration GREEN six quality cases` -> `pass`
+- `S04` `verify:` `strict exact just test-python v8 5844 passed 8 existing skips zero warnings` -> `pass`
+- `S04` `verify:` `exact just check-all v8 native exit zero including basedpyright zero errors warnings notes and general vault all clean` -> `pass`
+- `S04` `verify:` `exact just test-gpu resident selection source-v8 738 passed zero warnings native zero` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/integration/_service_lifecycle_helpers.py`
+- `S04` `verify:` `strict full subprocess GPU v8 restart and shutdown cases each fail two unraisable Popen lifetime warnings` -> `fail`
+- `S04` `verify:` `exact just test-gpu v8 overall failed two Popen warnings while resident 738 and subprocess 74 cases passed` -> `fail`
+- `S04` `verify:` `owned-Popen-wait omission real restart RED then exact restoration both restart and shutdown GREEN zero warnings` -> `pass`
+- `S04` `verify:` `strict exact just test-python source-v9 5844 passed 8 existing skips zero warnings native zero` -> `pass`
+- `S04` `verify:` `exact just check-all source-v9 native zero basedpyright zero errors warnings notes general vault all clean` -> `pass`
+- `S04` `verify:` `PYTHONWARNINGS=error TERM=xterm-256color just test-gpu resident-selection` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_service_lifecycle_runtime.py`
+- `S04` `verify:` `PYTHONWARNINGS=error TERM=xterm-256color just test-gpu full-v9` -> `fail`
+- `S04` `A` `src/vaultspec_rag/tests/integration/_shutdown_storage_control.py`
+- `S04` `verify:` `shutdown-storage-count-red=fail;shutdown-storage-count-green=pass;shutdown-storage-count-measurement-red=fail;shutdown-storage-count-measurement-green=pass;focused Ruff/format/Ty/basedpyright` -> `pass`
+- `S04` `verify:` `just test-python=fail;just check-all=pass;just test-gpu=interrupted;102 published-value-narrowing tests=pass;scoped Ruff/format/Ty/basedpyright` -> `pass`
+- `S04` `verify:` `canonical-count shutdown storage proof=pass;substitution declaration mutation proof` -> `pass`
+- `S04` `verify:` `just test-python=pass;just check-all=pass;git diff --check=pass;active legacy-reference scan` -> `pass`
+- `S04` `M` `src/vaultspec_rag/tests/integration/test_service_logs.py`
+- `S04` `verify:` `source-v11 just test-python=pass;source-v11 just check-all=pass;source-v11 fullGPU=incomplete-with-call-failure;actual retained byte-order guard proof=pass;real Uvicorn traffic case=pass;scoped Ruff/format/Ty/basedpyright` -> `pass`
+- `S04` `verify:` `source-v12 just test-python=pass;source-v12 just check-all` -> `pass`
+- `S04` `verify:` `source-v12 complete resident GPU selection=pass;source-v12 source stability` -> `pass`
+- `S04` `verify:` `source-v12 just test-python=pass;source-v12 just check-all=pass;source-v12 COMPLETE just test-gpu=pass;post-all source hash=pass;post-all acceptance no-recreation/preservation=pass;independent integrated source review` -> `pass`
+- `S04` `verify:` `full GitHub CI 36912341534 exact 6cff5b90 Windows CPU job 110537815818 16 failed 5829 passed 7 skipped` -> `fail`
+- `S04` `M` `src/vaultspec_rag/_win32.py`
+- `S04` `M` `src/vaultspec_rag/tests/test_hardware_anchor.py`
+- `S04` `verify:` `strict just test-python frozen preliminary source-v13 5844 passed 8 existing skips zero warnings 160.04s` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-guard-proofs-v14.py intended creator deny null RED exact restoration GREEN` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-repeat-proof-v14.py intended native-write RED exact restoration GREEN` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-restricted-acl-proof.py actual administrator-disabled baseline old denied repaired operations` -> `pass`
+- `S04` `verify:` `python .pytest-tmp/windows-acl-boundaries-v13.py actual denied write remains refused null DACL unchanged` -> `pass`
+- `S04` `verify:` `source-v14 exact strict just test-python: 5844 passed, 8 existing OS/admin skips, 0 warnings, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 exact just check-all: aggregate and general vault clean, basedpyright 0 errors 0 warnings 0 notes, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 exact strict just test-gpu: resident 738 passed and subprocess 76 passed, serial, 0 warnings, native exit 0` -> `pass`
+- `S04` `verify:` `source-v14 frozen 1188-file digest 66d353904efdfa1fe23f20d0ef6eb2f7e61ba8d3cecf373ee413ed115ead14d2: post-full mismatch count 0` -> `pass`
+- `S04` `verify:` `acceptance-index post-full retention: 9 directories 40 files preserved, no common-Git artifacts recreated` -> `pass`
+- `S04` `verify:` `post-full resident borrowing restoration: models loaded, running admission, borrower unbound, compute tickets 0` -> `pass`
+- `S04` `verify:` `GPT-6.1 Sol integrated local S04 review of final opaque-ACE repair and frozen full gates: no blocker` -> `pass`
+- `S04` `verify:` `full CI36925031642 at3026df9c Windows job110580150087: 1 fixture failure 5844 passes 7 skips; Linux all passed` -> `fail`
+- `S04` `verify:` `whole actual ACL guard under administrator-disabled token: original read/restoration denied, corrected entire guard and cleanup pass` -> `pass`
+- `S04` `verify:` `v15 creator deny null repeat intended guard RED1 exact production-byte restore GREEN0` -> `pass`
+- `S04` `verify:` `v15 exact strict just test-python: 5844 passed 8 existing OS/admin skips zero warnings native exit0` -> `pass`
+- `S04` `verify:` `v15 GPU evidence reuse: only CPU guard changed, production dependencies GPU scope unchanged, v14 reports738+76 passes and zero executed changed cases` -> `pass`
+- `S04` `verify:` `final v15 exact just check-all native0: all configured checks and general vault clean, basedpyright0errors0warnings0notes` -> `pass`
+- `S04` `verify:` `post v15 full CPU and aggregate: 1188-file frozen digest0d3afc33a09487f1e22bd849f3d07c51c596c174a5edf1bad02370fdf74f2859 mismatch0` -> `pass`
+- `S04` `verify:` `post v15 CPU acceptance retention: 9 directories40files intact, no common-Git artifacts recreated` -> `pass`
+- `S04` `verify:` `GPT-6.1 Sol final integrated LOCAL S04 v15 review and root integrity confirmation` -> `pass`
+
+## Notes
+
+- `S01` An externally owned merge into this worktree delays the explicit-path Step commit. No foreign staged files were modified or included. Native execution is deferred until the reviewed pins are committed.
+- `S01` Explicit-path commit and native execution remain deferred until the externally owned merge is finished. Overall review is PENDING for real native/CUDA evidence.
+- `S02` Partial Step only: CUDA/native inference measurements and sparse budget/parity selection remain blocked by active service tickets and pending external merge. S02 stays unchecked; no sparse batch/precision/backend default changed.
+- `S01` Execution moved to isolated feature/pipeline-performance worktree at b9d2daf0 so the externally owned sparseencode merge can proceed. Shared GPU admission remains enforced; copied earlier CPU evidence retains its original corpus hashes.
+- `S01` S01 corrective reopen closes live profiler suspension hazard. Same resident service recovered without restart or job cancellation. CUDA and sustained energy remain pending; failed profiler attempts excluded.
+- `S02` Sequencing separates completed AST work from required GPU and sustained-energy selection now in S03. Conditional repeat timing interval includes no gain. No indexing throughput or energy improvement claim.
+- `S03` 4096 experiment rejected before energy windows; default remains24000 because8192 short energy regressed.8192 is opt-in long/mixed tuning. Both owned cancellations have exact-spec succeeded retry children; first HTTP timeout reconciled against created-child records.
+- `S03` The recorded failed three-arm experiment is preserved as history; it did not evaluate the shipped selection. Final verification explicitly proves the selected two-arm comparison and unchanged 24000 default pass, and the rejected 4096 arm aborted before windows.
+- `S03` A supplementary verification helper initially imported `get_config` from the namespace instead of `config._settings.` The import was corrected and the exact helper rerun passed before checkpoint. The premature helper pass entry is validated by that completed run; production gates were unaffected.
+- `S04` S04 reopened when broader publication checks found the missing reviewed unit-boundary declaration. The exact seventeen-site declaration retains existing guard logic and was bounded/mutation-proven; production and measurement behavior remain unchanged.
+- `S04` User explicitly authorized finishing all pending merges and pushing on 2026-10-01. S04 reopened to record the original-worktree integration; canonical behavior and existing GPU evidence remain applicable. Superseded enrollment is archived with exact bytes, and stale untracked source copies are preserved outside the checkout.
+- `S04` 2026-10-01: Reopened integrated verification under explicit user direction to repair all CI and vault failures before push. Full lint reported three module-size failures; Windows correctness reported thirteen failures. These required failures supersede the earlier overall-clean assertion, while all historical scoped passing rows remain intact. Reclose S04 only after fresh full CPU, both GPU lanes, aggregate gates, and independent review pass. Evidence: remediation-ci-status.json, remediation-ci-full-lint.log, and remediation-ci-windows-full.log under ignored test artifacts.
+- `S04` Fresh root-owned full CPU run after canonical holder fixture repair:5810passed,8platform-specificskips,zero warnings,221.50s; artifact remediation-full-cpu-holder-fixed.log. Earlier holder-PID failure is superseded by this actual CPU result only. GPU strict-Werror currently exposes SQLite connection ResourceWarnings; GPU lifecycle repair and full aggregate remain pending. No full integrated PASS or S04closure is claimed.
+- `S04` Strict resident GPU verification finished with exit 1: 87 failed, 622 passed, 31 errors, 5622 deselected in 1041.06s. All 118 failed phase reports over 117 nodes classify as unclosed SQLite, pipe or unreaped child-process resources; no independent functional assertion failure was found. Artifact remediation-resident-gpu-final.log/jsonl and resident-gpu-producer-triage.json under ignored .pytest-tmp. Current lifetime and fixture repairs have focused strict CPU evidence only. S04 remains open; full final CPU, resident GPU, subprocess GPU, aggregate and integrated review are pending. No new commit or push occurred; PR 569 remains draft.
+- `S04` The first strict CPU startup failed because pytest-asyncio fixture loop scope was unset. Explicit function scope preserves all six genuine async fixtures. The next full strict CPU run failed 14 cases (5812 passed, 8 environment/platform skips): unclosed real test HTTP listener sockets, holder-launcher pipes, and independent nested pytest configurations. Canonical closure and exact child configurations repaired those causes; two additional production HTTPError response lifetime defects have real retained-response red/green proofs. Final exact CPU recipe under PYTHONWARNINGS=error passed 5828, skipped 8, zero warnings, exit 0 in 218.51s. Logs remediation-final-cpu-strict-loop-configured.log and remediation-final-cpu-strict-resources-fixed.log under ignored .pytest-tmp. All original thirteen Windows CI failing cases pass in this complete CPU run. GPU lanes and final aggregate/review remain pending; no push.
+- `S04` The actual served retry after an admitted durable source changed failed the production ingest verification barrier: expected 13 applied points, found 12. The same run reported an unreaped canonical Windows venv launcher Popen at teardown. Result: 1 failed, 1 teardown error in 50.36 seconds. Strict full CPU evidence remains applicable to its recorded snapshot; both full GPU lanes and final aggregate remain pending. These actual defects are being repaired with assertions and the ingest barrier preserved. The PR remains draft; no commit or push.
+- `S04` One functional failure, 45.75 seconds, zero warnings: retry succeeded, but public job drift was None. Prior applied-point and launcher symptoms no longer observed in this run; positive supersession remains unproved. Integrated S04 remains open pending repair and complete required gates.
+- `S04` Current PR remains draft at3b0724c with failed CI signals retained. Existing Linux correctness and advisories pass; skipped runs do not prove correctness. Final reader count is captured before stop Event to retain the observed unknown-descendant reason. Source v3 is frozen1184 files digest75d95e94416d776bfb454d3579b601e4aefa6f4c353a1d45569d1e362c3115f8; root fresh full CPU, full aggregate, both GPU correctness selections and final integrated review remain pending. No new commit or push.
+- `S04` Final frozen CPU rerun exposed actual launcher fixture readiness publication race: child.pid existence became visible before its integer content was written; positive real launch guard raised ValueError on empty text. Assigned atomic complete PID publication repair preserves all original assertions and timing limits. Full final source gates remain pending; no push or ready action.
+- `S04` Both launcher and child PID payloads now close a sibling temporary file before replacing their final readiness names. No deadlines or assertions changed. Final v4 frozen source1184 digest3c2051d7a5277915e490ca6057e2642981887200e9cb9a120174067ae6a27e62; root final CPU rerun and subsequent aggregate plus both GPU lanes remain pending. PR569 remains draft; stale gate claims were replaced by explicit pending status and the actual failed CI link. No new commit or push.
+- `S04` Evidence .pytest-tmp/remediation-final-cpu-v4.log, remediation-final-check-all-v4.log, remediation-final-dependency-audit-v4.log and remediation-final-source-freeze-v4.json. Root full resident GPU warnings-as-errors selection is now active; separate subprocess GPU selection follows serially. S04 remains open and integrated review PENDING until actual GPU and final metadata gates pass. PR draft unchanged; no new commit or push.
+- `S04` First current resource producer failure `test_generation_reclaim::TestTheCycleRunsTheGenerationPass::test_a_cycle_plans_the_drop_of_a_superseded_generation` appeared after148 passed. Root preserves complete full-lane report-log and continues collection; assigned read-only producer trace while source stays frozen. No warning filter, assertion relaxation, source mutation, new commit or push.
+- `S04` Full artifacts remediation-final-resident-gpu-v4.log/jsonl. Independent allocator proof qdrant-local-probe-allocation.json/log; native proof orphan-dead-handle-proof.json/log. Method owns three previously unprotected persisted-local Qdrant constructor sites to match existing stdlib-derived production thread policy, plus real migration guard. Profile owns discovered ancestor liveness correction and real retained-dead-handle guard; original Windows-only orphan test decorator is restored from pre82650b37 placement with exact existing condition/reason. Source freeze released only assigned files after full lane ended. No warnings hidden, assertion/deadline weakened, installed dependency changed, commit or push.
+- `S04` Local client constructors now use existing sqlite3.threadsafety==3 public SDK policy. Guard actual integration execution and old-constructor RED/restored GREEN remain root-owned and pending. Clarification for preceding S04 note: decorator restoration described the assigned repair; owner subsequently reports its actual restoration and native guard mutation restoration. Watchdog final statics, root targeted integrations and full final source CPU/aggregate/bothGPU verification remain pending; no push.
+- `S04` Full resident-v4 actually failed2 cases with735 passed in1230.81s; next targeted attempt passed6 but failed1 distinct deleted-local-collection SQLite lifetime. SDK constructor probe allocation80 and deleted durable connection94 are separate actual producers. Canonical close-before-delete extraction reuses existing VaultStore behavior at4 authorities. Native Windows ancestry excludes signaled dead ancestors while retaining precise handle semantics and error cleanup. Test launchers retain children through real readiness and deliberate crash handoff; exact empty captured stderr rejects original ResourceWarnings. Seven real target integrations now pass36.84s with warnings errors. Source-v6 frozen1187 files digest508cd8d23e9637d0622fc95dbfdef771ef4dfdbcc8c83dcc1044920b43396724; all mutations restored and writes stopped. Full CPU aggregate and both GPU selections still pending; S04 open and PR draft, no repaired commit or push.
+- `S04` Frozen-v6 full CPU fails existing release timing guard: new real migration regression added a third Qdrant URL client but omitted its canonical shared timeout. Existing AST guard correctly observes3 calls including timeoutNone, versus its original2-call inventory. Assigned both fixture timeout correction and complete3-call guard coverage, retaining exact shared-cutoff expression assertions; no narrower inventory or longer cutoff. Full final checks remain pending; no commit or push.
+- `S04` Timeout repair covers every actual3 seed-serverclient; no cutoffvalue or timeout-expression assertion changed. Frozen-v7 source1187 files digest2e36dd68ae2b6cec0e157b446d40abf01819577d4badd5b873a9dc4a3615bab2. Fresh full CPU active; aggregate and both GPU lanes pending. S04 remains open, draft PR and unpushed repairs preserved.
+- `S04` Full resident GPU has no reported warnings or raw ResourceWarning/Exception-ignored output, and the repaired migration reclamation and native orphan cases pass. One actual evidence quality assertion fails: `evidence_in_snippet13of36=.361111` versus unchanged.38floor requiring14of36. This is distinct from resource-lifetime fixes and remains unresolved. Corpus is pinned gitarchive c02c12cff9505f5283dc9c37b08696416a791fe8, so current vault edits are ruledout. Same source1187-file frozen-v7 hashes remainunchanged afterfullCPU aggregate and resident lane. Root bounded actual quality reproduction captures fixtureobservations and canonicalpassage scores viaignored read-only observer, with no model/ranking override or threshold/label change. S04 remains open and subprocessGPU/finalreview pending; no repaired commit or push.
+- `S04` First diagnostic callback used nonexistent `SearchResult.doc_id` instead of canonical.id, so fixture setup aborted before quality assertions: no quality result inferred. Root corrected onlyignoredobserver to canonical.id and captures observererrors separately without interrupting realsearch. Second actual boundedreproduction active; source remainsfrozen and evidencefloor/labels unchanged. No commit or push.
+- `S04` Full resident v7 scored 13 of 36 evidence cases below unchanged 0.38 floor; fresh reproduction C confirmed 13 of 36. Read-only D repeats preserve cached dense and sparse vectors but observe classifier retrieval limits 60 then 40 within one encoded invocation. The optional hosted classifier legitimately expands its window and falls back atomically on failure; the frozen local-model experiment inherited ambient enrollment. Fixture-scoped normal no-credential path repair is under actual guard and quality validation; no floor, label, model, index or production limit changed. Initial proof attempts did not enter the fixture because service capture or interpreter imports failed; those logs are retained as failed setup, not guard evidence.
+- `S04` The actual isolation-removal mutation failed the intended no-hosted-classifier assertion before indexing; finally restored source bytes, then all six unchanged real-GPU evidence assertions passed in 162.87 seconds. Independent GPT6.1 Sol fixture and integrated reviews report no new code blocker; overall acceptance remains PENDING complete resident and subprocess GPU lanes and final aggregate. Frozen non-vault source v8 digest effe0c35415a659a73763fbabf6016266ccadddf6016e23cb8155ff7a7b1c24f covers 1187 files. Strict CPU v8 passed 5844 cases in 204.01 seconds with eight existing platform/admin-environment skips and zero warnings. No final commit or push has occurred.
+- `S04` Root-owned strict full CPU and exact aggregate gates completed at unchanged source-v8 digest effe0c35415a659a73763fbabf6016266ccadddf6016e23cb8155ff7a7b1c24f. Both configured GPU selections are running sequentially through exact just test-gpu; no complete GPU verdict is yet available. Known deeper parser advisory dispositions and intentional path-contract inputs remain transparent; no gate filter, floor, warning suppression or new skip was added.
+- `S04` The exact configured GPU command completed its first full resident selection with 738 passed and 5656 deselected in 1096.14 seconds, zero warnings and native session exit zero. All frozen evidence assertions passed within that complete run, not just the focused reproduction. The second configured `subprocess_gpu` selection is running serially and remains required; no overall GPU or integrated PASS is claimed yet. Source-v8 hashes remain unchanged. Full resident report was preserved before the second selection opened its own report.
+- `S04` The ongoing full subprocess selection exposed two actual failures: daemon restart durable intent and shutdown release-order tests each report two ResourceWarning destructor failures. Each test enters the signalable-service helper twice. Independent read-only review traces the one owned Popen per context to PID-only canonical cleanup, which never observes or reaps that retained Popen object. CPython reports its unset returncode before checking native process state, even after the PID is dead. Root retains the full failure traces and source-v8 freeze; no source edits will occur until this complete selection exits. The required repair must reap the owned process within the existing cleanup budget on normal and failure paths, preserving every real shutdown assertion.
+- `S04` The complete v8 subprocess selection ended with 74 passed and two failed in 1656.34 seconds; the exact combined GPU recipe exited one. All other cases, including the real served drift/retry test, passed. The fixture now reaps its retained Popen in finally under the same 30-second deadline as canonical PID cleanup, preserving failures and all shutdown identity/order assertions. Wait omission reproduced the intended ResourceWarning failure; exact-byte restoration passed both actual cases in 123.49 seconds with zero warnings and native zero. Independent GPT6.1 Sol review found no blocker, including timeout and exception chaining. Source-v9 digest f8f885f76db549738c7fcc5075e788eb8b7ca05960496b1e5ac65e1c880aca98 differs from v8 in exactly this one private helper. Fresh exact full CPU, aggregate and both GPU selections are running; no integrated PASS or repaired push is claimed.
+- `S04` The fresh complete CPU recipe passed in 178.21 seconds at source-v9 f8f885f76db549738c7fcc5075e788eb8b7ca05960496b1e5ac65e1c880aca98; hash verification reports no changes. Exact full aggregate and exact sequential resident/subprocess GPU recipe remain active, so final acceptance and push remain blocked. Prior full v8 GPU failure and actual wait-omission RED are retained as failures, not superseded by this CPU result.
+- `S04` Exact configured full aggregate completed after the lifetime audit repair at unchanged source-v9; whitespace review also passes. Full CPU and aggregate are green, while the newly rerun exact full GPU recipe remains in progress. Prior incomplete or failing GPU commands remain recorded. No commit or push has occurred.
+- `S04` Frozen source-v9 f8f885f76db549738c7fcc5075e788eb8b7ca05960496b1e5ac65e1c880aca98: resident selection completed 738 passed, zero warnings, 5656 deselected, 1083.46 seconds, native session exit zero. Exact combined just test-gpu remains running its second, serial `subprocess_gpu` selection; no overall PASS, no commit or push. Preserved evidence: .pytest-tmp/remediation-final-resident-gpu-v9.jsonl and remediation-final-gpu-v9.log. Independent read-only final source review reports no code blocker; required subprocess evidence and final record closure remain pending.
+- `S04` Exact frozen-v9 combined recipe exited one. Resident selection passed738 zero warnings1083.46s; subprocess selection75 passed1 failed zero resource warnings1662.05s. Only failed assertion: shutdown-release/reopen test expected public `index_unverifiable` but received `index_unavailable` while nested integrity was unverifiable. Bounded Popen ownership is now clean. Independent read-only review identifies missing test premise: worker ownership is observed before any confirmed stored slice; canonical missing-collection/unbuilt diagnostics correctly precede integrity failure classification. Preserve exact response/order assertions and synchronize shutdown after real partial stored progress. Complete reports preserved as remediation-final-resident-gpu-v9.jsonl and remediation-final-subprocess-gpu-v9.jsonl; overall remains PENDING and no repaired commit pushed. Latest other-branch RAG failures36876401796/36871964456 were read: init-monitor psutil AccessDenied before Windows pytest, separate from sparseencode source; their Linux checks pass.
+- `S04` Source-v9 exact GPU recipe failed its lifecycle publication premise: the fresh clean rebuild was signalled before a served collection existed. A cold incremental attempt was refused `full_reindex_required;` a seeded baseline attempt incorrectly expected consistent after an OPEN receipt. Both failed premise sequences and the independent unmutated diagnostic remain retained, and neither is accepted RED evidence. Accepted receipt fencing requires `unverifiable/proof_unreadable` with null claim and generation. Final fixture publishes a real baseline, adds one source, waits after real confirmed storage and accounting, then uses actual shutdown/restart. Uninterrupted substitution-bound1-to0 mutation failed intended growth; exact restore passed. Reported count-zero mutation after the new source appeared failed intended 0>512 assertion; exact production-byte restore then passed the real GPU case1 in83.56s with zero warnings. Proof: .pytest-tmp/shutdown-storage-guard-proof.json. Independent GPT6.1Sol review finds no blocker and supersedes its earlier consistency theory. Scope proves useful rows and breadth, not point identity or certification. Fresh source-v10 digest7fe2aefc99ae4d56c1f8c7b3115a811b58cf36c69e0a58f0bd763b8f6e9c90d6 covers1188files; root owns fresh exact fullCPU, aggregate and both serial GPU selections now running. S04 remains open, integrated PENDING, PR569 DRAFT, no repaired commit/push.
+- `S04` Frozen source-v10 exact fullCPU failed1 with5843passed8existingplatform/adminskips0warnings182.20s. The unchanged published-value-narrowing scanner flagged the new baseline bare integer assertion whose value flowed into another assertion; no suppression or allowance is added. Exact aggregate passed all configured gates with basedpyright0errors0warnings0notes and general vault clean. Root interrupted the incomplete resident GPU selection to repair the failed frozen input; this partial selection is not acceptance and no complete GPU success is claimed. Owned test process chain exited; resident service34896 independently reported ready/running/admissionsopen/no borrower/tickets0. The fixture now routes baseline claim and measured live count through existing `_job_values.count,` rejecting bool and malformed counts without weakening positive/breadth assertions. All102 strict published-value-narrowing cases passed3.15s and focused Ruff/format/Ty/basedpyright passed. Earlier valid RED/GREEN proof is preserved with -bare-count-v10 suffix; changed assertion will receive a fresh uninterrupted count-zero proof. Source writers stopped. Fresh fullCPU/aggregate/bothGPU remain required after proof and source-v11 freeze; S04 open, review PENDING, PR569 DRAFT and no commit/push.
+- `S04` Fresh uninterrupted proof after canonical count repair: bound1-to0 intended count-growth RED exit1, exact restore unit GREEN exit0; real GPU count-measurement RED failed intended 0 is not None and0>512, exact production-byte restore then same real shutdown/restart GREEN1passed84.24s0warnings. Proof .pytest-tmp/shutdown-storage-guard-proof.json confirms restoration. Independent GPT6.1Sol canonical-count followup review finds no blocker, receipt fence and all lifecycle checks unchanged. Earlier failed premises and v9/v10 actual full failures are appended to audit without rewriting historical findings. Frozen source-v11 1188files digestc88fc26e5c64f6b4d1cd557c1cf6704e3a19920bbd2403e156c4733aae9d57d0. Root restarts exact fullCPU, aggregate and both serial GPU selections; no source changes while gates run. S04 open, integrated PENDING, PR569 DRAFT, no repaired commit/push.
+- `S04` Frozen source-v11 c88fc26e5c64f6b4d1cd557c1cf6704e3a19920bbd2403e156c4733aae9d57d0/1188nonvaultfiles: exact strict fullCPU native0,5844passed8existingplatform/adminskips0warnings183.05s. All original13WindowsCI-failed cases pass. Exactaggregate native0 includes Ruff/format/Ty/links/TOML/markdown/workflows/imports/complexity/nesting/Pylintmodulelimits/docsversion/citationidentity/conventions/basedpyright/generalvault/generatedCLIreference. Basedpyright0errors0warnings0notes, generalvaultallchecks clean. Patch whitespace native0; bounded activecode/docs/tools/config scan found no `HF_TOKEN` or old sparse-model-v3 references. Independent final integrated GPT6.1Sol review reports code PASS/no blockers, requiring actual completeGPU/native0 and finalno-recreation before integratedPASS. Prior dependency audit remains applicable to unchanged pins. Root owns serialfullGPU stillrunning; S04 open, PENDING, PR569DRAFT, no repairedcommit/push. Logs .pytest-tmp/remediation-final-cpu-v11.log and remediation-final-check-all-v11.log.
+- `S04` Source-v11 partialresident recorded613PASS1callFAIL, actual access-only marker splitAC/ CESS across raw1024byte rollover. Root interrupted incompletefullGPU; no completeGPUacceptance. Actual3retainedfiles2217bytes conclusively show lexicaljoin0 markers versus chronologicaljoin1. Onlytesthelper now joins exact3generations oldest-to-active, preserving1024limits/exact-once. IndependentGPT6.1Sol analysis confirms no productionloss; actualfailedfiles preserved/hashverified. Uninterrupted actualfile pytestreplay old-order RED intendedassert0==1, exactbytesrestore replayGREEN, separate actualrealUvicorncaseGREEN1passed25.42s0warnings. Proof .pytest-tmp/log-rotation-guard-proof.json. Source-v12 1188files digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105; allsourcewritersSTOPPED. Root starts fresh exactfullCPU/aggregate/serialresident+subprocessGPU. S04open/integratedPENDING/PR569DRAFT/no repairedcommit or push.
+- `S04` Frozen source-v12 1188nonvaultfiles digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105: exactstrictfullCPU native0,5844PASS8existingplatform/adminSKIP0warnings195.14s; all13originalWindowsCIfailedcases pass. Exactfullaggregate native0, Ruff/format/Ty/links/TOML/Markdown/workflows/imports/complexity/nesting/Pylintmodulelimits/docs0.6/citationsidentity/conventions/basedpyright/generalvault/generatedCLIreference pass. Basedpyright0errors0warnings0notes; generalvaultallchecks clean. Independent GPT6.1Sol rolloverfollowup confirms originalbyte-order repair no blocker, intended actual-retained-boundary replay RED/exactrestore/GREEN and freshrealUvicornPASS applicable. Required fullresident/subprocessGPU stillrunning rootsoleowner; allsourcewriters stopped. S04open/integratedPENDING/PR569DRAFT/no repairedcommit orpush. Evidence .pytest-tmp/remediation-final-cpu-v12.log and remediation-final-check-all-v12.log.
+- `S04` Fresh exact just test-gpu resident selection completed native0:738PASS5656deselected0warnings1143.42s. FullCPU5844PASS8existingskips0warnings and exactaggregate native0 already apply to the SAME frozen1188nonvaultfiles source-v12 digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105, nowverified0mismatches. The previouslyfailed realaccess-log rollover case PASSED in thiscomplete selection; all realquality/model cases also passed unchanged floors. Resident report preserved .pytest-tmp/remediation-final-resident-gpu-v12.jsonl. Same exactrecipe proceeds serially to fullsubprocessGPU; combinedrecipe outcome and finalintegratedacceptance remain PENDING. RootsoleGPUowner, no sourcewrites, S04open, PR569DRAFT, no repairedcommit/push.
+- `S04` ACTUAL finalsame-source acceptance: CPU5844PASS8existingplatform/adminSKIP0WARN195.14s; residentGPU738PASS0WARN1143.42s; subprocessGPU76PASS0WARN1693.78s; COMPLETE exactGPUrecipe native0. Exactaggregate native0, strictbasedpyright0errors0warnings0notes, generalvaultallclean. Total6658full-lanepasses, no focused double-count. Source1188files frozenv12 digest88fa9a1d6c21be0b4d0b815e85ebb2e4ced9c4ac27c44fcaa3aca8ef76151105 verified0mismatches AFTERALL. Realserveddrift/restart/shutdown/rollover/quality cases allpass. IndependentGPT6.1Sol integratedsource reviewPASS/no blockers. Postfull commonGitnoacceptanceartifacts,9dirs40filesandZIP exactpreserved; issueS09owncriterionclosed withoutretiringhistoricalplan. Originalresidentmodelsloaded/running/admissionsopen/no borrower/tickets0; globalhealthdegraded from latestfailed vaultjobforadifferentproject, no causeinferred orforeigncontrols. Finalauditappendedactualevidenceandlimits/history withoutrewrites. S04 localcriterion complete; owningCLIclosure and finalcompletion-recordaggregate follow before explicitcommit/pushdraft/exact-headfullCI/ready. No repairedcommit/push yet.
+- `S04` Reopened S04 after actual full CI Windows filesystem failures. Full local v12 checks remain historical passes; CI has not passed and PR stays draft. Independent caller inspection found the shared Windows anchor directory grant replaces prior explicit creator ACL rights; PID-qualified temp separation did not repair this additional non-admin permissions cause. Repair and intended mutation proof are pending.
+- `S04` Additional actual deny probe rejected the initial SetEntriesInAcl `GRANT_ACCESS` repair: it removed an existing AU deny and permitted the forbidden write. Final implementation preserves opaque existing ACE bytes and copies only missing grants. Earlier owner-rights baseline setup failures and unchanged rendered-ACL dedup mutations are not counted as intended RED proof. S04 remains open pending fresh final local full checks, review and exact-head full CI.
+- `S04` Repair-commit full CI is pending; prior exact-head 6cff5b90 run36912341534 failed 16 Windows CPU cases. PR569 remains draft. Separate foreign-project resident health degradation is retained.
+- `S04` S04 reopened for native ACL fixture premise; previous whole CI failed. Prior shared-parent deny mutation passed via deduplication, so that unexercised premise was rejected. Exact final-commit full CI and final local aggregate remain pending; PR569 stays draft.

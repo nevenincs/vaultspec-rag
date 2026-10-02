@@ -83,7 +83,7 @@ JSCPD = ("--min-lines", "20", "--min-tokens", "70", "--reporters", "console")
 #: Markers that require real infrastructure or a real accelerator.
 #:
 #: This is the exact set ``conftest.py``'s own ``pytest_runtestloop`` guard
-#: checks before requiring ``HF_TOKEN``, plus ``cuda`` and ``mps`` for tests
+#: checks before acquiring a GPU borrower lease, plus ``cuda`` and ``mps`` for tests
 #: targeting one real accelerator without the shared CUDA model fixtures.
 #: Excluding only ``integration`` once let a quality/performance/robustness/
 #: subprocess_gpu/cuda test slip through gateless and hard-abort the recipe on

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -274,7 +275,7 @@ def test_publication_mutation_journal_is_monotonic_exact_and_replayable(
         second,
     )
     assert (prepared.ordinal, second_prepared.ordinal) == (0, 1)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         cursor = connection.execute(
             """
             SELECT next_mutation_ordinal FROM publication_receipts
@@ -284,7 +285,7 @@ def test_publication_mutation_journal_is_monotonic_exact_and_replayable(
         ).fetchone()
     assert cursor is not None and int(cursor[0]) == 2
     assert ledger.prepare_publication_mutation(receipt.receipt_id, unit) == prepared
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         replay_cursor = connection.execute(
             """
             SELECT next_mutation_ordinal FROM publication_receipts
@@ -449,7 +450,7 @@ def test_publication_receipt_seal_rechecks_late_point_ownership(
     ledger.prepare_publication_mutation(receipt.receipt_id, unit)
     ledger.mark_publication_mutation_applied(receipt.receipt_id, unit)
     ledger.confirm_publication_mutation(receipt.receipt_id, unit)
-    with sqlite3.connect(ledger.path) as connection:
+    with closing(sqlite3.connect(ledger.path)) as connection, connection:
         connection.execute(
             """
             UPDATE publication_points SET point_id = ?

@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#service-quiesce'
 date: '2026-08-14'
-modified: '2026-09-14'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:4996f5358b3f233f0c545cfd65032ee37e39c63a509d8b61076e2d041567eaf5'
+body_hash: 'sha256:323e8b1e67d6489c0f19861c1b6b023c7ebe8e2d26a528f180fcc9d8d8bb1c1f'
 related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-24-service-quiesce-ledger]]'
@@ -20,6 +20,7 @@ related:
   - '[[2026-07-30-service-quiesce-w03-acceptance-audit]]'
   - '[[2026-07-31-service-quiesce-s31-identity-binding-directive-audit]]'
   - '[[2026-07-31-service-quiesce-w04-s29-s33-final-acceptance-audit]]'
+  - '[[2026-08-02-service-quiesce-ledger]]'
   - '[[2026-08-02-service-quiesce-paused-state-legibility-research]]'
   - '[[2026-08-02-service-quiesce-plan]]'
 ---
@@ -48,6 +49,7 @@ Auto-generated index of all documents tagged with `#service-quiesce`.
 ### exec
 
 - `2026-07-24-service-quiesce-ledger` - `service-quiesce` ledger
+- `2026-08-02-service-quiesce-ledger` - `service-quiesce` ledger
 
 ### plan
 

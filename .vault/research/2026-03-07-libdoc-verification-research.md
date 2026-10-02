@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:6176ca84130af75775ef45eb526287d6da695e27f393564fdae72c861f13a39f'
+modified: '2026-09-30'
+body_hash: 'sha256:d4d88c5952ddde269dc435e410f1327cf4105df967b34ed2456a7064581d1af9'
 ---
 
 # Library Documentation Verification Audit
@@ -32,7 +32,7 @@ ______________________________________________________________________
 - `client.collection_exists(name)` â€” correct (store.py:168)
 - `client.create_collection(collection_name, vectors_config={...}, sparse_vectors_config={...})` â€” correct signature with named vector configs (store.py:171-182)
 - `models.VectorParams(size=..., distance=models.Distance.COSINE)` â€” correct (store.py:174-176)
-- `models.SparseVectorParams()` â€” correct, no modifier needed for SPLADE (store.py:180)
+- `models.SparseVectorParams()` â€” correct, no modifier needed for previous BERT sparse encoder (store.py:180)
 - `client.create_payload_index(collection_name, field_name, field_schema=models.PayloadSchemaType.KEYWORD)` â€” confirmed correct signature (store.py:199-203)
 - `client.upsert(collection_name, points=[...])` â€” correct (store.py:268-271)
 - `models.PointStruct(id=..., vector=..., payload=...)` â€” correct (store.py:251-266)
@@ -88,7 +88,7 @@ ______________________________________________________________________
 
 - **`self._sparse_model.encode(texts, batch_size=...)`** at embeddings.py:293-296 â€” **POTENTIAL ISSUE:** The SparseEncoder docs show three methods: `encode()`, `encode_query()`, and `encode_document()` (singular, NOT plural). The code uses generic `encode()` for both documents (line 293) and queries (line 319). This works but misses query-specific prompt optimization. The `encode_query()` method automatically applies a "query" prompt if the model defines one. Similarly, `encode_document()` applies a "document" prompt.
 
-  **RECOMMENDATION (not a bug):** Consider using `encode_query()` for query encoding and `encode_document()` for document encoding to leverage SPLADE's query/document asymmetry. However, `encode()` still works correctly -- it just doesn't apply role-specific prompts.
+  **RECOMMENDATION (not a bug):** Consider using `encode_query()` for query encoding and `encode_document()` for document encoding to leverage previous BERT sparse encoder's query/document asymmetry. However, `encode()` still works correctly -- it just doesn't apply role-specific prompts.
 
   Note: The method is `encode_document` (singular), NOT `encode_documents` (plural). If switching, the batch loop would call `self._sparse_model.encode_document(texts, batch_size=...)`.
 
@@ -180,11 +180,11 @@ ______________________________________________________________________
 
 ### Summary of Critical Findings
 
-| #   | Library               | Severity | Issue                                                                                                                                                                        |
-| --- | --------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | sentence-transformers | LOW      | `SparseEncoder.encode()` used for both queries and documents instead of role-specific `encode_query()` / `encode_document()`. Works but may miss SPLADE prompt optimization. |
-| 2   | MCP SDK               | MEDIUM   | All MCP tools are sync `def`. Older SDK versions block the event loop. Ensure SDK version includes PR #1909 fix, or convert to async.                                        |
-| 3   | CLAUDE.md             | INFO     | CrossEncoder reranker is specified in architecture but not implemented in codebase.                                                                                          |
+| #   | Library               | Severity | Issue                                                                                                                                                                                              |
+| --- | --------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | sentence-transformers | LOW      | `SparseEncoder.encode()` used for both queries and documents instead of role-specific `encode_query()` / `encode_document()`. Works but may miss previous BERT sparse encoder prompt optimization. |
+| 2   | MCP SDK               | MEDIUM   | All MCP tools are sync `def`. Older SDK versions block the event loop. Ensure SDK version includes PR #1909 fix, or convert to async.                                                              |
+| 3   | CLAUDE.md             | INFO     | CrossEncoder reranker is specified in architecture but not implemented in codebase.                                                                                                                |
 
 No critical API signature mismatches found. All qdrant-client and tree-sitter calls are correct.
 
@@ -223,7 +223,7 @@ Yes, they differ in prompt and task routing:
 - `encode_document()` â€” uses a predefined "document" prompt if available, and sets task to "document" for Router module routing.
 - `encode()` â€” uses no default prompt, no task routing.
 
-For SPLADE v3 (`naver/splade-v3`), this distinction matters because SPLADE is an asymmetric model where query and document representations are generated differently.
+For previous BERT sparse encoder (`previous BERT sparse encoder`), this distinction matters because previous BERT sparse encoder is an asymmetric model where query and document representations are generated differently.
 
 ### Impact on codebase
 
@@ -232,7 +232,7 @@ In `embeddings.py`:
 - Line 293: `self._sparse_model.encode(truncated, batch_size=...)` â€” used for documents. Should ideally be `self._sparse_model.encode_document(truncated, batch_size=...)`.
 - Line 319: `self._sparse_model.encode([query[:max_chars]])` â€” used for queries. Should ideally be `self._sparse_model.encode_query([query[:max_chars]])`.
 
-Current code works but may produce suboptimal sparse representations if SPLADE v3 defines asymmetric query/document prompts.
+Current code works but may produce suboptimal sparse representations if previous BERT sparse encoder defines asymmetric query/document prompts.
 
 ______________________________________________________________________
 

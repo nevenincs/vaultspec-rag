@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-27'
-body_hash: 'sha256:28896be1402cf8441d80ec1e363ba6a04de0196e4f34e3d93ff33e7b034a10a6'
+modified: '2026-09-30'
+body_hash: 'sha256:9a99ae92bcb1bd55b5d57c27c9e0a67782685bab1e29c922fb901b10d48e4404'
 ---
 
 # Audit: Config and Dependencies
@@ -25,7 +25,7 @@ VaultSpecConfigWrapper RAG defaults:
 
 - `embedding_model: "Qwen/Qwen3-Embedding-0.6B"` (was nomic)
 - `embedding_dimension: 1024` (was 768)
-- `sparse_model: "naver/splade-v3"` (was bm42)
+- `sparse_model: "previous BERT sparse encoder"` (was bm42)
 
 ### pyproject.toml: Dependencies Updated
 

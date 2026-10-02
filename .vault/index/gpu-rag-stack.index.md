@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#gpu-rag-stack'
 date: '2026-08-14'
-modified: '2026-09-16'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:353a261f1da783090684e149d16f4ebfc6fbd121d4e54c6324f962456d435b5f'
+body_hash: 'sha256:0b9f6de13ed5aec51f3b948a1f0b5fff091287fc9e5543deb34afe18657068a9'
 related:
   - '[[2026-03-06-cli-api-audit]]'
   - '[[2026-03-06-cli-mcp-audit]]'
@@ -94,7 +94,7 @@ Auto-generated index of all documents tagged with `#gpu-rag-stack`.
 
 ### adr
 
-- `2026-03-06-gpu-only-rag-stack-adr` - `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
+- `2026-03-06-gpu-only-rag-stack-adr` - `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPARSEUP` | (**status:** `accepted`)
 - `2026-03-07-blake2b-file-hashing-adr` - `gpu-rag-stack` adr: `Use blake2b via file_digest() for file change detection` | (**status:** `accepted`)
 - `2026-03-07-manual-node-walking-adr` - `gpu-rag-stack` adr: `Manual tree-sitter node walking over Query API for metadata extraction` | (**status:** `accepted`)
 - `2026-03-07-mcp-sync-tools-adr` - `gpu-rag-stack` adr: `MCP tools use async def + anyio.to_thread.run_sync` | (**status:** `superseded`)

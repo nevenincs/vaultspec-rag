@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#index-perf-hardening'
 date: '2026-06-02'
-modified: '2026-07-27'
-body_hash: 'sha256:45a66ceaee3f574477307d516c04b34406416de4aeb44dd5fc662714a6d08125'
+modified: '2026-09-30'
+body_hash: 'sha256:adb0e8605b8c6220fb51fea53b4ce44fc7b3271bf56c1009a54de535e1609fce'
 related:
   - "[[2026-03-06-codebase-indexer-tech-stack-research]]"
 ---
@@ -122,7 +122,7 @@ Confidence: high.
 
 For short, length-uniform inputs (code chunks ≤1500 chars), `batch_size=8` leaves
 throughput unused; sweep 32 -> 64 -> 128 on the 16GB RTX 4080 (ample headroom over ~1.9GB
-resident weights). Overlapping dense and SPLADE on separate CUDA streams is
+resident weights). Overlapping dense and previous BERT sparse encoder on separate CUDA streams is
 counterproductive: two compute-bound matmul kernels serialize on the tensor cores
 regardless of stream. Keep them sequential on the default stream and get overlap from the
 CPU/GPU pipeline instead.
@@ -163,7 +163,7 @@ The two structural changes attack the whole hour; the rest are tuning on top.
   producers and a single in-process GPU consumer overlaps CPU parsing with GPU encoding
   and caps resident memory. CUDA stays out of the workers (spawn).
 - **Encode batch tuning (addresses C5, O5).** Decouple the code path's encode batch size
-  from the vault path and sweep to 64–128; keep dense+SPLADE sequential.
+  from the vault path and sweep to 64–128; keep dense+previous BERT sparse encoder sequential.
 - **Single-read I/O (addresses C4).** Hash from the bytes already read for chunking.
 - **Throttle `empty_cache()` (addresses C5).** Flush every N slices, not every slice.
 - **Decode once (addresses C3).** Decode source once per file and slice the `str`, or

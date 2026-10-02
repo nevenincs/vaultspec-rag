@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#store-eviction-log-rotation'
 date: '2026-04-12'
-modified: '2026-09-14'
-body_hash: 'sha256:7ffd3cc0adb2f13e8329069eec5bceca2554c775b4295142598471d31e3909c1'
+modified: '2026-10-01'
+body_hash: 'sha256:c600f816f8dd4c7845b8b05b319df28baea249e0ef6082df1dd2cb35b1dbb693'
 related:
   - '[[2026-04-12-store-eviction-log-rotation-research]]'
   - '[[2026-04-02-service-graph-adr]]'
@@ -555,7 +555,7 @@ preserves the existing `_on_close_project` teardown order.
   {
     "projects": [
       {
-        "root": "C:/code/foo",
+        "root": "<project-root>",
         "last_access_iso": "2026-04-12T10:14:33Z",
         "idle_seconds": 42.1,
         "ref_count": 0

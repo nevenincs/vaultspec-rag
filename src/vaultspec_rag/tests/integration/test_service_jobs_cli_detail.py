@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import time
 import urllib.parse
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import vaultspec_rag.mcp._admin_client as admin
 
@@ -24,6 +27,7 @@ from ._service_jobs_support import (
 
 @pytest.mark.unit
 def test_job_detail_uses_plain_runtime_and_resource_language(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ...cli._service_jobs_presentation import render_job_detail
@@ -40,13 +44,13 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
             "initiator": {
                 "kind": "watcher",
                 "command": "watcher_code_index",
-                "project_root": r"C:\projects\proj-a",
+                "project_root": str(tmp_path / "proj-a"),
             },
             "runtime": {
                 "pid": 123,
                 "user": "operator",
-                "executable": r"C:\projects\.venv\Scripts\python.exe",
-                "virtual_env": r"C:\projects\.venv",
+                "executable": str(tmp_path / ".venv" / "Scripts" / "python.exe"),
+                "virtual_env": str(tmp_path / ".venv"),
             },
             "resources": {
                 "current": {
@@ -70,7 +74,7 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
     assert values["Memory"] == (
         "process 10.0 MiB, GPU used 20.0 MiB, GPU reserved 30.0 MiB"
     )
-    assert r"C:\projects\.venv\Scripts\python.exe" not in output
+    assert str(tmp_path / ".venv" / "Scripts" / "python.exe") not in output
     for forbidden in (
         "Initiator:",
         "Command:",
@@ -90,9 +94,14 @@ def test_job_detail_uses_plain_runtime_and_resource_language(
 
 
 @pytest.mark.unit
-def test_jobs_job_id_detail_uses_precise_process_label() -> None:
+def test_jobs_job_id_detail_uses_precise_process_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Keep the complete fixture path on one terminal line for label parsing.
+    monkeypatch.setenv("COLUMNS", str(len(str(tmp_path / "proj-a")) + 40))
     now = time.time()
-    payload = _cli_jobs_payload(now)
+    payload = _cli_jobs_payload(tmp_path, now)
     jobs = cast("list[dict[str, object]]", payload["jobs"])
     payload["jobs"] = [jobs[0]]
     payload["total"] = 1
@@ -113,7 +122,7 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
     assert values["Address"] == f"http://127.0.0.1:{port}"
     assert values["Status"] == "active"
     assert values["Project"] == "proj-a"
-    assert values["Path"] == r"C:\projects\proj-a"
+    assert values["Path"] == str(tmp_path / "proj-a")
     assert values["Job process id"] == "123"
     assert values["User"] == "operator"
     assert values["Started by"] == "automatic updates"
@@ -125,7 +134,9 @@ def test_jobs_job_id_detail_uses_precise_process_label() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
+def test_jobs_job_id_detail_humanizes_cleanup_progress(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -142,7 +153,7 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
                 "initiator": {
                     "kind": "watcher",
                     "command": "watcher_code_index",
-                    "project_root": r"C:\projects\proj-a",
+                    "project_root": str(tmp_path / "proj-a"),
                 },
             }
         ],
@@ -172,6 +183,7 @@ def test_jobs_job_id_detail_humanizes_cleanup_progress() -> None:
 
 @pytest.mark.unit
 def test_job_detail_only_reports_progress_freshness_while_running(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ...cli._service_jobs_presentation import render_job_detail
@@ -190,7 +202,7 @@ def test_job_detail_only_reports_progress_freshness_while_running(
         "initiator": {
             "kind": "watcher",
             "command": "watcher_code_index",
-            "project_root": r"C:\projects\proj-a",
+            "project_root": str(tmp_path / "proj-a"),
         },
     }
 
@@ -212,9 +224,11 @@ def test_job_detail_only_reports_progress_freshness_while_running(
 
 
 @pytest.mark.unit
-def test_jobs_json_preserves_raw_service_payload() -> None:
+def test_jobs_json_preserves_raw_service_payload(
+    tmp_path: Path,
+) -> None:
     now = time.time()
-    payload = _cli_jobs_payload(now)
+    payload = _cli_jobs_payload(tmp_path, now)
     with _jobs_http_server([payload]) as (_server, port):
         result = runner.invoke(
             app,

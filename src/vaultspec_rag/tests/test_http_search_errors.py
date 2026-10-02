@@ -202,7 +202,8 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
 
         assert response.status_code == 503, response.text
         payload = response.json()
-        assert payload["error"] == "index_unverifiable"
+        assert payload["error"] == "index_unavailable"
+        assert payload["readiness"]["sources"][0]["reason_code"] == "index_not_built"
         assert payload["retryable"] is False
         assert "results" not in payload
         # Adding an unconditional Retry-After at the JSONResponse seam made
@@ -215,7 +216,7 @@ def test_search_route_keeps_the_runtime_registry_after_global_shutdown(
         reset_config()
 
 
-@pytest.mark.parametrize("search_type", ["code", "combined"])
+@pytest.mark.parametrize("search_type", ["vault", "code", "document", "combined"])
 def test_a_never_indexed_root_answers_rather_than_failing(
     tmp_path: Path,
     search_type: str,
@@ -273,13 +274,17 @@ def test_a_never_indexed_root_answers_rather_than_failing(
 
         assert response.status_code == 503, response.text
         payload = cast("dict[str, object]", response.json())
-        assert payload["error"] == "index_unverifiable", payload
+        assert payload["error"] == "index_unavailable", payload
+        assert "has not been built yet" in str(payload["message"])
+        readiness = cast("dict[str, object]", payload["readiness"])
+        facts = cast("list[dict[str, object]]", readiness["sources"])
+        assert all(fact["reason_code"] == "index_not_built" for fact in facts)
         assert payload["retryable"] is False, payload
         assert "results" not in payload
         index_state = cast("dict[str, object]", payload["index_state"])
         integrity = cast("dict[str, object]", index_state["index_integrity"])
         assert integrity["verdict"] == "unverifiable", integrity
-        assert integrity["reason"] == "proof_unreadable", integrity
+        assert integrity["reason"] == "proof_missing", integrity
     finally:
         runtime_registry.close_all()
         reset_registry()
@@ -705,7 +710,9 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
     makes the honest type the thing that has to be pinned.
     """
 
-    def test_the_facts_refuse_every_source_no_index_job_can_carry(self) -> None:
+    def test_the_facts_refuse_every_source_no_index_job_can_carry(
+        self, tmp_path: Path
+    ) -> None:
         """Only a concrete corpus builds facts; the fan-out is refused.
 
         Proven able to fail: replacing the ``__post_init__`` membership test
@@ -716,10 +723,8 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         for source in INDEX_SOURCES:
             facts = SearchAvailabilityRequestFacts(
                 job_snapshot_before=[],
-                root=Path("C:/combined-carve-out"),
-                # INDEX_SOURCES is the runtime twin of the field's Literal, so
-                # the checker cannot narrow the loop variable to it.
-                source=cast("IndexSource", source),
+                root=Path(str(tmp_path / "combined-carve-out")),
+                source=source,
                 request_id="concrete-source",
                 port=None,
             )
@@ -728,7 +733,7 @@ class TestCombinedSearchBuildsNoAvailabilityFacts:
         with pytest.raises(ValueError, match="combined fan-out has no single index"):
             SearchAvailabilityRequestFacts(
                 job_snapshot_before=[],
-                root=Path("C:/combined-carve-out"),
+                root=Path(str(tmp_path / "combined-carve-out")),
                 source=cast("IndexSource", PublicSourceType.COMBINED.value),
                 request_id="fan-out-source",
                 port=None,
@@ -915,7 +920,7 @@ def test_combined_http_empty_partial_is_typed_failure_without_results(
 
     assert status == 503
     assert payload["ok"] is False
-    assert payload["error"] == "index_unverifiable"
+    assert payload["error"] == "index_unavailable"
     assert "results" not in payload
     assert payload["remediation"] is not None
     assert "retry-after" not in headers

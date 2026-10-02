@@ -44,6 +44,13 @@ def test_release_workflow_generates_archive_based_channels(repo_root: Path) -> N
     )
     assert "dist-bin/SHA256SUMS" not in generation
     assert "dist-bundles/SHA256SUMS" not in generation
+    refuse = workflow.index("- name: Refuse to point at an unpublished release")
+    download = workflow.index("- name: Download the published checksums")
+    assert refuse < download < start < commit
+    assert "--json isDraft --jq '.isDraft'" in workflow[refuse:download]
+    assert "exit 1" in workflow[refuse:download]
+    assert "--pattern SHA256SUMS --dir published" in workflow[download:start]
+    assert "[ ! -s published/SHA256SUMS ]" in workflow[download:start]
     generate = justfile.index("python -m tools.packaging.generate")
     validate = justfile.index("python -m tools.packaging.validate")
     assert generate < validate

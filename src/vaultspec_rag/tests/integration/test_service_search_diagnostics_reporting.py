@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from ..._search_state import SearchReasonCode
 from ...serviceclient._search_transport import try_http_search
 from ...serviceclient._transport import _do_http_call
 from .._search_readiness_scenarios import (
@@ -163,7 +164,11 @@ def test_empty_service_search_reports_missing_index(
     assert isinstance(result, dict)
     assert_request_id(result)
     assert result["ok"] is False
-    assert result["error"] == "index_unverifiable"
+    assert result["error"] == "index_unavailable"
+    readiness = cast("dict[str, object]", result["readiness"])
+    sources = cast("list[dict[str, object]]", readiness["sources"])
+    assert sources[0]["reason_code"] == "index_not_built"
+    assert "has not been built yet" in str(result["message"])
     assert "results" not in result
     index_state = cast("dict[str, object]", result["index_state"])
     assert isinstance(index_state, dict)
@@ -177,6 +182,8 @@ def test_empty_service_search_reports_missing_index(
         "target_matches",
         "status",
         "index_integrity",
+        "matching_jobs",
+        "matching_jobs_truncated",
     }
     assert index_state["requested_target_root"] == str(root)
     assert index_state["target_matches"] is True
@@ -211,14 +218,32 @@ def test_search_request_id_is_log_correlatable(
     assert status == 503, result
     assert isinstance(result, dict)
     request_id = assert_request_id(result)
-    completed_log = wait_for_search_log_line(port, request_id)
-    assert "service.search event=completed status_code=503" in completed_log
-    assert f"request_id={request_id}" in completed_log
-    assert "source=code" in completed_log
-    assert "search_type=code" in completed_log
-    assert f"root={root}" in completed_log
-    assert "results=0" in completed_log
-    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", completed_log)
+    assert result["ok"] is False
+    assert result["error"] == "index_unavailable"
+    assert "results" not in result
+    assert result["retryable"] is False
+    readiness = cast("dict[str, object]", result["readiness"])
+    facts = cast("list[dict[str, object]]", readiness["sources"])
+    assert len(facts) == 1
+    assert facts[0]["source"] == "code"
+    assert facts[0]["reason_code"] == SearchReasonCode.INDEX_NOT_BUILT.value
+    assert facts[0]["absence_authority"] == "non_authoritative"
+    state = cast("dict[str, object]", result["index_state"])
+    assert state["requested_target_root"] == str(root)
+    assert state["target_matches"] is True
+    assert state["matching_jobs"] == []
+    assert state["matching_jobs_truncated"] is False
+    unavailable_log = wait_for_search_log_line(port, request_id)
+    assert (
+        "service.search event=unavailable status_code=503 error=index_unavailable"
+        in unavailable_log
+    )
+    assert f"request_id={request_id}" in unavailable_log
+    assert "source=code" in unavailable_log
+    assert "search_type=code" in unavailable_log
+    assert f"root={root}" in unavailable_log
+    assert "results=0" in unavailable_log
+    assert re.search(r"\btotal_seconds=\d+\.\d{3}\b", unavailable_log)
 
 
 @pytest.mark.subprocess_gpu

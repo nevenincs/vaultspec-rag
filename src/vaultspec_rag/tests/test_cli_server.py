@@ -456,8 +456,8 @@ class TestServiceJobsCli:
         assert "States:" not in result.output
         assert "watcher" not in result.output.lower()
 
-    def test_jobs_populated_feed_uses_visible_prefixes(self) -> None:
-        server, thread, requests = _jobs_populated_contract_server()
+    def test_jobs_populated_feed_uses_visible_prefixes(self, tmp_path: Path) -> None:
+        server, thread, requests = _jobs_populated_contract_server(tmp_path)
         try:
             result = runner.invoke(
                 app,
@@ -529,14 +529,14 @@ class TestServiceProjectsCli:
         assert "No such command" in result.output
 
     def test_projects_list_summary_uses_operator_language(
-        self, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         from ..cli._service_projects import _print_projects_summary
 
         _print_projects_summary(
             [
                 {
-                    "root": r"C:\projects\example",
+                    "root": str(tmp_path / "example"),
                     "idle_seconds": 125,
                     "ref_count": 1,
                     "last_access_iso": "2026-06-12T14:05:06Z",
@@ -547,7 +547,7 @@ class TestServiceProjectsCli:
         )
 
         out = capsys.readouterr().out
-        _assert_project_summary_language(out)
+        _assert_project_summary_language(tmp_path, out)
 
     def test_projects_list_service_down_returns_exit_3(self) -> None:
         port = _find_free_port()
@@ -574,8 +574,10 @@ class TestServiceProjectsCli:
         assert result.exit_code == 3
         assert f"Address: http://127.0.0.1:{port}" in result.output
 
-    def test_projects_list_command_humanizes_service_payload(self) -> None:
-        server, thread, requests = _projects_list_contract_server()
+    def test_projects_list_command_humanizes_service_payload(
+        self, tmp_path: Path
+    ) -> None:
+        server, thread, requests = _projects_list_contract_server(tmp_path)
         try:
             result = runner.invoke(
                 app,
@@ -594,12 +596,12 @@ class TestServiceProjectsCli:
             "Capacity: 2 of 8 projects loaded",
             "Automatic unload: after 10 minutes idle",
             "- Project: busy",
-            r"Path: C:\projects\busy",
+            f"Path: {tmp_path / 'busy'}",
             "Active requests: 2",
             "Last activity: 1 minute 5 seconds ago",
             "Last request: 14:05:06",
             "- Project: ready",
-            r"Path: C:\projects\ready",
+            f"Path: {tmp_path / 'ready'}",
             "Active requests: none",
             "Last activity: 4 seconds ago",
         ]
@@ -609,7 +611,7 @@ class TestServiceProjectsCli:
         ready_block = lines[ready_index : ready_index + 4]
         assert ready_block == [
             "- Project: ready",
-            r"Path: C:\projects\ready",
+            f"Path: {tmp_path / 'ready'}",
             "Active requests: none",
             "Last activity: 4 seconds ago",
         ]
@@ -637,7 +639,9 @@ class TestServiceProjectsCli:
         assert not leaked_prefixes, f"internal fields leaked: {leaked_prefixes}"
         _assert_no_table_borders(result.output)
 
-    def test_projects_unload_unexpected_response_stays_actionable(self) -> None:
+    def test_projects_unload_unexpected_response_stays_actionable(
+        self, tmp_path: Path
+    ) -> None:
         server, thread, requests = _projects_unload_contract_server()
         try:
             result = runner.invoke(
@@ -646,7 +650,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"C:\projects\example",
+                    str(tmp_path / "example"),
                     "--port",
                     str(server.server_port),
                 ],
@@ -657,11 +661,11 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 1, result.output
-        assert requests == [{"root": r"C:\projects\example"}]
+        assert requests == [{"root": str(tmp_path / "example")}]
         labels = _label_values(result.output)
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert labels["Project"] == "example"
-        assert labels["Path"] == r"C:\projects\example"
+        assert labels["Path"] == str(tmp_path / "example")
         assert labels["Unload"] == "service could not confirm unload"
         assert (
             labels["Next action"]
@@ -670,7 +674,7 @@ class TestServiceProjectsCli:
         assert "unexpected" not in result.output
         assert "{" not in result.output
 
-    def test_projects_unload_not_found_uses_project_block(self) -> None:
+    def test_projects_unload_not_found_uses_project_block(self, tmp_path: Path) -> None:
         server, thread, requests = _projects_unload_contract_server(
             {"evicted": False, "reason": "not_found"}
         )
@@ -681,7 +685,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"C:\projects\not-loaded",
+                    str(tmp_path / "not-loaded"),
                     "--port",
                     str(server.server_port),
                 ],
@@ -692,16 +696,18 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 2, result.output
-        assert requests == [{"root": r"C:\projects\not-loaded"}]
+        assert requests == [{"root": str(tmp_path / "not-loaded")}]
         labels = _label_values(result.output)
         assert labels["Address"] == f"http://127.0.0.1:{server.server_port}"
         assert labels["Project"] == "not-loaded"
-        assert labels["Path"] == r"C:\projects\not-loaded"
+        assert labels["Path"] == str(tmp_path / "not-loaded")
         assert labels["Unload"] == "project is not loaded"
         assert "Project is not loaded:" not in result.output
         _assert_no_table_borders(result.output)
 
-    def test_projects_unload_json_message_stays_user_facing(self) -> None:
+    def test_projects_unload_json_message_stays_user_facing(
+        self, tmp_path: Path
+    ) -> None:
         server, thread, requests = _projects_unload_contract_server()
         try:
             result = runner.invoke(
@@ -710,7 +716,7 @@ class TestServiceProjectsCli:
                     "server",
                     "projects",
                     "unload",
-                    r"C:\projects\example",
+                    str(tmp_path / "example"),
                     "--port",
                     str(server.server_port),
                     "--json",
@@ -722,14 +728,14 @@ class TestServiceProjectsCli:
             thread.join(timeout=1)
 
         assert result.exit_code == 1, result.output
-        assert requests == [{"root": r"C:\projects\example"}]
+        assert requests == [{"root": str(tmp_path / "example")}]
         envelope = typing.cast("dict[str, object]", json.loads(result.output))
         assert envelope["ok"] is False
         assert envelope["command"] == "service.projects.unload"
         assert envelope["error"] == "unexpected_response"
         message = envelope["message"]
         assert isinstance(message, str)
-        assert r"C:\projects\example" in message
+        assert str(tmp_path / "example") in message
         assert "vaultspec-rag server status" in message
         assert "Eviction failed" not in message
         assert "reason=" not in message

@@ -4,7 +4,8 @@ Exercises the real readiness computation against the real environment
 with no mocks, no patches, and no network: torch CUDA availability is a
 real expectation (the dev host has an RTX 4080, so CUDA *is* available -
 that is a real assertion, not a skip condition), model presence is the
-real Hugging Face cache probe, and the qdrant dimension reads a real
+real offline complete-snapshot cache probe at the configured revisions, and
+the qdrant dimension reads a real
 temp-isolated resolution state. The report's read-only contract is
 proven by asserting the managed dir and the configured pyproject are
 untouched across a computation, and the serialisable shape is proven by
@@ -254,7 +255,7 @@ class TestModelsDimension:
         repos = cast("dict[str, object]", models.info["repos"])
         assert isinstance(repos, dict)
         # The probe reports presence for each configured repo, keyed by
-        # the repo id, with a boolean value (no download triggered).
+        # the repo id, with a complete-snapshot boolean (no download triggered).
         expected = {
             str(cfg.embedding_model),
             str(cfg.sparse_model),
@@ -277,7 +278,7 @@ class TestModelsDimension:
             assert models.detail
 
     def test_disabled_sparse_is_never_probed_or_named_as_missing(self) -> None:
-        # Dense-only mode must never require the gated SPLADE repo: it is
+        # Dense-only mode must never require the SPARSEUP repo: it is
         # absent from the probed set entirely, and an absent cache entry for
         # it can therefore never surface as a readiness failure.
         from ..config._settings import get_config

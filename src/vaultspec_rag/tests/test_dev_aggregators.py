@@ -18,7 +18,7 @@ import pytest
 from dev import exit_codes, gates
 from dev.__main__ import _execute
 from dev.runner import Cmd, Ref
-from dev.toolchain import VERBS, Target, Verb
+from dev.toolchain import LINT_LIGHT, VERBS, Target, Verb
 
 #: Targets deliberately outside their verb's ``all``, and why. Most are a
 #: SELECTION within a target that ``all`` already runs, so including one would
@@ -85,6 +85,16 @@ def test_every_target_is_reachable_from_its_aggregate(verb: Verb) -> None:
     referenced = {step.target for step in aggregate.steps if isinstance(step, Ref)}
     for target in verb.targets:
         if target.name == "all" or target.name.startswith("_"):
+            continue
+        if (verb.name, target.name) == ("lint", "light"):
+            # Mutation proof: omitting a light dimension fails the tuple check;
+            # adding a dimension absent from all fails the subset check.
+            light_references = tuple(
+                step.target for step in target.steps if isinstance(step, Ref)
+            )
+            assert light_references == LINT_LIGHT
+            assert len(target.steps) == len(light_references)
+            assert set(light_references) < referenced
             continue
         if (verb.name, target.name) in EXEMPT:
             continue

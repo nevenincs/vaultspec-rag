@@ -4,13 +4,14 @@ tags:
   - '#index'
   - '#jobs-tui'
 date: '2026-08-14'
-modified: '2026-09-02'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:0702df6fec656033055b3e7bc449ba78b6abce3e40f7fa86f2886323c837c345'
+body_hash: 'sha256:91a3f0048aec5e548f40a1dd70fc8536d466694b97c7df8b91a4cded2ab2dcbb'
 related:
   - '[[2026-07-27-jobs-tui-adr]]'
   - '[[2026-07-27-jobs-tui-audit]]'
   - '[[2026-07-27-jobs-tui-interrupt-and-terminal-handoff-reference]]'
+  - '[[2026-07-27-jobs-tui-ledger]]'
   - '[[2026-07-27-jobs-tui-plan]]'
   - '[[2026-07-27-jobs-tui-research]]'
 ---
@@ -28,6 +29,10 @@ Auto-generated index of all documents tagged with `#jobs-tui`.
 ### audit
 
 - `2026-07-27-jobs-tui-audit` - `jobs-tui` audit: `what shipped, and what blocks releasing it`
+
+### exec
+
+- `2026-07-27-jobs-tui-ledger` - `jobs-tui` ledger
 
 ### plan
 

@@ -31,6 +31,7 @@ from .._search_state import (
     FreshnessWaitPolicy,
     SearchAvailability,
     SearchFreshness,
+    SearchReasonCode,
     SearchWaitCause,
 )
 from .._source_types import (
@@ -105,7 +106,7 @@ class SearchSourceReadiness(BaseModel):
     wait_policy: FreshnessWaitPolicy
     waits: list[SearchWaitContent]
     evidence: list[str]
-    reason_code: str | None = Field(
+    reason_code: SearchReasonCode | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     retryable: bool

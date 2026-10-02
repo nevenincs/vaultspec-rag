@@ -3,8 +3,8 @@ tags:
   - '#adr'
   - '#sparse-search-latency'
 date: '2026-06-07'
-modified: '2026-07-27'
-body_hash: 'sha256:a15cb1e330b8a2988a27402af8fcbeb6c773ef68a977d0aaa1ebe61c5c6c2d4a'
+modified: '2026-09-30'
+body_hash: 'sha256:2603317866d7c9973653de63f962990a7685d046424d9cdf1182a53b695ae730'
 related:
   - "[[2026-06-07-sparse-search-latency-research]]"
   - '[[2026-06-09-sparse-search-latency-research]]'
@@ -16,7 +16,7 @@ related:
 
 ## Problem Statement
 
-During full-codebase queries, local-mode search experiences severe latency (up to ~20 seconds for sparse queries across ~114k chunks), primarily because the local Qdrant in-process store forces a linear scan of SPLADE embeddings. Additionally, an architectural audit surfaced a business logic leak in the MCP layer (`src/vaultspec_rag/mcp_server/_tools.py`) where job scheduling logic bypasses the core APIs.
+During full-codebase queries, local-mode search experiences severe latency (up to ~20 seconds for sparse queries across ~114k chunks), primarily because the local Qdrant in-process store forces a linear scan of previous BERT sparse encoder embeddings. Additionally, an architectural audit surfaced a business logic leak in the MCP layer (`src/vaultspec_rag/mcp_server/_tools.py`) where job scheduling logic bypasses the core APIs.
 
 ## Considerations
 
@@ -39,13 +39,13 @@ During full-codebase queries, local-mode search experiences severe latency (up t
 
 1. **Search Latency Optimizations:**
 
-   - **Dense-Only Fallback:** Introduce a `sparse_enabled: bool` toggle to `_RAG_DEFAULTS` inside the configuration module. When `False`, skip SPLADE computation and sparse matching entirely, relying purely on fast dense searches.
+   - **Dense-Only Fallback:** Introduce a `sparse_enabled: bool` toggle to `_RAG_DEFAULTS` inside the configuration module. When `False`, skip previous BERT sparse encoder computation and sparse matching entirely, relying purely on fast dense searches.
    - **Payload Pre-Filtering (ABORTED):** Originally planned to translate glob parameters into regex-backed Qdrant `MatchPattern` filters to narrow the vector space natively. However, `qdrant-client` `1.18.0` strictly forbids regex `MatchPattern` structures on payload fields. Qdrant does not natively support payload filtering via regular expressions. Therefore, the legacy Python-level post-query `fnmatch` iteration will be retained as it is structurally necessary.
    - **Server Mode Support:** Formalize and document the use of `VAULTSPEC_RAG_QDRANT_URL` to enable connecting to high-performance remote Qdrant instances.
 
 ## Rationale
 
-Pushing metadata filters to Qdrant allows the local engine to dramatically reduce the linear scan footprint of SPLADE embeddings. Adding a `sparse_enabled` toggle guarantees a fast path for operators who prioritize speed over exact keyword retrieval. Finally, removing the job-scheduling leak from the MCP wrapper adheres to the core principle of keeping all business logic unified and encapsulated within the backend library.
+Pushing metadata filters to Qdrant allows the local engine to dramatically reduce the linear scan footprint of previous BERT sparse encoder embeddings. Adding a `sparse_enabled` toggle guarantees a fast path for operators who prioritize speed over exact keyword retrieval. Finally, removing the job-scheduling leak from the MCP wrapper adheres to the core principle of keeping all business logic unified and encapsulated within the backend library.
 
 ## Consequences
 

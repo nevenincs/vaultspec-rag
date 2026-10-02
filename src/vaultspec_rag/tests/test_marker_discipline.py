@@ -541,3 +541,6 @@ def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     assert "uses: ./.github/workflows/hardware.yml" in proof
     assert "target_sha: ${{ needs.candidate.outputs.sha }}" in proof
     assert "needs: [candidate, prove-gate, prove-hardware]" in cut
+    assert "ref: ${{ needs.candidate.outputs.sha }}" in cut
+    assert 'if [ "${proven}" != "${landed}" ]; then' in cut
+    assert 'if [ "${tagged}" != "${COMMIT}" ]; then' in cut

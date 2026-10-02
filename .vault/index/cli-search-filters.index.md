@@ -4,11 +4,12 @@ tags:
   - '#index'
   - '#cli-search-filters'
 date: '2026-08-14'
-modified: '2026-09-09'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:a830d1dd837eb58c421feea14d47099a36ec1a3c35907948544ee0c5af4615ef'
+body_hash: 'sha256:61ff58b1effb98d030e7d7442d1a85adaa7bd61368021e6203b794833f38a5fd'
 related:
   - '[[2026-05-28-cli-search-filters-adr]]'
+  - '[[2026-05-28-cli-search-filters-ledger]]'
   - '[[2026-05-28-cli-search-filters-plan]]'
   - '[[2026-05-28-cli-search-filters-research]]'
 ---
@@ -22,6 +23,10 @@ Auto-generated index of all documents tagged with `#cli-search-filters`.
 ### adr
 
 - `2026-05-28-cli-search-filters-adr` - `cli-search-filters` adr: `cli fast-path filter contract` | (**status:** `accepted`)
+
+### exec
+
+- `2026-05-28-cli-search-filters-ledger` - `cli-search-filters` ledger
 
 ### plan
 

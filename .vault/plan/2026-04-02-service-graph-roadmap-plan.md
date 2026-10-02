@@ -3,13 +3,14 @@ tags:
   - '#plan'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-07-27'
-body_hash: 'sha256:3e44248f8dd8d19cea84890915ed6e91df01d8927f42f6fcbecc5d750b2005fd'
+tier: L2
 related:
   - '[[2026-04-02-service-graph-adr]]'
   - '[[2026-04-02-service-graph-research]]'
   - '[[2026-04-02-service-graph-phase1-plan]]'
   - '[[2026-04-02-release-readiness-audit]]'
+modified: '2026-10-01'
+body_hash: 'sha256:c875d3bad4434cfac5d95b888ef87debebe10b59907eda353e93b53e75825d7a'
 ---
 
 # `service-graph` roadmap
@@ -127,7 +128,7 @@ The one deferred beta milestone that was subsequently delivered: bounded project
 
 ## Post-merge follow-ups (from audit)
 
-### M5.1: Performance — narrow \_gpu_sem scope
+### M5.1: Performance - narrow \_gpu_sem scope
 
 **GitHub:** #22
 **Scope:** Narrow semaphore to GPU-only operations, share CrossEncoder
@@ -222,9 +223,9 @@ M4 and M5 can run in parallel after M3 completes.
 | M5.2      | #23          | open (follow-up) |
 | M5.3      | #24          | open (follow-up) |
 | M5.4      | #25          | open (follow-up) |
-| M6        | deferred     | —                |
-| M7        | deferred     | —                |
-| M8        | deferred     | —                |
+| M6        | deferred     | -                |
+| M7        | deferred     | -                |
+| M8        | deferred     | -                |
 
 ## Description
 

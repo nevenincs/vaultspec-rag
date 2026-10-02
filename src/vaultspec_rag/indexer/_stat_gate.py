@@ -159,8 +159,22 @@ class StatEvidenceGate:
     ) -> Self:
         """Open the current point-addressable evidence store."""
         gate = cls(path, digest=digest)
-        gate._ensure_schema()
+        try:
+            gate._ensure_schema()
+        except BaseException:
+            gate.close()
+            raise
         return gate
+
+    def close(self) -> None:
+        """Release this pass's handle without committing unfinished evidence."""
+        self._connection.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     def _ensure_schema(self) -> None:
         with self._connection as connection:
@@ -530,14 +544,14 @@ def record_computed_hashes(
     a *keep* collection additionally prunes evidence for departed files and
     must only be passed by a caller that hashed the full current membership.
     """
-    gate = cache.acquire()
-    for key, path, content_hash in items:
-        gate.record_known_hash(
-            key,
-            path,
-            content_hash,
-            computed_not_before_ns=computed_not_before_ns,
-        )
-    if keep is not None:
-        gate.prune(keep)
-    gate.persist()
+    with cache.acquire() as gate:
+        for key, path, content_hash in items:
+            gate.record_known_hash(
+                key,
+                path,
+                content_hash,
+                computed_not_before_ns=computed_not_before_ns,
+            )
+        if keep is not None:
+            gate.prune(keep)
+        gate.persist()

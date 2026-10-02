@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:26ed795a19bce2f85a6b703cf5b904332e884da4c437a9df7413eb7432c5f00c'
+modified: '2026-09-30'
+body_hash: 'sha256:b01ed4f005d19dd25666565d7ef3ed8be1c53f9c3ad0a5c84a4a2ece1a3be588'
 ---
 
 # Qdrant Hybrid Search Patterns (Verified)
@@ -75,7 +75,7 @@ This is correct â€” `query_filter` on the top level works fine for single-m
 The project uses two named vectors per collection:
 
 - `dense`: 1024d Qwen3-Embedding-0.6B (Cosine distance)
-- `sparse`: SPLADE v3 (sparse vocabulary weights)
+- `sparse`: previous BERT sparse encoder (sparse vocabulary weights)
 
 ### Local Mode
 

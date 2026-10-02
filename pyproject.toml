@@ -55,7 +55,7 @@ keywords = [
   "retrieval-augmented-generation",
   "semantic-search",
   "sentence-transformers",
-  "splade",
+  "modernbert",
   "vaultspec",
   "vector-search",
 ]
@@ -63,7 +63,7 @@ license = { file = "LICENSE" }
 name = "vaultspec-rag"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
-version = "0.5.3"
+version = "0.6.0"
 
   [project.scripts]
   vaultspec-rag = "vaultspec_rag.__main__:main"
@@ -92,7 +92,7 @@ version = "0.5.3"
   # Local embedding and reranking are intentionally opt-in. The command and
   # service-control surfaces stay usable without these packages, while a
   # CUDA-capable workspace requests the complete model stack explicitly.
-  gpu = ["sentence-transformers>=5.0", "torch>=2.4", "transformers>=4.51"]
+  gpu = ["sentence-transformers>=5.4.0", "torch>=2.4", "transformers>=5.3,<6"]
 
 [dependency-groups]
 dev = [
@@ -212,6 +212,7 @@ addopts = [
   "--capture=sys",
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 # GPU test runs materialize real Qdrant stores under the pytest temp
 # root; retaining every run's directories once filled a system drive
 # (50k+ leftover dirs). Keep temp only for failing tests and only for
@@ -517,14 +518,11 @@ known_first_party = ["vaultspec_rag"]
   # Each entry is a deliberate declaration the scanner cannot infer, not a
   # finding waved through. Nothing else is suppressed.
   [tool.deptry.per_rule_ignores]
-  # DEP002 is "declared but never imported". Both of these are version FLOORS
-  # on packages reached through another dependency, pinned here on purpose:
-  # `transformers` is what sentence-transformers loads models through, and
-  # `tree-sitter` is the runtime `tree-sitter-language-pack` parses with. The
-  # only direct reference to `tree_sitter` is a typing-time import of `Node`.
-  # Dropping either pin would leave the floor to whatever the intermediate
-  # package happens to require.
-  DEP002 = ["transformers", "tree-sitter"]
+  # DEP002 is "declared but never imported". `tree-sitter` is the runtime
+  # `tree-sitter-language-pack` parses with, and its only direct reference is
+  # a typing-time import of `Node`. Dropping the pin would leave the floor to
+  # whatever the intermediate package happens to require.
+  DEP002 = ["tree-sitter"]
   # DEP003 is "imported but only transitive". `tqdm` arrives with the hub and
   # is imported lazily behind ImportError, which the code treats as survivable
   # by falling back to a plain download with no progress bar. Declaring it

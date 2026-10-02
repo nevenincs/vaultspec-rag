@@ -164,7 +164,9 @@ class TestRouteMissingProjectRoot:
         finally:
             mod._http_mode = orig_mode
 
-    def test_unauthenticated_search_activity_route_never_exposes_query(self):
+    def test_unauthenticated_search_activity_route_never_exposes_query(
+        self, tmp_path: Path
+    ):
         """The token gate rejects the in-memory query-review surface."""
         from starlette.testclient import TestClient
 
@@ -182,7 +184,7 @@ class TestRouteMissingProjectRoot:
                 request_id=request_id,
                 query=query,
                 search_type="vault",
-                root="Y:/workspace",
+                root=str(tmp_path / "workspace"),
                 top_k=5,
             )
         )

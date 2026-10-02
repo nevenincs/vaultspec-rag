@@ -3,11 +3,12 @@ tags:
   - '#plan'
   - '#server-mcp-route'
 date: '2026-05-31'
-modified: '2026-07-27'
-body_hash: 'sha256:4975fc251f6204b573745dfec9bbc669ea57a83b64ffc2cb4b3b95efc95e2dfa'
+tier: L2
 related:
   - '[[2026-05-31-server-mcp-route-adr]]'
   - '[[2026-05-31-server-mcp-route-research]]'
+modified: '2026-10-01'
+body_hash: 'sha256:1572df0fd55f44a9aa7d05208403607e450d004c410b680e8f836f0dbba36c87'
 ---
 
 # `server-mcp-route` `server-side /mcp 307 elimination` plan
@@ -44,7 +45,7 @@ Cover the rewrite behaviour, guard against a refactor handing the bare applicati
 
 ## Steps
 
-### Phase 1 — wrapper
+### Phase 1 - wrapper
 
 1. Define `_mcp_no_redirect(scope, receive, send)` inside
    `main()` HTTP branch, immediately after the
@@ -53,26 +54,26 @@ Cover the rewrite behaviour, guard against a refactor handing the bare applicati
    `app`. Add `lifespan="on"` so the daemon's lifespan
    (heartbeat task, atexit hooks) still fires.
 
-### Phase 2 — tests
+### Phase 2 - tests
 
 1. `tests/test_mcp_server.py` `TestMcpPathRewrite`:
-   - `test_main_uses_path_rewriting_wrapper` — source
+   - `test_main_uses_path_rewriting_wrapper` - source
      inspection: `inspect.getsource(main)` contains
      `_mcp_no_redirect` and the `uvicorn.run(\n  _mcp_no_redirect`
      handoff. Catches refactors that accidentally pass `app`
      again.
-   - `test_path_rewrite_logic` — three sub-assertions:
+   - `test_path_rewrite_logic` - three sub-assertions:
      bare `/mcp` rewrites to `/mcp/`, trailing-slash form
      passes through, `/health` passes through.
 
-### Phase 3 — smoke
+### Phase 3 - smoke
 
 1. Start the daemon on a free port (used 18878 during
    development).
 1. `httpx.get('http://127.0.0.1:18878/mcp', follow_redirects=False)`
-   — assert no `307` status, no `Location` header pointing at
-   `/mcp/`. Expected behaviour: `ReadTimeout` (SSE endpoint
-   awaiting POST), same as `/mcp/`.
+   - assert no `307` status, no `Location` header pointing at
+     `/mcp/`. Expected behaviour: `ReadTimeout` (SSE endpoint
+     awaiting POST), same as `/mcp/`.
 1. `streamable_http_client('http://127.0.0.1:18878/mcp')` lists
    the 8 expected tools without a redirect hop.
 1. Stop the daemon cleanly.
@@ -84,7 +85,7 @@ Cover the rewrite behaviour, guard against a refactor handing the bare applicati
   passes including the three new cases.
 - Live smoke confirms the 307 is gone for both `/mcp` and
   `/mcp/`.
-- No new `except` clauses introduced — the wrapper is a pure
+- No new `except` clauses introduced - the wrapper is a pure
   scope-mutation step that delegates to the existing Starlette
   app. Errors inside the inner app propagate to uvicorn's
   standard error path (which logs the traceback).

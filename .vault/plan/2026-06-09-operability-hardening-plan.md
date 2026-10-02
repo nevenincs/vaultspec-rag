@@ -3,12 +3,12 @@ tags:
   - '#plan'
   - '#operability-hardening'
 date: '2026-06-09'
-modified: '2026-07-27'
-body_hash: 'sha256:df6bfbf324024ad7ab55381d316aa24a176b2b0f6f8bb4017443d7d517267723'
 tier: L3
 related:
   - '[[2026-06-09-operability-hardening-adr]]'
   - '[[2026-06-09-operability-hardening-research]]'
+modified: '2026-09-30'
+body_hash: 'sha256:c1919657b7a39afad2c93d4c8b5de26252d571fed7b7b3393207ed40eedb5970'
 ---
 
 # `operability-hardening` `operability hardening` plan
@@ -41,9 +41,9 @@ interpreters.
 
 ### Phase `W01.P02` - Model-load resilience
 
-Fail fast with remediation on gated models and ensure the in-process path loads the model.
+Fail fast with actionable download remediation for required public models and ensure the in-process path loads the model.
 
-- [x] `W01.P02.S03` - Wrap gated-model construction to fail fast with HF_TOKEN remediation; `src/vaultspec_rag/embeddings.py`.
+- [x] `W01.P02.S03` - Wrap required-model construction to fail fast with actionable model-download remediation; `src/vaultspec_rag/embeddings.py`.
 - [x] `W01.P02.S04` - Idempotently load the embedding model before lease in background reindex; `src/vaultspec_rag/jobs.py`.
 
 ## Wave `W02` - Service lifecycle and management hardening

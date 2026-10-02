@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from ...cli import app
 from ._service_jobs_support import (
@@ -98,9 +101,11 @@ def _assert_no_internal_jobs_fragments(output: str) -> None:
 
 
 @pytest.mark.unit
-def test_jobs_human_output_is_line_oriented_operator_feed() -> None:
+def test_jobs_human_output_is_line_oriented_operator_feed(
+    tmp_path: Path,
+) -> None:
     now = time.time()
-    with _jobs_http_server([_cli_jobs_payload(now)]) as (_server, port):
+    with _jobs_http_server([_cli_jobs_payload(tmp_path, now)]) as (_server, port):
         result = runner.invoke(
             app,
             ["server", "jobs", "--limit", "5", "--port", str(port)],
@@ -151,9 +156,11 @@ def test_jobs_sparse_service_payload_uses_reported_absence_language() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_humanizes_disk_space_failures() -> None:
+def test_jobs_humanizes_disk_space_failures(
+    tmp_path: Path,
+) -> None:
     now = time.time()
-    payload = _cli_jobs_payload(now)
+    payload = _cli_jobs_payload(tmp_path, now)
     jobs = cast("list[dict[str, object]]", payload["jobs"])
     failed_job = jobs[1]
     failed_job["result"] = "[Errno 28] No space left on device"
@@ -177,7 +184,9 @@ def test_jobs_humanizes_disk_space_failures() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_humanizes_subsecond_finish_duration() -> None:
+def test_jobs_humanizes_subsecond_finish_duration(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -190,7 +199,7 @@ def test_jobs_humanizes_subsecond_finish_duration() -> None:
                 "finished_at": now,
                 "runtime_seconds": 0.1,
                 "result": "+0/1-0 (50ms)",
-                "initiator": {"kind": "tool", "project_root": r"C:\projects\fast"},
+                "initiator": {"kind": "tool", "project_root": str(tmp_path / "fast")},
             }
         ],
         "total": 1,
@@ -215,7 +224,9 @@ def test_jobs_humanizes_subsecond_finish_duration() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
+def test_jobs_failure_detail_stays_on_one_feed_line(
+    tmp_path: Path,
+) -> None:
     now = time.time()
     payload: dict[str, object] = {
         "jobs": [
@@ -232,7 +243,10 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
                     "Search for cudaErrorIllegalAddress in the CUDA docs.\n"
                     "For debugging consider passing CUDA_LAUNCH_BLOCKING=1"
                 ),
-                "initiator": {"kind": "tool", "project_root": r"C:\projects\proj-cuda"},
+                "initiator": {
+                    "kind": "tool",
+                    "project_root": str(tmp_path / "proj-cuda"),
+                },
             }
         ],
         "total": 1,
@@ -262,7 +276,9 @@ def test_jobs_failure_detail_stays_on_one_feed_line() -> None:
 
 
 @pytest.mark.unit
-def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> None:
+def test_jobs_header_counts_waiting_jobs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     from ...cli._service_jobs_presentation import render_jobs_result
 
     now = time.time()
@@ -281,7 +297,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
                     "runtime_seconds": 20.0,
                     "initiator": {
                         "kind": "watcher",
-                        "project_root": r"C:\projects\proj-waiting",
+                        "project_root": str(tmp_path / "proj-waiting"),
                     },
                 }
             ],
@@ -316,6 +332,7 @@ def test_jobs_header_counts_waiting_jobs(capsys: pytest.CaptureFixture[str]) -> 
 
 @pytest.mark.unit
 def test_jobs_filtered_header_separates_matches_from_service_total(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from ...cli._service_jobs_presentation import render_jobs_result
@@ -331,7 +348,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
                     "phase": "running",
                     "started_at": now - 40,
                     "progress": {"step": "embed", "completed": 1, "total": 4},
-                    "initiator": {"project_root": r"C:\projects\proj-a"},
+                    "initiator": {"project_root": str(tmp_path / "proj-a")},
                 },
                 {
                     "id": "running-b",
@@ -340,7 +357,7 @@ def test_jobs_filtered_header_separates_matches_from_service_total(
                     "phase": "running",
                     "started_at": now - 20,
                     "progress": {"step": "embed + upsert documents"},
-                    "initiator": {"project_root": r"C:\projects\proj-b"},
+                    "initiator": {"project_root": str(tmp_path / "proj-b")},
                 },
             ],
             "total": 58,

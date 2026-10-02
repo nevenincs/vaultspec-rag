@@ -15,6 +15,7 @@ import re
 import stat
 import subprocess
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,7 +30,7 @@ from .._anchor_claim import (
 from .._gpu_admission import _claim_load_window
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
 # The real resolvers are the subject here, so this module opts out of the
@@ -238,16 +239,23 @@ def _dacl_sddl(path: Path) -> str:
     advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = (
         wintypes.BOOL
     )
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.LocalFree.argtypes = (ctypes.c_void_p,)
+    kernel32.LocalFree.restype = ctypes.c_void_p
     descriptor = ctypes.c_void_p()
-    status = advapi32.GetNamedSecurityInfoW(
-        str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor)
-    )
-    assert status == 0, f"could not read the access list of {path}: {status}"
     rendered = ctypes.c_wchar_p()
-    assert advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-        descriptor, 1, 4, ctypes.byref(rendered), None
-    )
-    return rendered.value or ""
+    try:
+        status = advapi32.GetNamedSecurityInfoW(
+            str(path), 1, 4, None, None, None, None, ctypes.byref(descriptor)
+        )
+        assert status == 0, f"could not read the access list of {path}: {status}"
+        assert advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor, 1, 4, ctypes.byref(rendered), None
+        )
+        return rendered.value or ""
+    finally:
+        kernel32.LocalFree(ctypes.cast(rendered, ctypes.c_void_p))
+        kernel32.LocalFree(descriptor)
 
 
 def _authenticated_users_may_write(path: Path) -> bool:
@@ -263,9 +271,59 @@ def _authenticated_users_may_write(path: Path) -> bool:
     return False
 
 
+def _set_dacl_sddl(path: Path, sddl: str) -> None:
+    """Seed and restore a real test object's DACL without changing its owner."""
+    import ctypes
+    from ctypes import wintypes
+
+    from .._win32 import _anchor_acl_api
+
+    advapi32, kernel32 = _anchor_acl_api()
+    descriptor = ctypes.c_void_p()
+    try:
+        assert advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(descriptor), None
+        )
+        acl = ctypes.c_void_p()
+        present = wintypes.BOOL()
+        defaulted = wintypes.BOOL()
+        assert advapi32.GetSecurityDescriptorDacl(
+            descriptor,
+            ctypes.byref(present),
+            ctypes.byref(acl),
+            ctypes.byref(defaulted),
+        )
+        assert (
+            advapi32.SetNamedSecurityInfoW(
+                str(path), 1, 4 | 0x80000000, None, None, acl, None
+            )
+            == 0
+        )
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+@contextmanager
+def _temporary_dacl(
+    path: Path, sddl: str, *, retain_existing: bool = False
+) -> Generator[None]:
+    """Restore a test file's original permissions even when its guard fails."""
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    path.write_bytes(b"")
+    initial = _dacl_sddl(path)
+    if retain_existing:
+        sddl += "".join(re.findall(r"\([^)]*\)", initial))
+    try:
+        _set_dacl_sddl(path, sddl)
+        yield
+    finally:
+        _set_dacl_sddl(path, initial)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")
 def test_a_created_shared_anchor_admits_every_account_on_windows(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Windows has no mode bits, so the widening is an access list.
 
@@ -277,14 +335,73 @@ def test_a_created_shared_anchor_admits_every_account_on_windows(
     Mutation: returned from the creation path before the grant, the shape this
     had on Windows. Observed this assertion fail on the anchor admitting no
     authenticated account; restoring the grant passed.
+
+    Replacing the directory's ACL instead of merging also drops its creator's
+    explicit full-control entry. Comparing actual entries catches that loss
+    even when an administrator token masks the resulting filesystem refusal.
+    Mutations: copying no original entries fails creator preservation; dropping
+    an original deny fails deny preservation; installing an empty ACL over a
+    null DACL fails unrestricted preservation. Each restored path passes.
     """
+    original_entries = set(re.findall(r"\(([^)]*)\)", _dacl_sddl(tmp_path)))
+    assert any(
+        fields[2] == "FA" and fields[5] not in {"SY", "BA", "AU"}
+        for entry in original_entries
+        if len(fields := entry.split(";")) == 6
+    ), "the private temporary directory must carry its creator's full control"
     anchor = tmp_path / "gpu-owner.lock"
 
     held = claim_anchor(anchor, pid_record=True, create_parent=True, shared=True)
     assert held.descriptor is not None
     release_anchor_claim(held.descriptor, pid_record=True)
 
+    shared_entries = set(re.findall(r"\(([^)]*)\)", _dacl_sddl(tmp_path)))
+    assert original_entries <= shared_entries, "sharing must preserve creator access"
     assert _authenticated_users_may_write(anchor)
+
+    from .. import _win32
+    from .._win32 import grant_every_account_access
+
+    # Windows can coalesce duplicate entries, so compare the actual native
+    # write count as well as the resulting ACL. Mutation: bypassing the
+    # deduplication fails the no-rewrite assertion; restoring it passes.
+    shared = _dacl_sddl(tmp_path)
+    api, kernel32 = _win32._anchor_acl_api()
+    set_named = api.SetNamedSecurityInfoW
+    repeat_writes: list[str] = []
+
+    def record_write(*args: object) -> int:
+        repeat_writes.append("applied")
+        return int(set_named(*args))
+
+    with monkeypatch.context() as tracking:
+        tracking.setattr(api, "SetNamedSecurityInfoW", record_write)
+        tracking.setattr(_win32, "_anchor_acl_api", lambda: (api, kernel32))
+        assert grant_every_account_access(str(tmp_path), directory=True)
+    assert not repeat_writes, "repeating a shared ACL must not rewrite permissions"
+    assert _dacl_sddl(tmp_path) == shared
+
+    denied = tmp_path / "private" / "denied-anchor.lock"
+    # FILE_WRITE_DATA denies the actual write without also denying
+    # READ_CONTROL, which FILE_GENERIC_WRITE includes. Keep the original
+    # creator permissions so inspection and finally restoration remain usable.
+    with _temporary_dacl(denied, "D:P(D;;0x2;;;AU)", retain_existing=True):
+        denied_entries = set(re.findall(r"\(([^)]*)\)", _dacl_sddl(denied)))
+        assert not _authenticated_users_may_write(denied)
+        with pytest.raises(PermissionError):
+            denied.write_bytes(b"baseline forbidden write")
+        assert grant_every_account_access(str(denied))
+        granted_entries = set(re.findall(r"\(([^)]*)\)", _dacl_sddl(denied)))
+        assert denied_entries <= granted_entries, "sharing must preserve explicit deny"
+        with pytest.raises(PermissionError):
+            denied.write_bytes(b"forbidden write after sharing")
+
+    unrestricted = tmp_path / "unrestricted-anchor.lock"
+    with _temporary_dacl(unrestricted, "D:NO_ACCESS_CONTROL"):
+        assert "NO_ACCESS_CONTROL" in _dacl_sddl(unrestricted)
+        assert grant_every_account_access(str(unrestricted))
+        assert "NO_ACCESS_CONTROL" in _dacl_sddl(unrestricted)
+        unrestricted.write_bytes(b"unrestricted write remains permitted")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows access lists")

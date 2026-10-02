@@ -3,9 +3,9 @@ tags:
   - '#research'
   - '#vault-result-evidence'
 date: '2026-09-23'
-modified: '2026-09-24'
+modified: '2026-10-01'
 body_schema: 'body-v2'
-body_hash: 'sha256:c577bdc03781e3bb900648ec1ce77195543c35c63da93963587d7234427a8337'
+body_hash: 'sha256:9f171fa14affd97418de5a0569ea0c9789a629ba037b6b6e39f05ca223e18089'
 related:
   - "[[2026-06-12-service-concurrency-adr]]"
   - "[[2026-06-26-storage-schema-contract-adr]]"
@@ -230,7 +230,7 @@ CrossEncoder, then selected passages within the top-N chunks by chunk score, cap
 ## Sources
 
 - https://github.com/nevenincs/vaultspec-rag/issues/531
-- `Y:/code/vaultspec-core-worktrees/typesafe/tmp/typesafe-search-eval/` (issue harness:
+- `../vaultspec-core-worktrees/typesafe/tmp/typesafe-search-eval/` (issue harness:
   `queries.json`, `heldout.json`, `run_eval.py`, `results/*.score.json`); local and
   untracked
 - Scratch prototypes `proto_passages.py`, `proto_doc.py`, `proto_fp16.py`: session

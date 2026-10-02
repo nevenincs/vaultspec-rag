@@ -475,7 +475,9 @@ def test_a_receipt_without_the_package_falls_back_to_the_host_request(
     )
 
 
-def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_handoff_is_visible_without_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """The operator sees the refusal, the holders and the command in plain output.
 
     Guard assertion: this outcome used to reach `--json` only, so an operator
@@ -486,7 +488,7 @@ def test_a_handoff_is_visible_without_json(capsys: pytest.CaptureFixture[str]) -
 
     outcome = _tool_torch.ToolTorchRepairOutcome(
         _tool_torch.ToolTorchRepairAction.HOLDER_DETECTED,
-        "tool CUDA repair for C:/tools/vaultspec-rag"
+        f"tool CUDA repair for {tmp_path / 'tools' / 'vaultspec-rag'}"
         + chr(10)
         + "  running out of it now, and still on the old build until restarted:"
         + chr(10)

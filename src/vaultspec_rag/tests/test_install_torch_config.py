@@ -11,11 +11,8 @@ pyproject-patching branch and deliberately do not trigger the
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import stat
-import subprocess
-import sys
 from threading import Thread
 from typing import TYPE_CHECKING, cast
 
@@ -153,52 +150,6 @@ class TestInstallTorchConfig:
         assert d["torch_config_action"] == "applied"
         assert "torch_config_conflicts" in d
         assert d["torch_sync_action"] == "skipped"
-
-    @pytest.mark.torch
-    def test_install_warns_when_hf_token_missing(
-        self, consumer_workspace: Path, tmp_path: Path
-    ) -> None:
-        # Only a host installation is warned, and the child classifies itself
-        # from the distributions it really holds, so this runs where the
-        # inference stack is installed; a pinned role cannot cross into it.
-        #
-        # Removing the variable is enough: a workspace .env is read only
-        # inside the credential gate, so nothing re-injects a developer's
-        # real token into the child on the way past.
-        env: dict[str, str] = {
-            **os.environ,
-            "HF_HOME": str(tmp_path / "empty-hf-home"),
-        }
-        env.pop("HF_TOKEN", None)
-        cmd: list[str] = [
-            sys.executable,
-            "-c",
-            (
-                "import json; "
-                "from pathlib import Path; "
-                "from vaultspec_rag.commands._install import install_run; "
-                "report = install_run(path=Path(r'"
-                + str(consumer_workspace)
-                + "'), assume_yes=True); "
-                "print(json.dumps(report.to_dict()))"
-            ),
-        ]
-        completed = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-            env=env,
-        )
-        payload = cast(
-            "dict[str, object]", json.loads(completed.stdout.strip().splitlines()[-1])
-        )
-        warnings = cast("list[object]", payload["warnings"])
-        token_warnings = [str(w) for w in warnings if "token not found" in str(w)]
-        assert token_warnings, warnings
-        # The hub removed `huggingface-cli` in 2.0; `hf auth login` is the
-        # login command every supported hub version ships.
-        assert all("`hf auth login`" in w for w in token_warnings), token_warnings
 
     def test_install_force_does_not_answer_the_torch_config_prompt(
         self, consumer_workspace: Path

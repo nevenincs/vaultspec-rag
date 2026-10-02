@@ -3,14 +3,15 @@ tags:
   - '#adr'
   - '#gpu-rag-stack'
 date: '2026-03-06'
-modified: '2026-07-27'
-body_hash: 'sha256:be9601cfdf3872f2d204d304bd55e2826dcdd574ef8a84bd11e3aa15eec8e814'
+modified: '2026-09-30'
+body_hash: 'sha256:281eb8d9cc14ff00ea6ffeb22b75ceccb6a956fee1aeeea8acd6964123989295'
 related:
   - '[[2026-03-06-gpu-rag-architecture-research]]'
   - '[[2026-03-06-gpu-vector-search-deep-dive-research]]'
+  - '[[2026-09-30-sparseencode-research]]'
 ---
 
-# `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPLADE v3` | (**status:** `accepted`)
+# `gpu-rag-stack` adr: `GPU-Only RAG Stack â€” sentence-transformers + Qwen3 + SPARSEUP` | (**status:** `accepted`)
 
 ## Problem Statement
 
@@ -40,7 +41,7 @@ Rewrite the embedding pipeline for GPU-only inference. Seven decisions follow.
 
 ### 1. Embedding Engine
 
-Replace **fastembed (ONNX Runtime, CPU)** with **sentence-transformers >= 5.0 (PyTorch, CUDA)**. sentence-transformers provides a unified API for both dense (`SentenceTransformer`) and sparse (`SparseEncoder`) models on GPU with fp16/bf16 support and flash_attention_2 compatibility.
+Replace **fastembed (ONNX Runtime, CPU)** with **sentence-transformers >= 5.4 (PyTorch, CUDA)**. Dense inference retains `SentenceTransformer` on the admitted accelerator. The current sparse subsection below refines the original library choice with a pinned custom adapter; reduced precision and attention settings require representation and hardware validation.
 
 ### 2. Dense Embedding Model
 
@@ -72,17 +73,9 @@ flash_attention_2 is optional -- if unavailable, falls back to standard attentio
 
 ### 3. Sparse Embedding Model
 
-Replace **BM42 via fastembed** with **SPLADE v3 via sentence-transformers SparseEncoder**.
+The original BERT sparse encoder is retired. `2026-09-30-sparseencode-adr` refines this subsection: use public `Linkup-Platform/linkup-sparseup-embed-v1`, pinned revision `08314498d4f6a3a205b930ab9f27001404ea94b8`, through a separate canonical adapter around the reviewed upstream custom Transformers model. The upstream Sentence Transformers custom loader drops loading kwargs and is not the production adapter.
 
-```python
-SparseEncoder(
-    "naver/splade-v3",
-    device="cuda",
-    model_kwargs={"torch_dtype": "float16"},
-)
-```
-
-SPLADE v3 runs on GPU natively. BM42 required fastembed (ONNX/CPU). Total VRAM for both models: ~3 GB in fp16.
+Preserve upstream query/document prefixes, query length 128, document length 512, vocabulary width 50370, logit shift, threshold gating, masked pooling and checkpoint vocabulary folding. GPU ownership and forward-only locking remain binding. CPU preprocessing and sparse conversion happen outside the GPU lock. The model-only replacement requires identity-driven rebuilding while preserving storage wire-shape version 2.
 
 ### 4. Vector Database
 
@@ -94,7 +87,7 @@ The only schema change: dense vector dimension increases from 768 to 1024.
 
 **Remove:** `fastembed>=0.4.0`, `qdrant-client[fastembed]>=1.12.0`.
 
-**Add:** `sentence-transformers>=5.0`, `torch>=2.4`, `transformers>=4.51`, `qdrant-client>=1.17`.
+**Add:** `sentence-transformers>=5.4`, `torch>=2.4`, `transformers>=5.3,<6`, `qdrant-client>=1.17`.
 
 **Keep:** pydantic, rich, vaultspec, mcp, typer, click.
 
@@ -108,20 +101,20 @@ The only schema change: dense vector dimension increases from 768 to 1024.
 
 - `EmbeddingModel.device` returns `"cuda"` instead of `"cpu"`.
 - `EmbeddingModel.MODEL_NAME` changes to `"Qwen/Qwen3-Embedding-0.6B"`.
-- `EmbeddingModel.SPARSE_MODEL_NAME` changes to `"naver/splade-v3"`.
+- `EmbeddingModel.SPARSE_MODEL_NAME` changes to `"Linkup-Platform/linkup-sparseup-embed-v1"`.
 - `EmbeddingModel.DEFAULT_DIMENSION` changes from 768 to 1024.
 - `DOCUMENT_PREFIX` and `QUERY_PREFIX` removed (Qwen3 uses `prompt_name` parameter).
 - Sparse encode methods return objects compatible with Qdrant's `.indices.tolist()` / `.values.tolist()` interface.
 
 ### 7. Config Changes
 
-| Key                   | Old Default                                 | New Default                   |
-| --------------------- | ------------------------------------------- | ----------------------------- |
-| `embedding_model`     | `"nomic-ai/nomic-embed-text-v1.5"`          | `"Qwen/Qwen3-Embedding-0.6B"` |
-| `embedding_dimension` | `768`                                       | `1024`                        |
-| `sparse_model`        | `"Qdrant/bm42-all-minilm-l6-v2-attentions"` | `"naver/splade-v3"`           |
-| `qdrant_dir`          | `".qdrant"`                                 | Unchanged                     |
-| `lance_dir`           | `".lance"`                                  | Removed (LanceDB is gone)     |
+| Key                   | Old Default                                 | New Default                                  |
+| --------------------- | ------------------------------------------- | -------------------------------------------- |
+| `embedding_model`     | `"nomic-ai/nomic-embed-text-v1.5"`          | `"Qwen/Qwen3-Embedding-0.6B"`                |
+| `embedding_dimension` | `768`                                       | `1024`                                       |
+| `sparse_model`        | `"Qdrant/bm42-all-minilm-l6-v2-attentions"` | `"Linkup-Platform/linkup-sparseup-embed-v1"` |
+| `qdrant_dir`          | `".qdrant"`                                 | Unchanged                                    |
+| `lance_dir`           | `".lance"`                                  | Removed (LanceDB is gone)                    |
 
 ## Rationale
 
@@ -133,13 +126,13 @@ No separate rationale is recorded in the retained prior ADR body. Source: retain
 
 - GPU inference is ~10-50x faster than CPU/ONNX for batch indexing.
 - Qwen3-Embedding-0.6B scores higher on MTEB than nomic-embed-text-v1.5 (64.33 vs 62.28).
-- SPLADE v3 on GPU replaces BM42 on CPU -- better sparse representations with GPU acceleration.
-- Unified library (sentence-transformers) for both dense and sparse models.
+- The current SPARSEUP model preserves GPU-only sparse inference under the pinned custom representation contract.
+- Dense and reranking engines retain their existing libraries; the sparse adapter owns the pinned custom inference semantics.
 - Qdrant hybrid search pipeline (Prefetch + RRF fusion) is unchanged -- zero risk to search quality.
 
 ### Negative
 
-- Requires CUDA-capable GPU with ~3 GB VRAM. Cannot run on CPU-only machines or macOS without CUDA.
+- The original CUDA stack required about 3 GB VRAM; that historical estimate is not a memory budget for the replacement sparse model. The accelerator support ruling in `2026-08-28-platform-backend-selection-adr` and current GPU admission govern supported hardware; CPU inference remains forbidden.
 - PyTorch + sentence-transformers reinstates the ~3 GB dependency footprint removed by the fastembed migration.
 - Existing `.qdrant/` indices are incompatible (768d vs 1024d). Full re-index required.
 - flash_attention_2 has CUDA version sensitivity -- may require manual installation on some systems.
@@ -147,7 +140,7 @@ No separate rationale is recorded in the retained prior ADR body. Source: retain
 
 ### Migration Path
 
-1. Rewrite `embeddings.py`: remove fastembed, use SentenceTransformer + SparseEncoder on CUDA.
+1. Rewrite `embeddings.py`: remove fastembed, use SentenceTransformer and the pinned sparse adapter on the admitted accelerator.
 1. Update `store.py`: EMBEDDING_DIM 768 -> 1024.
 1. Update `config.py`: new model name/dimension/sparse defaults.
 1. Update `pyproject.toml`: swap dependencies.

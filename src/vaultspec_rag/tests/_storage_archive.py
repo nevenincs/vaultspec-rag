@@ -67,7 +67,7 @@ def write_archive(
                         "source": "vault",
                         "collection": ARCHIVE_COLLECTION,
                         "signature": {
-                            "root_identity": "C:/archived/root",
+                            "root_identity": str(path.parent / "archived" / "root"),
                             "collection_identity": "vault_docs",
                             "source_type": "vault",
                             "operation": "full",

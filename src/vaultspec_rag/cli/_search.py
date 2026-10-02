@@ -17,7 +17,6 @@ from .._operator_commands import (
     index_command,
     server_start_command,
     server_status_command,
-    server_stop_command,
 )
 from .._source_types import PublicSourceType, SourceTypeParseError, parse_source_type
 from .._store_locks import VaultStoreLockedError
@@ -29,6 +28,7 @@ from ..serviceclient._search_transport import (
     get_search_timeout,
     try_http_search,
 )
+from . import _render as search_render
 from ._app import (
     CLIState,
     JsonMode,
@@ -334,87 +334,6 @@ def _render_empty_index_state(
     _plain(f"Project: {requested}", soft_wrap=True)
 
 
-def _handle_vaultstore_locked_error(
-    exc: VaultStoreLockedError, json_mode: bool
-) -> NoReturn:
-    if exc.held_in_process:
-        # The lock table proves the blocker: a store this same process opened
-        # earlier in the run is still open, not a foreign holder to wait out.
-        if json_mode:
-            _emit_json_error_and_exit(
-                "search",
-                "local_store_locked",
-                (
-                    f"The local search index at {exc.db_path} is busy. "
-                    "This command already opened it earlier in this run, and "
-                    "a local store cannot be opened twice from the same "
-                    "process. Send the search through the running service "
-                    "instead, for example with --port 8766."
-                ),
-                1,
-                db_path=str(exc.db_path),
-                routing_mode="direct_local_search",
-                remediation=[
-                    "vaultspec-rag search ... --port 8766",
-                    "Rerun the command.",
-                ],
-            )
-        _plain(
-            f"Error: The local search index at {exc.db_path} is busy.\n\n"
-            "  This command already opened it earlier in this run, and a "
-            "local store cannot be opened twice from the same process.\n\n"
-            "  Next actions:\n"
-            "    1. Send this search through a running "
-            "service on a port, e.g.:\n"
-            "         vaultspec-rag search ... --port 8766\n"
-            "    2. Rerun the command."
-        )
-        raise typer.Exit(code=1) from exc
-    if json_mode:
-        _emit_json_error_and_exit(
-            "search",
-            "local_store_locked",
-            (
-                f"The local search index at {exc.db_path} is busy. "
-                "This command tried to search the index directly, but another "
-                "vaultspec-rag command, the background service, or an automatic "
-                "index update is using this workspace. Send the search through "
-                "the running service instead, for example with --port 8766."
-            ),
-            1,
-            db_path=str(exc.db_path),
-            routing_mode="direct_local_search",
-            remediation=[
-                "Wait for the other command or update to finish.",
-                "vaultspec-rag search ... --port 8766",
-                server_status_command(),
-                server_stop_command(),
-                "Stop any orphaned Python process that is still using this workspace.",
-            ],
-        )
-    _plain(
-        f"Error: The local search index at {exc.db_path} is busy.\n\n"
-        "  This command tried to search the index directly, but another "
-        "vaultspec-rag command, the background service, or an automatic index "
-        "update is using this workspace.\n\n"
-        "  Only one local command can use this index directly at a time. "
-        "For concurrent searches, send requests through one running "
-        "vaultspec-rag service.\n\n"
-        "  Next actions:\n"
-        "    1. Wait for the other command or update to finish.\n"
-        "    2. Send this search through a running "
-        "service on a port, e.g.:\n"
-        "         vaultspec-rag search ... --port 8766\n"
-        "    3. Check the service:\n"
-        f"         {server_status_command()}\n"
-        "    4. Stop the running service:\n"
-        f"         {server_stop_command()}\n"
-        "    5. If no vaultspec-rag process is alive, look for an "
-        "orphaned Python process using the index and stop it manually."
-    )
-    raise typer.Exit(code=1) from exc
-
-
 @dataclass(frozen=True, slots=True)
 class _InProcessSearchRequest:
     target: pathlib.Path
@@ -533,8 +452,8 @@ def _try_in_process_search(
         else search_type
     )
     from .._index_integrity import (
+        IndexIntegritySnapshot,
         acquire_index_integrity_snapshot_if_proven,
-        unverifiable_integrity,
     )
 
     integrity_snapshot = acquire_index_integrity_snapshot_if_proven(
@@ -547,7 +466,7 @@ def _try_in_process_search(
             PublicSourceType.DOCUMENT: get_registry().document_chunk_count(target),
         }
     except VaultStoreLockedError as exc:
-        _handle_vaultstore_locked_error(exc, json_mode)
+        search_render.handle_vaultstore_locked_error(exc, json_mode)
         return []
     has_index = (
         any(counts.values())
@@ -566,11 +485,7 @@ def _try_in_process_search(
         )
         # A combined search reconciles the code domain, mirroring the combined
         # shortfall above; single-domain searches reconcile their own.
-        integrity = (
-            unverifiable_integrity(integrity_source)
-            if integrity_snapshot is None
-            else integrity_snapshot.finish(counts[integrity_source])
-        )
+        integrity = integrity_snapshot.finish(counts[integrity_source])
         envelope["index_state"] = search_index_state(
             indexed_count=(
                 sum(counts.values())
@@ -663,7 +578,7 @@ def _try_in_process_search(
                         ),
                     )
                 )
-        if integrity_snapshot is not None:
+        if isinstance(integrity_snapshot, IndexIntegritySnapshot):
             integrity_snapshot.publication.validate()
         # The block above is built before the search runs, because its counts
         # come from the store rather than from the answer. The collapse signal
@@ -676,7 +591,7 @@ def _try_in_process_search(
             results,
         )
     except VaultStoreLockedError as exc:
-        _handle_vaultstore_locked_error(exc, json_mode)
+        search_render.handle_vaultstore_locked_error(exc, json_mode)
         return []
     except (ImportError, RuntimeError) as e:
         _handle_gpu_error(e, command="search", json_mode=request.json_mode)
@@ -794,6 +709,48 @@ class _InProcessRenderRequest:
     envelope: dict[str, object] | None = None
 
 
+def _empty_in_process_failure(
+    request: _InProcessRenderRequest, index_state: dict[str, object]
+) -> dict[str, object] | None:
+    """Supply local observations to the shared readiness and failure model."""
+    from uuid import uuid4
+
+    from .._search_state import SearchReasonCode
+    from ..server._search_availability import classify_search_response
+    from ..server._search_route_availability import SearchAvailabilityRequestFacts
+
+    request_id = uuid4().hex
+    if request.search_type is PublicSourceType.COMBINED:
+        outcome = cast("CombinedSearchOutcome", request.results)
+        unbuilt = next(
+            (
+                fact
+                for fact in outcome.source_facts
+                if fact.reason_code is SearchReasonCode.INDEX_NOT_BUILT
+            ),
+            None,
+        )
+        if unbuilt is None:
+            return None
+        return unbuilt.failure_response(
+            request_id=request_id,
+            index_state=index_state,
+            sources=outcome.source_facts,
+        ) | {"domains": outcome.domain_status_payload()}
+    facts = SearchAvailabilityRequestFacts(
+        job_snapshot_before=[],
+        root=request.target,
+        source=request.search_type.value,
+        request_id=request_id,
+        port=None,
+    )
+    classified = classify_search_response(
+        {"results": []},
+        facts.to_context(after_snapshot=[], index_state=index_state),
+    )
+    return classified.response if classified.status_code != 200 else None
+
+
 def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from ..search._outcomes import (
         COMBINED_SEARCH_FAILED,
@@ -841,6 +798,17 @@ def _render_in_process_results(request: _InProcessRenderRequest) -> None:
     from ..server._models import SearchResultItem
 
     items = [SearchResultItem.serialize(r) for r in result_items]
+    if not items and isinstance(raw_state := breadth.get("index_state"), dict):
+        failure = _empty_in_process_failure(
+            request, cast("dict[str, object]", raw_state)
+        )
+        if failure is not None:
+            _handle_service_results(
+                failure,
+                _ServiceSearchRenderRequest(
+                    query, search_type.value, json_mode, show_scores, target
+                ),
+            )
     if json_mode:
         data: dict[str, object] = {
             "query": query,

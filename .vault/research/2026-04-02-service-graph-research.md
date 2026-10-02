@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#service-graph'
 date: '2026-04-02'
-modified: '2026-09-14'
-body_hash: 'sha256:9149cd0061bc8df2a8d83c1a9beeb0c65fd9c9355722fb917455273d73cdd199'
+modified: '2026-09-30'
+body_hash: 'sha256:8b04e7aaacca55f025e1959f957aceb3ec1907bdf3df7e8e02c6264c31825c96'
 related:
   - '[[2026-04-02-release-readiness-audit]]'
   - '[[2026-03-09-graph-embedding-round36-audit]]'
@@ -108,7 +108,7 @@ download, not model loading. Once cached, loading 3 models to GPU takes
 1. Check CUDA availability -- fail fast
 1. Verify model cache (warn if download needed)
 1. Load dense model (Qwen3, ~1.2GB VRAM)
-1. Load sparse model (SPLADE, ~0.13GB)
+1. Load sparse model (previous BERT sparse encoder, ~0.13GB)
 1. Load reranker (CrossEncoder, ~0.56GB) -- if enabled
 1. Open Qdrant store
 1. Warmup query (encode short string, run dummy search)
@@ -224,7 +224,7 @@ checks prone to TOCTOU races).
 
 **Recommendation: one global service, multi-project routing.**
 
-GPU models are project-independent (same Qwen3/SPLADE/CrossEncoder for
+GPU models are project-independent (same Qwen3/previous BERT sparse encoder/CrossEncoder for
 all projects). Only Qdrant data varies per project. The service should
 hold one `EmbeddingModel` singleton and a `dict[Path, VaultStore]` mapping
 project roots to their Qdrant connections. MCP tools accept an optional

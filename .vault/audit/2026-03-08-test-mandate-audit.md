@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-07-27'
-body_hash: 'sha256:61ab27a38604125d696dc78a7718a92ec942e47f51149429a31d6dd0e4f39b08'
+modified: '2026-09-30'
+body_hash: 'sha256:a03b170af0668f9356f5c8aa307d6f2d276cc6b5b26594d4ade722106bbe38d6'
 ---
 
 # Test Mandate Compliance Audit — 2026-03-08
@@ -171,7 +171,7 @@ All tests are properly marked with exactly one marker:
 
 All integration tests exercise real hardware:
 
-- **GPU:** EmbeddingModel loads Qwen3-Embedding-0.6B and SPLADE v3 on CUDA
+- **GPU:** EmbeddingModel loads Qwen3-Embedding-0.6B and previous BERT sparse encoder on CUDA
 - **Storage:** Qdrant collections with real documents
 - **Inference:** Real embedding vectors from actual models, not synthetic [0.1]\*1024
 - **Corpus:** test-project/.vault/ with 200+ real documents

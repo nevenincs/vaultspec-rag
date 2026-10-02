@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-08'
-modified: '2026-09-14'
-body_hash: 'sha256:a6f5a7f2d8d2463e3da3ee3f970566e2310b343a9690b44bf158c944890b193b'
+modified: '2026-09-30'
+body_hash: 'sha256:cfc043ca08bfa6e083d977352d06907bab849f7ecef6b6652e5bee88a3677b3d'
 ---
 
 # Audit: mcp_server.py, config.py, watcher.py — Round 28
@@ -201,7 +201,7 @@ _RAG_DEFAULTS: ClassVar[dict[str, Any]] = {
     "max_embed_chars": 8000,
     "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
     "embedding_dimension": 1024,
-    "sparse_model": "naver/splade-v3",
+    "sparse_model": "previous BERT sparse encoder",
     "reranker_enabled": True,
     "reranker_model": "BAAI/bge-reranker-v2-m3",
 }

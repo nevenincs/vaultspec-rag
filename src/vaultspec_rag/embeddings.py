@@ -1,7 +1,7 @@
 """GPU-native embedding model wrapper for vault semantic search.
 
 Uses sentence-transformers with Qwen3-Embedding-0.6B (1024d) for dense
-embeddings and SPLADE v3 via SparseEncoder for sparse embeddings.
+embeddings and the pinned ModernBERT sparse adapter for sparse embeddings.
 Requires CUDA GPU -- no CPU fallback.
 """
 
@@ -16,7 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from ._operator_commands import HF_LOGIN_REMEDIATION
+from ._sparse_profile import SPARSE_DOCUMENT_MAX_LENGTH, SPARSE_MODEL_ID
 from .config._types import EnvVar
 from .job_control import timed_gpu_lock
 
@@ -24,10 +24,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     import numpy as np
-    from sentence_transformers import CrossEncoder, SentenceTransformer, SparseEncoder
+    from sentence_transformers import CrossEncoder, SentenceTransformer
     from torch import Tensor
 
     from ._gpu import AcceleratorContext
+    from ._sparse_encoder import SparseModelAdapter
     from .config._settings import VaultSpecConfigWrapper
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ __all__ = ["EmbeddingModel", "QueryEmbeddingCache", "SparseResult", "load_rerank
 class SparseResult:
     """Sparse embedding result compatible with Qdrant SparseVector interface.
 
-    Wraps SPLADE COO tensor output into .indices / .values arrays
+    Wraps ModernBERT sparse COO tensor output into .indices / .values arrays
     that match the interface expected by VaultStore.hybrid_search.
     """
 
@@ -163,6 +164,7 @@ def plan_encode_buckets(
     token_budget: int,
     chars_per_token: int,
     max_items: int,
+    max_tokens_per_item: int | None = None,
 ) -> list[EncodeBucket]:
     """Partition texts into contiguous buckets bounded by a token budget.
 
@@ -215,6 +217,8 @@ def plan_encode_buckets(
     padded = 0
     for index, text in enumerate(texts):
         estimate = max(1, -(-len(text) // chars_per_token))
+        if max_tokens_per_item is not None:
+            estimate = min(estimate, max_tokens_per_item)
         if count > 0:
             widened = max(padded, estimate)
             if count < max_items and widened * (count + 1) <= token_budget:
@@ -235,8 +239,10 @@ class _BucketPlanContext:
     """One encode call's immutable planning inputs, shared across replans."""
 
     texts: list[str]
+    token_budget: int
     chars_per_token: int
     max_items: int
+    max_tokens_per_item: int | None = None
 
     def plan(self, token_budget: int, start: int = 0) -> list[EncodeBucket]:
         """Plan buckets for the texts from *start* onward under *token_budget*."""
@@ -245,6 +251,7 @@ class _BucketPlanContext:
             token_budget=token_budget,
             chars_per_token=self.chars_per_token,
             max_items=self.max_items,
+            max_tokens_per_item=self.max_tokens_per_item,
         )
         if start == 0:
             return planned
@@ -367,14 +374,20 @@ class EncodeBatchCeiling:
                 return min(requested, self._ceiling * 2)
             return self._ceiling
 
-    def record_success(self, token_budget: int) -> None:
-        """Bank one call that completed under *token_budget* without an OOM."""
+    def record_success(
+        self, successful_tokens: int, *, padded_tokens_per_item: int = 0
+    ) -> None:
+        """Credit the largest successful bucket's estimated padded footprint."""
         with self._lock:
             if self._ceiling is None:
                 return
-            if token_budget > self._ceiling:
-                self._ceiling = token_budget
-            if token_budget >= self._ceiling:
+            if successful_tokens > self._ceiling:
+                self._ceiling = successful_tokens
+            # Discrete item packing can leave less than one item's headroom.
+            if (
+                successful_tokens >= self._ceiling
+                or successful_tokens + padded_tokens_per_item > self._ceiling
+            ):
                 self._successes_at_ceiling += 1
 
     def record_oom(self, failing_tokens: int) -> int:
@@ -392,31 +405,6 @@ class EncodeBatchCeiling:
             self._ceiling = max(1, failing_tokens // 2)
             self._successes_at_ceiling = 0
             return self._ceiling
-
-
-def _raise_for_hf_access(model_id: str, exc: Exception) -> None:
-    """Re-raise a HuggingFace gated/missing repo error as an actionable RuntimeError.
-
-    Maps ``huggingface_hub.errors.GatedRepoError`` and
-    ``RepositoryNotFoundError`` to a ``RuntimeError`` that names the model,
-    explains the remediation, and includes the model URL. All other exceptions
-    are left untouched (not caught by callers of this helper).
-
-    Args:
-        model_id: The HuggingFace model identifier that caused the error.
-        exc: The original ``GatedRepoError`` or ``RepositoryNotFoundError``.
-
-    Raises:
-        RuntimeError: Always, with actionable remediation message.
-    """
-    from huggingface_hub.errors import GatedRepoError
-
-    kind = "gated" if isinstance(exc, GatedRepoError) else "inaccessible or not found"
-    raise RuntimeError(
-        f"Model '{model_id}' is {kind} on HuggingFace Hub. "
-        f"Set the HF_TOKEN environment variable or run {HF_LOGIN_REMEDIATION} "
-        f"to authenticate. Model URL: https://huggingface.co/{model_id}",
-    ) from exc
 
 
 def _check_rag_deps() -> AcceleratorContext:
@@ -480,9 +468,9 @@ def _sparse_tensor_to_results(
     sparse_tensor: object,
     accelerator: AcceleratorContext,
 ) -> list[SparseResult]:
-    """Convert a batch of SPLADE sparse tensors to SparseResult list.
+    """Convert a batch of ModernBERT sparse tensors to SparseResult list.
 
-    SparseEncoder.encode() returns a sparse COO-like tensor. Each row
+    The sparse adapter returns a pooled dense tensor. Each row
     is a sparse vector over the vocabulary. We extract non-zero indices
     and values for each document.
 
@@ -491,7 +479,7 @@ def _sparse_tensor_to_results(
 
     Args:
         sparse_tensor: Batch sparse embedding output from
-            SparseEncoder. May be a scipy sparse matrix,
+            the sparse adapter. May be a scipy sparse matrix,
             torch.Tensor, or numpy ndarray.
 
     Returns:
@@ -559,7 +547,7 @@ class EmbeddingModel:
     """GPU-native embedding model using sentence-transformers.
 
     Dense: Qwen3-Embedding-0.6B (1024 dimensions, fp16, flash_attention_2)
-    Sparse: SPLADE v3 via SparseEncoder (GPU-native learned sparse)
+    Sparse: the pinned ModernBERT sparse adapter (GPU-native learned sparse)
 
     Attributes:
         MODEL_NAME: Default dense embedding model ID.
@@ -572,7 +560,7 @@ class EmbeddingModel:
     """
 
     MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-    SPARSE_MODEL_NAME = "naver/splade-v3"
+    SPARSE_MODEL_NAME = SPARSE_MODEL_ID
     DEFAULT_DIMENSION = 1024
     DEFAULT_BATCH_SIZE = 64
     MAX_EMBED_CHARS = 8000
@@ -663,20 +651,13 @@ class EmbeddingModel:
                 logger.info("Dense model loaded via ONNX backend (%s)", onnx_file)
                 return model
 
-        try:
-            return SentenceTransformer(
-                dense_name,
-                device=device,
-                local_files_only=local_files_only,
-                model_kwargs=model_kwargs,
-                processor_kwargs={"padding_side": "left"},
-            )
-        except Exception as exc:
-            from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
-
-            if isinstance(exc, (GatedRepoError, RepositoryNotFoundError)):
-                _raise_for_hf_access(dense_name, exc)
-            raise
+        return SentenceTransformer(
+            dense_name,
+            device=device,
+            local_files_only=local_files_only,
+            model_kwargs=model_kwargs,
+            processor_kwargs={"padding_side": "left"},
+        )
 
     def __init__(
         self,
@@ -768,7 +749,7 @@ class EmbeddingModel:
         # a sparse query vector, and ``effective_sparse_dim`` returns the
         # placeholder width 1 without touching the model at all. Loading it
         # regardless was the one place that did not ask, so a deployment with
-        # sparse off still put SPLADE on the device and held its VRAM for the
+        # sparse off still put ModernBERT sparse on the device and held its VRAM for the
         # process lifetime - and resident VRAM is exactly what the indexing CUDA
         # ceiling is derived net of, so the unused model narrowed every budget
         # computed after it.
@@ -820,10 +801,13 @@ class EmbeddingModel:
         # ceilings clamp, and the chars-to-tokens estimate divisor. The
         # learned ceiling - not the estimate - stays the safety authority.
         self._encode_token_budget: int = int(cfg.embedding_encode_token_budget)
+        self._sparse_encode_token_budget: int = int(
+            cfg.embedding_sparse_encode_token_budget
+        )
         self._encode_chars_per_token: int = int(cfg.embedding_encode_chars_per_token)
 
-    def _require_sparse_model(self) -> SparseEncoder:
-        """Return the loaded SPLADE model, or say plainly why there is none.
+    def _require_sparse_model(self) -> SparseModelAdapter:
+        """Return the loaded ModernBERT sparse model, or say plainly why there is none.
 
         Reaching a sparse encode with sparse disabled means a caller skipped the
         ``sparse_enabled`` check every other call path makes. That is a wiring
@@ -843,48 +827,19 @@ class EmbeddingModel:
         *,
         local_files_only: bool,
     ) -> None:
-        """Load SPLADE onto the GPU and record the width a run will write."""
-        from sentence_transformers import SparseEncoder
+        """Load the pinned sparse adapter and record its output width."""
+        from ._sparse_encoder import SparseModelAdapter
 
-        accelerator = self._accelerator
-        torch = accelerator.torch
         t0 = time.perf_counter()
-        try:
-            self._sparse_model = SparseEncoder(
-                sparse_name,
-                device=accelerator.device,
-                local_files_only=local_files_only,
-                model_kwargs={"torch_dtype": torch.float16},
-            )
-        except Exception as exc:
-            from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
-
-            if isinstance(exc, (GatedRepoError, RepositoryNotFoundError)):
-                _raise_for_hf_access(sparse_name, exc)
-            raise
-        # Do NOT override the sparse model's max_seq_length: SPLADE
-        # is BERT-based and has max_position_embeddings=512. Setting
-        # it to 2048 causes a position-embedding shape mismatch at
-        # forward time. The sparse path already truncates internally.
-        sparse_max = int(getattr(self._sparse_model, "max_seq_length", 512))
-        sparse_dimension = self._sparse_model.get_embedding_dimension()
-        if sparse_dimension is None:
-            sparse_config = self._sparse_model.config
-            sparse_dimension = getattr(sparse_config, "vocab_size", None)
-        if (
-            not isinstance(sparse_dimension, int)
-            or isinstance(sparse_dimension, bool)
-            or sparse_dimension <= 0
-        ):
-            raise RuntimeError(
-                "Sparse model did not expose a positive output dimension required "
-                "for bounded indexing"
-            )
-        self.sparse_dimension = sparse_dimension
+        self._sparse_model = SparseModelAdapter(
+            sparse_name,
+            accelerator=self._accelerator,
+            local_files_only=local_files_only,
+        )
+        self.sparse_dimension = self._sparse_model.get_embedding_dimension()
         logger.info(
-            "Sparse model loaded in %.2fs (max_seq_length=%d, dimension=%d)",
+            "Sparse model loaded in %.2fs (dimension=%d)",
             time.perf_counter() - t0,
-            sparse_max,
             self.sparse_dimension,
         )
 
@@ -1023,11 +978,13 @@ class EmbeddingModel:
             One ``encode_bucket`` result per successfully encoded
             bucket, in input order.
         """
-        budget = ceiling.clamp(self._encode_token_budget)
+        budget = ceiling.clamp(context.token_budget)
         buckets = context.plan(budget)
         outputs: list[T] = []
         oom_count = 0
         index = 0
+        largest_successful_bucket = 0
+        successful_item_tokens = 0
         while index < len(buckets):
             bucket = buckets[index]
             bucket_texts = context.texts[bucket.start : bucket.end]
@@ -1051,6 +1008,8 @@ class EmbeddingModel:
                     raise
                 self._accelerator.release_cache()
                 oom_count += 1
+                largest_successful_bucket = 0
+                successful_item_tokens = 0
                 if bucket.end - bucket.start <= 1:
                     raise
                 budget, buckets = _shrink_after_bucket_oom(
@@ -1062,6 +1021,12 @@ class EmbeddingModel:
                 )
                 continue
             outputs.append(encoded)
+            item_tokens = bucket.estimated_tokens // (bucket.end - bucket.start)
+            if bucket.estimated_tokens > largest_successful_bucket:
+                largest_successful_bucket = bucket.estimated_tokens
+                successful_item_tokens = item_tokens
+            elif bucket.estimated_tokens == largest_successful_bucket:
+                successful_item_tokens = max(successful_item_tokens, item_tokens)
             if on_bucket is not None:
                 on_bucket(
                     "after",
@@ -1076,7 +1041,10 @@ class EmbeddingModel:
                     ),
                 )
             index += 1
-        ceiling.record_success(budget)
+        ceiling.record_success(
+            largest_successful_bucket,
+            padded_tokens_per_item=successful_item_tokens,
+        )
         return outputs
 
     def _encode_dense_bucket(
@@ -1139,6 +1107,7 @@ class EmbeddingModel:
         outputs = self._run_bucketed_encode(
             _BucketPlanContext(
                 texts=truncated,
+                token_budget=self._encode_token_budget,
                 chars_per_token=self._encode_chars_per_token,
                 max_items=batch_size,
             ),
@@ -1222,7 +1191,7 @@ class EmbeddingModel:
         gpu_lock: threading.Lock | None = None,
         on_bucket: Callable[[str, EncodeBucketProgress], None] | None = None,
     ) -> list[SparseResult]:
-        """Encode documents as SPLADE sparse vectors bucket by bucket.
+        """Encode documents as ModernBERT sparse vectors bucket by bucket.
 
         Bucket planning, OOM-scoped retry, and the ``on_bucket`` callback
         contract are owned by :meth:`_run_bucketed_encode`, driving the
@@ -1260,21 +1229,30 @@ class EmbeddingModel:
         if not truncated:
             return []
 
+        order = sorted(range(len(truncated)), key=lambda index: len(truncated[index]))
+        grouped = [truncated[index] for index in order]
+
         def encode_bucket(bucket_texts: list[str]) -> list[SparseResult]:
             return self._encode_sparse_batch(bucket_texts, gpu_lock)
 
         bucket_results = self._run_bucketed_encode(
             _BucketPlanContext(
-                texts=truncated,
+                texts=grouped,
+                token_budget=self._sparse_encode_token_budget,
                 chars_per_token=self._encode_chars_per_token,
                 max_items=batch_size,
+                max_tokens_per_item=SPARSE_DOCUMENT_MAX_LENGTH,
             ),
             ceiling=self._sparse_batch_ceiling,
             kind="sparse",
             encode_bucket=encode_bucket,
             on_bucket=on_bucket,
         )
-        return [result for bucket in bucket_results for result in bucket]
+        grouped_results = [result for bucket in bucket_results for result in bucket]
+        restored = [SparseResult([], []) for _ in truncated]
+        for index, result in zip(order, grouped_results, strict=True):
+            restored[index] = result
+        return restored
 
     def _encode_sparse_batch(
         self,
@@ -1283,53 +1261,26 @@ class EmbeddingModel:
     ) -> list[SparseResult]:
         """Run one bucket as one sparse forward, converting outside the GPU lock.
 
-        The bucket is passed as one ``encode_document`` sub-batch
-        (``batch_size`` equal to the bucket's item count), so the
-        library's internal loop degenerates to exactly one forward pass.
+        CPU tokenization runs before locking; one pooled forward runs under
+        the lock and result transfer/conversion run after release.
         """
         from .memory_probe import cuda_forward_peak_capture
 
         sparse_model = self._require_sparse_model()
-        batch_size = max(1, len(bucket_texts))
-        accelerator_tensor = None
-        cpu_tensor = None
-        cpu_sparse_tensor = None
-        try:
-            if gpu_lock is None:
-                accelerator_tensor = sparse_model.encode_document(
-                    bucket_texts,
-                    batch_size=batch_size,
-                    show_progress_bar=False,
-                    convert_to_tensor=True,
-                    convert_to_sparse_tensor=False,
-                    save_to_cpu=False,
-                )
-            else:
-                with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
-                    accelerator_tensor = sparse_model.encode_document(
-                        bucket_texts,
-                        batch_size=batch_size,
-                        show_progress_bar=False,
-                        convert_to_tensor=True,
-                        convert_to_sparse_tensor=False,
-                        save_to_cpu=False,
-                    )
-            # Sentence Transformers otherwise performs this transfer inside
-            # encode when save_to_cpu=True. Release the GPU tensor first.
-            cpu_tensor = accelerator_tensor.cpu()
-            del accelerator_tensor
-            accelerator_tensor = None
-            cpu_sparse_tensor = cpu_tensor.to_sparse().coalesce()
-            del cpu_tensor
-            cpu_tensor = None
-            return _sparse_tensor_to_results(cpu_sparse_tensor, self._accelerator)
-        finally:
-            del accelerator_tensor
-            del cpu_tensor
-            del cpu_sparse_tensor
+        prepared = sparse_model.prepare(bucket_texts, kind="document")
+        if gpu_lock is None:
+            accelerator_tensor = sparse_model.forward(prepared)
+        else:
+            with timed_gpu_lock(gpu_lock), cuda_forward_peak_capture():
+                accelerator_tensor = sparse_model.forward(prepared)
+        cpu_tensor = accelerator_tensor.cpu()
+        del accelerator_tensor
+        return _sparse_tensor_to_results(cpu_tensor, self._accelerator)
 
-    def encode_query_sparse(self, query: str) -> SparseResult:
-        """Encode a search query as a SPLADE sparse vector on GPU.
+    def encode_query_sparse(
+        self, query: str, *, gpu_lock: threading.Lock | None = None
+    ) -> SparseResult:
+        """Encode a search query as a ModernBERT sparse vector on GPU.
 
         Args:
             query: Natural language query string.
@@ -1341,9 +1292,11 @@ class EmbeddingModel:
             torch.cuda.OutOfMemoryError: If the GPU runs out of memory.
         """
         max_chars = self._default_max_embed_chars()
-        sparse_tensor = self._require_sparse_model().encode_query(
-            [query[:max_chars]],
-            show_progress_bar=False,
-        )
+        model = self._require_sparse_model()
+        prepared = model.prepare([query[:max_chars]], kind="query")
+        with timed_gpu_lock(gpu_lock):
+            accelerator_tensor = model.forward(prepared)
+        sparse_tensor = accelerator_tensor.cpu()
+        del accelerator_tensor
         results = _sparse_tensor_to_results(sparse_tensor, self._accelerator)
         return results[0]

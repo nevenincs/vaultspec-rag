@@ -29,11 +29,11 @@ import logging
 import threading
 import time
 import types
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from enum import StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
-    Literal,
     NamedTuple,
     Protocol,
     Union,
@@ -50,6 +50,7 @@ from ._store_writes import workspace_volume_path
 from .indexer._file_state import validate_rel_path
 from .indexer._publication_proof import (
     ProofIncompatibleError,
+    ProofMissingError,
     ProofReadConflictError,
     ProofUnverifiableError,
 )
@@ -76,31 +77,52 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "AUDIT_VERDICT_CONSISTENT",
-    "AUDIT_VERDICT_DRIFT",
-    "REASON_COUNT_UNAVAILABLE",
-    "REASON_PROOF_UNREADABLE",
     "SHRUNKEN_LOG_INTERVAL_SECONDS",
-    "VERDICT_CONSISTENT",
-    "VERDICT_SHRUNKEN",
-    "VERDICT_UNVERIFIABLE",
+    "AuditFailureCode",
+    "AuditVerdict",
     "IndexAudit",
     "IndexIntegrity",
     "IndexIntegritySnapshot",
+    "IntegrityReason",
+    "IntegrityVerdict",
     "acquire_index_integrity_snapshot",
     "audit_index_integrity",
     "audit_index_sources",
 ]
 
-IntegrityVerdict = Literal["consistent", "shrunken", "unverifiable"]
 
-VERDICT_CONSISTENT: IntegrityVerdict = "consistent"
-VERDICT_SHRUNKEN: IntegrityVerdict = "shrunken"
-VERDICT_UNVERIFIABLE: IntegrityVerdict = "unverifiable"
+class IntegrityVerdict(StrEnum):
+    """Result of comparing live collection breadth with its publication."""
 
-AuditVerdict = Literal["consistent", "drift"]
-AUDIT_VERDICT_CONSISTENT: AuditVerdict = "consistent"
-AUDIT_VERDICT_DRIFT: AuditVerdict = "drift"
+    CONSISTENT = "consistent"
+    SHRUNKEN = "shrunken"
+    UNVERIFIABLE = "unverifiable"
+
+
+class AuditVerdict(StrEnum):
+    """Result of an exhaustive collection audit."""
+
+    CONSISTENT = "consistent"
+    DRIFT = "drift"
+    CONFLICT = "conflict"
+    REBUILD_REQUIRED = "rebuild_required"
+
+
+class AuditFailureCode(StrEnum):
+    """Stable failures from an exhaustive collection audit."""
+
+    PROOF_READ_CONFLICT = "proof_read_conflict"
+    UNEXPLAINED_DRIFT = "unexplained_drift"
+
+
+class IntegrityReason(StrEnum):
+    """Why a live collection cannot be verified against publication."""
+
+    COUNT_UNAVAILABLE = "count_unavailable"
+    PROOF_UNREADABLE = "proof_unreadable"
+    PROOF_MISSING = "proof_missing"
+
+
 _AUDIT_PAGE_SIZE = 256
 
 
@@ -122,17 +144,6 @@ _AUDIT_PAYLOAD_CONTRACTS = {
     PublicSourceType.CODE: _payload_contract(store_schema.CodeChunkPayload),
     PublicSourceType.DOCUMENT: _payload_contract(store_schema.DocumentChunkPayload),
 }
-
-#: The caller had no live count to compare - the count call failed or the
-#: figure never reached the envelope site. Degraded, never fatal: a count that
-#: could not be taken proves nothing about the collection either way.
-REASON_COUNT_UNAVAILABLE = "count_unavailable"
-
-#: No canonical proof could be read for this root and source, so nothing
-#: about its breadth is known. Distinct from a count that failed: there is
-#: no claim to compare against, which is also the state a root that has
-#: never been indexed is in.
-REASON_PROOF_UNREADABLE = "proof_unreadable"
 
 #: Minimum spacing between ERROR lines for one root and domain. The response
 #: envelope carries the verdict on every single search, so the log line exists
@@ -158,7 +169,8 @@ class _BreadthClaim(NamedTuple):
     named_files: int
 
 
-class IndexIntegrity(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class IndexIntegrity:
     """One serve-time breadth verdict, with the evidence that produced it.
 
     Constructed only by a proof-fenced snapshot, so a consumer never
@@ -166,15 +178,31 @@ class IndexIntegrity(NamedTuple):
     """
 
     verdict: IntegrityVerdict
-    source: str
+    source: PublicSourceType
     claimed_count: int | None
     live_count: int | None
     generation_id: str | None
-    reason: str | None
+    reason: IntegrityReason | None
     named_files: int | None = None
     """Indexed files the manifest names, ``None`` where the domain has none."""
     covered_files: int | None = None
     """Files the publication recorded covering, ``None`` when unrecorded."""
+
+    def __post_init__(self) -> None:
+        for value, expected, name in (
+            (self.verdict, IntegrityVerdict, "verdict"),
+            (self.source, PublicSourceType, "source"),
+        ):
+            if not isinstance(cast("object", value), expected):
+                raise ValueError(f"{name} must be a {expected.__name__}")
+        if self.reason is not None and not isinstance(
+            cast("object", self.reason), IntegrityReason
+        ):
+            raise ValueError("reason must be an IntegrityReason or None")
+
+    def finish(self, live_count: int | None) -> IndexIntegrity:
+        """Carry a measured count when there was no publication to fence it."""
+        return replace(self, live_count=live_count)
 
     def as_block(self) -> dict[str, object]:
         """Return the canonical ``index_integrity`` envelope block.
@@ -188,18 +216,18 @@ class IndexIntegrity(NamedTuple):
         proof names any, so an empty publication renders no file figure.
         """
         block: dict[str, object] = {
-            "verdict": self.verdict,
-            "source": self.source,
+            "verdict": self.verdict.value,
+            "source": self.source.value,
             "claimed_count": self.claimed_count,
             "live_count": self.live_count,
             "generation_id": self.generation_id,
-            "reason": self.reason,
+            "reason": self.reason.value if self.reason is not None else None,
         }
         if self.named_files:
             block["named_files"] = self.named_files
             block["covered_files"] = self.covered_files
         if (
-            self.verdict == VERDICT_SHRUNKEN
+            self.verdict == IntegrityVerdict.SHRUNKEN
             and self.claimed_count is not None
             and self.live_count is not None
             and self.claimed_count > self.live_count
@@ -209,7 +237,8 @@ class IndexIntegrity(NamedTuple):
 
 
 def unverifiable_integrity(
-    source: PublicSourceType, reason: str = REASON_PROOF_UNREADABLE
+    source: PublicSourceType,
+    reason: IntegrityReason = IntegrityReason.PROOF_UNREADABLE,
 ) -> IndexIntegrity:
     """Return the verdict for a source whose proof could not be read.
 
@@ -220,8 +249,8 @@ def unverifiable_integrity(
     index and latch there.
     """
     return IndexIntegrity(
-        verdict=VERDICT_UNVERIFIABLE,
-        source=source.value,
+        verdict=IntegrityVerdict.UNVERIFIABLE,
+        source=source,
         claimed_count=None,
         live_count=None,
         generation_id=None,
@@ -231,19 +260,23 @@ def unverifiable_integrity(
 
 def acquire_index_integrity_snapshot_if_proven(
     root: pathlib.Path, source: PublicSourceType
-) -> IndexIntegritySnapshot | None:
-    """Acquire the proof token, or ``None`` when no proof can be read.
+) -> IndexIntegritySnapshot | IndexIntegrity:
+    """Acquire a proof fence, or retain why publication could not be read.
 
     The serving path needs the fence when there is one and must not fail
     without it, so every unreadable-proof outcome is turned into an absence
-    here rather than raised through a read-only request.
+    here rather than raised through a read-only request. A missing proof is
+    distinct from an unreadable one: paired with a measured zero count it
+    identifies a source that needs its first publication.
     """
     from ._publication_state import UNREADABLE_PUBLICATION_ERRORS
 
     try:
         return acquire_index_integrity_snapshot(root, source)
+    except ProofMissingError:
+        return unverifiable_integrity(source, IntegrityReason.PROOF_MISSING)
     except UNREADABLE_PUBLICATION_ERRORS:
-        return None
+        return unverifiable_integrity(source)
 
 
 def acquire_index_integrity_snapshot(
@@ -357,18 +390,18 @@ def _evaluate_claim(
     """
     if live_count is None:
         integrity = IndexIntegrity(
-            verdict=VERDICT_UNVERIFIABLE,
-            source=source.value,
+            verdict=IntegrityVerdict.UNVERIFIABLE,
+            source=source,
             claimed_count=claim.claimed,
             live_count=None,
             generation_id=claim.generation_id,
-            reason=REASON_COUNT_UNAVAILABLE,
+            reason=IntegrityReason.COUNT_UNAVAILABLE,
             named_files=claim.named_files or None,
         )
     elif live_count >= claim.claimed:
         integrity = IndexIntegrity(
-            verdict=VERDICT_CONSISTENT,
-            source=source.value,
+            verdict=IntegrityVerdict.CONSISTENT,
+            source=source,
             claimed_count=claim.claimed,
             live_count=live_count,
             generation_id=claim.generation_id,
@@ -377,8 +410,8 @@ def _evaluate_claim(
         )
     else:
         integrity = IndexIntegrity(
-            verdict=VERDICT_SHRUNKEN,
-            source=source.value,
+            verdict=IntegrityVerdict.SHRUNKEN,
+            source=source,
             claimed_count=claim.claimed,
             live_count=live_count,
             generation_id=claim.generation_id,
@@ -416,7 +449,7 @@ class _IndexAuditStore(Protocol):
 class IndexAudit:
     """Exact comparison of one canonical proof with one backend scan."""
 
-    source: str
+    source: PublicSourceType
     verdict: AuditVerdict
     generation_id: str
     proof_revision: int
@@ -436,7 +469,7 @@ class IndexAudit:
     @property
     def ok(self) -> bool:
         """Return whether the backend exactly satisfies the committed proof."""
-        return self.verdict == AUDIT_VERDICT_CONSISTENT
+        return self.verdict == AuditVerdict.CONSISTENT
 
     def as_dict(self) -> dict[str, object]:
         """Return a stable JSON-ready audit domain result."""
@@ -707,8 +740,8 @@ def _audit_result(
         and not partial_identities
     )
     return IndexAudit(
-        source=source.value,
-        verdict=(AUDIT_VERDICT_CONSISTENT if consistent else AUDIT_VERDICT_DRIFT),
+        source=source,
+        verdict=(AuditVerdict.CONSISTENT if consistent else AuditVerdict.DRIFT),
         generation_id=proof.generation_id,
         proof_revision=proof.revision,
         expected_identities=expected_identities,
@@ -796,7 +829,7 @@ def _audit_rebuild_required(
     reason = getattr(error, "reason", None)
     return {
         "ok": False,
-        "status": "rebuild_required",
+        "status": AuditVerdict.REBUILD_REQUIRED,
         "source": source.value,
         "error_kind": (reason.value if reason is not None else type(error).__name__),
         "message": str(error),
@@ -840,9 +873,9 @@ def audit_index_sources(
         ) as exc:
             domains[current.value] = {
                 "ok": False,
-                "status": "conflict",
+                "status": AuditVerdict.CONFLICT,
                 "source": current.value,
-                "error_kind": "proof_read_conflict",
+                "error_kind": AuditFailureCode.PROOF_READ_CONFLICT,
                 "message": str(exc),
                 "retryable": True,
             }
@@ -857,22 +890,22 @@ def audit_index_sources(
             if not result.ok:
                 from ._operator_commands import IndexCommandOptions, index_command
 
-                domain["error_kind"] = "unexplained_drift"
+                domain["error_kind"] = AuditFailureCode.UNEXPLAINED_DRIFT
                 domain["remediation"] = [
                     index_command(current, IndexCommandOptions(rebuild=True))
                 ]
             domains[current.value] = domain
 
     ok = all(bool(domain["ok"]) for domain in domains.values())
-    statuses = {str(domain["status"]) for domain in domains.values()}
+    statuses = {AuditVerdict(domain["status"]) for domain in domains.values()}
     if ok:
-        status = AUDIT_VERDICT_CONSISTENT
-    elif "conflict" in statuses:
-        status = "conflict"
-    elif "rebuild_required" in statuses:
-        status = "rebuild_required"
+        status = AuditVerdict.CONSISTENT
+    elif AuditVerdict.CONFLICT in statuses:
+        status = AuditVerdict.CONFLICT
+    elif AuditVerdict.REBUILD_REQUIRED in statuses:
+        status = AuditVerdict.REBUILD_REQUIRED
     else:
-        status = AUDIT_VERDICT_DRIFT
+        status = AuditVerdict.DRIFT
     return {
         "ok": ok,
         "partial": any(bool(domain["ok"]) for domain in domains.values()) and not ok,

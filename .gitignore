@@ -197,3 +197,6 @@ playwright-report/
 test-results/
 .env.*
 !.env.example
+# Private VaultSpec environment (never commit)
+/.vaultspec/.env
+/.vaultspec/.env.*

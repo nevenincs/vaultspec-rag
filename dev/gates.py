@@ -1,8 +1,7 @@
-"""Hardware and credential probes that decide whether a lane can run.
+"""Hardware and infrastructure probes that decide whether a lane can run.
 
-Most of this repository's test lanes need real hardware: a CUDA device, Apple
-silicon, a Hugging Face token for the gated ``naver/splade-v3`` weights, and a
-manifest-verified Qdrant binary in the host image. The root ``conftest.py``
+Most of this repository's test lanes need a CUDA device or Apple silicon, and
+a manifest-verified Qdrant binary in the host image. The root ``conftest.py``
 does not SKIP when those are missing - it calls ``pytest.exit(..., returncode=1)``
 and aborts the run. That is correct for a lane selected deliberately, and it is
 exactly why an aggregate cannot simply invoke every lane and hope: on a
@@ -14,7 +13,7 @@ which is the failure mode this module exists to prevent: ``test all`` used to
 run one lane out of four and print nothing at all about the other three.
 
 The probe runs once, in the project environment, in a single child process -
-``torch`` and ``huggingface_hub`` are imported there rather than here, so the
+``torch`` is imported there rather than here, so the
 harness itself stays standard-library-only and a broken project environment
 degrades into "gate closed" rather than a traceback out of ``just``.
 """
@@ -42,7 +41,7 @@ SKIPPED = -1
 _PROBE_SOURCE = textwrap.dedent(
     """
     import json, os
-    facts = {"cuda": False, "mps": False, "hf_token": False, "qdrant": False}
+    facts = {"cuda": False, "mps": False, "qdrant": False}
     try:
         import torch
         facts["cuda"] = bool(torch.cuda.is_available())
@@ -50,14 +49,6 @@ _PROBE_SOURCE = textwrap.dedent(
         facts["mps"] = bool(backend is not None and backend.is_available())
     except Exception as exc:
         facts["cuda_error"] = f"{type(exc).__name__}: {exc}"
-    if os.environ.get("HF_TOKEN"):
-        facts["hf_token"] = True
-    else:
-        try:
-            from huggingface_hub import get_token
-            facts["hf_token"] = bool(get_token())
-        except Exception as exc:
-            facts["hf_token_error"] = f"{type(exc).__name__}: {exc}"
     try:
         from vaultspec_rag.qdrant_runtime._constants import QDRANT_SERVER_VERSION
         from vaultspec_rag.qdrant_runtime._resolve import has_provisioned_binary
@@ -94,7 +85,7 @@ def facts() -> dict[str, bool]:
     global _FACTS
     if _FACTS is not None:
         return _FACTS
-    blank = {"cuda": False, "mps": False, "hf_token": False, "qdrant": False}
+    blank = {"cuda": False, "mps": False, "qdrant": False}
     try:
         completed = subprocess.run(
             ["uv", "run", "--no-sync", "python", "-c", _PROBE_SOURCE],
@@ -179,10 +170,10 @@ class Gate:
 
 CUDA_GATE = Gate(
     lambda: (
-        f"{missing('cuda', 'hf_token', 'qdrant')} on this host "
+        f"{missing('cuda', 'qdrant')} on this host "
         "(conftest aborts the tier rather than skipping)"
     ),
-    lambda: facts()["cuda"] and facts()["hf_token"] and facts()["qdrant"],
+    lambda: facts()["cuda"] and facts()["qdrant"],
 )
 
 MPS_GATE = Gate(

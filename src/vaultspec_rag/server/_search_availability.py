@@ -11,28 +11,21 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from .._operator_commands import (
-    IndexCommandOptions,
-    index_command,
-    server_jobs_command,
-    server_status_command,
-)
 from .._search_state import (
     MAX_SEARCH_EVIDENCE_ITEMS,
     AbsenceAuthority,
     GenerationEvidence,
     SearchAvailability,
+    SearchAvailabilityCause,
     SearchFreshness,
+    SearchIndexStatus,
+    SearchReasonCode,
     SearchSourceFact,
-    search_readiness_block,
 )
+from ..job_models import JobMode, JobOperation, JobState
 
 if TYPE_CHECKING:
     from .._source_types import IndexSource
-
-    # The convergence-mode vocabulary is the domain's, not the client's.
-    # Annotation-only, so job_models is not imported at runtime.
-    from ..job_models import JobMode
 
 __all__ = [
     "CanonicalSearchEvidence",
@@ -43,22 +36,18 @@ __all__ = [
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
 
-_CANONICAL_NONTERMINAL_STATES = frozenset(
-    {"queued", "running", "pausing", "paused", "cancelling"}
-)
-
 
 @dataclass(frozen=True, slots=True)
 class MatchingIndexJobReference:
     """Immutable public correlation fields for one matching index job."""
 
     id: str
-    state: str
+    state: JobState
     mode: JobMode
 
     def to_dict(self) -> dict[str, object]:
         """Return the exact public response shape."""
-        return {"id": self.id, "state": self.state, "mode": self.mode}
+        return {"id": self.id, "state": self.state.value, "mode": self.mode.value}
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +59,7 @@ class SearchResponseClassification:
     matching_jobs: tuple[MatchingIndexJobReference, ...]
     matching_jobs_truncated: bool
     rebuilding: bool
-    availability_cause: Literal["matching_index_job", "collection_missing"] | None
+    availability_cause: SearchAvailabilityCause | None
     source_fact: SearchSourceFact
 
 
@@ -141,7 +130,7 @@ class _MatchingJob:
     """Normalized evidence from one matching convergence job."""
 
     id: str
-    state: str
+    state: JobState
     mode: JobMode
 
     def to_reference(self) -> MatchingIndexJobReference:
@@ -167,10 +156,8 @@ def _normalized_mode(value: object) -> JobMode | None:
     Asks the enum rather than testing its members one at a time: a third mode
     would have been rejected here as unknown while the domain accepted it.
     """
-    from ..job_models import JobMode as _JobMode
-
     try:
-        return _JobMode(value)
+        return JobMode(value)
     except ValueError:
         return None
 
@@ -183,12 +170,13 @@ def _canonical_match(
     source: IndexSource,
 ) -> _MatchingJob | None:
     job_id = record.get("id")
-    state = record.get("state")
+    raw_state = record.get("state")
     if not isinstance(job_id, str) or not job_id.strip():
         return None
-    if not isinstance(state, str) or state not in _CANONICAL_NONTERMINAL_STATES:
+    state = _normalized_active_state(raw_state)
+    if state is None:
         return None
-    if spec.get("operation") != "index" or spec.get("source") != source:
+    if spec.get("operation") != JobOperation.INDEX or spec.get("source") != source:
         return None
     if _normalized_root(spec.get("project_root")) != requested_root:
         return None
@@ -200,6 +188,15 @@ def _canonical_match(
         state=state,
         mode=mode,
     )
+
+
+def _normalized_active_state(value: object) -> JobState | None:
+    """Accept only known active states from canonical job records."""
+    try:
+        state = JobState(value)
+    except ValueError:
+        return None
+    return None if state.is_terminal else state
 
 
 def _matching_jobs(
@@ -287,11 +284,18 @@ def _target_is_current(evidence: CanonicalSearchEvidence) -> bool:
 
 
 def _source_states(
-    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
+    canonical: CanonicalSearchEvidence,
+    matches: Sequence[_MatchingJob],
+    *,
+    index_not_built: bool,
 ) -> tuple[SearchAvailability, SearchFreshness]:
     if canonical.capacity_refused:
         availability = SearchAvailability.CAPACITY_LIMITED
-    elif canonical.rebuild_required or canonical.collection_present is not True:
+    elif (
+        canonical.rebuild_required
+        or canonical.collection_present is not True
+        or index_not_built
+    ):
         availability = SearchAvailability.UNAVAILABLE
     else:
         availability = SearchAvailability.USABLE
@@ -307,35 +311,24 @@ def _source_states(
 
 
 def _source_reason(
-    canonical: CanonicalSearchEvidence, matches: Sequence[_MatchingJob]
-) -> str | None:
-    if canonical.capacity_refused:
-        return "capacity_limited"
-    if canonical.rebuild_required:
-        return "rebuild_required"
-    if canonical.collection_present is False:
-        return "index_unavailable"
-    if matches:
-        return "index_updating"
-    return None if _target_is_current(canonical) else "index_unverifiable"
-
-
-def _source_remediation(
-    context: SearchAvailabilityContext,
-    reason_code: str | None,
+    canonical: CanonicalSearchEvidence,
     matches: Sequence[_MatchingJob],
-) -> str | None:
-    if reason_code == "rebuild_required":
-        return index_command(
-            context.source, IndexCommandOptions(rebuild=True, port=context.port)
-        )
-    if reason_code == "index_unverifiable":
-        return server_status_command(context.port, verbose=True)
-    if matches or reason_code == "capacity_limited":
-        return server_jobs_command(context.port, index=context.source)
-    if reason_code == "index_unavailable":
-        return index_command(context.source, IndexCommandOptions(port=context.port))
-    return None
+    *,
+    index_not_built: bool,
+) -> SearchReasonCode | None:
+    if canonical.capacity_refused:
+        return SearchReasonCode.CAPACITY_LIMITED
+    if canonical.rebuild_required:
+        return SearchReasonCode.REBUILD_REQUIRED
+    if canonical.collection_present is False:
+        return SearchReasonCode.INDEX_UNAVAILABLE
+    if matches:
+        return SearchReasonCode.INDEX_UPDATING
+    if index_not_built:
+        return SearchReasonCode.INDEX_NOT_BUILT
+    return (
+        None if _target_is_current(canonical) else SearchReasonCode.INDEX_UNVERIFIABLE
+    )
 
 
 def _project_source_fact(
@@ -344,18 +337,27 @@ def _project_source_fact(
 ) -> SearchSourceFact:
     """Project explicit canonical evidence without treating terminality as publish."""
     canonical = context.canonical_evidence
+    index_not_built = _index_not_built(context)
     # A successful retrieval is direct evidence that this collection can serve,
     # even when an older daemon/index path supplied no publication identity.
     # Identity remains mandatory for CURRENT and authoritative absence below.
-    availability, freshness = _source_states(canonical, matches)
+    availability, freshness = _source_states(
+        canonical, matches, index_not_built=index_not_built
+    )
     authority = (
         AbsenceAuthority.AUTHORITATIVE
         if availability is SearchAvailability.USABLE
         and freshness is SearchFreshness.CURRENT
         else AbsenceAuthority.NON_AUTHORITATIVE
     )
-    reason_code = _source_reason(canonical, matches)
-    remediation = _source_remediation(context, reason_code, matches)
+    reason_code = _source_reason(canonical, matches, index_not_built=index_not_built)
+    remediation = (
+        reason_code.remediation(
+            context.source, port=context.port, target=str(context.requested_root)
+        )
+        if reason_code is not None
+        else None
+    )
     return SearchSourceFact(
         source=context.source,
         availability=availability,
@@ -381,6 +383,24 @@ def _project_source_fact(
     )
 
 
+def _index_not_built(context: SearchAvailabilityContext) -> bool:
+    """Require both an absent publication and a measured empty source."""
+    from .._index_integrity import IntegrityReason
+
+    integrity = context.index_state.get("index_integrity")
+    if not isinstance(integrity, Mapping):
+        return False
+    integrity = cast("Mapping[str, object]", integrity)
+    return (
+        context.index_state.get("indexed_count") == 0
+        and context.index_state.get("target_matches") is True
+        and integrity.get("reason") == IntegrityReason.PROOF_MISSING
+        and integrity.get("live_count") == 0
+        and context.canonical_evidence.served_generation is None
+        and context.canonical_evidence.publication_revision is None
+    )
+
+
 def _build_index_unavailable_response(
     context: SearchAvailabilityContext,
     *,
@@ -397,12 +417,14 @@ def _build_index_unavailable_response(
         "requested_target_root": context.index_state["requested_target_root"],
         "target_matches": context.index_state["target_matches"],
         "status": (
-            "unavailable"
+            SearchIndexStatus.UNAVAILABLE
             if context.canonical_evidence.collection_present is False
-            else "rebuilding"
+            else SearchIndexStatus.MISSING
+            if source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT
+            else SearchIndexStatus.REBUILDING
             if rebuilding
-            else "updating"
-        ),
+            else SearchIndexStatus.UPDATING
+        ).value,
         "matching_jobs": [job.to_dict() for job in matching_jobs],
         "matching_jobs_truncated": matching_jobs_truncated,
     }
@@ -412,29 +434,10 @@ def _build_index_unavailable_response(
     integrity = context.index_state.get("index_integrity")
     if integrity is not None:
         response_index_state["index_integrity"] = integrity
-    error = (
-        source_fact.reason_code
-        if source_fact.reason_code in {"capacity_limited", "rebuild_required"}
-        else "index_unavailable"
+    return source_fact.failure_response(
+        request_id=context.request_id,
+        index_state=response_index_state,
     )
-    state = (
-        "unavailable"
-        if context.canonical_evidence.collection_present is False
-        else "changing"
-    )
-    return {
-        "ok": False,
-        "error": error,
-        "message": (
-            f"The {context.source} index for {context.requested_root} is {state}; "
-            "this empty search cannot establish that no matches exist."
-        ),
-        "request_id": context.request_id,
-        "index_state": response_index_state,
-        "retryable": source_fact.retryable,
-        "readiness": search_readiness_block((source_fact,)),
-        "remediation": source_fact.remediation,
-    }
 
 
 def _is_qdrant_collection_disappearance(exc: BaseException) -> bool:
@@ -493,7 +496,7 @@ def classify_qdrant_collection_disappearance(
         classification,
         response=response,
         status_code=503,
-        availability_cause="collection_missing",
+        availability_cause=SearchAvailabilityCause.COLLECTION_MISSING,
     )
 
 
@@ -517,11 +520,15 @@ def classify_search_response(
         match.to_reference() for match in matches[:MAX_SEARCH_EVIDENCE_ITEMS]
     )
     matching_jobs_truncated = len(matches) > MAX_SEARCH_EVIDENCE_ITEMS
-    rebuilding = any(match.mode == "rebuild" for match in matches)
+    rebuilding = any(match.mode is JobMode.REBUILD for match in matches)
     source_fact = _project_source_fact(context, matches)
 
     results = result.get("results")
-    if isinstance(results, list) and not results and matches:
+    if (
+        isinstance(results, list)
+        and not results
+        and (matches or source_fact.reason_code == SearchReasonCode.INDEX_NOT_BUILT)
+    ):
         response = _build_index_unavailable_response(
             context,
             matching_jobs=matching_jobs,
@@ -535,7 +542,9 @@ def classify_search_response(
             matching_jobs=matching_jobs,
             matching_jobs_truncated=matching_jobs_truncated,
             rebuilding=rebuilding,
-            availability_cause="matching_index_job",
+            availability_cause=SearchAvailabilityCause.MATCHING_INDEX_JOB
+            if matches
+            else None,
             source_fact=source_fact,
         )
     return SearchResponseClassification(

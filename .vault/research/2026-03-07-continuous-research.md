@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-09-14'
-body_hash: 'sha256:0d5a72dc78248474c9e28b1b6a3372fb435b33a30673b719b6b7db702360e254'
+modified: '2026-10-01'
+body_hash: 'sha256:c6b60de59a807f71fda34d14926b292de24f5fe2dd9e2e74d89567308a0e2ceb'
 ---
 
 # Continuous Research Loop Findings â€” 2026-03-07
@@ -664,9 +664,9 @@ This means:
 1. **No error raised** for inputs exceeding the limit
 1. **Silent truncation** â€” the input is simply cut to the first N tokens
 
-For SPLADE models (BERT-based), `max_seq_length` is typically **256 tokens**
+For previous BERT sparse encoder models (BERT-based), `max_seq_length` is typically **256 tokens**
 (from the model config). This is documented in sbert.net for
-`naver/splade-cocondenser-ensembledistil`. The `naver/splade-v3` model uses
+`previous BERT sparse encoder`. The `previous BERT sparse encoder` model uses
 the same BERT base architecture, so 256 tokens is expected.
 
 ### encode_query() vs encode() â€” which to use
@@ -680,7 +680,7 @@ as specialized alternatives to `encode()`:
 | `encode_document()` | Document-side encoding | Uses "document" prompt if model has one |
 | `encode()`          | General purpose        | No automatic prompt selection           |
 
-For SPLADE-v3 specifically, the model card does not define separate query/document
+For previous BERT sparse encoder specifically, the model card does not define separate query/document
 prompts, so `encode()`, `encode_query()`, and `encode_document()` produce
 identical output. However, using `encode_query()` / `encode_document()` is best
 practice for forward compatibility with models that do distinguish.
@@ -688,7 +688,7 @@ practice for forward compatibility with models that do distinguish.
 ### Our codebase status
 
 **embeddings.py uses `encode()` for both queries and documents** (lines 293, 319).
-This works correctly for SPLADE-v3 since it has no query/document distinction.
+This works correctly for previous BERT sparse encoder since it has no query/document distinction.
 Switching to `encode_query()` / `encode_document()` would be a minor improvement
 for forward compatibility but is not a bug.
 
@@ -1856,7 +1856,7 @@ Why `resolve()` over `normpath`:
 ### On Windows specifically
 
 `Path.resolve()` on Windows also normalizes drive letter case and UNC paths.
-`Path("c:/foo")` and `Path("C:/foo")` resolve to the same canonical form.
+Paths that differ only in drive-letter case resolve to the same canonical form; `<drive-lowercase>:/<root>` and `<drive-uppercase>:/<root>` are symbolic stand-ins for that case-only difference.
 This is relevant for our Windows development environment.
 
 ______________________________________________________________________
@@ -2175,7 +2175,7 @@ def hybrid_search(
 
 1. **Sparse-only is not a supported path.** Dense embeddings are always
    available (our `EmbeddingModel` always produces them). Sparse may be
-   unavailable if SPLADE fails or is disabled.
+   unavailable if previous BERT sparse encoder fails or is disabled.
 
 1. **The `if/else` is in the store layer, not the caller.** The search API
    accepts `sparse_vector: SparseVector | None` and handles the branching
@@ -2272,36 +2272,36 @@ ______________________________________________________________________
 
 ### The question
 
-Is SPLADE-v3 still the best sparse encoder? Does sparse retrieval add value
+Is previous BERT sparse encoder still the best sparse encoder? Does sparse retrieval add value
 for code search specifically?
 
 ### Sparse encoder landscape (2025-2026)
 
-| Model            | Architecture            | Strengths                                 | Weaknesses                              |
-| ---------------- | ----------------------- | ----------------------------------------- | --------------------------------------- |
-| BM25             | Statistical (TF-IDF)    | Zero-cost, interpretable                  | No semantic expansion, exact match only |
-| SPLADE-v3        | Neural (BERT-based)     | Learned term expansion, semantic matching | 256 token limit, GPU required           |
-| SPLADE-v3-distil | Distilled SPLADE        | Faster inference, similar quality         | Slightly lower accuracy                 |
-| UniCOIL          | Single-weight per token | Efficient                                 | Less expansion than SPLADE              |
-| BM42 (Qdrant)    | Modified BM25           | Qdrant-native, no GPU                     | Lower quality than SPLADE               |
+| Model                        | Architecture                           | Strengths                                 | Weaknesses                                       |
+| ---------------------------- | -------------------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| BM25                         | Statistical (TF-IDF)                   | Zero-cost, interpretable                  | No semantic expansion, exact match only          |
+| previous BERT sparse encoder | Neural (BERT-based)                    | Learned term expansion, semantic matching | 256 token limit, GPU required                    |
+| previous BERT sparse encoder | Distilled previous BERT sparse encoder | Faster inference, similar quality         | Slightly lower accuracy                          |
+| UniCOIL                      | Single-weight per token                | Efficient                                 | Less expansion than previous BERT sparse encoder |
+| BM42 (Qdrant)                | Modified BM25                          | Qdrant-native, no GPU                     | Lower quality than previous BERT sparse encoder  |
 
-### SPLADE-v3 vs BM25 for code
+### previous BERT sparse encoder vs BM25 for code
 
-**SPLADE advantages for code search:**
+**previous BERT sparse encoder advantages for code search:**
 
 1. **Term expansion.** A query for "binary search" expands to include
    "bisect", "sorted", "find", "algorithm". BM25 requires exact keyword
    match.
-1. **Term weighting.** SPLADE downweights common tokens ("def", "return",
+1. **Term weighting.** previous BERT sparse encoder downweights common tokens ("def", "return",
    "self") and upweights distinctive identifiers. BM25's IDF does this
    partially but less effectively.
 1. **Handling abbreviations.** Code uses abbreviations heavily (cfg, ctx,
-   fmt, iter). SPLADE's BERT backbone can relate these to their full forms.
+   fmt, iter). previous BERT sparse encoder's BERT backbone can relate these to their full forms.
 
 **BM25 advantages for code search:**
 
 1. **Exact identifier matching.** When searching for `_collect_chunks`, BM25
-   matches it exactly. SPLADE may dilute this with expanded terms.
+   matches it exactly. previous BERT sparse encoder may dilute this with expanded terms.
 1. **No GPU required.** BM25 runs anywhere.
 1. **No 256-token limit.** BM25 processes arbitrarily long documents.
 
@@ -2318,31 +2318,31 @@ best practice in 2025-2026 retrieval. Key evidence:
 1. For code specifically, exact identifier matching is critical -- users
    often search for specific function/variable names.
 
-### SPLADE-v3 assessment for our stack
+### previous BERT sparse encoder assessment for our stack
 
-**SPLADE-v3 remains the best available sparse encoder.** No successor has
+**previous BERT sparse encoder remains the best available sparse encoder.** No successor has
 been released. The main alternatives are:
 
 - BM25: lower quality but no GPU needed
 - BM42: Qdrant-native but lower quality
-- SPLADE-v3-distil: slightly faster, slightly lower quality
+- previous BERT sparse encoder: slightly faster, slightly lower quality
 
 **The 256-token limit is the main weakness.** For code chunks that exceed
 ~800-1000 characters, the tail of the document is silently truncated by
-SPLADE's BERT tokenizer. Our pre-truncation at 8000 chars (embeddings.py
+previous BERT sparse encoder's BERT tokenizer. Our pre-truncation at 8000 chars (embeddings.py
 line 289) provides a safety net, but the effective sparse coverage is only
 the first ~256 tokens of each chunk.
 
 ### Recommendation
 
-**Keep SPLADE-v3.** No change needed. It's the best available sparse encoder
+**Keep previous BERT sparse encoder.** No change needed. It's the best available sparse encoder
 for our GPU-required stack. The 256-token limit is a known trade-off, but
 the alternative (BM25) would mean giving up learned term expansion.
 
 **Potential future improvement:** If Qdrant adds native BM25 scoring on
 payload text fields, consider adding BM25 as a third retrieval branch
-alongside dense + SPLADE. This would catch long-tail exact matches that
-SPLADE truncates.
+alongside dense + previous BERT sparse encoder. This would catch long-tail exact matches that
+previous BERT sparse encoder truncates.
 
 ______________________________________________________________________
 
@@ -2625,9 +2625,9 @@ truncate_dim: int | None = None
 - `encode_query()` â€” auto-sets `prompt_name="query"` if prompts dict has "query" key, passes `task="query"`
 - `encode_document()` â€” auto-sets `prompt_name` from `["document", "passage", "corpus"]` candidates, passes `task="document"`
 
-**SPLADE-v3 prompts:** `{'query': '', 'document': ''}` â€” both are empty strings. Therefore `encode()`, `encode_query()`, and `encode_document()` produce identical output for SPLADE-v3.
+**previous BERT sparse encoder prompts:** `{'query': '', 'document': ''}` â€” both are empty strings. Therefore `encode()`, `encode_query()`, and `encode_document()` produce identical output for previous BERT sparse encoder.
 
-**Our usage (embeddings.py:293, 319):** Uses plain `encode()` for both documents and queries. This is CORRECT for SPLADE-v3 since its prompts are empty. If the sparse model were ever changed to one with non-empty prompts (e.g., a future SPLADE variant), the code would need to switch to `encode_query()`/`encode_document()`.
+**Our usage (embeddings.py:293, 319):** Uses plain `encode()` for both documents and queries. This is CORRECT for previous BERT sparse encoder since its prompts are empty. If the sparse model were ever changed to one with non-empty prompts (e.g., a future previous BERT sparse encoder variant), the code would need to switch to `encode_query()`/`encode_document()`.
 
 **Severity:** NO BUG â€” but worth noting as a future-proofing concern.
 
@@ -2694,7 +2694,7 @@ Our code uses `predict()` directly instead of `rank()`. Both are valid â€” 
 ### Sources
 
 - Installed package introspection: sentence-transformers 5.2.3
-- SPLADE-v3 cached config: `config_sentence_transformers.json` prompts field
+- previous BERT sparse encoder cached config: `config_sentence_transformers.json` prompts field
 
 ______________________________________________________________________
 
@@ -2905,10 +2905,10 @@ ______________________________________________________________________
 - BSWEN reranker comparison 2026: <https://docs.bswen.com/blog/2026-02-25-best-reranker-models/>
 - cAST paper (EMNLP 2025): <https://arxiv.org/abs/2506.15655>
 - cAST full text: <https://arxiv.org/html/2506.15655v1>
-- SPLADE overview (Pinecone): <https://www.pinecone.io/learn/splade/>
-- SPLADE vs BM25 (Zilliz): <https://zilliz.com/learn/comparing-splade-sparse-vectors-with-bm25>
+- previous BERT sparse encoder overview (Pinecone): \<[retired sparse-model source locator removed; historical claim is not re-fetchable from this record]>
+- previous BERT sparse encoder vs BM25 (Zilliz): \<[retired sparse-model source locator removed; historical claim is not re-fetchable from this record]>
 - Qdrant modern sparse retrieval: <https://qdrant.tech/articles/modern-sparse-neural-retrieval/>
-- SPLADE billion-scale efficiency: <https://arxiv.org/pdf/2511.22263>
+- previous BERT sparse encoder billion-scale efficiency: <https://arxiv.org/pdf/2511.22263>
 - Jina ColBERT v2: <https://arxiv.org/html/2408.16672v2>
 - CoIR code retrieval benchmark: <https://jina.ai/models/jina-reranker-v3/>
 

@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#service-concurrency'
 date: '2026-06-12'
-modified: '2026-07-27'
-body_hash: 'sha256:d9a1a1adda8642d365557231981b6d8627b05c4c496f27916e5d06f72103b072'
+modified: '2026-09-30'
+body_hash: 'sha256:aff0a665059f629ac0f26ab3d927d639c1d13b8a88b87ae20d638000e3144f78'
 related:
   - "[[2026-06-11-server-bound-search-production-readiness-adr]]"
   - "[[2026-04-02-service-graph-adr]]"
@@ -107,7 +107,7 @@ GPU consumers.
 
 `QdrantClient(path=...)` is process-exclusive (own `FileLock` at `store.py:334-336`
 plus qdrant's own guard) and not thread-safe, which is the entire reason
-`_client_lock` exists. Local mode has no inverted sparse index (linear SPLADE scan
+`_client_lock` exists. Local mode has no inverted sparse index (linear previous BERT sparse encoder scan
 measured at ~20s over ~114k chunks) and no payload-index pushdown. The
 qdrant-performance ADR already accepted **server mode** (`VAULTSPEC_RAG_QDRANT_URL`)
 as the concurrency escape hatch with mandatory local-mode fallback: server mode lifts
@@ -274,20 +274,20 @@ practice bounds the structural signal (additive nudge on near-ties, as `--prefer
 already correctly does with `PREFER_SCORE_NUDGE`) or feeds it to the reranker rather
 than overriding it.
 
-### F15. SPLADE-v3 on source code is unvalidated (quality, cost)
+### F15. previous BERT sparse encoder on source code is unvalidated (quality, cost)
 
-The sparse branch applies naver/splade-v3 — a model trained on natural-language MS
+The sparse branch applies previous BERT sparse encoder — a model trained on natural-language MS
 MARCO passages — to source code. Code identifiers tokenize poorly in a BERT WordPiece
 vocabulary, so the learned expansion is of unproven value for the `codebase_docs`
 collection, while costing a second encode per query/slice and the dominant share of
 local-mode query latency at scale (the ~20s/114k-chunk linear sparse scan in F7). No
 benchmark currently compares code-search quality with `sparse_enabled` on versus off.
-An A/B on the existing benchmark harness should decide whether code keeps SPLADE,
+An A/B on the existing benchmark harness should decide whether code keeps previous BERT sparse encoder,
 switches to a code-aware lexical signal, or runs dense+rerank only.
 
 ### F16. Hot-path implementation inefficiencies (performance)
 
-- `_sparse_tensor_to_results` (`embeddings.py:94-152`) densifies the SPLADE output to
+- `_sparse_tensor_to_results` (`embeddings.py:94-152`) densifies the previous BERT sparse encoder output to
   `[batch × ~30k vocab]`, then loops per row calling `.nonzero()` / `.tolist()` —
   O(batch×vocab) work plus a GPU→CPU sync per row, executed inside the `gpu_lock` hold
   on every index slice. A single `.coalesce()` on the COO tensor (or one CSR transfer
@@ -338,7 +338,7 @@ already declared for server-mode pushdown, and the dense-only fallback path.
 For balance: the cAST-style AST chunker is current best practice and cleanly
 implemented; greedy sibling merge with a half-budget merge pass is sensible; the
 streaming slice pipeline with length-sorted batching, OOM halving, throttled CUDA
-cache flushes, and idempotent per-slice upserts is a mature design; asymmetric SPLADE
+cache flushes, and idempotent per-slice upserts is a mature design; asymmetric previous BERT sparse encoder
 encode (document vs query) is correct; the RRF hybrid query structure matches Qdrant's
 recommended pattern; incremental indexing via blake2b file digests is sound. The
 implementation problems are concentrated in what surrounds the models (snippet-based
@@ -361,7 +361,7 @@ not in the pipeline engineering.
 - **O12 — Model refresh evaluation.** Benchmark Qwen3-Reranker against
   bge-reranker-v2-m3, and Matryoshka 512d against 1024d, on the existing quality
   harness before any swap.
-- **O13 — Sparse-on-code A/B.** Measure code-search quality with the SPLADE branch on
+- **O13 — Sparse-on-code A/B.** Measure code-search quality with the previous BERT sparse encoder branch on
   vs off; keep, replace, or scope it to vault accordingly.
 - **O14 — Server-mode collection schema.** HNSW config, fp16 vector datatype, default
   scalar quantization, sparse index params — decided together with O1.

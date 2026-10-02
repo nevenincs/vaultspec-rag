@@ -3,8 +3,8 @@ tags:
   - '#audit'
   - '#gpu-rag-stack'
 date: '2026-03-07'
-modified: '2026-07-27'
-body_hash: 'sha256:089b6cc70e95a3e6ff9b12c26ad71d03e1b8fddfbff3b6514ab3099994554bac'
+modified: '2026-09-30'
+body_hash: 'sha256:0f8bed21d7594eaffe240db1b2de7da5ff10a452b4aef0c7c79fde1a3adaabd0'
 ---
 
 # ADR Test Coverage Audit — 2026-03-07
@@ -21,14 +21,14 @@ ______________________________________________________________________
 
 ### 1. gpu-only-rag-stack (2026-03-06)
 
-**Decision:** GPU-only inference with SentenceTransformer(Qwen3-Embedding-0.6B) + SparseEncoder(splade-v3). No CPU fallback. CUDA required.
+**Decision:** GPU-only inference with SentenceTransformer(Qwen3-Embedding-0.6B) + SparseEncoder(previous BERT sparse encoder). No CPU fallback. CUDA required.
 
 **Verdict: PARTIALLY COVERED**
 
 - `test_embeddings.py:18` asserts `model.device == "cuda"` -- would fail if CPU fallback added.
 - `test_embeddings.py:25,30,61` assert `vectors.shape[1] == model.dimension` -- would catch dimension change.
 - **GAP:** No test asserts the model name is `Qwen/Qwen3-Embedding-0.6B`. Swapping to a different model (e.g. nomic) with the same dimension would not be caught.
-- **GAP:** No test asserts the sparse model is `naver/splade-v3`. Swapping sparse models would not be caught.
+- **GAP:** No test asserts the sparse model is `previous BERT sparse encoder`. Swapping sparse models would not be caught.
 - **GAP:** No test asserts `torch_dtype=float16` or `flash_attention_2`. Inference precision could silently change.
 
 ______________________________________________________________________

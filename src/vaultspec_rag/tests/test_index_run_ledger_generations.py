@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -285,7 +286,7 @@ def test_a_succeeding_generation_never_accrues_resume_failures(
         ledger.advance_finalization(generation.generation_id, phase)
     ledger.finish_generation(generation.generation_id, RunTerminalState.SUCCEEDED)
 
-    with sqlite3.connect(tmp_path / "runs.sqlite3") as connection:
+    with closing(sqlite3.connect(tmp_path / "runs.sqlite3")) as connection, connection:
         failures = connection.execute(
             "SELECT consecutive_failures FROM generations WHERE generation_id = ?",
             (generation.generation_id,),

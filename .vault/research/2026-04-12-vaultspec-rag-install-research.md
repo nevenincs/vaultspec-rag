@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#install-command'
 date: '2026-04-12'
-modified: '2026-07-27'
-body_hash: 'sha256:de15d3a8fe23cf966219a71aeafc9a5e4982e1f9b3eda0982ee094fd3fb220a6'
+modified: '2026-10-01'
+body_hash: 'sha256:8fdb0a5faab0bfe3321512043cbb3793ef7d1debd82a4dee98d2c2fe94ece5d0'
 related:
   - '[[2026-04-12-vaultspec-rag-install-reference]]'
   - '[[2026-04-12-vaultspec-rag-install-adr]]'
@@ -118,10 +118,10 @@ shaped the ADR:
 
 Investigation was performed by parallel sub-agents against:
 
-- `C:/projects/worktrees/main/src/vaultspec_core/` —
+- `src/vaultspec_core/ (companion checkout)` —
   core's source tree, focused on `cli/`, `core/`, `builtins/`,
   and `config/`.
-- `C:/projects/worktrees/feature-54-55-install-command/src/vaultspec_rag/` —
+- `src/vaultspec_rag/ (historical install-command checkout)` —
   rag's existing layout and dependency declarations.
 - `.vault/adr/` and `.vault/audit/` of both repos — prior decisions
   on layer separation, ecosystem integration, and module exports.

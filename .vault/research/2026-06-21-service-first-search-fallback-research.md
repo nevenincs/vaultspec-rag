@@ -3,8 +3,8 @@ tags:
   - '#research'
   - '#service-first-search-fallback'
 date: '2026-06-21'
-modified: '2026-07-27'
-body_hash: 'sha256:40911e4ef4b55d6e56cb2090ccac57e60e7cf4527afa27aa0f9fcfd598e99d1a'
+modified: '2026-09-30'
+body_hash: 'sha256:44ec63cde971e1cbbb5e81c7c9b2ca31e8c846a1ec79ee88bc5c5627a67260c9'
 related: []
 ---
 
@@ -37,7 +37,7 @@ the HTTP path (`_try_http_search`). When the service at `--port` is unreachable,
 `_try_http_search` returns `None` (connection refused, see
 `src/vaultspec_rag/serviceclient/_transport.py` `_is_connection_refused`), and
 with `--allow-fallback` the handler drops through to `_try_in_process_search`,
-which loads the full GPU model stack (Qwen3 + SPLADE + CrossEncoder) and opens
+which loads the full GPU model stack (Qwen3 + previous BERT sparse encoder + CrossEncoder) and opens
 the local Qdrant store **with no deadline at all**. Once fallback engages,
 `--timeout` is meaningless and the command runs unbounded. This is the headline
 cause of "hangs past `--timeout`".

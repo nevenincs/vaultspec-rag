@@ -404,6 +404,7 @@ def _hold_local_index_lock(root: Path):
 
 
 def _status_contract_server(
+    tmp_path: Path,
     options: _StatusContractOptions | None = None,
     **legacy: object,
 ) -> _ContractServer:
@@ -434,6 +435,7 @@ def _status_contract_server(
                     options.jobs
                     if options.jobs is not None
                     else _status_contract_jobs_payload(
+                        tmp_path,
                         running_job_started_at,
                         options,
                     )
@@ -456,6 +458,7 @@ def _status_contract_server(
 
 
 def _status_contract_jobs_payload(
+    tmp_path: Path,
     started_at: float,
     options: _StatusContractOptions,
 ) -> dict[str, object]:
@@ -479,8 +482,7 @@ def _status_contract_jobs_payload(
         running_job["initiator"] = {
             "command": "reindex_codebase",
             "project_root": (
-                r"C:\projects\code-worktrees"
-                r"\feature-server-supervision"
+                str(tmp_path / "code-worktrees" / "feature-server-supervision")
             ),
         }
     jobs: list[dict[str, object]] = [running_job]
@@ -502,7 +504,7 @@ def _status_contract_jobs_payload(
                 "last_progress_age_seconds": 3.0,
                 "initiator": {
                     "command": "watcher_vault_index",
-                    "project_root": r"C:\projects\other-project",
+                    "project_root": str(tmp_path / "other-project"),
                 },
             }
         )
@@ -770,9 +772,9 @@ def _find_free_port() -> int:
     return free_loopback_port()
 
 
-def _projects_list_contract_server() -> tuple[
-    http.server.HTTPServer, threading.Thread, list[str]
-]:
+def _projects_list_contract_server(
+    tmp_path: Path,
+) -> tuple[http.server.HTTPServer, threading.Thread, list[str]]:
     import threading
 
     requests: list[str] = []
@@ -788,13 +790,13 @@ def _projects_list_contract_server() -> tuple[
                     {
                         "projects": [
                             {
-                                "root": r"C:\projects\busy",
+                                "root": str(tmp_path / "busy"),
                                 "idle_seconds": 65,
                                 "ref_count": 2,
                                 "last_access_iso": "2026-06-12T14:05:06Z",
                             },
                             {
-                                "root": r"C:\projects\ready",
+                                "root": str(tmp_path / "ready"),
                                 "idle_seconds": 4,
                                 "ref_count": 0,
                                 "last_access_iso": "",
@@ -812,9 +814,9 @@ def _projects_list_contract_server() -> tuple[
     return server, thread, requests
 
 
-def _logs_contract_server() -> tuple[
-    http.server.HTTPServer, threading.Thread, list[str]
-]:
+def _logs_contract_server(
+    tmp_path: Path,
+) -> tuple[http.server.HTTPServer, threading.Thread, list[str]]:
     import threading
 
     requests: list[str] = []
@@ -832,7 +834,7 @@ def _logs_contract_server() -> tuple[
                             "2026-06-13 10:05:06 INFO vaultspec_rag.service: "
                             "service.lifecycle event=search search_type=code "
                             "results=3 total_seconds=0.42 "
-                            r"root=C:\projects\feature-server-supervision "
+                            f"root={tmp_path / 'feature-server-supervision'} "
                             "request_id=abcdef123456"
                         ]
                     }
@@ -903,9 +905,9 @@ def _jobs_empty_contract_server() -> tuple[
     return server, thread, requests
 
 
-def _jobs_populated_contract_server() -> tuple[
-    http.server.HTTPServer, threading.Thread, list[str]
-]:
+def _jobs_populated_contract_server(
+    tmp_path: Path,
+) -> tuple[http.server.HTTPServer, threading.Thread, list[str]]:
     import threading
 
     requests: list[str] = []
@@ -924,7 +926,7 @@ def _jobs_populated_contract_server() -> tuple[
                         "result": "+1 /0 -0 (1000ms)",
                         "initiator": {
                             "command": "reindex_codebase",
-                            "project_root": r"C:\projects\finished-project",
+                            "project_root": str(tmp_path / "finished-project"),
                         },
                     },
                     {
@@ -941,7 +943,7 @@ def _jobs_populated_contract_server() -> tuple[
                         "runtime_seconds": 7,
                         "initiator": {
                             "command": "watcher_vault_index",
-                            "project_root": r"C:\projects\running-project",
+                            "project_root": str(tmp_path / "running-project"),
                         },
                     },
                 ],
@@ -983,12 +985,12 @@ def _projects_unload_contract_server(
     return server, thread, requests
 
 
-def _assert_project_summary_language(out: str) -> None:
+def _assert_project_summary_language(tmp_path: Path, out: str) -> None:
     expected = {
         "Capacity: 1 of 16 projects loaded",
         "Automatic unload: after 30 minutes idle",
         "- Project: example",
-        r"  Path: C:\projects\example",
+        f"  Path: {tmp_path / 'example'}",
         "  Active requests: 1",
         "  Last activity: 2 minutes 5 seconds ago",
         "  Last request: 14:05:06",
@@ -1167,8 +1169,12 @@ def process_the_identity_check_recognises() -> typing.Generator[int]:
             raise AssertionError(msg)
         yield process.pid
     finally:
-        process.kill()
-        process.wait(timeout=10)
+        try:
+            process.kill()
+            process.wait(timeout=10)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 @contextlib.contextmanager
@@ -1208,5 +1214,9 @@ def store_locked_by_another_process(root: Path) -> typing.Generator[None]:
             raise AssertionError(msg)
         yield
     finally:
-        process.kill()
-        process.wait(timeout=10)
+        try:
+            process.kill()
+            process.wait(timeout=10)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
