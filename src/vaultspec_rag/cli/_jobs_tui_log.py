@@ -618,15 +618,23 @@ class JobsLogView(RetainedLog[LogEntry]):
     # -- navigation ---------------------------------------------------------
 
     def jump_top(self) -> None:
+        self.auto_scroll = False
         self.scroll_home(animate=False)
 
     def jump_end(self) -> None:
+        self.auto_scroll = True
         self.scroll_end(animate=False)
+
+    def scroll_followed_tail(self) -> None:
+        """Honor manual navigation that happened after a tail scroll was queued."""
+        if self.auto_scroll:
+            self.scroll_end(animate=False)
 
     def jump_next_error(self) -> bool:
         """Scroll to the error after the last one jumped to, wrapping."""
         if not self._error_offsets:
             return False
+        self.auto_scroll = False
         self._error_cursor = (self._error_cursor + 1) % len(self._error_offsets)
         self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
         return True
@@ -635,6 +643,7 @@ class JobsLogView(RetainedLog[LogEntry]):
         """Scroll to the error before the last one jumped to, wrapping."""
         if not self._error_offsets:
             return False
+        self.auto_scroll = False
         self._error_cursor = (self._error_cursor - 1) % len(self._error_offsets)
         self.scroll_to(y=self._error_offsets[self._error_cursor], animate=False)
         return True
@@ -648,11 +657,16 @@ class JobsLogView(RetainedLog[LogEntry]):
         so it runs first; the re-render then replaces them at the width the
         pane actually has.
         """
+        position = self.scroll_offset.y
         super().on_resize(event)
         if (self._records or self._message is not None) and (
             self._content_width() != self._rendered_width
         ):
             self._paint()
+        if self.auto_scroll:
+            self.call_after_refresh(self.scroll_followed_tail)
+        else:
+            self.call_after_refresh(self.scroll_to, y=position, animate=False)
 
     def _content_width(self) -> int:
         width = self.scrollable_content_region.width or self.content_size.width

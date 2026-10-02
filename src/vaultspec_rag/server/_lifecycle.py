@@ -207,6 +207,8 @@ def _daemon_discovery_snapshot(
         fields["phase_total"] = phase_total
         fields["phase_done"] = phase_done or 0
     fields.update(_qdrant_discovery_fields())
+    if runtime.monitor is not None:
+        fields.update(runtime.monitor.discovery_fields())
     return fields
 
 

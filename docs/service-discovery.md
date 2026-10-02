@@ -49,35 +49,45 @@ Don't confuse this pair with `package_version`. The pair describes the shape of 
 
 Both views carry the same payload. "Presence" says when a field is absent.
 
-| Field                  | Type    | Presence            | Meaning                                                                                                   |
-| ---------------------- | ------- | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `schema`               | string  | always              | Schema discriminator.                                                                                     |
-| `version`              | integer | always              | Schema version.                                                                                           |
-| `pid`                  | integer | always              | Operating-system process id (PID) of the serving daemon. See the [PID-reuse caveat](#staleness-contract). |
-| `port`                 | integer | always              | TCP port the daemon serves on.                                                                            |
-| `started_at`           | string  | always              | ISO-8601 timestamp of the first publication.                                                              |
-| `last_heartbeat`       | string  | always              | ISO-8601 timestamp of the most recent heartbeat.                                                          |
-| `heartbeat_interval_s` | integer | always              | Seconds between heartbeats. Fixed at 15; see below.                                                       |
-| `stale_after_s`        | integer | always              | Seconds after which a consumer treats the record as stale. Fixed at 60; see below.                        |
-| `service_token`        | string  | always              | Bearer token for the daemon's token-gated HTTP routes.                                                    |
-| `package_version`      | string  | always              | Release of the daemon that wrote the record.                                                              |
-| `python_version`       | string  | always              | Python running the daemon.                                                                                |
-| `phase`                | string  | always              | Lifecycle phase, for example `running` or `warming`.                                                      |
-| `phase_detail`         | string  | always              | Human-readable detail beside `phase`, empty once running; during start-up it names the stage, for example `loading the reranker`. |
-| `parent_pid`           | integer | always              | PID of the process that spawned the daemon.                                                               |
-| `launch_token`         | string  | spawned services    | Per-spawn identifier the launcher passes in and matches back, so it can tell the process it started from another that was already coming up. |
-| `executable`           | string  | always              | Absolute path to the interpreter running the daemon.                                                      |
-| `prefix`               | string  | always              | Environment prefix of that interpreter.                                                                   |
-| `base_prefix`          | string  | always              | Base installation prefix, which differs from `prefix` inside a virtual environment.                       |
-| `virtual_env`          | string  | always              | Active virtual-environment path, or `null` when the daemon runs outside one.                              |
-| `qdrant_pid`           | integer | managed server only | PID of the managed Qdrant process.                                                                        |
-| `qdrant_alive`         | boolean | managed server only | Whether the daemon last observed that process alive.                                                      |
-| `qdrant_port`          | integer | managed server only | Port the managed Qdrant serves on.                                                                        |
-| `qdrant_version`       | string  | managed server only | Version of the managed Qdrant binary.                                                                     |
-| `qdrant_start_time`    | float   | managed server only | Epoch seconds when the managed Qdrant started.                                                            |
-| `qdrant_identity`      | object  | managed server only | The witnessed child's `pid`, `port`, and `start_time`.                                                    |
+| Field                  | Type    | Presence             | Meaning                                                                                                                                      |
+| ---------------------- | ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`               | string  | always               | Schema discriminator.                                                                                                                        |
+| `version`              | integer | always               | Schema version.                                                                                                                              |
+| `pid`                  | integer | always               | Operating-system process id (PID) of the serving daemon. See the [PID-reuse caveat](#staleness-contract).                                    |
+| `port`                 | integer | always               | TCP port the daemon serves on.                                                                                                               |
+| `started_at`           | string  | always               | ISO-8601 timestamp of the first publication.                                                                                                 |
+| `last_heartbeat`       | string  | always               | ISO-8601 timestamp of the most recent heartbeat.                                                                                             |
+| `heartbeat_interval_s` | integer | always               | Seconds between heartbeats. Fixed at 15; see below.                                                                                          |
+| `stale_after_s`        | integer | always               | Seconds after which a consumer treats the record as stale. Fixed at 60; see below.                                                           |
+| `service_token`        | string  | always               | Bearer token for the daemon's token-gated HTTP routes.                                                                                       |
+| `package_version`      | string  | always               | Release of the daemon that wrote the record.                                                                                                 |
+| `python_version`       | string  | always               | Python running the daemon.                                                                                                                   |
+| `phase`                | string  | always               | Lifecycle phase, for example `running` or `warming`.                                                                                         |
+| `phase_detail`         | string  | always               | Human-readable detail beside `phase`, empty once running; during start-up it names the stage, for example `loading the reranker`.            |
+| `parent_pid`           | integer | always               | PID of the process that spawned the daemon.                                                                                                  |
+| `launch_token`         | string  | spawned services     | Per-spawn identifier the launcher passes in and matches back, so it can tell the process it started from another that was already coming up. |
+| `executable`           | string  | always               | Absolute path to the interpreter running the daemon.                                                                                         |
+| `prefix`               | string  | always               | Environment prefix of that interpreter.                                                                                                      |
+| `base_prefix`          | string  | always               | Base installation prefix, which differs from `prefix` inside a virtual environment.                                                          |
+| `virtual_env`          | string  | always               | Active virtual-environment path, or `null` when the daemon runs outside one.                                                                 |
+| `qdrant_pid`           | integer | managed server only  | PID of the managed Qdrant process.                                                                                                           |
+| `qdrant_alive`         | boolean | managed server only  | Whether the daemon last observed that process alive.                                                                                         |
+| `qdrant_port`          | integer | managed server only  | Port the managed Qdrant serves on.                                                                                                           |
+| `qdrant_version`       | string  | managed server only  | Version of the managed Qdrant binary.                                                                                                        |
+| `qdrant_start_time`    | float   | managed server only  | Epoch seconds when the managed Qdrant started.                                                                                               |
+| `qdrant_identity`      | object  | managed server only  | The witnessed child's `pid`, `port`, and `start_time`.                                                                                       |
+| `monitor_port`         | integer | live managed monitor | Actual frontend port allocated upward from the backend port plus one.                                                                        |
+| `monitor_pid`          | integer | live managed monitor | PID of the daemon-owned frontend process.                                                                                                    |
+| `monitor_start_time`   | float   | live managed monitor | Epoch seconds identifying that frontend process incarnation.                                                                                 |
 
 The `qdrant_*` fields are absent in local-only mode and when pointed at a remote Qdrant. Treat absent and null alike.
+
+Monitor fields are additive diagnostics and are absent when no managed frontend
+is running. Every owner-published snapshot includes the actual assignment, so
+heartbeat repair preserves it. The user scratch directory also retains
+`monitor.json` with owner and child PID/start-time witnesses for forced-stop
+cleanup. It grants no backend ownership authority. Server stop verifies the
+child incarnation before terminating an orphan, then removes its identity.
 
 Parse `started_at` and `last_heartbeat` as ISO-8601 strings. Note that `qdrant_start_time` is epoch seconds, not ISO-8601.
 
@@ -178,17 +188,17 @@ Startup writers to the status file serialize through an operating-system-backed 
 
 Every adapter renders one canonical operator verdict, composed from the typed resolution plus already-probed liveness signals. The verdict is derived once and rendered per surface, never recomputed.
 
-| Operator state            | Meaning                                                                   | Exit code |
-| ------------------------- | ------------------------------------------------------------------------- | --------- |
-| `running`                 | The service answers. Its health verdict says whether it is serving.       | 0         |
-| `starting`                | Holds the singleton, loading models, not yet serving.                     | 5         |
-| `stopped`                 | Nothing is running (resolution `absent`).                                 | 3         |
-| `crashed_pid_dead`        | The recorded process is no longer running.                                | 4         |
-| `crashed_pid_reused`      | The recorded process ID now belongs to another program.                   | 4         |
-| `crashed_port_silent`     | The process is alive but its port gives no usable answer.                 | 4         |
-| `crashed_heartbeat_stale` | The service stopped reporting that it is alive.                           | 4         |
-| `not_serving`             | The service answers but its models never loaded, so it cannot serve.      | 4         |
-| `discovery_degraded`      | Live holder, untrustworthy pointer (resolution `degraded`).               | 4         |
+| Operator state            | Meaning                                                              | Exit code |
+| ------------------------- | -------------------------------------------------------------------- | --------- |
+| `running`                 | The service answers. Its health verdict says whether it is serving.  | 0         |
+| `starting`                | Holds the singleton, loading models, not yet serving.                | 5         |
+| `stopped`                 | Nothing is running (resolution `absent`).                            | 3         |
+| `crashed_pid_dead`        | The recorded process is no longer running.                           | 4         |
+| `crashed_pid_reused`      | The recorded process ID now belongs to another program.              | 4         |
+| `crashed_port_silent`     | The process is alive but its port gives no usable answer.            | 4         |
+| `crashed_heartbeat_stale` | The service stopped reporting that it is alive.                      | 4         |
+| `not_serving`             | The service answers but its models never loaded, so it cannot serve. | 4         |
+| `discovery_degraded`      | Live holder, untrustworthy pointer (resolution `degraded`).          | 4         |
 
 A paused or degraded service still answers on its port, so it is `running`; its
 health says what it is doing. Only a service whose health verdict is `error` is

@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import psutil
+    from psutil._ntuples import pconn
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ __all__ = [
     "pid_listens_on_loopback_port",
     "pid_matches_start_time",
     "pid_start_time",
+    "pid_tcp_connections",
     "pid_terminated",
     "process_lineage",
     "reap_if_child",
@@ -559,7 +561,7 @@ def pid_listens_on_loopback_port(
         import psutil
 
         try:
-            connections = psutil.Process(pid).net_connections(kind="tcp")
+            connections = pid_tcp_connections(pid)
         except Exception as exc:
             logger.debug(
                 "could not inspect TCP listener ownership for pid %d port %d: %s",
@@ -579,6 +581,13 @@ def pid_listens_on_loopback_port(
     return bounded_call(
         inspect, timeout=timeout, fallback=False, label=f"pid-{pid}-listener"
     )
+
+
+def pid_tcp_connections(pid: int) -> list[pconn]:
+    """Read a process's TCP endpoints; propagate an unavailable observation."""
+    import psutil
+
+    return psutil.Process(pid).net_connections(kind="tcp")
 
 
 class _ProcessInfo(Mapping[str, object]):

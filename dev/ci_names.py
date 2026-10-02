@@ -20,6 +20,7 @@ __all__ = [
     "MERGE_BOX",
     "PRODUCT",
     "SAME_REPO_CLAUSE",
+    "SHARED_WORKFLOW_NAMES",
     "Workflow",
 ]
 
@@ -40,10 +41,14 @@ class Workflow(StrEnum):
     PUBLISH = "publish.yml"
     CHANNELS = "channels.yml"
     CODE_HEALTH = "code-health.yml"
+    DEVSERVER = "devserver.yml"
 
 
-#: The product every workflow name starts with, so its runs group together.
+#: The product owned workflow names start with, so their runs group together.
 PRODUCT = "RAG"
+
+# Shared workflows retain their owner's name in every consumer repository.
+SHARED_WORKFLOW_NAMES = {Workflow.DEVSERVER: "Dev server"}
 
 #: The workflow that measures pull requests and reports merge readiness.
 #: Release and scheduled hardware workflows answer different questions.

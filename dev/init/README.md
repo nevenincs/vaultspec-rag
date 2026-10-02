@@ -15,6 +15,29 @@ The recipes:
 | `just init-tools`  | Framework enrollment, git hooks, and host-tool diagnosis.     |
 | `just init-check`  | Reports whether the worktree is initialized. Mutates nothing. |
 
+The monitor frontend is provisioned separately with `just init-monitor`
+(`npm ci`, after stopping its managed dev and preview servers); Python-only
+CI jobs do not need Node. `just init-node` reports
+that separate entry point. Run `just dev` to start or attach to the monitor,
+`just dev status` to inspect it, and `just dev stop` to stop it.
+`just check-monitor` runs frontend lint, formatting, types and build.
+The application's root is `src/monitor`; it currently contains an empty HTML
+entry. Ports and proxy names are declared in the root `package.json`.
+
+The shared proxy supplies `https://vaultspec-rag-monitor.localhost/`. Trust
+its local certificate authority with `portless trust` in an interactive
+terminal if your browser does not already trust it. The server also accepts
+the workstation's Tailscale hostname, declared under `devserver.allowedHosts`.
+For tailnet HTTPS, enable Tailscale Serve in the tailnet administration first.
+The devservers repository's `just tailnet apply` maps enrolled main checkouts
+with its fixed HTTPS port offset; a feature worktree needs an explicit mapping
+until it lands. Compute that mapping from the frontend declaration:
+
+```powershell
+$monitorPort = (Get-Content package.json -Raw | ConvertFrom-Json).portless.appPort
+tailscale serve --bg --yes --https=($monitorPort + 10000) "http://127.0.0.1:$monitorPort"
+```
+
 ## The contract
 
 **Idempotent, and cheap when there is nothing to do.** A phase is skipped when
@@ -71,11 +94,11 @@ stay behind their own named recipes. `init` restores what the lockfiles pin.
 chooses how much of the `gpu` dependency group — torch, its model libraries,
 and the CUDA runtime torch pulls in — `init-python` installs:
 
-| Value            | Installs                                   | For                                        |
-| ---------------- | ------------------------------------------ | ------------------------------------------ |
-| `full` (default) | The whole group, CUDA runtime included.    | GPU workstations and the accelerator tiers. |
-| `types`          | The group's packages, no CUDA runtime.     | Jobs that type-check; torch cannot import. |
-| `none`           | Nothing from the group.                    | Every other job that runs no GPU work.     |
+| Value            | Installs                                | For                                         |
+| ---------------- | --------------------------------------- | ------------------------------------------- |
+| `full` (default) | The whole group, CUDA runtime included. | GPU workstations and the accelerator tiers. |
+| `types`          | The group's packages, no CUDA runtime.  | Jobs that type-check; torch cannot import.  |
+| `none`           | Nothing from the group.                 | Every other job that runs no GPU work.      |
 
 Any other value fails the run rather than falling back to `full`. Tests that
 need torch installed but no device carry the `torch` marker, so the

@@ -6,7 +6,7 @@ markdown files kept in a `.vault/` folder. The repository setup creates the fold
 code search works while it's empty. This guide installs vaultspec-rag on one machine and
 connects repositories to it.
 
-vaultspec-rag needs a supported graphics processing unit (GPU): an NVIDIA GPU with CUDA,
+The RAG search service needs a supported graphics processing unit (GPU): an NVIDIA GPU with CUDA,
 NVIDIA's GPU computing platform, on Linux or Windows, or Apple silicon on macOS. It
 doesn't run on a central processing unit (CPU) or on AMD GPUs. The
 [architecture overview](architecture.md#why-vaultspec-rag-needs-a-gpu) explains why a
@@ -208,9 +208,10 @@ installation. The release publishes Windows x86-64, Linux x86-64 and ARM64, and 
 silicon macOS archives. Intel Macs are unsupported on every route, because PyTorch
 publishes no Intel macOS build.
 
-`vaultspec-rag` and `vaultspec-search-mcp` ship in one archive per target. The archive
-embeds CPython 3.13, and on first launch it installs the vaultspec-rag wheel and its
-runtime dependencies.
+`vaultspec-rag`, `vaultspec-search-mcp`, and `vaultspec-rag-monitor` ship in one archive
+per target. The two RAG commands embed CPython 3.13 and install their runtime dependencies
+on first launch. The monitor embeds its server, React assets, CSS and fonts; serving its
+frontend needs no Python, Node, npm, Bun, GPU or network download.
 
 #### Install with Scoop or Homebrew
 
@@ -232,7 +233,7 @@ brew install vaultspec-rag
 ```
 
 Each channel pins one archive URL and SHA-256 digest for the selected target, and puts
-the `vaultspec-rag` and `vaultspec-search-mcp` commands on your `PATH`.
+all three commands on your `PATH`.
 
 #### Download an archive directly
 
@@ -271,6 +272,7 @@ Then use the release asset for your operating system and architecture, replacing
    Expand-Archive -LiteralPath .\vaultspec-rag-v<release>-x86_64-pc-windows-msvc.zip `
      -DestinationPath .\vaultspec-rag
    .\vaultspec-rag\vaultspec-rag.exe --version
+   .\vaultspec-rag\vaultspec-rag-monitor.exe --version
    ```
 
    Linux or macOS (substitute your asset's name):
@@ -278,8 +280,10 @@ Then use the release asset for your operating system and architecture, replacing
    ```sh
    mkdir -p vaultspec-rag
    tar -xzf vaultspec-rag-v<release>-x86_64-unknown-linux-gnu.tar.gz -C vaultspec-rag
-   chmod +x vaultspec-rag/vaultspec-rag vaultspec-rag/vaultspec-search-mcp
+   chmod +x vaultspec-rag/vaultspec-rag vaultspec-rag/vaultspec-search-mcp \
+     vaultspec-rag/vaultspec-rag-monitor
    ./vaultspec-rag/vaultspec-rag --version
+   ./vaultspec-rag/vaultspec-rag-monitor --version
    ```
 
 1. Add the extracted folder to your `PATH`, so later steps can run `vaultspec-rag`.
@@ -287,7 +291,26 @@ Then use the release asset for your operating system and architecture, replacing
 To check each extracted file against the archive's manifest, see the
 [archive layout](#inspect-the-archive-layout).
 
-#### First launch requirements for binaries
+#### Open the monitor
+
+After adding the extracted directory to your `PATH`, run:
+
+```sh
+vaultspec-rag-monitor --port 5420
+```
+
+Open `http://127.0.0.1:5420`. The frontend starts independently of the search service;
+when no backend is available it shows that state. An occupied port fails explicitly.
+Press Ctrl+C to stop a monitor you launched directly. `--version --json` reports the
+release version, full producer commit and embedded frontend identity without starting
+the backend.
+
+Backend controls use the sibling `vaultspec-rag` command. If that command lives
+elsewhere, set `VAULTSPEC_RAG_MONITOR_OWNER` to its absolute executable path. Those
+controls still need the RAG runtime described below. The service supervisor uses its
+initialized Python environment automatically when it launches the monitor.
+
+#### First launch requirements for RAG commands
 
 On Windows and Linux, the binary installs the CUDA 13 PyTorch wheel pinned from the
 project lockfile. On macOS, it installs PyPI's PyTorch, which carries MPS. The other
@@ -904,22 +927,28 @@ encoder, or reranker. The host installation still needs `[gpu]` and a supported 
 
 Every verified release archive contains these members at its top level:
 
-| Member                                               | Purpose                                            |
-| ---------------------------------------------------- | -------------------------------------------------- |
-| `vaultspec-rag` or `vaultspec-rag.exe`               | Command-line client and service control            |
-| `vaultspec-search-mcp` or `vaultspec-search-mcp.exe` | MCP stdio adapter                                  |
-| `LICENSE`                                            | Project licence                                    |
-| `README.txt`                                         | Target and runtime notes                           |
-| `manifest.json`                                      | Machine-readable bundle metadata and member hashes |
+| Member                                                 | Purpose                                            |
+| ------------------------------------------------------ | -------------------------------------------------- |
+| `vaultspec-rag` or `vaultspec-rag.exe`                 | Command-line client and service control            |
+| `vaultspec-search-mcp` or `vaultspec-search-mcp.exe`   | MCP stdio adapter                                  |
+| `vaultspec-rag-monitor` or `vaultspec-rag-monitor.exe` | Self-contained React monitor and local bridge      |
+| `LICENSE`                                              | Project licence                                    |
+| `README.txt`                                           | Target and runtime notes                           |
+| `manifest.json`                                        | Machine-readable bundle metadata and member hashes |
 
 `manifest.json` records the schema, product and version, release tag, target, archive
-format, runtime, requirements, and platform metadata. Its `files` array records the
+format and platform metadata. Schema `vaultspec.release-bundle.v2` records runtime and
+requirements separately for each executable under `components`, including native
+browser verification of the monitor. Its `files` array records the
 role, size, and SHA-256 of each executable and release document.
 
 Confirm `archive.name` matches the downloaded filename, `target` matches your machine,
 and every `files[].name` exists with its listed size and digest. `manifest.json`
 doesn't hash the enclosing archive; `SHA256SUMS` is the source of truth for that digest.
-The manifest's `platform.glibc_floor` records the Linux loader floor.
+The manifest's `platform.glibc_floor` records the enclosing Linux bundle floor.
+The monitor's component records its independently measured `glibc_required`; it does
+not lower the RAG bundle's glibc 2.39 requirement. Release CI also compares the archive
+and monitor against the independently reviewed [committed release pins](../tools/monitor/release-pins.json).
 
 ### Which Linux binary your distribution can run
 

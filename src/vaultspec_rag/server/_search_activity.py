@@ -9,7 +9,16 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+from .._operator_lists import list_offset, list_order
 from .._search_state import SearchWaitCause, WaitObservation
+from ._search_evidence import (
+    MAX_LEDGER_EVIDENCE_BYTES,
+    MAX_REQUEST_EVIDENCE_BYTES,
+    MAX_RESPONSE_EVIDENCE_BYTES,
+    SEARCH_INPUT_FIELDS,
+    JsonEvidence,
+    capture_json_evidence,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -19,7 +28,6 @@ __all__ = [
     "DEFAULT_MAX_QUEUED_SEARCHES",
     "DEFAULT_MAX_RECENT_SEARCHES",
     "DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS",
-    "DEFAULT_SEARCH_ACTIVITY_ROWS",
     "MAX_SEARCH_ACTIVITY_QUERY_CHARS",
     "SearchActivityAdmissionError",
     "SearchActivityCompletion",
@@ -35,15 +43,6 @@ DEFAULT_MAX_RECENT_SEARCHES = 512
 DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS = 30.0
 MAX_SEARCH_ACTIVITY_QUERY_CHARS = 10_000
 
-#: Rows an unfiltered activity read returns when the caller names no limit.
-#:
-#: The retention bounds above are a memory ceiling, not a response size: all
-#: 1280 records carrying queries of the length allowed above serialize to
-#: several megabytes, built in one pass while every other route waits. An
-#: operator list is bounded by default and widened on request, so the ceiling
-#: is what the caller asked for rather than what the ledger happens to hold.
-DEFAULT_SEARCH_ACTIVITY_ROWS = 200
-
 type ActivityState = Literal["queued", "active", "terminal"]
 
 
@@ -54,9 +53,12 @@ class _SearchActivityFilters(TypedDict):
     request_id: str | None
     since: float | None
     limit: int | None
+    query: str | None
+    outcome: str | None
 
 
 class _SearchActivitySnapshot(TypedDict):
+    records: list[dict[str, object]]
     queued: list[dict[str, object]]
     queued_count: int
     active: list[dict[str, object]]
@@ -65,6 +67,12 @@ class _SearchActivitySnapshot(TypedDict):
     all_counts: dict[str, int]
     returned: int
     filters: _SearchActivityFilters
+    matched: int
+    offset: int
+    limit: int | None
+    sort: str
+    order: str
+    has_more: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +86,7 @@ class SearchActivityCompletion:
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    response: Mapping[str, object] | None = None
 
 
 class SearchActivityAdmissionError(TimeoutError):
@@ -108,6 +117,11 @@ class SearchActivityFilters:
     request_id: str | None = None
     since: float | None = None
     limit: int | None = None
+    offset: int = 0
+    query: str | None = None
+    outcome: str | None = None
+    sort: str = "priority"
+    order: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +149,17 @@ class _SearchActivity:
     availability_cause: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    request_inputs: JsonEvidence | None = None
+    response: JsonEvidence | None = None
+    evidence_evicted: bool = False
+
+    @property
+    def evidence_bytes(self) -> int:
+        return sum(
+            item.size_bytes
+            for item in (self.request_inputs, self.response)
+            if item is not None
+        )
 
     def serialise(self, *, include_query: bool) -> dict[str, object]:
         """Return the route-safe representation with optional query text."""
@@ -161,8 +186,24 @@ class _SearchActivity:
         }
         if include_query:
             result["query"] = self.query
+            result["request_inputs"] = (
+                self.request_inputs.materialize() if self.request_inputs else None
+            )
+            result["response"] = self.response.materialize() if self.response else None
+            result["evidence_truncated_paths"] = {
+                "request_inputs": (
+                    list(self.request_inputs.truncated_paths)
+                    if self.request_inputs
+                    else []
+                ),
+                "response": list(self.response.truncated_paths)
+                if self.response
+                else [],
+            }
+            result["evidence_evicted"] = self.evidence_evicted
         else:
             result["query_redacted"] = True
+            result["evidence_redacted"] = True
         return result
 
 
@@ -196,6 +237,17 @@ class SearchActivityStart:
     admission_wait_seconds: float = DEFAULT_SEARCH_ACTIVITY_ADMISSION_WAIT_SECONDS
 
 
+@dataclass(frozen=True, slots=True)
+class SearchActivityRequest:
+    """Inspectable request fields after its JSON body has been read."""
+
+    query: str
+    search_type: str
+    root: str | None
+    top_k: int | None
+    inputs: Mapping[str, object] | None = None
+
+
 class SearchActivityLedger:
     """Own active and recently terminal search activity with finite retention.
 
@@ -225,6 +277,7 @@ class SearchActivityLedger:
         self._queued: dict[str, _SearchActivity] = {}
         self._recent: deque[_SearchActivity] = deque()
         self._active_slot = threading.Condition(self._lock)
+        self._evidence_bytes = 0
 
     def start(self, admission: SearchActivityStart) -> SearchActivityTicket:
         """Start one served search and return its terminal-record ticket.
@@ -374,7 +427,16 @@ class SearchActivityLedger:
                 availability_cause=completion.availability_cause,
                 error_code=completion.error_code,
                 error_message=_bounded_text(completion.error_message),
+                response=(
+                    capture_json_evidence(
+                        dict(completion.response),
+                        maximum_bytes=MAX_RESPONSE_EVIDENCE_BYTES,
+                    )
+                    if completion.response is not None
+                    else None
+                ),
             )
+            self._evidence_bytes -= active.evidence_bytes
             self._append_recent_locked(terminal)
             self._active_slot.notify()
             return True
@@ -383,27 +445,39 @@ class SearchActivityLedger:
         self,
         ticket: SearchActivityTicket,
         *,
-        query: str,
-        search_type: str,
-        root: str | None,
-        top_k: int | None,
+        request: SearchActivityRequest,
     ) -> bool:
         """Replace provisional request metadata once route validation settles it."""
-        truncated_query = query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
+        truncated_query = request.query[:MAX_SEARCH_ACTIVITY_QUERY_CHARS]
         with self._lock:
             if ticket.terminal:
                 return False
             active = self._active.get(ticket.request_id)
             if active is None:
                 return False
-            self._active[ticket.request_id] = replace(
+            updated = replace(
                 active,
                 query=truncated_query,
-                query_truncated=len(query) > len(truncated_query),
-                source=search_type,
-                root=root,
-                top_k=top_k,
+                query_truncated=len(request.query) > len(truncated_query),
+                source=request.search_type,
+                root=request.root,
+                top_k=request.top_k,
+                request_inputs=(
+                    capture_json_evidence(
+                        {
+                            key: value
+                            for key, value in request.inputs.items()
+                            if key in SEARCH_INPUT_FIELDS
+                        },
+                        maximum_bytes=MAX_REQUEST_EVIDENCE_BYTES,
+                    )
+                    if request.inputs is not None
+                    else active.request_inputs
+                ),
             )
+            self._evidence_bytes += updated.evidence_bytes - active.evidence_bytes
+            self._active[ticket.request_id] = updated
+            self._enforce_evidence_budget_locked()
             return True
 
     def snapshot(
@@ -436,45 +510,43 @@ class SearchActivityLedger:
                 **counts,
                 "total": len(queued) + counts["total"],
             }
-        active_matches = _filter_records(
-            active,
+        matches = _sort_records(
+            _filter_records(queued + active + recent, selected_filters),
             selected_filters,
         )
-        queued_matches = _filter_records(
-            queued,
-            selected_filters,
-        )
-        recent_matches = _filter_records(
-            recent,
-            selected_filters,
-        )
+        matched = len(matches)
+        matches = matches[selected_filters.offset :]
         if selected_filters.limit is not None:
-            queued_matches = queued_matches[: selected_filters.limit]
-            remaining = max(0, selected_filters.limit - len(queued_matches))
-            active_matches = active_matches[:remaining]
-            remaining = max(0, remaining - len(active_matches))
-            recent_matches = recent_matches[:remaining]
+            matches = matches[: selected_filters.limit]
+        shaped_matches = [
+            _serialise_queued(
+                record, now=time.perf_counter(), include_query=include_query
+            )
+            if record.state == "queued"
+            else record.serialise(include_query=include_query)
+            for record in matches
+        ]
         return {
+            "records": shaped_matches,
             "queued": [
-                _serialise_queued(
-                    record,
-                    now=time.perf_counter(),
-                    include_query=include_query,
-                )
-                for record in queued_matches
+                record for record in shaped_matches if record["state"] == "queued"
             ],
             "queued_count": len(queued),
             "active": [
-                record.serialise(include_query=include_query)
-                for record in active_matches
+                record for record in shaped_matches if record["state"] == "active"
             ],
             "recent": [
-                record.serialise(include_query=include_query)
-                for record in recent_matches
+                record for record in shaped_matches if record["state"] == "terminal"
             ],
             "counts": counts,
             "all_counts": all_counts,
-            "returned": len(queued_matches) + len(active_matches) + len(recent_matches),
+            "returned": len(matches),
+            "matched": matched,
+            "offset": selected_filters.offset,
+            "limit": selected_filters.limit,
+            "sort": selected_filters.sort,
+            "order": selected_filters.order or "asc",
+            "has_more": selected_filters.offset + len(matches) < matched,
             "filters": {
                 "state": selected_filters.state,
                 "type": selected_filters.search_type,
@@ -482,6 +554,8 @@ class SearchActivityLedger:
                 "request_id": selected_filters.request_id,
                 "since": selected_filters.since,
                 "limit": selected_filters.limit,
+                "query": selected_filters.query,
+                "outcome": selected_filters.outcome,
             },
         }
 
@@ -517,8 +591,26 @@ class SearchActivityLedger:
 
     def _append_recent_locked(self, record: _SearchActivity) -> None:
         self._recent.append(record)
+        self._evidence_bytes += record.evidence_bytes
         while len(self._recent) > self._max_recent:
-            self._recent.popleft()
+            self._evidence_bytes -= self._recent.popleft().evidence_bytes
+        self._enforce_evidence_budget_locked()
+
+    def _enforce_evidence_budget_locked(self) -> None:
+        for index, record in enumerate(self._recent):
+            if self._evidence_bytes <= MAX_LEDGER_EVIDENCE_BYTES:
+                return
+            self._evidence_bytes -= record.evidence_bytes
+            self._recent[index] = replace(
+                record, request_inputs=None, response=None, evidence_evicted=True
+            )
+        for request_id, record in self._active.items():
+            if self._evidence_bytes <= MAX_LEDGER_EVIDENCE_BYTES:
+                return
+            self._evidence_bytes -= record.evidence_bytes
+            self._active[request_id] = replace(
+                record, request_inputs=None, response=None, evidence_evicted=True
+            )
 
 
 def _bounded_text(value: str | None) -> str | None:
@@ -608,6 +700,17 @@ def _normalise_limit(value: object | None) -> int | None:
 
 def _normalise_filters(filters: SearchActivityFilters) -> SearchActivityFilters:
     """Normalize one route-provided filter object before taking the lock."""
+    sort = filters.sort.strip().lower()
+    if sort not in {
+        "priority",
+        "started_at",
+        "total_seconds",
+        "state",
+        "type",
+        "root",
+        "query",
+    }:
+        sort = "priority"
     return SearchActivityFilters(
         state=_normalise_state(filters.state),
         search_type=_normalise_filter(filters.search_type),
@@ -615,6 +718,13 @@ def _normalise_filters(filters: SearchActivityFilters) -> SearchActivityFilters:
         request_id=_normalise_filter(filters.request_id),
         since=_normalise_since(filters.since),
         limit=_normalise_limit(filters.limit),
+        offset=list_offset(filters.offset),
+        query=(_normalise_filter(filters.query) or "").casefold() or None,
+        outcome=(_normalise_filter(filters.outcome) or "").lower() or None,
+        sort=sort,
+        order=list_order(
+            filters.order, default="asc" if sort == "priority" else "desc"
+        ),
     )
 
 
@@ -630,4 +740,38 @@ def _filter_records(
         and (filters.root is None or record.root == filters.root)
         and (filters.request_id is None or record.request_id == filters.request_id)
         and (filters.since is None or record.started_at >= filters.since)
+        and (filters.outcome is None or record.outcome == filters.outcome)
+        and (
+            filters.query is None
+            or filters.query
+            in " ".join(
+                value or ""
+                for value in (
+                    record.query,
+                    record.request_id,
+                    record.root,
+                    record.error_message,
+                )
+            ).casefold()
+        )
     ]
+
+
+def _sort_records(
+    records: list[_SearchActivity], filters: SearchActivityFilters
+) -> list[_SearchActivity]:
+    if filters.sort == "priority":
+        return records if filters.order == "asc" else list(reversed(records))
+
+    def key(record: _SearchActivity) -> tuple[str | float, str]:
+        values: dict[str, str | float] = {
+            "started_at": record.started_at,
+            "total_seconds": record.total_seconds or 0.0,
+            "state": record.state,
+            "type": record.source,
+            "root": (record.root or "").casefold(),
+            "query": record.query.casefold(),
+        }
+        return values[filters.sort], record.request_id
+
+    return sorted(records, key=key, reverse=filters.order == "desc")

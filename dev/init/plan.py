@@ -148,7 +148,7 @@ PYTHON = Phase(
 NODE = Phase(
     name="node",
     summary="Restore the pinned Node dependency graph.",
-    skip_reason="this repository has no Node dependency graph",
+    skip_reason="frontend dependencies are restored separately with just init-monitor",
 )
 
 TOOLS = Phase(

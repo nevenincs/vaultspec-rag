@@ -5,7 +5,7 @@ tags:
 date: '2026-09-21'
 modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:614f2a2d611d64720551a1c2f2b7219c546be938c9a8c5e7936365dc63aebd5d'
+body_hash: 'sha256:658878b29300a8f0e8ec60bcdb3f004f8c6ec3810ffe71a8d6e0e9eee0806e9d'
 related:
   - "[[2026-09-21-automatic-merge-gate-reference]]"
   - '[[2026-09-29-release-pr-identity-research]]'
@@ -95,6 +95,13 @@ gate for releases preserves one implementation of the required verdict, as
 demonstrated by `2026-09-21-automatic-merge-gate-reference`.
 
 ## Consequences
+
+Amended 2026-09-30 for the user's authorized monitor tooling adoption:
+`2026-09-30-monitor-tooling-adr` adds the canonical shared frontend-lifecycle
+workflow as a supplemental check. The merge gate retains its required context
+and owns Python validation plus frontend static checks. The shared lifecycle
+workflow keeps its canonical name and trusted-author or human-label admission;
+it does not change branch protection or release validation.
 
 - Drafts consume no runner.
 - A pull request pays for the full gate once when it opens or becomes ready;

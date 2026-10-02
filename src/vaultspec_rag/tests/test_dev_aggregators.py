@@ -26,6 +26,10 @@ from dev.toolchain import LINT_LIGHT, VERBS, Target, Verb
 #: checked against real pytest collection by the marker guards in this tree.
 #: The audit entry is a different reason and is checked elsewhere - see it.
 EXEMPT: dict[tuple[str, str], str] = {
+    ("lint", "light"): (
+        "a selection of dimensions already run by lint all; the subset guard "
+        "checks its actual references against the full aggregate"
+    ),
     ("test", "fast"): "the unit tier, a subset of the python lane",
     ("test", "provisioning"): "five files the python lane already collects",
     ("test", "windows"): (
@@ -43,6 +47,28 @@ EXEMPT: dict[tuple[str, str], str] = {
         "stops doing so - so this exemption cannot become a dropped gate."
     ),
 }
+
+
+@pytest.mark.unit
+def test_light_lint_is_a_nonempty_subset_of_the_full_aggregate() -> None:
+    """The light exemption cannot hide a dimension absent from full lint.
+
+    Mutation proof: adding ``Ref(\"uncovered\")`` to the light target failed
+    naming that dimension; removing it passed immediately.
+    """
+    lint = next(verb for verb in VERBS if verb.name == "lint")
+    full = lint.find("all")
+    light = lint.find("light")
+    assert full is not None and light is not None
+    assert light.steps, "light lint must run at least one dimension"
+    assert all(isinstance(step, Ref) for step in light.steps), (
+        "light lint must select dimensions from lint all"
+    )
+    covered = {step.target for step in full.steps if isinstance(step, Ref)}
+    selected = {step.target for step in light.steps if isinstance(step, Ref)}
+    assert selected < covered, (
+        f"light lint dimensions absent from all: {selected - covered}"
+    )
 
 
 def _aggregate_verbs() -> list[Verb]:

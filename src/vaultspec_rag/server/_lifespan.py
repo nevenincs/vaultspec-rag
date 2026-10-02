@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from ..qdrant_runtime._supervise import QdrantSupervisor
     from ..service import ServiceHealth, ServiceRegistry
     from ..service_quiesce import QuiesceSnapshot
+    from ._runtime import ServerRouteRuntime
 
 logger = logging.getLogger("vaultspec_rag.server")
 
@@ -154,6 +155,17 @@ def _stop_active_qdrant() -> bool:
     _supervise.set_active_supervisor(None)
     os.environ.pop(EnvVar.QDRANT_URL.value, None)
     return True
+
+
+def _stop_owned_monitor(runtime: ServerRouteRuntime) -> bool:
+    """Attempt frontend cleanup without preventing the remaining drains."""
+    if runtime.monitor is None:
+        return True
+    try:
+        return runtime.monitor.stop()
+    except Exception:
+        logger.exception("Managed monitor shutdown failed")
+        return False
 
 
 def _reconcile_storage_manifest(
@@ -314,6 +326,10 @@ async def service_lifespan(app: Starlette) -> AsyncGenerator[None]:
         _m._install_daemon_shutdown_hooks(discovery)
 
         _stamp_service_phase(discovery, SERVICE_PHASE_WARMING)
+        if runtime.monitor is not None:
+            discovery.publish_phase("warming", detail="starting the monitor")
+            await _run_in_thread(runtime.monitor.start)
+            _stamp_service_phase(discovery, SERVICE_PHASE_WARMING)
         periodic_tasks = await _start_components(discovery, registry)
         from .. import jobs as _jobs_module
 
@@ -799,6 +815,7 @@ async def _shutdown_components(
     # The join is bounded: a worker wedged mid-publish must not strand teardown
     # here, before any shutdown line is logged.
     discovery.quiesce(timeout=_DISCOVERY_SHUTDOWN_GUARD_TIMEOUT_SECONDS)
+    monitor_clean = await _run_in_thread(_stop_owned_monitor, discovery.runtime)
     requested, initial_reasons, watcher_stop_ok = _begin_managed_shutdown(manager)
     for task in tasks:
         task.cancel()
@@ -844,19 +861,26 @@ async def _shutdown_components(
         _m._record_shutdown("unclean", detail=f"component teardown failed: {exc}")
         raise
     qdrant_clean = _stop_active_qdrant()
-    if not qdrant_clean:
-        qdrant_reason = "managed Qdrant shutdown did not converge"
+    if not qdrant_clean or not monitor_clean:
+        child_reason = "; ".join(
+            message
+            for failed, message in (
+                (not qdrant_clean, "managed Qdrant shutdown did not converge"),
+                (not monitor_clean, "managed monitor shutdown did not converge"),
+            )
+            if failed
+        )
         log_event(
             logger,
             "service.lifecycle",
             "shutdown_unclean",
             severity=logging.ERROR,
-            reason=qdrant_reason,
+            reason=child_reason,
             surviving_job_ids=survivors,
         )
         _m._record_shutdown(
             "unclean",
-            detail=qdrant_reason,
+            detail=child_reason,
             surviving_job_ids=",".join(survivors),
         )
         return

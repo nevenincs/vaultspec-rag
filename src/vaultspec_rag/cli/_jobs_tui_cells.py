@@ -71,7 +71,7 @@ def append_pill(
     line.append(f" {content} ", style=f"{foreground} on {background}")
 
 
-# The service-condition pill's vocabulary, worst-last, and its tones.
+# The indexing-condition pill's vocabulary, worst-last, and its tones.
 # ``reachable`` is what an older daemon that stamps no verdicts can claim.
 CONDITION_ORDER = ("healthy", "degraded", "stalled")
 CONDITION_TONES: dict[str, tuple[str, bool]] = {
@@ -407,8 +407,12 @@ def search_state_cell(
 ) -> Text:
     """Render lifecycle state and terminal outcome without result bodies."""
     state = search_text(search.get("state"), fallback="unknown")
-    outcome = search_text(search.get("outcome"), fallback="serving")
+    outcome = search_text(
+        search.get("outcome"), fallback="waiting" if state == "queued" else "serving"
+    )
     tone = "good" if state == "active" else "muted"
+    if state == "queued":
+        tone = "attention"
     if outcome in FAILED_ACTIVITY_OUTCOMES:
         tone = "bad"
     return _two_line(
@@ -456,6 +460,8 @@ def search_time_cell(search: dict[str, object], cells: int) -> Text:
     """Render duration, status, and result count from the activity record."""
     total = measurement(search.get("total_seconds"))
     duration = compact_duration(total) if total is not None else "in progress"
+    if search.get("state") == "queued":
+        duration = "waiting for admission"
     status = count(search.get("status_code"))
     results = count(search.get("result_count"))
     return _two_line(
@@ -514,17 +520,25 @@ def search_clock_line(search: dict[str, object]) -> str:
 
 
 def search_timings_line(search: dict[str, object]) -> str:
-    """Break the request down by stage, empty where the service timed none."""
+    """Show diagnostics with their actual units, never counters as durations."""
     timings = [
         (str(name), measurement(value))
         for name, value in mapping(search.get("timings")).items()
     ]
     values = [
-        f"{name}={compact_duration(seconds)}"
+        f"{name}={_diagnostic_value(name, seconds)}"
         for name, seconds in sorted(timings, key=lambda item: item[0])
         if seconds is not None
     ]
     return f"timings {' · '.join(values)}" if values else ""
+
+
+def _diagnostic_value(name: str, value: float) -> str:
+    if name.endswith("_ms"):
+        return f"{value:g}ms"
+    if name.endswith("_seconds"):
+        return f"{value:g}s"
+    return f"{value:g}"
 
 
 def search_failure_line(search: dict[str, object]) -> str:

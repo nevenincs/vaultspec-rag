@@ -4,6 +4,9 @@ Run vaultspec-rag as a long-lived background service to keep the models loaded a
 
 This guide assumes the workspace is already installed and provisioned. "Provisioned" means `install` has fetched the model files and the Qdrant binary. It also means the environment has a PyTorch build for CUDA or Metal Performance Shaders (MPS). If you haven't done that, start with the [installation guide](installation.md).
 
+Starting the service also requires the compiled browser monitor executable; see
+[local browser monitor setup](#local-carbon-browser-monitor).
+
 For the choice between the managed server and the local-only store, see the [backends guide](backends.md). For the vocabulary used here, see the [glossary](glossary.md).
 
 Examples use the `uv run` prefix, which runs the command inside a project environment.
@@ -38,6 +41,25 @@ Start it from a host installation, the one that carries the `gpu` extra. The ser
 Other start flags control the port, automatic updates, update timing, and the managed server. The [CLI reference](cli.md) carries the full list.
 
 ## Confirm it is running
+
+### Monitor the service in a browser
+
+The binary installation includes `vaultspec-rag-monitor`. Put the archive's extracted
+directory on `PATH` before starting the service. A Python host installation can select
+that executable with `VAULTSPEC_RAG_MONITOR_BINARY`, set to its absolute path.
+
+The service supervisor launches the monitor after backend readiness, beginning at the
+backend port plus one and choosing the next available higher port. It records the
+chosen address with service discovery and stops its owned monitor when the service
+stops. The monitor uses the service's initialized Python runtime for lifecycle and
+persisted inventory operations.
+
+For a separate diagnostic session, run `vaultspec-rag-monitor --port 5420` and open
+`http://127.0.0.1:5420`. This directly launched process uses a strict port and is stopped
+with Ctrl+C. Its frontend remains useful while the backend is unavailable; search and
+backend control retain the host installation's accelerator and bootstrap requirements.
+
+### Read service status
 
 ```
 uv run vaultspec-rag server status
@@ -173,6 +195,12 @@ refresh you can slow down or speed up with `--interval`. It is the command to
 reach for while a first index is running on a large tree, where the one-shot
 form tells you only what was true at the moment you asked.
 
+The watch separates daemon health and TypeSafe classification from indexing
+state. Indexing jobs and queued, processing, and recently finished serving
+requests have their own lanes. The focused log follows the selected work and
+refreshes without reselection; raw service and Qdrant logs remain grouped by
+producer. Each observation shows its freshness, failures, and truncation.
+
 To inspect recent service and Qdrant logs:
 
 ```
@@ -193,6 +221,104 @@ Both commands accept `--json`.
 Four job signals are worth knowing. A failed job carries a stable `error_kind` in `--json` and on `GET /jobs`, classified once by the service so every surface agrees, and the human feed renders the matching remediation. A running job whose progress hasn't moved for five minutes is flagged `stalled`, so you never have to infer it. A job still queued after five minutes, on a service that isn't paused, degrades health with `jobs_undispatched`: the service starts queued work the moment it is queued, so a job still waiting was left behind and won't start on its own. `server jobs` lists it right after running work, and restarting the service starts it again. If the service process dies mid-job, the next startup restores what it was running as `interrupted`, with the last progress and who started it.
 
 An index job that reused vectors from an already-indexed sibling worktree carries a `reuse` block describing what it avoided re-encoding. See [reusing vectors across worktrees](indexing.md#reusing-vectors-across-worktrees) for the mechanism, and the [CLI reference](cli.md) for the block's fields.
+
+### Local Carbon browser monitor
+
+Use the service commands to start and stop the managed browser monitor:
+
+```bash
+uv run vaultspec-rag server start
+uv run vaultspec-rag server stop
+```
+
+Start prints a `Monitor: http://127.0.0.1:<assigned-port>` line. Open that URL
+in a browser on the machine running the service. `server status` reports the
+backend address; its human, verbose and JSON output do not currently report
+the monitor URL. To redisplay a recorded monitor URL, run `server start` again:
+an already-running owned service is reused. For scripts, `server start --json`
+returns the assignment as `data.monitor_port` and `data.monitor_url` when
+recorded.
+
+The monitor port starts at the backend's actual port plus one and advances
+until free. With the default backend port 8766, it first tries 8767. For a
+custom backend port:
+
+```bash
+uv run vaultspec-rag server start --port 9000
+```
+
+The monitor tries 9001, then 9002 if 9001 is occupied. Use the printed URL
+because a later start may choose another port. The backend itself still
+refuses an occupied requested port.
+
+The daemon records the actual monitor port and process identity in its managed
+user scratch directory. `server stop` stops both processes and removes their
+assignments. A forced daemon death also closes the monitor's parent pipe and
+stops its web server; a later stop cleans any remaining scratch identity.
+Stopping the service from this managed browser also closes its web server.
+
+Managed startup requires the compiled `vaultspec-rag-monitor` command on
+`PATH`, or its absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. The monitor
+contains the frontend resources and runtime; startup does not compile sources
+or require a checkout, Node or Bun. A missing or failed executable fails the
+coupled start and cleans up the frontend child. Building and bundling the
+executable are separate from this lifecycle integration.
+
+For a standalone development monitor, use the shared harness below.
+
+From a source checkout with the Node/npm versions pinned in `.nvmrc` and
+`package.json`, run:
+
+```bash
+just init-monitor
+just build-monitor
+just dev
+```
+
+For the accelerator-free lifecycle tests, run `just build-monitor-test` and
+set `VAULTSPEC_RAG_MONITOR_BINARY` to the absolute executable path it prints
+before running `just test-python`. This uses the pinned release compiler and
+embedded Vite assets, marks the local executable as a development build, and
+writes it under `dist-bin`. The CI test jobs prepare and select it automatically.
+
+Open `http://127.0.0.1:5420`. The monitor automatically connects to the local
+service recorded in the managed status directory. It requires no login,
+credential entry, or admin role. The standalone monitor has its own lifecycle.
+A stopped service shows a connection
+message and retains any previous observations with their timestamps.
+
+Dev and preview bind to `0.0.0.0` on their strict declared ports. The shared
+`just dev` harness attaches to a healthy owned server and recreates a stale,
+degraded, or foreign server on that port. Its canonical **Dev server** workflow
+runs `just dev ci` to verify start, reattach, and stop.
+
+The devservers repository owns the reverse proxies. Local HTTPS uses
+`https://vaultspec-rag-monitor.localhost`; Tailscale nodes can use
+`http://gw-workstation.taild36992.ts.net:5420` or its managed HTTPS mapping at
+`https://gw-workstation.taild36992.ts.net:15420`. The monitor API accepts local
+and Tailscale clients at its declared host, with matching browser origins.
+The underlying RAG service connection and credential remain on this machine.
+The HTTPS mapping requires Serve to be enabled in the tailnet; the Tailscale
+command provides the account setup link if that prerequisite is missing.
+
+Health and TypeSafe details sit above separate indexing and serving tabs.
+Inspect a job or request for its current details and correlated live logs;
+service and Qdrant logs have their own panels. Job controls follow the service's
+reported capabilities, and requested state stays distinct from observed state.
+Deleting a finished job record asks for confirmation.
+
+Work pages show up to 100 records, and each log panel requests the latest 200
+matching records. Counts describe the service's retained snapshot and recent
+history. **Pause live updates** pauses browser polling; the service continues
+working. Resume updates to observe new work again.
+
+Background browser tabs stop polling and retain the last displayed data.
+Returning to the tab refreshes it immediately, unless live updates were
+manually paused.
+
+The built preview at `http://127.0.0.1:5421` uses the same automatic local
+connection. Serving the static assets alone does not provide that connection.
+Use `just dev stop` to stop this checkout's browser servers.
 
 ## Control one job
 
@@ -235,6 +361,9 @@ uv run vaultspec-rag server preflight
 ```
 uv run vaultspec-rag server stop
 ```
+
+This also stops the managed browser monitor and clears its recorded port
+assignment. A separately launched development monitor keeps its own lifecycle.
 
 To restart, stop and start again. No single restart command exists.
 
@@ -328,9 +457,7 @@ Another process is bound there. Use one port consistently: pass `--port N` or se
 Exit `4` covers two different faults, and the fix for one is the wrong move for
 the other. Read the label `status` printed beside it rather than the code alone.
 
-**`crashed (its process is no longer running)`, `crashed (its process ID now belongs to
-another program)`, `crashed (its port gives no usable answer)`, or `crashed (it stopped
-reporting that it is alive)`, or a divergent status file.** No daemon is serving. The status file disagrees with the live process -
+**`crashed (its process is no longer running)`, `crashed (its process ID now belongs to another program)`, `crashed (its port gives no usable answer)`, or `crashed (it stopped reporting that it is alive)`, or a divergent status file.** No daemon is serving. The status file disagrees with the live process -
 naming a process id that is no longer alive, for instance. Re-run `server start`
 to overwrite it cleanly, and if that does not clear it, delete the status file at
 `~/.vaultspec-rag/service.json` and start again.

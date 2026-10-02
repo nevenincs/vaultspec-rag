@@ -1,0 +1,77 @@
+{
+  "name": "vaultspec-rag-monitor",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=26.10.0 <27",
+    "npm": ">=12.1.0 <13"
+  },
+  "portless": {
+    "name": "vaultspec-rag-monitor",
+    "appPort": 5420
+  },
+  "devserver": {
+    "block": [
+      5420,
+      5439
+    ],
+    "host": "0.0.0.0",
+    "allowedHosts": [
+      ".localhost",
+      "gw-workstation.taild36992.ts.net"
+    ],
+    "services": {
+      "preview": {
+        "port": 5421,
+        "run": [
+          "npm",
+          "run",
+          "preview",
+          "--",
+          "--port",
+          "{port}",
+          "--strictPort",
+          "--host",
+          "{host}"
+        ]
+      }
+    }
+  },
+  "scripts": {
+    "postinstall": "patch-package --error-on-fail",
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit",
+    "format": "prettier --write package.json package-lock.json tsconfig.json vite.config.ts eslint.config.js src/monitor",
+    "format:check": "prettier --check package.json package-lock.json tsconfig.json vite.config.ts eslint.config.js src/monitor"
+  },
+  "dependencies": {
+    "@carbon/charts": "1.27.20",
+    "@carbon/charts-react": "1.27.20",
+    "@carbon/icons-react": "11.89.0",
+    "@carbon/react": "1.117.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-is": "19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "eslint": "10.11.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "patch-package": "8.0.1",
+    "prettier": "3.9.9",
+    "sass": "1.105.1",
+    "typescript": "6.0.3",
+    "typescript-7": "npm:typescript@7.0.2",
+    "typescript-eslint": "8.70.1",
+    "vite": "8.3.1"
+  }
+}

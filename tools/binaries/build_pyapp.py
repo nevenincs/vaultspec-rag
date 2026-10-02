@@ -64,8 +64,9 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from tools.binaries.native import host_target_triple
 from tools.binaries.torch_channel import pip_extra_args
-from tools.binaries.windows_icon import VersionInfo, stamp_icon_and_version
+from tools.binaries.windows_icon import product_version_info, stamp_icon_and_version
 from tools.packaging import products
 
 # Pinned PyApp crate version. Bumping this changes the bootstrapper and the
@@ -195,20 +196,6 @@ def validate_project_wheel(wheel: Path, version: str) -> Path:
     return wheel
 
 
-def host_target_triple() -> str:
-    """Return the host Rust target triple as reported by ``rustc``."""
-    out = subprocess.run(
-        ["rustc", "-vV"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    for line in out.splitlines():
-        if line.startswith("host:"):
-            return line.split(":", 1)[1].strip()
-    raise RuntimeError("could not determine host target triple from `rustc -vV`")
-
-
 def build_one(
     binary: Binary,
     version: str,
@@ -272,23 +259,6 @@ def build_one(
 
 def asset_name(binary: Binary, target: str) -> str:
     return products.raw_asset_name(binary.name, target)
-
-
-def binary_version_info(binary: Binary, version: str, target: str) -> VersionInfo:
-    """Return the Windows metadata for one finalized release executable."""
-    executable = next(
-        item for item in products.VAULTSPEC_RAG.executables if item.name == binary.name
-    )
-    product = products.VAULTSPEC_RAG
-    return VersionInfo(
-        file_version=version,
-        product_version=version,
-        product_name=product.display_name or product.name,
-        file_description=executable.summary,
-        original_filename=products.executable_filename(binary.name, target),
-        company_name=product.publisher,
-        legal_copyright=product.legal_copyright,
-    )
 
 
 # --- platform floor ---------------------------------------------------------
@@ -512,7 +482,16 @@ def main() -> int:
                 stamp_icon_and_version(
                     asset,
                     APPLICATION_ICON,
-                    binary_version_info(binary, version, target),
+                    product_version_info(
+                        products.VAULTSPEC_RAG,
+                        next(
+                            item
+                            for item in products.VAULTSPEC_RAG.executables
+                            if item.name == binary.name
+                        ),
+                        version,
+                        target,
+                    ),
                 )
             else:
                 asset.chmod(0o755)

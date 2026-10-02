@@ -1,0 +1,67 @@
+diff --git a/node_modules/@carbon/charts-react/dist/index.mjs b/node_modules/@carbon/charts-react/dist/index.mjs
+--- a/node_modules/@carbon/charts-react/dist/index.mjs
++++ b/node_modules/@carbon/charts-react/dist/index.mjs
+@@ -8497,10 +8497,16 @@
+     R(e).classed("fullscreen") && (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement) ? document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen ? document.webkitExitFullscreen() : document.mozCancelFullScreen ? document.mozCancelFullScreen() : document.msExitFullscreen && document.msExitFullscreen() : e.requestFullscreen ? e.requestFullscreen() : e.webkitRequestFullscreen ? e.webkitRequestFullscreen() : e.mozRequestFullScreen ? e.mozRequestFullScreen() : e.msRequestFullscreen && e.msRequestFullscreen();
+   }
+   handleFullscreenChange() {
+-    document.addEventListener("fullscreenchange", () => {
++    this.fullscreenListener = () => {
+       const e = R(this.getHolder()), n = e.classed("fullscreen");
+       e.classed("fullscreen", !n);
+-    });
++    };
++    document.addEventListener("fullscreenchange", this.fullscreenListener);
++  }
++  destroy() {
++    document.removeEventListener("fullscreenchange", this.fullscreenListener);
++    this.resizeObserver?.disconnect();
++    this.resizeListener?.cancel();
+   }
+   setSVGMaxHeight() {
+     if (!this.model.getOptions().height) {
+@@ -8539,7 +8545,9 @@
+     const i = Va(() => {
+       e && (Math.abs(n - e.clientWidth) > 1 || Math.abs(r - e.clientHeight) > 1) && (n = e.clientWidth, r = e.clientHeight, this.services.events?.dispatchEvent(T.Chart.RESIZE));
+     }, 12.5);
+-    new ResizeObserver(i).observe(e);
++    this.resizeListener = i;
++    this.resizeObserver = new ResizeObserver(i);
++    this.resizeObserver.observe(e);
+   }
+ }, oc = class Jg extends Nn {
+   static appendOrUpdateLinearGradient(e) {
+@@ -16712,7 +16720,7 @@
+    * Appends the corresponding status based on the value and the peak.
+    */
+   displayStatus() {
+-    const e = this, n = this.getComponentContainer(), r = I.getHTMLElementSize(this.parent.node()).width || 0, i = this.model.getStatus(), s = te.status.indicatorSize / 2, a = I.appendOrSelect(n, "g.status-indicator").attr("class", i !== null ? `status-indicator status--${i}` : "").attr("transform", `translate(${r - s}, 0)`), o = i ? [i] : [], l = a.selectAll("circle.status").data(o);
++    const e = this, n = this.getComponentContainer(), r = I.getHTMLElementSize(this.parent.node()).width || 0, i = this.model.getStatus(), s = te.status.indicatorSize / 2, a = I.appendOrSelect(n, "g.status-indicator").attr("class", i !== null ? `status-indicator status--${i}` : "status-indicator").attr("transform", `translate(${r - s}, 0)`), o = i ? [i] : [], l = a.selectAll("circle.status").data(o);
+     l.enter().append("circle").merge(l).attr("class", "status").attr("r", s).attr("cx", 0).attr("cy", 8);
+     const c = a.selectAll("path.innerFill").data(o);
+     c.enter().append("path").merge(c).attr("d", e.getStatusIconPathString(i)).attr("transform", `translate(-${s}, 0)`).attr("class", "innerFill"), c.exit().remove(), l.exit().remove();
+@@ -21283,6 +21291,7 @@
+     );
+   }
+   destroy() {
++    this.services.domUtils.destroy();
+     this.components.forEach((e) => e.destroy()), this.services.domUtils.getHolder().remove(), this.model.set({ destroyed: !0 }, { skipUpdate: !0 });
+   }
+   getChartComponents(e, n) {
+@@ -22230,7 +22239,15 @@
+     throw new Error("Method not implemented.");
+   }
+   componentDidMount() {
+-    this.chartRef.current && !this.chart && (this.chart = this.createChart(this.chartRef.current, this.props.data, this.props.options));
++    if (this.chartRef.current && !this.chart) {
++      const holder = document.createElement("div");
++      this.chartRef.current.appendChild(holder);
++      this.chart = this.createChart(holder, this.props.data, this.props.options);
++    }
++  }
++  componentWillUnmount() {
++    this.chart?.destroy();
++    this.chart = undefined;
+   }
+   componentDidUpdate(e) {
+     this.props.data !== e.data && this.chart?.model.setData(this.props.data), this.props.options !== e.options && this.chart?.model.setOptions(this.props.options);

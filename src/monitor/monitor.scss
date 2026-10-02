@@ -1,0 +1,303 @@
+@use "@carbon/react" with (
+  $font-path: "@ibm/plex"
+);
+@use "@carbon/styles/scss/spacing";
+@use "@carbon/styles/scss/theme";
+@use "@carbon/styles/scss/type";
+@use "@carbon/type" as carbon-type;
+
+@include carbon-type.type-classes;
+@include carbon-type.reset;
+
+body {
+  margin: 0;
+}
+
+.monitor-root {
+  --monitor-header-height: 3rem;
+  min-block-size: 100vh;
+  background: theme.$background;
+  color: theme.$text-primary;
+}
+
+.monitor-root .monitor-content {
+  padding-block: spacing.$spacing-07 spacing.$spacing-08;
+  margin-block-start: var(--monitor-header-height);
+  margin-inline-start: 0;
+  padding-inline: spacing.$spacing-05;
+}
+
+.monitor-grid {
+  max-inline-size: none;
+  row-gap: spacing.$spacing-05;
+}
+
+.monitor-grid > * {
+  min-inline-size: 0;
+}
+
+.monitor-log-grid {
+  padding-inline: 0;
+}
+
+.monitor-muted {
+  color: theme.$text-secondary;
+}
+
+.monitor-toolbar {
+  display: flex;
+  gap: spacing.$spacing-05;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.monitor-controls,
+.monitor-metrics {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.monitor-controls {
+  gap: spacing.$spacing-03;
+}
+
+.monitor-metrics {
+  gap: spacing.$spacing-07;
+}
+
+.monitor-health-tile {
+  block-size: 100%;
+}
+
+.monitor-reasons {
+  padding-inline-start: spacing.$spacing-05;
+  list-style-type: disc;
+}
+
+.monitor-reasons li + li {
+  margin-block-start: spacing.$spacing-03;
+}
+
+.monitor-table-window {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.monitor-work-table {
+  min-inline-size: 48rem;
+}
+
+.monitor-work-table td {
+  overflow-wrap: anywhere;
+  max-inline-size: 28rem;
+}
+
+.monitor-empty {
+  padding: spacing.$spacing-06;
+  background: theme.$layer-01;
+}
+
+.monitor-log-tile {
+  min-inline-size: 0;
+}
+
+.monitor-table-window:focus-visible {
+  outline: 2px solid theme.$focus;
+  outline-offset: -2px;
+}
+
+// Keep the right-pointing Carbon disclosure icons aligned with their state.
+.monitor-root .cds--table-expand__button > .cds--table-expand__svg,
+.monitor-root .cds--accordion__heading > .cds--accordion__arrow {
+  transform: rotate(0deg);
+}
+
+.monitor-root
+  .cds--table-expand__button[aria-expanded="true"]
+  > .cds--table-expand__svg,
+.monitor-root
+  .cds--accordion__heading[aria-expanded="true"]
+  > .cds--accordion__arrow {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+.monitor-header-details {
+  margin-inline-start: auto;
+  align-items: center;
+  padding-inline-end: spacing.$spacing-05;
+}
+.monitor-freshness {
+  min-inline-size: 12rem;
+}
+
+.monitor-relation {
+  padding-inline: 0;
+}
+.monitor-expanded {
+  padding: 0;
+}
+
+.monitor-root .monitor-nested-table {
+  margin: 0;
+}
+.monitor-root .monitor-nested-table th,
+.monitor-root .monitor-nested-table td {
+  padding-inline: spacing.$spacing-05;
+}
+.monitor-root .cds--data-table tr.cds--expandable-row[data-child-row] > td,
+.monitor-root
+  .cds--data-table
+  tr.cds--expandable-row[data-child-row]
+  > td
+  > .cds--child-row-inner-container {
+  padding: 0;
+  margin: 0;
+}
+// Expanded-row indentation must not cascade into nested table cells.
+.monitor-root .cds--data-table .cds--data-table > tbody > tr > td,
+.monitor-root .cds--data-table .cds--data-table > thead > tr > th {
+  padding-inline: spacing.$spacing-05;
+}
+.monitor-root .monitor-data-details {
+  padding: 0;
+  margin: 0;
+}
+.monitor-request-summary,
+.monitor-list-filters {
+  padding-inline: 0;
+  align-items: end;
+}
+.monitor-request-details section > h3 {
+  margin-block-end: spacing.$spacing-03;
+}
+.monitor-root .monitor-mobile-work .cds--accordion__content {
+  padding-inline: 0;
+}
+.monitor-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.monitor-reading {
+  @include type.type-style("heading-03");
+}
+html {
+  scroll-padding-block-start: 5rem;
+}
+.monitor-details td {
+  overflow-wrap: anywhere;
+}
+.monitor-details td:first-child {
+  inline-size: 40%;
+}
+
+.monitor-nav-open .monitor-content {
+  margin-inline-start: 16rem;
+}
+.monitor-navigation {
+  inset-block-start: var(--monitor-header-height);
+  block-size: calc(100dvh - var(--monitor-header-height));
+}
+.monitor-header-actions {
+  block-size: spacing.$spacing-09;
+  margin-inline-start: 0;
+  order: 3;
+  flex: 0 0 auto;
+}
+.monitor-header-details {
+  margin-inline-start: auto;
+  order: 2;
+}
+.monitor-mobile-work {
+  display: none;
+}
+@media (max-width: 65.98rem) {
+  .monitor-root {
+    --monitor-header-height: 9rem;
+  }
+  .monitor-header {
+    flex-wrap: wrap;
+    block-size: var(--monitor-header-height);
+    align-content: start;
+  }
+  .monitor-header-details {
+    inline-size: 100%;
+    block-size: 6rem;
+    padding: spacing.$spacing-03 spacing.$spacing-05;
+  }
+  .monitor-freshness {
+    min-inline-size: 0;
+    max-inline-size: none;
+    white-space: nowrap;
+  }
+  .monitor-root .monitor-content {
+    padding-block-start: spacing.$spacing-05;
+  }
+  .monitor-nav-open .monitor-content {
+    margin-inline-start: 0;
+  }
+}
+@media (max-width: 41.98rem) {
+  .monitor-desktop-work {
+    display: none;
+  }
+  .monitor-mobile-work {
+    display: block;
+  }
+  .monitor-health-tile {
+    padding: spacing.$spacing-04;
+  }
+  .monitor-health-tile .monitor-reading {
+    @include type.type-style("heading-compact-02");
+  }
+  .monitor-metrics {
+    gap: spacing.$spacing-05;
+  }
+  .monitor-expanded {
+    padding: 0;
+  }
+  .monitor-work-title {
+    overflow-wrap: anywhere;
+  }
+}
+
+.monitor-control-grid {
+  padding-inline: 0;
+  row-gap: spacing.$spacing-03;
+}
+.monitor-control-grid button {
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+.monitor-header .monitor-brand,
+.monitor-header .monitor-nav-toggle {
+  block-size: spacing.$spacing-09;
+}
+.monitor-observation-group {
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.monitor-update-controls {
+  align-items: center;
+  justify-content: space-between;
+}
+@media (max-width: 41.98rem) {
+  .monitor-header .monitor-brand {
+    padding-inline: spacing.$spacing-03;
+  }
+}
+
+@media (max-width: 65.98rem) {
+  .monitor-header-actions {
+    order: 1;
+    margin-inline-start: auto;
+  }
+}

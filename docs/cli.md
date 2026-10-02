@@ -29,6 +29,7 @@ Generated from the live command surface. Each entry lists the command's argument
 - [status](#status)
 - **server**
   - [doctor](#server-doctor)
+  - [inventory](#server-inventory)
   - [warmup](#server-warmup)
   - [jobs](#server-jobs)
   - [logs](#server-logs)
@@ -273,6 +274,25 @@ None.
 | --- | --- | --- | --- | --- |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. It is the readiness snapshot. |
 
+## server inventory
+
+Emit persisted monitor inventory without creating or operating a service.
+
+```bash
+vaultspec-rag server inventory
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operation` | str | yes | required | repositories or storage/survey |
+| `parameters` | str | yes | required | Bounded JSON string parameters |
+
+### Options
+
+None.
+
 ## server warmup
 
 Download GPU model files before they are needed. Run once before the first index to avoid model download latency at search time.
@@ -411,6 +431,11 @@ service prints one line naming its state and how to start it. See
 [Typesafe enrollment](configuration.md#typesafe-enrollment)
 for state meanings; status never makes a paid classification call.
 
+The address in status output is the backend address. Human, verbose and
+JSON status output do not currently report the browser monitor URL. Run
+`server start` to display its recorded `Monitor:` URL; an already-running
+owned service is reused. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+
 ```bash
 vaultspec-rag server status
 ```
@@ -450,6 +475,16 @@ None.
 
 Start the background search service. Defaults to the managed Qdrant server backend (server mode); pass --local-only for the on-disk store. Waits until it is ready and records how the CLI can reach it.
 
+Also starts the managed browser monitor. Its port begins at the actual
+backend port plus one and increments until free: `--port 9000` first
+tries monitor port 9001. Human output prints `Monitor: http://127.0.0.1:<port>`;
+JSON includes `data.monitor_port` and `data.monitor_url` when recorded.
+An already-running response redisplays the recorded assignment.
+
+Requires the compiled `vaultspec-rag-monitor` command on PATH or its
+absolute path in `VAULTSPEC_RAG_MONITOR_BINARY`. Startup does not compile
+the frontend. See [browser monitor setup](service-mode.md#local-carbon-browser-monitor).
+
 Successful starts and already-running responses include Typesafe enrollment
 from the daemon (`Typesafe:` in human output, `data.typesafe` in JSON).
 Set the dedicated key before launching the server; attaching to an existing
@@ -482,6 +517,11 @@ None.
 ## server stop
 
 Stop the background search service.
+
+Also stops the daemon-owned browser monitor and clears its recorded port
+assignment. A missing or already-stopped service is an idempotent success;
+failure to stop the monitor is a failed stop. Separately launched development
+monitors retain their own lifecycle.
 
 ```bash
 vaultspec-rag server stop

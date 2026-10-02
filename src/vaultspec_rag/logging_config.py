@@ -31,7 +31,7 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, Unpack, cast
 
 from vaultspec_core.logging_config import (
     configure_logging as _core_configure_logging,
@@ -41,6 +41,7 @@ from vaultspec_core.logging_config import (
 )
 
 from ._managed_log_sink import RawRotatingLogSink
+from ._operator_lists import list_offset, list_order
 from ._test_isolation import enforce_pytest_singleton_containment
 from .config._registry import entry
 from .config._settings import managed_status_dir
@@ -99,6 +100,9 @@ class ManagedLogGroup(TypedDict):
     truncated: NotRequired[bool]
     marker: NotRequired[str]
     truncation: NotRequired[dict[str, int | bool]]
+    matched: NotRequired[int]
+    returned: NotRequired[int]
+    has_more: NotRequired[bool]
 
 
 class ManagedLogsResult(TypedDict):
@@ -108,6 +112,16 @@ class ManagedLogsResult(TypedDict):
     limit: int
     groups: list[ManagedLogGroup]
     filters: dict[str, str]
+    offset: NotRequired[int]
+    order: NotRequired[str]
+
+
+class ManagedLogOptions(TypedDict, total=False):
+    """Optional paging and request scope for a managed-log read."""
+
+    request_id: str | None
+    offset: object
+    order: str | None
 
 
 class InvalidManagedLogSourceError(ValueError):
@@ -287,6 +301,7 @@ def managed_log_filters(
     *,
     job_id: str | None = None,
     contains: str | None = None,
+    request_id: str | None = None,
 ) -> dict[str, str]:
     """Return the non-empty filters accepted by the managed-log contract."""
     filters: dict[str, str] = {}
@@ -294,6 +309,8 @@ def managed_log_filters(
         filters["job_id"] = job_id.strip()
     if contains and contains.strip():
         filters["contains"] = contains.strip()
+    if request_id and request_id.strip():
+        filters["request_id"] = request_id.strip()
     return filters
 
 
@@ -535,11 +552,20 @@ def _filter_managed_log_groups(
     *,
     job_id: str | None = None,
     contains: str | None = None,
+    request_id: str | None = None,
 ) -> None:
     """Apply case-insensitive AND filters in place without losing metadata."""
     job_filter = job_id.strip().lower() if job_id else None
     contains_filter = contains.strip().lower() if contains else None
-    if not job_filter and not contains_filter:
+    request_filter = (
+        re.compile(
+            r"\brequest_id=" + re.escape(request_id.strip()) + r"(?=\s|$)",
+            re.IGNORECASE,
+        )
+        if request_id
+        else None
+    )
+    if not job_filter and not contains_filter and request_filter is None:
         return
     for group in groups:
         filtered: list[str] = []
@@ -548,6 +574,8 @@ def _filter_managed_log_groups(
             if job_filter and job_filter not in lowered:
                 continue
             if contains_filter and contains_filter not in lowered:
+                continue
+            if request_filter is not None and request_filter.search(line) is None:
                 continue
             filtered.append(line)
         group["lines"] = filtered
@@ -617,22 +645,44 @@ def query_managed_logs(
     job_id: str | None = None,
     contains: str | None = None,
     status_dir: Path | None = None,
+    **options: Unpack[ManagedLogOptions],
 ) -> ManagedLogsResult:
     """Return the canonical bounded managed-log outcome for every adapter."""
     limit = clamp_managed_log_lines(lines)
-    filters = managed_log_filters(job_id=job_id, contains=contains)
-    read_limit = MAX_MANAGED_LOG_LINES if filters else limit
+    filters = managed_log_filters(
+        job_id=job_id, contains=contains, request_id=options.get("request_id")
+    )
+    offset = options.get("offset")
+    order = options.get("order")
+    paginated = offset is not None or order is not None
+    page_offset = list_offset(offset)
+    page_order = list_order(order, default="asc")
+    read_limit = MAX_MANAGED_LOG_LINES if filters or paginated else limit
     groups = read_managed_logs(read_limit, source=source, status_dir=status_dir)
     if filters:
         _filter_managed_log_groups(groups, **filters)
     for group in groups:
+        matched = len(group["lines"])
+        if paginated:
+            end = max(0, matched - page_offset)
+            group["lines"] = group["lines"][max(0, end - limit) : end]
         _bound_managed_group_response(group, limit)
-    return {
+        if paginated:
+            if page_order == "desc":
+                group["lines"].reverse()
+            group["matched"] = matched
+            group["returned"] = len(group["lines"])
+            group["has_more"] = page_offset + len(group["lines"]) < matched
+    result: ManagedLogsResult = {
         "source": source,
         "limit": limit,
         "groups": groups,
         "filters": filters,
     }
+    if paginated:
+        result["offset"] = page_offset
+        result["order"] = page_order
+    return result
 
 
 def render_managed_log_groups(groups: list[ManagedLogGroup]) -> str:

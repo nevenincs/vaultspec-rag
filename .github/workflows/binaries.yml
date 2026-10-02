@@ -52,8 +52,11 @@ jobs:
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 10
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - name: Require a release tag that resolves to the requested commit
+        id: commit
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
@@ -79,6 +82,11 @@ jobs:
             echo "::error::${TAG} resolves to ${sha}, not the requested ${TARGET_SHA}"
             exit 1
           fi
+          if [ "${GITHUB_REF}" != "refs/tags/${TAG}" ] || [ "${GITHUB_SHA}" != "${sha}" ]; then
+            echo "::error::dispatch this workflow with --ref ${TAG}; its commit must match the release tag"
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
           echo "${TAG} resolves to ${TARGET_SHA}"
 
   # The binaries carry the release's own wheel, never a second build of it.
@@ -100,12 +108,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ github.sha }}
 
       - name: Require the exact release commit
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       # Exactly one manifest line for exactly this wheel, then the digest: a
@@ -152,16 +160,80 @@ jobs:
           uv run --no-project --python 3.13 -- python -c \
             "import os; from pathlib import Path; from tools.binaries.build_pyapp import sole_wheel, validate_project_wheel, version_from_tag; wheel = validate_project_wheel(sole_wheel(Path('dist')), version_from_tag(os.environ['TAG'])); print(f'validated {wheel}')"
 
+      - name: Require the canonical installed monitor owners in the release wheel
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.release wheel --tag "$TAG" --directory dist
+
       - name: Upload the wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: project-wheel-${{ inputs.target_sha }}
+          name: project-wheel-${{ needs.validate.outputs.sha }}
           path: dist/
           if-no-files-found: error
           retention-days: 5
 
+  frontend:
+    needs: [validate, wheel]
+    name: "Build: Common monitor frontend (Linux)"
+    timeout-minutes: 140
+    runs-on: [self-hosted, Linux, X64, build]
+    env:
+      CI_EXEC_BUDGET_MINUTES: 20
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+      frontend_sha256: ${{ steps.identity.outputs.frontend_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Restore the committed npm dependency graph
+        run: npm ci
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+      - name: Install Python
+        run: uv python install 3.13
+      - name: Set up just
+        uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
+        with:
+          tool: just@1.38.0
+      - name: Build the frontend once from the exact producer
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+        run: just release-monitor-frontend "$TAG" "$TARGET_SHA"
+      - name: Bind the common artifact to source, version and lock
+        id: identity
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          lock=$(sha256sum package-lock.json | cut -d' ' -f1)
+          echo "artifact=monitor-frontend-${TAG}-${TARGET_SHA}-${lock}" >> "$GITHUB_OUTPUT"
+          echo "frontend_sha256=$(sha256sum dist-monitor-frontend/frontend.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Upload the exact Vite handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: dist-monitor-frontend/
+          if-no-files-found: error
+          retention-days: 5
+
   build:
-    needs: wheel
+    needs: [validate, wheel, frontend]
     name: "Build: Standalone binaries (${{ matrix.name }})"
     strategy:
       fail-fast: false
@@ -201,12 +273,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ github.sha }}
 
       - name: Require the exact release commit
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Set up Rust
@@ -225,8 +297,19 @@ jobs:
       - name: Download the wheel the binaries carry
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: project-wheel-${{ inputs.target_sha }}
+          name: project-wheel-${{ needs.validate.outputs.sha }}
           path: dist
+
+      - name: Download the common frontend handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.frontend.outputs.artifact }}
+          path: dist-monitor-frontend
+
+      - name: Set up Node for the installed-browser verification driver
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
 
       - name: Set up just
         uses: taiki-e/install-action@6012bba2f8e3e666a2b212f8823c06831704ce92 # just
@@ -245,6 +328,22 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: just release-binaries "${TAG}" "${TARGET}" dist-bin dist
 
+      - name: Compile the embedded native monitor
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: just release-monitor "$TAG" "$TARGET_SHA" "$FRONTEND_SHA256"
+
+      - name: Verify finalized monitor bytes and render in an installed browser
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          TARGET: ${{ matrix.target }}
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" --directory dist-bin
+
       - name: Package and verify the release bundle
         shell: bash
         env:
@@ -255,7 +354,7 @@ jobs:
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: binaries-${{ inputs.target_sha }}-${{ matrix.name }}
+          name: binaries-${{ needs.validate.outputs.sha }}-${{ matrix.name }}
           path: dist-bundles/
           if-no-files-found: error
           retention-days: 5
@@ -263,7 +362,7 @@ jobs:
   release:
     timeout-minutes: 150
     name: "Build: Release attachment (Linux)"
-    needs: build
+    needs: [validate, build, frontend]
     runs-on: [self-hosted, Linux, X64, build]
     env:
       CI_EXEC_BUDGET_MINUTES: 30
@@ -277,20 +376,49 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ github.sha }}
 
       - name: Require the exact release commit
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Download binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: binaries-${{ inputs.target_sha }}-*
+          pattern: binaries-${{ needs.validate.outputs.sha }}-*
           path: dist-bundles/
           merge-multiple: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Verify all four native monitor proofs before release attachment
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles
+
+      - name: Generate the candidate release pins for independent review
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.pins propose --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles --output dist-release-evidence/release-pins-proposal.json
+
+      - name: Upload candidate pins without approving them
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-pin-proposal-${{ needs.validate.outputs.sha }}
+          path: dist-release-evidence/release-pins-proposal.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Aggregate checksums
         shell: bash
@@ -445,8 +573,8 @@ jobs:
   verify-release-assets:
     timeout-minutes: 150
     name: "Check: Release proven (Linux)"
-    needs: release
-    if: ${{ always() }}
+    needs: [validate, release, frontend]
+    if: ${{ always() && needs.validate.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, build]
     permissions:
       # Reads the release and downloads its assets; it edits nothing. The
@@ -457,8 +585,9 @@ jobs:
       CI_EXEC_BUDGET_MINUTES: 30
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ inputs.tag }}
-      TARGET_SHA: ${{ inputs.target_sha }}
+      TARGET_SHA: ${{ needs.validate.outputs.sha }}
       RELEASE_RESULT: ${{ needs.release.result }}
+      FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
     steps:
       # This job reads the build matrix out of this file, so the file is
       # checked out explicitly.
@@ -466,16 +595,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ github.sha }}
           path: .sparse-verify-release-assets
-          sparse-checkout: .github/workflows
-          sparse-checkout-cone-mode: false
 
       - name: Require the exact release commit
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
         run: test "$(git -C .sparse-verify-release-assets rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
 
       - name: Require every declared target on the draft release
         shell: bash
@@ -584,6 +716,10 @@ jobs:
           [ ${#raw[@]} -eq 0 ] || problems+=("raw executables: ${raw[*]}")
 
           if [ ${#problems[@]} -eq 0 ]; then
+            (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory "${verify_dir}")
+            git -C .sparse-verify-release-assets fetch --no-tags origin main
+            catalog_sha=$(git -C .sparse-verify-release-assets rev-parse FETCH_HEAD)
+            (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate --tag "$TAG" --source-revision "$TARGET_SHA" --catalog-revision "$catalog_sha" --directory "${verify_dir}")
             echo "all ${#expected[@]} declared target archives present on ${TAG}"
             exit 0
           fi
