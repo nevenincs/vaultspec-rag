@@ -12,7 +12,7 @@ related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:e9e33ccc2e0816adb53abfeefe3d2884ce2108cfcca3772021c4761c4e3cb6e8'
+body_hash: 'sha256:98b8d3cd8e2df4d5146ae629b9b652ec24e5a7da5c5b08e4a58cc9fb6ed2bead'
 ---
 
 # `resident-service-recovery` plan
@@ -28,11 +28,12 @@ The user explicitly authorized fixing all defects discovered in the resident-ser
 - [ ] `S01` - Preserve terminal rebuild refusals and accurate watcher controller status across new events, failed attempts, and restart; `src/vaultspec_rag/watcher_retry_policy.py, watcher_execution.py, watcher_controller.py, affected watcher tests`.
 - [ ] `S02` - Recover abandoned publication receipts before certification and validate bounded replay or rollback across source adapters; `src/vaultspec_rag/indexer publication recovery, vault incremental/checkpoint paths, publication integration tests`.
 - [x] `S03` - Stabilize membership identity by pruning unreachable ignore files and verify legitimate nested ignore changes still invalidate proof; `src/vaultspec_rag/indexer/_ignore_specs.py, ignore/policy regression tests`.
+- [x] `S05` - Remove stale relevance-feedback anchors before hybrid or dense queries and verify search remains available after point replacement; `src/vaultspec_rag/_store_search.py and store search regression tests`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
 
-S01 and S02 may run concurrently with disjoint ownership: the retry worker owns watcher retry, controller settlement, and corresponding tests; the recovery worker owns publication recovery and corresponding tests. The supervisor owns S03 ignore collection, shared verification and serialized git/vault mutations, and S04 service operations. S04 follows S01-S03.
+S01 and S02 may run concurrently with disjoint write ownership: the retry worker owns retry, controller settlement, and their tests; the recovery worker owns receipt recovery paths and their tests. The supervisor owns S03 and S05, the operator-job completion hook for S01, shared verification and serialized Git/vault mutations, and S04 service rollout. S04 follows all code repairs.
 
 ## Verification
 
