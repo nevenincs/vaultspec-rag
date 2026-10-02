@@ -25,9 +25,10 @@ related:
   - '[[2026-07-24-service-quiesce-adr]]'
   - '[[2026-07-21-service-job-control-adr]]'
   - '[[2026-06-12-service-concurrency-adr]]'
+  - '[[2026-09-08-search-readiness-contract-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:f815f838940c0d27d730d6e44ef67053e4048fab92fc6a211a8add6d307abd67'
+body_hash: 'sha256:23923d54d4abff66060f5e6992b75317c6ea8d53aa24248d166da5edb887e771'
 ---
 
 # `resident-service-recovery` plan
@@ -50,6 +51,10 @@ S11 follows a live ingest code rebuild that confirmed every source file, bound i
 
 S12 repairs two confirmed control defects under the accepted service-quiesce, job-control and concurrency decisions: paused desired-running jobs are stranded after an aborted global pause, and unstarted workers waiting for index capacity cannot acknowledge control until unrelated protected work releases the limiter. Recovery must preserve logical identity and operator intent, and cancellation must never abandon an already-running worker. Isolated in-memory canonical components reproduced both failures. Semantic discovery was attempted but the affected index remains unavailable during replacement; bounded exact traces and existing recovery paths ground this repair. No persisted schema or public protocol change is needed.
 
+The same S12 control trace also found PAUSING/desired-RUNNING work from global quiesce rejecting an explicit operator desired-PAUSED request. Persisting that newer operator intent must be allowed without releasing a live worker early or clearing global quiesce ownership; acknowledgement then remains paused instead of automatically requeueing. The accepted desired-state contract already settles this behavior.
+
+S13 follows four production search ASGI traces whose typed StorageModelError escaped as HTTP 500. Accepted search readiness requires a nonretryable rebuild-required source fact and HTTP 409; combined search must retain every failed constituent while serving useful compatible domains. The existing sparse-provenance and storage-conformance authorities remain strict. This is correction of exception-to-outcome mapping within the accepted protocol, with no ranking or persisted schema change. Recent logs and canonical handler traces ground the unavailable-index fallback.
+
 ## Steps
 
 - [x] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
@@ -62,7 +67,8 @@ S12 repairs two confirmed control defects under the accepted service-quiesce, jo
 - [ ] `S09` - Prevent CI resident restart while a dependent native attempt is active and roll out the corrected admission runtime after that attempt releases; `isolated ci-fleet resident, protected task compilation and fleet.yml probe declaration, engine/supervisor grant and preparation readiness, runtime/server wiring and affected CPU tests, resident-service ADR refinement and trusted idle local authority deployment`.
 - [x] `S10` - Preserve canonical weighted-stream framing while resuming committed segment gaps, with real-ledger interrupted-run regressions and guarded boundary rejection; `indexer/_consumer_pipeline.py, _run_checkpoint.py, _slicing.py and _streaming_types.py as needed, focused CPU weighted stream and real-ledger resume tests`.
 - [x] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
-- [ ] `S12` - Recover desired-running paused jobs after aborted quiesce and let unstarted capacity waiters acknowledge control without starting workers; `jobs control quiesce recovery, attempt capacity admission and token checkpoint integration, focused real-component CPU job and quiesce regressions`.
+- [x] `S12` - Recover desired-running paused jobs after aborted quiesce, let unstarted capacity waiters acknowledge control, and preserve operator pause intent during global unwind; `job_manager quiesce recovery, attempt capacity admission and desired-state/capability owner, _service_residency.py and service_quiesce.py recovery failure ordering, focused real-component CPU control regressions`.
+- [ ] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization
@@ -80,6 +86,8 @@ For S10, the recovery worker owns resumed weighted-stream framing and checkpoint
 S11 is assigned to the watcher worker in the monitor checkout, owning cross-kind route reconciliation and vector-free storage metadata/delete seams plus their CPU regressions. Its source paths are disjoint from S10 and may proceed concurrently. The supervisor owns all shared gates, vault/Git changes, runtime control and final rollout.
 
 S12 is assigned to the recovery worker, owning quiesce recovery, attempt capacity admission and their CPU regressions. It may proceed concurrently with S11 checkpoint metadata and S04 observation because source ownership is disjoint. The supervisor owns shared package gates, serialized Git/vault writes, job/lifecycle operations and rollout. No worker uses the live resident or GPU; process-only mutation checks preserve checkout source bytes.
+
+S13 is assigned to the watcher worker, owning search conformance-failure mapping and focused CPU regressions. It may run concurrently with S12 because source paths are disjoint. The supervisor owns all shared gates, serialized vault/Git changes and resident/CI operations. Deployment follows both source repairs.
 
 ## Verification
 

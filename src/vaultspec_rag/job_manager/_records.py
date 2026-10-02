@@ -241,7 +241,9 @@ class JobManagerRecords(JobManagerState):
             spec=request.spec,
             state=state,
             desired_state=desired_state,
-            capabilities=_capabilities_for_state(request.spec, state),
+            capabilities=_capabilities_for_state(
+                request.spec, state, desired_state=desired_state
+            ),
             attempt=JobAttempt(number=1),
             timestamps=JobTimestamps(
                 created_at=now,

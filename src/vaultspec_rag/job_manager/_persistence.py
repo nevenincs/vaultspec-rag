@@ -421,7 +421,11 @@ class JobManagerPersistence(JobManagerState):
             revision=previous.revision + 1,
             state=transition.state,
             desired_state=transition.desired_state,
-            capabilities=_capabilities_for_state(previous.spec, transition.state),
+            capabilities=_capabilities_for_state(
+                previous.spec,
+                transition.state,
+                desired_state=transition.desired_state,
+            ),
             attempt=transition.attempt or previous.attempt,
             timestamps=replace(
                 timestamps,

@@ -399,7 +399,9 @@ def _valid_snapshot() -> JobSnapshot:
         spec=spec,
         state=JobState.QUEUED,
         desired_state=DesiredJobState.RUNNING,
-        capabilities=capabilities_for_state(spec, JobState.QUEUED),
+        capabilities=capabilities_for_state(
+            spec, JobState.QUEUED, desired_state=DesiredJobState.RUNNING
+        ),
         attempt=JobAttempt(number=1),
         timestamps=JobTimestamps(created_at=1000.0, state_changed_at=1000.0),
         progress=JobProgress(
@@ -737,7 +739,9 @@ def _snapshot_in_state(
         spec=resolved,
         state=state,
         desired_state=_DESIRED_FOR_STATE[state],
-        capabilities=capabilities_for_state(resolved, state),
+        capabilities=capabilities_for_state(
+            resolved, state, desired_state=_DESIRED_FOR_STATE[state]
+        ),
         attempt=JobAttempt(number=1),
         timestamps=JobTimestamps(
             created_at=1000.0,

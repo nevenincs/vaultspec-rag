@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:dd15d8d8103583623608e29e79299cf4dbe2af3a4a28ad97599b174eee3f6092'
+body_hash: 'sha256:e3f2a756c7464a8daf3afacf83f27af771c3d0c6aab0ac97db0c7506f13c43e5'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -162,8 +162,34 @@ Read-only follow-up reproduced a canonical paused job with desired RUNNING after
 
 A second isolated real-AnyIO reproduction held the index limiter with job1, then paused job2 before its worker entered. Job2 remained PAUSING with its compute ticket until job1 released the slot, because the first token checkpoint runs inside a worker after the limiter wait. The capacity wait itself must observe control without cancelling or abandoning an already-running worker. S12 owns both control repairs under the existing service-quiesce, job-control and concurrency rulings.
 
-The current 11 PAUSING/desired-RUNNING jobs are distinct: their retained quiesce signals have a valid late-acknowledgement path after protected work completes. Controller abort reopens admissions; safe acknowledgement releases resources and schedules a same-ID attempt. Their pending projection is truthful, and no lost work was established for those jobs.
+The current 10 PAUSING/desired-RUNNING repair jobs are distinct: their retained quiesce signals have a valid late-acknowledgement path after protected work completes. Controller abort reopens admissions; safe acknowledgement releases resources and schedules a same-ID attempt. Their pending projection is truthful, and no lost work was established for those jobs.
+
+### Search conformance refusal escapes as HTTP 500 | high | S13
+
+Four recent POST /search ASGI exceptions at 22:13, 22:29, 22:57 and 23:01 UTC end in StorageModelError. The concrete availability wrapper only catches collection disappearance, and the route only catches backend and quiesce faults. Accepted search readiness requires typed nonretryable rebuild-required source facts and HTTP 409; combined search must retain failed constituents beside useful compatible hits. S13 owns the narrow typed-error mapping without changing storage conformance, retrieval ranking or public schema. The pre-repair checkout service log is archived as checkout-pre-s12-service.log.
+
+### Recovered sparse OOM probe assessment
+
+The log sweep counted 70 recovered sparse OOM warnings by 23:06 UTC, with continued durable progress. The learned ceiling is retained on the model; accepted adaptivity deliberately probes upward after sixteen sufficiently loaded successful calls. Observed consecutive OOMs have 19 to 63 successful upserts between them, matching guarded recovery rather than reset-per-slice behavior. No new crash or discarded learned state was established. The previous single-bucket description covered the first observation only.
+
+### S10 and S11 integrated final source review
+
+Independent final review passes S10 and S11 together: 53 and 57 applicable CPU tests, all eight and seventeen intended production-mutation failures followed by restored fresh passes, and matching final source hashes. S10 file completeness and exact segment evidence remain authoritative before S11 destination validation and journaled origin deletion. Runtime verification is still pending S04, and S12/S13 must finish before the next restart.
+
+At 23:20 UTC the actual TUI job remains inside protected ingestion, with 7883 of 10491 paths processed and recent progress. Ten repair jobs are PAUSING with desired RUNNING; the controller separately reports eleven compute tickets, which must not be conflated with job count. Canonical job detail proves the TUI worker still owns its index slot, project lease, writer lock and active pipeline. Those resources are not reported released.
 
 ## Recommendations
 
 Complete the open code Steps, verify their negative guards and integrated CPU behavior, then deploy the checkout through its separate locked GPU environment. Point the existing on-demand resident lifecycle tasks at that environment so CI restarts preserve the repair. Respect live CI ownership; repair affected publication domains through admitted explicit rebuild jobs, verify search and watcher convergence, and append the final review and rollout results here.
+
+## Final control and search repair checkpoints
+
+S12 additionally reproduced an explicit operator pause being rejected for PAUSING or retained idle PAUSED work whose desired state was RUNNING after global quiesce. All canonical capability owners now derive pausable state from the actual desired state; persisting operator intent retains the existing attempt, resources, revision guards and quiesce ownership. Recovery durably prepares retained desired-running work before admission reopens, reconciles late acknowledgements after reopening, and closes admission on publication failure. Capacity waiters observe control without abandoning admitted workers.
+
+S12 is frozen with 253 affected CPU tests passing, all ten changed-source gates exit0, and 23 production-function process-only mutation proofs failing at the intended assertion then passing in a fresh restored process. S13 is frozen with 31 focused and 289 affected CPU tests passing, changed strict/design gates exit0, and 17 process-only fail/restored-pass proofs. The generic exception mapping and accepted same-geometry dense-model policy are preserved; typed incompatible storage becomes a nonretryable rebuild-required fact, and compatible combined hits retain failed constituents. Shared package Ruff lint and format pass for all 872 files. Root verified all nineteen owned file hashes and preserved complete proof directories in the incident evidence directory. Formal integrated evidence review precedes source closure.
+
+At 23:31:40 UTC the canonical global pause reached its 20-second drain bound with admission closed and eleven compute tickets retained. Ten repair jobs were PAUSING/desired-RUNNING; two other leaves were failed. The active TUI rebuild continued forward and had confirmed 9,283 of 10,491 source files and 58,064 durable units before restart. At 23:34 UTC an authoritative admission snapshot was empty, the Start task was disabled, and canonical service stop succeeded for daemon PID 70288. Windows detached-daemon stop terminates the process; no graceful-shutdown claim is made. Root subsequently verified daemon 70288 and managed Qdrant 27336 absent and both ports unused. Durable per-root checkpoints and safe health/job projections were captured before stop. Linked canonical retries will reconcile unfinished attempts after the committed fixes restart. A fresh scheduled Probe completed at 23:36:13 UTC with its authoritative absence result0.
+
+## Integrated S12 and S13 review
+
+The independent reviewer issued SOURCE+CPU PASS for S12 and S13 against the current frozen files and complete evidence. All nineteen owned hashes and the additional unchanged storage-conformance hash match. All 23 S12 and 17 S13 actual production-function mutation logs fail at their intended assertion and pass after fresh restoration. No remaining source findings were reported. Quiesce recovery preserves closed durable preparation, protected workers and operator intent; search conformance refusal retains compatible combined results without starting rebuilds or weakening publication. S04 live rollout remains pending. Fresh captured subprocesses from both CPU and debug interpreters import this checkout and return stopped exit3 in human and JSON modes; earlier reported exit1 was PowerShell propagation, with no status-source defect.

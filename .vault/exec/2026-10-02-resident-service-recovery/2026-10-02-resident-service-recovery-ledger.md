@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:50d25826693d3e8eeff3062618e5cedab349475dec72b165a8fd121e5bb99b12'
+body_hash: 'sha256:fac1a7ccd5b61462c9637529596600dee452afc9823e5a5e842db9cff4484832'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -148,6 +148,28 @@ related:
 - `S11` `verify:` `affected CPU route storage identity donor reads search57 tests exit0` -> `pass`
 - `S11` `verify:` `17 process-only actual production mutations intended fail then fresh restored pass unchanged six hashes` -> `pass`
 - `S11` `by:` `vaultspec-high-executor`
+- `S12` `M` `src/vaultspec_rag/job_manager/_execution.py`
+- `S12` `M` `src/vaultspec_rag/job_manager/_control_quiesce.py`
+- `S12` `M` `src/vaultspec_rag/_service_residency.py`
+- `S12` `M` `src/vaultspec_rag/service_quiesce.py`
+- `S12` `M` `src/vaultspec_rag/job_manager/_control.py`
+- `S12` `M` `src/vaultspec_rag/job_models.py`
+- `S12` `M` `src/vaultspec_rag/job_manager/_persistence.py`
+- `S12` `M` `src/vaultspec_rag/job_manager/_records.py`
+- `S12` `M` `src/vaultspec_rag/job_persistence.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_job_manager_quiesce.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_job_control_admission.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_quiesce_abort_recovery.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_job_contracts.py`
+- `S12` `M` `src/vaultspec_rag/tests/test_job_contracts_persistence.py`
+- `S12` `A` `src/vaultspec_rag/tests/test_job_quiesce_operator_intent.py`
+- `S12` `verify:` `package Ruff lint and format872 files exit0` -> `pass`
+- `S12` `verify:` `strict Basedpyright source debug annotation context and CPU tests Ty all15 paths exit0` -> `pass`
+- `S12` `verify:` `configured Pylint cognitive Xenon changed-source gates exit0` -> `pass`
+- `S12` `verify:` `affected control admission contracts residency CPU253 tests exit0` -> `pass`
+- `S12` `verify:` `23 process-only production mutations intended fail fresh restored pass unchanged15 hashes` -> `pass`
+- `S12` `verify:` `git diff --check exit0` -> `pass`
+- `S12` `by:` `vaultspec-high-executor`
 
 ## Notes
 

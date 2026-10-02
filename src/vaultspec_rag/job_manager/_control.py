@@ -876,6 +876,7 @@ class JobManagerControl(JobManagerQuiesceControl):
                 capabilities=_capabilities_for_state(
                     parent.snapshot.spec,
                     JobState.QUEUED,
+                    desired_state=DesiredJobState.RUNNING,
                 ),
                 attempt=JobAttempt(number=1, parent_job_id=parent.snapshot.id),
                 timestamps=JobTimestamps(created_at=now, state_changed_at=now),
@@ -1027,7 +1028,7 @@ class JobManagerControl(JobManagerQuiesceControl):
         managed: ManagedJob,
         state: JobState,
     ) -> JobOutcome:
-        if state is JobState.QUEUED:
+        if state in (JobState.QUEUED, JobState.PAUSED):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,
@@ -1041,7 +1042,7 @@ class JobManagerControl(JobManagerQuiesceControl):
             )
             code = "job_paused"
             status = JobOutcomeStatus.OK
-        elif state is JobState.RUNNING:
+        elif state in (JobState.RUNNING, JobState.PAUSING):
             now = time.time()
             self._replace_snapshot_locked(
                 managed,

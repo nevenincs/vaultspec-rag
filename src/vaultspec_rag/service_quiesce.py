@@ -121,6 +121,10 @@ _pin_terminal_failure_codes()
 
 def _failure_targets(
     code: TerminalFailureCode,
+    *,
+    recovery_state: Literal[
+        QuiesceState.PAUSING, QuiesceState.WARMING
+    ] = QuiesceState.WARMING,
 ) -> tuple[QuiesceState, QuiesceTransitionCode]:
     """Return the state a terminal failure records in, and its stale-report code.
 
@@ -133,11 +137,15 @@ def _failure_targets(
     match code:
         case QuiesceTransitionCode.QUIESCE_FAILED:
             return (QuiesceState.PAUSING, QuiesceTransitionCode.QUIESCE_UNAVAILABLE)
-        case (
-            QuiesceTransitionCode.WARMUP_FAILED
-            | QuiesceTransitionCode.RESUME_RECOVERY_FAILED
-        ):
+        case QuiesceTransitionCode.WARMUP_FAILED:
             return (QuiesceState.WARMING, QuiesceTransitionCode.WARMUP_UNAVAILABLE)
+        case QuiesceTransitionCode.RESUME_RECOVERY_FAILED:
+            return (
+                recovery_state,
+                QuiesceTransitionCode.QUIESCE_UNAVAILABLE
+                if recovery_state is QuiesceState.PAUSING
+                else QuiesceTransitionCode.WARMUP_UNAVAILABLE,
+            )
         case _:
             assert_never(code)
 
@@ -454,6 +462,9 @@ class ServiceQuiesceController:
         *,
         code: TerminalFailureCode,
         reason: str,
+        recovery_state: Literal[
+            QuiesceState.PAUSING, QuiesceState.WARMING
+        ] = QuiesceState.WARMING,
     ) -> QuiesceTransition:
         """Keep admission closed and unsafe when an owned transition fails.
 
@@ -463,7 +474,11 @@ class ServiceQuiesceController:
         against whichever one is now live.
         """
         failure_reason = _require_reason(reason)
-        required_state, unavailable = _failure_targets(code)
+        if recovery_state not in (QuiesceState.PAUSING, QuiesceState.WARMING):
+            raise ValueError("Recovery failure requires a closed recovery state.")
+        required_state, unavailable = _failure_targets(
+            code, recovery_state=recovery_state
+        )
         with self._condition:
             if self._state is not required_state:
                 return self._transition_locked(unavailable, achieved=False)

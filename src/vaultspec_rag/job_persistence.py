@@ -514,11 +514,11 @@ def _job_snapshot_from_dict(value: object) -> JobSnapshot:
         desired_state=desired_state,
         # Capabilities are written - they belong to the one resource
         # representation the served views also render - and deliberately not
-        # read. They are a total function of the specification and the state,
+        # read. They derive from the specification, state, and desired state,
         # both of which round-trip exactly, so deriving them again yields what
         # the writer emitted. Reading them instead would let a file assert an
         # action this build no longer supports.
-        capabilities=capabilities_for_state(spec, state),
+        capabilities=capabilities_for_state(spec, state, desired_state=desired_state),
         attempt=JobAttempt(
             number=attempt_number,
             parent_job_id=_optional_str(raw.get("parent_job_id"), "parent_job_id"),

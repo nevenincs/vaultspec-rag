@@ -509,7 +509,9 @@ class TestPersistedJobStateRoundTrip:
             spec=spec,
             state=JobState.PAUSED,
             desired_state=DesiredJobState.PAUSED,
-            capabilities=capabilities_for_state(spec, JobState.PAUSED),
+            capabilities=capabilities_for_state(
+                spec, JobState.PAUSED, desired_state=DesiredJobState.PAUSED
+            ),
             attempt=JobAttempt(number=1),
             timestamps=JobTimestamps(
                 created_at=acknowledged,
