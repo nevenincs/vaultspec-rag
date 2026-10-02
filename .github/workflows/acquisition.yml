@@ -35,8 +35,8 @@ concurrency:
 jobs:
   frontend:
     if: inputs.mode == 'candidate'
-    name: "Build: Candidate monitor frontend (macOS)"
-    runs-on: [self-hosted, macOS, ARM64]
+    name: "Build: Candidate monitor frontend (Linux)"
+    runs-on: ubuntu-24.04
     timeout-minutes: 140
     env:
       CI_EXEC_BUDGET_MINUTES: 20
