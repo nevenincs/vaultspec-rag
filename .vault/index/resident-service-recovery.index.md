@@ -6,8 +6,9 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:aff52639df797dd50abaf824d0c79b878ec7025c5774b18016ffbd7aca23a6ab'
+body_hash: 'sha256:7e89e8e901ce2573b163d8ce8c384aad9ad8525f4e8718b81715174bc2a12d6b'
 related:
+  - '[[2026-10-02-resident-service-recovery-audit]]'
   - '[[2026-10-02-resident-service-recovery-ledger]]'
   - '[[2026-10-02-resident-service-recovery-plan]]'
 ---
@@ -17,6 +18,10 @@ related:
 Auto-generated index of all documents tagged with `#resident-service-recovery`.
 
 ## Documents
+
+### audit
+
+- `2026-10-02-resident-service-recovery-audit` - `resident-service-recovery` audit: `resident incident diagnosis and integrated recovery review`
 
 ### exec
 

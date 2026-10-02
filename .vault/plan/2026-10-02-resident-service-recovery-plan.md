@@ -12,7 +12,7 @@ related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:98b8d3cd8e2df4d5146ae629b9b652ec24e5a7da5c5b08e4a58cc9fb6ed2bead'
+body_hash: 'sha256:e33c803079a34edf26d92e26d9a73d4475c997bdee908a0cf216b0f9ab3a4a59'
 ---
 
 # `resident-service-recovery` plan
@@ -25,8 +25,8 @@ The user explicitly authorized fixing all defects discovered in the resident-ser
 
 ## Steps
 
-- [ ] `S01` - Preserve terminal rebuild refusals and accurate watcher controller status across new events, failed attempts, and restart; `src/vaultspec_rag/watcher_retry_policy.py, watcher_execution.py, watcher_controller.py, affected watcher tests`.
-- [ ] `S02` - Recover abandoned publication receipts before certification and validate bounded replay or rollback across source adapters; `src/vaultspec_rag/indexer publication recovery, vault incremental/checkpoint paths, publication integration tests`.
+- [ ] `S01` - Preserve terminal rebuild refusals and accurate watcher status through events, failures, and restart, and reconcile successful verified operator rebuilds; `watcher retry, controller, intake, execution and runtime, jobs.py completion hook, affected watcher and job tests`.
+- [x] `S02` - Recover abandoned receipts before certification, preserve unsafe reader fences until explicit rebuild proof commit, and enforce proof before generation publication; `shared publication recovery and checkpoint owner, code/document/vault source entry paths, CPU real-storage recovery and ledger regression tests`.
 - [x] `S03` - Stabilize membership identity by pruning unreachable ignore files and verify legitimate nested ignore changes still invalidate proof; `src/vaultspec_rag/indexer/_ignore_specs.py, ignore/policy regression tests`.
 - [x] `S05` - Remove stale relevance-feedback anchors before hybrid or dense queries and verify search remains available after point replacement; `src/vaultspec_rag/_store_search.py and store search regression tests`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.

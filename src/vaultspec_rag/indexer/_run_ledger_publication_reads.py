@@ -13,17 +13,20 @@ from ._publication_proof import (
     ProofIncompatibleError,
     ProofMissingError,
     ProofParentMismatchError,
+    ProofProvenance,
     ProofReadConflictError,
     ProofReadToken,
     ProofReceiptState,
 )
 from ._run_ledger_models import (
     FETCH_BATCH,
+    FinalizationPhase,
     GenerationRow,
     PublicationProof,
     PublicationReceipt,
     RunLedgerCorruptionError,
     RunLedgerStateError,
+    RunTerminalState,
     column_int,
     column_text,
     fetch_all,
@@ -265,6 +268,59 @@ class RunLedgerPublicationReadMethods:
                 return receipt
             finally:
                 connection.rollback()
+
+    def recoverable_publication_receipt(
+        self,
+        *,
+        source_type: PublicSourceType,
+        root_identity: str,
+        backend_identity: str,
+    ) -> PublicationReceipt | None:
+        """Locate recorded writer recovery work without certifying a live read."""
+        with ledger_connection(self.path) as connection:
+            begin_read(connection)
+            row = current_proof_snapshot_row(
+                connection,
+                (source_type.value, root_identity, backend_identity),
+            )
+            if row is None:
+                return None
+            proof = proof_from_row(row)
+            key = proof.compatibility_key
+            if not has_open_receipt(row):
+                return self._unfinished_committed_receipt(connection, proof)
+        return self.active_publication_receipt(key)
+
+    def _unfinished_committed_receipt(
+        self,
+        connection: sqlite3.Connection,
+        proof: PublicationProof,
+    ) -> PublicationReceipt | None:
+        """A committed in-place delta may still need operational finalization."""
+        if proof.provenance is not ProofProvenance.DELTA_DERIVED:
+            return None
+        generation_row: GenerationRow | None = fetch_one(
+            connection,
+            "SELECT * FROM generations WHERE generation_id = ?",
+            (proof.generation_id,),
+        )
+        if generation_row is None:
+            receipt_corrupt("publication proof cites a missing generation")
+        generation = self._generation_from_row(generation_row)
+        if (
+            generation.terminal_state is RunTerminalState.SUCCEEDED
+            or generation.finalization_phase is FinalizationPhase.COMPACTED
+        ):
+            return None
+        row: sqlite3.Row | None = fetch_one(
+            connection,
+            "SELECT * FROM publication_receipts WHERE generation_id = ? "
+            "AND state = ? ORDER BY reservation_sequence DESC LIMIT 1",
+            (proof.generation_id, ProofReceiptState.COMMITTED.value),
+        )
+        if row is None:
+            receipt_corrupt("unfinished delta publication has no committed receipt")
+        return hydrate_receipt(connection, row)
 
     def acquire_publication_read_token(
         self,

@@ -32,12 +32,17 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, ClassVar, Protocol, Self
 
 from .. import store_schema
+from .._job_errors import JobError, JobErrorKind
+from .._operator_commands import IndexCommandOptions, index_command
+from .._store_writes import workspace_volume_path
 from ._file_state import FileState, FileStateKind
 from ._publication_proof import (
     PathDelta,
     PathOutcome,
     ProofEvidence,
+    ProofMutationState,
     ProofReceiptState,
+    ProofUnverifiableError,
 )
 from ._run_ledger_models import (
     FETCH_BATCH,
@@ -46,11 +51,14 @@ from ._run_ledger_models import (
     FinalizationPhase,
     RunAuthority,
     RunLedgerCompatibilityError,
+    RunLedgerCorruptionError,
+    RunLedgerRebuildRequiredError,
     RunLedgerStateError,
     RunOperation,
     RunSignature,
     RunTerminalState,
     index_run_ledger_path,
+    ledger_connection,
 )
 from ._run_ledger_runtime import RunLedger
 from ._run_policy import DurableProgressKind
@@ -188,6 +196,179 @@ class RunCheckpointBase:
     _collection_identity: ClassVar[str]
     _source_type: ClassVar[PublicSourceType]
     _embedding_schema: ClassVar[int]
+
+    @staticmethod
+    def recover_pending_publication(
+        root: Path,
+        source: PublicSourceType,
+        *,
+        backend_identity: str,
+        run_control: RunControl,
+    ) -> None:
+        """Settle recorded publication work under the caller's writer lease.
+
+        An empty reservation has touched no storage. A sealed, confirmed
+        receipt already records the exact complete delta and its ingest
+        barriers. Neither needs source discovery or a reader snapshot.
+        Unsealed or unconfirmed writes cannot be reconstructed from current
+        source bytes, which may have changed since the reservation.
+        """
+        path = index_run_ledger_path(workspace_volume_path(root.resolve()))
+        if not path.is_file():
+            return
+        try:
+            ledger = RunLedger(path)
+            receipt = ledger.recoverable_publication_receipt(
+                source_type=source,
+                root_identity=str(root.resolve()),
+                backend_identity=backend_identity,
+            )
+            if receipt is not None:
+                RunCheckpointBase._settle_pending_publication(
+                    ledger, receipt, run_control
+                )
+        except (
+            ProofUnverifiableError,
+            RunLedgerCompatibilityError,
+            RunLedgerCorruptionError,
+            RunLedgerRebuildRequiredError,
+            RunLedgerStateError,
+        ) as exc:
+            rebuild = index_command(source, IndexCommandOptions(rebuild=True))
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                f"interrupted publication cannot recover safely ({exc}); run {rebuild}",
+            ) from exc
+
+    @staticmethod
+    def _settle_pending_publication(
+        ledger: RunLedger,
+        receipt: PublicationReceipt,
+        run_control: RunControl,
+    ) -> None:
+        """Choose rollback or forward completion only from exact durable evidence."""
+        run_control.checkpoint()
+        generation = ledger.generation(receipt.generation_id)
+        from ._run_ledger_publication_identity import compatibility_for_signature
+
+        proof = ledger.publication_proof(receipt.compatibility_key)
+        if receipt.state is ProofReceiptState.COMMITTED:
+            if (
+                proof.generation_id != generation.generation_id
+                or proof.revision != receipt.target_revision
+                or proof.reservation_sequence != receipt.reservation_sequence
+                or compatibility_for_signature(generation.signature)
+                != receipt.compatibility_key
+                or generation.signature.clean
+            ):
+                raise RunLedgerCompatibilityError(
+                    "unfinished publication does not match its committed receipt"
+                )
+            RunCheckpointBase._recover_confirmed_publication(
+                ledger, receipt, generation, run_control
+            )
+            return
+        if (
+            compatibility_for_signature(generation.signature)
+            != receipt.compatibility_key
+            or generation.parent_generation_id != proof.generation_id
+        ):
+            raise RunLedgerCompatibilityError(
+                "pending publication generation does not descend from canonical proof"
+            )
+        if (
+            not receipt.mutations
+            and ledger.committed_unit_count(generation.generation_id) == 0
+        ):
+            ledger.begin_publication_rollback(receipt.receipt_id)
+            ledger.roll_back_publication_receipt(
+                receipt.receipt_id, compensated_units=()
+            )
+            if generation.terminal_state is RunTerminalState.RUNNING:
+                ledger.finish_generation(
+                    generation.generation_id,
+                    RunTerminalState.INVALIDATED,
+                    detail="abandoned publication reservation touched no storage",
+                )
+            return
+        if receipt.state is not ProofReceiptState.SEALED or any(
+            item.state is not ProofMutationState.CONFIRMED for item in receipt.mutations
+        ):
+            rebuild = index_command(
+                receipt.compatibility_key.source_type, IndexCommandOptions(rebuild=True)
+            )
+            raise JobError(
+                JobErrorKind.FULL_REINDEX_REQUIRED,
+                "interrupted publication has no complete storage-confirmed delta; "
+                f"run {rebuild}",
+            )
+        RunCheckpointBase._recover_confirmed_publication(
+            ledger, receipt, generation, run_control
+        )
+
+    @staticmethod
+    def _recover_confirmed_publication(
+        ledger: RunLedger,
+        receipt: PublicationReceipt,
+        generation: RunGeneration,
+        run_control: RunControl,
+    ) -> None:
+        """Replay durable outcomes, then commit the recorded sealed delta."""
+        if ledger.start_generation(generation.signature).generation_id != (
+            generation.generation_id
+        ):
+            raise RunLedgerStateError("pending publication generation cannot resume")
+        from .._source_types import PublicSourceType
+        from ._content_policy import ContentKind
+
+        for mutation in receipt.mutations:
+            run_control.checkpoint()
+            unit = mutation.unit
+            if generation.finalization_phase is not FinalizationPhase.INGESTING:
+                if not ledger.unit_committed(generation.generation_id, unit):
+                    raise RunLedgerStateError(
+                        "finalizing receipt lacks its storage-confirmed checkpoint unit"
+                    )
+                continue
+            ledger.record_storage_confirmed_unit(generation.generation_id, unit)
+            if unit.kind is CommitUnitKind.DELETE_PATH:
+                ledger.record_path_deleted(generation.generation_id, unit.rel_path)
+            elif (
+                unit.kind is CommitUnitKind.UPSERT
+                and unit.is_file_end
+                and generation.signature.source_type is not PublicSourceType.VAULT
+            ):
+                assert unit.source_digest is not None
+                ledger.record_file_state(
+                    generation.generation_id,
+                    FileState.indexed(
+                        unit.rel_path,
+                        ContentKind(generation.signature.source_type.value),
+                        unit.source_digest,
+                    ),
+                )
+        current = ledger.generation(generation.generation_id)
+        if current.finalization_phase is FinalizationPhase.INGESTING:
+            ledger.advance_finalization(
+                generation.generation_id, FinalizationPhase.STALE_RECONCILED
+            )
+        ledger.commit_publication_receipt(receipt.receipt_id)
+        if current.finalization_phase in {
+            FinalizationPhase.INGESTING,
+            FinalizationPhase.STALE_RECONCILED,
+        }:
+            ledger.advance_finalization(
+                generation.generation_id, FinalizationPhase.METADATA_PUBLISHED
+            )
+        with ledger_connection(ledger.path) as connection:
+            connection.execute("BEGIN")
+            ledger.assert_generation_proof_committed(
+                connection, generation.generation_id
+            )
+        ledger.advance_finalization(
+            generation.generation_id, FinalizationPhase.GENERATION_PUBLISHED
+        )
+        ledger.finish_generation(generation.generation_id, RunTerminalState.SUCCEEDED)
 
     @classmethod
     def open_generation(cls, request: RunOpenRequest, /) -> Self:
@@ -611,6 +792,12 @@ class RunCheckpointBase:
                 f"{self._kind_label} metadata must be durably published "
                 "before generation publication"
             )
+        if self.generation.terminal_state is RunTerminalState.RUNNING:
+            with ledger_connection(self.ledger.path) as connection:
+                connection.execute("BEGIN")
+                self.ledger.assert_generation_proof_committed(
+                    connection, self.generation_id
+                )
         if phase is FinalizationPhase.METADATA_PUBLISHED:
             self.generation = self.ledger.advance_finalization(
                 self.generation_id,

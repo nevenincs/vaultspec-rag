@@ -18,7 +18,7 @@ from .._job_errors import JobError, JobErrorKind
 from .._source_types import PublicSourceType
 from ..job_control import NO_RUN_CONTROL
 from . import _chunk_worker, _stat_gate
-from ._checkpoint_common import PublicationExecution
+from ._checkpoint_common import PublicationExecution, RunCheckpointBase
 from ._chunk_producer import CodeChunkProducer
 from ._codebase_preprocess import CodebasePreprocessMixin
 from ._consumer_pipeline import (
@@ -640,14 +640,18 @@ class CodebaseIndexer(CodebasePreprocessMixin):
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofIncompatibleError, ProofMissingError
+        from ._publication_proof import (
+            ProofIncompatibleError,
+            ProofMissingError,
+            ProofReadConflictError,
+        )
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.CODE,
             )
-        except (ProofIncompatibleError, ProofMissingError):
+        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
             previous_metadata = {}
         else:
             previous_metadata = {
@@ -872,6 +876,12 @@ class CodebaseIndexer(CodebasePreprocessMixin):
         """Locked implementation of cooperative incremental indexing."""
         run_control = execution.run_control
         run_control.checkpoint()
+        RunCheckpointBase.recover_pending_publication(
+            self.root_dir,
+            PublicSourceType.CODE,
+            backend_identity=self.store.backend_identity,
+            run_control=run_control,
+        )
         if self._lifecycle.published_evidence_lost():
             # The predicate has already logged which branch fired and, for a
             # shortfall, both counts. Naming only the absent-collection case

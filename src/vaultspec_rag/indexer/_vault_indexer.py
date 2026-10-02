@@ -470,6 +470,12 @@ class VaultIndexer(VaultIncrementalMixin):
         """
         run_control.checkpoint()
         with self._writer_lock, self._memory_telemetry():
+            VaultRunCheckpoint.recover_pending_publication(
+                self.root_dir,
+                PublicSourceType.VAULT,
+                backend_identity=self.store.backend_identity,
+                run_control=run_control,
+            )
             return run_index_lifecycle(
                 lambda: self._incremental_index_locked(
                     reporter=reporter,

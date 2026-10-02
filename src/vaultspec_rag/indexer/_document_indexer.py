@@ -1134,16 +1134,16 @@ class DocumentIndexer:
             for path in paths
         )
         effective_clean = clean and not preprocessing_disabled
-        checkpoint = self._open_checkpoint(
-            policy=policy,
-            operation=RunOperation.FULL,
-            clean=authority is RunAuthority.REBUILD,
-            limits=limits,
-            execution=PublicationExecution(authority, run_control),
-        )
-        with checkpoint.preserve_incomplete_generation():
-            budget = self._begin_resource_budget(limits)
         with self._writer_lock:
+            checkpoint = self._open_checkpoint(
+                policy=policy,
+                operation=RunOperation.FULL,
+                clean=authority is RunAuthority.REBUILD,
+                limits=limits,
+                execution=PublicationExecution(authority, run_control),
+            )
+            with checkpoint.preserve_incomplete_generation():
+                budget = self._begin_resource_budget(limits)
             return run_index_lifecycle(
                 lambda: self._full_index_locked(
                     paths,
@@ -1193,14 +1193,18 @@ class DocumentIndexer:
             acquire_publication_snapshot,
             read_all_publication_evidence,
         )
-        from ._publication_proof import ProofIncompatibleError, ProofMissingError
+        from ._publication_proof import (
+            ProofIncompatibleError,
+            ProofMissingError,
+            ProofReadConflictError,
+        )
 
         try:
             previous_snapshot = acquire_publication_snapshot(
                 self.root_dir,
                 PublicSourceType.DOCUMENT,
             )
-        except (ProofIncompatibleError, ProofMissingError):
+        except (ProofIncompatibleError, ProofMissingError, ProofReadConflictError):
             previous_files = {}
         else:
             previous_files = {
@@ -1323,6 +1327,12 @@ class DocumentIndexer:
         prep = self._preprocess_context(policy, limits)
         previous_files: dict[str, DocumentFileMetadata]
         with self._writer_lock:
+            DocumentRunCheckpoint.recover_pending_publication(
+                self.root_dir,
+                PublicSourceType.DOCUMENT,
+                backend_identity=self.store.backend_identity,
+                run_control=run_control,
+            )
             from .._publication_state import (
                 acquire_publication_snapshot,
                 read_all_publication_evidence,
@@ -1372,30 +1382,30 @@ class DocumentIndexer:
                     "document storage is shorter than its canonical proof; request "
                     "an explicit full document reindex",
                 )
-        operation = (
-            RunOperation.SCOPED_INCREMENTAL
-            if changed_paths is not None
-            else RunOperation.INCREMENTAL
-        )
-        try:
-            checkpoint = self._open_checkpoint(
-                policy=policy,
-                operation=operation,
-                clean=False,
-                limits=limits,
-                execution=PublicationExecution(authority, run_control),
+            operation = (
+                RunOperation.SCOPED_INCREMENTAL
+                if changed_paths is not None
+                else RunOperation.INCREMENTAL
             )
-        except RunLedgerCompatibilityError as exc:
-            logger.warning("document incremental ledger is incompatible: %s", exc)
-            raise JobError(
-                JobErrorKind.FULL_REINDEX_REQUIRED,
-                f"no compatible committed document proof ({exc}); request "
-                "an explicit full document reindex",
-            ) from exc
+            try:
+                checkpoint = self._open_checkpoint(
+                    policy=policy,
+                    operation=operation,
+                    clean=False,
+                    limits=limits,
+                    execution=PublicationExecution(authority, run_control),
+                )
+            except RunLedgerCompatibilityError as exc:
+                logger.warning("document incremental ledger is incompatible: %s", exc)
+                raise JobError(
+                    JobErrorKind.FULL_REINDEX_REQUIRED,
+                    f"no compatible committed document proof ({exc}); request "
+                    "an explicit full document reindex",
+                ) from exc
 
-        with checkpoint.preserve_incomplete_generation():
-            budget = self._begin_resource_budget(limits)
-        with self._writer_lock:
+            with checkpoint.preserve_incomplete_generation():
+                run_control.checkpoint()
+                budget = self._begin_resource_budget(limits)
             return run_index_lifecycle(
                 lambda: self._incremental_index_locked(
                     authorized_paths,

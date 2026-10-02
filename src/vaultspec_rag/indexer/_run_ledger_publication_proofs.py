@@ -38,6 +38,7 @@ from ._run_ledger_publication_identity import (
 )
 from ._run_ledger_publication_storage import (
     OPEN_RECEIPT_SQL,
+    hydrate_receipt,
     proof_from_row,
     proof_row,
     receipt_corrupt,
@@ -197,23 +198,6 @@ class RunLedgerPublicationProofMethods:
             )
         key = compatibility_for_generation(generation)
         stable = stable_parameters(key)
-        if (
-            fetch_one(
-                connection,
-                f"""
-            SELECT 1 FROM publication_receipts
-            WHERE source_type = ? AND root_identity = ?
-              AND backend_identity = ? AND collection_identity = ?
-              AND {OPEN_RECEIPT_SQL}
-            LIMIT 1
-            """,
-                stable,
-            )
-            is not None
-        ):
-            raise RunLedgerStateError(
-                "cannot replace publication proof while a receipt is open"
-            )
         previous = proof_row(connection, key)
         if previous is not None:
             existing = proof_from_row(previous)
@@ -226,6 +210,18 @@ class RunLedgerPublicationProofMethods:
         revision = 0 if previous is None else column_int(previous, "revision") + 1
         sequence = (
             0 if previous is None else column_int(previous, "reservation_sequence") + 1
+        )
+        # The complete acknowledged rebuild replaces partial mutation evidence
+        # under its own authority. Keep the old fence until this transaction
+        # installs the replacement proof; it is not a claimed storage rollback.
+        connection.execute(
+            f"""
+            DELETE FROM publication_receipts
+            WHERE source_type = ? AND root_identity = ?
+              AND backend_identity = ? AND collection_identity = ?
+              AND {OPEN_RECEIPT_SQL}
+            """,
+            stable,
         )
         connection.execute(
             """
@@ -341,10 +337,6 @@ class RunLedgerPublicationProofMethods:
             raise RunLedgerStateError(
                 "publication proof is incompatible with generation finalization"
             )
-        if proof.generation_id != generation.generation_id:
-            raise RunLedgerStateError(
-                "publication proof must commit before generation finalization"
-            )
         open_receipt: sqlite3.Row | None = fetch_one(
             connection,
             f"""
@@ -371,6 +363,14 @@ class RunLedgerPublicationProofMethods:
             """,
             (generation.generation_id,),
         )
+        if proof.generation_id != generation.generation_id:
+            if latest_receipt is not None and self._unchanged_publication(
+                connection, generation, proof, latest_receipt
+            ):
+                return
+            raise RunLedgerStateError(
+                "publication proof must commit before generation finalization"
+            )
         if latest_receipt is None:
             if proof.provenance is not ProofProvenance.VERIFIED:
                 raise RunLedgerStateError(
@@ -394,3 +394,28 @@ class RunLedgerPublicationProofMethods:
                 "publication receipt must commit the current proof before generation "
                 "finalization"
             )
+
+    @staticmethod
+    def _unchanged_publication(
+        connection: sqlite3.Connection,
+        generation: RunGeneration,
+        proof: PublicationProof,
+        row: sqlite3.Row,
+    ) -> bool:
+        """An untouched rolled-back reservation retains the exact parent proof."""
+        receipt = hydrate_receipt(connection, row)
+        return (
+            receipt.state is ProofReceiptState.ROLLED_BACK
+            and not receipt.mutations
+            and not receipt.deltas
+            and generation.parent_generation_id == proof.generation_id
+            and receipt.compatibility_key == proof.compatibility_key
+            and receipt.parent_revision == proof.revision
+            and receipt.reservation_sequence == proof.reservation_sequence
+            and fetch_one(
+                connection,
+                "SELECT 1 FROM commit_units WHERE generation_id = ? LIMIT 1",
+                (generation.generation_id,),
+            )
+            is None
+        )
