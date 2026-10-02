@@ -5,40 +5,14 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:51e2340a3b57e8d6b589d708ed35bd8a65191da2f5ad3056ad22f7689eeb5630'
+body_hash: 'sha256:40cc2b4bbf5d55c15a0f754770353dd16d84dd3acc9ef893b8964a0108596418'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
 
-<!-- Machine-owned, whole file: `vaultspec-core vault exec log` creates it
-     on first use and appends every row; never hand-edit it. Add no
-     frontmatter fields. Wiki-links belong in `related:` only.
-
-     ONE ledger per plan, the only execution artifact. Each row's first
-     column names its Step. -->
-
 # `monitor-delivery` ledger
 
 ## Changes
-
-<!-- MECHANICAL LOG, append-only, one row per path touched per Step, written
-     by `--row`:
-       - `S##` `A` `path`   added
-       - `S##` `M` `path`   modified
-       - `S##` `D` `path`   deleted
-       - `S##` `R` `old` -> `new`   renamed
-     Paths are repo-relative, in backticks. No prose: the Step row states the
-     intent and the commit carries the diff.
-
-     Optional per-Step rows, written by `--verify` and `--by`:
-       - `S##` `verify:` `<command>` -> `pass` | `fail`
-       - `S##` `by:` `<persona>`
-
-     Rows are appended in Step order and never rewritten. Only rows in this
-     section register a Step as covered. `--note` adds a `## Notes` section
-     ONLY on exception (data loss, skipped work, a scaffold left in code, a
-     persistent failure), one `S##`-prefixed line each; it is otherwise
-     omitted. -->
 
 - `S07` `A` `tools/binaries/bun_pins.py`
 - `S07` `M` `.vault/adr/2026-10-02-monitor-delivery-adr.md`
@@ -154,6 +128,9 @@ related:
 - `S01` `verify:` `basedpyright canonical extractor` -> `pass`
 - `S01` `verify:` `monitor packaging workflow Bun Qdrant and CLI progress tests 176` -> `pass`
 - `S01` `verify:` `ZIP mode guard intentional bypass then exact restore 5` -> `pass`
+- `S06` `A` `.vault/audit/2026-10-02-monitor-delivery-audit.md`
+- `S06` `M` `.vault/index/monitor-delivery.index.md`
+- `S06` `verify:` `integrated implementation review and ZIP correction review` -> `pass`
 
 ## Notes
 
@@ -167,3 +144,4 @@ related:
 - `S10` Focused documentation maintenance verified against canonical compile, native-smoke, committed catalog and acquisition interfaces. Generated CLI tables retain generator-owned formatting. No runtime source changed, so type gates are not applicable and existing implementation lint/type/native evidence remains applicable. Lifecycle claims describe the required integrated release, whose wheel admission remains blocked until S09. Pin catalog starts empty and verifier-only retry retains independently reviewed bytes.
 - `S10` Full citation gate initially interpreted slash-separated cwd/home/status prose as a home path. Rephrased the owned ADR sentence without changing its offline isolation commitment; the same gate then passed.
 - `S01` Integrated review found the shared ZIP extractor admitted non-symlink special modes. Reopened S01 and aligned canonical admission with regular or unspecified ZIP file modes. FIFO/device/socket/symlink fixtures refuse before writing. Removing mode admission made five intended DID NOT RAISE assertions fail, exact original bytes restored, all five pass. Proof: owned temporary monitor-delivery-records/zip-mode-guard-proof.json. Compiled runtime and asset bytes are unchanged; no native rebuild needed for this authoring boundary correction.
+- `S06` Review checkpoint is PENDING, not final PASS or plan completion. S09 lifecycle owner merge, Linux and macOS native evidence, executable OS-level outbound denial and first reviewed public acquisition remain unresolved. All independent code/documentation work is committed. Full feature vault check still has exactly two expected dangling lifecycle links until owner merge. S06 remains open.
