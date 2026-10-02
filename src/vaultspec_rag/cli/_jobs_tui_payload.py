@@ -8,7 +8,7 @@ quiet and why.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from .._job_values import count, mapping
 from ..service_quiesce import QUIESCE_ENVELOPE_FIELDS
@@ -19,9 +19,6 @@ from ._jobs_tui_constants import (
     SEARCH_COUNT_NAMES,
     STATE_ACTIONS,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 def canonical_quiesce_block(raw: object) -> object | None:
@@ -79,10 +76,11 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
     """Validate the bounded active/recent response envelope."""
     active = result.get("active")
     recent = result.get("recent")
+    queued = result.get("queued", [])
     counts = result.get("counts")
     returned = result.get("returned")
     filters = result.get("filters")
-    if not isinstance(active, list) or not isinstance(recent, list):
+    if not all(isinstance(lane, list) for lane in (queued, active, recent)):
         return "served-search activity unavailable: invalid record lists"
     if not isinstance(counts, dict) or not isinstance(filters, dict):
         return "served-search activity unavailable: invalid summary"
@@ -91,17 +89,34 @@ def _search_activity_payload_error(result: dict[str, object]) -> str | None:
     for name in SEARCH_COUNT_NAMES:
         if count(cast("dict[str, object]", counts).get(name)) is None:
             return "served-search activity unavailable: invalid counts"
+    invalid_queue = "queued" in result and count(result.get("queued_count")) is None
+    all_counts = result.get("all_counts")
+    invalid_counts = all_counts is not None and (
+        not isinstance(all_counts, dict)
+        or any(
+            count(cast("dict[str, object]", all_counts).get(name)) is None
+            for name in ("queued", *SEARCH_COUNT_NAMES)
+        )
+    )
+    if invalid_queue or invalid_counts:
+        return "served-search activity unavailable: invalid queue summary"
     return search_activity_records_error(
-        cast("list[object]", active), cast("list[object]", recent)
+        cast("list[object]", active),
+        cast("list[object]", recent),
+        cast("list[object]", queued),
     )
 
 
 def search_activity_records_error(
-    active: list[object], recent: list[object]
+    active: list[object], recent: list[object], queued: list[object] | None = None
 ) -> str | None:
     """Validate record identity, lane, and query privacy invariants."""
     seen: set[str] = set()
-    for records, state in ((active, "active"), (recent, "terminal")):
+    for records, state in (
+        (queued or [], "queued"),
+        (active, "active"),
+        (recent, "terminal"),
+    ):
         for record in records:
             if not isinstance(record, dict):
                 return "served-search activity unavailable: invalid record"
@@ -155,18 +170,3 @@ def action_capability(action: str) -> str | None:
     if name in STATE_ACTIONS:
         return STATE_ACTIONS[name][0]
     return PLAIN_ACTIONS.get(name)
-
-
-def log_lines(result: dict[str, object]) -> Iterable[str]:
-    """Yield raw log lines from a managed-log payload, group order preserved."""
-    groups = result.get("groups")
-    if not isinstance(groups, list):
-        return []
-    lines: list[str] = []
-    for group in cast("list[object]", groups):
-        if not isinstance(group, dict):
-            continue
-        raw = cast("dict[str, object]", group).get("lines")
-        if isinstance(raw, list):
-            lines.extend(str(line) for line in cast("list[object]", raw))
-    return lines or ["No log lines matched this job."]

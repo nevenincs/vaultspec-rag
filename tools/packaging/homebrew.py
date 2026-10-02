@@ -170,7 +170,6 @@ def render(
         )
     else:
         available = tuple(target for target in available if product.serves(target))
-    primary = product.executables[0]
     caveats = _caveats_body(product, available)
     lines = [
         f"class {product.formula_class} < Formula",
@@ -197,8 +196,11 @@ def render(
         # PyApp resolves the pinned distribution from PyPI on first launch, so
         # this test exercises the bootstrap as well as the placement - which is
         # the failure a user meets first if the release never reached PyPI.
-        "    assert_match version.to_s, "
-        f'shell_output("#{{bin}}/{primary.name} --version")',
+        *(
+            "    assert_match version.to_s, "
+            f'shell_output("#{{bin}}/{executable.name} --version")'
+            for executable in product.executables
+        ),
         "  end",
         "end",
     ]

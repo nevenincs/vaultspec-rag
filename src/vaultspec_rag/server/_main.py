@@ -187,6 +187,7 @@ def _run_http_daemon(port: int) -> None:
         install_daemon_log_capture,
         install_fatal_fault_dump,
     )
+    from ..monitor_process import MonitorProcess
     from ..registry import get_registry
 
     # Install ordering (CRITICAL): argparse → configure_logging → capture →
@@ -210,6 +211,7 @@ def _run_http_daemon(port: int) -> None:
         token=uuid.uuid4().hex,
         registry=get_registry(),
         port=port,
+        monitor=MonitorProcess(port),
     )
     daemon_exit_code = 0
     try:

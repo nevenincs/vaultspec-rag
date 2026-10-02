@@ -66,6 +66,28 @@ def test_generated_pointers_validate_clean(channel_root: Path) -> None:
     assert validate(channel_root, VAULTSPEC_RAG) == []
 
 
+@pytest.mark.parametrize("channel", ["scoop", "homebrew"])
+def test_channels_must_install_monitor(channel_root: Path, channel: str) -> None:
+    if channel == "scoop":
+        path = scoop_path(channel_root, VAULTSPEC_RAG)
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["bin"].pop()
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+    else:
+        path = formula_path(channel_root, VAULTSPEC_RAG)
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                '    bin.install "vaultspec-rag-monitor"\n', ""
+            ),
+            encoding="utf-8",
+        )
+    # Removing command admission must fail this concrete installation finding.
+    assert any(
+        "does not install" in problem
+        for problem in validate(channel_root, VAULTSPEC_RAG)
+    )
+
+
 def test_blank_scoop_hashes_are_refused(channel_root: Path) -> None:
     """The empty-hash failure, reproduced exactly.
 

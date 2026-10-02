@@ -519,7 +519,11 @@ def test_mps_acceptance_proves_each_model_parameter_device() -> None:
 
 
 def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
-    """MPS stays off PR/main while the exact candidate gates the release cut."""
+    """MPS stays off PR/main and proves the candidate before it can be tagged.
+
+    Mutation proof: changing the hardware call to ``github.sha`` failed the
+    candidate SHA assertion; restoring the call passed immediately.
+    """
     root = Path(__file__).parents[3] / ".github" / "workflows"
     ci_workflow = (root / "ci.yml").read_text(encoding="utf-8")
     caller = ci_workflow.split("  hardware:", 1)[1]
@@ -532,9 +536,11 @@ def test_mps_runs_on_schedule_and_for_the_exact_release_sha() -> None:
     cut = (root / "release-please.yml").read_text(encoding="utf-8")
     assert "ref: ${{ inputs.target_sha }}" in hardware
     assert "run: just test-mps" in hardware
-    assert "uses: ./.github/workflows/hardware.yml" in cut
-    assert "target_sha: ${{ needs.candidate.outputs.sha }}" in cut
-    assert "ref: ${{ needs.candidate.outputs.sha }}" in cut
+    proof = cut.split("  prove-hardware:", 1)[1].split("  cut:", 1)[0]
+    assert "needs: candidate" in proof
+    assert "uses: ./.github/workflows/hardware.yml" in proof
+    assert "target_sha: ${{ needs.candidate.outputs.sha }}" in proof
     assert "needs: [candidate, prove-gate, prove-hardware]" in cut
+    assert "ref: ${{ needs.candidate.outputs.sha }}" in cut
     assert 'if [ "${proven}" != "${landed}" ]; then' in cut
     assert 'if [ "${tagged}" != "${COMMIT}" ]; then' in cut

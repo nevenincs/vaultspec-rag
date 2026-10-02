@@ -71,7 +71,6 @@ __all__ = [
     "_call_interruptibly",
     "_is_our_service",
     "_may_carry_launch_witness",
-    "_port_is_available",
     "_resolve_daemon_interpreter",
     "_spawn_service",
     "_terminate_pid",
@@ -202,31 +201,6 @@ def _is_our_service(
         logger.debug("cmdline unreadable for pid=%d; identity unconfirmed", pid)
         return False
     return "vaultspec_rag" in cmdline
-
-
-def _port_is_available(port: int) -> bool:
-    """Check whether a TCP port is available for binding.
-
-    Attempts to bind to ``127.0.0.1:port``. Used as a lightweight
-    lock to prevent concurrent ``service start`` races: the port
-    itself is the mutex.
-
-    Args:
-        port: TCP port to probe.
-
-    Returns:
-        True if the port is free, False if already in use.
-
-    """
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("127.0.0.1", port))
-            return True
-        except OSError as exc:
-            logger.debug("port %d not bindable: %s", port, exc)
-            return False
 
 
 # Re-exported from the shared heartbeat contract so this module keeps its

@@ -81,6 +81,7 @@ def test_scoop_manifest_pins_the_release_digests() -> None:
     assert manifest["bin"] == [
         ["vaultspec-rag.exe", "vaultspec-rag"],
         ["vaultspec-search-mcp.exe", "vaultspec-search-mcp"],
+        ["vaultspec-rag-monitor.exe", "vaultspec-rag-monitor"],
     ]
     autoupdate = cast("dict[str, object]", manifest["autoupdate"])
     assert autoupdate["url"] == [
@@ -126,7 +127,7 @@ def test_homebrew_formula_pins_every_covered_platform() -> None:
     assert 'bin.install "vaultspec-search-mcp"' in formula
 
 
-def test_homebrew_formula_uses_one_archive_for_both_commands() -> None:
+def test_homebrew_formula_uses_one_archive_for_all_commands() -> None:
     """The second command comes from the same archive, never a resource URL.
 
     Mutation proof: adding a second ``url`` line to the platform block made
@@ -140,6 +141,8 @@ def test_homebrew_formula_uses_one_archive_for_both_commands() -> None:
     assert formula.count('url "') == 1
     assert formula.count('sha256 "') == 1
     assert formula.count("bin.install ") == len(VAULTSPEC_RAG.executables)
+    assert 'bin.install "vaultspec-rag-monitor"' in formula
+    assert 'shell_output("#{bin}/vaultspec-rag-monitor --version")' in formula
     assert "resource" not in formula
 
 

@@ -32,7 +32,6 @@ from tools.binaries.build_pyapp import (
     Binary,
     WheelError,
     asset_name,
-    binary_version_info,
     build_one,
     sole_wheel,
     validate_project_wheel,
@@ -40,7 +39,7 @@ from tools.binaries.build_pyapp import (
     write_checksum,
 )
 from tools.binaries.torch_channel import pip_extra_args
-from tools.binaries.windows_icon import parse_ico
+from tools.binaries.windows_icon import parse_ico, product_version_info
 from tools.packaging.products import VAULTSPEC_RAG
 
 pytestmark = pytest.mark.unit
@@ -269,7 +268,9 @@ def test_every_windows_binary_is_stamped_before_its_checksum() -> None:
 
 def test_binary_version_info_uses_product_identity() -> None:
     """Windows metadata names the stable command and the RAG product."""
-    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+    info = product_version_info(
+        VAULTSPEC_RAG, VAULTSPEC_RAG.executables[0], "0.4.6", "x86_64-pc-windows-msvc"
+    )
 
     assert info.file_version == "0.4.6"
     assert info.product_version == "0.4.6"

@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#server-watch-observability'
 date: '2026-07-29'
-modified: '2026-07-29'
+modified: '2026-10-01'
 body_schema: 'body-v1'
-body_hash: 'sha256:f5511606262f055ccb3687de8e9d5c18ecc00d4393149d9ea778a7d861d0cc3a'
+body_hash: 'sha256:6a709fa4dee6ffb8630dd331e44b8addcb3df2449f1b719a7190ed494ba3fa75'
 related:
   - "[[2026-07-29-server-watch-observability-research]]"
   - '[[2026-07-29-server-watch-observability-reference]]'
@@ -97,7 +97,7 @@ metadata-only structured completion events. A bounded authenticated read route a
 canonical service client expose active/recent requests with limit, state, search type,
 root, request-id, and since filters. Snapshots carry query text, request type, root,
 top-k, state, timestamps, duration, status, result count, error classification, and
-phase timings; they never carry result bodies.
+phase timings, with bounded in-memory returned evidence under the authorized browser refinement below. Result bodies never enter persistent logs.
 
 Rename the terminal owner to `ServerWatchApp` and migrate callers and tests directly.
 It concurrently polls the jobs projection, search activity, server status, and managed
@@ -118,6 +118,8 @@ terminal branch is counted; service and Qdrant records appear under their own so
 no default raw record disappears or is repacked; narrow layout preserves access to both
 lanes; search-pool pressure is rendered; and query text never appears in retained
 managed logs.
+
+2026-10-01 authorized browser refinement: the user explicitly requires query inputs and returned values for relational review. Replace the earlier prohibition on result bodies in activity snapshots with bounded in-memory returned evidence attached to the canonical request identity. Enforce per-record and ledger-wide budgets, expose truncation and redaction, and retain no result bodies in persistent logs. Existing query redaction also removes returned evidence. Browser page separation does not change the terminal composition.
 
 ## Rationale
 

@@ -58,6 +58,7 @@ QDRANT_RELEASE_BASE_URL: Final[str] = (
 ALLOWED_DOWNLOAD_HOSTS: Final[frozenset[str]] = frozenset(
     {
         "github.com",
+        "api.github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
     }

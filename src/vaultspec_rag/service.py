@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     )
     from .store_runtime import VaultStore
 
+
 from ._service_borrower import BorrowerLeaseMixin
 from ._service_eviction import ProjectEvictionMixin
 from ._service_residency import GPUResidencyMixin
@@ -1273,6 +1274,40 @@ class ServiceRegistry(
         logger.info("ServiceRegistry shut down")
 
     # -- introspection -----------------------------------------------------
+
+    def model_observation(self) -> dict[str, object]:
+        """Report model identifiers and residency without loading any model."""
+        from .config._settings import get_config
+
+        cfg = get_config()
+        with self._lock:
+            health = self.health()
+            recipe = self._gpu_residency_recipe
+            dense_name = (
+                recipe.model_name
+                if recipe is not None and recipe.model_name
+                else cfg.embedding_model
+            )
+            model_loaded = health["model_loaded"]
+            reranker_loaded = health["reranker_loaded"]
+        return {
+            "embedding": {
+                "configured_name": cfg.embedding_model,
+                "loaded_name": dense_name if model_loaded else None,
+                "loaded": model_loaded,
+            },
+            "sparse": {
+                "configured_name": cfg.sparse_model if cfg.sparse_enabled else None,
+                "enabled": bool(cfg.sparse_enabled),
+                "loaded": model_loaded and bool(cfg.sparse_enabled),
+            },
+            "reranker": {
+                "configured_name": cfg.reranker_model if cfg.reranker_enabled else None,
+                "loaded_name": cfg.reranker_model if reranker_loaded else None,
+                "enabled": bool(cfg.reranker_enabled),
+                "loaded": reranker_loaded,
+            },
+        }
 
     def health(self) -> ServiceHealth:
         """Return a status dict for diagnostics.

@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tools.binaries.bun_pins import BUN_VERSION
 from tools.packaging import products
 from tools.packaging.bundles import (
+    SMOKE_NAME,
     BundleError,
     BundleSpec,
     build_bundle,
@@ -31,10 +33,11 @@ TARGETS = (
     products.WINDOWS_X86_64,
     products.LINUX_X86_64,
     products.LINUX_ARM64,
+    products.MACOS_ARM64,
 )
 MULTI_ARCH_PRODUCT = replace(VAULTSPEC_RAG, supported_targets=TARGETS)
 VERSION = "0.4.6"
-REVISION = "revision-1"
+REVISION = "a" * 40
 
 
 def _raw_outputs(root: Path, target: str) -> Path:
@@ -44,6 +47,37 @@ def _raw_outputs(root: Path, target: str) -> Path:
     for index, executable in enumerate(VAULTSPEC_RAG.executables, start=1):
         path = raw / VAULTSPEC_RAG.asset_name(executable, target)
         path.write_bytes(f"executable-{index}".encode())
+    lock = root / "repo/package-lock.json"
+    lock.write_text("{}\n", encoding="utf-8")
+    monitor = raw / VAULTSPEC_RAG.asset_name(products.MONITOR_EXECUTABLE, target)
+    (raw / SMOKE_NAME).write_text(
+        json.dumps(
+            {
+                "schema": "vaultspec.monitor.smoke.v1",
+                "command": "vaultspec-rag-monitor",
+                "version": VERSION,
+                "source_revision": REVISION,
+                "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                "frontend_sha256": "c" * 64,
+                "bun_version": BUN_VERSION,
+                "development": False,
+                "sha256": hashlib.sha256(monitor.read_bytes()).hexdigest(),
+                "target": target,
+                "platform": {
+                    "glibc_required": "2.28" if target.endswith("linux-gnu") else None
+                },
+                "assets_verified": 94,
+                "browser_verified": True,
+                "isolated_shell": True,
+                "occupied_port_refused": True,
+                "parent_eof_shutdown": True,
+                "request_bounds_verified": True,
+                "cancelled_request_recovered": True,
+                "partial_request_shutdown": True,
+            }
+        ),
+        encoding="utf-8",
+    )
     return raw
 
 
@@ -133,12 +167,24 @@ def test_build_bundle_has_stable_contents_and_manifest(
     assert manifest["legal_copyright"] == "Copyright (c) 2026 Vaultspec Project"
     assert manifest["target"] == target
     assert manifest["source_revision"] == REVISION
-    assert manifest["runtime"]["python"] == "3.13"
-    assert manifest["requirements"] == {
-        "nvidia_gpu": True,
+    backend = manifest["components"][
+        VAULTSPEC_RAG.executable_name(VAULTSPEC_RAG.executables[0], target)
+    ]
+    assert manifest["schema"] == "vaultspec.release-bundle.v2"
+    assert backend["runtime"]["python"] == "3.13"
+    assert backend["requirements"] == {
+        "accelerator": "mps" if target.endswith("apple-darwin") else "cuda",
         "network_on_first_launch": True,
-        "cuda_runtime_download_on_first_launch": True,
+        "python_bootstrap": True,
     }
+    frontend = manifest["components"][
+        VAULTSPEC_RAG.executable_name(products.MONITOR_EXECUTABLE, target)
+    ]
+    assert frontend["requirements"]["network_on_first_launch"] is False
+    assert frontend["runtime"] == {"bun": BUN_VERSION, "embedded_frontend": True}
+    if target.endswith("linux-gnu"):
+        assert manifest["platform"]["glibc_floor"] == "2.39"
+        assert frontend["platform"]["glibc_required"] == "2.28"
     assert {entry["name"] for entry in manifest["files"]} == expected - {
         "manifest.json"
     }
@@ -279,8 +325,7 @@ def test_build_bundle_rejects_an_unsupported_target(tmp_path: Path) -> None:
     ("field", "value", "message"),
     [
         ("source_revision", "", "source revision"),
-        ("runtime", {}, "runtime metadata"),
-        ("requirements", {}, "requirements"),
+        ("components", {}, "components metadata"),
         ("platform", {}, "platform metadata"),
     ],
 )
@@ -299,3 +344,40 @@ def test_verify_bundle_rejects_missing_contract_metadata(
 
     with pytest.raises(BundleError, match=message):
         verify_bundle(tampered, spec)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("development", True),
+        ("browser_verified", False),
+        ("sha256", "0" * 64),
+        ("source_revision", "b" * 40),
+        ("lock_sha256", "0" * 64),
+        ("target", products.LINUX_X86_64),
+        ("bun_version", "unreviewed"),
+        ("platform", {"glibc_required": "2.40"}),
+        ("assets_verified", True),
+    ],
+)
+def test_bundle_refuses_unproven_monitor(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("license\n", encoding="utf-8")
+    target = products.WINDOWS_X86_64
+    raw = _raw_outputs(tmp_path, target)
+    report_path = raw / SMOKE_NAME
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report[field] = value
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    # Bypassing evidence admission must fail the expected refusal assertion.
+    with pytest.raises(BundleError, match="monitor"):
+        build_bundle(
+            BundleSpec(VAULTSPEC_RAG, VERSION, target),
+            raw,
+            tmp_path / "bundles",
+            repo,
+            REVISION,
+        )

@@ -104,6 +104,24 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return cast("dict[str, object]", parsed)
 
 
+def _installation_problems(
+    manifest: dict[str, object], formula: str, product: Product
+) -> list[str]:
+    """Require every stable command in both channel installation declarations."""
+    problems: list[str] = []
+    windows_target = products.SCOOP_TARGETS[0]
+    expected_commands = [
+        [product.executable_name(executable, windows_target), executable.name]
+        for executable in product.executables
+    ]
+    if manifest.get("bin") != expected_commands:
+        problems.append("Scoop does not install every stable command")
+    for executable in product.executables:
+        if f'bin.install "{executable.name}"' not in formula:
+            problems.append(f"Homebrew does not install {executable.name}")
+    return problems
+
+
 def validate(root: Path, product: Product, repo_root: Path | None = None) -> list[str]:
     """Return every reason these channel pointers are unfit to publish.
 
@@ -131,6 +149,8 @@ def validate(root: Path, product: Product, repo_root: Path | None = None) -> lis
     if not manifest:
         problems.append(f"{manifest_path}: is not a JSON object")
         return problems
+
+    problems.extend(_installation_problems(manifest, formula, product))
 
     # (a) the empty-hash failure - a pointer that installs nothing.
     hashes = _string_list(manifest, "hash")

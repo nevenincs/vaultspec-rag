@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, NoReturn
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from tools.packaging import products
+
 RT_ICON = 3
 RT_GROUP_ICON = 14
 RT_VERSION = 16
@@ -57,6 +59,24 @@ class VersionInfo:
 
 class VersionResourceError(RuntimeError):
     """A PE version resource is invalid or could not be stamped exactly."""
+
+
+def product_version_info(
+    product: products.Product,
+    executable: products.Executable,
+    version: str,
+    target: str,
+) -> VersionInfo:
+    """Use the same product identity for every native release component."""
+    return VersionInfo(
+        file_version=version,
+        product_version=version,
+        product_name=product.display_name or product.name,
+        file_description=executable.summary,
+        original_filename=product.executable_name(executable, target),
+        company_name=product.publisher,
+        legal_copyright=product.legal_copyright,
+    )
 
 
 def parse_ico(path: Path) -> tuple[IconImage, ...]:

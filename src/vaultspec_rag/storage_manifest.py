@@ -404,7 +404,7 @@ def _write_manifest(entries: dict[str, ManifestEntry]) -> Path:
 
 
 def record_root(
-    root: Path | str, *, backend: str, last_indexed: str = ""
+    root: Path | str, *, backend: str, last_indexed: str | None = ""
 ) -> ManifestEntry:
     """Upsert the manifest entry for ``root`` and persist it.
 
@@ -417,7 +417,8 @@ def record_root(
         root: The workspace root being indexed.
         backend: ``"server"`` or ``"local"``.
         last_indexed: ISO-8601 timestamp to stamp; the caller supplies it
-            so this layer takes no clock dependency.
+            so this layer takes no clock dependency. None preserves the
+            existing activity stamp under the same write lock.
 
     Returns:
         The persisted :class:`ManifestEntry`.
@@ -438,7 +439,13 @@ def record_root(
             prefix=prefix,
             root=resolved,
             backend=backend,
-            last_indexed=last_indexed,
+            last_indexed=(
+                last_indexed
+                if last_indexed is not None
+                else existing.last_indexed
+                if existing is not None
+                else ""
+            ),
             # An observed point count describes the stored data, which
             # re-recording the root does not change, so it carries over for the
             # same reason the schema generation and identity do. Dropping it

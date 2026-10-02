@@ -1,12 +1,14 @@
 # ===========================================================================
 #  vaultspec-rag development harness
 #
-#  Every entry point is a FLAT HYPHENATED recipe named `<verb>-<thing>` -
+#  Python entry points are FLAT HYPHENATED recipes named `<verb>-<thing>` -
 #  `just check-type`, `just test-fast`, `just fix-markdown`. There is no
-#  `target` argument anywhere: the thing a recipe acts on is part of its name,
+#  `target` argument on those recipes: the thing they act on is part of the name,
 #  so `just --list` is the complete surface and tab completion reaches every
 #  one of them. Run `just` for the annotated recipe list, grouped by
 #  CONSEQUENCE.
+#  The shared frontend `just dev` recipe accepts the workstation's lifecycle
+#  verbs and service names.
 #
 #  PLATFORM AGNOSTIC BY CONSTRUCTION. Every recipe body below is a single
 #  command with no shell branching, no pipes, no conditionals, and no `sh`
@@ -74,6 +76,52 @@ dev := "uv run --no-sync python -m dev"
 [group('meta')]
 default:
     @just --list
+
+[doc('Dev server: start or attach, sanitize, health-check, evict occupiers (up|restart|stop|status|logs|check|ci)')]
+[group('dev')]
+dev target="up" *args="":
+    @uv run --script dev/devserver.py {{ target }} {{ args }}
+
+# Install the committed frontend dependency tree.
+[group('setup')]
+init-monitor:
+    @uv run --script dev/devserver.py stop all
+    npm ci
+
+# Check the shared lifecycle script under its owner's rules.
+[group('check')]
+check-devserver:
+    {{dev}} lint devserver
+
+# Run every frontend gate used by CI.
+[group('check')]
+check-monitor:
+    {{dev}} lint monitor
+
+# Lint the monitor frontend and its configuration.
+[group('check')]
+check-monitor-lint:
+    npm run lint
+
+# Check monitor formatting without changing files.
+[group('check')]
+check-monitor-format:
+    npm run format:check
+
+# Type-check the monitor frontend and Vite configuration.
+[group('check')]
+check-monitor-type:
+    npm run typecheck
+
+# Build the monitor into src/monitor/dist.
+[group('build')]
+build-monitor:
+    npm run build
+
+# Compile the native monitor used by accelerator-free lifecycle tests.
+[group('build')]
+build-monitor-test:
+    uv run --no-sync python -m tools.monitor.build test --outdir dist-bin
 
 # ===========================================================================
 #  setup
@@ -464,9 +512,22 @@ check-docs-cli:
 release-binaries tag rust_target outdir='dist-bin' wheel_dir='dist':
     uv run --no-project --python 3.13 -- python -m tools.binaries.build_pyapp --tag {{tag}} --target {{rust_target}} --outdir {{outdir}} --wheel-dir {{wheel_dir}}
 
-# Package finalized target-qualified executables as the public archive consumed
-# by release publication and the distribution channels. The bundle command
-# verifies the finished archive before writing its sidecar checksum.
+# Build and record the exact frontend handoff once per release producer.
+[group('release')]
+release-monitor-frontend tag producer_revision frontend_dir='dist-monitor-frontend':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build frontend --tag {{tag}} --source-revision {{producer_revision}} --outdir "{{frontend_dir}}"
+
+# Compile the common frontend handoff using the verified native Bun compiler.
+[group('release')]
+release-monitor tag producer_revision frontend_digest frontend_dir='dist-monitor-frontend' outdir='dist-bin':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend "{{frontend_dir}}" --frontend-sha256 {{frontend_digest}} --outdir "{{outdir}}"
+
+# Render and probe finalized bytes before packaging or publication.
+[group('release')]
+release-monitor-smoke binary digest version producer_revision browser report='dist-bin/monitor-smoke.json':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.smoke --binary "{{binary}}" --expected-sha256 {{digest}} --version {{version}} --source-revision {{producer_revision}} --browser "{{browser}}" --report "{{report}}"
+
+# Package finalized executables as the validated public target archive.
 [group('release')]
 release-bundle tag rust_target raw_dir='dist-bin' outdir='dist-bundles':
     uv run --no-project --python 3.13 -- python -m tools.packaging.bundles --tag {{tag}} --target {{rust_target}} --raw-dir {{raw_dir}} --outdir {{outdir}}

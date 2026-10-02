@@ -2,53 +2,20 @@ name: RAG Acquisition
 
 run-name: RAG Acquisition ${{ inputs.tag || 'latest' }} @ ${{ inputs.target_sha || 'scheduled' }}
 
-# Everything else in this repository tests what is IN the tree. This tests what
-# a user actually receives: it downloads the published target bundle onto a machine
-# with no checkout, no warm cache and no toolchain, and asks the one question
-# the build cannot answer about itself - does the dynamic loader accept it.
-#
-# vaultspec-rag#409 is why. A Linux binary built on a host with newer glibc than
-# the floor it claims loads fine everywhere it is built and tested, and fails on
-# a user's machine with a missing symbol version. That gap was found by reading
-# ELF sections by hand, at v0.4.14, three releases after it appeared. Two
-# checks close it. The loader is asked whether it accepts the binary. And the
-# symbol versions the published binary requires are read back and compared
-# with the floor its own manifest declares, which holds whatever libc the job
-# happens to run on.
-#
-# WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
-#
-# It asserts the loader accepts the binary. It does NOT assert the product
-# works, and that is not laziness: the binary is a PyApp bootstrapper whose
-# explicit GPU runtime download is both multi-gigabyte and unusable on these
-# no-GPU hosts. `ldd` answers the loader question without triggering that
-# download, which is the only claim this workflow can exercise honestly.
-#
-# It downloads the way a user does - unauthenticated `curl` against the
-# release download URL - so it cannot see a draft, and the release is a draft
-# until the publication lane flips it. It therefore runs AFTER publication, by
-# dispatch from that lane, and never as a gate on it: a check that cannot see
-# the thing it is gating can only ever fail.
-#
-# It has no `release: published` trigger either. That event is inert for
-# releases the default token creates, so it would never fire for anything this
-# chain produces, and for a release a person publishes it fires before any
-# binary is attached. A dispatch is explicitly exempt from the first rule. The
-# weekly schedule matters on its own: acquisition rots for reasons no commit
-# causes - a yanked release or a renamed asset.
-
+# Committed main supplies the catalog and driver. Only downloaded monitor
+# bytes run with an empty PATH/home and no checkout or backend sibling.
+# Live checksums add coverage; reviewed committed pins authorize launch.
 on:
   schedule:
-    # Weekly, off the hour: nothing here is urgent.
-    - cron: '41 6 * * 1'
+    - cron: "41 6 * * 1"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to acquire (defaults to the latest release)'
+        description: "Release tag (defaults to the public latest release)"
         required: false
         type: string
       target_sha:
-        description: 'Immutable producer commit expected by the release gate'
+        description: "Expected immutable producer commit"
         required: false
         type: string
 
@@ -61,215 +28,56 @@ concurrency:
 
 jobs:
   acquire:
-    name: "Test: Binary acquisition (Linux, ${{ matrix.arch }})"
+    name: "Test: Monitor acquisition (${{ matrix.name }})"
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
+          - name: linux-x86_64
             runner: [self-hosted, Linux, X64, build]
-            triple: x86_64-unknown-linux-gnu
-          - arch: aarch64
+            target: x86_64-unknown-linux-gnu
+          - name: linux-aarch64
             runner: [self-hosted, Linux, ARM64]
-            triple: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-gnu
+          - name: windows-x86_64
+            runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
+          - name: macos-arm64
+            runner: [self-hosted, macOS, ARM64]
+            target: aarch64-apple-darwin
     timeout-minutes: 150
     runs-on: ${{ matrix.runner }}
     env:
       CI_EXEC_BUDGET_MINUTES: 30
     steps:
-      # No checkout and no install: curl, jq, unzip and ldd are all this needs,
-      # and the job may not be able to install anything.
-      - name: Require what acquisition itself needs
-        run: |
-          set -eu
-          for tool in curl jq unzip tar sha256sum ldd; do
-            command -v "${tool}" >/dev/null || { echo "::error::${tool} is not on this runner"; exit 1; }
-          done
-          # The job's own temp directory, never a fixed path: the job owns
-          # nothing outside it.
-          acq="${RUNNER_TEMP}/acq"
-          rm -rf "${acq}"
-          echo "ACQ=${acq}" >> "$GITHUB_ENV"
-
-      - name: Acquire the published binaries
-        env:
-          REPO: ${{ github.repository }}
-          INPUT_TAG: ${{ inputs.tag }}
-          TARGET_SHA: ${{ inputs.target_sha }}
-          TRIPLE: ${{ matrix.triple }}
-          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
-          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
-        run: |
-          set -eux
-          tag="${INPUT_TAG:-}"
-          if [ -z "${tag}" ]; then
-            tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-                  | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-          fi
-          [ -n "${tag}" ] || { echo "::error::could not resolve a release tag"; exit 1; }
-          printf '%s\n' "${tag}" \
-            | grep -Eqx 'vaultspec-rag-v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?' \
-            || { echo "::error::refusing unexpected release tag: ${tag}"; exit 1; }
-          echo "TAG=${tag}" >> "$GITHUB_ENV"
-
-          mkdir -p "${ACQ}"
-          release_url="https://github.com/${REPO}/releases/download/${tag}"
-          archive="${tag}-${TRIPLE}${ARCHIVE_SUFFIX}"
-          checksum_manifest="${ACQ}/SHA256SUMS"
-          archive_path="${ACQ}/${archive}"
-
-          # The archive and its checksum manifest are the public release
-          # contract. A raw target-qualified executable is a private build
-          # intermediate and must never be accepted by acquisition.
-          curl --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' \
-            -o "${checksum_manifest}" "${release_url}/SHA256SUMS"
-          curl --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' \
-            -o "${archive_path}" "${release_url}/${archive}"
-
-          # SHA256SUMS also covers the wheel and sdist, so select exactly this
-          # target archive before invoking sha256sum. Missing or duplicate
-          # entries fail closed; extraction is never reached on a mismatch.
-          checksum_line=$(awk -v archive="${archive}" \
-            '($2 == archive || $2 == "*" archive) { print; count++ }
-             END { if (count != 1) exit 1 }' "${checksum_manifest}")
-          [ -n "${checksum_line}" ] || {
-            echo "::error::SHA256SUMS has no unique entry for ${archive}"; exit 1;
-          }
-          printf '%s\n' "${checksum_line}" > "${archive_path}.sha256"
-          (cd "${ACQ}" && sha256sum -c "${archive}.sha256")
-
-          # The manifest is read only after the checksum has passed, and the
-          # loader step below takes the floor it declares from here.
-          case "${ARCHIVE_SUFFIX}" in
-            .tar.gz) tar -xOzf "${archive_path}" manifest.json > "${ACQ}/manifest.json" ;;
-            .zip) unzip -p "${archive_path}" manifest.json > "${ACQ}/manifest.json" ;;
-          esac
-
-          # A matching archive checksum proves integrity, but not which source
-          # commit produced the bytes. Release-gated dispatches name the exact
-          # producer SHA; bind that request to the manifest inside the archive.
-          if [ -n "${TARGET_SHA:-}" ]; then
-            case "${TARGET_SHA}" in
-              *[!0-9a-f]*|'')
-                echo "::error::target_sha is not a lowercase full commit ID"; exit 1 ;;
-            esac
-            [ "${#TARGET_SHA}" -eq 40 ] || {
-              echo "::error::target_sha is not a 40-character commit ID"; exit 1;
-            }
-            producer_sha=$(jq -er '.source_revision | select(type == "string")' "${ACQ}/manifest.json")
-            [ "${producer_sha}" = "${TARGET_SHA}" ] || {
-              echo "::error::bundle producer ${producer_sha} does not match requested ${TARGET_SHA}"; exit 1;
-            }
-          fi
-
-      - name: Extract the stable executables
-        env:
-          TRIPLE: ${{ matrix.triple }}
-          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
-          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
+      - name: Checkout the reviewed catalog and acquisition driver
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: main
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+      - name: Set up Node for installed-browser verification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+      - name: Verify public delivery against committed pins and render native bytes
         shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          archive="${ACQ}/${TAG}-${TRIPLE}${ARCHIVE_SUFFIX}"
-          destination="${ACQ}/extracted"
-          mkdir -p "${destination}"
-
-          case "${ARCHIVE_SUFFIX}" in
-            .tar.gz)
-              members=$(tar -tzf "${archive}")
-              for name in vaultspec-rag vaultspec-search-mcp; do
-                member="${name}${EXECUTABLE_SUFFIX}"
-                count=$(printf '%s\n' "${members}" | grep -Fxc -- "${member}" || true)
-                [ "${count}" -eq 1 ] || {
-                  echo "::error::bundle is missing exactly one ${member}"; exit 1;
-                }
-                tar -xOzf "${archive}" "${member}" > "${destination}/${member}"
-                chmod +x "${destination}/${member}"
-              done
-              ;;
-            .zip)
-              members=$(unzip -Z1 "${archive}")
-              for name in vaultspec-rag vaultspec-search-mcp; do
-                member="${name}${EXECUTABLE_SUFFIX}"
-                count=$(printf '%s\n' "${members}" | grep -Fxc -- "${member}" || true)
-                [ "${count}" -eq 1 ] || {
-                  echo "::error::bundle is missing exactly one ${member}"; exit 1;
-                }
-                unzip -p "${archive}" "${member}" > "${destination}/${member}"
-                chmod +x "${destination}/${member}"
-              done
-              ;;
-            *)
-              echo "::error::unsupported bundle format: ${ARCHIVE_SUFFIX}"
-              exit 1
-              ;;
-          esac
-
-      - name: The loader must accept the extracted executables
-        env:
-          ARCHIVE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.zip' || '.tar.gz' }}
-          EXECUTABLE_SUFFIX: ${{ endsWith(matrix.triple, '-windows-msvc') && '.exe' || '' }}
-        run: |
-          set -eu
-          if [ "${ARCHIVE_SUFFIX}" = ".zip" ]; then
-            echo "extracted Windows executables are present and executable"
-            exit 0
-          fi
-          host="$(ldd --version | head -1)"
-          echo "runner glibc: ${host}"
-          floor=$(jq -er '.platform.glibc_floor | select(type == "string")' "${ACQ}/manifest.json") || {
-            echo "::error::the published manifest declares no platform.glibc_floor for a Linux bundle"; exit 1;
-          }
-          echo "declared floor: GLIBC_${floor}"
-
-          failed=0
-          for name in vaultspec-rag vaultspec-search-mcp; do
-            binary="${ACQ}/extracted/${name}${EXECUTABLE_SUFFIX}"
-            [ -x "${binary}" ] || {
-              echo "::error::extracted executable is not runnable: ${binary}"; failed=1; continue;
-            }
-
-            # `ldd` resolves every symbol version the binary requires against
-            # this runner's libc and reports what it cannot satisfy. It
-            # answers the loader question directly and in milliseconds, without
-            # launching anything - which matters here, because launching would
-            # start a multi-gigabyte bootstrap that has nothing to do with what
-            # is being tested.
-            if ! out=$(ldd -v "${binary}" 2>&1); then
-              printf '::error::%s: ldd failed on %s\n%s\n' "${name}" "${host}" "${out}"
-              failed=1
-              continue
-            fi
-            if printf '%s' "${out}" | grep -q 'not found'; then
-              printf '::error::%s does not load on %s. Unsatisfied here:\n%s\n' \
-                "${name}" "${host}" "$(printf '%s' "${out}" | grep 'not found')"
-              printf '::error::This is vaultspec-rag#409 recurring: the artifact was built against a newer libc than GLIBC_FLOOR in tools/binaries/build_pyapp.py claims.\n'
-              failed=1
-              continue
-            fi
-
-            # The loader above only proves this runner's libc. The binary's
-            # own block of `ldd -v` lists every GLIBC version it requires, and
-            # the highest of them may not exceed the floor the manifest
-            # declares - on any host, whatever libc it carries.
-            required=$(printf '%s\n' "${out}" \
-              | awk -v own="\t${binary}:" '$0 == own { inside = 1; next } inside && /^\t[^\t]/ { exit } inside' \
-              | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -uV | tail -1)
-            [ -n "${required}" ] || {
-              echo "::error::${name}: read no GLIBC requirement from ldd -v; refusing to pass vacuously"; failed=1; continue;
-            }
-            if [ "$(printf '%s\n%s\n' "${required}" "${floor}" | sort -V | tail -1)" != "${floor}" ]; then
-              printf '::error::%s requires GLIBC_%s but its manifest declares a floor of GLIBC_%s. This is vaultspec-rag#409 recurring.\n' \
-                "${name}" "${required}" "${floor}"
-              failed=1
-              continue
-            fi
-            echo "ok: ${name} loads here and requires GLIBC_${required}, within the declared GLIBC_${floor}"
-          done
-          [ "${failed}" -eq 0 ] || exit 1
-
-      - name: Clean up
-        if: always()
-        run: rm -rf "${RUNNER_TEMP}/acq" || true
+          uv run --no-project --python 3.13 -- python -m tools.monitor.acquire \
+            --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" \
+            --report "dist-release-evidence/acquisition-$TARGET.json"
+      - name: Upload native acquisition evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-acquisition-${{ matrix.target }}-${{ github.run_id }}
+          path: dist-release-evidence/acquisition-*.json
+          if-no-files-found: error
+          retention-days: 30

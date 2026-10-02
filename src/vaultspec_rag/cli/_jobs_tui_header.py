@@ -153,7 +153,7 @@ class HeaderRenderingMixin(_MixinBase):
             else:
                 glyph, fallback, label, tone, _bold = spec
             content = f"{glyph if unicode_ok else fallback} {tally}"
-            if labelled:
+            if labelled or spec is None:
                 content += f" {label}"
             # One cell of air: the caps already separate pill from pill.
             line.append(" ")
@@ -213,9 +213,11 @@ class HeaderRenderingMixin(_MixinBase):
             f"search {active} active · {recent} recent",
             style=tone_style(tones, "good", bold=active > 0),
         )
+        queued = self._search.queued_count
+        line.append(f" · {queued if queued is not None else '—'} queued", style="dim")
 
-    def _service_condition(self) -> str:
-        """The service's condition verdict for the header pill.
+    def _index_condition(self) -> str:
+        """The indexing condition, independent of the daemon's health verdict.
 
         Reachability first, then the worst active degradation verdict the
         service has stamped - taken from the service's own tally where the
@@ -393,6 +395,7 @@ class HeaderRenderingMixin(_MixinBase):
             line.append(" v?", style=tone_style(tones, "muted"))
         line.append(" · ", style="dim")
         line.append(f"port {self._port}", style="bold")
+        line.append(" · indexing", style="dim")
         fills = pill_fill(self.theme)
         self._append_state_pills(
             line, fills, labelled=state_labels, unicode_ok=unicode_ok
@@ -412,11 +415,11 @@ class HeaderRenderingMixin(_MixinBase):
             line.append("\n")
         else:
             self._append_separator(line, unicode_ok=unicode_ok)
-        verdict = self._service_condition()
+        verdict = self._index_condition()
         condition_tone, _bold = CONDITION_TONES[verdict]
         append_pill(
             line,
-            f"{'●' if unicode_ok else '*'} svc {verdict}",
+            f"{'●' if unicode_ok else '*'} index {verdict}",
             fills[condition_tone],
             unicode_ok=unicode_ok,
         )

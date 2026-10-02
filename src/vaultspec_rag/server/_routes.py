@@ -43,6 +43,7 @@ import vaultspec_rag.server as _m
 
 from .. import _job_evidence
 from .. import jobs as _jobs
+from .._operator_lists import list_limit, list_offset, list_order
 from .._store_locks import VaultStoreLockedError
 from ..indexer._run_ledger_models import RunAuthority
 from ..job_models import JobOutcome
@@ -56,8 +57,8 @@ from ..logging_config import (
 from ..service import RegistryFullError
 from ._auth import require_token
 from ._routes_jobs import (
+    JOB_SORT_FIELDS,
     JobFilter,
-    _clamp_limit,
     _job_matches,
     _job_summary,
     _job_with_liveness,
@@ -65,8 +66,9 @@ from ._routes_jobs import (
     _normalise_filter_value,
     _normalise_job_source_filter,
     _parse_since_seconds,
-    _prioritise_running_jobs,
+    sort_job_records,
 )
+from ._routes_operator import enroll_repository_route, repositories_route
 from ._routes_quiesce import pause_service_route, resume_service_route
 from ._routes_registry import (
     evict_project_route,
@@ -77,10 +79,11 @@ from ._routes_registry import (
     stop_watcher_route,
 )
 from ._routes_reindex import audit_route, clean_route, reindex_route
+from ._routes_runtime import runtime_observations_route
 from ._routes_search import search_route
 from ._routes_storage import storage_survey_route
 from ._runtime import get_request_runtime
-from ._search_activity import DEFAULT_SEARCH_ACTIVITY_ROWS, SearchActivityFilters
+from ._search_activity import SearchActivityFilters
 from ._state import search_activity_ledger
 from ._utils import (
     _BAD_REQUEST_MISSING_ROOT,
@@ -546,8 +549,8 @@ async def jobs_route(request: Request) -> JSONResponse:
 
     Returns the newest-first :mod:`._jobs` registry snapshot as JSON -
     parity with the ``get_jobs`` MCP tool. Read-only: it never mutates
-    the registry. An optional ``?limit=N`` query parameter caps the
-    number of returned records (newest first).
+    the registry. Filters and explicit sorting apply before ``offset`` and
+    ``limit`` select a bounded page; actionable states come first by default.
 
     Args:
         request: The incoming Starlette request.
@@ -600,15 +603,28 @@ async def jobs_route(request: Request) -> JSONResponse:
             ),
         )
     ]
-    filtered_records = _prioritise_running_jobs(filtered_records)
-    limit = _clamp_limit(request.query_params.get("limit"))
-    if limit is not None:
-        filtered_records = filtered_records[:limit] if limit > 0 else []
+    sort = _normalise_filter_value(request.query_params.get("sort")) or "priority"
+    sort = sort if sort in JOB_SORT_FIELDS else "priority"
+    order = list_order(
+        request.query_params.get("order"),
+        default="asc" if sort == "priority" else "desc",
+    )
+    filtered_records = sort_job_records(filtered_records, sort=sort, order=order)
+    matched = len(filtered_records)
+    limit = list_limit(request.query_params.get("limit"))
+    offset = list_offset(request.query_params.get("offset"))
+    filtered_records = filtered_records[offset : offset + limit]
     return JSONResponse(
         {
             "jobs": filtered_records,
             "total": len(records),
             "returned": len(filtered_records),
+            "matched": matched,
+            "offset": offset,
+            "limit": limit,
+            "sort": sort,
+            "order": order,
+            "has_more": offset + len(filtered_records) < matched,
             "summary": _job_summary(records, now=now),
             "quiesce": registry.quiesce_snapshot().as_envelope(),
             # Machine-wide GPU pressure beside the work list, so a header can
@@ -672,8 +688,12 @@ async def search_activity_route(request: Request) -> JSONResponse:
                 since=since,
                 # Bounded by default: an absent limit means the caller
                 # named none, not that they want every retained record.
-                limit=_clamp_limit(request.query_params.get("limit"))
-                or DEFAULT_SEARCH_ACTIVITY_ROWS,
+                limit=list_limit(request.query_params.get("limit")),
+                offset=list_offset(request.query_params.get("offset")),
+                query=request.query_params.get("query"),
+                outcome=request.query_params.get("outcome"),
+                sort=request.query_params.get("sort", "priority"),
+                order=request.query_params.get("order"),
             ),
         )
     )
@@ -893,12 +913,20 @@ async def _managed_logs_for_request(
     filters = managed_log_filters(
         job_id=request.query_params.get("job_id"),
         contains=request.query_params.get("contains"),
+        request_id=request.query_params.get("request_id"),
     )
     try:
         # Reading, filtering, and byte-bounded shaping are one service-domain
         # operation and stay off the event loop for both live and offline parity.
         return await _run_in_thread(
-            partial(query_managed_logs, lines, source=source, **filters)
+            partial(
+                query_managed_logs,
+                lines,
+                source=source,
+                offset=request.query_params.get("offset"),
+                order=request.query_params.get("order"),
+                **filters,
+            )
         )
     except InvalidManagedLogSourceError as exc:
         return JSONResponse(
@@ -1143,6 +1171,9 @@ ROUTES: list[Route] = [
     Route("/readiness", get_readiness_route, methods=["GET"]),
     Route("/search", search_route, methods=["POST"]),
     Route("/search-activity", search_activity_route, methods=["GET"]),
+    Route("/runtime-observations", runtime_observations_route, methods=["GET"]),
+    Route("/repositories", repositories_route, methods=["GET"]),
+    Route("/repositories/enroll", enroll_repository_route, methods=["POST"]),
     Route("/reindex", reindex_route, methods=["POST"]),
     Route("/index/audit", audit_route, methods=["POST"]),
     Route("/clean", clean_route, methods=["POST"]),

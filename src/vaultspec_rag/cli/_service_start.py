@@ -46,6 +46,7 @@ from .._operator_commands import (
     server_status_command,
     server_stop_command,
 )
+from .._ports import port_is_available
 from .._process_probe import pid_alive
 from ..config._settings import get_config
 from ..config._types import EnvVar
@@ -76,7 +77,6 @@ from ._process import (
     DaemonBreakawayError,
     _call_interruptibly,
     _is_our_service,
-    _port_is_available,
     _resolve_daemon_interpreter,
     _spawn_service,
 )
@@ -499,6 +499,12 @@ def _start_success(
     from ._status_labels import typesafe_label
 
     data.setdefault("typesafe", None)
+    discovery = read_service_status()
+    monitor_port = discovery.get("monitor_port") if discovery is not None else None
+    if isinstance(monitor_port, int) and monitor_port > 0:
+        data["monitor_port"] = monitor_port
+        data["monitor_url"] = f"http://127.0.0.1:{monitor_port}"
+        human_lines = (*human_lines, f"Monitor: {data['monitor_url']}")
     _lifecycle_success(
         json_mode,
         command=_START_COMMAND,
@@ -624,7 +630,7 @@ def _guard_start_preconditions(port: int, json_mode: bool) -> None:
     acquire. The machine check catches a second instance that a port-scoped
     check (different --port / status dir) misses.
     """
-    if not _port_is_available(port):
+    if not port_is_available(port):
         raise _fail_start(
             json_mode,
             error="port_in_use",

@@ -90,6 +90,7 @@ from ._jobs_tui_payload import (
     search_records,
 )
 from ._jobs_tui_state import (
+    FocusedLogState,
     LaneStamps,
     LayoutMetrics,
     MachineSignals,
@@ -305,6 +306,7 @@ class ServerWatchApp(
         self._jobs: list[dict[str, object]] = []
         self._search = SearchActivityState()
         self._logs = ManagedLogState()
+        self._focused_log = FocusedLogState()
         self._version = ServiceVersion()
         self._signals = MachineSignals()
         self._layout = LayoutMetrics()
@@ -334,11 +336,12 @@ class ServerWatchApp(
         # Each lane's fetches are stamped and applied newest-first; see
         # ``LaneStamps`` for why completion order cannot be trusted.
         self._job_stamps = LaneStamps()
+        self._status_stamps = LaneStamps()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="header"):
-            yield Static(id="summary")
             yield ServiceStatusBar(id="servicestatus")
+            yield Static(id="summary")
         with Horizontal(id="body"):
             with Horizontal(id="lanes"):
                 yield DataTable(id="jobs", cursor_type="row", zebra_stripes=True)
@@ -402,6 +405,7 @@ class ServerWatchApp(
         screen.set_interval(self._interval, self.refresh_jobs)
         screen.set_interval(self._interval, self.refresh_search_activity)
         screen.set_interval(self._interval, self.refresh_managed_logs)
+        screen.set_interval(self._interval, self._poll_focused_logs)
         # The service itself changes far more slowly than its job list, so
         # its beat runs at a multiple of the jobs interval - but the first
         # read happens now, because the header's identity cell is empty
@@ -578,6 +582,10 @@ class ServerWatchApp(
         if self._active_screen() is None:
             return
         self._relayout()
+        status_bar = self._pane("#servicestatus", ServiceStatusBar)
+        if status_bar is not None:
+            status_bar.repaint_status()
+        self._refresh_log_title()
         if self._expire_tombstones():
             self._render_rows()
         elif self._animating():
@@ -687,12 +695,14 @@ class ServerWatchApp(
         # search_activity_error returns non-None whenever result is None, so
         # reaching here means result is the dict.
         payload = cast("dict[str, object]", result)
+        queued = search_records(payload.get("queued", []), "queued")
         active = search_records(payload.get("active"), "active")
         recent = search_records(payload.get("recent"), "terminal")
-        self._search.records = active + recent
+        self._search.records = queued + active + recent
         # search_activity_error (via _search_activity_payload_error) already
         # confirmed "counts" is a dict before returning None.
-        counts = cast("dict[str, object]", payload["counts"])
+        counts = cast("dict[str, object]", payload.get("all_counts", payload["counts"]))
+        self._search.queued_count = count(payload.get("queued_count"))
         self._search.counts = {
             name: count(counts.get(name)) or 0 for name in SEARCH_COUNT_NAMES
         }
@@ -754,18 +764,25 @@ class ServerWatchApp(
         self._logs.last_refresh = time.time()
         self._refresh_managed_log_title()
 
-    @work(thread=True, exclusive=True, group=_STATUS_GROUP)
     def refresh_service_status(self) -> None:
+        self._fetch_service_status(self._status_stamps.issue())
+
+    @work(thread=True, exclusive=True, group=_STATUS_GROUP)
+    def _fetch_service_status(self, generation: int) -> None:
         """Poll what the service *is*, beside what it is doing.
 
         Never raises: an unreachable or older service returns a result whose
         unlearnable fields are ``None``, and the header renders those as absent
         rather than as zero.
         """
-        result = fetch_service_status(self._port)
-        self.call_from_thread(self._apply_service_status, result)
+        result = fetch_service_status(self._port, timeout=min(5.0, self._interval))
+        self.call_from_thread(self._apply_service_status, result, generation)
 
-    def _apply_service_status(self, result: ServiceStatusHeader) -> None:
+    def _apply_service_status(
+        self, result: ServiceStatusHeader, generation: int
+    ) -> None:
+        if not self._status_stamps.accept(generation):
+            return
         if result.reachable:
             # Only a daemon that answered can say which daemon it is; an
             # unreachable beat keeps the last learned identity beside the
@@ -1098,6 +1115,8 @@ class ServerWatchApp(
 
     def watch_selected_search_id(self, _request_id: str) -> None:
         self._render_search_detail()
+        if self._focused_log.kind == "request":
+            self.refresh_focused_logs()
 
     def _render_search_title(self) -> None:
         found = self.query("#searchtitle")
@@ -1106,6 +1125,8 @@ class ServerWatchApp(
         active = self._search.counts.get("active", 0)
         recent = self._search.counts.get("recent", 0)
         title = Text(f"Served searches · {active} active · {recent} recent")
+        queued = self._search.queued_count
+        title.append(f" · {queued if queued is not None else '—'} queued", style="dim")
         # The counts above cover every record the service holds; the table
         # holds the bounded projection. Without this an operator scrolls to
         # the end of 100 rows and concludes they have seen all 300.
@@ -1157,7 +1178,8 @@ class ServerWatchApp(
             # Nothing is selected, so the pane must stop claiming to show a
             # job's log. Leaving the last one there attributes those lines to
             # work that is no longer listed.
-            self._clear_log("No job selected.")
+            if self._focused_log.kind == "job":
+                self.refresh_focused_logs()
             return
         row = min(table.cursor_row, table.row_count - 1)
         # ``str`` on a row key gives its repr, not the id it carries.
@@ -1178,13 +1200,27 @@ class ServerWatchApp(
         if table.id == "jobs":
             self.selected_id = str(event.row_key.value or "")
 
-    def watch_selected_id(self, job_id: str) -> None:
-        if not job_id:
-            return
+    def watch_selected_id(self, _job_id: str) -> None:
         if not self.query("#logtitle"):
             return
-        self._refresh_log_title()
-        self.fetch_logs(job_id)
+        if self._focused_log.kind == "job":
+            self.refresh_focused_logs()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        if event.widget is self._table():
+            self._focused_log.kind = "job"
+            self.refresh_focused_logs()
+        elif event.widget is self._search_table():
+            self._focused_log.kind = "request"
+            self.refresh_focused_logs()
+
+    def _poll_focused_logs(self) -> None:
+        if (
+            self._active_screen() is not None
+            and self._log_visible()
+            and not self._managed_log_visible()
+        ):
+            self.refresh_focused_logs()
 
     def selected_job(self) -> dict[str, object] | None:
         """Return the currently selected indexing-job record."""
@@ -1226,6 +1262,8 @@ class ServerWatchApp(
             return False
         searches = self._search_table()
         if self.focused is searches:
+            return False
+        if self.focused is self._log_view() and self._focused_log.kind == "request":
             return False
         # In jobs watch, opening search always replaces the indexing lane. In
         # server watch it does so below the split breakpoint. Check the classes
@@ -1323,8 +1361,10 @@ class ServerWatchApp(
         # One state, applied the same way in both layouts, so the key always
         # does something: the width decides only whether showing the log
         # splits the screen or takes it over.
-        self._logs.show = not self._log_visible()
-        self.screen.set_class(self._logs.show, "-showlog")
+        self._focused_log.show = not self._log_visible()
+        self.screen.set_class(self._focused_log.show, "-showlog")
+        if self._focused_log.show:
+            self.refresh_focused_logs()
         # The log keys gate on the pane being on screen, and the footer only
         # re-evaluates them when told to.
         self.refresh_bindings()
@@ -1334,7 +1374,7 @@ class ServerWatchApp(
         if self._managed_log_visible():
             self.action_toggle_managed_logs()
         if self._watch_mode == "jobs" and self._log_visible():
-            self._logs.show = False
+            self._focused_log.show = False
             self.screen.set_class(False, "-showlog")
         if self._wide() and self._watch_mode == "server":
             table = self._search_table()
@@ -1421,16 +1461,18 @@ class ServerWatchApp(
         have chosen, the choice survives every later resize.
         """
         screen = self._active_screen()
-        if self._logs.show is None and screen is not None:
+        if self._focused_log.show is None and screen is not None:
             screen.set_class(self._watch_mode == "jobs" and self._wide(), "-showlog")
 
     def _wide(self) -> bool:
         return self.screen.has_class("-wide")
 
     def action_refresh_now(self) -> None:
+        self.refresh_service_status()
         self.refresh_jobs()
         self.refresh_search_activity()
         self.refresh_managed_logs()
+        self.refresh_focused_logs()
 
 
 def run_server_watch(

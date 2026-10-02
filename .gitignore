@@ -188,6 +188,19 @@ actions-runner-*.tar.gz
 # stray provider-mirror lock artifacts
 .agents/*.lock
 
+# Frontend dependencies, generated output and local configuration
+/dist-bin/
+/dist-bundles/
+/dist-monitor-frontend/
+/dist-release-evidence/
+node_modules/
+*.tsbuildinfo
+.vite/
+coverage/
+playwright-report/
+test-results/
+.env.*
+!.env.example
 # Private VaultSpec environment (never commit)
 /.vaultspec/.env
 /.vaultspec/.env.*

@@ -12,8 +12,6 @@ import pytest
 
 from tools.binaries.build_pyapp import (
     APPLICATION_ICON,
-    BINARIES,
-    binary_version_info,
     write_checksum,
 )
 from tools.binaries.windows_icon import (
@@ -21,6 +19,7 @@ from tools.binaries.windows_icon import (
     VersionInfo,
     VersionResourceError,
     parse_ico,
+    product_version_info,
     stamp_icon,
     stamp_icon_and_version,
     stamp_version_info,
@@ -28,6 +27,7 @@ from tools.binaries.windows_icon import (
     verify_version_info,
     version_resource,
 )
+from tools.packaging.products import VAULTSPEC_RAG
 
 pytestmark = pytest.mark.unit
 
@@ -141,7 +141,9 @@ def test_version_stamping_is_rejected_off_windows(
     monkeypatch.setattr("tools.binaries.windows_icon.sys.platform", "linux")
     executable = tmp_path / "sample.exe"
     executable.write_bytes(b"MZ")
-    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+    info = product_version_info(
+        VAULTSPEC_RAG, VAULTSPEC_RAG.executables[0], "0.4.6", "x86_64-pc-windows-msvc"
+    )
 
     with pytest.raises(VersionResourceError, match="only be updated on Windows"):
         stamp_version_info(executable, info)
@@ -153,7 +155,9 @@ def test_real_pe_stamp_is_exact_and_precedes_checksum(tmp_path: Path) -> None:
     executable = tmp_path / "python.exe"
     shutil.copy2(sys.executable, executable)
 
-    info = binary_version_info(BINARIES[0], "0.4.6", "x86_64-pc-windows-msvc")
+    info = product_version_info(
+        VAULTSPEC_RAG, VAULTSPEC_RAG.executables[0], "0.4.6", "x86_64-pc-windows-msvc"
+    )
     stamp_icon_and_version(executable, APPLICATION_ICON, info)
     stamped = executable.read_bytes()
     checksum = write_checksum(executable)

@@ -1,6 +1,7 @@
 """Workflow and job names stay addressable.
 
-Every workflow is named ``<Product> <Purpose>`` so its runs group together.
+Owned workflows are named ``<Product> <Purpose>`` so their runs group together.
+Shared generated workflows retain their owner's exact name.
 Every row a workflow run shows carries a distinct label, so a required check
 names exactly one row.
 """
@@ -9,21 +10,29 @@ from __future__ import annotations
 
 import pytest
 
-from dev.ci_names import PRODUCT
+from dev.ci_names import PRODUCT, SHARED_WORKFLOW_NAMES
 from dev.guards import _workflows as workflows
 
 pytestmark = [pytest.mark.unit, pytest.mark.repo]
 
 
 def test_every_workflow_name_starts_with_the_product() -> None:
-    """Every workflow is ``<Product> <Purpose>``."""
+    """Owned workflows use the product; shared workflows use their exact name.
+
+    Verified: renaming devserver.yml's workflow to an arbitrary name failed
+    here; restoring it passed. The parity guard also checks its full content.
+    """
     findings = [
         f"{workflow}: {name!r}"
         for workflow, name in workflows.workflow_names()
-        if not name.startswith(f"{PRODUCT} ")
+        if (
+            name != SHARED_WORKFLOW_NAMES[workflow]
+            if workflow in SHARED_WORKFLOW_NAMES
+            else not name.startswith(f"{PRODUCT} ")
+        )
     ]
     assert not findings, (
-        f"A workflow is not named `{PRODUCT} <Purpose>`.\n\n" + "\n".join(findings)
+        "A workflow differs from its product or shared name.\n\n" + "\n".join(findings)
     )
 
 

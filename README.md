@@ -124,6 +124,11 @@ vaultspec-rag server start
 vaultspec-rag server doctor
 ```
 
+`server start` also launches the local browser monitor and prints its `Monitor:`
+URL. Open that URL on the service's machine. The compiled `vaultspec-rag-monitor`
+command must be installed; see [browser monitor setup](docs/service-mode.md#local-carbon-browser-monitor).
+`vaultspec-rag server stop` stops the service and its monitor together.
+
 `server start` returns once the models are loaded. The service doesn't come back by
 itself after a reboot, so start it again then. `server doctor` should report your GPU,
 every model, and the Qdrant binary as ready:

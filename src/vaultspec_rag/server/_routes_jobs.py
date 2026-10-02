@@ -28,7 +28,6 @@ from .._job_errors import (
 from ..job_models import JobCapabilities, JobState
 
 __all__ = [
-    "_clamp_limit",
     "_job_degradation",
     "_job_matches",
     "_job_resilience",
@@ -153,20 +152,6 @@ def _job_desired_state(record: dict[str, object]) -> str:
         return "unknown"
     normalized = desired_state.strip().lower()
     return normalized or "unknown"
-
-
-def _clamp_limit(raw: str | None) -> int | None:
-    """Parse the ``?limit=`` query parameter; ``None`` when absent/invalid.
-
-    Returns ``None`` (no cap) when the parameter is missing or
-    non-integer, so the full bounded snapshot is returned.
-    """
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
 
 
 def _parse_since_seconds(raw: str | None) -> float | None:
@@ -988,4 +973,47 @@ def _prioritise_running_jobs(
     return sorted(
         records,
         key=priority,
+    )
+
+
+JOB_SORT_FIELDS = frozenset(
+    {"priority", "updated_at", "created_at", "state", "source", "root"}
+)
+
+
+def sort_job_records(
+    records: list[dict[str, object]], *, sort: str, order: str
+) -> list[dict[str, object]]:
+    """Sort one filtered snapshot before applying its page bounds."""
+    if sort == "priority":
+        prioritized = _prioritise_running_jobs(records)
+        return prioritized if order == "asc" else list(reversed(prioritized))
+
+    def text_key(record: dict[str, object]) -> tuple[str, str]:
+        values = {
+            "state": job_state(record),
+            "source": job_source(record),
+            "root": job_project_root(record) or "",
+        }
+        return values[sort].casefold(), str(record.get("id", ""))
+
+    if sort in {"state", "source", "root"}:
+        return sorted(
+            records,
+            key=text_key,
+            reverse=order == "desc",
+        )
+    return sorted(
+        records,
+        key=lambda record: (
+            (
+                job_updated_timestamp(record)
+                if sort == "updated_at"
+                else _job_values.measurement(record.get("created_at"))
+                or _job_values.measurement(record.get("started_at"))
+            )
+            or 0.0,
+            str(record.get("id", "")),
+        ),
+        reverse=order == "desc",
     )

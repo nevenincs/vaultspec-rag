@@ -80,6 +80,7 @@ __all__ = [
     "current_cuda_mib",
     "current_rss_mib",
     "is_enabled",
+    "memory_observation",
     "rebase_resident_cuda_baseline",
     "record_forward_peaks",
     "reset_cuda_peak_memory_stats",
@@ -233,6 +234,28 @@ def current_rss_mib() -> float:
     """
     measured = _measure_rss_mib()
     return measured if measured is not None else 0.0
+
+
+def memory_observation() -> dict[str, object]:
+    """Observe host RAM and this process's RSS without fabricating absent data."""
+    import psutil
+
+    result: dict[str, object] = {
+        "available": False,
+        "process_rss_bytes": None,
+        "total_bytes": None,
+        "available_bytes": None,
+    }
+    try:
+        memory = psutil.virtual_memory()
+        result.update(total_bytes=memory.total, available_bytes=memory.available)
+        rss = _measure_rss_mib()
+        if rss is not None:
+            result["process_rss_bytes"] = mib_to_bytes(rss)
+            result["available"] = True
+    except (psutil.Error, OSError) as exc:
+        result["reason"] = type(exc).__name__
+    return result
 
 
 def _measure_cuda_mib() -> tuple[float, float] | None:

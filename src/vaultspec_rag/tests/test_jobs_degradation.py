@@ -574,17 +574,17 @@ class TestPhaseAwareEvidence:
     def test_the_cpu_section_reports_a_reading_after_priming(self) -> None:
         import vaultspec_rag._job_evidence as jobs_module
 
-        from .._job_evidence import _process_cpu_evidence
+        from .._job_evidence import process_cpu_snapshot
 
         jobs_module._cpu_snapshot_cache = None
         jobs_module._cpu_probe_process = None
-        first = _process_cpu_evidence(now=1000.0)
+        first = process_cpu_snapshot(now=1000.0)
         assert set(first) == _CPU_KEYS
         assert first["available"] is True
         # The first sample only primes the interval counter; a fabricated
         # zero here would read as a dead process.
         assert first["utilization_percent"] is None
-        second = _process_cpu_evidence(now=1000.0 + 6.0)
+        second = process_cpu_snapshot(now=1000.0 + 6.0)
         assert second["available"] is True
         percent = second["utilization_percent"]
         assert isinstance(percent, float)
@@ -593,12 +593,12 @@ class TestPhaseAwareEvidence:
     def test_polling_inside_the_window_reuses_the_cpu_reading(self) -> None:
         import vaultspec_rag._job_evidence as jobs_module
 
-        from .._job_evidence import _process_cpu_evidence
+        from .._job_evidence import process_cpu_snapshot
 
         jobs_module._cpu_snapshot_cache = None
         jobs_module._cpu_probe_process = None
-        _process_cpu_evidence(now=2000.0)
-        _process_cpu_evidence(now=2002.0)
+        process_cpu_snapshot(now=2000.0)
+        process_cpu_snapshot(now=2002.0)
         cached = jobs_module._cpu_snapshot_cache
         assert cached is not None
         assert cached[0] == 2000.0, (

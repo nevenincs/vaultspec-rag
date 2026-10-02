@@ -209,7 +209,7 @@ def _gpu_evidence() -> dict[str, object]:
     }
 
 
-def _process_cpu_evidence(*, now: float | None = None) -> dict[str, object]:
+def process_cpu_snapshot(*, now: float | None = None) -> dict[str, object]:
     """Sample this process's CPU utilisation for the evidence block.
 
     A CPU- or I/O-bound step runs no forward pass, so during one the encode
@@ -405,7 +405,7 @@ def degradation_evidence(
             **_forward_evidence(inputs.forward, now=now),
             "expected": _forward_pass_expected(inputs.step),
         },
-        "cpu": _process_cpu_evidence(now=now),
+        "cpu": process_cpu_snapshot(now=now),
         "gpu": _gpu_evidence(),
         "backend": _backend_evidence(inputs.project_root, inputs.source),
     }

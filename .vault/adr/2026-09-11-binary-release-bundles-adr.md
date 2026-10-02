@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#binary-release-bundles'
 date: '2026-09-11'
-modified: '2026-09-30'
+modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:bb1f5dee2f149f57f1a49ad6a2f46d34b8cf8939715ebf0cf1e15cf3d2baefc8'
+body_hash: 'sha256:9a279924c903b0675f82151f1a9a722cfbaaea7553dcd72bd0afa6e4a932806e'
 related:
   - "[[2026-09-11-binary-release-bundles-rag-port-research]]"
   - "[[2026-09-11-binary-release-bundles-current-pipeline-reference]]"
@@ -20,7 +20,7 @@ RAG needs a single public contract for standalone binary downloads and package c
 
 ## Considerations
 
-- RAG has two commands, three supported binary targets, and first-launch CUDA/network requirements; the public artifact must describe those constraints: `2026-09-11-binary-release-bundles-rag-port-research`.
+- Executable membership and supported targets follow the product declaration and release matrix; current packaging adds a monitor component with its own runtime requirements. Grounding: `2026-10-02-monitor-delivery-reference`.
 - Existing channel generators and validators are organized around one digest per executable and must converge on one public artifact per target: `2026-09-11-binary-release-bundles-current-pipeline-reference`.
 - Binary and Python publication are separate release workflows that merge a shared checksum aggregate; publication must remain race-safe and complete-target aware: `2026-09-11-binary-release-bundles-current-pipeline-reference`.
 - Windows icon stamping already happens before checksums, so version-resource metadata must join that finalization boundary rather than become a later mutation: `2026-09-11-binary-release-bundles-rag-port-research`.
@@ -34,7 +34,7 @@ RAG needs a single public contract for standalone binary downloads and package c
 
 ## Constraints
 
-- The public bundle unit is one versioned archive per RAG target: ZIP on Windows and TAR.GZ on Unix. The archive contains stable `vaultspec-rag` and `vaultspec-search-mcp` executables, generated `manifest.json`, license material, and RAG usage material.
+- The public bundle unit is one versioned archive per supported RAG target: ZIP on Windows and TAR.GZ on Unix. It contains stable `vaultspec-rag`, `vaultspec-search-mcp` and `vaultspec-rag-monitor` executables, generated `manifest.json`, license and usage material. The manifest distinguishes the self-contained monitor frontend from the RAG accelerator/runtime bootstrap requirements.
 - The manifest carries schema, product/version/target, executable roles, sizes and hashes, source revision, runtime/build versions, and platform-floor metadata. It does not hash the enclosing archive; `SHA256SUMS` carries the completed top-level artifact digest.
 - Stable/latest may be published only when every target declared by the RAG binary matrix has a validated bundle. A missing, malformed, or incomplete target set must fail or demote the release rather than silently publish a partial stable surface.
 - Raw target-qualified names are staging details. Direct downloads and Scoop/Homebrew consume one archive and its digest per target; extraction yields stable command names.

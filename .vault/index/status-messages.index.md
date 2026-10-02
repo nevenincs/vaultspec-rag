@@ -4,9 +4,9 @@ tags:
   - '#index'
   - '#status-messages'
 date: '2026-09-23'
-modified: '2026-09-23'
+modified: '2026-09-30'
 body_schema: 'body-v2'
-body_hash: 'sha256:4b14ed2978c60685435e42a98cf981842a28163451bb240ee64f4c6e4ed896da'
+body_hash: 'sha256:64d94063576ac18476093cf2a6469e3ce84926f8c39cf60b2e478b7f1bd276e1'
 related:
   - '[[2026-09-23-status-messages-adr]]'
   - '[[2026-09-23-status-messages-audit]]'
@@ -25,7 +25,7 @@ Auto-generated index of all documents tagged with `#status-messages`.
 ### adr
 
 - `2026-09-23-status-messages-adr` - `status-messages` adr: `canonical typed operator state model` | (**status:** `accepted`)
-- `2026-09-23-status-messages-exit-codes-adr` - `status-messages` adr: `exit codes and degradation codes for the typed operator state` | (**status:** `proposed`)
+- `2026-09-23-status-messages-exit-codes-adr` - `status-messages` adr: `exit codes and degradation codes for the typed operator state` | (**status:** `deprecated`)
 
 ### audit
 

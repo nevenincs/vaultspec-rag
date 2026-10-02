@@ -46,6 +46,9 @@ def test_jobs_route_401_with_wrong_token(
 def test_jobs_route_200_with_bearer_token(
     _routes_app: tuple[TestClient, str],
 ) -> None:
+    """Forcing has_more true failed its exact false assertion (exit 1);
+    restoring the page calculation passed this test (exit 0).
+    """
     client, token = _routes_app
     response = cast(
         "httpx.Response",
@@ -62,6 +65,12 @@ def test_jobs_route_200_with_bearer_token(
         "jobs",
         "total",
         "returned",
+        "matched",
+        "offset",
+        "limit",
+        "sort",
+        "order",
+        "has_more",
         "summary",
         "filters",
         "gpu",
@@ -71,6 +80,12 @@ def test_jobs_route_200_with_bearer_token(
     }
     jobs = cast("list[dict[str, object]]", payload["jobs"])
     assert len(jobs) == 1
+    assert payload["matched"] == 1
+    assert payload["offset"] == 0
+    assert payload["limit"] == 200
+    assert payload["sort"] == "priority"
+    assert payload["order"] == "asc"
+    assert payload["has_more"] is False
     assert jobs[0]["source"] == "vault"
     assert jobs[0]["phase"] == "done"
     summary = cast("dict[str, object]", payload["summary"])

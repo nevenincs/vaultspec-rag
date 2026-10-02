@@ -19,7 +19,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -318,6 +318,45 @@ def _row(
 ) -> dict[str, object]:
     """One process-table row in the shape the holder scan reads."""
     return {"pid": pid, "ppid": ppid, "exe": exe, "cwd": cwd, "cmdline": cmdline}
+
+
+def test_only_a_matched_holder_requests_its_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parent reads cost a system snapshot on Windows; outsiders need none.
+
+    The injected lazy rows record attribute access: the OS returns parent
+    values but cannot expose whether this query requested an unused one,
+    and elapsed time cannot establish that on a variably loaded runner.
+    Classification, exclusions and parent pairing use production code.
+
+    Restoring the eager read failed parent_reads == [matching] (exit 1);
+    deferring it again passed this test (exit 0).
+    """
+    parent_reads: list[int] = []
+
+    class ReadWitness(dict[str, object]):
+        def __getitem__(self, key: str) -> object:
+            if key == "ppid":
+                parent_reads.append(cast("int", super().__getitem__("pid")))
+            return super().__getitem__(key)
+
+    matching = 4321
+    rows = (
+        ReadWitness(_row(4320, exe=str(tmp_path.parent / "unrelated.exe"))),
+        ReadWitness(_row(4322)),
+        ReadWitness(_row(4323, exe=str(tmp_path / "excluded.exe"))),
+        ReadWitness(_row(matching, exe=str(tmp_path / "python.exe"), ppid=1234)),
+    )
+    monkeypatch.setattr("vaultspec_rag._process_probe.iter_process_info", _table(*rows))
+
+    result = environment_holders(tmp_path, exclude_pids=(4323,))
+
+    assert parent_reads == [matching]
+    assert [holder.pid for holder in result.holders] == [matching]
+    assert result.holders[0].ppid == 1234
+    assert result.uninspectable == 1
+    assert result.complete is True
 
 
 class TestTheAskingCommandIsNotAnObstacle:

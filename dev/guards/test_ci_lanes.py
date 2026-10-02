@@ -272,7 +272,9 @@ def test_the_gate_needs_every_measuring_job_and_skips_only_a_draft() -> None:
     raw = cast("dict[object, object]", gate)
     assert raw.get("name") == GATE_CHECK
     needs = raw.get("needs")
-    needed = set(cast("list[str]", needs)) if isinstance(needs, list) else set()
+    needed: set[str] = (
+        set(cast("list[str]", needs)) if isinstance(needs, list) else set()
+    )
     measuring = {str(job_id) for job_id in jobs} - {GATE_JOB}
     assert needed == measuring, (
         f"the gate needs {sorted(needed)}, but measuring jobs are {sorted(measuring)}"
@@ -304,3 +306,16 @@ def test_the_gate_runs_every_check_on_every_platform() -> None:
     assert not findings, "The merge gate lost required coverage.\n\n" + "\n".join(
         findings
     )
+
+
+@pytest.mark.parametrize("job_id", ["tests", "tests-windows"])
+def test_lifecycle_suites_receive_the_compiled_monitor(job_id: str) -> None:
+    """Removing native compilation fails admission before the test suite.
+
+    Mutation proof: removing each job's build recipe independently failed the
+    missing-producer assertion (exit 1); restoration passed (exit 0).
+    """
+    steps = _jobs()[job_id]["steps"]
+    runs = [step.get("run") for step in steps]
+    assert "just build-monitor-test" in runs, f"{job_id} has no compiled producer"
+    assert runs.index("just build-monitor-test") < runs.index("just test-python")

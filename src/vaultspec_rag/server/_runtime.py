@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.requests import Request
 
+    from ..monitor_process import MonitorProcess
     from ..service import ServiceRegistry
 
 __all__ = [
@@ -26,6 +27,7 @@ class ServerRouteRuntime:
     token: str
     registry: ServiceRegistry
     port: int
+    monitor: MonitorProcess | None = None
 
     def __post_init__(self) -> None:
         """Refuse route hosts that cannot authenticate or publish themselves."""
