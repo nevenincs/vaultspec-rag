@@ -45,11 +45,11 @@ def _ports(count: int = 1) -> Generator[list[socket.socket]]:
             sockets = [socket.socket()]
             if os.name == "nt":
                 sockets[0].setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            # Match the compiled server's listener outside Windows' ephemeral
-            # range, where the runtime's own sockets can consume a freed port.
+            # Reserve loopback outside Windows' ephemeral range, where the
+            # runtime's own sockets can consume a freed port.
             port = random.randrange(20000, 40000)
             try:
-                sockets[0].bind(("0.0.0.0", port))
+                sockets[0].bind(("127.0.0.1", port))
                 for offset in range(1, count):
                     listener = socket.socket()
                     if os.name == "nt":
@@ -57,7 +57,7 @@ def _ports(count: int = 1) -> Generator[list[socket.socket]]:
                             socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1
                         )
                     sockets.append(listener)
-                    listener.bind(("0.0.0.0", port + offset))
+                    listener.bind(("127.0.0.1", port + offset))
                 break
             except OSError:
                 continue

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:7728ebbd7cd04f4514b9ad5781d57db91e00987a184070f73a43332dae8fbb31'
+body_hash: 'sha256:eb374a5f09496626e5479e80cd01d9536c695bd8b900b98a3c2af6c280ae0736'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -183,6 +183,10 @@ related:
 - `S04` `verify:` `real remote tag resolver and mismatch refusal` -> `pass`
 - `S04` `verify:` `actual Windows native loopback smoke 94 assets browser port EOF` -> `pass`
 - `S04` `verify:` `PR570 CodeQL at d5114a9d` -> `fail`
+- `S09` `verify:` `Ruff package` -> `pass`
+- `S09` `verify:` `affected format` -> `pass`
+- `S09` `verify:` `ty and strict basedpyright affected helper` -> `pass`
+- `S09` `verify:` `actual compiled monitor lifecycle 12 tests` -> `pass`
 
 ## Notes
 
@@ -202,3 +206,4 @@ related:
 - `S09` The light aggregate exposed redundant IPv6 probing in the test-only IPv4 wildcard port reservation helper. Removed that probe to meet the unchanged nesting gate and match the actual compiled listener. All other light dimensions passed and remain applicable.
 - `S04` Reopened S04 for current-head CodeQL cache-poisoning finding; explicitly opt out of setup-node automatic caching and leave explicit cache absent. Local corrective review PASS. Parsed YAML helper annotations and optional triggers now satisfy strict typing without suppressions. CodeQL must rerun at the next pushed head before authorized main merge. S06 release evidence remains pending.
 - `S04` Explicit cache opt-out retained; existing validated remote tag SHA now crosses the job boundary through resolver output, all build and evidence consumers bind to it, and always-running draft verification requires validation success. One stale exact dependency guard corrected to the intended shape; final 152 tests pass. Native smoke socket restricted to loopback; unchanged verified test binary passes complete probe. Corrective local review PASS, fresh CodeQL still required before merge. Lifecycle socket helper medium finding assigned to S09.
+- `S09` Reopened S09 to resolve CodeQL medium wildcard-listener annotation. Test reservations now bind loopback only, preserving exclusive Windows socket admission and avoiding the ephemeral range. Real compiled allocation, backend HTTP and cleanup checks pass. Corrective review PASS; fresh remote checks still required before authorized merge. S06 remains pending release evidence.

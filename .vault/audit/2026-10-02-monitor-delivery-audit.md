@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:904cb830bd07f76af223003812bcac9a1d343354c74e0583866bd1aca5bcba8b'
+body_hash: 'sha256:c9324cec3eded6a8777e963013b8b99bc3bd7b756f8cd213a7865f7bc96d9203'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -81,6 +81,10 @@ The CodeQL result at `d5114a9d` still reports execution from inputs.target_sha a
 Follow-up S04 review against `d5114a9d`: the existing resolver emits its remote-derived SHA only after the request comparison succeeds. Every downstream checkout, provenance input and artifact name consumes needs.validate.outputs.sha, and every consumer declares that dependency. The always-running draft verifier additionally requires successful validation before checkout. This follows the existing publication resolver pattern and preserves the tag-based release contract. A real execution of the unchanged resolver script against vaultspec-rag-v0.5.1 accepted its remote SHA `b2077e369cb439d86626f7c1bdded2a387a69849`; the mismatched request failed with no output. Changing the frontend back to raw input failed the named guard assertion, and exact restoration passed.
 
 The combined release/developer-guard run initially passed 151 tests with one stale assertion expecting the old dependency shape. That assertion now checks the designed validation dependency. The full corrected suite passes 152 tests; Ruff package/binary/monitor tooling, affected formatting, ty/basedpyright, canonical workflow actionlint and Prettier pass. The native smoke probe now reserves only loopback and still proves strict occupied-port refusal against actual Windows binary `ccc2b857d4c05de58bf1369cdc5522a4e5717b9351f712df379105db95a1fa41`, 94 assets, browser rendering, bounds, cancellation and EOF/partial-request shutdown. Corrective S04 review is **PASS** locally; the next pushed head must clear CodeQL and the merge gate. S06 remains **PENDING** for the recorded release evidence.
+
+### loopback-lifecycle-resolution | low | Lifecycle port reservations are confined to loopback
+
+S09 corrective follow-up to the medium CodeQL annotation at `d5114a9d`: the bounded test helper reserves only 127.0.0.1, retaining exclusive Windows binds and the non-ephemeral port range. Those reservations still conflict with the compiled server's wildcard listener, so the real upward-allocation and strict-port assertions remain exercised. The 12-test lifecycle suite passes against the verified Windows compiled monitor, including actual backend HTTP, discovery, parent death and identity-safe cleanup. Package Ruff, affected formatting and ty/basedpyright pass. S09 corrective review is **PASS**. Both Python wildcard test listeners are now removed; current-head remote security and merge-gate results remain required before landing. S06 release evidence remains **PENDING**.
 
 ## Recommendations
 
