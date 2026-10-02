@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:2b1bece93b4b5b9d0a34e6da52ef80f7f2f1b383a75505562e1c98cdcdd24b1d'
+body_hash: 'sha256:c96693aa74a6aeb39a2f6c2e0eac027b7a4894977b0221129dde01e6e38f3f76'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -80,3 +80,13 @@ related:
 - `S06` `verify:` `process-isolated conformance kind mutation failed intended rebuild assertion then restore passed` -> `pass`
 - `S06` `verify:` `process-isolated backend projection mutation failed managed-server assertion then restore passed` -> `pass`
 - `S06` `by:` `vaultspec-execute`
+- `S07` `M` `src/vaultspec_rag/watcher_retry_policy.py`
+- `S07` `M` `src/vaultspec_rag/tests/test_watcher_rebuild_reconciliation.py`
+- `S07` `verify:` `ruff check --no-cache src/vaultspec_rag` -> `pass`
+- `S07` `verify:` `ruff format --check --no-cache src/vaultspec_rag` -> `pass`
+- `S07` `verify:` `basedpyright S07 two paths (worker strict, exit 0)` -> `pass`
+- `S07` `verify:` `ty check S07 two paths` -> `pass`
+- `S07` `verify:` `changed-path cognitive complexity and nesting gates` -> `pass`
+- `S07` `verify:` `pytest affected watcher suite (141 tests, exit 0)` -> `pass`
+- `S07` `verify:` `three process-isolated observation guard fail restore fresh-pass sequences with unchanged source SHA256 (forensic s07-guard-evidence.json)` -> `pass`
+- `S07` `by:` `vaultspec-high-executor`

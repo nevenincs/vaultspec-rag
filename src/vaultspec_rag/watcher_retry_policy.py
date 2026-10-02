@@ -538,7 +538,11 @@ class WatcherRetryPolicy:
                     or not started <= proof.committed_at <= finished
                     or generation.signature.operation is not RunOperation.FULL
                     or not generation.complete
-                    or (refusal_at is not None and proof.verified_at < refusal_at)
+                    or (
+                        refusal_at is not None
+                        and min(started, generation.created_at, proof.verified_at)
+                        < refusal_at
+                    )
                 ):
                     return False
                 publication.validate()

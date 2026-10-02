@@ -12,7 +12,7 @@ related:
   - '[[2026-07-13-index-drift-hardening-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:f829efbfceb80ba49512af4c27907bde8eb6387f2ab10d9844096cbc95925446'
+body_hash: 'sha256:aff4b23b6d569c1ae7da080491c4174a2e739cb05365bba0e3df3732e291846f'
 ---
 
 # `resident-service-recovery` plan
@@ -32,7 +32,7 @@ S04 live verification also found generic classification of the checkout's sparse
 - [x] `S03` - Stabilize membership identity by pruning unreachable ignore files and verify legitimate nested ignore changes still invalidate proof; `src/vaultspec_rag/indexer/_ignore_specs.py, ignore/policy regression tests`.
 - [x] `S05` - Remove stale relevance-feedback anchors before hybrid or dense queries and verify search remains available after point replacement; `src/vaultspec_rag/_store_search.py and store search regression tests`.
 - [x] `S06` - Report collection model or geometry incompatibility as terminal explicit-rebuild refusal and report the actual configured backend in service capabilities; `src/vaultspec_rag/store_runtime.py and capabilities.py, storage identity and service capability CPU regressions`.
-- [ ] `S07` - Require rebuild observation and generation creation after structural scope refusal so an in-flight or resumed older full sweep cannot erase lost scope; `watcher_retry_policy.py rebuild certification and real-ledger watcher rebuild reconciliation regressions`.
+- [x] `S07` - Require rebuild observation and generation creation after structural scope refusal so an in-flight or resumed older full sweep cannot erase lost scope; `watcher_retry_policy.py rebuild certification and real-ledger watcher rebuild reconciliation regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization

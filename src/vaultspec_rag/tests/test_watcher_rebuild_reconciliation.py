@@ -11,6 +11,7 @@ import pytest
 
 from .. import store_schema
 from .._job_errors import JobError, JobErrorKind
+from .._publication_state import acquire_publication_snapshot
 from .._source_types import PublicSourceType
 from .._store_writes import workspace_volume_path
 from ..indexer._run_ledger_models import (
@@ -54,8 +55,10 @@ from ._run_ledger_test_support import ledger_test_signature
 from ._watcher_job_snapshot import watcher_job_snapshot
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
+    from ..indexer._run_ledger_models import RunGeneration
     from ..job_models import JobSnapshot
     from ..watcher_retry import WatcherRetryState
 
@@ -91,7 +94,13 @@ def _refused_policy(root: Path, source: WatcherSource) -> WatcherRetryPolicy:
     return policy
 
 
-def _published_rebuild(root: Path, source: WatcherSource) -> JobSnapshot:
+def _published_rebuild(
+    root: Path,
+    source: WatcherSource,
+    *,
+    before_generation: Callable[[], None] | None = None,
+    before_publication: Callable[[RunLedger, RunGeneration], None] | None = None,
+) -> JobSnapshot:
     started = time.time()
     collections = {
         WatcherSource.CODE: store_schema.CODE_COLLECTION,
@@ -106,7 +115,11 @@ def _published_rebuild(root: Path, source: WatcherSource) -> JobSnapshot:
         backend_identity=configured_backend_identity(root),
     )
     ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root)))
+    if before_generation is not None:
+        before_generation()
     generation = ledger.start_generation(signature)
+    if before_publication is not None:
+        before_publication(ledger, generation)
     ledger.establish_verified_publication(
         generation.generation_id, RunAuthority.REBUILD, ()
     )
@@ -356,6 +369,93 @@ def test_rebuild_before_a_new_refusal_cannot_clear_it(tmp_path: Path) -> None:
 
     assert not reconcile_completed_rebuild(snapshot)
     assert policy.refresh().scope_refusal is not None
+
+
+@pytest.mark.parametrize("sweep", ["inflight", "delayed_generation", "resumed"])
+def test_rebuild_observation_must_start_after_scope_refusal(
+    tmp_path: Path, sweep: str
+) -> None:
+    # Mutation: omitting job start admits a sweep already in flight when its
+    # generation began later; omitting generation creation admits a new job
+    # that resumed observations from before unknown scope was recorded.
+    root = tmp_path.resolve()
+    policy = WatcherRetryPolicy(
+        workspace_volume_path(root) / "watcher-retry" / "code.json",
+        _WatcherRetryOptions(
+            canonical_root=os.path.normcase(str(root)),
+            source=WatcherSource.CODE,
+            base_seconds=1.0,
+            max_seconds=2.0,
+            jitter_fraction=0.0,
+            failure_threshold=3,
+            scope_max_paths=1,
+        ),
+    )
+    _observe(policy, "src/old.py")
+    admitted = policy.admit()
+    assert admitted.attempt_generation is not None
+    policy.record_failure(
+        JobError(JobErrorKind.FULL_REINDEX_REQUIRED, "membership proof changed"),
+        admitted.attempt_generation,
+    )
+    resumed_job_started: float | None = None
+
+    def overflow() -> None:
+        _observe(policy, "src/dirty.py")
+        _observe(policy, "src/lost.py")
+        assert policy.state.scope_refusal is WatcherScopeRefusal.SCOPE_CAPACITY_EXCEEDED
+
+    def refuse_after_generation(ledger: RunLedger, generation: RunGeneration) -> None:
+        nonlocal resumed_job_started
+        overflow()
+        if sweep == "resumed":
+            resumed_job_started = time.time()
+            resumed = ledger.start_generation(generation.signature)
+            assert resumed.generation_id == generation.generation_id
+            assert resumed.created_at == generation.created_at
+
+    snapshot = _published_rebuild(
+        root,
+        WatcherSource.CODE,
+        before_generation=overflow if sweep == "delayed_generation" else None,
+        before_publication=refuse_after_generation
+        if sweep != "delayed_generation"
+        else None,
+    )
+    if resumed_job_started is not None:
+        snapshot = replace(
+            snapshot,
+            timestamps=replace(snapshot.timestamps, started_at=resumed_job_started),
+        )
+    refused = policy.state
+    cutoff = refused.last_failure_at
+    started = snapshot.timestamps.started_at
+    assert cutoff is not None and started is not None
+    ledger = RunLedger(index_run_ledger_path(workspace_volume_path(root)))
+    publication = acquire_publication_snapshot(root, PublicSourceType.CODE)
+    generation = ledger.generation(publication.proof.generation_id)
+    assert publication.proof.verified_at is not None
+    assert cutoff < publication.proof.verified_at
+    if sweep == "resumed":
+        assert generation.created_at < cutoff < started
+    elif sweep == "delayed_generation":
+        assert started < cutoff <= generation.created_at
+    else:
+        assert started <= generation.created_at < cutoff
+
+    assert not policy.reconcile_rebuild(snapshot)
+    assert policy.refresh() == refused
+    assert [item.relative_path for item in refused.pending_paths] == ["src/dirty.py"]
+
+    fresh = _published_rebuild(root, WatcherSource.CODE)
+    fresh_publication = acquire_publication_snapshot(root, PublicSourceType.CODE)
+    assert fresh_publication.proof.generation_id != generation.generation_id
+    fresh_generation = ledger.generation(fresh_publication.proof.generation_id)
+    assert fresh_generation.created_at >= cutoff
+    assert policy.reconcile_rebuild(fresh)
+    assert policy.state.scope_refusal is None
+    assert policy.state.circuit_state is WatcherCircuitState.CLOSED
+    assert policy.state.pending_paths == refused.pending_paths
 
 
 @pytest.mark.parametrize("failure_kind", ["capacity", "marker", "legacy_missing_time"])
