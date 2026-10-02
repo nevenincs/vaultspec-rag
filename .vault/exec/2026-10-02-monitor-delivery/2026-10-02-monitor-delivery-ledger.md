@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:40cc2b4bbf5d55c15a0f754770353dd16d84dd3acc9ef893b8964a0108596418'
+body_hash: 'sha256:48063aaa2abc915cdd75a22671b185806dbb4bf681b631b1c1124b35db06ba84'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -131,6 +131,9 @@ related:
 - `S06` `A` `.vault/audit/2026-10-02-monitor-delivery-audit.md`
 - `S06` `M` `.vault/index/monitor-delivery.index.md`
 - `S06` `verify:` `integrated implementation review and ZIP correction review` -> `pass`
+- `S06` `verify:` `current 0.6.0 Vite build and typecheck` -> `pass`
+- `S06` `verify:` `current Windows finalized compile and native release-smoke` -> `pass`
+- `S06` `verify:` `current Windows real in-flight lifecycle owner interop` -> `pass`
 
 ## Notes
 
@@ -145,3 +148,4 @@ related:
 - `S10` Full citation gate initially interpreted slash-separated cwd/home/status prose as a home path. Rephrased the owned ADR sentence without changing its offline isolation commitment; the same gate then passed.
 - `S01` Integrated review found the shared ZIP extractor admitted non-symlink special modes. Reopened S01 and aligned canonical admission with regular or unspecified ZIP file modes. FIFO/device/socket/symlink fixtures refuse before writing. Removing mode admission made five intended DID NOT RAISE assertions fail, exact original bytes restored, all five pass. Proof: owned temporary monitor-delivery-records/zip-mode-guard-proof.json. Compiled runtime and asset bytes are unchanged; no native rebuild needed for this authoring boundary correction.
 - `S06` Review checkpoint is PENDING, not final PASS or plan completion. S09 lifecycle owner merge, Linux and macOS native evidence, executable OS-level outbound denial and first reviewed public acquisition remain unresolved. All independent code/documentation work is committed. Full feature vault check still has exactly two expected dangling lifecycle links until owner merge. S06 remains open.
+- `S06` Fresh clean producer 957962b342ae1433eee014baa58cff86cb6f942a Windows 0.6.0 executable SHA64c1aad61d42efd0885932c9707746e9d872f4d0b3b071d88308322ba666898c passed all94assets/browser/isolated/bounds/cancellation/port/EOF probes and unmodified in-flight canonical owner status/inventory/identity cleanup. Private ignored local handoff is dist-bin with final checksum sidecar and monitor-smoke.json. S09 and S06 remain open for owner commit/combined review, remaining native/offline/public evidence. No public release admission asserted.

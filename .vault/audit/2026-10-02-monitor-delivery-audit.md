@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:b6fd3bd0761671afb797a843cbc7277b9c39bfe019cadb7921fd32f78342d178'
+body_hash: 'sha256:a13684b805da85a224f567fd9ae262687bd458056fd9108df54b5df59e72ea9d'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -44,6 +44,12 @@ The Windows prototype proves executable behavior, all local assets and browser r
 
 2026-10-02 follow-up at `3cfbc0c2`: S01 now admits only regular or unspecified ZIP file modes, preserving unique flattened members and verification before extraction. Reviewed the correction and its interactions with Bun provisioning, public acquisition and Qdrant. Ruff across qdrant_runtime/binary tooling, affected formatting, ty and strict basedpyright pass. The combined monitor, packaging, workflow, Bun, Qdrant and CLI progress suite passes 176 tests. An uninterrupted bypass removed the mode predicate: five intended DID NOT RAISE assertions failed; exact source bytes were restored and the same five guards passed. This resolves zip-member-mode. Other reviewed runtime/workflow inputs are unchanged; lifecycle/native-offline/public evidence gaps keep the verdict PENDING.
 
+### windows-current-producer | low | Fresh 0.6.0 Windows bytes pass native and owner interoperability probes
+
+2026-10-02 follow-up: clean committed producer `957962b342ae1433eee014baa58cff86cb6f942a` rebuilt the Vite handoff once at the current project version 0.6.0 (typecheck and production build pass), frontend manifest SHA256 `10fc6859be3733098492512319a99bec381534ca50d16fa78646f71b80c324d6`. Committed Bun archive/executable pins were verified before native compilation, then Windows resources finalized before hashing. The resulting monitor SHA256 is `64c1aad61d42efd0885932c9707746e9d872f4d0b3b071d88308322ba666898c`. `tools.monitor.release native-smoke` passed version/source/lock/frontend identity, 94 embedded asset hashes/MIME, browser rendering with external requests blocked, isolated home/PATH, unavailable backend, foreign-origin rejection, request bounds, cancellation, strict port refusal, managed upward allocation and bounded EOF shutdown with a partial request. The local handoff is `dist-bin/vaultspec-rag-monitor-x86_64-pc-windows-msvc.exe`, with checksum sidecar and `dist-bin/monitor-smoke.json`; its copied digest was verified. These private staging files are ignored by Git and are not a public bundle.
+
+Real interop reused the unmodified in-flight canonical MonitorProcess owner, source SHA256 `ea26ac35b9b4f0b48d523ce991afe513b9a1f7d277db7296ffa103a3ba718c83`, against these finalized 0.6.0 bytes: managed allocation/readiness, initialized absolute Python CLI, stopped lifecycle status, persisted inventory and identity cleanup passed with temporary status/storage roots. No search service/GPU bootstrap occurred. The source remained unchanged during the probe. This strengthens Windows interoperability evidence but does not replace S09's owner commit and merged-runtime review, the remaining platform/offline condition or public acquisition. Verdict remains **PENDING**.
+
 ## Recommendations
 
-Resolve zip-member-mode through the approved S01 extractor scope. Leave the final verdict pending until the lifecycle owner commits and S09 merges it, all native and offline evidence arrives, and the first reviewed public acquisition completes. Then append the changed interactions/results to this audit without repeating unchanged analysis.
+Zip-member-mode is resolved through the approved S01 extractor scope. Leave the final verdict pending until the lifecycle owner commits and S09 merges it, all native and offline evidence arrives, and the first reviewed public acquisition completes. Then append the changed interactions/results to this audit without repeating unchanged analysis.
