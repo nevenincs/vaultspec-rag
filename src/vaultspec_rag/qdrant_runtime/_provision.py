@@ -276,7 +276,7 @@ def _open_extract_dest(path: Path) -> IO[bytes]:
 
 
 def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> Path:
-    """Extract the qdrant executable from *archive* into *dest_dir*.
+    """Extract one unique regular executable from *archive* into *dest_dir*.
 
     Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
     and the Unix ``.tar.gz`` (single ``qdrant`` entry) shapes. Only
@@ -308,7 +308,10 @@ def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> P
             ]
             if len(matches) == 1:
                 info = matches[0]
-                if not info.is_dir() and not stat.S_ISLNK(info.external_attr >> 16):
+                if not info.is_dir() and stat.S_IFMT(info.external_attr >> 16) in (
+                    0,
+                    stat.S_IFREG,
+                ):
                     with zf.open(info) as src, _open_extract_dest(out_path) as out:
                         shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
                     return out_path

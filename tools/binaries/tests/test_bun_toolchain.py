@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -72,3 +73,21 @@ def test_bun_ambiguous_members_are_refused(tmp_path: Path) -> None:
         extract_verified_archive(
             archive, file_sha256(archive), tmp_path, binary_name="bun"
         )
+
+
+@pytest.mark.parametrize(
+    "mode", [stat.S_IFIFO, stat.S_IFCHR, stat.S_IFBLK, stat.S_IFSOCK, stat.S_IFLNK]
+)
+def test_bun_nonregular_zip_member_is_refused(tmp_path: Path, mode: int) -> None:
+    archive = tmp_path / "bun.zip"
+    member = zipfile.ZipInfo("runtime/bun")
+    member.create_system = 3
+    member.external_attr = (mode | 0o755) << 16
+    with zipfile.ZipFile(archive, "w") as source:
+        source.writestr(member, b"special member")
+    # Removing mode admission must fail this refusal before an output is written.
+    with pytest.raises(RuntimeError, match="requires one regular bun member"):
+        extract_verified_archive(
+            archive, file_sha256(archive), tmp_path, binary_name="bun"
+        )
+    assert not (tmp_path / "bun").exists()

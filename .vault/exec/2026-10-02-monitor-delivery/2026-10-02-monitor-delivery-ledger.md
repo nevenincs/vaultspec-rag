@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:b53ec9ecbeb565d8800c18ce3198f84a6b3f24a369e32d4c800cdbd595394327'
+body_hash: 'sha256:51e2340a3b57e8d6b589d708ed35bd8a65191da2f5ad3056ad22f7689eeb5630'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -147,6 +147,13 @@ related:
 - `S10` `verify:` `docs conventions covering tests 13` -> `pass`
 - `S10` `M` `.vault/adr/2026-10-02-monitor-delivery-adr.md`
 - `S10` `verify:` `citation gate after prose separator clarification` -> `pass`
+- `S01` `M` `tools/binaries/tests/test_bun_toolchain.py`
+- `S01` `verify:` `ruff qdrant_runtime and binary tooling` -> `pass`
+- `S01` `verify:` `ruff format affected extractor and guard` -> `pass`
+- `S01` `verify:` `ty affected source and guard` -> `pass`
+- `S01` `verify:` `basedpyright canonical extractor` -> `pass`
+- `S01` `verify:` `monitor packaging workflow Bun Qdrant and CLI progress tests 176` -> `pass`
+- `S01` `verify:` `ZIP mode guard intentional bypass then exact restore 5` -> `pass`
 
 ## Notes
 
@@ -159,3 +166,4 @@ related:
 - `S05` Committed catalog owner reads Git objects, so working proposals cannot authorize acquisition. Initial catalog intentionally has no approved release. CI proposes target archive+monitor digests with full source/lock/frontend identity as private artifact. Reviewed main catalog must admit exact draft bytes before handoff and again before irreversible PyPI upload. Review occurs through maintainer commit, then rerun only the failed verifier to preserve pinned draft bytes. Acquisition uses unauthenticated HTTPS with pinned hosts/redirects and stream cap, independent archive pin before regular-file flattening, unique live checksum as additional check, monitor pin immediately before each spawn, native frontend browser probe on all4 targets. Backend bootstrappers remain outside shell-only placement, Linux loader/floor checks do not initialize GPU. Tests prove committed authority, producer admission, live uniqueness and pin gate order by intended failed assertions/restored passes. Hardened clean producer7f74275b0e28fa5d2f4c786655361760bafd75d6 produced Windows final89ee0e214637356d99d49f448f414bbe96b560025167bbc3c0ea00f4d05cb7f5, frontend e4c7153b4fdcd11a556a0854deb7a9d4fc418ff539d750e41f1a4fa1eb603846. Native release-smoke passed94assets, Chrome, bounds, cancellation, partial-request EOF and config isolation. No approved public release was launched, no remote workflow dispatched or release/channel modified. Public/native other-platform results and owner merge remain pending integrated review.
 - `S10` Focused documentation maintenance verified against canonical compile, native-smoke, committed catalog and acquisition interfaces. Generated CLI tables retain generator-owned formatting. No runtime source changed, so type gates are not applicable and existing implementation lint/type/native evidence remains applicable. Lifecycle claims describe the required integrated release, whose wheel admission remains blocked until S09. Pin catalog starts empty and verifier-only retry retains independently reviewed bytes.
 - `S10` Full citation gate initially interpreted slash-separated cwd/home/status prose as a home path. Rephrased the owned ADR sentence without changing its offline isolation commitment; the same gate then passed.
+- `S01` Integrated review found the shared ZIP extractor admitted non-symlink special modes. Reopened S01 and aligned canonical admission with regular or unspecified ZIP file modes. FIFO/device/socket/symlink fixtures refuse before writing. Removing mode admission made five intended DID NOT RAISE assertions fail, exact original bytes restored, all five pass. Proof: owned temporary monitor-delivery-records/zip-mode-guard-proof.json. Compiled runtime and asset bytes are unchanged; no native rebuild needed for this authoring boundary correction.
