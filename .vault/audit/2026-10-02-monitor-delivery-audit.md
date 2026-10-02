@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:ecdbf81478452d44d1aefa74dbccf8629b0dd442577a93109f5d82882a56549e'
+body_hash: 'sha256:cd618fa65bfadc6917b5b323c62899a94548c9cd8cf55387711af4717986e05a'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -99,3 +99,7 @@ The real resolver accepted the matching remote tag and refused a mismatched requ
 ## Recommendations
 
 ZIP admission, lifecycle integration and the release cache finding are resolved. Leave S06 pending until the remaining native and offline evidence arrives and the first reviewed public acquisition completes. Append those results to this audit without repeating unchanged analysis.
+
+### Native verification preparation | low | Private candidate lane reuses release owners
+
+PR #570 merged as ff13b2447ab9cdb9ac33b8d7b7013392f55aa995 with a tree identical to the integrated monitor head. Main full run 37003600351 passed Linux correctness on both interpreters, full lint and dependency audit; Windows failed before monitor compilation because `just init-monitor` tried to stop an operator process owned by another account. The in-scope correction restores npm dependencies directly in CI, leaving development-server stop behavior to its explicit owner. The existing acquisition workflow gains an explicitly selected private candidate lane: one clean source/version/lock frontend, the same verified native compiler and finalized-byte smoke probe on four hosts, and private retained evidence. It cannot publish a release or approve a pin catalog. Its checkout is the workflow's fixed commit; the public lane continues to use committed main authority. Integrated review of this checkpoint finds no unresolved source defect; native results, OS outbound denial and public acquisition remain PENDING. The dependency-restore admission guard was intentionally broken, failed with exit 1, restored byte-for-byte, then passed all 26 CI-lane cases. Workflow lint, Python lint/type/format and vault checks passed locally.

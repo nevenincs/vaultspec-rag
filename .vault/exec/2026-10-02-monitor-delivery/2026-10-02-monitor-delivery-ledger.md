@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:2bd70f87345699689990e7a6305f35a52dee2effde73f85611af2a2fddccc401'
+body_hash: 'sha256:567a9181662bf196b3c5c8ffaca443bd904bdb008ec7a4d80cc13bb8c4dbbe19'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -200,6 +200,14 @@ related:
 - `S04` `verify:` `real remote resolver matching tag and all three mismatch cases` -> `pass`
 - `S04` `verify:` `RELEASING Markdown and documentation conventions` -> `pass`
 - `S04` `verify:` `PR570 CodeQL at c76433d2` -> `fail`
+- `S06` `M` `.github/workflows/acquisition.yml`
+- `S06` `M` `.github/workflows/merge-gate.yml`
+- `S06` `M` `dev/guards/test_ci_lanes.py`
+- `S06` `verify:` `CI admission mutation` -> `pass`
+- `S06` `verify:` `pytest dev/guards/test_ci_lanes.py` -> `pass`
+- `S06` `verify:` `actionlint acquisition/merge-gate` -> `pass`
+- `S06` `verify:` `ruff package and affected tooling` -> `pass`
+- `S06` `verify:` `ty affected guards` -> `pass`
 
 ## Notes
 
@@ -221,3 +229,4 @@ related:
 - `S04` Explicit cache opt-out retained; existing validated remote tag SHA now crosses the job boundary through resolver output, all build and evidence consumers bind to it, and always-running draft verification requires validation success. One stale exact dependency guard corrected to the intended shape; final 152 tests pass. Native smoke socket restricted to loopback; unchanged verified test binary passes complete probe. Corrective local review PASS, fresh CodeQL still required before merge. Lifecycle socket helper medium finding assigned to S09.
 - `S09` Reopened S09 to resolve CodeQL medium wildcard-listener annotation. Test reservations now bind loopback only, preserving exclusive Windows socket admission and avoiding the ephemeral range. Real compiled allocation, backend HTTP and cleanup checks pass. Corrective review PASS; fresh remote checks still required before authorized merge. S06 remains pending release evidence.
 - `S04` Bind binary workflow dispatch to the existing release tag contract. Existing resolver additionally refuses a different workflow ref or SHA, checkouts use its fixed GitHub commit and all provenance uses the equal proven SHA. Update the publication caller and manual repair command together. Query source reviewed to establish why dynamic outputs remained flagged; no dismissal or suppression. Local corrective review PASS, fresh remote CodeQL required before merge. Existing native smoke and lifecycle evidence remains applicable; S06 release evidence pending.
+- `S06` Native/OS/public proof remains open; user authorized private verification dispatch. CI setup correction avoids operator process stop.
