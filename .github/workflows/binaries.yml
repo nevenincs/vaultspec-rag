@@ -395,6 +395,22 @@ jobs:
           FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
         run: uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles
 
+      - name: Generate the candidate release pins for independent review
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+          FRONTEND_SHA256: ${{ needs.frontend.outputs.frontend_sha256 }}
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.pins propose --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory dist-bundles --output dist-release-evidence/release-pins-proposal.json
+
+      - name: Upload candidate pins without approving them
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitor-pin-proposal-${{ inputs.target_sha }}
+          path: dist-release-evidence/release-pins-proposal.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Aggregate checksums
         shell: bash
         env:
@@ -692,6 +708,9 @@ jobs:
 
           if [ ${#problems[@]} -eq 0 ]; then
             (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.release verify-set --tag "$TAG" --source-revision "$TARGET_SHA" --frontend-sha256 "$FRONTEND_SHA256" --directory "${verify_dir}")
+            git -C .sparse-verify-release-assets fetch --no-tags origin main
+            catalog_sha=$(git -C .sparse-verify-release-assets rev-parse FETCH_HEAD)
+            (cd .sparse-verify-release-assets && uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate --tag "$TAG" --source-revision "$TARGET_SHA" --catalog-revision "$catalog_sha" --directory "${verify_dir}")
             echo "all ${#expected[@]} declared target archives present on ${TAG}"
             exit 0
           fi

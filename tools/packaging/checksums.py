@@ -35,7 +35,7 @@ class ChecksumError(ValueError):
     """The release's ``SHA256SUMS`` cannot be trusted to pin a manifest."""
 
 
-def parse_checksums(text: str) -> dict[str, str]:
+def parse_checksums(text: str, *, require_unique: bool = False) -> dict[str, str]:
     """Return ``{asset name: digest}`` for one ``SHA256SUMS`` document.
 
     Raises :class:`ChecksumError` on a carriage return, a malformed line, or
@@ -58,7 +58,7 @@ def parse_checksums(text: str) -> dict[str, str]:
         name = match["name"]
         digest = match["digest"]
         previous = digests.get(name)
-        if previous is not None and previous != digest:
+        if previous is not None and (require_unique or previous != digest):
             raise ChecksumError(
                 f"SHA256SUMS lists {name!r} twice with different digests"
             )

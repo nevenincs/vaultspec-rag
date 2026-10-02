@@ -338,7 +338,13 @@ jobs:
       CI_EXEC_BUDGET_MINUTES: 15
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.resolve-target.outputs.tag }}
+      TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
     steps:
+      - name: Checkout the reviewed release authority
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: main
       # A DRAFT is what this stage expects, because the release is published
       # by the job below and by nothing else. An already-published release is
       # accepted so a failed upload can be retried for the same tag: PyPI
@@ -402,6 +408,11 @@ jobs:
             exit 1
           fi
           (cd "${work}/dist" && sha256sum -c ../packages.sha256)
+          mkdir -p "${work}/bundles"
+          gh release download "${TAG}" --repo "$GITHUB_REPOSITORY" \
+            --dir "${work}/bundles" --pattern 'vaultspec-rag-v*.zip' --pattern 'vaultspec-rag-v*.tar.gz'
+          uv run --no-project --python 3.13 -- python -m tools.monitor.pins validate \
+            --tag "$TAG" --source-revision "$TARGET_SHA" --directory "${work}/bundles"
           uv publish --check-url https://pypi.org/simple/ "${work}/dist/${wheel}" "${work}/dist/${sdist}"
 
   # THE PUBLICATION, and the last act of the chain. Everything before it ran
