@@ -2,7 +2,8 @@
 
 This is the maintainer runbook for publishing the Python package, standalone
 binary bundles, and package-manager pointers. The release pipeline is
-automated from the moment a maintainer cuts a release; this document records
+automated after a maintainer cuts a release, with an independent pin review before
+publication. This document records
 the artifact contract, the gates a release must pass before it is published at
 all, and the recovery paths when a lane stalls.
 
@@ -20,9 +21,11 @@ The RAG binary matrix currently supports these targets:
 | Windows x86-64 | `vaultspec-rag-v<version>-x86_64-pc-windows-msvc.zip`       | Scoop    |
 | Linux x86-64   | `vaultspec-rag-v<version>-x86_64-unknown-linux-gnu.tar.gz`  | Homebrew |
 | Linux arm64    | `vaultspec-rag-v<version>-aarch64-unknown-linux-gnu.tar.gz` | Homebrew |
+| macOS arm64    | `vaultspec-rag-v<version>-aarch64-apple-darwin.tar.gz`      | Homebrew |
 
-RAG is CUDA-only. macOS is not a supported runtime, so no macOS binary or
-Homebrew formula branch is published. Linux archives require the glibc floor
+The RAG backend uses CUDA on Windows/Linux and MPS on Apple silicon. Intel Macs
+are unsupported. The monitor frontend starts independently of an accelerator.
+Linux archives require the glibc floor
 recorded in their `manifest.json`; the Homebrew formula repeats the applicable
 caveat.
 
@@ -30,6 +33,7 @@ Each archive contains exactly these release members:
 
 - `vaultspec-rag` (or `vaultspec-rag.exe` on Windows)
 - `vaultspec-search-mcp` (or `vaultspec-search-mcp.exe` on Windows)
+- `vaultspec-rag-monitor` (or `vaultspec-rag-monitor.exe` on Windows)
 - `LICENSE`
 - `README.txt`
 - `manifest.json`
@@ -37,7 +41,11 @@ Each archive contains exactly these release members:
 The target-qualified executable names used in the build directory are staging
 names. They are not public download names and must never be uploaded to a
 release. The archive-local manifest describes the product, version, target,
-runtime, requirements, platform floor, and SHA-256 of each member. It does not
+per-component runtimes and requirements, platform floor, and SHA-256 of each member.
+Schema `vaultspec.release-bundle.v2` distinguishes the Bun frontend from the PyApp
+backend commands. Monitor evidence binds its final hash, producer, npm lock and common
+frontend manifest digest to native browser verification. The enclosing Linux floor
+remains glibc 2.39; the monitor records its own measured requirement. The manifest does not
 contain the enclosing archive's digest; that digest belongs in the release's
 top-level `SHA256SUMS` file.
 
@@ -69,20 +77,27 @@ is dispatched explicitly by the lane before it, in this order:
    existing release's flags, and it does not upload to PyPI in this stage. It
    then dispatches `RAG Binaries`.
 1. `RAG Binaries` takes the release's own attached wheel, checked against
-   `SHA256SUMS`, passes it to every target leg, and creates and verifies one
-   archive per target. Its release job aggregates the archive checksums, passes
+   `SHA256SUMS`, and verifies that it contains the exact canonical monitor lifecycle
+   and inventory owners. One job restores `package-lock.json` with npm and builds
+   Vite once. Every native target receives that exact handoff, verifies its digest,
+   and compiles the server with the committed Bun archive/executable pins.
+   Windows resources, macOS signing and Unix modes are finalized before hashing.
+   Each target must pass the isolated executable and installed-browser probe before
+   packaging. Its release job aggregates the archive checksums, passes
    the complete-target gate, and attaches only the public archives and the
    merged checksum file to the draft.
 1. `RAG Binaries` always runs `verify-release-assets` after its release job.
    The verifier derives the expected targets from the matrix and requires every
    correctly named archive, the exact wheel and source distribution, no raw
    executables, exact `SHA256SUMS` coverage with valid digests, and a
-   successful binary release job. It judges a draft, so it edits nothing: an
-   incomplete set fails and the release stays a draft.
+   successful binary release job. It verifies all four monitor proofs against the
+   common frontend digest and the reviewed release-pin catalog on `main`. A missing
+   pin leaves the draft waiting for the review described below.
 1. Only on success, that gate dispatches `RAG Publish` in its `package-index`
    stage. That run requires the release to carry its wheel, source
    distribution, and `SHA256SUMS`, downloads the release's own packages, checks
-   them against the release's `SHA256SUMS`, and uploads exactly those bytes to
+   them against the release's `SHA256SUMS`, independently admits all four archives
+   against the committed pin catalog, and uploads exactly those package bytes to
    PyPI through the trusted publisher. An already-published release is accepted
    so a failed upload can be retried; PyPI skips files it already holds.
 1. A separate job in that same run then publishes the release, as the last act
@@ -117,41 +132,47 @@ rerun for the same tag.
 1. Dispatch `RAG Release Please` to cut the release. Merging the PR by hand
    releases nothing; the cut finishes a hand-merged proposal too. Do not
    manually create a second tag or Release for the same version.
-1. Watch `RAG Publish`, then `RAG Binaries`, then the `package-index` run of
-   `RAG Publish` that the binary verifier dispatches. The Release stays a draft
+1. Watch `RAG Publish`, then `RAG Binaries`. Review and commit the candidate release
+   pins before rerunning the failed draft verifier. That verifier then dispatches
+   the `package-index` run of `RAG Publish`. The Release stays a draft
    for the whole of that sequence. It becomes visible only after PyPI has the
    version, so a release listed on the releases page is a release the chain
    finished.
 1. Confirm the GitHub Release asset list and the PyPI version, then the
    `RAG Channels` and `RAG Acquisition` runs the publication dispatched. A
-   normal, complete release should expose three binary archives, one wheel, one
+   normal, complete release should expose four binary archives, one wheel, one
    source distribution, and `SHA256SUMS`.
 
 The required release checks include workflow lint, static analysis, tests,
 documentation checks, the Vault audit, and the dependency audit. The GPU
-integration suite is informational; the binary workflow's target matrix is the
-release gate for standalone artifacts.
+acceptance tiers prove CUDA and MPS at release cut. Native monitor rendering and the
+complete four-target archive set are additional release gates.
 
 ## Reproducing the binary artifacts locally
 
-Run each target on an environment that can serve the corresponding matrix
-leg. Start with an empty `dist`, `dist-bin`, and `dist-bundles` output set so
+Run each target on its native matrix host with an installed Chrome, Chromium or Edge
+browser. Build the Vite handoff once and carry it unchanged to the other hosts.
+Start with an empty `dist`, `dist-bin`, `dist-monitor-frontend`, and `dist-bundles` output set so
 the exact-wheel and exact-target checks cannot select stale files.
 
 ```sh
 TAG=vaultspec-rag-v<version>
+TARGET=<native-target-triple>
+PRODUCER_SHA=$(git rev-parse HEAD)
 
 uv python install 3.13
+npm ci
+just release-monitor-frontend "$TAG" "$PRODUCER_SHA"
+FRONTEND_SHA256=$(uv run --no-project --python 3.13 -- python -c \
+  "import hashlib; from pathlib import Path; print(hashlib.sha256(Path('dist-monitor-frontend/frontend.json').read_bytes()).hexdigest())")
 uv build --wheel --out-dir dist
 
-just release-binaries "$TAG" x86_64-pc-windows-msvc dist-bin dist
-just release-bundle   "$TAG" x86_64-pc-windows-msvc dist-bin dist-bundles
-
-just release-binaries "$TAG" x86_64-unknown-linux-gnu dist-bin dist
-just release-bundle   "$TAG" x86_64-unknown-linux-gnu dist-bin dist-bundles
-
-just release-binaries "$TAG" aarch64-unknown-linux-gnu dist-bin dist
-just release-bundle   "$TAG" aarch64-unknown-linux-gnu dist-bin dist-bundles
+uv run --no-project --python 3.13 -- python -m tools.monitor.release wheel --tag "$TAG" --directory dist
+just release-binaries "$TAG" "$TARGET" dist-bin dist
+just release-monitor "$TAG" "$PRODUCER_SHA" "$FRONTEND_SHA256"
+uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke \
+  --tag "$TAG" --source-revision "$PRODUCER_SHA" --target "$TARGET" --directory dist-bin
+just release-bundle "$TAG" "$TARGET" dist-bin dist-bundles
 
 just release-checksums dist-bundles dist-bundles/SHA256SUMS
 (cd dist-bundles && sha256sum -c SHA256SUMS)
@@ -159,7 +180,8 @@ just release-checksums dist-bundles dist-bundles/SHA256SUMS
 
 `just release-binaries` requires exactly one wheel in `dist` and builds from
 that wheel rather than resolving a published package. `just release-bundle`
-consumes the finalized target-qualified files, verifies the archive before
+requires all three finalized target-qualified files and `dist-bin/monitor-smoke.json`,
+verifies the archive before
 writing its `.sha256` sidecar, and gives the extracted commands their stable
 names. `just release-checksums` creates an archive-only local view. The GitHub
 workflow merges that view with the wheel and source-distribution entries
@@ -167,6 +189,10 @@ already attached to the Release before uploading `SHA256SUMS`.
 
 Never use `dist-bin` as a release upload directory. It is a private staging
 directory; `dist-bundles` is the public archive boundary.
+
+The release build requires a clean producer checkout matching `PRODUCER_SHA`.
+For a dirty local prototype, the compiler supports `--development`; its executable
+reports that marker and release packaging refuses it.
 
 ## Complete-target and checksum gates
 
@@ -199,6 +225,36 @@ Both artifact workflows reconcile `SHA256SUMS` in the same way:
 This makes reruns idempotent and preserves the other workflow's completed
 entries. Do not replace the remote file with a binary-only checksum list, edit
 it by hand, or attach raw staging files to repair a release.
+
+## Reviewing monitor release pins
+
+The binary release job uploads a private Actions artifact named
+`monitor-pin-proposal-<producer-sha>`. Its JSON is a candidate, not an approval.
+The first release starts with an empty catalog and deliberately stops at the draft
+verifier until a maintainer completes this review.
+
+Review the candidate against the four actual draft archives and their native smoke
+results. Check the release tag, full producer commit, npm lock digest, common frontend
+manifest digest, and the finalized archive and monitor executable hashes. Confirm that
+all four native browser probes passed and that the archives carry the same frontend.
+Merge the reviewed release entry into
+[tools/monitor/release-pins.json](tools/monitor/release-pins.json), preserving previous
+entries, and land that catalog change on `main` through the normal review process.
+The producer commit remains the commit that built the artifacts; the catalog commit
+is separate approval evidence.
+
+Rerun only the failed `verify-release-assets` job in the original `RAG Binaries` run.
+It fetches the reviewed catalog from `main` and validates the existing draft bytes.
+Do not rerun the successful build jobs to resolve a missing pin: a rebuild can change
+the executable or archive hashes and would require a new candidate review.
+The `package-index` stage independently repeats admission before uploading to PyPI.
+
+After publication, `RAG Acquisition` reads the committed catalog and verifies archive
+hashes before extraction and executable hashes before every launch. The public
+`SHA256SUMS` is an additional consistency check. It runs the downloaded monitor alone
+in a fresh directory without a sibling backend command and proves the unavailable
+backend view on each native target. Node and the installed browser run the verification
+driver; they are not prerequisites for the delivered monitor.
 
 ## Package-manager publication
 
@@ -252,14 +308,14 @@ If the staged diff is non-empty, commit with the bot identity and push
 for multiple products and may contain another maintainer's work. The workflow
 uses a bounded fetch/rebase/push retry and never force-pushes. The Homebrew
 formula is a binary formula and contains one archive URL and digest per
-available Linux target; the Scoop manifest contains the single Windows bundle
+available Linux or Apple silicon target; the Scoop manifest contains the single Windows bundle
 URL and digest.
 
 ## Recovery
 
-Every repair is the same shape: the release is a draft until the chain
-finishes, so a failure has advertised nothing, and the fix is to re-dispatch
-the lane that failed for the **same tag**. Never publish a draft by hand to
+The release remains a draft until the chain finishes. Repair a failed lane for the
+**same tag**; a missing reviewed pin instead requires the verifier-only retry below.
+Never publish a draft by hand to
 unstick a lane - the publication is the statement that everything above it
 passed.
 
@@ -348,6 +404,22 @@ last act of the chain, so a published release with a broken asset set means a
 lane pushed something after it - fix forward with a new release rather than
 retracting a version users may already hold.
 
+### Missing reviewed monitor pins
+
+A successful binary build followed by a pin-catalog rejection needs review, not a
+rebuild. Follow the pin review above, land the catalog entry, then rerun the failed
+verifier job from that same Actions run. For a run whose only failed job is the
+verifier:
+
+```sh
+gh run rerun <binary-run-id> --repo "$REPO" --failed
+```
+
+If the rejection reports a digest mismatch, compare the actual draft bytes with the
+reviewed candidate. Do not copy a new live checksum into the catalog merely to make
+the gate pass. Changed artifacts require their native proofs and a fresh independent
+review before admission.
+
 ### Missing Python artifacts or PyPI publication
 
 If the Release exists but the wheel or source distribution is missing, rerun
@@ -367,7 +439,8 @@ gh workflow run publish.yml --repo "$REPO" --ref main --field tag="$TAG" \
 ```
 
 That stage requires the release to carry its wheel, source distribution, and
-`SHA256SUMS`. If it refuses for a missing asset, the release stage has not
+`SHA256SUMS`, all four binary archives, and their reviewed committed monitor pins.
+If it refuses for a missing Python asset, the release stage has not
 finished for this tag: rerun it as above. The stage publishes the release when
 it completes, so it also repairs a chain that stopped after the binaries were
 proven.

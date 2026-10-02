@@ -14,7 +14,7 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:a6a7653b0df9268d74069b80a9bf94082b868474dc9b871f2dc72c47c7e6cf6d'
+body_hash: 'sha256:b4d0f00e61c0d3f38239143c3cc127855496ff3bd3f2a201f98cf5526c6b9071'
 ---
 
 # `monitor-delivery` plan
@@ -36,12 +36,13 @@ Default delivery is a third stable command in current RAG archives. The daemon u
 - [x] `S03` - Add the monitor to every target archive, evolve the manifest to v2 and verify channel installation of all three commands; `tools/packaging/products.py, bundles.py, scoop.py, homebrew.py, generate.py, validate.py and tests, tools/binaries Windows resource/floor integration`.
 - [x] `S04` - Build the frontend once from the release SHA, hand it to native jobs and require smoke evidence before the draft publication handoff; `binaries.yml common frontend/native/draft handoff, tools/monitor release admission and stronger shared probes/reference closure/common frontend hash, shared bundle evidence consumers, installed browser selector and existing source harness caller, justfile and generated output ignore, workflow/frontend/wheel/archive guards. Native CI executions remain required evidence for S06. No remote dispatch or publication authorized`.
 - [x] `S05` - Define reviewed release pins and extend public acquisition to native monitor launch on every shipped target with the shared probe; `acquisition.yml four-target public native probe, binaries.yml candidate pin handoff and reviewed catalog gate, publish.yml independent admission before PyPI, tools/monitor committed catalog/pins/acquire and tests, shared checksum uniqueness and pinned GitHub API metadata host. Catalog begins empty, proposal generation never commits or authorizes bytes`.
+- [x] `S10` - Document extraction, direct monitor launch, backend prerequisites and reviewed release pin handoff; `docs/installation.md, docs/service-mode.md, docs/cli.md generation, RELEASING.md and monitor-delivery ADR prose clarification for the citation gate. Split documentation from S06 final integrated review so completed guidance can checkpoint while owner merge and platform evidence remain pending`.
 - [ ] `S09` - Merge the completed canonical lifecycle commit and verify combined delivery behavior; `feature/monitor into feature/monitor-delivery, src/vaultspec_rag/monitor_process.py and lifecycle integration tests, accepted monitor-lifecycle reconciliation and related links. Runtime interoperability is already proven against its stable in-flight owner source, but this Step remains open until that owner commits and combined code is reviewed`.
-- [ ] `S06` - Document extraction, monitor launch and backend prerequisites, then review integrated delivery and its verification evidence; `docs/installation.md, docs/service-mode.md, RELEASING.md, monitor-delivery audit, authorized prior ADR amendments`.
+- [ ] `S06` - Review integrated delivery and reconcile governing records after the lifecycle merge and platform evidence arrive; `monitor-delivery audit, authorized monitor-lifecycle ADR refinement, integrated runtime/archive/channel/workflow/documentation review. Documentation checkpoints in S10. Completion requires S09 and applicable native/public CI evidence`.
 
 ## Parallelization
 
-Execute sequentially in the isolated feature/monitor-delivery worktree. Commit archive pins, then derive and commit executable pins before S01 -> S02 -> S03 -> S04 -> S05 -> S09 -> S06. This preparatory split satisfies the committed-pin extraction and execution boundary. One executor owns shared source, workflow, vault and commit mutations; no parallel agent assignments. Native CI target jobs may run concurrently after the common frontend artifact is proven and handed off.
+Execute sequentially in the isolated feature/monitor-delivery worktree. Commit archive pins, then derive and commit executable pins before S01 -> S02 -> S03 -> S04 -> S05 -> S10 -> S09 -> S06. This preparatory split satisfies the committed-pin extraction and execution boundary. One executor owns shared source, workflow, vault and commit mutations; no parallel agent assignments. Native CI target jobs may run concurrently after the common frontend artifact is proven and handed off.
 
 ## Verification
 

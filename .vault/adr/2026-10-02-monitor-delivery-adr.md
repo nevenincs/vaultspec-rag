@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:4cf4353dc345788150ba7b2dbe506b15a05712276611899126c18f8268047f9c'
+body_hash: 'sha256:a69c78460587bd5a369e97aad2c65f2308510d2b13884a041338b97b0d15157f'
 related:
   - "[[2026-10-02-monitor-delivery-reference]]"
   - "[[2026-10-02-monitor-delivery-research]]"
@@ -50,7 +50,7 @@ In managed mode, reuse the absolute Python runtime supplied by the canonical dae
 
 Restore npm dependencies from the committed lock and run the frontend gates. Build the Vite output once for a release source SHA/version/lock digest, then hand that exact output to each native Bun compilation job. Pin and verify the Bun archive and executable for each build host before extraction/execution; native compilation must not make implicit cross-target downloads. Disable ambient dotenv/bunfig loading in the compiled command. Generated asset maps and intermediate binaries remain outside Git. Final resources/signing/permissions finish before digests. Emit bundle manifest schema v2 with explicit component/runtime requirements and per-executable platform evidence; update its producers, validators and consumers together. The enclosing Linux bundle floor remains at least the current RAG 2.39 floor, regardless of the monitor's individual floor.
 
-The draft completeness gate requires all target archives to contain the monitor, complete asset/version/provenance metadata, and successful native delivered-binary smoke evidence. The smoke launches finalized bytes in an isolated cwd/home/status directory with development commands unavailable and outbound networking disabled, checks readiness, all asset references, backend-unavailable behavior, occupied-port failure and bounded shutdown. A browser check renders the binary's HTTP output. Backend-control integration exercises real owners separately and cannot be replaced by shell smoke. No release/index/channel operation runs during these tests.
+The draft completeness gate requires all target archives to contain the monitor, complete asset/version/provenance metadata, and successful native delivered-binary smoke evidence. The smoke launches finalized bytes in an isolated working directory, home and status directory with development commands unavailable and outbound networking disabled, checks readiness, all asset references, backend-unavailable behavior, occupied-port failure and bounded shutdown. A browser check renders the binary's HTTP output. Backend-control integration exercises real owners separately and cannot be replaced by shell smoke. No release/index/channel operation runs during these tests.
 
 Publication order remains the accepted release standard. Public acquisition extends to every shipped monitor target and launches checksum-verified downloaded bytes after publication. A reviewed committed pin catalog binds release tag, source revision, target archive SHA256 and monitor executable SHA256; verify before extraction and immediately before launch, with HTTPS/redirect/host checks and explicit member extraction. Live SHA256SUMS and bundle hashes are additional consistency checks. A tag without reviewed pins is unverified and fails closed; generated pin proposals do not authorize themselves. The public launch probe follows the reviewed pin handoff, while native build proof still gates the draft. The exact catalog owner/path and review handoff must be made concrete within this commitment before rollout.
 

@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:fe4cb9e91e17f6c6d63ba52efb709ca05b0fc3fb778640909c8b81d59d7b73e9'
+body_hash: 'sha256:b53ec9ecbeb565d8800c18ce3198f84a6b3f24a369e32d4c800cdbd595394327'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -136,6 +136,17 @@ related:
 - `S05` `A` `tools/monitor/release-pins.json`
 - `S05` `A` `tools/monitor/tests/test_pins.py`
 - `S05` `verify:` `ruff lint=pass; ruff format=pass; ty affected tools=pass; basedpyright constants=pass; workflow actionlint/prettier=pass; monitor+packaging+workflow+Qdrant progress tests=176pass; four guard mutation-restore proofs=pass; hardened Windows native release-smoke` -> `pass`
+- `S10` `M` `docs/installation.md`
+- `S10` `M` `docs/service-mode.md`
+- `S10` `M` `docs/cli.md`
+- `S10` `M` `RELEASING.md`
+- `S10` `verify:` `mdformat affected maintained Markdown` -> `pass`
+- `S10` `verify:` `pymarkdown affected guides and generated CLI` -> `pass`
+- `S10` `verify:` `docs convention and version owners` -> `pass`
+- `S10` `verify:` `generated CLI reference check` -> `pass`
+- `S10` `verify:` `docs conventions covering tests 13` -> `pass`
+- `S10` `M` `.vault/adr/2026-10-02-monitor-delivery-adr.md`
+- `S10` `verify:` `citation gate after prose separator clarification` -> `pass`
 
 ## Notes
 
@@ -146,3 +157,5 @@ related:
 - `S03` Manifest v2 describes three stable commands and per-component bootstrap/accelerator requirements. Enclosing Linux floor remains2.39; monitor report independently measures ELF requirements. Browser proof binds finalized monitor SHA/version/full producer/lock/native target/Bun1.4.2 and rejects development bytes. Four-target fixture archive contract and generated channel declarations pass; remote channel installation not executed. Clean producer018ae8cde55f6ca2096e87eb75500506849abd3c yielded finalized Windows SHA f31d908378897bb8008614765ceac3730e34b1cb0d911761653c164e935f1ba4: Chrome, all94assets, ambient config isolation, unavailable view, port/EOF passed with development=false. Linux/mac native results and real full-product archives await CI; no publication claim. Guards changed browser admission and removed Scoop/Homebrew command admission, observed intended DID NOT RAISE/assert any failures, restored then passed.
 - `S04` One frontend job restores npm lock, builds once, exposes manifest SHA256 and immutable source/version/lock artifact name. Native jobs use verified Bun, require manifest digest and final byte/browser proof before archive; archive and remote draft handoff verify all four targets against common frontend digest and producer lock. Wheel source-byte admission requires canonical supervisor/inventory owners, so missing lifecycle integration refuses release. Existing merge-gate remains sole PR owner. Added native malformed/oversized body/allowlist and canceled/partial-request shutdown checks: finalized Windows producer018ae8cd artifact f31d9083 passed (same runtime source); new `frontend_sha256` metadata will be proven by fresh clean build after this commit. CSS/HTML/literal imports close over embedded assets, including all94 real Vite assets. Five guards bypassed canonical wheel bytes, complete set, common digest, asset references and moved native proof after bundle: intended assertion failures then restored pass. Full Linux/mac CI results, OS-level egress denial and merged lifecycle integration remain pending for integrated review. Source-browser selector changed to same installed-browser owner, one rendering case passed; prior unchanged rendering evidence retained.
 - `S05` Committed catalog owner reads Git objects, so working proposals cannot authorize acquisition. Initial catalog intentionally has no approved release. CI proposes target archive+monitor digests with full source/lock/frontend identity as private artifact. Reviewed main catalog must admit exact draft bytes before handoff and again before irreversible PyPI upload. Review occurs through maintainer commit, then rerun only the failed verifier to preserve pinned draft bytes. Acquisition uses unauthenticated HTTPS with pinned hosts/redirects and stream cap, independent archive pin before regular-file flattening, unique live checksum as additional check, monitor pin immediately before each spawn, native frontend browser probe on all4 targets. Backend bootstrappers remain outside shell-only placement, Linux loader/floor checks do not initialize GPU. Tests prove committed authority, producer admission, live uniqueness and pin gate order by intended failed assertions/restored passes. Hardened clean producer7f74275b0e28fa5d2f4c786655361760bafd75d6 produced Windows final89ee0e214637356d99d49f448f414bbe96b560025167bbc3c0ea00f4d05cb7f5, frontend e4c7153b4fdcd11a556a0854deb7a9d4fc418ff539d750e41f1a4fa1eb603846. Native release-smoke passed94assets, Chrome, bounds, cancellation, partial-request EOF and config isolation. No approved public release was launched, no remote workflow dispatched or release/channel modified. Public/native other-platform results and owner merge remain pending integrated review.
+- `S10` Focused documentation maintenance verified against canonical compile, native-smoke, committed catalog and acquisition interfaces. Generated CLI tables retain generator-owned formatting. No runtime source changed, so type gates are not applicable and existing implementation lint/type/native evidence remains applicable. Lifecycle claims describe the required integrated release, whose wheel admission remains blocked until S09. Pin catalog starts empty and verifier-only retry retains independently reviewed bytes.
+- `S10` Full citation gate initially interpreted slash-separated cwd/home/status prose as a home path. Rephrased the owned ADR sentence without changing its offline isolation commitment; the same gate then passed.

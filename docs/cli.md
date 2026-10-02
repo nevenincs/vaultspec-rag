@@ -29,6 +29,7 @@ Generated from the live command surface. Each entry lists the command's argument
 - [status](#status)
 - **server**
   - [doctor](#server-doctor)
+  - [inventory](#server-inventory)
   - [warmup](#server-warmup)
   - [jobs](#server-jobs)
   - [logs](#server-logs)
@@ -272,6 +273,25 @@ None.
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `--json` | boolean | no | off | Emit one structured JSON outcome. It is the readiness snapshot. |
+
+## server inventory
+
+Emit persisted monitor inventory without creating or operating a service.
+
+```bash
+vaultspec-rag server inventory
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operation` | str | yes | required | repositories or storage/survey |
+| `parameters` | str | yes | required | Bounded JSON string parameters |
+
+### Options
+
+None.
 
 ## server warmup
 
