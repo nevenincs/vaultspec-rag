@@ -152,6 +152,7 @@ VAULTSPEC_RAG = Product(
             name="vaultspec-search-mcp",
             summary="the semantic-search MCP server",
         ),
+        MONITOR_EXECUTABLE,
     ),
     # CUDA-ONLY. This is not a preference to soften in a channel manifest:
     # `embeddings.py`, `search/_searcher.py` and `server/_lifespan.py` each
@@ -176,10 +177,12 @@ VAULTSPEC_RAG = Product(
         # plain PyPI torch, which on Windows carries no CUDA at all. Apple
         # silicon is deliberately unpinned: default PyPI is where the wheel
         # carrying MPS comes from.
-        "Requires an NVIDIA GPU with CUDA, or Apple silicon; there is no CPU mode.",
-        "First launch downloads the accelerator runtime; needs network and space.",
-        "Same GPU torch build uv installs, pinned from this project's lock.",
+        "RAG backend requires NVIDIA CUDA or Apple silicon; there is no CPU mode.",
+        "RAG commands download their runtime on first launch; need network and space.",
+        "Monitor starts offline without Python, Node, Bun or an accelerator.",
+        "Backend control needs the sibling RAG command or the daemon's Python runtime.",
         "Verify with: vaultspec-rag --version",
+        "Verify with: vaultspec-rag-monitor --version",
     ),
 )
 

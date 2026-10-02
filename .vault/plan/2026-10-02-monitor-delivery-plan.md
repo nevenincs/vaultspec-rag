@@ -14,7 +14,7 @@ related:
   - '[[2026-10-02-monitor-lifecycle-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:6914cd3d3e2bc2b7eaa7e05fbcb2e2d746c1440f7d9ab16c79828aafc546653c'
+body_hash: 'sha256:dfaa6c510bd812f6fe8d0f3c242cb9acb64d9039dfc7ad936a4f0cdcebbeea42'
 ---
 
 # `monitor-delivery` plan
@@ -33,7 +33,7 @@ Default delivery is a third stable command in current RAG archives. The daemon u
 - [x] `S08` - Derive and commit executable pins from verified Bun archives before compiler execution; `tools/binaries/bun_pins.py`.
 - [x] `S01` - Make the bridge accept portable owner launch and provision verified native Bun; `src/monitor/server/local-service.ts, new vite-plugin.ts, vite.config.ts, src/vaultspec_rag/monitor_inventory.py and cli, qdrant_runtime/_provision.py, tools/binaries/bun_toolchain.py and native.py, build_pyapp.py native-target caller, binary and bridge tests, authorized prior ADR reconciliation. The standalone entry and existing lifecycle owner are verified against real compiled bytes in S02 with the stable in-flight lifecycle owner; its completed commit is merged in S09`.
 - [x] `S02` - Embed the exact Vite output, compile versioned monitor binaries, preserve managed readiness/EOF/allocation and add the delivered-binary probe; `tools/monitor build/frontend/smoke tooling and tests, src/monitor/server/standalone.ts, dev/monitor-browser.mjs, shared native pre-execution verifier and product Windows metadata owner, product monitor declaration, justfile recipes. Verify Windows finalized bytes and canonical owner interoperability locally. The lifecycle owner merge belongs to S09, and additional native platform proof belongs to S04 and the integrated S06 review`.
-- [ ] `S03` - Add the monitor to every target archive, evolve the manifest to v2 and verify channel installation of all three commands; `tools/packaging/products.py, bundles.py, scoop.py, homebrew.py, generate.py, validate.py and tests, tools/binaries Windows resource/floor integration`.
+- [x] `S03` - Add the monitor to every target archive, evolve the manifest to v2 and verify channel installation of all three commands; `tools/packaging/products.py, bundles.py, scoop.py, homebrew.py, generate.py, validate.py and tests, tools/binaries Windows resource/floor integration`.
 - [ ] `S04` - Build the frontend once from the release SHA, hand it to native jobs and require smoke evidence before the draft publication handoff; `.github/workflows/binaries.yml, merge-gate.yml and publish.yml only where needed, dev/toolchain.py, justfile, dev/guards, tools/binaries/tests/test_release_workflow.py`.
 - [ ] `S05` - Define reviewed release pins and extend public acquisition to native monitor launch on every shipped target with the shared probe; `.github/workflows/acquisition.yml, reviewed release-pin catalog and validation, tools/monitor acquisition integration, workflow/pin guards, catalog authority and handoff fixed before public launch`.
 - [ ] `S09` - Merge the completed canonical lifecycle commit and verify combined delivery behavior; `feature/monitor into feature/monitor-delivery, src/vaultspec_rag/monitor_process.py and lifecycle integration tests, accepted monitor-lifecycle reconciliation and related links. Runtime interoperability is already proven against its stable in-flight owner source, but this Step remains open until that owner commits and combined code is reviewed`.

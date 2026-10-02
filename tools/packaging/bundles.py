@@ -7,7 +7,9 @@ import gzip
 import hashlib
 import io
 import json
+import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -21,12 +23,19 @@ from tools.binaries.build_pyapp import (
     PYAPP_VERSION,
     PYTHON_VERSION,
 )
-from tools.packaging.products import VAULTSPEC_RAG, Product, is_windows_target
+from tools.binaries.bun_pins import BUN_VERSION
+from tools.packaging.products import (
+    MONITOR_EXECUTABLE,
+    VAULTSPEC_RAG,
+    Product,
+    is_windows_target,
+)
 
 MANIFEST_NAME = "manifest.json"
 LICENSE_NAME = "LICENSE"
 README_NAME = "README.txt"
-MANIFEST_SCHEMA = "vaultspec.release-bundle.v1"
+MANIFEST_SCHEMA = "vaultspec.release-bundle.v2"
+SMOKE_NAME = "monitor-smoke.json"
 EXECUTABLE_MODE = 0o755
 DATA_MODE = 0o644
 
@@ -116,17 +125,100 @@ def _readme(spec: BundleSpec) -> bytes:
             if not note.lower().startswith("verify with:")
         ),
         "",
-        "Verify with: vaultspec-rag --version",
+        *(note for note in product.notes if note.lower().startswith("verify with:")),
+        "Start monitor: vaultspec-rag-monitor --port 5420",
+        "Open http://127.0.0.1:5420; an absent backend is shown as unavailable.",
     ]
     return ("\n".join(lines) + "\n").encode()
 
 
-def _runtime_requirements() -> dict[str, object]:
-    """Return the RAG first-launch requirements recorded in the manifest."""
+def _runtime_requirements(target: str) -> dict[str, object]:
+    """Describe backend bootstrap separately from the offline frontend."""
     return {
-        "nvidia_gpu": True,
+        "accelerator": "mps" if target.endswith("apple-darwin") else "cuda",
         "network_on_first_launch": True,
-        "cuda_runtime_download_on_first_launch": True,
+        "python_bootstrap": True,
+    }
+
+
+def verify_monitor_evidence(
+    report: object, spec: BundleSpec, revision: str, digest: str
+) -> dict[str, object]:
+    """Bind successful native browser proof to the finalized release bytes."""
+    if not isinstance(report, dict):
+        raise BundleError("monitor smoke evidence is missing")
+    evidence = cast("dict[str, object]", report)
+    expected = {
+        "schema": "vaultspec.monitor.smoke.v1",
+        "command": MONITOR_EXECUTABLE.name,
+        "version": spec.version,
+        "source_revision": revision,
+        "target": spec.target,
+        "sha256": digest,
+        "bun_version": BUN_VERSION,
+        "development": False,
+        "browser_verified": True,
+        "isolated_shell": True,
+        "occupied_port_refused": True,
+        "parent_eof_shutdown": True,
+    }
+    if any(
+        evidence.get(key) != value or type(evidence.get(key)) is not type(value)
+        for key, value in expected.items()
+    ):
+        raise BundleError("monitor smoke evidence does not match finalized release")
+    assets = evidence.get("assets_verified")
+    lock = evidence.get("lock_sha256")
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or not isinstance(lock, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", lock)
+        or not isinstance(assets, int)
+        or isinstance(assets, bool)
+        or assets < 2
+    ):
+        raise BundleError("monitor smoke build or asset identity is invalid")
+    platform = evidence.get("platform")
+    if not isinstance(platform, dict) or set(platform) != {"glibc_required"}:
+        raise BundleError("monitor platform evidence is missing")
+    required = platform["glibc_required"]
+    floor = GLIBC_FLOOR.get(spec.target)
+    if floor:
+        if not isinstance(required, str) or not re.fullmatch(r"2\.\d+", required):
+            raise BundleError("monitor glibc measurement is missing")
+        if tuple(int(part) for part in required.split(".")) > floor:
+            raise BundleError("monitor exceeds the bundle glibc floor")
+    elif required is not None:
+        raise BundleError("non-Linux monitor has glibc requirements")
+    return evidence
+
+
+def _components(spec: BundleSpec, evidence: dict[str, object]) -> dict[str, object]:
+    floor = GLIBC_FLOOR.get(spec.target)
+    return {
+        **{
+            spec.product.executable_name(executable, spec.target): {
+                "runtime": {"python": PYTHON_VERSION, "pyapp": PYAPP_VERSION},
+                "requirements": _runtime_requirements(spec.target),
+                "platform": {
+                    "glibc_floor": (
+                        ".".join(str(part) for part in floor) if floor else None
+                    ),
+                },
+            }
+            for executable in spec.product.executables
+            if executable != MONITOR_EXECUTABLE
+        },
+        spec.product.executable_name(MONITOR_EXECUTABLE, spec.target): {
+            "runtime": {"bun": BUN_VERSION, "embedded_frontend": True},
+            "requirements": {
+                "accelerator": None,
+                "network_on_first_launch": False,
+                "python_bootstrap": False,
+            },
+            "verification": evidence,
+            "platform": evidence["platform"],
+        },
     }
 
 
@@ -134,6 +226,7 @@ def _manifest(
     spec: BundleSpec,
     revision: str,
     files: tuple[BundleFile, ...],
+    evidence: dict[str, object],
 ) -> bytes:
     """Return a deterministic manifest for the staged bundle members."""
     product = spec.product
@@ -163,11 +256,7 @@ def _manifest(
         },
         "files": members,
         "source_revision": revision,
-        "runtime": {
-            "python": PYTHON_VERSION,
-            "pyapp": PYAPP_VERSION,
-        },
-        "requirements": _runtime_requirements(),
+        "components": _components(spec, evidence),
         "platform": {
             "glibc_floor": (".".join(str(part) for part in floor) if floor else None),
         },
@@ -227,7 +316,7 @@ def _stage_files(
     members: list[BundleFile] = []
     for executable in product.executables:
         source = raw_dir / product.asset_name(executable, target)
-        if not source.is_file():
+        if source.is_symlink() or not source.is_file():
             raise BundleError(f"missing finalized executable: {source}")
         destination = root / product.executable_name(executable, target)
         shutil.copy2(source, destination)
@@ -266,8 +355,22 @@ def build_bundle(
         root = Path(temporary) / "contents"
         root.mkdir()
         members = _stage_files(spec, raw_dir, repo_root, root)
+        monitor = next(
+            member
+            for member in members
+            if member.name == product.executable_name(MONITOR_EXECUTABLE, target)
+        )
+        try:
+            report = json.loads((raw_dir / SMOKE_NAME).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BundleError("monitor smoke evidence is missing or invalid") from exc
+        evidence = verify_monitor_evidence(
+            report, spec, revision, _sha256(monitor.source)
+        )
+        if evidence["lock_sha256"] != _sha256(repo_root / "package-lock.json"):
+            raise BundleError("monitor smoke lock differs from the producer checkout")
         manifest_path = root / MANIFEST_NAME
-        manifest_path.write_bytes(_manifest(spec, revision, members))
+        manifest_path.write_bytes(_manifest(spec, revision, members, evidence))
         archive_members = (
             *members,
             BundleFile(manifest_path, MANIFEST_NAME, "manifest"),
@@ -300,6 +403,11 @@ def _archive_contents(archive: Path, target: str) -> dict[str, ArchiveFile]:
                 names = [info.filename for info in infos]
                 if any(info.is_dir() for info in infos):
                     raise BundleError(f"bundle contains a directory: {archive}")
+                if any(
+                    stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG)
+                    for info in infos
+                ):
+                    raise BundleError(f"bundle contains a non-file member: {archive}")
                 if len(names) != len(set(names)):
                     raise BundleError(f"bundle contains duplicate members: {archive}")
                 return {
@@ -354,7 +462,9 @@ def _read_manifest(contents: dict[str, ArchiveFile]) -> dict[str, object]:
     return cast("dict[str, object]", parsed)
 
 
-def _verify_manifest_metadata(manifest: dict[str, object], spec: BundleSpec) -> None:
+def _verify_manifest_metadata(
+    manifest: dict[str, object], spec: BundleSpec, contents: dict[str, ArchiveFile]
+) -> None:
     """Verify identity, archive, runtime, requirements, and platform metadata."""
     product = spec.product
     expected_values = {
@@ -366,7 +476,6 @@ def _verify_manifest_metadata(manifest: dict[str, object], spec: BundleSpec) -> 
         "version": spec.version,
         "release_tag": product.tag_for(spec.version),
         "target": spec.target,
-        "requirements": _runtime_requirements(),
     }
     for key, expected in expected_values.items():
         if manifest.get(key) != expected:
@@ -387,9 +496,20 @@ def _verify_manifest_metadata(manifest: dict[str, object], spec: BundleSpec) -> 
     revision = manifest.get("source_revision")
     if not isinstance(revision, str) or not revision:
         raise BundleError("manifest.json source revision is missing")
-    runtime = manifest.get("runtime")
-    if runtime != {"python": PYTHON_VERSION, "pyapp": PYAPP_VERSION}:
-        raise BundleError("manifest.json runtime metadata is incorrect")
+    components = manifest.get("components")
+    monitor_name = product.executable_name(MONITOR_EXECUTABLE, spec.target)
+    if not isinstance(components, dict) or not isinstance(
+        components.get(monitor_name), dict
+    ):
+        raise BundleError("manifest.json components metadata is missing")
+    evidence = verify_monitor_evidence(
+        components[monitor_name].get("verification"),
+        spec,
+        revision,
+        hashlib.sha256(contents[monitor_name].payload).hexdigest(),
+    )
+    if components != _components(spec, evidence):
+        raise BundleError("manifest.json components runtime metadata is incorrect")
 
     platform = manifest.get("platform")
     if not isinstance(platform, dict):
@@ -468,7 +588,7 @@ def verify_bundle(archive: Path, spec: BundleSpec) -> None:
             f"expected {sorted(expected_members)}, got {sorted(contents)}"
         )
     manifest = _read_manifest(contents)
-    _verify_manifest_metadata(manifest, spec)
+    _verify_manifest_metadata(manifest, spec, contents)
     _verify_manifest_files(manifest, contents, expected_roles)
     _verify_member_modes(contents, expected_roles)
 

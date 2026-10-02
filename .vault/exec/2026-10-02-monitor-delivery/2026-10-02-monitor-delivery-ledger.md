@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:2685cad5a1a6ec36f7301989cbab536dd65c84d25695b86fbb2089fb0db9ed50'
+body_hash: 'sha256:cac2f459cd0216277639cfbc6a03bde79ac894d7fdef2806378a046d1dc791bd'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -101,6 +101,15 @@ related:
 - `S02` `A` `tools/monitor/tests/test_frontend.py`
 - `S02` `A` `tools/monitor/tests/test_build.py`
 - `S02` `verify:` `ruff lint=pass; ruff format=pass; ty affected tools=pass; basedpyright provision=pass; npm lint/typecheck/format=pass; driver prettier=pass; binary+monitor tests=85pass1platformskip; source browser=11pass after favicon fix; native Windows Chrome smoke=pass94assets; four guard mutation-restore proofs` -> `pass`
+- `S03` `M` `tools/monitor/smoke.py`
+- `S03` `M` `tools/packaging/bundles.py`
+- `S03` `M` `tools/packaging/homebrew.py`
+- `S03` `M` `tools/packaging/products.py`
+- `S03` `M` `tools/packaging/tests/test_bundles.py`
+- `S03` `M` `tools/packaging/tests/test_generators.py`
+- `S03` `M` `tools/packaging/tests/test_validate.py`
+- `S03` `M` `tools/packaging/validate.py`
+- `S03` `verify:` `ruff lint=pass; ruff format=pass; ty packaging+monitor=pass; packaging+monitor tests=84pass; validator tests after helper extraction=15pass; three negative guard mutation-restore proofs=pass; Windows committed-producer native smoke` -> `pass`
 
 ## Notes
 
@@ -108,3 +117,4 @@ related:
 - `S08` Authoring downloaded over the canonical HTTPS host-pinned transport, matched all archive constants committed by a12e589a, then hashed each unique Bun member in memory. No Bun execution. Lifecycle-related vault links remain pending its owner commit.
 - `S01` One pre-existing platform-specific binary test skipped on Windows. The runtime trust path reuses the canonical HTTPS downloader, hash and flattening extractor rather than copying them. Guard proof: changed the Windows archive-table key, bypassed the archive digest comparison, bypassed the executable comparison, and admitted duplicate matches, respectively; each failed its named test on AssertionError or DID NOT RAISE, then passed after immediate byte-for-byte restoration. Source/managed runtime and native lifecycle integration belong to S02; pending lifecycle ADR links remain the sole known vault findings until that owner commit is merged.
 - `S02` Windows finalized development artifact SHA256 27e898521f9b0f7d2726e340fb1258422814e388b0828e4df78df862058ca6d6, producer 45e29066598648dcebc1de1c309e77aa05e584fa, lock 40f681cafee2f79e3d47480e04dcc87adc569ac1ec64424976f95a7e12257a2a, Bun1.4.2. Version/render/all94asset hashes+MIME+CSS/fonts, PATH-empty isolated home, unavailable backend, ignored dotenv/bunfig, foreign-origin denial, strict port refusal, managed upward allocation and EOF shutdown passed. Browser denies remote origins; OS-level egress denial not claimed. Actual in-flight canonical MonitorProcess source SHA256 ea26ac35b9b4f0b48d523ce991afe513b9a1f7d277db7296ffa103a3ba718c83 interoperated with finalized older prototype dca11fe3bcbb782c63bd0478fed823488dd054270a4d657abf4260fd58de78c7: initialized Python override served stopped lifecycle/persisted inventory then identity cleanup. Owner commit/merge pending S09; Linux/mac native evidence pending S04/S06. Guards bypassed shared executable hash, handoff comparison, dirty producer check and eagerly imported service config: intended assertions failed, originals restored and passed. Proof at temp monitor-delivery-records/s02-guard-proofs.json. One failed-probe temporary directory cleanup rejected by automatic policy; no retry bypass.
+- `S03` Manifest v2 describes three stable commands and per-component bootstrap/accelerator requirements. Enclosing Linux floor remains2.39; monitor report independently measures ELF requirements. Browser proof binds finalized monitor SHA/version/full producer/lock/native target/Bun1.4.2 and rejects development bytes. Four-target fixture archive contract and generated channel declarations pass; remote channel installation not executed. Clean producer018ae8cde55f6ca2096e87eb75500506849abd3c yielded finalized Windows SHA f31d908378897bb8008614765ceac3730e34b1cb0d911761653c164e935f1ba4: Chrome, all94assets, ambient config isolation, unavailable view, port/EOF passed with development=false. Linux/mac native results and real full-product archives await CI; no publication claim. Guards changed browser admission and removed Scoop/Homebrew command admission, observed intended DID NOT RAISE/assert any failures, restored then passed.

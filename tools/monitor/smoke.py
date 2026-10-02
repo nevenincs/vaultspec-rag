@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError
 
+from tools.binaries.build_pyapp import glibc_version, required_symbol_versions
+from tools.binaries.native import host_target_triple
 from vaultspec_rag._loopback_http import LOOPBACK_OPENER
 from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
 
@@ -193,6 +195,26 @@ def probe_assets(url: str, expected: dict[str, object]) -> int:
     return len(assets)
 
 
+def platform_evidence(binary: Path, target: str) -> dict[str, str | None]:
+    """Measure the monitor independently of the enclosing PyApp bundle floor."""
+    versions = (
+        [
+            version
+            for requirement in required_symbol_versions(binary)
+            if (version := glibc_version(requirement)) is not None
+        ]
+        if target.endswith("linux-gnu")
+        else []
+    )
+    if target.endswith("linux-gnu") and not versions:
+        raise RuntimeError("The monitor has no measurable glibc requirements")
+    return {
+        "glibc_required": (
+            ".".join(str(part) for part in max(versions)) if versions else None
+        ),
+    }
+
+
 def probe(
     binary: Path,
     expected_sha256: str,
@@ -200,6 +222,8 @@ def probe(
     browser: Path | None,
 ) -> dict[str, object]:
     binary = binary.absolute()
+    target = host_target_triple()
+    platform = platform_evidence(binary, target)
     with tempfile.TemporaryDirectory(prefix="monitor-delivered-") as scratch:
         directory = Path(scratch)
         environment = isolated_environment(directory)
@@ -286,6 +310,8 @@ def probe(
         "schema": "vaultspec.monitor.smoke.v1",
         **metadata,
         "sha256": expected_sha256,
+        "target": target,
+        "platform": platform,
         "assets_verified": count,
         "browser_verified": browser is not None,
         "isolated_shell": True,
