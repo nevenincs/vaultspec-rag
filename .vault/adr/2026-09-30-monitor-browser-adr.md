@@ -3,9 +3,9 @@ tags:
   - '#adr'
   - '#monitor-browser'
 date: '2026-09-30'
-modified: '2026-10-01'
+modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:1ccea40cc1a84b93a4b2fcd1ecd20f0a06410a9afac07d780a2dfc3209ea6c76'
+body_hash: 'sha256:bb457660bc9eb2f478074cedcc91c3d44fb1a9e6b82a0892b86e5f526fedf466'
 related:
   - "[[2026-09-30-monitor-tooling-adr]]"
   - "[[2026-09-30-monitor-refinement-audit]]"
@@ -51,7 +51,7 @@ Use pinned official @carbon/react and Sass, Carbon Grid at all breakpoints, IBM 
 
 ## Implementation
 
-Implement a small server-only Vite middleware in src/monitor/server, shared by dev and preview. It performs bounded local HTTP forwarding with no-store responses. Browser code calls relative monitor routes, validates projections and renders health/TypeSafe, indexing, serving and focused/global logs as separate operator surfaces. Existing exact lifecycle controls remain scoped to the selected indexing job.
+Implement one server-side local bridge shared by Vite dev/preview and the packaged monitor server; it forwards bounded service operations and invokes portable canonical owner commands without exposing credentials. Browser code calls relative monitor routes, validates projections and renders health/TypeSafe, indexing, serving and focused/global logs as separate operator surfaces. Existing exact lifecycle controls remain scoped to the selected indexing job.
 
 ## Rationale
 
@@ -59,4 +59,4 @@ A local automatic adapter gives the browser the same operator connection as the 
 
 ## Consequences
 
-npm dev/preview owns the local browser process through the existing harness. A built static bundle needs that local adapter to read the service. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.
+npm dev/preview owns development through the existing harness. Release delivery uses the compiled monitor server with embedded frontend assets, as governed by monitor-delivery; static assets alone remain insufficient. A public or multi-user dashboard, persistent retention or alternate transport requires fresh decision assessment. The operations expansion below authorizes bounded service read projections and in-memory returned query evidence. Tailnet Serve enablement is an external Tailscale prerequisite; the client never invents a successful proxy mapping when that prerequisite is absent. No resident service, GPU workload or provider call is needed for implementation verification.

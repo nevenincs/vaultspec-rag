@@ -1,17 +1,20 @@
 import { execFile } from "node:child_process";
 import { access, open } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Plugin } from "vite";
 import manifest from "../../../package.json" with { type: "json" };
 
 const prefix = "/api/monitor";
 const maxResponseBytes = 32 * 1024 * 1024;
 const maxRequestBytes = 8192;
-const checkout = fileURLToPath(new URL("../../../", import.meta.url));
+declare const MONITOR_COMPILED: boolean;
+const checkout =
+  typeof MONITOR_COMPILED !== "undefined" && MONITOR_COMPILED
+    ? undefined
+    : fileURLToPath(new URL("../../../", import.meta.url));
 type LifecycleVerb = "status" | "start" | "stop";
 let lifecyclePython: string | undefined;
 class InvalidRequestError extends Error {}
@@ -232,6 +235,14 @@ function timeout(path: string): number {
 }
 
 async function pythonRuntime(signal: AbortSignal): Promise<string> {
+  const managed = process.env.VAULTSPEC_RAG_MONITOR_PYTHON;
+  if (managed) {
+    if (!isAbsolute(managed))
+      throw new Error("The managed monitor Python path must be absolute.");
+    await access(managed);
+    return managed;
+  }
+  if (!checkout) throw new Error("No source Python runtime is available.");
   if (lifecyclePython) return lifecyclePython;
   const interpreter =
     process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
@@ -275,19 +286,33 @@ async function runOwner(
   error: (Error & { code?: string | number; killed?: boolean }) | null;
   payload: Record<string, unknown>;
 }> {
-  const python = await pythonRuntime(signal);
+  const override = process.env.VAULTSPEC_RAG_MONITOR_OWNER;
+  if (override && !isAbsolute(override))
+    throw new Error("The monitor owner override must be an absolute path.");
+  const packaged =
+    (!checkout || !!override) && !process.env.VAULTSPEC_RAG_MONITOR_PYTHON;
+  const executable = packaged
+    ? (override ??
+      join(
+        dirname(process.execPath),
+        process.platform === "win32" ? "vaultspec-rag.exe" : "vaultspec-rag",
+      ))
+    : await pythonRuntime(signal);
+  await access(executable);
   const { error, stdout } = await new Promise<{
     error: (Error & { code?: string | number; killed?: boolean }) | null;
     stdout: string;
   }>((resolve) => {
     execFile(
-      python,
-      ["-P", "-m", ...args],
+      executable,
+      packaged ? args : ["-P", "-m", "vaultspec_rag", ...args],
       {
-        cwd: checkout,
+        cwd: packaged ? dirname(executable) : checkout,
         env: {
           ...process.env,
-          PYTHONPATH: join(checkout, "src"),
+          ...(checkout && !packaged
+            ? { PYTHONPATH: join(checkout, "src") }
+            : {}),
           PYTHONUTF8: "1",
         },
         encoding: "utf8",
@@ -310,7 +335,7 @@ async function lifecycle(
   signal: AbortSignal,
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   const { error, payload } = await runOwner(
-    ["vaultspec_rag", "server", verb, "--json"],
+    ["server", verb, "--json"],
     verb === "status" ? "/lifecycle" : `/lifecycle/${verb}`,
     1024 * 1024,
     signal,
@@ -334,7 +359,8 @@ async function persistedInventory(
 ): Promise<{ status: number; payload: Record<string, unknown> }> {
   const { error, payload } = await runOwner(
     [
-      "vaultspec_rag.monitor_inventory",
+      "server",
+      "inventory",
       route.pathname.slice(1),
       JSON.stringify(Object.fromEntries(route.searchParams)),
     ],
@@ -343,9 +369,11 @@ async function persistedInventory(
     signal,
   );
   if (error && ![2, 3].includes(Number(error.code))) throw error;
+  if (payload.command !== "server.inventory" || typeof payload.ok !== "boolean")
+    throw new Error("The inventory owner returned an invalid response.");
   return {
     status: error ? (Number(error.code) === 2 ? 400 : 503) : 200,
-    payload,
+    payload: error ? payload : object(payload.data),
   };
 }
 
@@ -492,16 +520,4 @@ export function monitorMiddleware(
   } else {
     next();
   }
-}
-
-export function localServicePlugin(): Plugin {
-  return {
-    name: "local-rag-monitor",
-    configureServer(server) {
-      server.middlewares.use(monitorMiddleware);
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use(monitorMiddleware);
-    },
-  };
 }

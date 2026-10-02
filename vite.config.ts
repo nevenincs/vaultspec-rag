@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import manifest from "./package.json" with { type: "json" };
-import { localServicePlugin } from "./src/monitor/server/local-service.ts";
+import { localServicePlugin } from "./src/monitor/server/vite-plugin.ts";
 
 const { devserver, portless } = manifest;
 

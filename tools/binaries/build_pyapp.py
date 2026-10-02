@@ -64,6 +64,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from tools.binaries.native import host_target_triple
 from tools.binaries.torch_channel import pip_extra_args
 from tools.binaries.windows_icon import VersionInfo, stamp_icon_and_version
 from tools.packaging import products
@@ -193,20 +194,6 @@ def validate_project_wheel(wheel: Path, version: str) -> Path:
             f"--wheel {wheel} contains version {wheel_version!r}, expected {version!r}"
         )
     return wheel
-
-
-def host_target_triple() -> str:
-    """Return the host Rust target triple as reported by ``rustc``."""
-    out = subprocess.run(
-        ["rustc", "-vV"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    for line in out.splitlines():
-        if line.startswith("host:"):
-            return line.split(":", 1)[1].strip()
-    raise RuntimeError("could not determine host target triple from `rustc -vV`")
 
 
 def build_one(

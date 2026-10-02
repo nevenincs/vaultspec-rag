@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import shutil
+import stat
 import sys
 import tarfile
 import urllib.error
@@ -265,7 +266,7 @@ def _open_extract_dest(path: Path) -> IO[bytes]:
     return os.fdopen(os.open(path, flags, 0o600), "wb")
 
 
-def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
+def _extract_binary_member(archive: Path, dest_dir: Path, target_name: str) -> Path:
     """Extract the qdrant executable from *archive* into *dest_dir*.
 
     Handles both the Windows ``.zip`` (single ``qdrant.exe`` entry)
@@ -277,7 +278,13 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
     Raises:
         RuntimeError: When no qdrant executable member exists.
     """
-    target_name = binary_filename()
+    if (
+        not target_name
+        or target_name in {".", ".."}
+        or Path(target_name).name != target_name
+        or "\\" in target_name
+    ):
+        raise ValueError("The executable name must be a basename")
     out_path = dest_dir / target_name
 
     # The download stages the archive under an extra ``.partial``
@@ -285,22 +292,35 @@ def _extract_binary_member(archive: Path, dest_dir: Path) -> Path:
     effective_name = archive.name.removesuffix(".partial")
     if effective_name.endswith(".zip"):
         with zipfile.ZipFile(archive) as zf:
-            for info in zf.infolist():
-                if Path(info.filename).name == target_name and not info.is_dir():
+            matches = [
+                info
+                for info in zf.infolist()
+                if Path(info.filename.replace("\\", "/")).name == target_name
+            ]
+            if len(matches) == 1:
+                info = matches[0]
+                if not info.is_dir() and not stat.S_ISLNK(info.external_attr >> 16):
                     with zf.open(info) as src, _open_extract_dest(out_path) as out:
                         shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
                     return out_path
     else:
         with tarfile.open(archive, "r:gz") as tf:
-            for member in tf:
-                if Path(member.name).name == target_name and member.isfile():
+            matches = [
+                member
+                for member in tf.getmembers()
+                if Path(member.name.replace("\\", "/")).name == target_name
+            ]
+            if len(matches) == 1:
+                member = matches[0]
+                if member.isfile():
                     src = tf.extractfile(member)
-                    if src is None:
-                        continue
-                    with src, _open_extract_dest(out_path) as out:
-                        shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
-                    return out_path
-    raise RuntimeError(f"Archive {archive.name} contains no {target_name} member")
+                    if src is not None:
+                        with src, _open_extract_dest(out_path) as out:
+                            shutil.copyfileobj(src, out, _DOWNLOAD_CHUNK_BYTES)
+                        return out_path
+    raise RuntimeError(
+        f"Archive {archive.name} requires one regular {target_name} member"
+    )
 
 
 def extract_verified_archive(
@@ -309,6 +329,7 @@ def extract_verified_archive(
     dest_dir: Path,
     *,
     on_progress: Callable[[str], None] = _no_progress,
+    binary_name: str | None = None,
 ) -> tuple[Path, str]:
     """Verify *archive* against *expected_sha256*, then extract.
 
@@ -337,7 +358,7 @@ def extract_verified_archive(
         raise ChecksumMismatchError(archive, expected_sha256, actual)
 
     on_progress("Extracting the Qdrant server...")
-    binary = _extract_binary_member(archive, dest_dir)
+    binary = _extract_binary_member(archive, dest_dir, binary_name or binary_filename())
     if sys.platform != "win32":
         # Owner-only rwx: the service runs as one user; a world-executable
         # managed binary needlessly widens who can run it on a shared host.
