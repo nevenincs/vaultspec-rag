@@ -359,6 +359,8 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
 
     Mutation proof: changing the dispatch producer to ``github.sha`` failed
     the producer environment assertion; restoring it passed immediately.
+    Making candidate compilation reachable in public mode failed its admission
+    condition; exact restoration passed (exits 1/0).
     """
     acquisition = (repo_root / ".github" / "workflows" / "acquisition.yml").read_text(
         encoding="utf-8"
@@ -366,18 +368,23 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
 
     assert "python -m tools.monitor.acquire" in acquisition
     assert "ref: main" in acquisition
-    assert "npm ci" not in acquisition
     acquire_source = (repo_root / "tools/monitor/acquire.py").read_text(
         encoding="utf-8"
     )
     pins_source = (repo_root / "tools/monitor/pins.py").read_text(encoding="utf-8")
     assert "catalog_at_commit(ROOT)" in acquire_source
     assert "extract_verified_archive(" in acquire_source
-    assert "probe(" in acquire_source
+    assert "probe_offline if os_offline else probe" in acquire_source
     assert "require_unique=True" in acquire_source
     assert '"git", "show", f"{revision}:{CATALOG}"' in pins_source
 
     document = _load(repo_root, "acquisition.yml")
+    jobs = document["jobs"]
+    assert jobs["frontend"]["if"] == "inputs.mode == 'candidate'"
+    for step in jobs["acquire"]["steps"]:
+        run = step.get("run", "")
+        if "npm ci" in run or "tools.monitor.build" in run:
+            assert step["if"] == "inputs.mode == 'candidate'"
     triggers = document.get("on", document.get(True))
     assert triggers is not None
     assert set(triggers) == {

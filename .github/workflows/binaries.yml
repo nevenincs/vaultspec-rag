@@ -342,7 +342,7 @@ jobs:
           TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.validate.outputs.sha }}
           TARGET: ${{ matrix.target }}
-        run: uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" --directory dist-bin
+        run: uv run --no-project --python 3.13 -- python -m tools.monitor.release native-smoke --tag "$TAG" --source-revision "$TARGET_SHA" --target "$TARGET" --directory dist-bin --os-offline
 
       - name: Package and verify the release bundle
         shell: bash

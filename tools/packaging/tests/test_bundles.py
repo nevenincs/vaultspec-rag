@@ -69,6 +69,7 @@ def _raw_outputs(root: Path, target: str) -> Path:
                 "assets_verified": 94,
                 "browser_verified": True,
                 "isolated_shell": True,
+                "os_offline_verified": True,
                 "occupied_port_refused": True,
                 "parent_eof_shutdown": True,
                 "request_bounds_verified": True,
@@ -351,6 +352,7 @@ def test_verify_bundle_rejects_missing_contract_metadata(
     [
         ("development", True),
         ("browser_verified", False),
+        ("os_offline_verified", False),
         ("sha256", "0" * 64),
         ("source_revision", "b" * 40),
         ("lock_sha256", "0" * 64),
@@ -363,6 +365,7 @@ def test_verify_bundle_rejects_missing_contract_metadata(
 def test_bundle_refuses_unproven_monitor(
     tmp_path: Path, field: str, value: object
 ) -> None:
+    """Removing OS-offline admission failed its case; restoration passed (1/0)."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "LICENSE").write_text("license\n", encoding="utf-8")

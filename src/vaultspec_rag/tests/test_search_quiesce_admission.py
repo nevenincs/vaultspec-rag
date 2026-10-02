@@ -48,6 +48,8 @@ class _QuiesceSearchEnvelopeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         assert self.path == "/search"
+        # Drain the request before replying so Windows does not reset an unread POST.
+        self.rfile.read(int(self.headers.get("Content-Length", "0")))
         response = {
             "ok": False,
             "error": "quiesce_admission_closed",

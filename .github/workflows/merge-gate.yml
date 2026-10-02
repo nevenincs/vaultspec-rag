@@ -180,7 +180,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Restore frontend dependencies
-        run: just init-monitor
+        run: npm ci
 
       - name: Every gating dimension
         run: just check-all
@@ -235,7 +235,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Restore frontend dependencies
-        run: just init-monitor
+        run: npm ci
 
       - name: The light gating dimensions
         run: just check-light
@@ -304,7 +304,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Restore monitor dependencies for installed-browser checks
-        run: just init-monitor
+        run: npm ci
 
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test
@@ -377,7 +377,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Restore monitor dependencies for installed-browser checks
-        run: just init-monitor
+        run: npm ci
 
       - name: Compile the native monitor for lifecycle tests
         run: just build-monitor-test

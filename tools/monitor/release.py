@@ -10,6 +10,7 @@ from typing import cast
 
 from tools.binaries.build_pyapp import sole_wheel, validate_project_wheel
 from tools.binaries.native import host_target_triple
+from tools.monitor.offline import probe_offline
 from tools.monitor.smoke import installed_browser, probe
 from tools.packaging.bundles import SMOKE_NAME, BundleError, BundleSpec, verify_bundle
 from tools.packaging.checksums import read_checksums, require
@@ -41,13 +42,17 @@ def verify_release_wheel(wheel: Path, version: str, source: Path) -> None:
                 )
 
 
-def native_smoke(tag: str, revision: str, target: str, raw: Path) -> None:
+def native_smoke(
+    tag: str, revision: str, target: str, raw: Path, *, os_offline: bool = False
+) -> None:
     if target != host_target_triple():
         raise BundleError("Monitor evidence requires the native declared target")
     name = VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, target)
     binary = raw / name
     digest = require(read_checksums(binary.with_name(name + ".sha256")), name)
-    report = probe(
+    browser = installed_browser()
+    smoke = probe_offline if os_offline else probe
+    report = smoke(
         binary,
         digest,
         {
@@ -56,7 +61,7 @@ def native_smoke(tag: str, revision: str, target: str, raw: Path) -> None:
             "source_revision": revision,
             "development": False,
         },
-        installed_browser(),
+        browser,
     )
     (raw / SMOKE_NAME).write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
@@ -99,6 +104,7 @@ def main() -> None:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--source-revision")
     parser.add_argument("--target")
+    parser.add_argument("--os-offline", action="store_true")
     parser.add_argument("--frontend-sha256")
     parser.add_argument("--directory", type=Path, required=True)
     args = parser.parse_args()
@@ -114,7 +120,13 @@ def main() -> None:
         if args.operation == "native-smoke":
             if not args.target:
                 parser.error("Native smoke requires --target")
-            native_smoke(args.tag, args.source_revision, args.target, args.directory)
+            native_smoke(
+                args.tag,
+                args.source_revision,
+                args.target,
+                args.directory,
+                os_offline=args.os_offline,
+            )
         else:
             if not args.frontend_sha256:
                 parser.error("Release-set verification requires --frontend-sha256")
