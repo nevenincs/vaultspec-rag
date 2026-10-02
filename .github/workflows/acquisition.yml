@@ -36,7 +36,7 @@ jobs:
   frontend:
     if: inputs.mode == 'candidate'
     name: "Build: Candidate monitor frontend (Linux)"
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, build]
     timeout-minutes: 140
     env:
       CI_EXEC_BUDGET_MINUTES: 20
