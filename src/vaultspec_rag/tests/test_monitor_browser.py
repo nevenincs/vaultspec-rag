@@ -7,6 +7,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.parse
@@ -46,6 +47,7 @@ def browser_bridge(monitor_http: tuple[int, Path]) -> Iterator[tuple[int, Path]]
     )
     environment = dict(os.environ)
     environment.pop("VAULTSPEC_RAG_PORT", None)
+    environment["VAULTSPEC_RAG_MONITOR_PYTHON"] = sys.executable
     process = subprocess.Popen(
         [node, "--input-type=module", "-e", script],
         stdout=subprocess.PIPE,
@@ -395,6 +397,7 @@ def test_local_bridge_reports_missing_discovery(
 
 def test_browser_projection_rejects_misattributed_production_observations(
     browser_bridge: tuple[int, Path],
+    tmp_path: Path,
 ) -> None:
     port, directory = browser_bridge
     job_id = record_start(JobSource.CODE, "tool", project_root=directory)
@@ -414,11 +417,17 @@ def test_browser_projection_rejects_misattributed_production_observations(
         source = Path(__file__).resolve().parents[2] / "monitor/model.ts"
         node = shutil.which("node")
         assert node is not None
+        payload_path = tmp_path / "projection-observations.json"
+        payload_path.write_text(
+            json.dumps([log_payload, activity_payload, job_id]), encoding="utf-8"
+        )
         script = (
             "import assert from 'node:assert/strict';"
+            "import { readFileSync } from 'node:fs';"
             "import { logs, activity, compareValues, safeLog } from "
             f"{json.dumps(source.as_uri())};"
-            "const [payload, serving, id] = JSON.parse(process.argv[1]);"
+            "const [payload, serving, id] = "
+            "JSON.parse(readFileSync(process.argv[1],'utf8'));"
             "const work = {kind:'job',id};"
             "assert.equal(logs(payload,work)[0].lines.length,1);"
             "assert.equal(activity(serving).records[0].request_id,'projection-request');"
@@ -441,7 +450,7 @@ def test_browser_projection_rejects_misattributed_production_observations(
                 "--input-type=module",
                 "-e",
                 script,
-                json.dumps([log_payload, activity_payload, job_id]),
+                str(payload_path),
             ],
             capture_output=True,
             text=True,

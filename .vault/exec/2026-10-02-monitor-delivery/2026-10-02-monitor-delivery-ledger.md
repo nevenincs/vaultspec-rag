@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:aef24127c62f88bdddad883ffc43cadfbbba4c27479cad91f46adc650776c495'
+body_hash: 'sha256:6b0330f8dc66c4cd1534fd546dcdb64a6c7df310f12adca0bdc0c202b834f48f'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -237,6 +237,11 @@ related:
 - `S06` `verify:` `macOS ARM64 native/browser/offline CI=pass; Linux x64 native/browser/offline CI=pass; clean Windows native/browser/offline actual firewall and cleanup=pass; affected tests 33 and workflow checks 47=pass; Ruff/type/format/docs/workflow` -> `pass`
 - `S06` `verify:` `private common frontend 37016154365 attempts 1,2=fail; workflow actionlint,Prettier and affected guards` -> `pass`
 - `S06` `verify:` `affected tooling/workflow/archive tests 93=pass; Windows corrected actual OS smoke and cleanup=pass; initial Windows negative-control bound=fail; Ruff/type/format/workflow=pass; full Windows 37014474575` -> `fail`
+- `S06` `M` `src/vaultspec_rag/tests/test_gpu_borrow_captured_target.py`
+- `S06` `M` `src/vaultspec_rag/tests/test_monitor_browser.py`
+- `S06` `verify:` `pytest Windows full-run failures (8) on local Windows` -> `pass`
+- `S06` `verify:` `ruff check src tools dev` -> `pass`
+- `S06` `verify:` `ruff format --check and ty check on changed files` -> `pass`
 
 ## Notes
 

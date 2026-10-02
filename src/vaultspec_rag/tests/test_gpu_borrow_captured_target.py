@@ -142,6 +142,11 @@ async def app(scope, receive, send):
             trace.write(authorization + "\\n")
         if reject_first_pause and not first_pause_rejected:
             first_pause_rejected = True
+            # Drain the rejected POST so Windows does not reset an unread stream.
+            while True:
+                message = await receive()
+                if not message.get("more_body", False):
+                    break
             body = b'{"ok": false, "error": "unauthorized"}'
             await send(
                 {
