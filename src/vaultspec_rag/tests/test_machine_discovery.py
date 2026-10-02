@@ -239,7 +239,7 @@ class TestAuthoritativeRunningPublish:
         """
         import threading
 
-        from ..serviceclient._discovery import _status_write_lock
+        from ..serviceclient._discovery import status_write_lock
 
         status_path = server_state._status_file_path()
         # Publish once so the status directory and lock file exist before the
@@ -250,7 +250,7 @@ class TestAuthoritativeRunningPublish:
 
         def hold_status_lock() -> None:
             # A different process/owner holds the status write lock throughout.
-            with _status_write_lock(status_path, timeout=30.0):
+            with status_write_lock(status_path, timeout=30.0):
                 held.set()
                 release.wait(timeout=15.0)
 

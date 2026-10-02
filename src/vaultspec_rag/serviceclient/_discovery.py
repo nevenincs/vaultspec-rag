@@ -130,6 +130,7 @@ __all__ = [
     "_status_file",
     "read_service_status",
     "resolve_machine_service",
+    "status_write_lock",
 ]
 
 
@@ -207,7 +208,7 @@ def _unlock_fd(fd: int) -> None:
 
 
 @contextmanager
-def _status_write_lock(path: Path, *, timeout: float = 1.0) -> Generator[None]:
+def status_write_lock(path: Path, *, timeout: float = 1.0) -> Generator[None]:
     """Serialize cross-process status merges with one bounded OS file lock."""
     from .._test_isolation import enforce_pytest_managed_singleton_containment
 
@@ -307,7 +308,7 @@ def _merge_service_status(
     on the same port, its pid and first timestamp win over the late parent.
     """
     path = path or _status_file()
-    with _status_write_lock(path, timeout=timeout):
+    with status_write_lock(path, timeout=timeout):
         try:
             raw: object = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -355,7 +356,7 @@ def _replace_service_status(
     # publishing anything.
     path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(fields)
-    with _status_write_lock(path, timeout=timeout):
+    with status_write_lock(path, timeout=timeout):
         write_json_atomically(path, data)
     return data
 
@@ -378,7 +379,7 @@ def _delete_service_status(
     path = path or _status_file()
     if not path.parent.exists():
         return False
-    with _status_write_lock(path, timeout=timeout):
+    with status_write_lock(path, timeout=timeout):
         try:
             path.unlink()
         except FileNotFoundError:

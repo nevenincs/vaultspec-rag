@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:b54a793375c408700d5d66794c67a8a88f8d0739ce141b87d54a9578ffa8eb4e'
+body_hash: 'sha256:a1cb44b3e4cf9099f4e266618b7a439545aec362b8eaa120938e380b13703bb5'
 related: []
 ---
 
@@ -28,3 +28,7 @@ Verified implementation detail: on Windows, Vite's wildcard bind can coexist wit
 ## Compiled runtime handoff
 
 The user's subsequent clarification requires compiled resources. The concurrent delivery design proposes a self-contained `vaultspec-rag-monitor` Bun executable, with embedded Vite output and the shared bridge, but explicitly records that no binary has been built: `2026-10-02-monitor-delivery-adr`, Constraints; `2026-10-02-monitor-delivery-plan`, S01-S02. Compilation, trust pins, acquisition and archive installation stay with that producer. The lifecycle supervisor consumes the resulting installed executable and no longer launches a source Vite entry. Earlier real Node process evidence establishes the prototype lifecycle only; positive compiled-executable integration remains pending the artifact.
+
+## Finalized executable verification
+
+The Windows delivery producer has now supplied finalized Bun bytes with all Vite assets embedded. The canonical supervisor consumes those exact bytes through an absolute override and the initialized Python owner. `src/vaultspec_rag/tests/test_monitor_process_integration.py` proves allocation, bridge requests, discovery repair, graceful and parent-death shutdown and CLI orphan cleanup against the real executable. Both identity-cleanup guards were independently removed and restored, failing and passing their intended assertions. Test reservations match the wildcard listener and use exclusive Windows binding outside the ephemeral range. The prototype and artifact-unavailable observations above describe earlier checkpoints; compiled lifecycle verification is complete on Windows.

@@ -10,7 +10,7 @@ related:
   - '[[2026-09-30-monitor-tooling-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:f3c7a9e2758e3ce12fbb2aff70ccfd741b5ed7d299bbad1bf1b02ae42993e414'
+body_hash: 'sha256:c0619fdf3e0961ed924be5a15134f0699b4b52215a4c2e15149262e434aef1e8'
 ---
 
 # `monitor-lifecycle` plan
@@ -29,7 +29,7 @@ The user's follow-up explicitly authorizes focused user-documentation edits and 
 
 ## Steps
 
-- [ ] `S01` - Finalize and verify the prepared daemon-owned compiled monitor integration against the producer artifact, then checkpoint the cohesive change; `src/vaultspec_rag/monitor_process.py and _ports.py, cli/_process.py, _service_start.py and _service_stop.py, server/_runtime.py, _main.py, _lifecycle.py and _lifespan.py, serviceclient/_discovery.py, config/_types.py and _registry.py, tests/test_monitor_process.py, test_monitor_process_integration.py, test_machine_discovery.py and test_env_registry.py, src/monitor/server/local-service.ts, .env.example, docs/service-discovery.md and configuration.md, lifecycle ADR/reference and authorized monitor-browser/tooling wording`.
+- [x] `S01` - Finalize and verify the prepared daemon-owned compiled monitor integration against the producer artifact, then checkpoint the cohesive change; `src/vaultspec_rag/monitor_process.py and _ports.py, cli/_process.py, _service_start.py and _service_stop.py, server/_runtime.py, _main.py, _lifecycle.py and _lifespan.py, serviceclient/_discovery.py, config/_types.py and _registry.py, tests/test_monitor_process.py, test_monitor_process_integration.py, test_machine_discovery.py and test_env_registry.py, src/monitor/server/local-service.ts, .env.example, docs/service-discovery.md and configuration.md, lifecycle ADR/reference and authorized monitor-browser/tooling wording`.
 - [x] `S02` - Document monitor commands, address discovery, upward port allocation and compiled-runtime requirements in the existing user guides; `README.md, docs/service-mode.md, docs/cli.md and its canonical dev/generate_cli_reference.py notes, focused documentation verification/review, initial accepted lifecycle ADR/reference and authorized monitor-browser/tooling amendments, plan, audit and generated feature index checkpoint`.
 
 ## Parallelization
@@ -48,4 +48,4 @@ For S01, run launcher admission and PID-incarnation guards, deliberately break e
 
 For S02, check each documented command/address claim against the prepared start/stop code and existing status renderer. Run the generated CLI reference check, documentation-convention gate, configured Markdown lint and authored-document format checks, and generator lint/format/type checks. Exercise existing CLI start/stop and documentation-convention tests without launching the GPU daemon. Review the README and guides as one operator workflow. Compiled-executable validation stays with S01 and does not gate the factual documentation checkpoint.
 
-After passing each Step's applicable checks, record it through the owning ledger/progress verbs and commit only the explicitly owned paths on `feature/monitor`. No push or merge is authorized.
+After passing each Step's applicable checks, record it through the owning ledger/progress verbs and commit only the explicitly owned paths on `feature/monitor`. The user subsequently explicitly authorized consolidating all monitor work in this existing monitor worktree and PR, pushing feature/monitor, and merging PR #570 into main. This authorization supersedes the earlier no-push/no-merge restriction. Reconcile the delivery producer and existing CI test jobs as part of that integration.

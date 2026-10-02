@@ -120,6 +120,7 @@ _INTERNAL: Final = frozenset(
         EnvVar.RAG_JUNCTION_PATH,
         EnvVar.RAG_JUNCTION_TARGET,
         EnvVar.PREPROCESS_INVOCATION,
+        EnvVar.MONITOR_PYTHON,
     }
 )
 
@@ -132,6 +133,14 @@ _SETTING_KEYS: Final[Mapping[EnvVar, str]] = {
 #: neither a settings key nor an entry here fails the totality check below,
 #: so a new name cannot land undescribed.
 _DESCRIPTIONS: Final[Mapping[EnvVar, str]] = {
+    EnvVar.MONITOR_BINARY: (
+        "Absolute path to the compiled monitor executable, overriding the "
+        "installed vaultspec-rag-monitor command on PATH."
+    ),
+    EnvVar.MONITOR_PYTHON: (
+        "The initialized daemon's absolute Python interpreter, handed to its "
+        "monitor child for canonical service commands; not an operator setting."
+    ),
     EnvVar.RAG_ROOT: (
         "The workspace root every process kind resolves against. Ranked below "
         "an explicit target named by the invocation and above discovery from "

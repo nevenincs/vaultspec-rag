@@ -435,6 +435,24 @@ def _stop_success(
     idempotent case as satisfied rather than as a fault; that rule lives in the
     shared renderer alongside the envelope-versus-human decision.
     """
+    from ..monitor_process import stop_recorded_monitor
+
+    try:
+        monitor_stopped = stop_recorded_monitor()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _fail_stop(
+            json_mode,
+            error="monitor_stop_failed",
+            message="Monitor stop failed",
+            human_lines=(str(exc),),
+        ) from exc
+    if not monitor_stopped:
+        raise _fail_stop(
+            json_mode,
+            error="monitor_still_running",
+            message="Monitor stop failed",
+            human_lines=("The recorded monitor process is still running.",),
+        )
     _lifecycle_success(
         json_mode,
         command=_STOP_COMMAND,

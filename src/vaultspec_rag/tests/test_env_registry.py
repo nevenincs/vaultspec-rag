@@ -151,6 +151,7 @@ def test_exactly_the_transport_markers_are_internal() -> None:
         EnvVar.RAG_JUNCTION_PATH,
         EnvVar.RAG_JUNCTION_TARGET,
         EnvVar.PREPROCESS_INVOCATION,
+        EnvVar.MONITOR_PYTHON,
     }
 
 

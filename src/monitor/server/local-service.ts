@@ -233,6 +233,15 @@ function timeout(path: string): number {
 
 async function pythonRuntime(signal: AbortSignal): Promise<string> {
   if (lifecyclePython) return lifecyclePython;
+  const managedPython = process.env.VAULTSPEC_RAG_MONITOR_PYTHON;
+  if (managedPython) {
+    if (!isAbsolute(managedPython)) {
+      throw new Error("The managed service Python runtime must be absolute.");
+    }
+    await access(managedPython);
+    lifecyclePython = managedPython;
+    return managedPython;
+  }
   const interpreter =
     process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
   const toolsDirectory = await new Promise<string>((resolve) => {
@@ -276,6 +285,7 @@ async function runOwner(
   payload: Record<string, unknown>;
 }> {
   const python = await pythonRuntime(signal);
+  const managed = Boolean(process.env.VAULTSPEC_RAG_MONITOR_PYTHON);
   const { error, stdout } = await new Promise<{
     error: (Error & { code?: string | number; killed?: boolean }) | null;
     stdout: string;
@@ -284,10 +294,10 @@ async function runOwner(
       python,
       ["-P", "-m", ...args],
       {
-        cwd: checkout,
+        cwd: managed ? process.cwd() : checkout,
         env: {
           ...process.env,
-          PYTHONPATH: join(checkout, "src"),
+          ...(managed ? {} : { PYTHONPATH: join(checkout, "src") }),
           PYTHONUTF8: "1",
         },
         encoding: "utf8",

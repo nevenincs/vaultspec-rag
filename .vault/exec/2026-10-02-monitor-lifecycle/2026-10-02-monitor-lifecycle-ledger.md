@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:d3baab0799f1583d317f43588a2ec211d2ad0df2e8fc0873fe9d935f83c84ba4'
+body_hash: 'sha256:fa1718adbfe374c8d3ade89bea83698f20f3cd8bfc63024315cb6b51e5f864aa'
 related:
   - "[[2026-10-02-monitor-lifecycle-plan]]"
 ---
@@ -35,3 +35,31 @@ related:
 - `S02` `verify:` `uv run --no-sync mdformat --check README.md docs/service-mode.md` -> `pass`
 - `S02` `verify:` `uv run --no-sync pymarkdown --config .pymarkdown.json scan README.md docs/service-mode.md docs/cli.md` -> `pass`
 - `S02` `by:` `codex`
+- `S01` `M` `src/vaultspec_rag/_ports.py`
+- `S01` `M` `src/vaultspec_rag/monitor_process.py`
+- `S01` `M` `src/vaultspec_rag/cli/_process.py`
+- `S01` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S01` `M` `src/vaultspec_rag/cli/_service_stop.py`
+- `S01` `M` `src/vaultspec_rag/config/_registry.py`
+- `S01` `M` `src/vaultspec_rag/config/_types.py`
+- `S01` `M` `src/vaultspec_rag/server/_lifecycle.py`
+- `S01` `M` `src/vaultspec_rag/server/_lifespan.py`
+- `S01` `M` `src/vaultspec_rag/server/_main.py`
+- `S01` `M` `src/vaultspec_rag/server/_runtime.py`
+- `S01` `M` `src/vaultspec_rag/serviceclient/_discovery.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_env_registry.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_machine_discovery.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_monitor_process.py`
+- `S01` `M` `src/vaultspec_rag/tests/test_monitor_process_integration.py`
+- `S01` `M` `.env.example`
+- `S01` `M` `docs/configuration.md`
+- `S01` `M` `docs/service-discovery.md`
+- `S01` `M` `src/monitor/server/local-service.ts`
+- `S01` `M` `.vault/plan/2026-10-02-monitor-lifecycle-plan.md`
+- `S01` `M` `.vault/audit/2026-10-02-monitor-lifecycle-audit.md`
+- `S01` `M` `.vault/reference/2026-10-02-monitor-lifecycle-reference.md`
+- `S01` `verify:` `compiled Windows lifecycle and covering service suites: 158 tests` -> `pass`
+- `S01` `verify:` `identity cleanup and orphan cleanup mutation exit1 restore exit0` -> `pass`
+- `S01` `verify:` `ruff, scoped format, ty, basedpyright, production complexity` -> `pass`
+- `S01` `verify:` `frontend lint format type, CLI generation and documentation checks` -> `pass`
+- `S01` `by:` `codex`
