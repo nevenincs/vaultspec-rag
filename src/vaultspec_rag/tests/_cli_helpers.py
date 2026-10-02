@@ -113,7 +113,7 @@ def _with_service_token(health: dict[str, object]) -> dict[str, object]:
     health says, and a stub that omitted it on the customised payloads would
     make identity depend on which test wrote the body.
     """
-    return {**health, "service_token": _CONTRACT_SERVICE_TOKEN}
+    return {"pid": os.getpid(), **health, "service_token": _CONTRACT_SERVICE_TOKEN}
 
 
 @contextlib.contextmanager

@@ -479,7 +479,7 @@ def _existing_service_running() -> _AttachCandidate | None:
     # status file only when the recorded PID is confirmed dead; leave it in
     # place on an ambiguous miss against a live PID (issue #204).
     if _should_unlink_discovery_file(pid_alive(existing_pid)):
-        _delete_service_status()
+        _delete_service_status(expected_pid=existing_pid, expected_port=existing_port)
     return None
 
 
@@ -1101,7 +1101,7 @@ def _fail_start_died(
     Tailing that log here is what turns "the process died" into a diagnosis
     the operator can act on without going looking for the file first.
     """
-    _delete_service_status()
+    _delete_service_status(expected_pid=pid, expected_port=port)
     tail = _tail_daemon_log(log_path)
     human = [_process_line(pid), address_line(port)]
     if tail:

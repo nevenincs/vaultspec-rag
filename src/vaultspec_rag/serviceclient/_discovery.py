@@ -365,21 +365,39 @@ def _delete_service_status(
     *,
     path: Path | None = None,
     timeout: float = 1.0,
+    expected_pid: int | None = None,
+    expected_port: int | None = None,
 ) -> bool:
     """Serialize status deletion with all merges and heartbeat publications.
 
     The locked unlink is the deletion tombstone in the status operation order:
     a merge that completes first is removed, while a ``require_existing`` merge
     that runs after deletion observes the missing file and cannot recreate it.
+    A stop supplies its witnessed PID and port so a successor publication that
+    wins this lock is retained. Both comparison and unlink occur under the
+    same lock; an unreadable record cannot authorize conditional deletion.
 
     Returns:
         ``True`` when a file was removed, or ``False`` when it was already
-        absent.
+        absent, unreadable, or belongs to a different expected identity.
     """
     path = path or _status_file()
     if not path.parent.exists():
         return False
     with status_write_lock(path, timeout=timeout):
+        if expected_pid is not None or expected_port is not None:
+            try:
+                raw: object = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnicodeError) as exc:
+                logger.debug("conditional status deletion skipped: %s", exc)
+                return False
+            if not isinstance(raw, dict):
+                return False
+            current = cast("dict[str, object]", raw)
+            if (expected_pid is not None and current.get("pid") != expected_pid) or (
+                expected_port is not None and current.get("port") != expected_port
+            ):
+                return False
         try:
             path.unlink()
         except FileNotFoundError:

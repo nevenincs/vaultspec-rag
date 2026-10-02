@@ -32,11 +32,11 @@ from vaultspec_core.config import VAULTSPEC_TARGET_DIR, child_environment
 
 from .._process_probe import (
     SERVER_LAUNCH_MARKER,
-    argv_contains,
     argv_of,
     bounded_call,
     iter_process_info,
     pid_alive,
+    pid_argv,
     pid_cmdline,
     pid_image_matches,
     pid_image_path,
@@ -45,6 +45,8 @@ from .._process_probe import (
     pid_start_time,
     pid_terminated,
     send_signal,
+    server_launch_option,
+    server_launch_port,
     wait_for_exit,
 )
 from .._win32 import (
@@ -70,6 +72,7 @@ __all__ = [
     "TerminationResult",
     "_call_interruptibly",
     "_is_our_service",
+    "_is_service_command",
     "_may_carry_launch_witness",
     "_resolve_daemon_interpreter",
     "_spawn_service",
@@ -120,12 +123,16 @@ def _is_our_service(
     pid: int,
     port: int | None = None,
     expected_token: str | None = None,
+    *,
+    require_launch_witness: bool = False,
+    expected_launch_token: str | None = None,
 ) -> bool:
     """Check if PID belongs to the daemon currently named in ``service.json``.
 
     Primary identity check (``port`` + ``expected_token`` supplied):
     probes ``/health`` on the port, compares ``service_token`` to
-    ``expected_token``. Mismatch → False (positively not ours); match
+    ``expected_token`` and binds its serving PID to the target. Mismatch →
+    False (positively not ours); match
     → True (positively ours); token-absent in the response → falls
     back to the executable-name check (pre-upgrade daemon, or an
     unrelated HTTP server returning 200 without a token).
@@ -135,9 +142,9 @@ def _is_our_service(
     ``QueryFullProcessImageNameW`` via ctypes to verify the process
     executable contains ``"python"``; on Unix inspects the process
     command line for the module name. An identity that cannot be
-    read is never adopted: every caller uses a positive answer to
-    attach to a pid or terminate it, and a recycled pid whose owner
-    this process cannot inspect must not qualify for either.
+    read is never adopted. This legacy policy supports older observation
+    callers; service stop requires the strict argument-vector witness and
+    separately brackets its inspection with the OS process birth.
 
     Args:
         pid: Process ID to verify.
@@ -146,6 +153,11 @@ def _is_our_service(
         expected_token: Token value from ``service.json`` to match
             against the ``/health`` response. When ``None``, only
             the fallback check runs.
+        require_launch_witness: Require the actual resident-server argument
+            vector to name the requested port even when health answers. A
+            Python executable alone is not enough to authorize termination.
+        expected_launch_token: When recorded, require the same launch token in
+            that argument vector as well.
 
     Returns:
         True if the process appears to be the daemon named in
@@ -154,6 +166,13 @@ def _is_our_service(
     """
     if not pid_alive(pid):
         return False
+
+    if require_launch_witness:
+        arguments = pid_argv(pid, timeout=_PROBE_BUDGET_SECONDS)
+        if port is None or not _is_service_command(
+            arguments, port, launch_token=expected_launch_token
+        ):
+            return False
 
     # Primary check: token round-trip via /health. Gated on both
     # port and expected_token being non-empty; the CLI passes
@@ -167,19 +186,34 @@ def _is_our_service(
             if isinstance(response_token, str) and response_token:
                 # Both sides reported a token - the comparison is
                 # authoritative regardless of outcome.
-                return response_token == expected_token
+                serving_pid = probe.get("pid")
+                return (
+                    response_token == expected_token
+                    and isinstance(serving_pid, int)
+                    and not isinstance(serving_pid, bool)
+                    and serving_pid == pid
+                )
             # Probe answered but with no token (pre-upgrade daemon,
             # or unrelated server returning 200). Fall back to the
             # executable-name path. Debug-log per the no-swallow
             # rule so the fallback is observable.
             logger.debug(
                 "service_token absent on /health for pid=%d port=%d; "
-                "falling back to executable-name check",
+                "using the process identity policy",
                 pid,
                 port,
             )
         # probe is None: connection failed. Fall back to exe-name
         # check (the daemon may be alive but port-bound late).
+
+    if require_launch_witness:
+        return True
+
+    return _legacy_service_process_identity(pid)
+
+
+def _legacy_service_process_identity(pid: int) -> bool:
+    """Apply the legacy executable/command-line policy for older callers."""
 
     if sys.platform == "win32":
         image = pid_image_path(pid)
@@ -841,12 +875,13 @@ def _is_service_command(
     raw_cmdline: object,
     port: int,
     *,
-    launch_token: str,
+    launch_token: str | None,
 ) -> bool:
-    """Return whether argv carries this exact resident-server launch witness."""
-    return argv_contains(
-        argv_of(raw_cmdline),
-        (*SERVER_LAUNCH_MARKER, "--port", str(port), "--launch-token", launch_token),
+    """Return whether argv carries the resident launch port and optional nonce."""
+    arguments = argv_of(raw_cmdline)
+    return server_launch_port(arguments) == port and (
+        not launch_token
+        or server_launch_option(arguments, "--launch-token") == launch_token
     )
 
 
@@ -914,6 +949,7 @@ def _terminate_pid(
     *,
     graceful_drain: float = _DEFAULT_GRACEFUL_DRAIN_SECONDS,
     console_group_signal: bool = True,
+    expected_start_time: float | None = None,
 ) -> TerminationResult:
     """Send a termination signal to a process.
 
@@ -946,6 +982,8 @@ def _terminate_pid(
             not a group leader is undefined on Windows: it can block the caller
             or deliver the break to the caller's own console group instead. When
             False, Windows goes straight to a pid-targeted ``TerminateProcess``.
+        expected_start_time: When supplied, refuse to signal a different
+            process incarnation that has reused the witnessed PID.
 
     Returns:
         A ``TerminationResult`` recording whether the target is still alive
@@ -962,6 +1000,10 @@ def _terminate_pid(
     )
     deadline = time.monotonic() + max(0.0, timeout)
     qdrant_identity = _owned_qdrant_identity(pid, deadline=deadline)
+    if expected_start_time is not None and not pid_matches_start_time(
+        pid, expected_start_time, timeout=max(0.0, deadline - time.monotonic())
+    ):
+        return TerminationResult(alive=not pid_terminated(pid), signal_denied=False)
     if sys.platform == "win32":
         if console_group_signal:
             denied = send_signal(pid, signal.CTRL_BREAK_EVENT)
@@ -981,6 +1023,10 @@ def _terminate_pid(
         _reap_owned_qdrant(qdrant_identity, deadline=deadline)
         return TerminationResult(alive=False, signal_denied=False)
     if not pid_terminated(pid):
+        if expected_start_time is not None and not pid_matches_start_time(
+            pid, expected_start_time, timeout=max(0.0, deadline - time.monotonic())
+        ):
+            return TerminationResult(alive=True, signal_denied=False)
         if sys.platform == "win32":
             escalation = signal.SIGTERM  # TerminateProcess on Windows
         else:

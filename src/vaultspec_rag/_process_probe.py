@@ -63,6 +63,7 @@ __all__ = [
     "kill_process_descendants",
     "open_process_handle",
     "pid_alive",
+    "pid_argv",
     "pid_cmdline",
     "pid_image_matches",
     "pid_image_path",
@@ -76,6 +77,7 @@ __all__ = [
     "reap_if_child",
     "send_signal",
     "server_console_scripts",
+    "server_launch_option",
     "server_launch_port",
     "wait_for_exit",
     "win_kernel32",
@@ -284,8 +286,8 @@ def pid_image_path(pid: int) -> str | None:
         kernel32.CloseHandle(handle)
 
 
-def pid_cmdline(pid: int) -> str | None:
-    """Return *pid*'s space-joined command line, or ``None`` when unreadable.
+def pid_argv(pid: int, *, timeout: float | None = None) -> list[str] | None:
+    """Return *pid*'s argument vector, or ``None`` when unreadable.
 
     Reads through psutil - the same mechanism the process-table scan already
     uses for argv - so every platform answers. A direct ``/proc`` read covers
@@ -293,19 +295,29 @@ def pid_cmdline(pid: int) -> str | None:
     pid there as unreadable, and a caller treating that as trustable identity
     adopted whatever process had recycled the pid. ``None`` means unknown,
     never "no match": the process is gone, or belongs to a user this process
-    cannot inspect. An empty string is a real answer (a zombie's argv), not
+    cannot inspect. An empty list is a real answer (a zombie's argv), not
     unknown.
     """
     if pid <= 0:
         return None
     import psutil
 
-    try:
-        arguments = psutil.Process(pid).cmdline()
-    except psutil.Error as exc:
-        logger.debug("cmdline unreadable for pid %d: %s", pid, exc)
-        return None
-    return " ".join(arguments)
+    def inspect() -> list[str] | None:
+        try:
+            return psutil.Process(pid).cmdline()
+        except psutil.Error as exc:
+            logger.debug("cmdline unreadable for pid %d: %s", pid, exc)
+            return None
+
+    return bounded_call(
+        inspect, timeout=timeout, fallback=None, label=f"pid-{pid}-argv"
+    )
+
+
+def pid_cmdline(pid: int) -> str | None:
+    """Return *pid*'s space-joined command line, or ``None`` when unreadable."""
+    arguments = pid_argv(pid)
+    return " ".join(arguments) if arguments is not None else None
 
 
 def pid_image_matches(pid: int, needle: str, *, timeout: float | None = None) -> bool:
@@ -760,25 +772,52 @@ def server_console_scripts() -> frozenset[str]:
     )
 
 
-def _names_a_server_console_script(argv: Sequence[str]) -> bool:
-    """Whether *argv* starts one of those console scripts.
+def _is_server_console_script(path: str) -> bool:
+    """Recognize the console entry point itself or an interpreter trampoline."""
+    name = PurePath(path).name.casefold()
+    if name.endswith(".exe"):
+        name = name[: -len(".exe")]
+    return name in server_console_scripts()
 
-    A launcher is observed two ways: as itself, and as the interpreter the
-    trampoline re-executes with the launcher's path as its first argument -
-    ``python.exe <launcher>.exe`` on Windows, ``python <script>`` on POSIX.
-    Both are matched on the basename, with the Windows suffix stripped,
-    because the directory it sits in is uv's to choose.
-    """
-    scripts = server_console_scripts()
-    if not scripts:
-        return False
-    for part in argv[:2]:
-        name = PurePath(part).name.casefold()
-        if name.endswith(".exe"):
-            name = name[: -len(".exe")]
-        if name in scripts:
-            return True
-    return False
+
+def _python_application_index(argv: Sequence[str]) -> int | None:
+    """Locate Python's execution mode before inspecting application arguments."""
+    index = 1
+    while index < len(argv):
+        part = argv[index]
+        if part in {"-c", "-", "--help", "--version"}:
+            return None
+        if part in {"-W", "-X"}:
+            index += 2
+        elif part.startswith(("-W", "-X")) or (
+            part.startswith("-")
+            and part[1:]
+            and all(flag in "bBdEiIOPqsSuvx" for flag in part[1:])
+        ):
+            index += 1
+        elif part == "--":
+            return index + 1 if index + 1 < len(argv) else None
+        else:
+            return index
+    return None
+
+
+def _server_application_arguments(argv: Sequence[str]) -> tuple[str, ...] | None:
+    """Return only arguments belonging to an actual server module or entry point."""
+    if not argv:
+        return None
+    if _is_server_console_script(argv[0]):
+        return tuple(argv[1:])
+    if not PurePath(argv[0]).name.casefold().startswith("python"):
+        return None
+    index = _python_application_index(argv)
+    if index is not None:
+        if argv[index] == "-m" and argv[index - 1] != "--":
+            if index + 1 < len(argv) and argv[index + 1] == SERVER_LAUNCH_MARKER[1]:
+                return tuple(argv[index + 2 :])
+        elif _is_server_console_script(argv[index]):
+            return tuple(argv[index + 1 :])
+    return None
 
 
 def is_server_launch(argv: Sequence[str]) -> bool:
@@ -788,9 +827,25 @@ def is_server_launch(argv: Sequence[str]) -> bool:
     form is what an editor or agent session starts for a stdio adapter, and
     it was read as an unrelated process until it was asked for here.
     """
-    return argv_contains(argv, SERVER_LAUNCH_MARKER) or _names_a_server_console_script(
-        argv
-    )
+    return _server_application_arguments(argv) is not None
+
+
+def server_launch_option(argv: Sequence[str], option: str) -> str | None:
+    """Read one unambiguous application option, refusing duplicate identities."""
+    arguments = _server_application_arguments(argv)
+    if arguments is None:
+        return None
+    found: list[str] = []
+    for index, part in enumerate(arguments):
+        if part == "--":
+            break
+        if part == option:
+            if index + 1 >= len(arguments) or arguments[index + 1].startswith("--"):
+                return None
+            found.append(arguments[index + 1])
+        elif part.startswith(f"{option}="):
+            found.append(part.partition("=")[2])
+    return found[0] if len(found) == 1 and found[0] else None
 
 
 def server_launch_port(argv: Sequence[str]) -> int | None:
@@ -801,15 +856,14 @@ def server_launch_port(argv: Sequence[str]) -> int | None:
     standard input and is given none. Telling them apart is what lets a
     refusal name the process an operator has to deal with, and how.
     """
-    if not is_server_launch(argv):
+    value = server_launch_option(argv, "--port")
+    if value is None:
         return None
-    for index, part in enumerate(argv):
-        if part == "--port" and index + 1 < len(argv):
-            try:
-                return int(argv[index + 1])
-            except ValueError:
-                return None
-    return None
+    try:
+        port = int(value)
+    except ValueError:
+        return None
+    return port if 0 < port <= 65535 else None
 
 
 @dataclass(frozen=True, slots=True)

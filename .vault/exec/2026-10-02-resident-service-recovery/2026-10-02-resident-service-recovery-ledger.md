@@ -5,11 +5,10 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:c96693aa74a6aeb39a2f6c2e0eac027b7a4894977b0221129dde01e6e38f3f76'
+body_hash: 'sha256:d327f07d74409746d7fff55d98e21796100a3ceff1988eca5cc634c65df1c124'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
-
 
 # `resident-service-recovery` ledger
 
@@ -90,3 +89,23 @@ related:
 - `S07` `verify:` `pytest affected watcher suite (141 tests, exit 0)` -> `pass`
 - `S07` `verify:` `three process-isolated observation guard fail restore fresh-pass sequences with unchanged source SHA256 (forensic s07-guard-evidence.json)` -> `pass`
 - `S07` `by:` `vaultspec-high-executor`
+- `S08` `M` `src/vaultspec_rag/_machine_lock.py`
+- `S08` `M` `src/vaultspec_rag/_process_probe.py`
+- `S08` `M` `src/vaultspec_rag/cli/_process.py`
+- `S08` `M` `src/vaultspec_rag/cli/_service_stop.py`
+- `S08` `M` `src/vaultspec_rag/cli/_service_start.py`
+- `S08` `M` `src/vaultspec_rag/cli/_status_render.py`
+- `S08` `M` `src/vaultspec_rag/serviceclient/_discovery.py`
+- `S08` `M` `src/vaultspec_rag/tests/_cli_helpers.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_service_stop_port.py`
+- `S08` `M` `src/vaultspec_rag/tests/test_machine_singleton_reclaim.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_service_stop_cleanup.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_service_cleanup_callers.py`
+- `S08` `A` `src/vaultspec_rag/tests/test_machine_lock_presence.py`
+- `S08` `verify:` `package Ruff lint and format 865 files exit0` -> `pass`
+- `S08` `verify:` `strict basedpyright and Ty all13 changed Python paths exit0` -> `pass`
+- `S08` `verify:` `changed-path Pylint design length cognitive20 XenonC/C/A gates exit0` -> `pass`
+- `S08` `verify:` `affected10-file CPU suite183passed170.83s exit0` -> `pass`
+- `S08` `verify:` `22 process-only guard mutation intended-fail restored-fresh-pass sequences sourceSHA unchanged` -> `pass`
+- `S08` `verify:` `git diff --check exit0` -> `pass`
+- `S08` `by:` `vaultspec-high-executor`

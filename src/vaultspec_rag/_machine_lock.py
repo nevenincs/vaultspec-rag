@@ -25,6 +25,7 @@ it, because the lock belongs with the storage it guards.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -492,8 +493,12 @@ def probe_machine_lock() -> MachineLockProbe:
         if retained is not None:
             _require_active_lease(retained, operation="probe the machine lock")
             return MachineLockProbe(held=True, holder_pid=retained.pid)
-    if not path.exists():
-        return MachineLockProbe(held=False, holder_pid=0)
+    try:
+        path.stat()
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return MachineLockProbe(held=False, holder_pid=0)
+        raise
     from ._anchor_claim import claim_anchor, release_anchor_claim
 
     # No owner pid is recorded here: this probe answers a question and must
@@ -501,13 +506,11 @@ def probe_machine_lock() -> MachineLockProbe:
     # the real holder's record rather than one a probe left behind.
     claim = claim_anchor(path, pid_record=True)
     if claim.fault is not None:
-        # An anchor that cannot be opened is truthful absence - there is
-        # nothing there to hold. A platform with no advisory-lock primitive is
-        # not: it cannot answer at all, and reporting the lock free would tell
-        # the caller it may spawn a second resident service.
-        if isinstance(claim.fault, ImportError):
-            raise claim.fault
-        return MachineLockProbe(held=False, holder_pid=0)
+        # Only a confirmed disappearance answers absence. Permission and
+        # coordination failures cannot tell whether someone still owns it.
+        if isinstance(claim.fault, OSError) and claim.fault.errno == errno.ENOENT:
+            return MachineLockProbe(held=False, holder_pid=0)
+        raise claim.fault
     if claim.descriptor is None:
         return MachineLockProbe(held=True, holder_pid=claim.holder_pid)
     # Nobody holds it (free, or a dead holder the OS already released).
