@@ -28,7 +28,7 @@ related:
   - '[[2026-09-08-search-readiness-contract-adr]]'
 modified: '2026-10-02'
 body_schema: body-v2
-body_hash: 'sha256:23923d54d4abff66060f5e6992b75317c6ea8d53aa24248d166da5edb887e771'
+body_hash: 'sha256:f25adeaa58d69b9d38036dacf9f8cd89941c1810a6006437c31666b121fab700'
 ---
 
 # `resident-service-recovery` plan
@@ -68,7 +68,7 @@ S13 follows four production search ASGI traces whose typed StorageModelError esc
 - [x] `S10` - Preserve canonical weighted-stream framing while resuming committed segment gaps, with real-ledger interrupted-run regressions and guarded boundary rejection; `indexer/_consumer_pipeline.py, _run_checkpoint.py, _slicing.py and _streaming_types.py as needed, focused CPU weighted stream and real-ledger resume tests`.
 - [x] `S11` - Allow vector-free cross-kind route reconciliation against an old-model origin without weakening destination evidence or vector conformance; `indexer/_route_migration.py, store_catalog.py and store_ingest.py plus collection owner only as needed, CPU real-Qdrant and ledger migration and strict conformance regressions`.
 - [x] `S12` - Recover desired-running paused jobs after aborted quiesce, let unstarted capacity waiters acknowledge control, and preserve operator pause intent during global unwind; `job_manager quiesce recovery, attempt capacity admission and desired-state/capability owner, _service_residency.py and service_quiesce.py recovery failure ordering, focused real-component CPU control regressions`.
-- [ ] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
+- [x] `S13` - Map storage conformance refusals to canonical search rebuild-required facts and HTTP outcomes without erasing combined source failures; `service-domain search availability and combined outcome conformance mapping, server search route as needed, focused CPU route and search regressions`.
 - [ ] `S04` - Deploy the current checkout as the resident daemon, repair affected publications through explicit rebuild jobs when required, and verify service health, search, and watcher convergence; `resident service lifecycle, affected root ledgers and admitted jobs, plan verification and final audit`.
 
 ## Parallelization

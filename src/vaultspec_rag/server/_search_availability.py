@@ -32,6 +32,7 @@ __all__ = [
     "SearchResponseClassification",
     "classify_qdrant_collection_disappearance",
     "classify_search_response",
+    "storage_conformance_refusal_fact",
 ]
 
 # One declaration of the convergence-mode vocabulary; the transport owns it.
@@ -55,7 +56,7 @@ class SearchResponseClassification:
     """One response decision and its bounded, causally merged job evidence."""
 
     response: dict[str, object]
-    status_code: Literal[200, 503]
+    status_code: Literal[200, 409, 503]
     matching_jobs: tuple[MatchingIndexJobReference, ...]
     matching_jobs_truncated: bool
     rebuilding: bool
@@ -123,6 +124,35 @@ class SearchAvailabilityContext:
     index_state: Mapping[str, object]
     port: int | None
     canonical_evidence: CanonicalSearchEvidence = CanonicalSearchEvidence()
+
+
+def storage_conformance_refusal_fact(
+    exc: Exception,
+    source_fact: SearchSourceFact,
+    *,
+    root: Path,
+    port: int | None = None,
+) -> SearchSourceFact | None:
+    """Replace preflight readiness only for a typed compatibility refusal.
+
+    Storage compatibility refusals require an explicit rebuild. Other failures
+    remain under their existing error policy rather than gaining rebuild authority.
+    Captured publication identities and bounded evidence remain diagnostic facts.
+    """
+    from ..store_runtime import StorageGeometryError
+
+    if not isinstance(exc, StorageGeometryError):
+        return None
+    reason = SearchReasonCode.REBUILD_REQUIRED
+    return replace(
+        source_fact,
+        availability=SearchAvailability.UNAVAILABLE,
+        freshness=SearchFreshness.REBUILD_REQUIRED,
+        absence_authority=AbsenceAuthority.NON_AUTHORITATIVE,
+        reason_code=reason,
+        retryable=False,
+        remediation=reason.remediation(source_fact.source, port=port, target=str(root)),
+    )
 
 
 @dataclass(frozen=True, slots=True)

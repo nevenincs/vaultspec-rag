@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-03'
 body_schema: 'body-v2'
-body_hash: 'sha256:fac1a7ccd5b61462c9637529596600dee452afc9823e5a5e842db9cff4484832'
+body_hash: 'sha256:6d5328826ed4235db2208adf3e83b81c108c7bc646f0a31bcb73b64b66f8d813'
 related:
   - "[[2026-10-02-resident-service-recovery-plan]]"
 ---
@@ -170,6 +170,17 @@ related:
 - `S12` `verify:` `23 process-only production mutations intended fail fresh restored pass unchanged15 hashes` -> `pass`
 - `S12` `verify:` `git diff --check exit0` -> `pass`
 - `S12` `by:` `vaultspec-high-executor`
+- `S13` `M` `src/vaultspec_rag/_public_search.py`
+- `S13` `M` `src/vaultspec_rag/server/_search_availability.py`
+- `S13` `M` `src/vaultspec_rag/server/_search_route_availability.py`
+- `S13` `A` `src/vaultspec_rag/tests/test_search_conformance_refusal.py`
+- `S13` `verify:` `package Ruff lint and format872 files exit0 unchanged evidence` -> `pass`
+- `S13` `verify:` `changed strict Basedpyright Pylint nesting cognitive Xenon gates exit0` -> `pass`
+- `S13` `verify:` `focused31 affected289 CPU search contract conformance tests exit0` -> `pass`
+- `S13` `verify:` `17 process-only production mutations intended fail fresh restored pass unchanged5 hashes` -> `pass`
+- `S13` `verify:` `independent integrated S12 S13 source CPU review PASS` -> `pass`
+- `S13` `verify:` `git diff --check exit0` -> `pass`
+- `S13` `by:` `vaultspec-high-executor`
 
 ## Notes
 
