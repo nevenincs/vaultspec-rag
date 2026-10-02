@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:e28be05994e64cbdc116d403bd68cfa0f41c544247aea4f839db1fd1a38217b6'
+body_hash: 'sha256:e87f5db6b13770f1cd386e452c6f6b5e3ac7b8fb10f58b73a0e0c3c3a035a824'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -64,6 +64,14 @@ The 414-test combined monitor, packaging and workflow run passed 413 tests and e
 
 Integrated S09 review verdict: **PASS** for source integration, runtime behavior and CI admission, with the applicable 413 combined results, 81 affected follow-up tests, real compiled lifecycle and smoke evidence, guard mutation proofs, Python lint/format/type/complexity, frontend gates, workflow lint, documentation generation/conventions/format and citation checks. No high or critical issue remains in this integration. The final S06 release evidence verdict stays **PENDING** for the previously recorded remaining native hosts, OS-level executable egress denial and first reviewed public acquisition. The main-merge request authorizes landing the code and these explicit follow-up obligations; no release was cut or published.
 
+### release-node-auto-cache | high | Dispatch-supplied frontend checkout can enable an Actions cache
+
+The current-head CodeQL check on PR #570 reported a high cache-poisoning finding at binaries.yml's setup-node step. The pinned action enables automatic npm caching when the checked-out manifest declares npm as its package manager; this release checkout is supplied through target_sha. Reopen S04 and explicitly disable automatic caching while keeping cache inputs absent. The publication/build trust boundaries and existing uv cache opt-out remain in force. This finding requires correction before the requested main merge.
+
+### release-node-auto-cache-resolution | low | Release frontend caching is explicitly disabled and guarded
+
+Follow-up review of S04 against base `b60a6859` and the uncommitted correction: setup-node now receives package-manager-cache=false and has no explicit cache input. A dispatch-supplied manifest therefore cannot enable the pinned action's automatic npm cache. The new guard failed at its named automatic-cache assertion when the opt-out was removed (exit 1), and exact restoration passed (exit 0). The YAML helper annotations also now describe parsed mapping keys and dependency lists; strict type checks cover the guard without suppressions. Ruff across the package and binary tooling, affected format, ty/basedpyright, actionlint and workflow Prettier pass. The release-workflow and developer-guard suite passes 151 tests. This resolves release-node-auto-cache; corrective S04 review is **PASS**. The next push must obtain current-head CI and CodeQL results before the requested merge. S06 remains **PENDING** for the previously recorded remaining native hosts, executable OS egress denial and first reviewed public acquisition.
+
 ## Recommendations
 
-Zip-member-mode is resolved through the approved S01 extractor scope. Leave the final verdict pending until the lifecycle owner commits and S09 merges it, all native and offline evidence arrives, and the first reviewed public acquisition completes. Then append the changed interactions/results to this audit without repeating unchanged analysis.
+ZIP admission, lifecycle integration and the release cache finding are resolved. Leave S06 pending until the remaining native and offline evidence arrives and the first reviewed public acquisition completes. Append those results to this audit without repeating unchanged analysis.

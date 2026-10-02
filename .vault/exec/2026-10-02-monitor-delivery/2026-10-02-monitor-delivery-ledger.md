@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:2fb23fead3a08f57e018e7b71af49defe34cd8f97677e88daa9822fc1c009a63'
+body_hash: 'sha256:3a01f7d8b11e654f3940c8a6933bd73b038e57940c1cbdfa42c4e1cff5cf36df'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -163,6 +163,16 @@ related:
 - `S09` `verify:` `check-light all dimensions passed except test-helper nesting` -> `fail`
 - `S09` `verify:` `corrected test-helper nesting gate, package lint, scoped format and types` -> `pass`
 - `S09` `verify:` `final compiled lifecycle suite after port-helper correction: 12 tests` -> `pass`
+- `S04` `M` `.vault/plan/2026-10-02-monitor-delivery-plan.md`
+- `S04` `M` `.vault/audit/2026-10-02-monitor-delivery-audit.md`
+- `S04` `verify:` `Ruff package and binary tooling` -> `pass`
+- `S04` `verify:` `affected Ruff format` -> `pass`
+- `S04` `verify:` `ty and strict basedpyright affected test` -> `pass`
+- `S04` `verify:` `workflow actionlint and Prettier` -> `pass`
+- `S04` `verify:` `release workflow and developer guards 151 tests` -> `pass`
+- `S04` `verify:` `intentional cache opt-out removal named guard` -> `fail`
+- `S04` `verify:` `exact cache opt-out restoration guard` -> `pass`
+- `S04` `verify:` `PR570 CodeQL at b60a6859` -> `fail`
 
 ## Notes
 
@@ -180,3 +190,4 @@ related:
 - `S06` Fresh clean producer 957962b342ae1433eee014baa58cff86cb6f942a Windows 0.6.0 executable SHA64c1aad61d42efd0885932c9707746e9d872f4d0b3b071d88308322ba666898c passed all94assets/browser/isolated/bounds/cancellation/port/EOF probes and unmodified in-flight canonical owner status/inventory/identity cleanup. Private ignored local handoff is dist-bin with final checksum sidecar and monitor-smoke.json. S09 and S06 remain open for owner commit/combined review, remaining native/offline/public evidence. No public release admission asserted.
 - `S09` User explicitly authorized combining feature/monitor-delivery into existing feature/monitor PR570, pushing it and merging to main. Mechanically resolved only inherited Git hash conflicts before owning vault edit regenerated final metadata. Source integration passes review. S06 retains native other-host, OS egress denial and first public acquisition evidence obligations.
 - `S09` The light aggregate exposed redundant IPv6 probing in the test-only IPv4 wildcard port reservation helper. Removed that probe to meet the unchanged nesting gate and match the actual compiled listener. All other light dimensions passed and remain applicable.
+- `S04` Reopened S04 for current-head CodeQL cache-poisoning finding; explicitly opt out of setup-node automatic caching and leave explicit cache absent. Local corrective review PASS. Parsed YAML helper annotations and optional triggers now satisfy strict typing without suppressions. CodeQL must rerun at the next pushed head before authorized main merge. S06 release evidence remains pending.

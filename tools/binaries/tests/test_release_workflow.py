@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import yaml
@@ -270,19 +270,22 @@ def test_publish_attaches_packages_before_dispatching_binaries(repo_root: Path) 
     assert '--field tag="${TAG}"' in dispatch_section
 
 
-def _load(repo_root: Path, workflow: str) -> dict:
+def _load(repo_root: Path, workflow: str) -> dict[str | bool, Any]:
     """Return *workflow* parsed as YAML."""
-    return yaml.safe_load(
-        (repo_root / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    return cast(
+        "dict[str | bool, Any]",
+        yaml.safe_load(
+            (repo_root / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        ),
     )
 
 
-def _upstream(jobs: dict, job_id: str) -> set[str]:
+def _upstream(jobs: dict[str, Any], job_id: str) -> set[str]:
     """Return every job *job_id* transitively needs."""
     seen: set[str] = set()
     pending = [job_id]
     while pending:
-        needs = jobs[pending.pop()].get("needs") or []
+        needs: str | list[str] = jobs[pending.pop()].get("needs") or []
         for name in [needs] if isinstance(needs, str) else needs:
             if name not in seen:
                 seen.add(name)
@@ -290,11 +293,14 @@ def _upstream(jobs: dict, job_id: str) -> set[str]:
     return seen
 
 
-def _release_request_findings(document: dict, resolver: str) -> list[str]:
+def _release_request_findings(
+    document: dict[str | bool, Any], resolver: str
+) -> list[str]:
     """Name every way *document* lets an unproven release request reach a job."""
     jobs = document["jobs"]
     findings: list[str] = []
-    if any("uses" in step for step in jobs[resolver].get("steps") or []):
+    steps: list[dict[str, Any]] = jobs[resolver].get("steps") or []
+    if any("uses" in step for step in steps):
         findings.append(f"{resolver} runs an action before the request is proven")
     for job_id, body in jobs.items():
         if job_id == resolver:
@@ -369,7 +375,9 @@ def test_published_bundle_acquisition_checks_digests_and_producer_commit(
     assert '"git", "show", f"{revision}:{CATALOG}"' in pins_source
 
     document = _load(repo_root, "acquisition.yml")
-    assert set(document.get("on", document.get(True))) == {
+    triggers = document.get("on", document.get(True))
+    assert triggers is not None
+    assert set(triggers) == {
         "schedule",
         "workflow_dispatch",
     }
@@ -404,7 +412,9 @@ def test_package_index_publication_uses_the_proven_drafts_packages(
     """
     publish = _load(repo_root, "publish.yml")
     jobs = publish["jobs"]
-    stage = publish.get("on", publish.get(True))["workflow_dispatch"]["inputs"]["stage"]
+    triggers = publish.get("on", publish.get(True))
+    assert triggers is not None
+    stage = triggers["workflow_dispatch"]["inputs"]["stage"]
     assert stage["type"] == "choice"
     assert stage["options"] == ["release", "package-index"]
     assert stage["default"] == "release"
@@ -550,6 +560,24 @@ def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
     assert "release verify-set " in gate["run"]
     wheel = jobs["wheel"]["steps"]
     assert any("release wheel " in str(s.get("run", "")) for s in wheel)
+
+
+def test_release_frontend_cannot_write_dependency_cache(repo_root: Path) -> None:
+    """A dispatch-supplied checkout cannot enable setup-node's npm cache.
+
+    Mutation proof: removing the explicit automatic-cache opt-out failed the
+    named assertion (exit 1); exact restoration passed (exit 0).
+    """
+    frontend = _load(repo_root, "binaries.yml")["jobs"]["frontend"]
+    node = next(
+        step
+        for step in frontend["steps"]
+        if str(step.get("uses", "")).startswith("actions/setup-node@")
+    )
+    assert node["with"].get("package-manager-cache") is False, (
+        "release checkout can enable automatic npm caching"
+    )
+    assert not node["with"].get("cache"), "release checkout enables explicit caching"
 
 
 def test_reviewed_release_pins_precede_publication_and_cover_acquisition(
