@@ -132,6 +132,10 @@ def archive_suffix(target: str) -> str:
     return ".zip" if is_windows_target(target) else ".tar.gz"
 
 
+MONITOR_EXECUTABLE = Executable(
+    name="vaultspec-rag-monitor", summary="the self-contained React monitor frontend"
+)
+
 VAULTSPEC_RAG = Product(
     name="vaultspec-rag",
     formula_class="VaultspecRag",

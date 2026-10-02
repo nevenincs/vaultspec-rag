@@ -16,17 +16,11 @@ from tools.packaging.products import executable_filename
 from vaultspec_rag.qdrant_runtime._provision import (
     _download,
     extract_verified_archive,
-    file_sha256,
+    verify_native_binary,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def verify_bun(binary: Path, target: str) -> None:
-    """Rehash immediately before every compiler execution, including cache hits."""
-    if binary.is_symlink() or file_sha256(binary) != BUN_EXECUTABLES[target]:
-        raise RuntimeError(f"Bun executable pin mismatch: {binary}")
 
 
 def provision_bun(cache: Path, target: str) -> Path:
@@ -46,7 +40,7 @@ def provision_bun(cache: Path, target: str) -> Path:
             )
         finally:
             archive.unlink(missing_ok=True)
-    verify_bun(binary, target)
+    verify_native_binary(binary, BUN_EXECUTABLES[target])
     result = subprocess.run(
         [str(binary), "--version"],
         check=True,

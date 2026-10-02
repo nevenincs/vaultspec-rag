@@ -39,7 +39,6 @@ from ._constants import (
     QDRANT_SERVER_VERSION,
     ProvisionReport,
 )
-from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir, read_manifest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,6 +109,16 @@ def file_sha256(path: Path) -> str:
         while chunk := fh.read(_DOWNLOAD_CHUNK_BYTES):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_native_binary(binary: Path, expected_sha256: str) -> None:
+    """Rehash a regular executable immediately before a supervised launch."""
+    if (
+        binary.is_symlink()
+        or not binary.is_file()
+        or file_sha256(binary) != expected_sha256
+    ):
+        raise RuntimeError(f"Native executable pin mismatch: {binary}")
 
 
 class _HostPinnedRedirect(urllib.request.HTTPRedirectHandler):
@@ -358,7 +367,11 @@ def extract_verified_archive(
         raise ChecksumMismatchError(archive, expected_sha256, actual)
 
     on_progress("Extracting the Qdrant server...")
-    binary = _extract_binary_member(archive, dest_dir, binary_name or binary_filename())
+    if binary_name is None:
+        from ._resolve import binary_filename
+
+        binary_name = binary_filename()
+    binary = _extract_binary_member(archive, dest_dir, binary_name)
     if sys.platform != "win32":
         # Owner-only rwx: the service runs as one user; a world-executable
         # managed binary needlessly widens who can run it on a shared host.
@@ -397,6 +410,8 @@ def _existing_install_state(version_dir: Path, expected_sha256: str) -> str:
         are present, ``"stale"`` when a binary exists but the manifest
         is absent or disagrees with the pin, ``"absent"`` otherwise.
     """
+    from ._resolve import binary_filename, read_manifest
+
     binary = version_dir / binary_filename()
     if not binary.is_file():
         return "absent"
@@ -418,6 +433,8 @@ def _provision_operator_binary(
     previously: str,
 ) -> ProvisionReport:
     """Register an operator-supplied binary into the managed dir."""
+    from ._resolve import binary_filename
+
     target = version_dir / binary_filename()
     if dry_run:
         return ProvisionReport(
@@ -471,6 +488,8 @@ def _provision_operator_binary(
 
 def _download_and_install(request: _DownloadInstallRequest) -> ProvisionReport:
     """Download, verify, extract, and record the pinned binary."""
+    from ._resolve import binary_filename
+
     url, asset, expected_sha256, version_dir, previously, on_progress = (
         request.url,
         request.asset,
@@ -568,6 +587,8 @@ def provision(
     Returns:
         A :class:`ProvisionReport` in the sync vocabulary.
     """
+    from ._resolve import asset_for_platform, binary_filename, qdrant_bin_dir
+
     asset = asset_for_platform()
     expected = QDRANT_ASSET_SHA256[asset]
     url = f"{QDRANT_RELEASE_BASE_URL}/v{QDRANT_SERVER_VERSION}/{asset}"
@@ -646,6 +667,8 @@ def provisioned_versions() -> list[dict[str, object]]:
         One entry per version dir that contains a qdrant binary, newest
         version string first, capped at 10 entries.
     """
+    from ._resolve import binary_filename, qdrant_bin_dir, read_manifest
+
     base = qdrant_bin_dir().parent
     if not base.is_dir():
         return []
@@ -680,6 +703,8 @@ def clean_provisioned(*, keep_current: bool = False) -> list[str]:
     Returns:
         The version strings removed.
     """
+    from ._resolve import qdrant_bin_dir
+
     base = qdrant_bin_dir().parent
     if not base.is_dir():
         return []

@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tools.binaries.bun_pins import BUN_ARCHIVES, BUN_EXECUTABLES
-from tools.binaries.bun_toolchain import verify_bun
 from tools.packaging.products import VAULTSPEC_RAG
 from vaultspec_rag.qdrant_runtime._provision import (
     ChecksumMismatchError,
     extract_verified_archive,
     file_sha256,
+    verify_native_binary,
 )
 
 if TYPE_CHECKING:
@@ -58,8 +58,8 @@ def test_bun_executable_mismatch_is_refused(tmp_path: Path) -> None:
     binary = tmp_path / "bun"
     binary.write_bytes(b"modified cache")
     # Removing the executable digest comparison must fail this assertion.
-    with pytest.raises(RuntimeError, match="Bun executable pin mismatch"):
-        verify_bun(binary, "x86_64-pc-windows-msvc")
+    with pytest.raises(RuntimeError, match="Native executable pin mismatch"):
+        verify_native_binary(binary, BUN_EXECUTABLES["x86_64-pc-windows-msvc"])
 
 
 def test_bun_ambiguous_members_are_refused(tmp_path: Path) -> None:
