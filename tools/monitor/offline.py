@@ -12,7 +12,6 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import cast
 
 from tools.binaries.bun_pins import BUN_EXECUTABLES
 from tools.binaries.bun_toolchain import provision_bun
@@ -20,7 +19,6 @@ from tools.binaries.native import host_target_triple
 from tools.monitor.smoke import probe
 from vaultspec_rag.qdrant_runtime._provision import verify_native_binary
 
-ROOT = Path(__file__).resolve().parents[2]
 CONTROL_HOST = "1.1.1.1"
 CONTROL_PORT = 443
 MAC_PROFILE = """(version 1)
@@ -73,27 +71,15 @@ def require_denial() -> None:
         raise RuntimeError("OS offline proof refused: external TCP still connects")
 
 
-def worker(request: Path) -> None:
-    require_denial()
-    payload = json.loads(request.read_text(encoding="utf-8"))
-    result = probe(
-        Path(payload["binary"]),
-        payload["sha256"],
-        payload["identity"],
-        Path(payload["browser"]),
+def macos_launcher() -> tuple[str, ...]:
+    launcher = ("/usr/bin/sandbox-exec", "-p", MAC_PROFILE)
+    subprocess.run(
+        [*launcher, sys.executable, "-m", "tools.monitor.offline", "--check-outbound"],
+        cwd=Path(__file__).resolve().parents[2],
+        check=True,
+        timeout=15,
     )
-    Path(payload["report"]).write_text(json.dumps(result), encoding="utf-8")
-
-
-def isolated_process(request: Path) -> str:
-    command = [sys.executable, "-m", "tools.monitor.offline", "--worker", str(request)]
-    if sys.platform == "darwin":
-        command = ["/usr/bin/sandbox-exec", "-p", MAC_PROFILE, *command]
-        mechanism = "macOS Seatbelt"
-    else:
-        raise RuntimeError("No native OS isolation method for this platform")
-    subprocess.run(command, cwd=ROOT, check=True, timeout=180)
-    return mechanism
+    return launcher
 
 
 def bun_connection(binary: Path, launch_prefix: tuple[str, ...] = ()) -> bool:
@@ -212,28 +198,14 @@ def probe_offline(
             )
             mechanism = "Linux seccomp outbound connect/datagram denial"
             scope = "monitor and pinned Bun control; accepted loopback HTTP preserved"
-        else:
+        elif sys.platform == "darwin":
             if not external_connection():
                 raise RuntimeError("The external TCP positive control did not connect")
-            request = directory / "request.json"
-            report = directory / "report.json"
-            request.write_text(
-                json.dumps(
-                    {
-                        "binary": str(binary.absolute()),
-                        "sha256": expected_sha256,
-                        "identity": identity,
-                        "browser": str(browser.absolute()),
-                        "report": str(report),
-                    }
-                ),
-                encoding="utf-8",
-            )
-            mechanism = isolated_process(request)
-            result = cast(
-                "dict[str, object]", json.loads(report.read_text(encoding="utf-8"))
-            )
-            scope = "probe and descendant monitor/browser processes"
+            result = probe(binary, expected_sha256, identity, browser, macos_launcher())
+            mechanism = "macOS Seatbelt"
+            scope = "monitor and Python network control; loopback HTTP preserved"
+        else:
+            raise RuntimeError("No native OS isolation method for this platform")
     return {
         **result,
         "os_offline_verified": True,
@@ -249,9 +221,9 @@ def probe_offline(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--worker", type=Path, required=True)
-    args = parser.parse_args()
-    worker(args.worker)
+    parser.add_argument("--check-outbound", action="store_true", required=True)
+    parser.parse_args()
+    require_denial()
 
 
 if __name__ == "__main__":
