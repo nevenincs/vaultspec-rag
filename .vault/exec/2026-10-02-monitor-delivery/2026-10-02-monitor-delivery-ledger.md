@@ -5,7 +5,7 @@ tags:
 date: '2026-10-02'
 modified: '2026-10-02'
 body_schema: 'body-v2'
-body_hash: 'sha256:6b0330f8dc66c4cd1534fd546dcdb64a6c7df310f12adca0bdc0c202b834f48f'
+body_hash: 'sha256:72a62aab5d40d2cede092f2b217a73809fbd071ebd9f2ed6015c71e4db895074'
 related:
   - "[[2026-10-02-monitor-delivery-plan]]"
 ---
@@ -242,6 +242,9 @@ related:
 - `S06` `verify:` `pytest Windows full-run failures (8) on local Windows` -> `pass`
 - `S06` `verify:` `ruff check src tools dev` -> `pass`
 - `S06` `verify:` `ruff format --check and ty check on changed files` -> `pass`
+- `S06` `verify:` `dev lint workflow (actionlint)` -> `pass`
+- `S06` `verify:` `prettier --check acquisition.yml` -> `pass`
+- `S06` `verify:` `pytest workflow guards (51)` -> `pass`
 
 ## Notes
 
