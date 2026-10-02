@@ -684,7 +684,8 @@ class JobsLogView(RetainedLog[LogEntry]):
         width = self._content_width()
         self._rendered_width = width
         if self._message is not None:
-            self.write(Text(self._message))
+            self.write(Text(self._message), scroll_end=False)
+            self.call_after_refresh(self.scroll_followed_tail)
             return
         tones = self._tones()
         hidden = 0
@@ -702,14 +703,16 @@ class JobsLogView(RetainedLog[LogEntry]):
                 quiet=entry.is_polling,
                 tones=tones,
             ):
-                self.write(line)
+                self.write(line, scroll_end=False)
         self._flush_hidden(hidden)
+        self.call_after_refresh(self.scroll_followed_tail)
 
     def _flush_hidden(self, hidden: int) -> int:
         """Mark a collapsed run of polling lines where it sat. Returns 0."""
         if hidden:
             noun = "polling line" if hidden == 1 else "polling lines"
             self.write(
-                Text(f"· {hidden} {noun} hidden — x shows them", style="dim italic")
+                Text(f"· {hidden} {noun} hidden — x shows them", style="dim italic"),
+                scroll_end=False,
             )
         return 0
