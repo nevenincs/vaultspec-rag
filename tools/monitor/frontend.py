@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shutil
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 from vaultspec_rag.qdrant_runtime._provision import file_sha256
 
@@ -62,7 +64,35 @@ def inventory(directory: Path) -> dict[str, Asset]:
         )
     if "index.html" not in assets or not any(name.endswith(".js") for name in assets):
         raise ValueError("The Vite handoff requires its HTML and JavaScript assets")
+    validate_asset_references(directory, assets)
     return assets
+
+
+def validate_asset_references(directory: Path, assets: dict[str, Asset]) -> None:
+    """Require local HTML, CSS and literal module references to be embedded."""
+    patterns = {
+        ".html": r"(?:src|href)=[\"\x27]([^\"\x27]+)",
+        ".css": r"url\(\s*[\"\x27]?([^\s)\"\x27]+)",
+        ".js": r"\b(?:import\s*\(\s*|from\s*)[\"\x27]([^\"\x27]+)",
+    }
+    for name in assets:
+        pattern = patterns.get(posixpath.splitext(name)[1])
+        if pattern is None:
+            continue
+        content = (directory / name).read_text(encoding="utf-8")
+        for reference in re.findall(pattern, content):
+            url = urlsplit(reference)
+            if url.scheme in {"data", "blob"} or not url.path:
+                continue
+            resolved = posixpath.normpath(
+                unquote(url.path).lstrip("/")
+                if url.path.startswith("/")
+                else posixpath.join(posixpath.dirname(name), unquote(url.path))
+            )
+            if url.scheme or url.netloc or resolved not in assets:
+                raise ValueError(
+                    f"Frontend asset reference is not embedded: {name}: {reference}"
+                )
 
 
 def prepare_frontend(source: Path, destination: Path, identity: Frontend) -> Frontend:
@@ -86,10 +116,17 @@ def prepare_frontend(source: Path, destination: Path, identity: Frontend) -> Fro
     return result
 
 
-def validate_frontend(directory: Path, expected: Frontend) -> Frontend:
+def validate_frontend(
+    directory: Path, expected: Frontend, *, manifest_sha256: str | None = None
+) -> Frontend:
     """Reject changed, missing or extra assets and mismatched producer identities."""
     if not re.fullmatch(r"[0-9a-f]{40}", expected.source_revision):
         raise ValueError("Frontend producer revision must be a full commit ID")
+    if (
+        manifest_sha256 is not None
+        and file_sha256(directory / MANIFEST) != manifest_sha256
+    ):
+        raise ValueError("The common frontend manifest digest differs from the handoff")
     assets = inventory(directory)
     actual = Frontend(
         expected.version,

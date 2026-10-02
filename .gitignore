@@ -189,6 +189,10 @@ actions-runner-*.tar.gz
 .agents/*.lock
 
 # Frontend dependencies, generated output and local configuration
+/dist-bin/
+/dist-bundles/
+/dist-monitor-frontend/
+/dist-release-evidence/
 node_modules/
 *.tsbuildinfo
 .vite/

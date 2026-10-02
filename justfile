@@ -514,8 +514,8 @@ release-monitor-frontend tag producer_revision frontend_dir='dist-monitor-fronte
 
 # Compile the common frontend handoff using the verified native Bun compiler.
 [group('release')]
-release-monitor tag producer_revision frontend_dir='dist-monitor-frontend' outdir='dist-bin':
-    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend "{{frontend_dir}}" --outdir "{{outdir}}"
+release-monitor tag producer_revision frontend_digest frontend_dir='dist-monitor-frontend' outdir='dist-bin':
+    uv run --no-project --python 3.13 -- python -m tools.monitor.build compile --tag {{tag}} --source-revision {{producer_revision}} --frontend "{{frontend_dir}}" --frontend-sha256 {{frontend_digest}} --outdir "{{outdir}}"
 
 # Render and probe finalized bytes before packaging or publication.
 [group('release')]

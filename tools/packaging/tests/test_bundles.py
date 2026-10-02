@@ -58,6 +58,7 @@ def _raw_outputs(root: Path, target: str) -> Path:
                 "version": VERSION,
                 "source_revision": REVISION,
                 "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                "frontend_sha256": "c" * 64,
                 "bun_version": BUN_VERSION,
                 "development": False,
                 "sha256": hashlib.sha256(monitor.read_bytes()).hexdigest(),
@@ -70,6 +71,9 @@ def _raw_outputs(root: Path, target: str) -> Path:
                 "isolated_shell": True,
                 "occupied_port_refused": True,
                 "parent_eof_shutdown": True,
+                "request_bounds_verified": True,
+                "cancelled_request_recovered": True,
+                "partial_request_shutdown": True,
             }
         ),
         encoding="utf-8",

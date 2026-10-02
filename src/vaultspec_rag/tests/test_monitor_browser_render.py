@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from tools.monitor.smoke import installed_browser
+
 from ..config._settings import get_config
 from ..job_models import JobSource
 from ..jobs import record_finish, record_start
@@ -71,20 +73,10 @@ def rendered_monitor(
     root = Path(__file__).resolve().parents[3]
     node = shutil.which("node")
     assert node is not None, "the enrolled monitor Node runtime is required"
-    executable = shutil.which("google-chrome") or shutil.which("chromium")
-    if executable is None:
-        for candidate in (
-            Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
-            Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
-        ):
-            if candidate.is_file():
-                executable = str(candidate)
-                break
-    if executable is None:
-        pytest.skip(
-            "rendered checks require installed Chrome/Chromium/Edge; "
-            "no browser is downloaded"
-        )
+    try:
+        executable = str(installed_browser())
+    except RuntimeError as error:
+        pytest.skip(str(error))
     if not (root / "node_modules/vite").is_dir():
         pytest.skip("run just init-monitor before installed-browser checks")
     environment = dict(os.environ)

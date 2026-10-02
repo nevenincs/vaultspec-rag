@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import queue
@@ -15,6 +16,7 @@ import threading
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 
 from tools.binaries.build_pyapp import glibc_version, required_symbol_versions
 from tools.binaries.native import host_target_triple
@@ -51,6 +53,24 @@ def isolated_environment(directory: Path) -> dict[str, str]:
         encoding="utf-8",
     )
     return environment
+
+
+def installed_browser() -> Path:
+    """Use enrolled Chromium-family browsers; release checks never download one."""
+    for name in ("google-chrome", "chromium", "chromium-browser", "msedge"):
+        if executable := shutil.which(name):
+            return Path(executable)
+    for candidate in (
+        Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+        Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+    ):
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        "Native monitor verification requires installed Chrome/Chromium/Edge"
+    )
 
 
 def output_line(process: subprocess.Popen[str]) -> str:
@@ -195,6 +215,51 @@ def probe_assets(url: str, expected: dict[str, object]) -> int:
     return len(assets)
 
 
+def probe_request_bounds(url: str) -> None:
+    """Exercise the shared operation allowlist and request limit in native bytes."""
+    target = urlsplit(url)
+    if target.hostname is None:
+        raise ValueError("The native probe requires a monitor URL with a host")
+    for route, body, expected in (
+        ("/api/monitor/not-an-operation", b"{}", {404}),
+        ("/api/monitor/lifecycle/start", b"broken json", {400}),
+        ("/api/monitor/lifecycle/start", b'{"unexpected":true}', {400}),
+        ("/index.html", b"{}", {405}),
+        (
+            "/api/monitor/lifecycle/start",
+            b'{"padding":"' + b"x" * 9000 + b'"}',
+            {503, None},
+        ),
+    ):
+        connection = http.client.HTTPConnection(
+            target.hostname, target.port, timeout=10
+        )
+        try:
+            connection.request(
+                "POST", route, body, {"Content-Type": "application/json"}
+            )
+            try:
+                response = connection.getresponse()
+                status = response.status
+                response.read()
+            except (http.client.RemoteDisconnected, ConnectionResetError):
+                status = None
+            if status not in expected:
+                raise RuntimeError(f"Native request boundary failed: {route}: {status}")
+        finally:
+            connection.close()
+
+
+def partial_request(port: int) -> socket.socket:
+    connection = socket.create_connection(("127.0.0.1", port), timeout=5)
+    connection.sendall(
+        b"POST /api/monitor/lifecycle/start HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        b"Content-Length: 12\r\n\r\n{"
+    )
+    return connection
+
+
 def platform_evidence(binary: Path, target: str) -> dict[str, str | None]:
     """Measure the monitor independently of the enclosing PyApp bundle floor."""
     versions = (
@@ -213,6 +278,42 @@ def platform_evidence(binary: Path, target: str) -> dict[str, str | None]:
             ".".join(str(part) for part in max(versions)) if versions else None
         ),
     }
+
+
+def exercise_monitor(
+    process: subprocess.Popen[str],
+    starting_port: int,
+    metadata: dict[str, object],
+    browser: Path | None,
+    directory: Path,
+) -> int:
+    ready = output_line(process).strip()
+    prefix = "vaultspec.monitor.ready "
+    if not ready.startswith(prefix):
+        raise RuntimeError(f"The monitor readiness protocol failed: {ready}")
+    port = int(ready.removeprefix(prefix))
+    if port <= starting_port:
+        raise RuntimeError("Managed monitor did not allocate upward")
+    url = f"http://127.0.0.1:{port}"
+    count = probe_assets(url, metadata)
+    probe_request_bounds(url)
+    partial_request(port).close()
+    if get(url + "/monitor.json")[0] != 200:
+        raise RuntimeError("The monitor did not recover from client cancellation")
+    if browser:
+        browser_probe(url, browser, directory)
+    if (directory / "autoloaded").exists() or (directory / "status").exists():
+        raise RuntimeError(
+            "Shell startup loaded ambient config or created service state"
+        )
+    if process.stdin is None:
+        raise RuntimeError("The managed monitor has no parent pipe")
+    with partial_request(port):
+        process.stdin.close()
+        process.wait(timeout=5)
+    if process.returncode:
+        raise RuntimeError("Managed monitor did not stop cleanly on parent EOF")
+    return count
 
 
 def probe(
@@ -272,33 +373,9 @@ def probe(
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             try:
-                ready = output_line(process).strip()
-                prefix = "vaultspec.monitor.ready "
-                if not ready.startswith(prefix):
-                    raise RuntimeError(
-                        f"The monitor readiness protocol failed: {ready}"
-                    )
-                port = int(ready.removeprefix(prefix))
-                if port <= starting_port:
-                    raise RuntimeError("Managed monitor did not allocate upward")
-                url = f"http://127.0.0.1:{port}"
-                count = probe_assets(url, metadata)
-                if browser:
-                    browser_probe(url, browser, directory)
-                if (directory / "autoloaded").exists() or (
-                    directory / "status"
-                ).exists():
-                    raise RuntimeError(
-                        "Shell startup loaded ambient config or created service state"
-                    )
-                if process.stdin is None:
-                    raise RuntimeError("The managed monitor has no parent pipe")
-                process.stdin.close()
-                process.wait(timeout=5)
-                if process.returncode:
-                    raise RuntimeError(
-                        "Managed monitor did not stop cleanly on parent EOF"
-                    )
+                count = exercise_monitor(
+                    process, starting_port, metadata, browser, directory
+                )
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -317,6 +394,9 @@ def probe(
         "isolated_shell": True,
         "occupied_port_refused": True,
         "parent_eof_shutdown": True,
+        "request_bounds_verified": True,
+        "cancelled_request_recovered": True,
+        "partial_request_shutdown": True,
     }
 
 

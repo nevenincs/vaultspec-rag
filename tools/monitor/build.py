@@ -21,7 +21,12 @@ from tools.binaries.bun_pins import BUN_EXECUTABLES, BUN_VERSION
 from tools.binaries.bun_toolchain import provision_bun
 from tools.binaries.native import host_target_triple
 from tools.binaries.windows_icon import product_version_info, stamp_icon_and_version
-from tools.monitor.frontend import Frontend, prepare_frontend, validate_frontend
+from tools.monitor.frontend import (
+    MANIFEST,
+    Frontend,
+    prepare_frontend,
+    validate_frontend,
+)
 from tools.packaging.products import (
     MONITOR_EXECUTABLE,
     VAULTSPEC_RAG,
@@ -93,6 +98,7 @@ def generated_entry(directory: Path, frontend: Path, identity: Frontend) -> Path
         "version": identity.version,
         "source_revision": identity.source_revision,
         "lock_sha256": identity.lock_sha256,
+        "frontend_sha256": file_sha256(frontend / MANIFEST),
         "bun_version": BUN_VERSION,
         "development": identity.development,
     }
@@ -144,12 +150,16 @@ def finalize(binary: Path, version: str, target: str) -> None:
 
 
 def compile_monitor(
-    frontend: Path, outdir: Path, cache: Path, identity: Frontend
+    frontend: Path,
+    outdir: Path,
+    cache: Path,
+    identity: Frontend,
+    frontend_sha256: str,
 ) -> Path:
     target = host_target_triple()
     if target not in VAULTSPEC_RAG.supported_targets:
         raise ValueError(f"Unsupported native monitor host: {target}")
-    identity = validate_frontend(frontend, identity)
+    identity = validate_frontend(frontend, identity, manifest_sha256=frontend_sha256)
     binary = (outdir / VAULTSPEC_RAG.asset_name(MONITOR_EXECUTABLE, target)).resolve()
     binary.parent.mkdir(parents=True, exist_ok=True)
     bun = provision_bun(cache, target)
@@ -193,6 +203,7 @@ def main() -> None:
     parser.add_argument("--development", action="store_true")
     parser.add_argument("--outdir", type=Path, required=True)
     parser.add_argument("--frontend", type=Path)
+    parser.add_argument("--frontend-sha256")
     parser.add_argument(
         "--cache", type=Path, default=Path(tempfile.gettempdir()) / "vaultspec-bun"
     )
@@ -208,9 +219,13 @@ def main() -> None:
         prepare_frontend(ROOT / "src/monitor/dist", args.outdir, identity)
         print(args.outdir)
     else:
-        if args.frontend is None:
-            parser.error("Native compilation requires the common --frontend handoff")
-        print(compile_monitor(args.frontend, args.outdir, args.cache, identity))
+        if args.frontend is None or not args.frontend_sha256:
+            parser.error("Native compilation requires --frontend and --frontend-sha256")
+        print(
+            compile_monitor(
+                args.frontend, args.outdir, args.cache, identity, args.frontend_sha256
+            )
+        )
 
 
 if __name__ == "__main__":

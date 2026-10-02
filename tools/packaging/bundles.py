@@ -161,6 +161,9 @@ def verify_monitor_evidence(
         "isolated_shell": True,
         "occupied_port_refused": True,
         "parent_eof_shutdown": True,
+        "request_bounds_verified": True,
+        "cancelled_request_recovered": True,
+        "partial_request_shutdown": True,
     }
     if any(
         evidence.get(key) != value or type(evidence.get(key)) is not type(value)
@@ -169,10 +172,13 @@ def verify_monitor_evidence(
         raise BundleError("monitor smoke evidence does not match finalized release")
     assets = evidence.get("assets_verified")
     lock = evidence.get("lock_sha256")
+    frontend = evidence.get("frontend_sha256")
     if (
         not re.fullmatch(r"[0-9a-f]{40}", revision)
         or not isinstance(lock, str)
         or not re.fullmatch(r"[0-9a-f]{64}", lock)
+        or not isinstance(frontend, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", frontend)
         or not isinstance(assets, int)
         or isinstance(assets, bool)
         or assets < 2
@@ -570,7 +576,7 @@ def _verify_member_modes(
             )
 
 
-def verify_bundle(archive: Path, spec: BundleSpec) -> None:
+def verify_bundle(archive: Path, spec: BundleSpec) -> dict[str, object]:
     """Verify the public archive layout and the hashes in its manifest."""
     if archive.name != spec.archive_name:
         raise BundleError(
@@ -591,6 +597,7 @@ def verify_bundle(archive: Path, spec: BundleSpec) -> None:
     _verify_manifest_metadata(manifest, spec, contents)
     _verify_manifest_files(manifest, contents, expected_roles)
     _verify_member_modes(contents, expected_roles)
+    return manifest
 
 
 def main() -> int:

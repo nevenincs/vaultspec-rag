@@ -12,6 +12,7 @@ export type MonitorBuild = {
   version: string;
   source_revision: string;
   lock_sha256: string;
+  frontend_sha256: string;
   bun_version: string;
   development: boolean;
 };

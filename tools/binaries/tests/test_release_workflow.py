@@ -498,3 +498,52 @@ def test_checksum_merge_reads_legacy_names_bare(repo_root: Path, workflow: str) 
         f"{digest}  vaultspec_rag-1.0.0.tar.gz\n"
         f"{digest}  vaultspec-rag-v1.0.0-x86_64-pc-windows-msvc.zip\n"
     )
+
+
+def test_monitor_frontend_is_built_once_and_native_proof_precedes_publication(
+    repo_root: Path,
+) -> None:
+    jobs = _load(repo_root, "binaries.yml")["jobs"]
+    frontend = jobs["frontend"]
+    assert "matrix" not in frontend
+    assert frontend["needs"] == "wheel"
+    assert set(jobs["build"]["needs"]) == {"wheel", "frontend"}
+    front_scripts = "\n".join(str(s.get("run", "")) for s in frontend["steps"])
+    assert front_scripts.count("just release-monitor-frontend") == 1
+    assert "npm ci" in front_scripts
+    assert "sha256sum package-lock.json" in front_scripts
+    assert "sha256sum dist-monitor-frontend/frontend.json" in front_scripts
+    build_steps = jobs["build"]["steps"]
+    download = next(
+        s
+        for s in build_steps
+        if s.get("name") == "Download the common frontend handoff"
+    )
+    assert download["with"]["name"] == "${{ needs.frontend.outputs.artifact }}"
+    scripts = [str(s.get("run", "")) for s in build_steps]
+    compile_index = next(
+        i for i, run in enumerate(scripts) if "just release-monitor " in run
+    )
+    smoke = next(i for i, run in enumerate(scripts) if "release native-smoke " in run)
+    bundle = next(i for i, run in enumerate(scripts) if "just release-bundle " in run)
+    # Deleting or moving native smoke must fail this ordered admission assertion.
+    assert compile_index < smoke < bundle
+    assert "FRONTEND_SHA256" in scripts[compile_index]
+    assert not any("release-monitor-frontend" in run for run in scripts)
+    release_scripts = [str(s.get("run", "")) for s in jobs["release"]["steps"]]
+    verify = next(
+        i for i, run in enumerate(release_scripts) if "release verify-set " in run
+    )
+    upload = next(
+        i for i, run in enumerate(release_scripts) if "gh release upload " in run
+    )
+    assert verify < upload
+    draft = jobs["verify-release-assets"]["steps"]
+    gate = next(
+        s
+        for s in draft
+        if s.get("name") == "Require every declared target on the draft release"
+    )
+    assert "release verify-set " in gate["run"]
+    wheel = jobs["wheel"]["steps"]
+    assert any("release wheel " in str(s.get("run", "")) for s in wheel)

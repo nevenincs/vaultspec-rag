@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from tools.monitor.frontend import Frontend, prepare_frontend, validate_frontend
+from tools.monitor.frontend import (
+    Frontend,
+    inventory,
+    prepare_frontend,
+    validate_frontend,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -66,3 +71,38 @@ def test_handoff_rejects_changed_bytes_or_identity(tmp_path: Path, change: str) 
     # Bypassing the metadata comparison admits these mutations and fails here.
     with pytest.raises(ValueError, match="handoff identity or asset digest mismatch"):
         validate_frontend(directory, identity)
+
+
+def test_rehashed_frontend_must_match_common_producer_digest(tmp_path: Path) -> None:
+    import json
+
+    from tools.monitor.frontend import MANIFEST
+    from vaultspec_rag.qdrant_runtime._provision import file_sha256
+
+    directory, identity = handoff(tmp_path)
+    manifest = directory / MANIFEST
+    digest = file_sha256(manifest)
+    asset = directory / "assets/app.js"
+    asset.write_bytes(b"different bytes")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["assets"]["assets/app.js"].update(
+        sha256=file_sha256(asset), size=asset.stat().st_size
+    )
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    # Bypassing the common producer digest admits internally consistent changed bytes.
+    with pytest.raises(ValueError, match="digest differs from the handoff"):
+        validate_frontend(directory, identity, manifest_sha256=digest)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["missing.woff2", "../../outside.woff2", "https://cdn.invalid/font.woff2"],
+)
+def test_css_references_must_be_embedded(tmp_path: Path, reference: str) -> None:
+    directory, _ = handoff(tmp_path)
+    (directory / "assets/style.css").write_text(
+        f"@font-face {{src: url('{reference}')}}", encoding="utf-8"
+    )
+    # Skipping reference validation must fail this named missing-asset assertion.
+    with pytest.raises(ValueError, match="asset reference is not embedded"):
+        inventory(directory)
